@@ -66,3 +66,18 @@ import Testing
     #expect(report.markdownSummary.contains("resets in 3h"))
     #expect(report.markdownSummary.contains("authorization headers"))
 }
+
+@Test func networkProbeEventRedactsPathIdentifiers() {
+    let event = NetworkProbeEvent(
+        observedAt: Date(),
+        method: "GET",
+        pathHint: "https://chatgpt.com/backend-api/conversation/abc123def456abc123def456?token=secret",
+        status: 200,
+        contentType: "application/json",
+        bodySize: 120,
+        matchedFields: ["reset_at", "remaining_messages"]
+    )
+
+    #expect(event.pathHint == "/backend-api/conversation/[id]")
+    #expect(event.matchedFields == ["remaining_messages", "reset_at"])
+}

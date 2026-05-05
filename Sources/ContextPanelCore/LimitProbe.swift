@@ -97,6 +97,37 @@ public struct LimitProbeReport: Codable, Equatable, Sendable {
     }
 }
 
+public struct NetworkProbeEvent: Codable, Equatable, Identifiable, Sendable {
+    public let id: UUID
+    public let observedAt: Date
+    public let method: String
+    public let pathHint: String
+    public let status: Int?
+    public let contentType: String?
+    public let bodySize: Int?
+    public let matchedFields: [String]
+
+    public init(
+        id: UUID = UUID(),
+        observedAt: Date,
+        method: String,
+        pathHint: String,
+        status: Int?,
+        contentType: String?,
+        bodySize: Int?,
+        matchedFields: [String]
+    ) {
+        self.id = id
+        self.observedAt = observedAt
+        self.method = EvidenceRedactor.redact(method)
+        self.pathHint = EvidenceRedactor.redactPath(pathHint)
+        self.status = status
+        self.contentType = EvidenceRedactor.redact(contentType ?? "")
+        self.bodySize = bodySize
+        self.matchedFields = matchedFields.map(EvidenceRedactor.redact).sorted()
+    }
+}
+
 public enum LimitProbeScanner {
     private static let patterns: [(ProbeSignalKind, NSRegularExpression)] = [
         (.resetLanguage, regex(#"(?i)\b(reset|resets|refresh|refreshes|available again)\b.{0,80}"#)),
@@ -190,5 +221,15 @@ public enum EvidenceRedactor {
             )
         }
         return redacted
+    }
+
+    public static func redactPath(_ value: String) -> String {
+        guard let components = URLComponents(string: value) else {
+            return redact(value)
+        }
+        let path = components.path
+            .replacingOccurrences(of: #"/[0-9a-fA-F-]{16,}"#, with: "/[id]", options: .regularExpression)
+            .replacingOccurrences(of: #"/[A-Za-z0-9_-]{24,}"#, with: "/[id]", options: .regularExpression)
+        return redact(path.isEmpty ? value : path)
     }
 }
