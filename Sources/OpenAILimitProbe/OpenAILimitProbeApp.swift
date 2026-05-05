@@ -71,6 +71,7 @@ struct ProbeRootView: View {
                 Button("Export Redacted Report") {
                     model.exportReport()
                 }
+                .keyboardShortcut("e", modifiers: [.command])
             }
 
             TextField("Manual note, e.g. resets tomorrow 9:00 AM", text: $model.manualObservation)
