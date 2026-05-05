@@ -6,6 +6,7 @@
     "index": "docs/README.md",
     "productGoals": "docs/product-goals.md",
     "architecture": "docs/architecture.md",
+    "designDirection": "docs/design-direction.md",
     "providerUsageAccess": "docs/provider-usage-access.md",
     "repoSettings": "docs/repo-settings.md"
   },
