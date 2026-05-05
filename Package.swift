@@ -11,10 +11,18 @@ let package = Package(
         .library(
             name: "ContextPanelCore",
             targets: ["ContextPanelCore"]
+        ),
+        .executable(
+            name: "ContextPanelPreview",
+            targets: ["ContextPanelPreview"]
         )
     ],
     targets: [
         .target(name: "ContextPanelCore"),
+        .executableTarget(
+            name: "ContextPanelPreview",
+            dependencies: ["ContextPanelCore"]
+        ),
         .testTarget(
             name: "ContextPanelCoreTests",
             dependencies: ["ContextPanelCore"]
