@@ -59,11 +59,25 @@ import Testing
                 confidence: .observed,
                 sanitizedEvidence: "resets in 3h"
             )
+        ],
+        networkEvents: [
+            NetworkProbeEvent(
+                observedAt: Date(timeIntervalSinceReferenceDate: 1),
+                method: "GET",
+                pathHint: "/backend-api/accounts/check",
+                status: 200,
+                contentType: "application/json",
+                bodySize: 256,
+                matchedFields: ["default_account_plan_type", "accounts.[id].entitlement.subscription_plan"]
+            )
         ]
     )
 
     #expect(report.markdownSummary.contains("Limit Probe Report"))
     #expect(report.markdownSummary.contains("resets in 3h"))
+    #expect(report.markdownSummary.contains("Network Candidates"))
+    #expect(report.markdownSummary.contains("/backend-api/accounts/check"))
+    #expect(report.markdownSummary.contains("subscription_plan"))
     #expect(report.markdownSummary.contains("authorization headers"))
 }
 

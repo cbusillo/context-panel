@@ -50,13 +50,20 @@ public struct LimitProbeReport: Codable, Equatable, Sendable {
     public let provider: Provider
     public let capturedAt: Date
     public let observations: [LimitProbeObservation]
+    public let networkEvents: [NetworkProbeEvent]
     public let redactions: [String]
 
-    public init(provider: Provider, capturedAt: Date, observations: [LimitProbeObservation]) {
+    public init(
+        provider: Provider,
+        capturedAt: Date,
+        observations: [LimitProbeObservation],
+        networkEvents: [NetworkProbeEvent] = []
+    ) {
         self.schemaVersion = 1
         self.provider = provider
         self.capturedAt = capturedAt
         self.observations = observations
+        self.networkEvents = networkEvents
         self.redactions = [
             "cookies",
             "authorization headers",
@@ -84,6 +91,22 @@ public struct LimitProbeReport: Codable, Equatable, Sendable {
         } else {
             for observation in observations {
                 lines.append("- `\(observation.signalKind.rawValue)` from `\(observation.source.rawValue)`: \(observation.sanitizedEvidence)")
+            }
+        }
+
+        lines.append(contentsOf: [
+            "",
+            "## Network Candidates"
+        ])
+
+        if networkEvents.isEmpty {
+            lines.append("- No candidate response shapes found.")
+        } else {
+            for event in networkEvents {
+                let status = event.status.map(String.init) ?? "?"
+                let bodySize = event.bodySize.map { "\($0)b" } ?? "unknown size"
+                let fields = event.matchedFields.joined(separator: ", ")
+                lines.append("- `\(event.method) \(event.pathHint)` status `\(status)`, `\(bodySize)`: \(fields)")
             }
         }
 

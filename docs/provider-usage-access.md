@@ -80,6 +80,37 @@ The widget should make confidence visible. Good copy examples:
 - `Save fast mode: projected to run out 18h before reset.`
 - `Needs calibration: open ChatGPT and set reset time.`
 
+## Local Probe And Every Code Evidence
+
+The first OpenAI Limit Probe run confirmed the uncomfortable but useful shape of
+the problem:
+
+- ChatGPT visible text exposed plan/model language such as model names, `Pro`,
+  `Instant`, and `Thinking`, but did not expose a remaining-message counter or a
+  reset time before exhaustion.
+- Sanitized network response-shape scanning found account entitlement and plan
+  fields, including subscription-plan style field names, but no obvious
+  `remaining_messages`, `used`, `reset_at`, weekly allowance, or five-hour
+  allowance fields.
+- The probe should remain useful as a diagnostic harness because it can detect
+  if OpenAI later starts exposing cleaner fields, and it can produce redacted
+  evidence across multiple accounts.
+
+The nearby Every Code source is also instructive. It stores and displays
+Codex-specific rate-limit snapshots when the Codex backend provides percentage
+and reset-window data, and it reacts to `usage_limit_reached` errors that include
+`plan_type` and `resets_in_seconds`. That is valuable prior art for Context
+Panel's normalized snapshot model, but it is not evidence of a clean ChatGPT
+subscription allowance API. Those snapshots are tied to Codex session/backend
+traffic and local usage history rather than general ChatGPT web subscription
+counters.
+
+Implication: v1 should not promise exact ChatGPT subscription remaining counts
+unless the probe finds a provider-exposed counter. The product can still answer
+the fast-mode question by combining user-entered/reset-observed windows,
+local-event counting from install time, conservative default allowances, burn-rate
+calibration, and explicit confidence labels.
+
 ## Product Decisions
 
 - Treat `unknown`, `manual`, `observed`, and `official` as distinct confidence

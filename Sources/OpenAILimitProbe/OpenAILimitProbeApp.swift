@@ -210,7 +210,12 @@ final class ProbeModel: ObservableObject {
     }
 
     var reportMarkdown: String {
-        LimitProbeReport(provider: .openAI, capturedAt: Date(), observations: observations).markdownSummary
+        LimitProbeReport(
+            provider: .openAI,
+            capturedAt: Date(),
+            observations: observations,
+            networkEvents: networkEvents
+        ).markdownSummary
     }
 
     func loadChatGPT() {
