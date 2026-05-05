@@ -96,20 +96,32 @@ the problem:
   if OpenAI later starts exposing cleaner fields, and it can produce redacted
   evidence across multiple accounts.
 
-The nearby Every Code source is also instructive. It stores and displays
-Codex-specific rate-limit snapshots when the Codex backend provides percentage
-and reset-window data, and it reacts to `usage_limit_reached` errors that include
-`plan_type` and `resets_in_seconds`. That is valuable prior art for Context
-Panel's normalized snapshot model, but it is not evidence of a clean ChatGPT
-subscription allowance API. Those snapshots are tied to Codex session/backend
-traffic and local usage history rather than general ChatGPT web subscription
-counters.
+The nearby Every Code source is also instructive. It does not derive Codex
+rate-limit snapshots from local token counts. It sends authenticated requests to
+the ChatGPT Codex backend and parses server-reported `x-codex-*` response
+headers into percentage and reset-window snapshots. The local usage files are a
+cache of the latest server snapshot plus local token history, which explains why
+the displayed limit pressure reflects cloud and other-machine usage for the same
+account.
 
-Implication: v1 should not promise exact ChatGPT subscription remaining counts
-unless the probe finds a provider-exposed counter. The product can still answer
-the fast-mode question by combining user-entered/reset-observed windows,
-local-event counting from install time, conservative default allowances, burn-rate
-calibration, and explicit confidence labels.
+Every Code also has a deliberate refresh path: it sends a tiny `"ok"` prompt via
+the selected account, waits for a `RateLimits` event from response headers, then
+persists the snapshot and updates the `/limits` UI. Separately, when the backend
+returns `usage_limit_reached`, it records `plan_type`, `resets_in_seconds`, and
+the reached-limit type as a hint.
+
+That is stronger evidence than visible ChatGPT UI scraping for Codex-style
+limits, but it is still product-surface-specific. Context Panel should separate
+`OpenAI ChatGPT subscription UI counters` from `OpenAI Codex backend limit
+headers`. The latter looks viable as an automated adapter if Context Panel can
+reuse the same authenticated account flow safely.
+
+Implication: v1 should not promise exact general ChatGPT subscription remaining
+counts unless the probe finds a provider-exposed counter. For Codex/Fast Mode,
+though, we should build a first-class OpenAI Codex adapter around the server
+headers Every Code already uses, then fall back to user-entered/reset-observed
+windows, local-event counting, conservative defaults, burn-rate calibration, and
+explicit confidence labels when those headers are unavailable.
 
 ## Product Decisions
 
