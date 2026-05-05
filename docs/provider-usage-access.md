@@ -118,10 +118,33 @@ reuse the same authenticated account flow safely.
 
 Implication: v1 should not promise exact general ChatGPT subscription remaining
 counts unless the probe finds a provider-exposed counter. For Codex/Fast Mode,
-though, we should build a first-class OpenAI Codex adapter around the server
-headers Every Code already uses, then fall back to user-entered/reset-observed
-windows, local-event counting, conservative defaults, burn-rate calibration, and
-explicit confidence labels when those headers are unavailable.
+though, we should build a cache-only OpenAI Codex adapter around Every Code's
+local `usage/*.json` snapshots. Every Code updates that cache as the user works,
+so Context Panel should read it without making provider requests, touching auth
+files, or trying to refresh limits itself.
+
+Upstream Codex CLI has related rate-limit support, but the source shape is
+different. It parses the same Codex rate-limit concepts and exposes an
+`account/rateLimits/read` app-server request that fetches live backend snapshots,
+including multi-bucket snapshots keyed by `limit_id`. In the checked source, it
+does not appear to write the Every Code-style `usage/*.json` disk cache. Treat
+upstream Codex as a later live/app-server fallback, not as the v1 cache source.
+
+### Every Code Cache Connector
+
+V1 connector scope:
+
+- Resolve `CODE_HOME`, then `CODEX_HOME`, then default to `~/.code`.
+- Read only `$CODE_HOME/usage/*.json`.
+- Never read auth files, token files, debug logs, history files, or config files
+  for the connector.
+- Parse `rate_limit.snapshot`, `observed_at`, `primary_next_reset_at`,
+  `secondary_next_reset_at`, `last_usage_limit_hit_at`, and `plan`.
+- Normalize primary and secondary windows as Codex limits with observed
+  confidence and freshness state.
+- Mark the connector stale when `observed_at` or `last_updated` is older than a
+  conservative threshold; do not trigger refreshes.
+- Show account IDs only as short local labels unless the user assigns names.
 
 ## Product Decisions
 
