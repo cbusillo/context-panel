@@ -157,6 +157,9 @@ struct HeaderCard: View {
                 Text(snapshot.subheadline)
                     .font(.system(size: 13))
                     .foregroundStyle(CPTheme.secondaryText)
+                Text(SampleUsageData.fastModeForecast.copy)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(CPTheme.accent)
                 HStack(spacing: 8) {
                     TagLabel("SwiftUI")
                     TagLabel("WidgetKit")
@@ -383,8 +386,8 @@ struct AccountDetail: View {
                 )
                 .frame(maxWidth: .infinity)
 
-                DetailCard(title: "Forecast") {
-                    Text(limit.note ?? "Fast mode looks safe through reset.")
+        DetailCard(title: "Forecast") {
+                    Text(forecastCopy)
                         .font(.system(size: 15, weight: .medium))
                     Text("Confidence: \(limit.confidence.rawValue)")
                         .font(.system(size: 12))
@@ -411,6 +414,22 @@ struct AccountDetail: View {
         }
         .background(CPTheme.background)
         .navigationTitle("Details")
+    }
+
+    private var forecastCopy: String {
+        if limit.provider == .openAI, limit.label.contains("GPT-5") {
+            return FastModeForecast(
+                input: FastModeForecastInput(
+                    limit: limit,
+                    now: SampleUsageData.referenceNow,
+                    standardBurnRate: BurnRate(mode: .standard, unitsPerHour: 2),
+                    fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 12),
+                    reserveUnits: 6,
+                    minimumSafeHours: 1
+                )
+            ).copy
+        }
+        return limit.note ?? "No fast-mode forecast for this limit yet."
     }
 }
 

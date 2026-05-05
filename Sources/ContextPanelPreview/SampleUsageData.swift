@@ -91,4 +91,22 @@ enum SampleUsageData {
             ]
         )
     }
+
+    static var fastModeForecast: FastModePortfolioForecast {
+        let forecasts = snapshot.limits
+            .filter { $0.provider == .openAI && $0.label.contains("GPT-5") }
+            .map { limit in
+                FastModeForecast(
+                    input: FastModeForecastInput(
+                        limit: limit,
+                        now: referenceNow,
+                        standardBurnRate: BurnRate(mode: .standard, unitsPerHour: 2),
+                        fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 12),
+                        reserveUnits: 6,
+                        minimumSafeHours: 1
+                    )
+                )
+            }
+        return FastModePortfolioForecast(forecasts: forecasts)
+    }
 }
