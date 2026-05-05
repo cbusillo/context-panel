@@ -1,0 +1,62 @@
+{
+  "defaultBranch": "main",
+  "projectType": "native-macos-app",
+  "docs": {
+    "index": "docs/README.md",
+    "productGoals": "docs/product-goals.md",
+    "architecture": "docs/architecture.md",
+    "repoSettings": "docs/repo-settings.md"
+  },
+  "qualityGate": {
+    "build": {
+      "default": "swift build"
+    },
+    "test": {
+      "default": "swift test"
+    },
+    "validate": {
+      "default": "scripts/commit-gate.sh"
+    },
+    "docsRequiredWhen": [
+      "provider behavior changes",
+      "credential storage changes",
+      "user-visible UI changes",
+      "release or signing changes"
+    ]
+  },
+  "importantWorkflows": ["CI", "CodeQL"],
+  "qaLabels": [],
+  "deployLabels": [],
+  "healthUrls": [],
+  "validatedThrough": [],
+  "githubSignals": {
+    "postMerge": {
+      "waitForActions": true,
+      "checkSecurityAndQuality": true
+    },
+    "capabilities": {
+      "codeScanning": "available",
+      "secretScanning": "available",
+      "dependabotAlerts": "available",
+      "securityAdvisories": "available"
+    },
+    "refreshWhen": [
+      "repo visibility changes",
+      "GitHub plan changes",
+      "security settings change",
+      "token permissions change"
+    ]
+  },
+  "cleanup": {
+    "deleteMergedLocalBranches": true,
+    "removeMergedCleanWorktrees": true
+  },
+  "metadataFreshness": {
+    "updateWhen": [
+      "validation gates change",
+      "important workflows change",
+      "repo relationship changes",
+      "ownership boundaries change"
+    ]
+  }
+}
