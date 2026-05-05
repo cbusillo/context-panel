@@ -2,6 +2,7 @@
   "defaultBranch": "main",
   "projectType": "native-macos-app",
   "docs": {
+    "agentNotes": "AGENTS.md",
     "index": "docs/README.md",
     "productGoals": "docs/product-goals.md",
     "architecture": "docs/architecture.md",
@@ -19,8 +20,10 @@
     },
     "docsRequiredWhen": [
       "provider behavior changes",
+      "provider account model changes",
       "credential storage changes",
       "user-visible UI changes",
+      "widget layout changes",
       "release or signing changes"
     ]
   },
