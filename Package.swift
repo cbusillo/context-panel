@@ -15,12 +15,20 @@ let package = Package(
         .executable(
             name: "ContextPanelPreview",
             targets: ["ContextPanelPreview"]
+        ),
+        .executable(
+            name: "OpenAILimitProbe",
+            targets: ["OpenAILimitProbe"]
         )
     ],
     targets: [
         .target(name: "ContextPanelCore"),
         .executableTarget(
             name: "ContextPanelPreview",
+            dependencies: ["ContextPanelCore"]
+        ),
+        .executableTarget(
+            name: "OpenAILimitProbe",
             dependencies: ["ContextPanelCore"]
         ),
         .testTarget(
