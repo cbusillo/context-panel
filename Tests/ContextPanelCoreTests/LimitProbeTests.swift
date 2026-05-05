@@ -81,3 +81,17 @@ import Testing
     #expect(event.pathHint == "/backend-api/conversation/[id]")
     #expect(event.matchedFields == ["remaining_messages", "reset_at"])
 }
+
+@Test func networkProbeEventRedactsIdentifiersInsideFieldNames() {
+    let event = NetworkProbeEvent(
+        observedAt: Date(),
+        method: "GET",
+        pathHint: "/api/accounts",
+        status: 200,
+        contentType: "application/json",
+        bodySize: 120,
+        matchedFields: ["accounts.1e13c5e0-a592-428d-a051-9fe5d6260e38.entitlement.subscription_plan"]
+    )
+
+    #expect(event.matchedFields == ["accounts.[id].entitlement.subscription_plan"])
+}

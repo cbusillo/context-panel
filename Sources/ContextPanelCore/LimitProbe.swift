@@ -208,7 +208,9 @@ public enum EvidenceRedactor {
         (#"(?i)bearer\s+[a-z0-9._\-]+"#, "bearer [redacted]"),
         (#"(?i)(authorization|cookie|set-cookie|csrf|session|token)[:=]\s*[^\s,;]+"#, "$1=[redacted]"),
         (#"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}"#, "[email redacted]"),
-        (#"\bsk-[A-Za-z0-9_\-]{12,}\b"#, "[api key redacted]")
+        (#"\bsk-[A-Za-z0-9_\-]{12,}\b"#, "[api key redacted]"),
+        (#"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"#, "[id]"),
+        (#"(?<=\.)[A-Za-z0-9_-]{20,}(?=\.)"#, "[id]")
     ]
 
     public static func redact(_ value: String) -> String {
