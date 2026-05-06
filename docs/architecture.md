@@ -54,6 +54,14 @@ must not read provider credential files or make provider network calls. The app
 owns connector refreshes, account setup, diagnostics, and future migration from
 JSON to a richer store if history queries become more complex.
 
+## Account Configuration
+
+The MVP account configuration is also local JSON. It stores account labels,
+enabled/disabled state, connector kind, and local paths or command names needed
+to locate provider CLI auth. It does not store provider secrets. Gemini OAuth
+client inputs are referenced by environment variable names so the values can
+remain outside the repository and outside the account config file.
+
 Widget interactions should keep the widget simple. Tapping the widget should
 open the app to the relevant provider or account detail; mutation and setup stay
 inside the app.

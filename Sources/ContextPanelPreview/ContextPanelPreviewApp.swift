@@ -489,8 +489,13 @@ struct AccountDetail: View {
 
                 DetailCard(title: "Setup") {
                     DetailRow(label: "Store", value: ConnectorRedactor.redactedPath(model.store.rootDirectory.path))
-                    DetailRow(label: "Codex", value: ConnectorRedactor.redactedPath(model.codexAuthPath))
-                    DetailRow(label: "Claude", value: "local status")
+                    DetailRow(label: "Accounts", value: "\(model.configuredAccounts.filter(\.isEnabled).count) enabled")
+                    ForEach(model.configuredAccounts) { account in
+                        DetailRow(
+                            label: account.displayName,
+                            value: account.isEnabled ? account.connectorKind.rawValue : "disabled"
+                        )
+                    }
                 }
             }
             .padding(22)
@@ -643,13 +648,14 @@ final class ContextPanelAppModel: ObservableObject {
     @Published private(set) var storedSnapshot: StoredUsageSnapshot?
     @Published private(set) var storeStatus: UsageStatus = .unknown
     @Published private(set) var historyCount: Int = 0
+    @Published private(set) var configuredAccounts: [LocalProviderAccountConfiguration] = []
     @Published private(set) var isRefreshing = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var lastRefreshAt: Date?
 
     let now = Date()
     let store: JSONSnapshotStore
-    let codexAuthPath: String
+    let accountStore: AccountConfigurationStore
 
     var currentSnapshot: UsageSnapshot {
         storedSnapshot?.snapshot ?? SampleUsageData.snapshot
@@ -676,12 +682,13 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     init() {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        codexAuthPath = "\(home)/.codex/auth.json"
         store = JSONSnapshotStore(rootDirectory: Self.defaultStoreDirectory())
+        accountStore = AccountConfigurationStore(configurationURL: Self.defaultConfigurationURL())
     }
 
     func loadSnapshot() {
+        let accounts = accountStore.load().document.accounts
+        configuredAccounts = accounts
         let result = store.loadCurrent(policy: SnapshotStoreStalenessPolicy(maximumAge: 15 * 60), now: Date())
         storedSnapshot = result.snapshot
         storeStatus = result.status
@@ -693,10 +700,9 @@ final class ContextPanelAppModel: ObservableObject {
         isRefreshing = true
         defer { isRefreshing = false }
 
-        let connectors: [any ProviderConnector] = [
-            CodexRateLimitConnector(accounts: [CodexAccountConfiguration(authPath: codexAuthPath)]),
-            ClaudeLocalStatusConnector(accounts: [ClaudeAccountConfiguration()]),
-        ]
+        let accountDocument = accountStore.load().document
+        configuredAccounts = accountDocument.accounts
+        let connectors = AccountConnectorFactory.connectors(from: accountDocument)
         let refreshResult = await ProviderConnectorRuntime(connectors: connectors).refreshAll()
         let savedAt = Date()
 
@@ -726,6 +732,14 @@ final class ContextPanelAppModel: ObservableObject {
         return base
             .appending(path: "Context Panel", directoryHint: .isDirectory)
             .appending(path: "Snapshots", directoryHint: .isDirectory)
+    }
+
+    private static func defaultConfigurationURL() -> URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support")
+        return base
+            .appending(path: "Context Panel", directoryHint: .isDirectory)
+            .appending(path: "accounts.json")
     }
 }
 
