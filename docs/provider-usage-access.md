@@ -135,7 +135,8 @@ that cannot be made stable or safely testable, fall back to Every Code's local
 
 Preferred v1 connector scope:
 
-- Fetch live Codex limits using the Codex backend usage endpoint shape.
+- Fetch live Codex limits directly from the Codex backend usage endpoint shape:
+  `GET https://chatgpt.com/backend-api/wham/usage` for ChatGPT-backed auth.
 - Support primary and secondary windows, reset times, plan type, credits,
   reached-limit classification, and additional `limit_id` buckets.
 - Keep auth handling isolated and redacted; never log tokens, cookies,
@@ -144,6 +145,9 @@ Preferred v1 connector scope:
   reset timing, bucket labels, and staleness.
 - Mark this as an OpenAI Codex/Fast Mode source, not a general ChatGPT
   subscription counter.
+- Do not require the Codex CLI binary or app server at runtime. The local
+  `CodexRateLimitProbe` executable exists to prove the direct call path against
+  an existing Codex `auth.json` while printing only redacted summaries.
 
 ### Every Code Cache Fallback
 

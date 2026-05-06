@@ -19,6 +19,10 @@ let package = Package(
         .executable(
             name: "OpenAILimitProbe",
             targets: ["OpenAILimitProbe"]
+        ),
+        .executable(
+            name: "CodexRateLimitProbe",
+            targets: ["CodexRateLimitProbe"]
         )
     ],
     targets: [
@@ -29,6 +33,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "OpenAILimitProbe",
+            dependencies: ["ContextPanelCore"]
+        ),
+        .executableTarget(
+            name: "CodexRateLimitProbe",
             dependencies: ["ContextPanelCore"]
         ),
         .testTarget(
