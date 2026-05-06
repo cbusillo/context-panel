@@ -9,15 +9,15 @@ Context Panel should model two different worlds:
 - API/provider-console usage, where official usage APIs, cost APIs, quota APIs,
   rate-limit headers, or Cloud Monitoring data can provide real measurements.
 - Consumer chat subscription usage, where providers often expose limits and reset
-  timing in product UI but do not expose a stable public API for remaining
-  message allowance.
+  timing in product UI but do not expose a stable public API for the underlying
+  percent or token pressure.
 
 The OpenAI account use case needs special treatment. For ChatGPT-style weekly
-message budgets, official OpenAI help currently documents weekly Thinking limits
-and reset behavior, but not a reliable API for personal message usage counts.
-Context Panel should therefore support local forecasting: multiple OpenAI
-accounts, reset windows, manually or locally observed usage, burn-rate history,
-and a clear answer to "am I safe to turn on fast mode?"
+subscription limits, current product surfaces have moved away from a visible
+message counter. Context Panel should model OpenAI usage as percent or token
+pressure over reset windows: multiple OpenAI accounts, reset windows, observed
+usage pressure, burn-rate history, and a clear answer to "am I safe to turn on
+fast mode?"
 
 ## Forecast Requirement
 
@@ -54,7 +54,7 @@ instead of pretending an estimate is exact.
 | Provider surface | Official data available | Reset/limit signal | Multi-login shape | V1 recommendation | Confidence |
 | --- | --- | --- | --- | --- | --- |
 | OpenAI API organizations | Usage API, Costs API, and rate-limit headers. Usage can be grouped by project, user, API key, model, batch, and service tier depending on endpoint. | API rate limits expose remaining requests/tokens and reset headers; monthly usage limits are organization/project concerns. | One connected API organization/project per credential. Multiple credentials/accounts should be supported. | Support API org usage as an official adapter using admin or sufficiently privileged API keys. | High |
-| OpenAI ChatGPT accounts | No stable public API found for personal ChatGPT message allowance. Help docs say some model budgets expose reset date in the model picker and, for that documented budget, there is no way to check messages used. Current GPT-5.5 Thinking docs document weekly limits and pop-up behavior at exhaustion. | Weekly Thinking limits exist for Plus/Business. Older OpenAI help explicitly says weekly limits reset seven days after first use and the reset date is visible by hovering the model name. | Multiple ChatGPT accounts are core. Each account needs its own reset window, plan, mode, and local observation history. | Start with manual/assisted local tracking: account profile, plan/bucket defaults, user-entered or UI-observed reset time, local message counter, and forecast confidence. Avoid credential sharing and avoid automated extraction that could violate terms. | Medium for reset; low for used count without local tracking |
+| OpenAI ChatGPT accounts | No stable public API found for general personal ChatGPT subscription pressure outside Codex. Current product surfaces no longer present a simple message counter; the useful automated signal found so far is percent-used pressure for Codex/Fast Mode. | Weekly and short rolling reset windows matter. Codex/Fast Mode exposes live percent-used windows through the Codex backend usage endpoint. | Multiple ChatGPT accounts are core. Each account needs its own reset window, plan, mode, percent/token pressure, and local observation history. | For Codex/Fast Mode, use the live Codex usage endpoint. For non-Codex ChatGPT surfaces, keep manual/assisted observations and forecast confidence until a clean provider signal exists. | High for Codex percent windows; medium for visible reset clues; low for non-Codex automation |
 | Anthropic API organizations | Usage and Cost API can report message usage and costs by time bucket, model, workspace, API key, service tier, context window, geo, and beta fast-mode speed. API responses include rate-limit headers with remaining and reset values. | API rate limits use token bucket behavior; monthly spend limits exist by tier. | Organization/workspace/API-key credentials. Multiple organizations and workspaces should be supported. | Support official API usage/cost adapter. Capture fast-mode dimensions where available. | High |
 | Claude subscriptions and Claude Code seats | Public docs describe usage limits across Claude.ai, Claude Code, and Claude Desktop, but no stable public API for personal subscription allowance was found. Claude Code can show session cost for API-key usage. | Pro/Max/Team usage has session-based reset behavior; Claude Code Enterprise seats show reset time when a limit is reached. | Multiple Claude accounts/seats are possible, but account connection should be conservative. | Defer automated subscription tracking unless a supported local/official signal is found. Support manual observation later; prioritize Anthropic API first. | Medium for displayed limits; low for automation |
 | Google Gemini API / Google AI Studio projects | AI Studio and Cloud Billing show usage. Gemini API rate limits are project-scoped, not API-key-scoped. Service Usage API lists quota limits; Cloud Monitoring exposes quota usage metrics; Cloud Billing export to BigQuery provides detailed cost/usage data. | Rate limits are RPM, input TPM, and RPD, with model/tier variation. RPD quotas reset at midnight Pacific time. | Google project is the natural account boundary. Multiple Google accounts/projects should be supported. | Support Google API projects after OAuth/service-account design. Use Service Usage for limits, Cloud Monitoring for quota usage, and optional Billing export for cost history. | Medium-high, but setup is heavier |
@@ -62,15 +62,19 @@ instead of pretending an estimate is exact.
 
 ## OpenAI Fast-Mode Forecasting
 
-For the user's immediate OpenAI need, the best product path is not a hidden
-provider API. It is an honest local predictor:
+For the user's immediate OpenAI need, the best product path is a live Codex
+percent-window connector backed by an honest local predictor:
 
 1. Add each OpenAI account separately.
-2. Record plan and relevant buckets, such as GPT-5.5 Thinking weekly allowance.
-3. Capture reset time from the UI when available, or let the user enter it.
-4. Start a local usage ledger from the moment Context Panel is installed.
-5. Allow manual correction when the provider UI reveals a reset or limit state.
-6. Estimate standard and fast-mode burn rates from local usage history.
+2. Record plan and relevant buckets, such as Codex/Fast Mode weekly and
+   five-hour windows.
+3. Fetch current percent-used pressure and reset times when the Codex endpoint
+   is available.
+4. Capture reset time from the UI when no endpoint signal exists, or let the
+   user enter it.
+5. Start a local usage ledger from the moment Context Panel is installed.
+6. Estimate standard and fast-mode burn rates in percent or tokens per hour
+   from local usage history.
 7. Recommend when to enable fast mode only when the forecast has enough margin.
 
 The widget should make confidence visible. Good copy examples:
@@ -86,12 +90,12 @@ The first OpenAI Limit Probe run confirmed the uncomfortable but useful shape of
 the problem:
 
 - ChatGPT visible text exposed plan/model language such as model names, `Pro`,
-  `Instant`, and `Thinking`, but did not expose a remaining-message counter or a
+  `Instant`, and `Thinking`, but did not expose a percent/token counter or a
   reset time before exhaustion.
 - Sanitized network response-shape scanning found account entitlement and plan
   fields, including subscription-plan style field names, but no obvious
-  `remaining_messages`, `used`, `reset_at`, weekly allowance, or five-hour
-  allowance fields.
+  `used_percent`, token pressure, `reset_at`, weekly allowance, or five-hour
+  allowance fields outside the Codex usage surface.
 - The probe should remain useful as a diagnostic harness because it can detect
   if OpenAI later starts exposing cleaner fields, and it can produce redacted
   evidence across multiple accounts.
@@ -120,16 +124,16 @@ the reached-limit type as a hint.
 
 That is stronger evidence than visible ChatGPT UI scraping for Codex-style
 limits, but it is still product-surface-specific. Context Panel should separate
-`OpenAI ChatGPT subscription UI counters` from `OpenAI Codex backend limit
-headers`. The latter looks viable as an automated adapter if Context Panel can
-reuse the same authenticated account flow safely.
+`OpenAI ChatGPT product UI hints` from `OpenAI Codex backend percent windows`.
+The latter looks viable as an automated adapter if Context Panel can reuse the
+same authenticated account flow safely.
 
-Implication: v1 should not promise exact general ChatGPT subscription remaining
-counts unless the probe finds a provider-exposed counter. For Codex/Fast Mode,
-though, the preferred path is a live OpenAI Codex limits connector using the same
-shape as Codex CLI's `account/rateLimits/read`/`get_rate_limits_many()` flow. If
-that cannot be made stable or safely testable, fall back to Every Code's local
-`usage/*.json` cache or Codex CLI's app-server request.
+Implication: v1 should not promise exact general ChatGPT subscription counters.
+For Codex/Fast Mode, though, the preferred path is a live OpenAI Codex limits
+connector using the same shape as Codex CLI's
+`account/rateLimits/read`/`get_rate_limits_many()` flow. If that cannot be made
+stable or safely testable, fall back to Every Code's local `usage/*.json` cache
+or Codex CLI's app-server request.
 
 ### Codex Limits Connector
 
@@ -143,8 +147,8 @@ Preferred v1 connector scope:
   authorization headers, account IDs, emails, or raw response bodies.
 - Expose a diagnostic probe that reports only sanitized structure, percentages,
   reset timing, bucket labels, and staleness.
-- Mark this as an OpenAI Codex/Fast Mode source, not a general ChatGPT
-  subscription counter.
+- Mark this as an OpenAI Codex/Fast Mode percent-window source, not a general
+  ChatGPT subscription counter.
 - Do not require the Codex CLI binary or app server at runtime. The local
   `CodexRateLimitProbe` executable exists to prove the direct call path against
   an existing Codex `auth.json` while printing only redacted summaries.

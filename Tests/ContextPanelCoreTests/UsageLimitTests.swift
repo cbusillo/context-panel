@@ -65,3 +65,20 @@ import Testing
 @Test func providersCoverInitialScope() {
     #expect(Provider.allCases == [.openAI, .anthropic, .google])
 }
+
+@Test func usageLimitCanRepresentPercentPressure() {
+    let limit = UsageLimit(
+        provider: .openAI,
+        accountID: "openai-personal",
+        accountName: "Personal",
+        label: "Codex weekly",
+        unit: .percent,
+        used: 38,
+        limit: 100,
+        confidence: .official
+    )
+
+    #expect(limit.unit == .percent)
+    #expect(limit.remaining == 62)
+    #expect(limit.usageRatio == 0.38)
+}

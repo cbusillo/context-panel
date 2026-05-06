@@ -6,7 +6,7 @@ import Testing
 @Test func visibleTextScannerFindsSubscriptionLimitSignals() {
     let text = """
     GPT-5 Thinking unavailable. You have reached your weekly limit.
-    Try again in 3h. Plus includes 160 messages every 3 hours.
+    Try again in 3h. Pro shows 52 percent used in the 5 hour window.
     """
 
     let observations = LimitProbeScanner.scanVisibleText(text, provider: .openAI)
@@ -14,20 +14,21 @@ import Testing
 
     #expect(kinds.contains(.limitReached))
     #expect(kinds.contains(.relativeDuration))
-    #expect(kinds.contains(.messageLimit))
+    #expect(kinds.contains(.usagePressure))
     #expect(kinds.contains(.modelAvailability))
     #expect(kinds.contains(.planLanguage))
 }
 
 @Test func responseShapeScannerOnlyReportsCandidateFieldNames() {
     let observations = LimitProbeScanner.scanResponseShape(
-        fieldNames: ["id", "email", "message_cap", "reset_at", "avatar", "remaining_messages"],
+        fieldNames: ["id", "email", "used_percent", "reset_at", "avatar", "token_pressure"],
         provider: .openAI
     )
 
-    #expect(observations.map(\.sanitizedEvidence).contains("message_cap"))
-    #expect(observations.map(\.sanitizedEvidence).contains("remaining_messages"))
+    #expect(observations.map(\.sanitizedEvidence).contains("reset_at"))
     #expect(!observations.map(\.sanitizedEvidence).contains("email"))
+    #expect(observations.map(\.sanitizedEvidence).contains("used_percent"))
+    #expect(observations.map(\.sanitizedEvidence).contains("token_pressure"))
 }
 
 @Test func probeEvidenceRedactsSecretsBeforeStorage() {
@@ -89,11 +90,11 @@ import Testing
         status: 200,
         contentType: "application/json",
         bodySize: 120,
-        matchedFields: ["reset_at", "remaining_messages"]
+        matchedFields: ["reset_at", "used_percent"]
     )
 
     #expect(event.pathHint == "/backend-api/conversation/[id]")
-    #expect(event.matchedFields == ["remaining_messages", "reset_at"])
+    #expect(event.matchedFields == ["reset_at", "used_percent"])
 }
 
 @Test func networkProbeEventRedactsIdentifiersInsideFieldNames() {

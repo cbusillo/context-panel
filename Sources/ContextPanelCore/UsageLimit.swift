@@ -48,6 +48,15 @@ public enum UsageConfidence: String, Codable, Equatable, Sendable {
     case unknown
 }
 
+public enum UsageUnit: String, Codable, Equatable, Sendable {
+    case percent
+    case tokens
+    case requests
+    case credits
+    case units
+    case unknown
+}
+
 public struct ProviderAccount: Codable, Equatable, Identifiable, Sendable {
     public let id: String
     public let provider: Provider
@@ -68,6 +77,7 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
     public let accountID: String
     public let accountName: String
     public let label: String
+    public let unit: UsageUnit
     public let used: Int?
     public let limit: Int?
     public let resetsAt: Date?
@@ -82,6 +92,7 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
         accountID: String,
         accountName: String,
         label: String,
+        unit: UsageUnit = .units,
         used: Int?,
         limit: Int?,
         resetsAt: Date? = nil,
@@ -102,6 +113,7 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
         self.accountID = accountID
         self.accountName = accountName
         self.label = label
+        self.unit = unit
         self.used = used
         self.limit = limit
         self.resetsAt = resetsAt
@@ -117,6 +129,7 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
             accountID: "default",
             accountName: provider.displayName,
             label: label,
+            unit: .units,
             used: used,
             limit: limit,
             resetsAt: resetsAt,

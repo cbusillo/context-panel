@@ -10,7 +10,7 @@ public enum ProbeSource: String, Codable, Equatable, Sendable {
 public enum ProbeSignalKind: String, Codable, Equatable, Sendable {
     case resetLanguage
     case relativeDuration
-    case messageLimit
+    case usagePressure
     case limitReached
     case modelAvailability
     case planLanguage
@@ -155,7 +155,7 @@ public enum LimitProbeScanner {
     private static let patterns: [(ProbeSignalKind, NSRegularExpression)] = [
         (.resetLanguage, regex(#"(?i)\b(reset|resets|refresh|refreshes|available again)\b.{0,80}"#)),
         (.relativeDuration, regex(#"(?i)\b(in\s+)?\d+\s*(m|min|mins|minutes|h|hr|hrs|hour|hours|day|days|week|weeks)\b"#)),
-        (.messageLimit, regex(#"(?i)\b\d+[\d,]*\s*(messages?|prompts?)\s*(every|per|/)?\s*\d*\s*(hours?|days?|weeks?)?\b"#)),
+        (.usagePressure, regex(#"(?i)\b\d+[\d,]*\s*(%|percent|tokens?)\s*(used|every|per|/)?\s*\d*\s*(hours?|days?|weeks?)?\b"#)),
         (.limitReached, regex(#"(?i)\b(limit reached|reached your limit|you.ve reached|unavailable|try again)\b.{0,80}"#)),
         (.modelAvailability, regex(#"(?i)\b(GPT|Thinking|fast mode|model picker|available|unavailable)\b.{0,80}"#)),
         (.planLanguage, regex(#"(?i)\b(Free|Plus|Pro|Team|Business|Enterprise|Go)\b.{0,80}"#))
@@ -202,7 +202,7 @@ public enum LimitProbeScanner {
     ) -> [LimitProbeObservation] {
         let candidates = fieldNames.filter { field in
             let lower = field.lowercased()
-            return ["limit", "usage", "remaining", "reset", "quota", "message", "model", "plan", "cap"].contains { lower.contains($0) }
+            return ["limit", "usage", "percent", "token", "remaining", "reset", "quota", "model", "plan", "cap"].contains { lower.contains($0) }
         }
 
         return Array(Set(candidates)).sorted().map { field in
