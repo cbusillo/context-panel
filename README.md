@@ -86,7 +86,9 @@ Support directory.
 ```
 
 The helper does not store auth tokens, prompts, transcript contents, emails,
-organization IDs, or raw Claude session JSON.
+organization IDs, or raw Claude session JSON. Claude Code's non-interactive
+`claude -p` path does not appear to run the status-line hook, so Context Panel
+marks old Claude subscription readings stale instead of treating them as live.
 
 For Gemini, use the OAuth client values from the locally installed Gemini CLI;
 they are intentionally not checked into this repository.

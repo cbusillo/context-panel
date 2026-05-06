@@ -105,6 +105,54 @@ import Testing
     #expect(result.snapshot.limits[0].note?.contains("subscription: pro") == true)
 }
 
+@Test func claudeConnectorReportsHealthyWhenStatuslineLimitsExist() async throws {
+    let auth = #"{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","subscriptionType":"pro"}"#.data(using: .utf8)!
+    let stats = #"{"version":3,"lastComputedDate":"2026-04-26","dailyActivity":[],"modelUsage":{},"totalSessions":2,"totalMessages":3}"#.data(using: .utf8)!
+    let cache = #"{"observed_at":1788379200,"rate_limits":{"five_hour":{"used_percentage":4,"resets_at":1788397200},"seven_day":{"used_percentage":0,"resets_at":1788984000}}}"#.data(using: .utf8)!
+    let connector = ClaudeLocalStatusConnector(
+        accounts: [ClaudeAccountConfiguration(
+            accountName: "Claude",
+            claudeBinary: "claude",
+            statsPath: "/tmp/stats.json",
+            rateLimitSnapshotPath: "/tmp/claude-statusline.json",
+            rateLimitSnapshotMaximumAge: 60
+        )],
+        processClient: StubProcessClient(result: ConnectorProcessResult(exitCode: 0, stdout: auth)),
+        fileLoader: { path in path == "/tmp/claude-statusline.json" ? cache : stats },
+        fileExists: { path in path == "/tmp/stats.json" || path == "/tmp/claude-statusline.json" }
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_788_379_230))
+
+    #expect(result.reports[0].status == .healthy)
+    #expect(result.snapshot.limits.count == 2)
+    #expect(result.snapshot.limits.map(\.windowLabel) == ["5-hour", "Weekly"])
+}
+
+@Test func claudeConnectorMarksOldStatuslineLimitsStale() async throws {
+    let auth = #"{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","subscriptionType":"pro"}"#.data(using: .utf8)!
+    let stats = #"{"version":3,"lastComputedDate":"2026-04-26","dailyActivity":[],"modelUsage":{},"totalSessions":2,"totalMessages":3}"#.data(using: .utf8)!
+    let cache = #"{"observed_at":1788379200,"rate_limits":{"five_hour":{"used_percentage":4,"resets_at":1788397200},"seven_day":{"used_percentage":0,"resets_at":1788984000}}}"#.data(using: .utf8)!
+    let connector = ClaudeLocalStatusConnector(
+        accounts: [ClaudeAccountConfiguration(
+            accountName: "Claude",
+            claudeBinary: "claude",
+            statsPath: "/tmp/stats.json",
+            rateLimitSnapshotPath: "/tmp/claude-statusline.json",
+            rateLimitSnapshotMaximumAge: 60
+        )],
+        processClient: StubProcessClient(result: ConnectorProcessResult(exitCode: 0, stdout: auth)),
+        fileLoader: { path in path == "/tmp/claude-statusline.json" ? cache : stats },
+        fileExists: { path in path == "/tmp/stats.json" || path == "/tmp/claude-statusline.json" }
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_788_379_500))
+
+    #expect(result.reports[0].status == .stale)
+    #expect(result.snapshot.limits.map(\.status) == [.stale, .stale])
+    #expect(result.snapshot.limits[0].note?.contains("stale Claude Code statusline") == true)
+}
+
 @Test func providerConnectorRuntimeAggregatesConnectorSnapshots() async {
     let connectorA = StubConnector(provider: .openAI, report: ProviderConnectorReport(
         provider: .openAI,

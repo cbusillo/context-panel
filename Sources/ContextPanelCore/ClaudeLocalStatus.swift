@@ -124,12 +124,14 @@ public struct ClaudeAccountConfiguration: Equatable, Sendable {
     public let claudeBinary: String
     public let statsPath: String
     public let rateLimitSnapshotPath: String
+    public let rateLimitSnapshotMaximumAge: TimeInterval
 
     public init(
         accountName: String = "Claude",
         claudeBinary: String = "claude",
         statsPath: String? = nil,
-        rateLimitSnapshotPath: String? = nil
+        rateLimitSnapshotPath: String? = nil,
+        rateLimitSnapshotMaximumAge: TimeInterval = 30 * 60
     ) {
         self.accountName = accountName
         self.claudeBinary = claudeBinary
@@ -137,6 +139,7 @@ public struct ClaudeAccountConfiguration: Equatable, Sendable {
         self.statsPath = statsPath ?? "\(home)/.claude/stats-cache.json"
         self.rateLimitSnapshotPath = rateLimitSnapshotPath
             ?? "\(home)/Library/Application Support/Context Panel/ClaudeRateLimits/statusline-cache.json"
+        self.rateLimitSnapshotMaximumAge = rateLimitSnapshotMaximumAge
     }
 }
 
@@ -185,6 +188,7 @@ public struct ClaudeLocalStatusConnector: ProviderConnector {
                 authStatus: authStatus,
                 statsSummary: statsSummary,
                 rateLimitSnapshot: rateLimitSnapshot,
+                rateLimitSnapshotMaximumAge: account.rateLimitSnapshotMaximumAge,
                 accountID: localAccountID,
                 accountName: account.accountName,
                 observedAt: now
@@ -195,7 +199,7 @@ public struct ClaudeLocalStatusConnector: ProviderConnector {
                 accountName: account.accountName,
                 generatedAt: now,
                 limits: limits,
-                status: authStatus.loggedIn ? .unknown : .failure,
+                status: authStatus.loggedIn ? limits.map(\.status).contextPanelWorstStatus : .failure,
                 errorMessage: authStatus.loggedIn ? nil : "Claude CLI is not logged in"
             )
         } catch {
@@ -234,11 +238,14 @@ public func claudeLocalStatusLimits(
     authStatus: ClaudeAuthStatus,
     statsSummary: ClaudeStatsCacheSummary?,
     rateLimitSnapshot: ClaudeSubscriptionRateLimitSnapshot? = nil,
+    rateLimitSnapshotMaximumAge: TimeInterval = 30 * 60,
     accountID: String,
     accountName: String,
     observedAt: Date
 ) -> [UsageLimit] {
     if authStatus.loggedIn, let rateLimitSnapshot, !rateLimitSnapshot.windows.isEmpty {
+        let isStale = observedAt.timeIntervalSince(rateLimitSnapshot.observedAt) > rateLimitSnapshotMaximumAge
+        let sourceNote = isStale ? "source: stale Claude Code statusline" : "source: Claude Code statusline"
         return rateLimitSnapshot.windows.map { window in
             UsageLimit(
                 provider: .anthropic,
@@ -253,7 +260,8 @@ public func claudeLocalStatusLimits(
                 resetsAt: window.resetsAt,
                 lastUpdatedAt: rateLimitSnapshot.observedAt,
                 confidence: .observed,
-                note: "source: Claude Code statusline; subscription: \(authStatus.subscriptionType ?? "unknown")"
+                statusOverride: isStale ? .stale : nil,
+                note: "\(sourceNote); subscription: \(authStatus.subscriptionType ?? "unknown")"
             )
         }
     }
