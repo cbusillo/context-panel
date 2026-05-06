@@ -25,6 +25,8 @@ public struct GeminiQuotaBucket: Codable, Equatable, Identifiable, Sendable {
             accountID: accountID,
             accountName: accountName,
             label: modelID,
+            windowLabel: resetWindowLabel,
+            modelLabel: modelID,
             unit: .percent,
             used: usedPercent.map { Int($0.rounded()) },
             limit: usedPercent == nil ? nil : 100,
@@ -33,6 +35,19 @@ public struct GeminiQuotaBucket: Codable, Equatable, Identifiable, Sendable {
             confidence: .observed,
             note: remainingAmount.map { "remaining amount: \($0)" }
         )
+    }
+
+    private var resetWindowLabel: String? {
+        guard let resetsAt else { return nil }
+        let seconds = Int(resetsAt.timeIntervalSince(Date()))
+        if seconds <= 0 { return nil }
+        let hours = max(Int((Double(seconds) / 3_600).rounded()), 1)
+        if hours <= 2 { return "Hourly" }
+        if hours <= 7 { return "5-hour" }
+        if hours <= 30 { return "Daily" }
+        if hours <= 132 { return "5-day" }
+        if hours <= 180 { return "Weekly" }
+        return nil
     }
 }
 

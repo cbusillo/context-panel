@@ -108,7 +108,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     private func capacityRatio(for limits: [UsageLimit]) -> Double {
         let ratios = limits.compactMap(\.usageRatio)
         guard !ratios.isEmpty else { return 0 }
-        return max(1 - (ratios.reduce(0, +) / Double(ratios.count)), 0)
+        return max(1 - (ratios.max() ?? 0), 0)
     }
 }
 
@@ -137,4 +137,3 @@ extension Array where Element == UsageStatus {
         return .healthy
     }
 }
-

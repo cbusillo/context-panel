@@ -61,7 +61,7 @@ public struct CodexRateLimitSnapshot: Codable, Equatable, Identifiable, Sendable
     }
 
     public var displayName: String {
-        limitName ?? id
+        limitName ?? (id == "codex" ? "Codex" : id)
     }
 }
 
@@ -219,7 +219,6 @@ public func codexUsageLimits(
         limits.append(codexUsageLimit(
             snapshot: snapshot,
             window: primary,
-            windowName: "primary",
             accountID: accountID,
             accountName: accountName,
             observedAt: observedAt
@@ -229,7 +228,6 @@ public func codexUsageLimits(
         limits.append(codexUsageLimit(
             snapshot: snapshot,
             window: secondary,
-            windowName: "secondary",
             accountID: accountID,
             accountName: accountName,
             observedAt: observedAt
@@ -387,17 +385,18 @@ private struct CodexReachedType: Decodable {
 private func codexUsageLimit(
     snapshot: CodexRateLimitSnapshot,
     window: CodexRateLimitWindow,
-    windowName: String,
     accountID: String,
     accountName: String,
     observedAt: Date
 ) -> UsageLimit {
-    let duration = window.windowMinutes.map { "\($0)m" } ?? "rolling"
+    let windowLabel = window.windowMinutes.map(codexWindowLabel(minutes:)) ?? "Rolling"
     return UsageLimit(
         provider: .openAI,
         accountID: accountID,
         accountName: accountName,
-        label: "\(snapshot.displayName) \(windowName) \(duration)",
+        label: "\(snapshot.displayName) \(windowLabel)",
+        windowLabel: windowLabel,
+        modelLabel: snapshot.displayName,
         unit: .percent,
         used: Int(window.usedPercent.rounded()),
         limit: 100,
@@ -406,4 +405,32 @@ private func codexUsageLimit(
         confidence: .observed,
         note: "plan: \(snapshot.planType)"
     )
+}
+
+private func codexWindowLabel(minutes: Int) -> String {
+    switch minutes {
+    case 0..<60:
+        return "\(minutes)m"
+    case 60:
+        return "Hourly"
+    case 300:
+        return "5-hour"
+    case 1_440:
+        return "Daily"
+    case 7_200:
+        return "5-day"
+    case 10_080:
+        return "Weekly"
+    default:
+        if minutes.isMultiple(of: 10_080) {
+            return "\(minutes / 10_080)-week"
+        }
+        if minutes.isMultiple(of: 1_440) {
+            return "\(minutes / 1_440)-day"
+        }
+        if minutes.isMultiple(of: 60) {
+            return "\(minutes / 60)-hour"
+        }
+        return "\(minutes)m"
+    }
 }

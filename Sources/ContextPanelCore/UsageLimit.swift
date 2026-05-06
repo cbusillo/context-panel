@@ -77,6 +77,8 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
     public let accountID: String
     public let accountName: String
     public let label: String
+    public let windowLabel: String?
+    public let modelLabel: String?
     public let unit: UsageUnit
     public let used: Int?
     public let limit: Int?
@@ -86,12 +88,32 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
     public let statusOverride: UsageStatus?
     public let note: String?
 
+    enum CodingKeys: String, CodingKey {
+        case id
+        case provider
+        case accountID
+        case accountName
+        case label
+        case windowLabel
+        case modelLabel
+        case unit
+        case used
+        case limit
+        case resetsAt
+        case lastUpdatedAt
+        case confidence
+        case statusOverride
+        case note
+    }
+
     public init(
         id: String? = nil,
         provider: Provider,
         accountID: String,
         accountName: String,
         label: String,
+        windowLabel: String? = nil,
+        modelLabel: String? = nil,
         unit: UsageUnit = .units,
         used: Int?,
         limit: Int?,
@@ -113,6 +135,8 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
         self.accountID = accountID
         self.accountName = accountName
         self.label = label
+        self.windowLabel = windowLabel
+        self.modelLabel = modelLabel
         self.unit = unit
         self.used = used
         self.limit = limit
@@ -121,6 +145,25 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
         self.confidence = confidence
         self.statusOverride = statusOverride
         self.note = note
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        provider = try container.decode(Provider.self, forKey: .provider)
+        accountID = try container.decode(String.self, forKey: .accountID)
+        accountName = try container.decode(String.self, forKey: .accountName)
+        label = try container.decode(String.self, forKey: .label)
+        windowLabel = try container.decodeIfPresent(String.self, forKey: .windowLabel)
+        modelLabel = try container.decodeIfPresent(String.self, forKey: .modelLabel)
+        unit = try container.decode(UsageUnit.self, forKey: .unit)
+        used = try container.decodeIfPresent(Int.self, forKey: .used)
+        limit = try container.decodeIfPresent(Int.self, forKey: .limit)
+        resetsAt = try container.decodeIfPresent(Date.self, forKey: .resetsAt)
+        lastUpdatedAt = try container.decodeIfPresent(Date.self, forKey: .lastUpdatedAt)
+        confidence = try container.decode(UsageConfidence.self, forKey: .confidence)
+        statusOverride = try container.decodeIfPresent(UsageStatus.self, forKey: .statusOverride)
+        note = try container.decodeIfPresent(String.self, forKey: .note)
     }
 
     public init(provider: Provider, label: String, used: Int, limit: Int, resetsAt: Date? = nil) {
@@ -145,6 +188,19 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
     public var usageRatio: Double? {
         guard let used, let limit else { return nil }
         return min(Double(used) / Double(limit), 1)
+    }
+
+    public var displayLabel: String {
+        windowLabel ?? label
+    }
+
+    public var contextLabel: String {
+        [modelLabel, accountName]
+            .compactMap { value in
+                guard let value, !value.isEmpty else { return nil }
+                return value
+            }
+            .joined(separator: " · ")
     }
 
     public var status: UsageStatus {
@@ -187,8 +243,7 @@ public struct UsageSnapshot: Codable, Equatable, Sendable {
     public var aggregateCapacityRatio: Double {
         let ratios = limits.compactMap(\.usageRatio)
         guard !ratios.isEmpty else { return 0 }
-        let averageUsed = ratios.reduce(0, +) / Double(ratios.count)
-        return max(1 - averageUsed, 0)
+        return max(1 - (ratios.max() ?? 0), 0)
     }
 
     public var aggregateStatus: UsageStatus {

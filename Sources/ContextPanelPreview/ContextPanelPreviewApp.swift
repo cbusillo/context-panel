@@ -95,7 +95,7 @@ struct ProviderSidebarRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            ProviderGlyph(provider: provider, size: 12)
+            ProviderBadge(provider: provider)
             Text(provider.displayName)
                 .font(.system(size: 12, weight: .semibold))
                 .textCase(.uppercase)
@@ -117,7 +117,7 @@ struct SidebarLimitRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(limit.accountName)
                     .font(.system(size: 13, weight: .medium))
-                Text(limit.label)
+                Text(limit.displayLabel)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
@@ -187,10 +187,10 @@ struct HeaderCard: View {
             }
             Spacer(minLength: 16)
             CapacityDial(
-                value: snapshot.aggregateCapacityRatio,
+                value: snapshot.tightestCapacityRatio,
                 status: snapshot.aggregateStatus,
-                label: "\(Int(snapshot.aggregateCapacityRatio * 100))",
-                sublabel: "capacity",
+                label: "\(Int(snapshot.tightestCapacityRatio * 100))",
+                sublabel: "tightest",
                 size: 116
             )
         }
@@ -282,7 +282,7 @@ struct SmallWidgetPreview: View {
             VStack(alignment: .leading, spacing: 10) {
                 WidgetHeader(status: snapshot.aggregateStatus)
                 Spacer()
-                Text(snapshot.tightestUsageText)
+                Text(snapshot.fastModeForecast.copy)
                     .font(.system(size: 26, weight: .semibold))
                     .foregroundStyle(CPTheme.primaryText)
                     .lineLimit(2)
@@ -308,21 +308,21 @@ struct MediumWidgetPreview: View {
                     WidgetHeader(status: snapshot.aggregateStatus)
                     Spacer()
                     CapacityDial(
-                        value: snapshot.aggregateCapacityRatio,
+                        value: snapshot.tightestCapacityRatio,
                         status: snapshot.aggregateStatus,
-                        label: "\(Int(snapshot.aggregateCapacityRatio * 100))",
-                        sublabel: "capacity",
+                        label: "\(Int(snapshot.tightestCapacityRatio * 100))",
+                        sublabel: "tightest",
                         size: 94
                     )
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Working room")
+                        Text(snapshot.fastModeForecast.copy)
                             .font(.system(size: 18, weight: .semibold))
-                        Text("1 limited · 2 close")
+                        Text(snapshot.providerPressureText)
                             .font(.system(size: 11))
                             .foregroundStyle(CPTheme.tertiaryText)
                     }
                     Spacer()
-                    Text("nearest reset · 42m")
+                    Text(snapshot.nearestResetText)
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(CPTheme.tertiaryText)
                 }
@@ -350,19 +350,19 @@ struct LargeWidgetPreview: View {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 6) {
                         CPLabel("Context Panel")
-                        Text("You're good for the afternoon.")
+                        Text(snapshot.fastModeForecast.copy)
                             .font(.system(size: 25, weight: .semibold))
                             .foregroundStyle(CPTheme.primaryText)
-                        Text("Image gen on Team is the only blocker.")
+                        Text(snapshot.tightestSupportText)
                             .font(.system(size: 12))
                             .foregroundStyle(CPTheme.secondaryText)
                     }
                     Spacer()
                     CapacityDial(
-                        value: snapshot.aggregateCapacityRatio,
+                        value: snapshot.tightestCapacityRatio,
                         status: snapshot.aggregateStatus,
-                        label: "\(Int(snapshot.aggregateCapacityRatio * 100))",
-                        sublabel: "cap",
+                        label: "\(Int(snapshot.tightestCapacityRatio * 100))",
+                        sublabel: "tightest",
                         size: 84
                     )
                 }
@@ -374,11 +374,11 @@ struct LargeWidgetPreview: View {
                 HStack {
                     Sparkline(values: [0.72, 0.68, 0.7, 0.64, 0.62, 0.58, 0.64])
                         .frame(width: 120, height: 20)
-                    Text("24h capacity")
+                    Text("pressure trend")
                         .font(.system(size: 10))
                         .foregroundStyle(CPTheme.tertiaryText)
                     Spacer()
-                    Text("next reset in 42m · upd 2m ago")
+                    Text(snapshot.nearestResetText)
                         .font(.system(size: 10))
                         .foregroundStyle(CPTheme.tertiaryText)
                 }
@@ -398,7 +398,7 @@ struct ProviderGroupGrid: View {
                 if !limits.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 6) {
-                            ProviderGlyph(provider: provider, size: 11)
+                            ProviderBadge(provider: provider, compact: true)
                             Text(provider.displayName)
                                 .font(.system(size: 11, weight: .semibold))
                                 .textCase(.uppercase)
@@ -418,7 +418,7 @@ struct ProviderGroupGrid: View {
                                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                                         .foregroundStyle(CPTheme.secondaryText)
                                 }
-                                Text(limit.label)
+                                Text(limit.displayLabel)
                                     .font(.system(size: 10))
                                     .foregroundStyle(CPTheme.tertiaryText)
                                     .lineLimit(1)
@@ -442,11 +442,11 @@ struct AccountDetail: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 HStack(spacing: 10) {
-                    ProviderGlyph(provider: limit.provider, size: 16)
+                    ProviderBadge(provider: limit.provider)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(limit.accountName)
                             .font(.system(size: 22, weight: .semibold))
-                        Text("\(limit.provider.displayName) · \(limit.label)")
+                        Text("\(limit.provider.displayName) · \(limit.displayLabel) · \(limit.contextLabel)")
                             .font(.system(size: 13))
                             .foregroundStyle(CPTheme.secondaryText)
                     }
@@ -505,7 +505,7 @@ struct AccountDetail: View {
     }
 
     private var forecastCopy: String {
-        if limit.provider == .openAI, limit.label.contains("GPT-5") {
+        if limit.provider == .openAI, limit.unit == .percent {
             return FastModeForecast(
                 input: FastModeForecastInput(
                         limit: limit,
@@ -590,10 +590,7 @@ struct ProviderMiniStatus: View {
             ForEach(Provider.allCases) { provider in
                 let limits = snapshot.limits.filter { $0.provider == provider }
                 HStack(spacing: 5) {
-                    ProviderGlyph(provider: provider, size: 10)
-                    Text(provider.shortName)
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundStyle(CPTheme.secondaryText)
+                    ProviderBadge(provider: provider, compact: true)
                 }
                 .opacity(limits.isEmpty ? 0.35 : 1)
             }
@@ -607,14 +604,14 @@ struct AccountRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            ProviderGlyph(provider: limit.provider, size: compact ? 11 : 13)
+            ProviderBadge(provider: limit.provider, compact: true)
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(limit.label)
+                    Text(limit.displayLabel)
                         .font(.system(size: compact ? 12 : 13, weight: .medium))
                         .lineLimit(1)
-                    Text("· \(limit.accountName)")
+                    Text("· \(limit.contextLabel)")
                         .font(.system(size: compact ? 12 : 13))
                         .foregroundStyle(CPTheme.tertiaryText)
                         .lineLimit(1)
@@ -780,26 +777,15 @@ struct CapacityBar: View {
     }
 }
 
-struct ProviderGlyph: View {
+struct ProviderBadge: View {
     let provider: Provider
-    var size: CGFloat = 12
+    var compact = false
 
     var body: some View {
-        Group {
-            switch provider {
-            case .openAI:
-                RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .stroke(CPTheme.accent, lineWidth: 1.4)
-            case .anthropic:
-                Triangle()
-                    .stroke(CPTheme.accent, lineWidth: 1.4)
-            case .google:
-                RoundedRectangle(cornerRadius: 1, style: .continuous)
-                    .rotation(.degrees(45))
-                    .stroke(CPTheme.accent, lineWidth: 1.4)
-            }
-        }
-        .frame(width: size, height: size)
+        Text(provider.shortName)
+            .font(.system(size: compact ? 10 : 11, weight: .semibold, design: .monospaced))
+            .foregroundStyle(CPTheme.providerColor(provider))
+            .lineLimit(1)
     }
 }
 
@@ -912,17 +898,6 @@ struct TagLabel: View {
     }
 }
 
-struct Triangle: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-        path.closeSubpath()
-        return path
-    }
-}
-
 enum CPTheme {
     static let background = Color(red: 244 / 255, green: 244 / 255, blue: 245 / 255)
     static let surface = Color.white
@@ -932,6 +907,17 @@ enum CPTheme {
     static let secondaryText = primaryText.opacity(0.66)
     static let tertiaryText = primaryText.opacity(0.46)
     static let accent = Color(red: 74 / 255, green: 91 / 255, blue: 122 / 255)
+
+    static func providerColor(_ provider: Provider) -> Color {
+        switch provider {
+        case .openAI:
+            Color(red: 56 / 255, green: 92 / 255, blue: 126 / 255)
+        case .anthropic:
+            Color(red: 139 / 255, green: 102 / 255, blue: 51 / 255)
+        case .google:
+            Color(red: 35 / 255, green: 116 / 255, blue: 106 / 255)
+        }
+    }
 
     static func statusColor(_ status: UsageStatus) -> Color {
         switch status {
@@ -972,7 +958,43 @@ extension UsageSnapshot {
 
     var tightestSupportText: String {
         guard let tightestLimit else { return "Add OpenAI, Anthropic, or Google." }
-        return "\(tightestLimit.label) · \(tightestLimit.accountName) — your tightest account"
+        return "\(tightestLimit.provider.shortName) · \(tightestLimit.displayLabel) · \(tightestLimit.contextLabel)"
+    }
+
+    var tightestCapacityRatio: Double {
+        guard let ratio = tightestLimit?.usageRatio else { return 0 }
+        return max(1 - ratio, 0)
+    }
+
+    var fastModeForecast: FastModePortfolioForecast {
+        let forecasts = limits
+            .filter { $0.provider == .openAI && $0.unit == .percent }
+            .map { limit in
+                FastModeForecast(input: FastModeForecastInput(
+                    limit: limit,
+                    now: Date(),
+                    standardBurnRate: BurnRate(mode: .standard, unitsPerHour: 2),
+                    fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 12),
+                    reserveUnits: 6,
+                    minimumSafeHours: 1
+                ))
+            }
+        return FastModePortfolioForecast(forecasts: forecasts)
+    }
+
+    var providerPressureText: String {
+        let limited = limits.filter { $0.status == .limited }.count
+        let close = limits.filter { $0.status == .close }.count
+        if limited > 0 || close > 0 {
+            return "\(limited) limited · \(close) close"
+        }
+        return "all tracked windows healthy"
+    }
+
+    var nearestResetText: String {
+        let futureResets = limits.compactMap(\.resetsAt).filter { $0 > Date() }.sorted()
+        guard let reset = futureResets.first else { return "reset unknown" }
+        return "nearest reset \(reset.widgetRelativeText)"
     }
 }
 
@@ -988,25 +1010,30 @@ extension UsageLimit {
     }
 
     var resetText: String {
-        switch status {
-        case .failure:
-            "refresh failed"
-        case .unknown:
-            "unknown"
-        default:
-            switch label {
-            case "Image generation":
-                "42m"
-            case "Claude Opus":
-                "1h 15m"
-            case "GPT-5":
-                "3h 20m"
-            case "GPT-5 Thinking":
-                "tomorrow 9:00"
-            default:
-                "tonight"
-            }
+        if status == .failure { return "refresh failed" }
+        guard let resetsAt else { return "unknown reset" }
+        if resetsAt < Date().addingTimeInterval(-60) { return "reset passed" }
+        return "resets \(resetsAt.widgetRelativeText)"
+    }
+}
+
+extension Date {
+    var widgetRelativeText: String {
+        let seconds = Int(timeIntervalSince(Date()))
+        if abs(seconds) < 60 { return "now" }
+        if seconds >= 0 {
+            let minutes = seconds / 60
+            if minutes < 60 { return "in \(minutes)m" }
+            let hours = minutes / 60
+            if hours < 24 { return "in \(hours)h" }
+            return "in \(hours / 24)d"
         }
+        let elapsed = abs(seconds)
+        let minutes = elapsed / 60
+        if minutes < 60 { return "\(minutes)m ago" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours)h ago" }
+        return "\(hours / 24)d ago"
     }
 }
 

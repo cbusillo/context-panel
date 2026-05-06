@@ -76,7 +76,9 @@ extension WidgetSnapshot {
                     provider: .openAI,
                     accountID: "placeholder-openai",
                     accountName: "OpenAI",
-                    label: "Codex weekly",
+                    label: "Codex Weekly",
+                    windowLabel: "Weekly",
+                    modelLabel: "Codex",
                     unit: .percent,
                     used: 52,
                     limit: 100,
@@ -89,6 +91,8 @@ extension WidgetSnapshot {
                     accountID: "placeholder-google",
                     accountName: "Gemini",
                     label: "gemini-3-pro-preview",
+                    windowLabel: "Daily",
+                    modelLabel: "gemini-3-pro-preview",
                     unit: .percent,
                     used: 12,
                     limit: 100,
@@ -102,4 +106,3 @@ extension WidgetSnapshot {
         )
     }
 }
-

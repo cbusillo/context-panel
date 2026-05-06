@@ -52,3 +52,18 @@ import Testing
     #expect(summaries[.anthropic]?.limitCount == 0)
 }
 
+@Test func providerSummariesUseTheTightestWindowInsteadOfAverageCapacity() {
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let stored = StoredUsageSnapshot(savedAt: savedAt, snapshot: UsageSnapshot(
+        generatedAt: savedAt,
+        limits: [
+            UsageLimit(provider: .openAI, label: "Weekly", used: 95, limit: 100),
+            UsageLimit(provider: .openAI, label: "5-hour", used: 5, limit: 100),
+        ]
+    ))
+
+    let widget = WidgetSnapshot.fromStore(SnapshotStoreLoadResult(snapshot: stored, status: .healthy))
+    let openAI = widget.providerSummaries.first { $0.provider == .openAI }
+
+    #expect(abs((openAI?.capacityRatio ?? 0) - 0.05) < 0.0001)
+}

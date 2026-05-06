@@ -30,7 +30,7 @@ import Testing
     #expect(result.snapshot.limits.count == 4)
     #expect(Set(result.snapshot.limits.map(\.accountName)) == ["OpenAI A", "OpenAI B"])
     #expect(result.snapshot.limits.allSatisfy { $0.provider == .openAI && $0.unit == .percent })
-    #expect(result.snapshot.limits.contains { $0.used == 50 && $0.label.contains("300m") })
+    #expect(result.snapshot.limits.contains { $0.used == 50 && $0.windowLabel == "5-hour" })
     #expect(http.requests.count == 2)
 }
 
@@ -164,4 +164,3 @@ private struct StubConnector: ProviderConnector {
         ConnectorRefreshResult(generatedAt: now, reports: [report])
     }
 }
-

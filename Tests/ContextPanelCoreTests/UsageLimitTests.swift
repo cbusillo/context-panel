@@ -59,7 +59,35 @@ import Testing
     let first = snapshot.mostConstrainedLimits.first
 
     #expect(first?.label == "Image generation")
-    #expect(snapshot.aggregateCapacityRatio > 0)
+    #expect(abs(snapshot.aggregateCapacityRatio - 0.02) < 0.0001)
+}
+
+@Test func aggregateCapacityUsesTightestTrackedWindow() {
+    let snapshot = UsageSnapshot(
+        generatedAt: Date(),
+        limits: [
+            UsageLimit(provider: .openAI, label: "Weekly", used: 95, limit: 100),
+            UsageLimit(provider: .openAI, label: "5-hour", used: 5, limit: 100),
+        ]
+    )
+
+    #expect(abs(snapshot.aggregateCapacityRatio - 0.05) < 0.0001)
+}
+
+@Test func usageLimitSeparatesWindowAndModelLabels() {
+    let limit = UsageLimit(
+        provider: .openAI,
+        accountID: "openai-personal",
+        accountName: "Personal",
+        label: "Codex 5-hour",
+        windowLabel: "5-hour",
+        modelLabel: "Codex",
+        used: 42,
+        limit: 100
+    )
+
+    #expect(limit.displayLabel == "5-hour")
+    #expect(limit.contextLabel == "Codex · Personal")
 }
 
 @Test func providersCoverInitialScope() {

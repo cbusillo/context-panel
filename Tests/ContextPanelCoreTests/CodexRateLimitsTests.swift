@@ -65,6 +65,15 @@ import Testing
     #expect(snapshots[1].limitName == "GPT-5.3-Codex-Spark")
     #expect(snapshots[1].primary?.usedPercent == 1)
     #expect(snapshots[1].credits == nil)
+
+    let limits = codexUsageLimits(
+        from: snapshots[0],
+        accountID: "acct",
+        accountName: "Personal",
+        observedAt: Date(timeIntervalSince1970: 0)
+    )
+    #expect(limits.map(\.windowLabel) == ["5-hour", "Weekly"])
+    #expect(limits.first?.modelLabel == "Codex")
 }
 
 @Test func codexUsagePayloadParserHandlesMissingLimitDetails() throws {
@@ -85,4 +94,3 @@ import Testing
     #expect(snapshots[0].primary == nil)
     #expect(snapshots[0].secondary == nil)
 }
-

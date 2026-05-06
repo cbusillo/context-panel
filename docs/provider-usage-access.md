@@ -106,7 +106,7 @@ Codex CLI has an app-server method, `account/rateLimits/read`, backed by a
 backend client call that fetches live snapshots from the ChatGPT Codex backend:
 `GET /backend-api/wham/usage` for ChatGPT-backed auth, or `/api/codex/usage` for
 Codex API-style deployments. The payload maps into rate-limit snapshots with
-primary and secondary windows, reset times, plan type, credits, reached-limit
+provider window buckets, reset times, plan type, credits, reached-limit
 classification, and additional buckets keyed by `limit_id`.
 
 Every Code is useful as a fallback and validation source. It does not derive
@@ -142,7 +142,7 @@ Preferred v1 connector scope:
 
 - Fetch live Codex limits directly from the Codex backend usage endpoint shape:
   `GET https://chatgpt.com/backend-api/wham/usage` for ChatGPT-backed auth.
-- Support primary and secondary windows, reset times, plan type, credits,
+- Support provider window buckets, reset times, plan type, credits,
   reached-limit classification, and additional `limit_id` buckets.
 - Keep auth handling isolated and redacted; never log tokens, cookies,
   authorization headers, account IDs, emails, or raw response bodies.
@@ -216,7 +216,7 @@ Fallback connector scope:
   for the connector.
 - Parse `rate_limit.snapshot`, `observed_at`, `primary_next_reset_at`,
   `secondary_next_reset_at`, `last_usage_limit_hit_at`, and `plan`.
-- Normalize primary and secondary windows as Codex limits with observed
+- Normalize Codex provider window buckets as limits with observed
   confidence and freshness state.
 - Mark the connector stale when `observed_at` or `last_updated` is older than a
   conservative threshold; do not trigger refreshes.

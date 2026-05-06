@@ -187,6 +187,7 @@ public func claudeLocalStatusLimits(
         accountID: accountID,
         accountName: accountName,
         label: "Claude subscription allowance",
+        modelLabel: "Claude subscription allowance",
         unit: .unknown,
         used: nil,
         limit: nil,
