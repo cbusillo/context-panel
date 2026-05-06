@@ -72,3 +72,6 @@ yet.
 
 For Gemini, use the OAuth client values from the locally installed Gemini CLI;
 they are intentionally not checked into this repository.
+
+The probes call the same `ContextPanelCore` connectors the app will use, so
+passing probe output is also a smoke test for the production connector runtime.

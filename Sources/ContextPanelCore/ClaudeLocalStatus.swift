@@ -69,6 +69,135 @@ public enum ClaudeStatsCacheParser {
     }
 }
 
+public struct ClaudeAccountConfiguration: Equatable, Sendable {
+    public let accountName: String
+    public let claudeBinary: String
+    public let statsPath: String
+
+    public init(accountName: String = "Claude", claudeBinary: String = "claude", statsPath: String? = nil) {
+        self.accountName = accountName
+        self.claudeBinary = claudeBinary
+        self.statsPath = statsPath ?? "\(FileManager.default.homeDirectoryForCurrentUser.path)/.claude/stats-cache.json"
+    }
+}
+
+public struct ClaudeLocalStatusConnector: ProviderConnector {
+    public let provider: Provider = .anthropic
+
+    private let accounts: [ClaudeAccountConfiguration]
+    private let processClient: any ConnectorProcessClient
+    private let fileLoader: @Sendable (String) throws -> Data
+    private let fileExists: @Sendable (String) -> Bool
+
+    public init(
+        accounts: [ClaudeAccountConfiguration],
+        processClient: any ConnectorProcessClient = DefaultConnectorProcessClient(),
+        fileLoader: @escaping @Sendable (String) throws -> Data = { path in
+            try Data(contentsOf: URL(fileURLWithPath: NSString(string: path).expandingTildeInPath))
+        },
+        fileExists: @escaping @Sendable (String) -> Bool = { path in
+            FileManager.default.fileExists(atPath: NSString(string: path).expandingTildeInPath)
+        }
+    ) {
+        self.accounts = accounts
+        self.processClient = processClient
+        self.fileLoader = fileLoader
+        self.fileExists = fileExists
+    }
+
+    public func refresh(now: Date) async -> ConnectorRefreshResult {
+        var reports: [ProviderConnectorReport] = []
+        reports.reserveCapacity(accounts.count)
+        for account in accounts {
+            reports.append(refresh(account: account, now: now))
+        }
+        return ConnectorRefreshResult(generatedAt: now, reports: reports)
+    }
+
+    private func refresh(account: ClaudeAccountConfiguration, now: Date) -> ProviderConnectorReport {
+        let localAccountID = ConnectorRedactor.localAccountID(provider: provider, path: account.statsPath)
+
+        do {
+            let authStatus = try loadAuthStatus(claudeBinary: account.claudeBinary)
+            let statsSummary = try loadStatsSummary(path: account.statsPath)
+            let limits = claudeLocalStatusLimits(
+                authStatus: authStatus,
+                statsSummary: statsSummary,
+                accountID: localAccountID,
+                accountName: account.accountName,
+                observedAt: now
+            )
+            return ProviderConnectorReport(
+                provider: provider,
+                accountID: localAccountID,
+                accountName: account.accountName,
+                generatedAt: now,
+                limits: limits,
+                status: authStatus.loggedIn ? .unknown : .failure,
+                errorMessage: authStatus.loggedIn ? nil : "Claude CLI is not logged in"
+            )
+        } catch {
+            return ProviderConnectorReport(
+                provider: provider,
+                accountID: localAccountID,
+                accountName: account.accountName,
+                generatedAt: now,
+                limits: [],
+                status: .failure,
+                errorMessage: error.localizedDescription
+            )
+        }
+    }
+
+    private func loadAuthStatus(claudeBinary: String) throws -> ClaudeAuthStatus {
+        let result = try processClient.run(executable: claudeBinary, arguments: ["auth", "status", "--json"])
+        guard result.exitCode == 0 else {
+            throw ConnectorError.processFailure(operation: "claude auth status", exitCode: result.exitCode)
+        }
+        return try ClaudeAuthStatusParser.status(from: result.stdout)
+    }
+
+    private func loadStatsSummary(path: String) throws -> ClaudeStatsCacheSummary? {
+        guard fileExists(path) else { return nil }
+        return try ClaudeStatsCacheParser.summary(from: try fileLoader(path))
+    }
+}
+
+public func claudeLocalStatusLimits(
+    authStatus: ClaudeAuthStatus,
+    statsSummary: ClaudeStatsCacheSummary?,
+    accountID: String,
+    accountName: String,
+    observedAt: Date
+) -> [UsageLimit] {
+    var noteParts = [
+        "auth: \(authStatus.authMethod)",
+        "provider: \(authStatus.apiProvider ?? "unknown")",
+        "subscription: \(authStatus.subscriptionType ?? "unknown")",
+    ]
+    if let statsSummary {
+        noteParts.append("sessions: \(statsSummary.totalSessions.map(String.init) ?? "unknown")")
+        noteParts.append("messages: \(statsSummary.totalMessages.map(String.init) ?? "unknown")")
+    } else {
+        noteParts.append("stats cache: absent")
+    }
+
+    return [UsageLimit(
+        provider: .anthropic,
+        accountID: accountID,
+        accountName: accountName,
+        label: "Claude subscription allowance",
+        unit: .unknown,
+        used: nil,
+        limit: nil,
+        resetsAt: nil,
+        lastUpdatedAt: statsSummary?.lastComputedDate ?? observedAt,
+        confidence: .unknown,
+        statusOverride: authStatus.loggedIn ? .unknown : .failure,
+        note: noteParts.joined(separator: "; ")
+    )]
+}
+
 private struct ClaudeAuthStatusPayload: Decodable {
     let loggedIn: Bool
     let authMethod: String

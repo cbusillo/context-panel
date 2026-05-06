@@ -18,6 +18,30 @@ Context Panel is expected to split into a few native boundaries:
 The first committed code lives in `ContextPanelCore` so provider, account, and
 UI work can share the same vocabulary from the start.
 
+## Connector Runtime
+
+`ContextPanelCore` owns the provider connector contract. A connector refreshes
+one or more configured local accounts and returns a `ConnectorRefreshResult`,
+which carries provider/account reports plus a normalized `UsageSnapshot` for UI
+and storage code.
+
+MVP connectors:
+
+- `CodexRateLimitConnector`: reads Codex-style auth roots such as `~/.code` or
+  `~/.codex`, calls the live Codex usage endpoint, and normalizes primary,
+  secondary, and additional percent-window buckets.
+- `GeminiCodeAssistConnector`: reads Gemini CLI OAuth credentials, uses
+  explicitly supplied OAuth client inputs, resolves the active Code Assist
+  project internally, and normalizes model quota buckets as percent pressure.
+- `ClaudeLocalStatusConnector`: runs `claude auth status --json` and summarizes
+  `~/.claude/stats-cache.json`; live personal subscription allowance remains
+  unknown unless a clean provider signal appears.
+
+Connector implementations must keep secrets out of normalized state. Do not
+persist or print tokens, account IDs, project IDs, organization IDs, emails,
+headers, or raw response bodies. Errors should mention status and operation but
+not provider response content.
+
 Widget interactions should keep the widget simple. Tapping the widget should
 open the app to the relevant provider or account detail; mutation and setup stay
 inside the app.
