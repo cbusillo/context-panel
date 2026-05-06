@@ -96,13 +96,21 @@ the problem:
   if OpenAI later starts exposing cleaner fields, and it can produce redacted
   evidence across multiple accounts.
 
-The nearby Every Code source is also instructive. It does not derive Codex
-rate-limit snapshots from local token counts. It sends authenticated requests to
-the ChatGPT Codex backend and parses server-reported `x-codex-*` response
-headers into percentage and reset-window snapshots. The local usage files are a
-cache of the latest server snapshot plus local token history, which explains why
-the displayed limit pressure reflects cloud and other-machine usage for the same
-account.
+Codex-family tooling exposes a stronger path for Codex/Fast Mode. Upstream
+Codex CLI has an app-server method, `account/rateLimits/read`, backed by a
+backend client call that fetches live snapshots from the ChatGPT Codex backend:
+`GET /backend-api/wham/usage` for ChatGPT-backed auth, or `/api/codex/usage` for
+Codex API-style deployments. The payload maps into rate-limit snapshots with
+primary and secondary windows, reset times, plan type, credits, reached-limit
+classification, and additional buckets keyed by `limit_id`.
+
+Every Code is useful as a fallback and validation source. It does not derive
+Codex rate-limit snapshots from local token counts. It sends authenticated
+requests to the ChatGPT Codex backend, parses server-reported `x-codex-*`
+response headers into percentage and reset-window snapshots, and persists the
+latest server snapshot under local usage files. The local files are a cache of
+server state plus local token history, which explains why displayed limit
+pressure reflects cloud and other-machine usage for the same account.
 
 Every Code also has a deliberate refresh path: it sends a tiny `"ok"` prompt via
 the selected account, waits for a `RateLimits` event from response headers, then
@@ -118,21 +126,28 @@ reuse the same authenticated account flow safely.
 
 Implication: v1 should not promise exact general ChatGPT subscription remaining
 counts unless the probe finds a provider-exposed counter. For Codex/Fast Mode,
-though, we should build a cache-only OpenAI Codex adapter around Every Code's
-local `usage/*.json` snapshots. Every Code updates that cache as the user works,
-so Context Panel should read it without making provider requests, touching auth
-files, or trying to refresh limits itself.
+though, the preferred path is a live OpenAI Codex limits connector using the same
+shape as Codex CLI's `account/rateLimits/read`/`get_rate_limits_many()` flow. If
+that cannot be made stable or safely testable, fall back to Every Code's local
+`usage/*.json` cache or Codex CLI's app-server request.
 
-Upstream Codex CLI has related rate-limit support, but the source shape is
-different. It parses the same Codex rate-limit concepts and exposes an
-`account/rateLimits/read` app-server request that fetches live backend snapshots,
-including multi-bucket snapshots keyed by `limit_id`. In the checked source, it
-does not appear to write the Every Code-style `usage/*.json` disk cache. Treat
-upstream Codex as a later live/app-server fallback, not as the v1 cache source.
+### Codex Limits Connector
 
-### Every Code Cache Connector
+Preferred v1 connector scope:
 
-V1 connector scope:
+- Fetch live Codex limits using the Codex backend usage endpoint shape.
+- Support primary and secondary windows, reset times, plan type, credits,
+  reached-limit classification, and additional `limit_id` buckets.
+- Keep auth handling isolated and redacted; never log tokens, cookies,
+  authorization headers, account IDs, emails, or raw response bodies.
+- Expose a diagnostic probe that reports only sanitized structure, percentages,
+  reset timing, bucket labels, and staleness.
+- Mark this as an OpenAI Codex/Fast Mode source, not a general ChatGPT
+  subscription counter.
+
+### Every Code Cache Fallback
+
+Fallback connector scope:
 
 - Resolve `CODE_HOME`, then `CODEX_HOME`, then default to `~/.code`.
 - Read only `$CODE_HOME/usage/*.json`.
