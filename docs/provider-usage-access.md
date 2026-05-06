@@ -1,6 +1,6 @@
 # Provider Usage Access Research
 
-Last verified: 2026-05-05.
+Last verified: 2026-05-06.
 
 ## Summary
 
@@ -56,7 +56,8 @@ instead of pretending an estimate is exact.
 | OpenAI API organizations | Usage API, Costs API, and rate-limit headers. Usage can be grouped by project, user, API key, model, batch, and service tier depending on endpoint. | API rate limits expose remaining requests/tokens and reset headers; monthly usage limits are organization/project concerns. | One connected API organization/project per credential. Multiple credentials/accounts should be supported. | Support API org usage as an official adapter using admin or sufficiently privileged API keys. | High |
 | OpenAI ChatGPT accounts | No stable public API found for general personal ChatGPT subscription pressure outside Codex. Current product surfaces no longer present a simple message counter; the useful automated signal found so far is percent-used pressure for Codex/Fast Mode. | Weekly and short rolling reset windows matter. Codex/Fast Mode exposes live percent-used windows through the Codex backend usage endpoint. | Multiple ChatGPT accounts are core. Each account needs its own reset window, plan, mode, percent/token pressure, and local observation history. | For Codex/Fast Mode, use the live Codex usage endpoint. For non-Codex ChatGPT surfaces, keep manual/assisted observations and forecast confidence until a clean provider signal exists. | High for Codex percent windows; medium for visible reset clues; low for non-Codex automation |
 | Anthropic API organizations | Usage and Cost API can report message usage and costs by time bucket, model, workspace, API key, service tier, context window, geo, and beta fast-mode speed. API responses include rate-limit headers with remaining and reset values. | API rate limits use token bucket behavior; monthly spend limits exist by tier. | Organization/workspace/API-key credentials. Multiple organizations and workspaces should be supported. | Support official API usage/cost adapter. Capture fast-mode dimensions where available. | High |
-| Claude subscriptions and Claude Code seats | Public docs describe usage limits across Claude.ai, Claude Code, and Claude Desktop, but no stable public API for personal subscription allowance was found. Claude Code can show session cost for API-key usage. | Pro/Max/Team usage has session-based reset behavior; Claude Code Enterprise seats show reset time when a limit is reached. | Multiple Claude accounts/seats are possible, but account connection should be conservative. | Defer automated subscription tracking unless a supported local/official signal is found. Support manual observation later; prioritize Anthropic API first. | Medium for displayed limits; low for automation |
+| Claude subscriptions and Claude Code seats | Public docs describe usage limits across Claude.ai, Claude Code, and Claude Desktop, but no stable public API for personal subscription allowance was found. Claude Code auth status exposes login method and subscription type; local stats cache exposes historical local usage only. | Pro/Max/Team usage has session-based reset behavior; Claude Code Enterprise seats show reset time when a limit is reached. Local cache does not expose live remaining allowance. | Multiple Claude accounts/seats are possible, but account connection should be conservative. | Support a local Claude status connector for account metadata and local activity freshness. Defer live subscription pressure unless a supported signal is found. Prioritize Anthropic API first for org/API usage. | Medium for auth/subscription metadata and local history; low for live subscription automation |
+| Google Gemini CLI / Code Assist | Gemini CLI OAuth credentials can be refreshed locally, then the Code Assist backend returns live quota buckets with model IDs, remaining fractions, optional remaining amounts, and reset times. | Quota buckets are percent-style remaining fractions per model with provider reset timestamps. | Google account plus Code Assist project is the natural boundary; multiple `GEMINI_CLI_HOME` roots can represent multiple logins. | Support a Gemini Code Assist live quota connector using Gemini CLI auth. Store only normalized percent pressure and reset times. | High for Gemini CLI/Code Assist buckets observed locally |
 | Google Gemini API / Google AI Studio projects | AI Studio and Cloud Billing show usage. Gemini API rate limits are project-scoped, not API-key-scoped. Service Usage API lists quota limits; Cloud Monitoring exposes quota usage metrics; Cloud Billing export to BigQuery provides detailed cost/usage data. | Rate limits are RPM, input TPM, and RPD, with model/tier variation. RPD quotas reset at midnight Pacific time. | Google project is the natural account boundary. Multiple Google accounts/projects should be supported. | Support Google API projects after OAuth/service-account design. Use Service Usage for limits, Cloud Monitoring for quota usage, and optional Billing export for cost history. | Medium-high, but setup is heavier |
 | Google consumer Gemini app subscriptions | No stable public API for personal Gemini app subscription allowance was found in this pass. | Provider UI likely remains source of truth. | Multiple Google accounts may matter, but automation risk is high. | Defer for v1 unless a supported API emerges. | Low |
 
@@ -153,6 +154,58 @@ Preferred v1 connector scope:
   `CodexRateLimitProbe` executable exists to prove the direct call path against
   an existing Codex `auth.json` while printing only redacted summaries.
 
+### Gemini Code Assist Connector
+
+The local Gemini CLI path gives Context Panel a second viable live connector.
+The CLI stores OAuth credentials under `~/.gemini/oauth_creds.json`, while the
+active account metadata lives separately under `~/.gemini/google_accounts.json`.
+The quota values are not persisted as a durable local cache; Gemini CLI keeps
+quota state in memory and refreshes it from the Code Assist backend.
+
+Preferred v1 connector scope:
+
+- Resolve `GEMINI_CLI_HOME`, then default to `~/.gemini`.
+- Read `oauth_creds.json` only to refresh an access token locally; never print,
+  store, or upload token values.
+- Call the Gemini Code Assist load path to resolve the active project internally;
+  never print or persist the raw project identifier.
+- Call the Gemini Code Assist quota path and normalize buckets by model ID,
+  remaining fraction, optional remaining amount, and reset time.
+- Represent each bucket as percent pressure: `used = round((1 - remaining) *
+  100)`, `limit = 100`, `unit = percent`.
+- Mark confidence as observed because this is a product backend surface rather
+  than a public quota API contract.
+
+The local `GeminiQuotaProbe` executable proves this path with redacted output.
+On 2026-05-06 it returned seven live model buckets for the local Gemini CLI
+account, including Gemini 2.5 and Gemini 3 preview models, with percent
+remaining and reset timestamps.
+
+### Claude Local Status Connector
+
+Claude currently has a weaker local connector story for subscription pressure.
+The official Claude Code authentication docs say macOS credentials are stored in
+the encrypted macOS Keychain. Context Panel should not read Keychain secrets or
+try to extract subscription OAuth tokens.
+
+Preferred v1 connector scope:
+
+- Call `claude auth status --json` and keep only non-secret fields such as
+  `loggedIn`, `authMethod`, `apiProvider`, and `subscriptionType`.
+- Read `~/.claude/stats-cache.json` only as local historical activity, not live
+  subscription allowance.
+- Summarize local stats by freshness and counts; do not read raw transcript
+  JSONL files, prompts, account UUIDs, emails, organization IDs, or token blobs.
+- Show Claude subscription allowance as unknown unless a provider UI/runtime
+  state exposes a reset or limit banner that the user can confirm.
+- Prefer Anthropic's official Admin Usage, Cost, and Rate Limits APIs when the
+  user connects an organization/API credential with sufficient permission.
+
+The local `ClaudeLimitProbe` executable proves the conservative path. On
+2026-05-06 it confirmed the local Claude CLI is logged in with subscription
+metadata and has a local stats cache, but no live subscription allowance is
+exposed by the probe.
+
 ### Every Code Cache Fallback
 
 Fallback connector scope:
@@ -187,8 +240,11 @@ Fallback connector scope:
 - [OpenAI o3 and o4-mini usage limits](https://help.openai.com/en/articles/9824962-openai-o1and-o1-mini-usage-limits-on-chatgpt-and-the-api)
 - [Anthropic Usage and Cost API](https://platform.claude.com/docs/en/build-with-claude/usage-cost-api)
 - [Anthropic API rate limits](https://docs.anthropic.com/en/api/rate-limits)
+- [Claude Code authentication](https://code.claude.com/docs/en/authentication)
 - [Claude usage and length limits](https://support.claude.com/en/articles/11647753-how-do-usage-and-length-limits-work)
 - [Models, usage, and limits in Claude Code](https://support.claude.com/en/articles/14552983-models-usage-and-limits-in-claude-code)
+- [Gemini CLI authentication](https://google-gemini.github.io/gemini-cli/docs/get-started/authentication.html)
+- [Gemini CLI quotas and pricing](https://google-gemini.github.io/gemini-cli/docs/quota-and-pricing.html)
 - [Gemini API billing](https://ai.google.dev/gemini-api/docs/billing/)
 - [Gemini API rate limits](https://ai.google.dev/gemini-api/docs/rate-limits)
 - [Google Service Usage consumer quota metrics](https://cloud.google.com/service-usage/docs/reference/rest/v1beta1/services.consumerQuotaMetrics/list)

@@ -23,6 +23,14 @@ let package = Package(
         .executable(
             name: "CodexRateLimitProbe",
             targets: ["CodexRateLimitProbe"]
+        ),
+        .executable(
+            name: "GeminiQuotaProbe",
+            targets: ["GeminiQuotaProbe"]
+        ),
+        .executable(
+            name: "ClaudeLimitProbe",
+            targets: ["ClaudeLimitProbe"]
         )
     ],
     targets: [
@@ -37,6 +45,14 @@ let package = Package(
         ),
         .executableTarget(
             name: "CodexRateLimitProbe",
+            dependencies: ["ContextPanelCore"]
+        ),
+        .executableTarget(
+            name: "GeminiQuotaProbe",
+            dependencies: ["ContextPanelCore"]
+        ),
+        .executableTarget(
+            name: "ClaudeLimitProbe",
             dependencies: ["ContextPanelCore"]
         ),
         .testTarget(

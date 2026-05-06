@@ -51,3 +51,20 @@ Useful entry points:
 - [Product Goals](docs/product-goals.md)
 - [Architecture](docs/architecture.md)
 - [Repository Settings](docs/repo-settings.md)
+
+## Local Provider Probes
+
+The package includes development probes for validating provider limit signals
+without printing secrets or raw provider responses:
+
+```sh
+swift run CodexRateLimitProbe --auth ~/.codex/auth.json
+swift run GeminiQuotaProbe --auth ~/.gemini/oauth_creds.json
+swift run ClaudeLimitProbe
+```
+
+The Codex and Gemini probes can return live percent-window quota buckets for
+their respective CLI-backed accounts. The Claude probe intentionally reports
+only local auth/subscription metadata and local stats-cache freshness because a
+live personal subscription allowance is not exposed through a clean local signal
+yet.
