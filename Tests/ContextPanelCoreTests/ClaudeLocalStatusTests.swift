@@ -21,6 +21,7 @@ import Testing
     #expect(status.authMethod == "claude.ai")
     #expect(status.apiProvider == "firstParty")
     #expect(status.subscriptionType == "pro")
+    #expect(status.subscriptionDisplayName == "Claude Pro")
 }
 
 @Test func claudeStatsCacheParserSummarizesLocalActivityOnly() throws {
@@ -70,4 +71,25 @@ import Testing
     #expect(ContextPanelDateFormatting.string(from: summary.lastComputedDate!) == "2026-04-26T00:00:00Z")
     #expect(summary.dailyActivityCount == 2)
     #expect(summary.modelUsageCount == 0)
+}
+
+@Test func claudeLocalStatusLimitMakesUnknownAllowanceExplicit() {
+    let limit = claudeLocalStatusLimits(
+        authStatus: ClaudeAuthStatus(
+            loggedIn: true,
+            authMethod: "claude.ai",
+            apiProvider: "firstParty",
+            subscriptionType: "pro"
+        ),
+        statsSummary: nil,
+        accountID: "local",
+        accountName: "Claude",
+        observedAt: Date(timeIntervalSince1970: 0)
+    ).first!
+
+    #expect(limit.label == "Claude Pro status")
+    #expect(limit.modelLabel == "Claude Code")
+    #expect(limit.confidence == .observed)
+    #expect(limit.status == .unknown)
+    #expect(limit.note?.contains("allowance: not exposed by Claude Code") == true)
 }

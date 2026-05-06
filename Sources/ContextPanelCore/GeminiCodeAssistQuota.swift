@@ -134,6 +134,10 @@ public enum GeminiOAuthClientMetadataDiscovery {
         },
         fileExists: @escaping @Sendable (String) -> Bool = { path in
             FileManager.default.fileExists(atPath: NSString(string: path).expandingTildeInPath)
+        },
+        directoryLister: @escaping @Sendable (String) -> [String] = { path in
+            let expanded = NSString(string: path).expandingTildeInPath
+            return (try? FileManager.default.contentsOfDirectory(atPath: expanded).map { "\(expanded)/\($0)" }) ?? []
         }
     ) -> GeminiOAuthClientMetadata? {
         if
@@ -143,7 +147,10 @@ public enum GeminiOAuthClientMetadataDiscovery {
             return GeminiOAuthClientMetadata(clientID: clientID, clientSecret: clientSecret)
         }
 
-        for path in candidateBundlePaths(environment: environment) where fileExists(path) {
+        for path in candidateBundlePaths(
+            environment: environment,
+            directoryLister: directoryLister
+        ) where fileExists(path) {
             guard
                 let source = try? fileLoader(path),
                 let metadata = parseClientMetadata(from: source)
@@ -173,14 +180,32 @@ public enum GeminiOAuthClientMetadataDiscovery {
         return String(source[valueRange])
     }
 
-    private static func candidateBundlePaths(environment: [String: String]) -> [String] {
+    private static func candidateBundlePaths(
+        environment: [String: String],
+        directoryLister: @Sendable (String) -> [String]
+    ) -> [String] {
         var paths: [String] = []
         if let path = environment["GEMINI_CLI_BUNDLE_PATH"], !path.isEmpty {
             paths.append(path)
         }
-        paths.append("/opt/homebrew/lib/node_modules/@google/gemini-cli/bundle/chunk-GDRLBWZL.js")
-        paths.append("/usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-GDRLBWZL.js")
+        paths.append(contentsOf: bundleChunkPaths(
+            root: "/opt/homebrew/lib/node_modules/@google/gemini-cli/bundle",
+            directoryLister: directoryLister
+        ))
+        paths.append(contentsOf: bundleChunkPaths(
+            root: "/usr/local/lib/node_modules/@google/gemini-cli/bundle",
+            directoryLister: directoryLister
+        ))
         return paths
+    }
+
+    private static func bundleChunkPaths(
+        root: String,
+        directoryLister: @Sendable (String) -> [String]
+    ) -> [String] {
+        directoryLister(root)
+            .filter { $0.hasSuffix(".js") }
+            .sorted()
     }
 }
 

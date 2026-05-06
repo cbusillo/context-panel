@@ -424,6 +424,9 @@ enum CPWTheme {
 
 extension UsageLimit {
     var widgetUsageText: String {
+        if provider == .anthropic, unit == .unknown, status == .unknown {
+            return "allowance unknown"
+        }
         if let remaining, let limit {
             return "\(remaining)/\(limit) left"
         }

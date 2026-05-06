@@ -12,6 +12,11 @@ public struct ClaudeAuthStatus: Codable, Equatable, Sendable {
         self.apiProvider = apiProvider
         self.subscriptionType = subscriptionType
     }
+
+    public var subscriptionDisplayName: String {
+        guard let subscriptionType, !subscriptionType.isEmpty else { return "Claude" }
+        return "Claude \(subscriptionType.capitalized)"
+    }
 }
 
 public struct ClaudeStatsCacheSummary: Codable, Equatable, Sendable {
@@ -174,6 +179,7 @@ public func claudeLocalStatusLimits(
         "auth: \(authStatus.authMethod)",
         "provider: \(authStatus.apiProvider ?? "unknown")",
         "subscription: \(authStatus.subscriptionType ?? "unknown")",
+        "allowance: not exposed by Claude Code",
     ]
     if let statsSummary {
         noteParts.append("sessions: \(statsSummary.totalSessions.map(String.init) ?? "unknown")")
@@ -186,14 +192,14 @@ public func claudeLocalStatusLimits(
         provider: .anthropic,
         accountID: accountID,
         accountName: accountName,
-        label: "Claude subscription allowance",
-        modelLabel: "Claude subscription allowance",
+        label: "\(authStatus.subscriptionDisplayName) status",
+        modelLabel: "Claude Code",
         unit: .unknown,
         used: nil,
         limit: nil,
         resetsAt: nil,
         lastUpdatedAt: statsSummary?.lastComputedDate ?? observedAt,
-        confidence: .unknown,
+        confidence: .observed,
         statusOverride: authStatus.loggedIn ? .unknown : .failure,
         note: noteParts.joined(separator: "; ")
     )]

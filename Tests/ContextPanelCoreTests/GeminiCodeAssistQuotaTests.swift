@@ -66,8 +66,31 @@ import Testing
             "GEMINI_OAUTH_CLIENT_SECRET": "env-secret",
         ],
         fileLoader: { _ in "" },
-        fileExists: { _ in false }
+        fileExists: { _ in false },
+        directoryLister: { _ in [] }
     )
 
     #expect(metadata == GeminiOAuthClientMetadata(clientID: "env-client", clientSecret: "env-secret"))
+}
+
+@Test func geminiOAuthClientMetadataDiscoveryScansInstalledBundleDirectory() {
+    let source = #"""
+    var OAUTH_CLIENT_ID = "bundle-client";
+    var OAUTH_CLIENT_SECRET = "bundle-secret";
+    """#
+
+    let metadata = GeminiOAuthClientMetadataDiscovery.discover(
+        environment: [:],
+        fileLoader: { path in
+            path.hasSuffix("chunk-with-oauth.js") ? source : ""
+        },
+        fileExists: { _ in true },
+        directoryLister: { root in
+            root == "/opt/homebrew/lib/node_modules/@google/gemini-cli/bundle"
+                ? ["\(root)/chunk-with-oauth.js"]
+                : []
+        }
+    )
+
+    #expect(metadata == GeminiOAuthClientMetadata(clientID: "bundle-client", clientSecret: "bundle-secret"))
 }

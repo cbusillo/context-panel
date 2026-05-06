@@ -158,6 +158,10 @@ public enum AccountConnectorFactory {
         },
         geminiMetadataFileExists: @escaping @Sendable (String) -> Bool = { path in
             FileManager.default.fileExists(atPath: NSString(string: path).expandingTildeInPath)
+        },
+        geminiMetadataDirectoryLister: @escaping @Sendable (String) -> [String] = { path in
+            let expanded = NSString(string: path).expandingTildeInPath
+            return (try? FileManager.default.contentsOfDirectory(atPath: expanded).map { "\(expanded)/\($0)" }) ?? []
         }
     ) -> [any ProviderConnector] {
         document.accounts.compactMap { account in
@@ -175,7 +179,8 @@ public enum AccountConnectorFactory {
                 let discoveredMetadata = GeminiOAuthClientMetadataDiscovery.discover(
                     environment: environment,
                     fileLoader: geminiMetadataFileLoader,
-                    fileExists: geminiMetadataFileExists
+                    fileExists: geminiMetadataFileExists,
+                    directoryLister: geminiMetadataDirectoryLister
                 )
                 guard let metadata = configuredMetadata ?? discoveredMetadata else { return nil }
                 return GeminiCodeAssistConnector(accounts: [GeminiAccountConfiguration(

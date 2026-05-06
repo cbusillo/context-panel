@@ -1000,11 +1000,17 @@ extension UsageSnapshot {
 
 extension UsageLimit {
     var compactUsageText: String {
+        if provider == .anthropic, unit == .unknown, status == .unknown {
+            return "unknown"
+        }
         guard let used, let limit else { return status == .failure ? "—" : "?" }
         return "\(used)/\(limit)"
     }
 
     var percentText: String {
+        if provider == .anthropic, unit == .unknown, status == .unknown {
+            return "unknown"
+        }
         guard let usageRatio else { return status == .failure ? "—" : "?" }
         return "\(Int(usageRatio * 100))%"
     }
