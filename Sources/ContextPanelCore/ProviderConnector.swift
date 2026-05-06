@@ -196,4 +196,3 @@ public enum ConnectorRedactor {
         return String(hash, radix: 16)
     }
 }
-

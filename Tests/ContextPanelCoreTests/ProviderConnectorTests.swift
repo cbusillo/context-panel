@@ -153,6 +153,32 @@ import Testing
     #expect(result.snapshot.limits[0].note?.contains("stale Claude Code statusline") == true)
 }
 
+@Test func claudeConnectorReportsEveryCodeUsageEstimate() async throws {
+    let auth = #"{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","subscriptionType":"pro"}"#.data(using: .utf8)!
+    let stats = #"{"version":3,"lastComputedDate":"2026-04-26","dailyActivity":[],"modelUsage":{},"totalSessions":2,"totalMessages":3}"#.data(using: .utf8)!
+    let blocks = #"{"blocks":[{"isActive":false,"totalTokens":1000},{"isActive":true,"totalTokens":500,"projection":{"totalTokens":1200,"remainingMinutes":30},"models":["claude-sonnet-4-6"]}]}"#.data(using: .utf8)!
+    let connector = ClaudeLocalStatusConnector(
+        accounts: [ClaudeAccountConfiguration(
+            accountName: "Claude",
+            claudeBinary: "claude",
+            statsPath: "/tmp/stats.json",
+            usageBlocksPath: "/tmp/ccusage-blocks.json"
+        )],
+        processClient: StubProcessClient(result: ConnectorProcessResult(exitCode: 0, stdout: auth)),
+        fileLoader: { path in path == "/tmp/ccusage-blocks.json" ? blocks : stats },
+        fileExists: { path in path == "/tmp/stats.json" || path == "/tmp/ccusage-blocks.json" }
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_000))
+
+    #expect(result.reports[0].status == .healthy)
+    #expect(result.snapshot.limits.count == 1)
+    #expect(result.snapshot.limits[0].confidence == .estimated)
+    #expect(result.snapshot.limits[0].used == 500)
+    #expect(result.snapshot.limits[0].limit == 1000)
+    #expect(result.snapshot.limits[0].note?.contains("Every Code/Claude sessions") == true)
+}
+
 @Test func providerConnectorRuntimeAggregatesConnectorSnapshots() async {
     let connectorA = StubConnector(provider: .openAI, report: ProviderConnectorReport(
         provider: .openAI,

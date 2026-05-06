@@ -98,6 +98,7 @@ struct ClaudeLimitProbe {
                 }
             }
         }
-        print("live subscription allowance: not exposed by this probe")
+        print("official non-interactive subscription percentage: not exposed by Claude Code")
+        print("Every Code estimate: shown when ccusage aggregate block data is available")
     }
 }

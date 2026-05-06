@@ -50,6 +50,55 @@ public struct ClaudeStatsCacheSummary: Codable, Equatable, Sendable {
     }
 }
 
+public struct ClaudeUsageBlock: Codable, Equatable, Sendable {
+    public let isActive: Bool
+    public let totalTokens: Int?
+    public let endTime: Date?
+    public let projectedTotalTokens: Int?
+    public let remainingMinutes: Int?
+    public let modelCount: Int
+
+    public init(
+        isActive: Bool,
+        totalTokens: Int?,
+        endTime: Date?,
+        projectedTotalTokens: Int?,
+        remainingMinutes: Int?,
+        modelCount: Int
+    ) {
+        self.isActive = isActive
+        self.totalTokens = totalTokens
+        self.endTime = endTime
+        self.projectedTotalTokens = projectedTotalTokens
+        self.remainingMinutes = remainingMinutes
+        self.modelCount = modelCount
+    }
+}
+
+public struct ClaudeUsageBlocksSummary: Codable, Equatable, Sendable {
+    public let activeBlock: ClaudeUsageBlock?
+    public let completedBlockTokenLimitEstimate: Int?
+
+    public init(activeBlock: ClaudeUsageBlock?, completedBlockTokenLimitEstimate: Int?) {
+        self.activeBlock = activeBlock
+        self.completedBlockTokenLimitEstimate = completedBlockTokenLimitEstimate
+    }
+}
+
+public enum ClaudeUsageBlocksParser {
+    public static func summary(from data: Data) throws -> ClaudeUsageBlocksSummary {
+        let payload = try JSONDecoder.contextPanelFlexibleDates.decode(ClaudeUsageBlocksPayload.self, from: data)
+        let active = payload.blocks.first { $0.isActive }?.usageBlock
+        let completedTokens = payload.blocks
+            .filter { !$0.isActive }
+            .compactMap(\.totalTokens)
+            .filter { $0 > 0 }
+            .sorted()
+        let estimate = completedTokens.isEmpty ? nil : completedTokens[Int(Double(completedTokens.count - 1) * 0.95)]
+        return ClaudeUsageBlocksSummary(activeBlock: active, completedBlockTokenLimitEstimate: estimate)
+    }
+}
+
 public struct ClaudeSubscriptionRateLimitWindow: Codable, Equatable, Sendable {
     public let label: String
     public let usedPercent: Double
@@ -125,13 +174,15 @@ public struct ClaudeAccountConfiguration: Equatable, Sendable {
     public let statsPath: String
     public let rateLimitSnapshotPath: String
     public let rateLimitSnapshotMaximumAge: TimeInterval
+    public let usageBlocksPath: String?
 
     public init(
         accountName: String = "Claude",
         claudeBinary: String = "claude",
         statsPath: String? = nil,
         rateLimitSnapshotPath: String? = nil,
-        rateLimitSnapshotMaximumAge: TimeInterval = 30 * 60
+        rateLimitSnapshotMaximumAge: TimeInterval = 30 * 60,
+        usageBlocksPath: String? = nil
     ) {
         self.accountName = accountName
         self.claudeBinary = claudeBinary
@@ -140,6 +191,8 @@ public struct ClaudeAccountConfiguration: Equatable, Sendable {
         self.rateLimitSnapshotPath = rateLimitSnapshotPath
             ?? "\(home)/Library/Application Support/Context Panel/ClaudeRateLimits/statusline-cache.json"
         self.rateLimitSnapshotMaximumAge = rateLimitSnapshotMaximumAge
+        self.usageBlocksPath = usageBlocksPath
+            ?? "\(home)/Library/Application Support/Context Panel/ClaudeRateLimits/ccusage-blocks-cache.json"
     }
 }
 
@@ -184,11 +237,13 @@ public struct ClaudeLocalStatusConnector: ProviderConnector {
             let statsSummary = try loadStatsSummary(path: account.statsPath)
             let rateLimitSnapshot = try loadRateLimitSnapshot(path: account.rateLimitSnapshotPath)
                 ?? statsSummary?.rateLimitSnapshot
+            let usageBlocksSummary = try loadUsageBlocksSummary(path: account.usageBlocksPath)
             let limits = claudeLocalStatusLimits(
                 authStatus: authStatus,
                 statsSummary: statsSummary,
                 rateLimitSnapshot: rateLimitSnapshot,
                 rateLimitSnapshotMaximumAge: account.rateLimitSnapshotMaximumAge,
+                usageBlocksSummary: usageBlocksSummary,
                 accountID: localAccountID,
                 accountName: account.accountName,
                 observedAt: now
@@ -232,6 +287,11 @@ public struct ClaudeLocalStatusConnector: ProviderConnector {
         guard fileExists(path) else { return nil }
         return try ClaudeSubscriptionRateLimitCacheParser.snapshot(from: try fileLoader(path))
     }
+
+    private func loadUsageBlocksSummary(path: String?) throws -> ClaudeUsageBlocksSummary? {
+        guard let path, fileExists(path) else { return nil }
+        return try ClaudeUsageBlocksParser.summary(from: try fileLoader(path))
+    }
 }
 
 public func claudeLocalStatusLimits(
@@ -239,10 +299,21 @@ public func claudeLocalStatusLimits(
     statsSummary: ClaudeStatsCacheSummary?,
     rateLimitSnapshot: ClaudeSubscriptionRateLimitSnapshot? = nil,
     rateLimitSnapshotMaximumAge: TimeInterval = 30 * 60,
+    usageBlocksSummary: ClaudeUsageBlocksSummary? = nil,
     accountID: String,
     accountName: String,
     observedAt: Date
 ) -> [UsageLimit] {
+    if let estimatedLimit = claudeUsageBlockEstimate(
+        usageBlocksSummary: usageBlocksSummary,
+        authStatus: authStatus,
+        accountID: accountID,
+        accountName: accountName,
+        observedAt: observedAt
+    ) {
+        return [estimatedLimit]
+    }
+
     if authStatus.loggedIn, let rateLimitSnapshot, !rateLimitSnapshot.windows.isEmpty {
         let isStale = observedAt.timeIntervalSince(rateLimitSnapshot.observedAt) > rateLimitSnapshotMaximumAge
         let sourceNote = isStale ? "source: stale Claude Code statusline" : "source: Claude Code statusline"
@@ -294,6 +365,56 @@ public func claudeLocalStatusLimits(
         statusOverride: authStatus.loggedIn ? .unknown : .failure,
         note: noteParts.joined(separator: "; ")
     )]
+}
+
+private func claudeUsageBlockEstimate(
+    usageBlocksSummary: ClaudeUsageBlocksSummary?,
+    authStatus: ClaudeAuthStatus,
+    accountID: String,
+    accountName: String,
+    observedAt: Date
+) -> UsageLimit? {
+    guard
+        authStatus.loggedIn,
+        let activeBlock = usageBlocksSummary?.activeBlock,
+        activeBlock.isActive,
+        let totalTokens = activeBlock.totalTokens,
+        totalTokens > 0
+    else { return nil }
+
+    let estimatedLimit = usageBlocksSummary?.completedBlockTokenLimitEstimate
+        ?? activeBlock.projectedTotalTokens
+    let used: Int?
+    let limit: Int?
+    if let estimatedLimit, estimatedLimit > 0 {
+        used = min(totalTokens, estimatedLimit)
+        limit = estimatedLimit
+    } else {
+        used = nil
+        limit = nil
+    }
+
+    let resetsAt = activeBlock.remainingMinutes.map {
+        observedAt.addingTimeInterval(TimeInterval($0 * 60))
+    } ?? activeBlock.endTime
+    let modelMode = activeBlock.modelCount > 1 ? "mixed models" : "single model"
+
+    return UsageLimit(
+        provider: .anthropic,
+        accountID: accountID,
+        accountName: accountName,
+        label: "Claude 5-hour estimate",
+        windowLabel: "5-hour estimated",
+        modelLabel: authStatus.subscriptionDisplayName,
+        unit: .tokens,
+        used: used,
+        limit: limit,
+        resetsAt: resetsAt,
+        lastUpdatedAt: observedAt,
+        confidence: .estimated,
+        statusOverride: limit == nil ? .unknown : nil,
+        note: "source: ccusage local block estimate from Every Code/Claude sessions; \(modelMode); official subscription percentage unavailable in claude -p"
+    )
 }
 
 private struct ClaudeStatuslineRateLimitPayload: Decodable {
@@ -373,6 +494,34 @@ private struct ClaudeStatsCachePayload: Decodable {
         case firstSessionDate
         case rateLimits = "rate_limits"
     }
+}
+
+private struct ClaudeUsageBlocksPayload: Decodable {
+    let blocks: [ClaudeUsageBlockPayload]
+}
+
+private struct ClaudeUsageBlockPayload: Decodable {
+    let isActive: Bool
+    let totalTokens: Int?
+    let endTime: Date?
+    let projection: ClaudeUsageBlockProjection?
+    let models: [String]?
+
+    var usageBlock: ClaudeUsageBlock {
+        ClaudeUsageBlock(
+            isActive: isActive,
+            totalTokens: totalTokens,
+            endTime: endTime,
+            projectedTotalTokens: projection?.totalTokens,
+            remainingMinutes: projection?.remainingMinutes,
+            modelCount: models?.filter { $0 != "<synthetic>" }.count ?? 0
+        )
+    }
+}
+
+private struct ClaudeUsageBlockProjection: Decodable {
+    let totalTokens: Int?
+    let remainingMinutes: Int?
 }
 
 private enum ClaudeCountedCollection: Decodable {

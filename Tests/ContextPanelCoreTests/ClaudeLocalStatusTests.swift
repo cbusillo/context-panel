@@ -96,6 +96,32 @@ import Testing
     #expect(summary.rateLimitSnapshot?.windows.map { Int($0.usedPercent.rounded()) } == [42, 52])
 }
 
+@Test func claudeUsageBlocksParserSummarizesActiveBlockAndLimitEstimate() throws {
+    let json = #"""
+    {
+      "blocks": [
+        { "isActive": false, "totalTokens": 1000 },
+        { "isActive": false, "totalTokens": 2000 },
+        {
+          "isActive": true,
+          "totalTokens": 500,
+          "endTime": "2026-05-06T23:00:00Z",
+          "projection": { "totalTokens": 1200, "remainingMinutes": 45 },
+          "models": ["claude-sonnet-4-6", "<synthetic>"]
+        }
+      ]
+    }
+    """#
+
+    let summary = try ClaudeUsageBlocksParser.summary(from: Data(json.utf8))
+
+    #expect(summary.activeBlock?.totalTokens == 500)
+    #expect(summary.activeBlock?.projectedTotalTokens == 1200)
+    #expect(summary.activeBlock?.remainingMinutes == 45)
+    #expect(summary.activeBlock?.modelCount == 1)
+    #expect(summary.completedBlockTokenLimitEstimate == 1000)
+}
+
 @Test func claudeLocalStatusLimitMakesUnknownAllowanceExplicit() {
     let limit = claudeLocalStatusLimits(
         authStatus: ClaudeAuthStatus(
@@ -176,4 +202,43 @@ import Testing
     #expect(limits.map(\.modelLabel) == ["Claude Pro", "Claude Pro"])
     #expect(limits.map(\.used) == [42, 52])
     #expect(limits.allSatisfy { $0.unit == .percent && $0.limit == 100 && $0.confidence == .observed })
+}
+
+@Test func claudeLocalStatusLimitsUsesEveryCodeEstimateWhenAvailable() {
+    let limits = claudeLocalStatusLimits(
+        authStatus: ClaudeAuthStatus(
+            loggedIn: true,
+            authMethod: "claude.ai",
+            apiProvider: "firstParty",
+            subscriptionType: "pro"
+        ),
+        statsSummary: nil,
+        rateLimitSnapshot: ClaudeSubscriptionRateLimitSnapshot(
+            observedAt: Date(timeIntervalSince1970: 10),
+            windows: [ClaudeSubscriptionRateLimitWindow(label: "5-hour", usedPercent: 4, resetsAt: nil)]
+        ),
+        usageBlocksSummary: ClaudeUsageBlocksSummary(
+            activeBlock: ClaudeUsageBlock(
+                isActive: true,
+                totalTokens: 500,
+                endTime: Date(timeIntervalSince1970: 9_000),
+                projectedTotalTokens: 1_200,
+                remainingMinutes: 45,
+                modelCount: 2
+            ),
+            completedBlockTokenLimitEstimate: 1_000
+        ),
+        accountID: "local",
+        accountName: "Claude",
+        observedAt: Date(timeIntervalSince1970: 1_000)
+    )
+
+    #expect(limits.count == 1)
+    #expect(limits[0].label == "Claude 5-hour estimate")
+    #expect(limits[0].unit == .tokens)
+    #expect(limits[0].used == 500)
+    #expect(limits[0].limit == 1_000)
+    #expect(limits[0].confidence == .estimated)
+    #expect(limits[0].resetsAt == Date(timeIntervalSince1970: 3_700))
+    #expect(limits[0].note?.contains("official subscription percentage unavailable") == true)
 }

@@ -89,6 +89,10 @@ The helper does not store auth tokens, prompts, transcript contents, emails,
 organization IDs, or raw Claude session JSON. Claude Code's non-interactive
 `claude -p` path does not appear to run the status-line hook, so Context Panel
 marks old Claude subscription readings stale instead of treating them as live.
+For Every Code-driven Claude usage, Context Panel also reads `ccusage` aggregate
+block output when available and shows a clearly marked estimated 5-hour token
+window; that estimate is useful for "am I likely to run out soon?" but is not
+Anthropic's official subscription percentage.
 
 For Gemini, use the OAuth client values from the locally installed Gemini CLI;
 they are intentionally not checked into this repository.
