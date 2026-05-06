@@ -62,6 +62,7 @@ swift run CodexRateLimitProbe --auth ~/.codex/auth.json
 GEMINI_OAUTH_CLIENT_ID=... GEMINI_OAUTH_CLIENT_SECRET=... \
   swift run GeminiQuotaProbe --auth ~/.gemini/oauth_creds.json
 swift run ClaudeLimitProbe
+swift run SnapshotStoreProbe --codex-auth ~/.codex/auth.json --include-claude
 ```
 
 The Codex and Gemini probes can return live percent-window quota buckets for
@@ -75,3 +76,5 @@ they are intentionally not checked into this repository.
 
 The probes call the same `ContextPanelCore` connectors the app will use, so
 passing probe output is also a smoke test for the production connector runtime.
+`SnapshotStoreProbe` additionally writes and reloads the local JSON cache shape
+that the app and widget will consume.

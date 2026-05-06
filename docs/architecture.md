@@ -42,6 +42,18 @@ persist or print tokens, account IDs, project IDs, organization IDs, emails,
 headers, or raw response bodies. Errors should mention status and operation but
 not provider response content.
 
+## Snapshot Store
+
+The MVP cache is a local JSON store. It writes one current snapshot file plus a
+history directory of timestamped snapshots. The schema is intentionally simple:
+`StoredUsageSnapshot` includes a schema version, save time, normalized
+`UsageSnapshot`, and redacted provider refresh reports.
+
+The widget should read `current-snapshot.json` and apply a staleness policy. It
+must not read provider credential files or make provider network calls. The app
+owns connector refreshes, account setup, diagnostics, and future migration from
+JSON to a richer store if history queries become more complex.
+
 Widget interactions should keep the widget simple. Tapping the widget should
 open the app to the relevant provider or account detail; mutation and setup stay
 inside the app.
