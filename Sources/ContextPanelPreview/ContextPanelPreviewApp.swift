@@ -682,8 +682,8 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     init() {
-        store = JSONSnapshotStore(rootDirectory: Self.defaultStoreDirectory())
-        accountStore = AccountConfigurationStore(configurationURL: Self.defaultConfigurationURL())
+        store = JSONSnapshotStore(rootDirectory: ContextPanelLocations.snapshotDirectory())
+        accountStore = AccountConfigurationStore(configurationURL: ContextPanelLocations.accountConfigurationURL())
     }
 
     func loadSnapshot() {
@@ -726,21 +726,6 @@ final class ContextPanelAppModel: ObservableObject {
         return "\(hours / 24)d ago"
     }
 
-    private static func defaultStoreDirectory() -> URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support")
-        return base
-            .appending(path: "Context Panel", directoryHint: .isDirectory)
-            .appending(path: "Snapshots", directoryHint: .isDirectory)
-    }
-
-    private static func defaultConfigurationURL() -> URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support")
-        return base
-            .appending(path: "Context Panel", directoryHint: .isDirectory)
-            .appending(path: "accounts.json")
-    }
 }
 
 struct CapacityDial: View {
@@ -1027,11 +1012,6 @@ extension UsageLimit {
 
 extension [UsageStatus] {
     var worstStatus: UsageStatus {
-        if contains(.limited) { return .limited }
-        if contains(.failure) { return .failure }
-        if contains(.close) { return .close }
-        if contains(.stale) { return .stale }
-        if contains(.unknown) { return .unknown }
-        return .healthy
+        contextPanelWorstStatus
     }
 }

@@ -54,6 +54,10 @@ must not read provider credential files or make provider network calls. The app
 owns connector refreshes, account setup, diagnostics, and future migration from
 JSON to a richer store if history queries become more complex.
 
+The WidgetKit implementation uses a `WidgetSnapshot` projection from the stored
+snapshot. That projection owns setup-needed, stale, failure, provider-summary,
+and most-constrained row selection so the widget view stays read-only and small.
+
 ## Account Configuration
 
 The MVP account configuration is also local JSON. It stores account labels,

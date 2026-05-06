@@ -35,6 +35,10 @@ let package = Package(
         .executable(
             name: "SnapshotStoreProbe",
             targets: ["SnapshotStoreProbe"]
+        ),
+        .executable(
+            name: "ContextPanelWidget",
+            targets: ["ContextPanelWidget"]
         )
     ],
     targets: [
@@ -61,6 +65,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "SnapshotStoreProbe",
+            dependencies: ["ContextPanelCore"]
+        ),
+        .executableTarget(
+            name: "ContextPanelWidget",
             dependencies: ["ContextPanelCore"]
         ),
         .testTarget(
