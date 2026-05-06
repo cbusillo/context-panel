@@ -61,7 +61,12 @@ import Testing
         ),
     ])
 
-    let withoutGeminiEnvironment = AccountConnectorFactory.connectors(from: document, environment: [:])
+    let withoutGeminiEnvironment = AccountConnectorFactory.connectors(
+        from: document,
+        environment: [:],
+        geminiMetadataFileLoader: { _ in "" },
+        geminiMetadataFileExists: { _ in false }
+    )
     let withGeminiEnvironment = AccountConnectorFactory.connectors(from: document, environment: [
         "GEMINI_ID": "client",
         "GEMINI_SECRET": "secret",
@@ -71,6 +76,32 @@ import Testing
     #expect(withoutGeminiEnvironment[0].provider == .openAI)
     #expect(withGeminiEnvironment.count == 2)
     #expect(Set(withGeminiEnvironment.map(\.provider)) == [.openAI, .google])
+}
+
+@Test func accountConnectorFactoryCanDiscoverGeminiMetadataFromInstalledCLI() {
+    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
+        LocalProviderAccountConfiguration(
+            id: "gemini",
+            provider: .google,
+            connectorKind: .geminiCodeAssist,
+            displayName: "Gemini",
+            authPath: "/tmp/gemini.json"
+        )
+    ])
+
+    let source = #"""
+    var OAUTH_CLIENT_ID = "client-id.apps.googleusercontent.com";
+    var OAUTH_CLIENT_SECRET = "client-secret";
+    """#
+    let connectors = AccountConnectorFactory.connectors(
+        from: document,
+        environment: ["GEMINI_CLI_BUNDLE_PATH": "/tmp/gemini-bundle.js"],
+        geminiMetadataFileLoader: { _ in source },
+        geminiMetadataFileExists: { _ in true }
+    )
+
+    #expect(connectors.count == 1)
+    #expect(connectors[0].provider == .google)
 }
 
 @Test func accountConfigurationStoreReportsCorruptFilesAsFailure() throws {
@@ -91,4 +122,3 @@ private func temporaryDirectory() throws -> URL {
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     return url
 }
-

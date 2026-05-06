@@ -13,8 +13,7 @@ struct ProbeConfiguration {
         var authPath: String?
         var tokenEndpoint = URL(string: "https://oauth2.googleapis.com/token")!
         var codeAssistEndpoint = URL(string: "https://cloudcode-pa.googleapis.com/v1internal")!
-        var clientID = ProcessInfo.processInfo.environment["GEMINI_OAUTH_CLIENT_ID"]
-        var clientSecret = ProcessInfo.processInfo.environment["GEMINI_OAUTH_CLIENT_SECRET"]
+        var metadata = GeminiOAuthClientMetadataDiscovery.discover()
         var iterator = arguments.dropFirst().makeIterator()
 
         while let argument = iterator.next() {
@@ -38,12 +37,18 @@ struct ProbeConfiguration {
                 guard let value = iterator.next(), !value.isEmpty else {
                     throw GeminiProbeError(message: "--client-id requires a value")
                 }
-                clientID = value
+                metadata = GeminiOAuthClientMetadata(
+                    clientID: value,
+                    clientSecret: metadata?.clientSecret ?? ""
+                )
             case "--client-secret":
                 guard let value = iterator.next(), !value.isEmpty else {
                     throw GeminiProbeError(message: "--client-secret requires a value")
                 }
-                clientSecret = value
+                metadata = GeminiOAuthClientMetadata(
+                    clientID: metadata?.clientID ?? "",
+                    clientSecret: value
+                )
             case "--help", "-h":
                 printHelp()
                 Foundation.exit(0)
@@ -52,19 +57,16 @@ struct ProbeConfiguration {
             }
         }
 
-        guard let clientID, !clientID.isEmpty else {
-            throw GeminiProbeError(message: "set GEMINI_OAUTH_CLIENT_ID or pass --client-id")
-        }
-        guard let clientSecret, !clientSecret.isEmpty else {
-            throw GeminiProbeError(message: "set GEMINI_OAUTH_CLIENT_SECRET or pass --client-secret")
+        guard let metadata, !metadata.clientID.isEmpty, !metadata.clientSecret.isEmpty else {
+            throw GeminiProbeError(message: "install Gemini CLI, set GEMINI_OAUTH_CLIENT_ID/SECRET, or pass --client-id/--client-secret")
         }
 
         return ProbeConfiguration(account: GeminiAccountConfiguration(
             authPath: authPath ?? defaultAuthPath(),
             tokenEndpoint: tokenEndpoint,
             codeAssistEndpoint: codeAssistEndpoint,
-            clientID: clientID,
-            clientSecret: clientSecret
+            clientID: metadata.clientID,
+            clientSecret: metadata.clientSecret
         ))
     }
 
@@ -79,9 +81,10 @@ struct ProbeConfiguration {
         print("""
         Usage: swift run GeminiQuotaProbe [--auth /path/to/oauth_creds.json]
 
-        Requires GEMINI_OAUTH_CLIENT_ID and GEMINI_OAUTH_CLIENT_SECRET, or the
-        equivalent --client-id and --client-secret flags. Use values from the
-        locally installed Gemini CLI; do not commit them to this repository.
+        Uses the locally installed Gemini CLI OAuth client metadata when
+        available. You can also set GEMINI_OAUTH_CLIENT_ID and
+        GEMINI_OAUTH_CLIENT_SECRET, or pass --client-id and --client-secret.
+        Do not commit OAuth client values to this repository.
 
         Uses the production Gemini Code Assist connector and prints only a
         redacted quota summary. Tokens, account identifiers, project IDs,

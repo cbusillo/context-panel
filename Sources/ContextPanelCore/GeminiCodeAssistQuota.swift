@@ -116,6 +116,74 @@ public struct GeminiAccountConfiguration: Equatable, Sendable {
     }
 }
 
+public struct GeminiOAuthClientMetadata: Equatable, Sendable {
+    public let clientID: String
+    public let clientSecret: String
+
+    public init(clientID: String, clientSecret: String) {
+        self.clientID = clientID
+        self.clientSecret = clientSecret
+    }
+}
+
+public enum GeminiOAuthClientMetadataDiscovery {
+    public static func discover(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        fileLoader: @escaping @Sendable (String) throws -> String = { path in
+            try String(contentsOfFile: NSString(string: path).expandingTildeInPath, encoding: .utf8)
+        },
+        fileExists: @escaping @Sendable (String) -> Bool = { path in
+            FileManager.default.fileExists(atPath: NSString(string: path).expandingTildeInPath)
+        }
+    ) -> GeminiOAuthClientMetadata? {
+        if
+            let clientID = environment["GEMINI_OAUTH_CLIENT_ID"], !clientID.isEmpty,
+            let clientSecret = environment["GEMINI_OAUTH_CLIENT_SECRET"], !clientSecret.isEmpty
+        {
+            return GeminiOAuthClientMetadata(clientID: clientID, clientSecret: clientSecret)
+        }
+
+        for path in candidateBundlePaths(environment: environment) where fileExists(path) {
+            guard
+                let source = try? fileLoader(path),
+                let metadata = parseClientMetadata(from: source)
+            else { continue }
+            return metadata
+        }
+        return nil
+    }
+
+    static func parseClientMetadata(from source: String) -> GeminiOAuthClientMetadata? {
+        guard
+            let clientID = stringLiteral(named: "OAUTH_CLIENT_ID", in: source),
+            let clientSecret = stringLiteral(named: "OAUTH_CLIENT_SECRET", in: source)
+        else { return nil }
+        return GeminiOAuthClientMetadata(clientID: clientID, clientSecret: clientSecret)
+    }
+
+    private static func stringLiteral(named variableName: String, in source: String) -> String? {
+        let pattern = #"var\s+\#(variableName)\s*=\s*\"([^\"]+)\""#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(source.startIndex..<source.endIndex, in: source)
+        guard
+            let match = regex.firstMatch(in: source, range: range),
+            match.numberOfRanges >= 2,
+            let valueRange = Range(match.range(at: 1), in: source)
+        else { return nil }
+        return String(source[valueRange])
+    }
+
+    private static func candidateBundlePaths(environment: [String: String]) -> [String] {
+        var paths: [String] = []
+        if let path = environment["GEMINI_CLI_BUNDLE_PATH"], !path.isEmpty {
+            paths.append(path)
+        }
+        paths.append("/opt/homebrew/lib/node_modules/@google/gemini-cli/bundle/chunk-GDRLBWZL.js")
+        paths.append("/usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-GDRLBWZL.js")
+        return paths
+    }
+}
+
 public struct GeminiCodeAssistConnector: ProviderConnector {
     public let provider: Provider = .google
 

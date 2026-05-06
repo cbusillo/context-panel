@@ -46,3 +46,28 @@ import Testing
 
     #expect(buckets.isEmpty)
 }
+
+@Test func geminiOAuthClientMetadataDiscoveryParsesInstalledCLIBundleShape() {
+    let source = #"""
+    var OAUTH_CLIENT_ID = "client-id.apps.googleusercontent.com";
+    var OAUTH_CLIENT_SECRET = "client-secret";
+    """#
+
+    let metadata = GeminiOAuthClientMetadataDiscovery.parseClientMetadata(from: source)
+
+    #expect(metadata?.clientID == "client-id.apps.googleusercontent.com")
+    #expect(metadata?.clientSecret == "client-secret")
+}
+
+@Test func geminiOAuthClientMetadataDiscoveryPrefersEnvironmentValues() {
+    let metadata = GeminiOAuthClientMetadataDiscovery.discover(
+        environment: [
+            "GEMINI_OAUTH_CLIENT_ID": "env-client",
+            "GEMINI_OAUTH_CLIENT_SECRET": "env-secret",
+        ],
+        fileLoader: { _ in "" },
+        fileExists: { _ in false }
+    )
+
+    #expect(metadata == GeminiOAuthClientMetadata(clientID: "env-client", clientSecret: "env-secret"))
+}

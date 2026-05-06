@@ -152,7 +152,13 @@ public struct AccountConfigurationStore: Sendable {
 public enum AccountConnectorFactory {
     public static func connectors(
         from document: AccountConfigurationDocument,
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        geminiMetadataFileLoader: @escaping @Sendable (String) throws -> String = { path in
+            try String(contentsOfFile: NSString(string: path).expandingTildeInPath, encoding: .utf8)
+        },
+        geminiMetadataFileExists: @escaping @Sendable (String) -> Bool = { path in
+            FileManager.default.fileExists(atPath: NSString(string: path).expandingTildeInPath)
+        }
     ) -> [any ProviderConnector] {
         document.accounts.compactMap { account in
             guard account.isEnabled else { return nil }
@@ -164,20 +170,19 @@ public enum AccountConnectorFactory {
                     accountName: account.displayName
                 )])
             case .geminiCodeAssist:
-                guard
-                    let authPath = account.authPath,
-                    let clientIDName = account.oauthClientIDEnvironmentName,
-                    let clientSecretName = account.oauthClientSecretEnvironmentName,
-                    let clientID = environment[clientIDName],
-                    let clientSecret = environment[clientSecretName]
-                else {
-                    return nil
-                }
+                guard let authPath = account.authPath else { return nil }
+                let configuredMetadata = geminiMetadata(account: account, environment: environment)
+                let discoveredMetadata = GeminiOAuthClientMetadataDiscovery.discover(
+                    environment: environment,
+                    fileLoader: geminiMetadataFileLoader,
+                    fileExists: geminiMetadataFileExists
+                )
+                guard let metadata = configuredMetadata ?? discoveredMetadata else { return nil }
                 return GeminiCodeAssistConnector(accounts: [GeminiAccountConfiguration(
                     authPath: authPath,
                     accountName: account.displayName,
-                    clientID: clientID,
-                    clientSecret: clientSecret
+                    clientID: metadata.clientID,
+                    clientSecret: metadata.clientSecret
                 )])
             case .claudeLocalStatus:
                 return ClaudeLocalStatusConnector(accounts: [ClaudeAccountConfiguration(
@@ -188,5 +193,17 @@ public enum AccountConnectorFactory {
             }
         }
     }
-}
 
+    private static func geminiMetadata(
+        account: LocalProviderAccountConfiguration,
+        environment: [String: String]
+    ) -> GeminiOAuthClientMetadata? {
+        guard
+            let clientIDName = account.oauthClientIDEnvironmentName,
+            let clientSecretName = account.oauthClientSecretEnvironmentName,
+            let clientID = environment[clientIDName], !clientID.isEmpty,
+            let clientSecret = environment[clientSecretName], !clientSecret.isEmpty
+        else { return nil }
+        return GeminiOAuthClientMetadata(clientID: clientID, clientSecret: clientSecret)
+    }
+}

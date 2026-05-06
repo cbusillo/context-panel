@@ -9,12 +9,14 @@ struct SnapshotStoreProbeError: LocalizedError {
 
 struct ProbeConfiguration {
     let outputDirectory: URL
-    let codexAuthPath: String?
+    let codexAccounts: [CodexAccountConfiguration]
+    let includeConfiguredAccounts: Bool
     let includeClaude: Bool
 
     static func fromArguments(_ arguments: [String]) throws -> ProbeConfiguration {
         var outputDirectory: URL?
-        var codexAuthPath: String?
+        var codexAccounts: [CodexAccountConfiguration] = []
+        var includeConfiguredAccounts = false
         var includeClaude = false
         var iterator = arguments.dropFirst().makeIterator()
 
@@ -29,7 +31,14 @@ struct ProbeConfiguration {
                 guard let value = iterator.next() else {
                     throw SnapshotStoreProbeError(message: "--codex-auth requires a path")
                 }
-                codexAuthPath = value
+                codexAccounts.append(CodexAccountConfiguration(authPath: value))
+            case "--codex-account":
+                guard let value = iterator.next() else {
+                    throw SnapshotStoreProbeError(message: "--codex-account requires label=path")
+                }
+                codexAccounts.append(try parseCodexAccount(value))
+            case "--configured-accounts":
+                includeConfiguredAccounts = true
             case "--include-claude":
                 includeClaude = true
             case "--help", "-h":
@@ -42,9 +51,18 @@ struct ProbeConfiguration {
 
         return ProbeConfiguration(
             outputDirectory: outputDirectory ?? defaultOutputDirectory(),
-            codexAuthPath: codexAuthPath,
+            codexAccounts: codexAccounts,
+            includeConfiguredAccounts: includeConfiguredAccounts,
             includeClaude: includeClaude
         )
+    }
+
+    private static func parseCodexAccount(_ value: String) throws -> CodexAccountConfiguration {
+        let parts = value.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty else {
+            throw SnapshotStoreProbeError(message: "--codex-account requires label=path")
+        }
+        return CodexAccountConfiguration(authPath: String(parts[1]), accountName: String(parts[0]))
     }
 
     private static func defaultOutputDirectory() -> URL {
@@ -54,7 +72,7 @@ struct ProbeConfiguration {
 
     private static func printHelp() {
         print("""
-        Usage: swift run SnapshotStoreProbe [--output /tmp/context-panel-store] [--codex-auth ~/.codex/auth.json] [--include-claude]
+        Usage: swift run SnapshotStoreProbe [--output /tmp/context-panel-store] [--configured-accounts] [--codex-account Label=~/.codex/auth.json] [--include-claude]
 
         Refreshes selected local connectors, writes the normalized snapshot to
         the JSON snapshot store, then reloads it. The store contains normalized
@@ -93,11 +111,14 @@ struct SnapshotStoreProbe {
     }
 
     private static func makeConnectors(configuration: ProbeConfiguration) -> [any ProviderConnector] {
+        if configuration.includeConfiguredAccounts {
+            let store = AccountConfigurationStore(configurationURL: ContextPanelLocations.accountConfigurationURL())
+            return AccountConnectorFactory.connectors(from: store.load().document)
+        }
+
         var connectors: [any ProviderConnector] = []
-        if let codexAuthPath = configuration.codexAuthPath {
-            connectors.append(CodexRateLimitConnector(accounts: [
-                CodexAccountConfiguration(authPath: codexAuthPath)
-            ]))
+        if !configuration.codexAccounts.isEmpty {
+            connectors.append(CodexRateLimitConnector(accounts: configuration.codexAccounts))
         }
         if configuration.includeClaude {
             connectors.append(ClaudeLocalStatusConnector(accounts: [ClaudeAccountConfiguration()]))
@@ -105,4 +126,3 @@ struct SnapshotStoreProbe {
         return connectors
     }
 }
-
