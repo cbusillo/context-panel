@@ -221,6 +221,15 @@ a user-visible embedded web session and records only sanitized fields such as
 `five_hour`, `seven_day`, `used_percentage`, `remaining_percentage`,
 `utilization`, and `resets_at`.
 
+The local `ClaudeWebUsageProbe` executable implements that path. It opens
+Claude's usage page in a visible WebKit session, lets the user complete login or
+Cloudflare verification normally, observes only `/api/organizations/*/usage`
+responses, and reduces the page response to whitelisted usage windows before
+Swift receives anything. Saving from the probe writes normalized percent/reset
+rows to Context Panel's snapshot store; it does not persist cookies,
+authorization headers, tokens, local storage, account UUIDs, organization UUIDs,
+emails, or raw response bodies.
+
 No safe persisted local Claude Desktop file/cache containing official
 subscription percentages was found. The remaining research target is an
 explicit, privacy-safe metadata capture path for Every Code/non-interactive
