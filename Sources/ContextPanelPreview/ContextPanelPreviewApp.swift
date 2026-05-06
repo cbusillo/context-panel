@@ -176,7 +176,7 @@ struct HeaderCard: View {
                 Text(snapshot.subheadline)
                     .font(.system(size: 13))
                     .foregroundStyle(CPTheme.secondaryText)
-                Text(SampleUsageData.fastModeForecast.copy)
+                Text(model.fastModeForecast.copy)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(CPTheme.accent)
                 HStack(spacing: 8) {
@@ -653,6 +653,22 @@ final class ContextPanelAppModel: ObservableObject {
 
     var currentSnapshot: UsageSnapshot {
         storedSnapshot?.snapshot ?? SampleUsageData.snapshot
+    }
+
+    var fastModeForecast: FastModePortfolioForecast {
+        let forecasts = currentSnapshot.limits
+            .filter { $0.provider == .openAI && $0.unit == .percent }
+            .map { limit in
+                FastModeForecast(input: FastModeForecastInput(
+                    limit: limit,
+                    now: Date(),
+                    standardBurnRate: BurnRate(mode: .standard, unitsPerHour: 2),
+                    fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 12),
+                    reserveUnits: 6,
+                    minimumSafeHours: 1
+                ))
+            }
+        return FastModePortfolioForecast(forecasts: forecasts)
     }
 
     var lastRefreshText: String {
