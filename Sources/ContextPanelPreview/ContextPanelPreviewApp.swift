@@ -5,42 +5,48 @@ import SwiftUI
 struct ContextPanelPreviewApp: App {
     var body: some Scene {
         WindowGroup {
-            AppRoot(snapshot: SampleUsageData.snapshot)
+            AppRoot()
                 .frame(minWidth: 1280, minHeight: 720)
         }
     }
 }
 
 struct AppRoot: View {
-    let snapshot: UsageSnapshot
+    @StateObject private var model = ContextPanelAppModel()
     @State private var selectedID: UsageLimit.ID?
+
+    private var snapshot: UsageSnapshot {
+        model.currentSnapshot
+    }
 
     private var selectedLimit: UsageLimit {
         if let selectedID, let match = snapshot.limits.first(where: { $0.id == selectedID }) {
             return match
         }
-        return snapshot.mostConstrainedLimits[0]
+        return snapshot.mostConstrainedLimits.first ?? SampleUsageData.snapshot.mostConstrainedLimits[0]
     }
 
     var body: some View {
         HStack(spacing: 0) {
-            AccountsSidebar(snapshot: snapshot, selectedID: $selectedID)
+            AccountsSidebar(model: model, snapshot: snapshot, selectedID: $selectedID)
                 .frame(width: 210)
             Divider()
-            InstrumentDashboard(snapshot: snapshot)
+            InstrumentDashboard(model: model, snapshot: snapshot)
                 .frame(minWidth: 740)
             Divider()
-            AccountDetail(limit: selectedLimit, generatedAt: snapshot.generatedAt)
+            AccountDetail(model: model, limit: selectedLimit, generatedAt: snapshot.generatedAt)
                 .frame(width: 320)
         }
         .tint(CPTheme.accent)
         .onAppear {
+            model.loadSnapshot()
             selectedID = selectedID ?? snapshot.mostConstrainedLimits.first?.id
         }
     }
 }
 
 struct AccountsSidebar: View {
+    @ObservedObject var model: ContextPanelAppModel
     let snapshot: UsageSnapshot
     @Binding var selectedID: UsageLimit.ID?
 
@@ -61,12 +67,22 @@ struct AccountsSidebar: View {
         }
         .navigationTitle("Context Panel")
         .safeAreaInset(edge: .bottom) {
-            Button {
-            } label: {
-                Label("Add Account", systemImage: "plus")
-                    .frame(maxWidth: .infinity)
+            VStack(spacing: 8) {
+                Button {
+                    Task { await model.refreshLocalConnectors() }
+                } label: {
+                    Label(model.isRefreshing ? "Refreshing" : "Refresh", systemImage: "arrow.clockwise")
+                        .frame(maxWidth: .infinity)
+                }
+                .disabled(model.isRefreshing)
+
+                Button {
+                } label: {
+                    Label("Add Account", systemImage: "plus")
+                        .frame(maxWidth: .infinity)
+                }
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.bordered)
             .controlSize(.large)
             .padding(12)
         }
@@ -83,11 +99,11 @@ struct ProviderSidebarRow: View {
             Text(provider.displayName)
                 .font(.system(size: 12, weight: .semibold))
                 .textCase(.uppercase)
-                .foregroundStyle(CPTheme.secondaryText)
+                .foregroundStyle(.secondary)
             Spacer()
             Text("\(limits.count)")
                 .font(.system(.caption, design: .monospaced, weight: .medium))
-                .foregroundStyle(CPTheme.tertiaryText)
+                .foregroundStyle(.tertiary)
         }
     }
 }
@@ -103,18 +119,19 @@ struct SidebarLimitRow: View {
                     .font(.system(size: 13, weight: .medium))
                 Text(limit.label)
                     .font(.system(size: 11))
-                    .foregroundStyle(CPTheme.tertiaryText)
+                    .foregroundStyle(.secondary)
             }
             Spacer()
             Text(limit.compactUsageText)
                 .font(.system(.caption2, design: .monospaced, weight: .medium))
-                .foregroundStyle(CPTheme.secondaryText)
+                .foregroundStyle(.secondary)
         }
         .padding(.vertical, 3)
     }
 }
 
 struct InstrumentDashboard: View {
+    @ObservedObject var model: ContextPanelAppModel
     let snapshot: UsageSnapshot
 
     private var constrained: [UsageLimit] {
@@ -124,7 +141,8 @@ struct InstrumentDashboard: View {
     var body: some View {
         ScrollView([.vertical, .horizontal]) {
             VStack(alignment: .leading, spacing: 18) {
-                HeaderCard(snapshot: snapshot)
+                HeaderCard(model: model, snapshot: snapshot)
+                SetupStatusStrip(model: model)
                 WidgetPreviewGrid(snapshot: snapshot)
                 SectionHeader(title: "Most Constrained", trailing: "\(snapshot.limits.count) accounts")
                 VStack(spacing: 10) {
@@ -144,6 +162,7 @@ struct InstrumentDashboard: View {
 }
 
 struct HeaderCard: View {
+    @ObservedObject var model: ContextPanelAppModel
     let snapshot: UsageSnapshot
 
     var body: some View {
@@ -163,7 +182,7 @@ struct HeaderCard: View {
                 HStack(spacing: 8) {
                     TagLabel("SwiftUI")
                     TagLabel("WidgetKit")
-                    TagLabel("Keychain-local")
+                    TagLabel(model.storeStatus.rawValue)
                 }
             }
             Spacer(minLength: 16)
@@ -180,6 +199,63 @@ struct HeaderCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(CPTheme.stroke(cornerRadius: 12))
         .shadow(color: .black.opacity(0.05), radius: 14, x: 0, y: 8)
+    }
+}
+
+struct SetupStatusStrip: View {
+    @ObservedObject var model: ContextPanelAppModel
+
+    var body: some View {
+        HStack(spacing: 12) {
+            SetupStatusItem(
+                title: "Snapshot cache",
+                value: model.storeStatus == .healthy ? "Ready" : model.storeStatus.rawValue,
+                status: model.storeStatus
+            )
+            SetupStatusItem(
+                title: "History",
+                value: "\(model.historyCount) entries",
+                status: model.historyCount > 0 ? .healthy : .unknown
+            )
+            SetupStatusItem(
+                title: "Last refresh",
+                value: model.lastRefreshText,
+                status: model.isRefreshing ? .loading : .healthy
+            )
+            Spacer(minLength: 12)
+            if let errorMessage = model.errorMessage {
+                Text(errorMessage)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(CPTheme.statusColor(.failure))
+                    .lineLimit(1)
+            }
+        }
+        .padding(14)
+        .background(CPTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(CPTheme.stroke(cornerRadius: 10))
+    }
+}
+
+struct SetupStatusItem: View {
+    let title: String
+    let value: String
+    let status: UsageStatus
+
+    var body: some View {
+        HStack(spacing: 8) {
+            StatusMark(status: status, size: 8)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(CPTheme.tertiaryText)
+                    .textCase(.uppercase)
+                Text(value)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(CPTheme.secondaryText)
+                    .lineLimit(1)
+            }
+        }
     }
 }
 
@@ -358,6 +434,7 @@ struct ProviderGroupGrid: View {
 }
 
 struct AccountDetail: View {
+    @ObservedObject var model: ContextPanelAppModel
     let limit: UsageLimit
     let generatedAt: Date
 
@@ -399,15 +476,21 @@ struct AccountDetail: View {
                     DetailRow(label: "Limit", value: limit.limit.map(String.init) ?? "unknown")
                     DetailRow(label: "Remaining", value: limit.remaining.map(String.init) ?? "unknown")
                     DetailRow(label: "Status", value: limit.status.rawValue)
-                    DetailRow(label: "Updated", value: "2m ago")
+                    DetailRow(label: "Updated", value: limit.lastUpdatedAt.map(model.relativeTime) ?? "unknown")
                 }
 
                 DetailCard(title: "Refresh history") {
                     Sparkline(values: [0.72, 0.68, 0.70, 0.64, 0.62, 0.58, 0.64])
                         .frame(height: 42)
-                    Text("Last good snapshot preserved for stale and failure states.")
+                    Text("\(model.historyCount) cached snapshots. Last good snapshot is preserved for stale and failure states.")
                         .font(.system(size: 12))
                         .foregroundStyle(CPTheme.secondaryText)
+                }
+
+                DetailCard(title: "Setup") {
+                    DetailRow(label: "Store", value: ConnectorRedactor.redactedPath(model.store.rootDirectory.path))
+                    DetailRow(label: "Codex", value: ConnectorRedactor.redactedPath(model.codexAuthPath))
+                    DetailRow(label: "Claude", value: "local status")
                 }
             }
             .padding(22)
@@ -420,8 +503,8 @@ struct AccountDetail: View {
         if limit.provider == .openAI, limit.label.contains("GPT-5") {
             return FastModeForecast(
                 input: FastModeForecastInput(
-                    limit: limit,
-                    now: SampleUsageData.referenceNow,
+                        limit: limit,
+                        now: model.now,
                     standardBurnRate: BurnRate(mode: .standard, unitsPerHour: 2),
                     fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 12),
                     reserveUnits: 6,
@@ -552,6 +635,81 @@ struct AccountRow: View {
                 CPTheme.stroke(cornerRadius: 8)
             }
         }
+    }
+}
+
+@MainActor
+final class ContextPanelAppModel: ObservableObject {
+    @Published private(set) var storedSnapshot: StoredUsageSnapshot?
+    @Published private(set) var storeStatus: UsageStatus = .unknown
+    @Published private(set) var historyCount: Int = 0
+    @Published private(set) var isRefreshing = false
+    @Published private(set) var errorMessage: String?
+    @Published private(set) var lastRefreshAt: Date?
+
+    let now = Date()
+    let store: JSONSnapshotStore
+    let codexAuthPath: String
+
+    var currentSnapshot: UsageSnapshot {
+        storedSnapshot?.snapshot ?? SampleUsageData.snapshot
+    }
+
+    var lastRefreshText: String {
+        lastRefreshAt.map(relativeTime) ?? "not yet"
+    }
+
+    init() {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        codexAuthPath = "\(home)/.codex/auth.json"
+        store = JSONSnapshotStore(rootDirectory: Self.defaultStoreDirectory())
+    }
+
+    func loadSnapshot() {
+        let result = store.loadCurrent(policy: SnapshotStoreStalenessPolicy(maximumAge: 15 * 60), now: Date())
+        storedSnapshot = result.snapshot
+        storeStatus = result.status
+        errorMessage = result.errorMessage
+        historyCount = store.loadHistory().count
+    }
+
+    func refreshLocalConnectors() async {
+        isRefreshing = true
+        defer { isRefreshing = false }
+
+        let connectors: [any ProviderConnector] = [
+            CodexRateLimitConnector(accounts: [CodexAccountConfiguration(authPath: codexAuthPath)]),
+            ClaudeLocalStatusConnector(accounts: [ClaudeAccountConfiguration()]),
+        ]
+        let refreshResult = await ProviderConnectorRuntime(connectors: connectors).refreshAll()
+        let savedAt = Date()
+
+        do {
+            try store.save(StoredUsageSnapshot(savedAt: savedAt, refreshResult: refreshResult))
+            lastRefreshAt = savedAt
+            loadSnapshot()
+        } catch {
+            storeStatus = .failure
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func relativeTime(_ date: Date) -> String {
+        let seconds = max(Int(Date().timeIntervalSince(date)), 0)
+        if seconds < 60 { return "just now" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(minutes)m ago" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours)h ago" }
+        return "\(hours / 24)d ago"
+    }
+
+    private static func defaultStoreDirectory() -> URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support")
+        return base
+            .appending(path: "Context Panel", directoryHint: .isDirectory)
+            .appending(path: "Snapshots", directoryHint: .isDirectory)
     }
 }
 
