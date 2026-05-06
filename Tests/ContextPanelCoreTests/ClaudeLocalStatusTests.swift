@@ -73,6 +73,29 @@ import Testing
     #expect(summary.modelUsageCount == 0)
 }
 
+@Test func claudeStatsCacheParserAcceptsRateLimitSnapshotWhenPresent() throws {
+    let json = #"""
+    {
+      "lastComputedDate": "2026-05-06T14:00:00Z",
+      "rate_limits": {
+        "five_hour": {
+          "used_percentage": 42.4,
+          "resets_at": 1788397200
+        },
+        "seven_day": {
+          "used_percentage": 51.6,
+          "resets_at": 1788984000
+        }
+      }
+    }
+    """#
+
+    let summary = try ClaudeStatsCacheParser.summary(from: Data(json.utf8))
+
+    #expect(summary.rateLimitSnapshot?.windows.map(\.label) == ["5-hour", "Weekly"])
+    #expect(summary.rateLimitSnapshot?.windows.map { Int($0.usedPercent.rounded()) } == [42, 52])
+}
+
 @Test func claudeLocalStatusLimitMakesUnknownAllowanceExplicit() {
     let limit = claudeLocalStatusLimits(
         authStatus: ClaudeAuthStatus(
@@ -92,4 +115,65 @@ import Testing
     #expect(limit.confidence == .observed)
     #expect(limit.status == .unknown)
     #expect(limit.note?.contains("allowance: not exposed by Claude Code") == true)
+}
+
+@Test func claudeStatuslineRateLimitCacheParsesSubscriptionWindows() throws {
+    let json = #"""
+    {
+      "observed_at": 1788379200,
+      "rate_limits": {
+        "five_hour": {
+          "used_percentage": 42.4,
+          "resets_at": 1788397200
+        },
+        "seven_day": {
+          "used_percentage": 51.6,
+          "resets_at": 1788984000
+        }
+      }
+    }
+    """#
+
+    let snapshot = try ClaudeSubscriptionRateLimitCacheParser.snapshot(from: Data(json.utf8))
+
+    #expect(ContextPanelDateFormatting.string(from: snapshot.observedAt) == "2026-09-02T20:00:00Z")
+    #expect(snapshot.windows.map(\.label) == ["5-hour", "Weekly"])
+    #expect(snapshot.windows.map { Int($0.usedPercent.rounded()) } == [42, 52])
+}
+
+@Test func claudeLocalStatusLimitsPrefersStatuslineSubscriptionWindows() {
+    let limits = claudeLocalStatusLimits(
+        authStatus: ClaudeAuthStatus(
+            loggedIn: true,
+            authMethod: "claude.ai",
+            apiProvider: "firstParty",
+            subscriptionType: "pro"
+        ),
+        statsSummary: nil,
+        rateLimitSnapshot: ClaudeSubscriptionRateLimitSnapshot(
+            observedAt: Date(timeIntervalSince1970: 10),
+            windows: [
+                ClaudeSubscriptionRateLimitWindow(
+                    label: "5-hour",
+                    usedPercent: 42.4,
+                    resetsAt: Date(timeIntervalSince1970: 100)
+                ),
+                ClaudeSubscriptionRateLimitWindow(
+                    label: "Weekly",
+                    usedPercent: 51.6,
+                    resetsAt: Date(timeIntervalSince1970: 200)
+                ),
+            ]
+        ),
+        accountID: "local",
+        accountName: "Claude",
+        observedAt: Date(timeIntervalSince1970: 0)
+    )
+
+    #expect(limits.count == 2)
+    #expect(limits.map(\.provider) == [.anthropic, .anthropic])
+    #expect(limits.map(\.windowLabel) == ["5-hour", "Weekly"])
+    #expect(limits.map(\.modelLabel) == ["Claude Pro", "Claude Pro"])
+    #expect(limits.map(\.used) == [42, 52])
+    #expect(limits.allSatisfy { $0.unit == .percent && $0.limit == 100 && $0.confidence == .observed })
 }

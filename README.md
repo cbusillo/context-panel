@@ -67,9 +67,26 @@ swift run SnapshotStoreProbe --codex-auth ~/.codex/auth.json --include-claude
 
 The Codex and Gemini probes can return live percent-window quota buckets for
 their respective CLI-backed accounts. The Claude probe intentionally reports
-only local auth/subscription metadata and local stats-cache freshness because a
-live personal subscription allowance is not exposed through a clean local signal
-yet.
+local auth/subscription metadata and local stats-cache freshness until a Claude
+Code status-line cache has been populated.
+
+To capture Claude subscription usage percentages, configure Claude Code's
+status line to call the helper in this repo. Claude Code sends the helper a JSON
+payload after session responses; the helper stores only five-hour and weekly
+used percentages plus reset timestamps under Context Panel's Application
+Support directory.
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "/absolute/path/to/context-panel/scripts/claude-statusline-cache.sh"
+  }
+}
+```
+
+The helper does not store auth tokens, prompts, transcript contents, emails,
+organization IDs, or raw Claude session JSON.
 
 For Gemini, use the OAuth client values from the locally installed Gemini CLI;
 they are intentionally not checked into this repository.

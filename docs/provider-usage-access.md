@@ -56,7 +56,7 @@ instead of pretending an estimate is exact.
 | OpenAI API organizations | Usage API, Costs API, and rate-limit headers. Usage can be grouped by project, user, API key, model, batch, and service tier depending on endpoint. | API rate limits expose remaining requests/tokens and reset headers; monthly usage limits are organization/project concerns. | One connected API organization/project per credential. Multiple credentials/accounts should be supported. | Support API org usage as an official adapter using admin or sufficiently privileged API keys. | High |
 | OpenAI ChatGPT accounts | No stable public API found for general personal ChatGPT subscription pressure outside Codex. Current product surfaces no longer present a simple message counter; the useful automated signal found so far is percent-used pressure for Codex/Fast Mode. | Weekly and short rolling reset windows matter. Codex/Fast Mode exposes live percent-used windows through the Codex backend usage endpoint. | Multiple ChatGPT accounts are core. Each account needs its own reset window, plan, mode, percent/token pressure, and local observation history. | For Codex/Fast Mode, use the live Codex usage endpoint. For non-Codex ChatGPT surfaces, keep manual/assisted observations and forecast confidence until a clean provider signal exists. | High for Codex percent windows; medium for visible reset clues; low for non-Codex automation |
 | Anthropic API organizations | Usage and Cost API can report message usage and costs by time bucket, model, workspace, API key, service tier, context window, geo, and beta fast-mode speed. API responses include rate-limit headers with remaining and reset values. | API rate limits use token bucket behavior; monthly spend limits exist by tier. | Organization/workspace/API-key credentials. Multiple organizations and workspaces should be supported. | Support official API usage/cost adapter. Capture fast-mode dimensions where available. | High |
-| Claude subscriptions and Claude Code seats | Public docs describe usage limits across Claude.ai, Claude Code, and Claude Desktop, but no stable public API for personal subscription allowance was found. Claude Code auth status exposes login method and subscription type; local stats cache exposes historical local usage only. | Pro/Max/Team usage has session-based reset behavior; Claude Code Enterprise seats show reset time when a limit is reached. Local cache does not expose live remaining allowance. | Multiple Claude accounts/seats are possible, but account connection should be conservative. | Support a local Claude status connector for account metadata and local activity freshness. Defer live subscription pressure unless a supported signal is found. Prioritize Anthropic API first for org/API usage. | Medium for auth/subscription metadata and local history; low for live subscription automation |
+| Claude subscriptions and Claude Code seats | Claude Code status-line JSON can include `rate_limits.five_hour` and `rate_limits.seven_day` for Claude.ai Pro and Max subscribers after a session receives an API response. Claude Code auth status exposes login method and subscription type; local stats cache exposes historical local usage only. | Status-line rate-limit windows include used percentage and reset epochs. Pro/Max/Team usage has session-based reset behavior. | Multiple Claude accounts/seats are possible, but account connection should be conservative. | Support a local Claude status connector for account metadata, local activity freshness, and optional status-line rate-limit cache. Do not read auth, Keychain, raw transcripts, prompts, or conversation JSONL. | High for status-line subscription windows when configured; medium for auth/subscription metadata and local history |
 | Google Gemini CLI / Code Assist | Gemini CLI OAuth credentials can be refreshed locally, then the Code Assist backend returns live quota buckets with model IDs, remaining fractions, optional remaining amounts, and reset times. | Quota buckets are percent-style remaining fractions per model with provider reset timestamps. | Google account plus Code Assist project is the natural boundary; multiple `GEMINI_CLI_HOME` roots can represent multiple logins. | Support a Gemini Code Assist live quota connector using Gemini CLI auth. Store only normalized percent pressure and reset times. | High for Gemini CLI/Code Assist buckets observed locally |
 | Google Gemini API / Google AI Studio projects | AI Studio and Cloud Billing show usage. Gemini API rate limits are project-scoped, not API-key-scoped. Service Usage API lists quota limits; Cloud Monitoring exposes quota usage metrics; Cloud Billing export to BigQuery provides detailed cost/usage data. | Rate limits are RPM, input TPM, and RPD, with model/tier variation. RPD quotas reset at midnight Pacific time. | Google project is the natural account boundary. Multiple Google accounts/projects should be supported. | Support Google API projects after OAuth/service-account design. Use Service Usage for limits, Cloud Monitoring for quota usage, and optional Billing export for cost history. | Medium-high, but setup is heavier |
 | Google consumer Gemini app subscriptions | No stable public API for personal Gemini app subscription allowance was found in this pass. | Provider UI likely remains source of truth. | Multiple Google accounts may matter, but automation risk is high. | Defer for v1 unless a supported API emerges. | Low |
@@ -181,30 +181,39 @@ On 2026-05-06 it returned seven live model buckets for the local Gemini CLI
 account, including Gemini 2.5 and Gemini 3 preview models, with percent
 remaining and reset timestamps.
 
-### Claude Local Status Connector
+### Claude Subscription Connector
 
-Claude currently has a weaker local connector story for subscription pressure.
+Claude subscription pressure should use Claude Code's supported status-line JSON
+surface, not Anthropic API organization usage. Claude Code's status-line input
+can contain `rate_limits.five_hour.used_percentage`,
+`rate_limits.five_hour.resets_at`, `rate_limits.seven_day.used_percentage`, and
+`rate_limits.seven_day.resets_at` for Claude.ai Pro and Max subscribers after a
+Claude Code session receives an API response.
+
 The official Claude Code authentication docs say macOS credentials are stored in
-the encrypted macOS Keychain. Context Panel should not read Keychain secrets or
+the encrypted macOS Keychain. Context Panel must not read Keychain secrets or
 try to extract subscription OAuth tokens.
 
 Preferred v1 connector scope:
 
 - Call `claude auth status --json` and keep only non-secret fields such as
   `loggedIn`, `authMethod`, `apiProvider`, and `subscriptionType`.
+- Offer a tiny status-line helper that receives Claude Code status-line JSON on
+  stdin and writes only observed timestamp, five-hour percentage/reset, and
+  weekly percentage/reset to a Context Panel cache file.
+- Read that sanitized status-line cache and normalize Claude five-hour and
+  weekly windows as percent limits when present.
 - Read `~/.claude/stats-cache.json` only as local historical activity, not live
   subscription allowance.
 - Summarize local stats by freshness and counts; do not read raw transcript
   JSONL files, prompts, account UUIDs, emails, organization IDs, or token blobs.
-- Show Claude subscription allowance as unknown unless a provider UI/runtime
-  state exposes a reset or limit banner that the user can confirm.
-- Prefer Anthropic's official Admin Usage, Cost, and Rate Limits APIs when the
-  user connects an organization/API credential with sufficient permission.
+- Show Claude subscription allowance as unknown until the status-line cache has
+  been populated by a live Claude Code response.
 
-The local `ClaudeLimitProbe` executable proves the conservative path. On
-2026-05-06 it confirmed the local Claude CLI is logged in with subscription
-metadata and has a local stats cache, but no live subscription allowance is
-exposed by the probe.
+The local `ClaudeLimitProbe` executable proves the conservative fallback path.
+On 2026-05-06 it confirmed the local Claude CLI is logged in with subscription
+metadata and has a local stats cache. The follow-up subscription path is the
+sanitized status-line cache, not raw Claude auth/session data.
 
 ### Every Code Cache Fallback
 

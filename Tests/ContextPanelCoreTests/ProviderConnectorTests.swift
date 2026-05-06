@@ -92,7 +92,7 @@ import Testing
         accounts: [ClaudeAccountConfiguration(accountName: "Claude", claudeBinary: "claude", statsPath: "/tmp/stats.json")],
         processClient: StubProcessClient(result: ConnectorProcessResult(exitCode: 0, stdout: auth)),
         fileLoader: { _ in stats },
-        fileExists: { _ in true }
+        fileExists: { path in path == "/tmp/stats.json" }
     )
 
     let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))

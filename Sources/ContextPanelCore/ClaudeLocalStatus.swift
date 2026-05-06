@@ -27,6 +27,7 @@ public struct ClaudeStatsCacheSummary: Codable, Equatable, Sendable {
     public let firstSessionDate: Date?
     public let modelUsageCount: Int
     public let dailyActivityCount: Int
+    public let rateLimitSnapshot: ClaudeSubscriptionRateLimitSnapshot?
 
     public init(
         version: Int?,
@@ -35,7 +36,8 @@ public struct ClaudeStatsCacheSummary: Codable, Equatable, Sendable {
         totalMessages: Int?,
         firstSessionDate: Date?,
         modelUsageCount: Int,
-        dailyActivityCount: Int
+        dailyActivityCount: Int,
+        rateLimitSnapshot: ClaudeSubscriptionRateLimitSnapshot? = nil
     ) {
         self.version = version
         self.lastComputedDate = lastComputedDate
@@ -44,6 +46,29 @@ public struct ClaudeStatsCacheSummary: Codable, Equatable, Sendable {
         self.firstSessionDate = firstSessionDate
         self.modelUsageCount = modelUsageCount
         self.dailyActivityCount = dailyActivityCount
+        self.rateLimitSnapshot = rateLimitSnapshot
+    }
+}
+
+public struct ClaudeSubscriptionRateLimitWindow: Codable, Equatable, Sendable {
+    public let label: String
+    public let usedPercent: Double
+    public let resetsAt: Date?
+
+    public init(label: String, usedPercent: Double, resetsAt: Date?) {
+        self.label = label
+        self.usedPercent = max(0, min(usedPercent, 100))
+        self.resetsAt = resetsAt
+    }
+}
+
+public struct ClaudeSubscriptionRateLimitSnapshot: Codable, Equatable, Sendable {
+    public let observedAt: Date
+    public let windows: [ClaudeSubscriptionRateLimitWindow]
+
+    public init(observedAt: Date, windows: [ClaudeSubscriptionRateLimitWindow]) {
+        self.observedAt = observedAt
+        self.windows = windows
     }
 }
 
@@ -69,7 +94,27 @@ public enum ClaudeStatsCacheParser {
             totalMessages: payload.totalMessages,
             firstSessionDate: payload.firstSessionDate,
             modelUsageCount: payload.modelUsage?.count ?? 0,
-            dailyActivityCount: payload.dailyActivity?.count ?? 0
+            dailyActivityCount: payload.dailyActivity?.count ?? 0,
+            rateLimitSnapshot: payload.rateLimits?.snapshot(
+                observedAt: payload.lastComputedDate ?? Date(timeIntervalSince1970: 0)
+            )
+        )
+    }
+}
+
+public enum ClaudeSubscriptionRateLimitCacheParser {
+    public static func snapshot(from data: Data) throws -> ClaudeSubscriptionRateLimitSnapshot {
+        let payload = try JSONDecoder().decode(ClaudeStatuslineRateLimitPayload.self, from: data)
+        var windows: [ClaudeSubscriptionRateLimitWindow] = []
+        if let fiveHour = payload.rateLimits.fiveHour {
+            windows.append(fiveHour.window(label: "5-hour"))
+        }
+        if let sevenDay = payload.rateLimits.sevenDay {
+            windows.append(sevenDay.window(label: "Weekly"))
+        }
+        return ClaudeSubscriptionRateLimitSnapshot(
+            observedAt: Date(timeIntervalSince1970: TimeInterval(payload.observedAt)),
+            windows: windows
         )
     }
 }
@@ -78,11 +123,20 @@ public struct ClaudeAccountConfiguration: Equatable, Sendable {
     public let accountName: String
     public let claudeBinary: String
     public let statsPath: String
+    public let rateLimitSnapshotPath: String
 
-    public init(accountName: String = "Claude", claudeBinary: String = "claude", statsPath: String? = nil) {
+    public init(
+        accountName: String = "Claude",
+        claudeBinary: String = "claude",
+        statsPath: String? = nil,
+        rateLimitSnapshotPath: String? = nil
+    ) {
         self.accountName = accountName
         self.claudeBinary = claudeBinary
-        self.statsPath = statsPath ?? "\(FileManager.default.homeDirectoryForCurrentUser.path)/.claude/stats-cache.json"
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        self.statsPath = statsPath ?? "\(home)/.claude/stats-cache.json"
+        self.rateLimitSnapshotPath = rateLimitSnapshotPath
+            ?? "\(home)/Library/Application Support/Context Panel/ClaudeRateLimits/statusline-cache.json"
     }
 }
 
@@ -120,14 +174,17 @@ public struct ClaudeLocalStatusConnector: ProviderConnector {
     }
 
     private func refresh(account: ClaudeAccountConfiguration, now: Date) -> ProviderConnectorReport {
-        let localAccountID = ConnectorRedactor.localAccountID(provider: provider, path: account.statsPath)
+        let localAccountID = ConnectorRedactor.localAccountID(provider: provider, path: account.rateLimitSnapshotPath)
 
         do {
             let authStatus = try loadAuthStatus(claudeBinary: account.claudeBinary)
             let statsSummary = try loadStatsSummary(path: account.statsPath)
+            let rateLimitSnapshot = try loadRateLimitSnapshot(path: account.rateLimitSnapshotPath)
+                ?? statsSummary?.rateLimitSnapshot
             let limits = claudeLocalStatusLimits(
                 authStatus: authStatus,
                 statsSummary: statsSummary,
+                rateLimitSnapshot: rateLimitSnapshot,
                 accountID: localAccountID,
                 accountName: account.accountName,
                 observedAt: now
@@ -166,15 +223,41 @@ public struct ClaudeLocalStatusConnector: ProviderConnector {
         guard fileExists(path) else { return nil }
         return try ClaudeStatsCacheParser.summary(from: try fileLoader(path))
     }
+
+    private func loadRateLimitSnapshot(path: String) throws -> ClaudeSubscriptionRateLimitSnapshot? {
+        guard fileExists(path) else { return nil }
+        return try ClaudeSubscriptionRateLimitCacheParser.snapshot(from: try fileLoader(path))
+    }
 }
 
 public func claudeLocalStatusLimits(
     authStatus: ClaudeAuthStatus,
     statsSummary: ClaudeStatsCacheSummary?,
+    rateLimitSnapshot: ClaudeSubscriptionRateLimitSnapshot? = nil,
     accountID: String,
     accountName: String,
     observedAt: Date
 ) -> [UsageLimit] {
+    if authStatus.loggedIn, let rateLimitSnapshot, !rateLimitSnapshot.windows.isEmpty {
+        return rateLimitSnapshot.windows.map { window in
+            UsageLimit(
+                provider: .anthropic,
+                accountID: accountID,
+                accountName: accountName,
+                label: "Claude \(window.label)",
+                windowLabel: window.label,
+                modelLabel: authStatus.subscriptionDisplayName,
+                unit: .percent,
+                used: Int(window.usedPercent.rounded()),
+                limit: 100,
+                resetsAt: window.resetsAt,
+                lastUpdatedAt: rateLimitSnapshot.observedAt,
+                confidence: .observed,
+                note: "source: Claude Code statusline; subscription: \(authStatus.subscriptionType ?? "unknown")"
+            )
+        }
+    }
+
     var noteParts = [
         "auth: \(authStatus.authMethod)",
         "provider: \(authStatus.apiProvider ?? "unknown")",
@@ -205,6 +288,56 @@ public func claudeLocalStatusLimits(
     )]
 }
 
+private struct ClaudeStatuslineRateLimitPayload: Decodable {
+    let observedAt: Int
+    let rateLimits: ClaudeStatuslineRateLimits
+
+    enum CodingKeys: String, CodingKey {
+        case observedAt = "observed_at"
+        case rateLimits = "rate_limits"
+    }
+}
+
+private struct ClaudeStatuslineRateLimits: Decodable {
+    let fiveHour: ClaudeStatuslineRateLimitWindow?
+    let sevenDay: ClaudeStatuslineRateLimitWindow?
+
+    enum CodingKeys: String, CodingKey {
+        case fiveHour = "five_hour"
+        case sevenDay = "seven_day"
+    }
+
+    func snapshot(observedAt: Date) -> ClaudeSubscriptionRateLimitSnapshot? {
+        var windows: [ClaudeSubscriptionRateLimitWindow] = []
+        if let fiveHour {
+            windows.append(fiveHour.window(label: "5-hour"))
+        }
+        if let sevenDay {
+            windows.append(sevenDay.window(label: "Weekly"))
+        }
+        guard !windows.isEmpty else { return nil }
+        return ClaudeSubscriptionRateLimitSnapshot(observedAt: observedAt, windows: windows)
+    }
+}
+
+private struct ClaudeStatuslineRateLimitWindow: Decodable {
+    let usedPercentage: Double
+    let resetsAt: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case usedPercentage = "used_percentage"
+        case resetsAt = "resets_at"
+    }
+
+    func window(label: String) -> ClaudeSubscriptionRateLimitWindow {
+        ClaudeSubscriptionRateLimitWindow(
+            label: label,
+            usedPercent: usedPercentage,
+            resetsAt: resetsAt.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+        )
+    }
+}
+
 private struct ClaudeAuthStatusPayload: Decodable {
     let loggedIn: Bool
     let authMethod: String
@@ -220,6 +353,18 @@ private struct ClaudeStatsCachePayload: Decodable {
     let totalSessions: Int?
     let totalMessages: Int?
     let firstSessionDate: Date?
+    let rateLimits: ClaudeStatuslineRateLimits?
+
+    enum CodingKeys: String, CodingKey {
+        case version
+        case lastComputedDate
+        case dailyActivity
+        case modelUsage
+        case totalSessions
+        case totalMessages
+        case firstSessionDate
+        case rateLimits = "rate_limits"
+    }
 }
 
 private enum ClaudeCountedCollection: Decodable {
