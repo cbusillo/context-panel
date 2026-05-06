@@ -59,7 +59,8 @@ without printing secrets or raw provider responses:
 
 ```sh
 swift run CodexRateLimitProbe --auth ~/.codex/auth.json
-swift run GeminiQuotaProbe --auth ~/.gemini/oauth_creds.json
+GEMINI_OAUTH_CLIENT_ID=... GEMINI_OAUTH_CLIENT_SECRET=... \
+  swift run GeminiQuotaProbe --auth ~/.gemini/oauth_creds.json
 swift run ClaudeLimitProbe
 ```
 
@@ -68,3 +69,6 @@ their respective CLI-backed accounts. The Claude probe intentionally reports
 only local auth/subscription metadata and local stats-cache freshness because a
 live personal subscription allowance is not exposed through a clean local signal
 yet.
+
+For Gemini, use the OAuth client values from the locally installed Gemini CLI;
+they are intentionally not checked into this repository.
