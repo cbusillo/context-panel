@@ -390,11 +390,9 @@ final class ClaudeUsageProbeModel: ObservableObject {
             limits: limits,
             status: .healthy
         )
-        try snapshotStore.save(
-            StoredUsageSnapshot(
-                savedAt: Date(),
-                refreshResult: ConnectorRefreshResult(generatedAt: Date(), reports: [report])
-            )
+        try snapshotStore.saveMerged(
+            refreshResult: ConnectorRefreshResult(generatedAt: Date(), reports: [report]),
+            savedAt: Date()
         )
     }
 

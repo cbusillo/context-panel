@@ -138,6 +138,27 @@ public struct JSONSnapshotStore: Sendable {
         try data.write(to: historyURL, options: [.atomic])
     }
 
+    public func saveMerged(refreshResult: ConnectorRefreshResult, savedAt: Date) throws {
+        let replacementAccounts = Set(
+            refreshResult.reports.map { ProviderAccountKey(provider: $0.provider, accountID: $0.accountID) }
+        )
+        let current = loadCurrent().snapshot
+        let preservedLimits = current?.snapshot.limits.filter { limit in
+            !replacementAccounts.contains(ProviderAccountKey(provider: limit.provider, accountID: limit.accountID))
+        } ?? []
+        let preservedReports = current?.reports.filter { report in
+            !replacementAccounts.contains(ProviderAccountKey(provider: report.provider, accountID: report.accountID))
+        } ?? []
+
+        let mergedSnapshot = UsageSnapshot(
+            generatedAt: refreshResult.generatedAt,
+            limits: preservedLimits + refreshResult.snapshot.limits
+        )
+        let mergedReports = preservedReports + refreshResult.reports.map(StoredProviderReport.init(report:))
+
+        try save(StoredUsageSnapshot(savedAt: savedAt, snapshot: mergedSnapshot, reports: mergedReports))
+    }
+
     public func loadCurrent() -> SnapshotStoreLoadResult {
         guard FileManager.default.fileExists(atPath: currentSnapshotURL.path) else {
             return SnapshotStoreLoadResult(snapshot: nil, status: .unknown)
@@ -225,6 +246,11 @@ public struct JSONSnapshotStore: Sendable {
         decoder.dateDecodingStrategy = .iso8601
         return decoder
     }
+}
+
+private struct ProviderAccountKey: Hashable {
+    let provider: Provider
+    let accountID: String
 }
 
 extension ContextPanelDateFormatting {

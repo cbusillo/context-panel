@@ -50,6 +50,68 @@ import Testing
     #expect(store.loadHistory(query: SnapshotStoreQuery(limit: 1)).count == 1)
 }
 
+@Test func jsonSnapshotStoreMergesRefreshResultByProviderAccount() throws {
+    let root = try temporaryDirectory()
+    let store = JSONSnapshotStore(rootDirectory: root)
+    let first = Date(timeIntervalSince1970: 100)
+    let second = Date(timeIntervalSince1970: 200)
+
+    let initial = ConnectorRefreshResult(generatedAt: first, reports: [
+        ProviderConnectorReport(
+            provider: .openAI,
+            accountID: "openai-a",
+            accountName: "OpenAI A",
+            generatedAt: first,
+            limits: [usageLimit(provider: .openAI, accountID: "openai-a", used: 40, savedAt: first)]
+        ),
+        ProviderConnectorReport(
+            provider: .google,
+            accountID: "gemini-a",
+            accountName: "Gemini A",
+            generatedAt: first,
+            limits: [usageLimit(provider: .google, accountID: "gemini-a", used: 10, savedAt: first)]
+        ),
+    ])
+    try store.save(StoredUsageSnapshot(savedAt: first, refreshResult: initial))
+
+    let claudeRefresh = ConnectorRefreshResult(generatedAt: second, reports: [
+        ProviderConnectorReport(
+            provider: .anthropic,
+            accountID: "claude-web",
+            accountName: "Claude Web",
+            generatedAt: second,
+            limits: [usageLimit(provider: .anthropic, accountID: "claude-web", used: 3, savedAt: second)]
+        )
+    ])
+
+    try store.saveMerged(refreshResult: claudeRefresh, savedAt: second)
+
+    let limits = try #require(store.loadCurrent().snapshot?.snapshot.limits)
+    #expect(limits.map(\.provider).contains(.openAI))
+    #expect(limits.map(\.provider).contains(.google))
+    #expect(limits.map(\.provider).contains(.anthropic))
+    #expect(store.loadCurrent().snapshot?.reports.count == 3)
+    #expect(store.loadHistory().count == 2)
+
+    let replacement = ConnectorRefreshResult(generatedAt: second, reports: [
+        ProviderConnectorReport(
+            provider: .openAI,
+            accountID: "openai-a",
+            accountName: "OpenAI A",
+            generatedAt: second,
+            limits: [usageLimit(provider: .openAI, accountID: "openai-a", used: 80, savedAt: second)]
+        )
+    ])
+    try store.saveMerged(refreshResult: replacement, savedAt: second.addingTimeInterval(1))
+
+    let replaced = try #require(store.loadCurrent().snapshot?.snapshot.limits)
+    let openAILimit = try #require(replaced.first { $0.provider == .openAI && $0.accountID == "openai-a" })
+    #expect(openAILimit.used == 80)
+    #expect(replaced.filter { $0.provider == .openAI && $0.accountID == "openai-a" }.count == 1)
+    #expect(replaced.map(\.provider).contains(.google))
+    #expect(replaced.map(\.provider).contains(.anthropic))
+}
+
 @Test func jsonSnapshotStoreReportsMissingCurrentAsUnknown() throws {
     let store = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
 
@@ -146,4 +208,3 @@ private func temporaryDirectory() throws -> URL {
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     return url
 }
-

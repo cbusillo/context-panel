@@ -704,7 +704,7 @@ final class ContextPanelAppModel: ObservableObject {
         let savedAt = Date()
 
         do {
-            try store.save(StoredUsageSnapshot(savedAt: savedAt, refreshResult: refreshResult))
+            try store.saveMerged(refreshResult: refreshResult, savedAt: savedAt)
             lastRefreshAt = savedAt
             loadSnapshot()
         } catch {
