@@ -8,3 +8,4 @@ DerivedData/
 *.xcworkspace/xcuserdata/
 .swiftpm/
 .idea/
+dist/

@@ -1,6 +1,6 @@
 # Provider Usage Access Research
 
-Last verified: 2026-05-05.
+Last verified: 2026-05-06.
 
 ## Summary
 
@@ -9,15 +9,15 @@ Context Panel should model two different worlds:
 - API/provider-console usage, where official usage APIs, cost APIs, quota APIs,
   rate-limit headers, or Cloud Monitoring data can provide real measurements.
 - Consumer chat subscription usage, where providers often expose limits and reset
-  timing in product UI but do not expose a stable public API for remaining
-  message allowance.
+  timing in product UI but do not expose a stable public API for the underlying
+  percent or token pressure.
 
 The OpenAI account use case needs special treatment. For ChatGPT-style weekly
-message budgets, official OpenAI help currently documents weekly Thinking limits
-and reset behavior, but not a reliable API for personal message usage counts.
-Context Panel should therefore support local forecasting: multiple OpenAI
-accounts, reset windows, manually or locally observed usage, burn-rate history,
-and a clear answer to "am I safe to turn on fast mode?"
+subscription limits, current product surfaces have moved away from a visible
+message counter. Context Panel should model OpenAI usage as percent or token
+pressure over reset windows: multiple OpenAI accounts, reset windows, observed
+usage pressure, burn-rate history, and a clear answer to "am I safe to turn on
+fast mode?"
 
 ## Forecast Requirement
 
@@ -51,26 +51,31 @@ instead of pretending an estimate is exact.
 
 ## Provider Matrix
 
-| Provider surface | Official data available | Reset/limit signal | Multi-login shape | V1 recommendation | Confidence |
-| --- | --- | --- | --- | --- | --- |
-| OpenAI API organizations | Usage API, Costs API, and rate-limit headers. Usage can be grouped by project, user, API key, model, batch, and service tier depending on endpoint. | API rate limits expose remaining requests/tokens and reset headers; monthly usage limits are organization/project concerns. | One connected API organization/project per credential. Multiple credentials/accounts should be supported. | Support API org usage as an official adapter using admin or sufficiently privileged API keys. | High |
-| OpenAI ChatGPT accounts | No stable public API found for personal ChatGPT message allowance. Help docs say some model budgets expose reset date in the model picker and, for that documented budget, there is no way to check messages used. Current GPT-5.5 Thinking docs document weekly limits and pop-up behavior at exhaustion. | Weekly Thinking limits exist for Plus/Business. Older OpenAI help explicitly says weekly limits reset seven days after first use and the reset date is visible by hovering the model name. | Multiple ChatGPT accounts are core. Each account needs its own reset window, plan, mode, and local observation history. | Start with manual/assisted local tracking: account profile, plan/bucket defaults, user-entered or UI-observed reset time, local message counter, and forecast confidence. Avoid credential sharing and avoid automated extraction that could violate terms. | Medium for reset; low for used count without local tracking |
-| Anthropic API organizations | Usage and Cost API can report message usage and costs by time bucket, model, workspace, API key, service tier, context window, geo, and beta fast-mode speed. API responses include rate-limit headers with remaining and reset values. | API rate limits use token bucket behavior; monthly spend limits exist by tier. | Organization/workspace/API-key credentials. Multiple organizations and workspaces should be supported. | Support official API usage/cost adapter. Capture fast-mode dimensions where available. | High |
-| Claude subscriptions and Claude Code seats | Public docs describe usage limits across Claude.ai, Claude Code, and Claude Desktop, but no stable public API for personal subscription allowance was found. Claude Code can show session cost for API-key usage. | Pro/Max/Team usage has session-based reset behavior; Claude Code Enterprise seats show reset time when a limit is reached. | Multiple Claude accounts/seats are possible, but account connection should be conservative. | Defer automated subscription tracking unless a supported local/official signal is found. Support manual observation later; prioritize Anthropic API first. | Medium for displayed limits; low for automation |
-| Google Gemini API / Google AI Studio projects | AI Studio and Cloud Billing show usage. Gemini API rate limits are project-scoped, not API-key-scoped. Service Usage API lists quota limits; Cloud Monitoring exposes quota usage metrics; Cloud Billing export to BigQuery provides detailed cost/usage data. | Rate limits are RPM, input TPM, and RPD, with model/tier variation. RPD quotas reset at midnight Pacific time. | Google project is the natural account boundary. Multiple Google accounts/projects should be supported. | Support Google API projects after OAuth/service-account design. Use Service Usage for limits, Cloud Monitoring for quota usage, and optional Billing export for cost history. | Medium-high, but setup is heavier |
-| Google consumer Gemini app subscriptions | No stable public API for personal Gemini app subscription allowance was found in this pass. | Provider UI likely remains source of truth. | Multiple Google accounts may matter, but automation risk is high. | Defer for v1 unless a supported API emerges. | Low |
+| Provider surface                              | Official data available                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Reset/limit signal                                                                                                                                                                                                     | Multi-login shape                                                                                                                               | V1 recommendation                                                                                                                                                                                                                                                                                                                                          | Confidence                                                                                                                                                                                                        |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OpenAI API organizations                      | Usage API, Costs API, and rate-limit headers. Usage can be grouped by project, user, API key, model, batch, and service tier depending on endpoint.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | API rate limits expose remaining requests/tokens and reset headers; monthly usage limits are organization/project concerns.                                                                                            | One connected API organization/project per credential. Multiple credentials/accounts should be supported.                                       | Support API org usage as an official adapter using admin or sufficiently privileged API keys.                                                                                                                                                                                                                                                              | High                                                                                                                                                                                                              |
+| OpenAI ChatGPT accounts                       | No stable public API found for general personal ChatGPT subscription pressure outside Codex. Current product surfaces no longer present a simple message counter; the useful automated signal found so far is percent-used pressure for Codex/Fast Mode.                                                                                                                                                                                                                                                                                                                                                                               | Weekly and short rolling reset windows matter. Codex/Fast Mode exposes live percent-used windows through the Codex backend usage endpoint.                                                                             | Multiple ChatGPT accounts are core. Each account needs its own reset window, plan, mode, percent/token pressure, and local observation history. | For Codex/Fast Mode, use the live Codex usage endpoint. For non-Codex ChatGPT surfaces, keep manual/assisted observations and forecast confidence until a clean provider signal exists.                                                                                                                                                                    | High for Codex percent windows; medium for visible reset clues; low for non-Codex automation                                                                                                                      |
+| Anthropic API organizations                   | Usage and Cost API can report message usage and costs by time bucket, model, workspace, API key, service tier, context window, geo, and beta fast-mode speed. API responses include rate-limit headers with remaining and reset values.                                                                                                                                                                                                                                                                                                                                                                                                | API rate limits use token bucket behavior; monthly spend limits exist by tier.                                                                                                                                         | Organization/workspace/API-key credentials. Multiple organizations and workspaces should be supported.                                          | Support official API usage/cost adapter. Capture fast-mode dimensions where available.                                                                                                                                                                                                                                                                     | High                                                                                                                                                                                                              |
+| Claude subscriptions and Claude Code seats    | Claude Code status-line JSON can include `rate_limits.five_hour` and `rate_limits.seven_day` for Claude.ai Pro and Max subscribers after a session receives an API response. Claude Code auth status exposes login method and subscription type; local stats cache exposes historical local usage only. Non-interactive `claude -p --output-format stream-json --verbose` can emit `rate_limit_info` with status, active window type, and reset time, but no used percentage was observed. `ccusage blocks --json --offline` can derive active 5-hour block token use and runway from local aggregate session data used by Every Code. | Status-line rate-limit windows include used percentage and reset epochs. Pro/Max/Team usage has session-based reset behavior. `ccusage` estimates token pressure and reset/runway rather than official server percent. | Multiple Claude accounts/seats are possible, but account connection should be conservative.                                                     | Support a local Claude status connector for account metadata, local activity freshness, optional status-line rate-limit cache, and an explicit Every Code-compatible `ccusage` estimate. Mark old status-line readings stale, and label `ccusage` rows as estimated. Do not read auth, Keychain, raw transcripts, prompts, or conversation JSONL directly. | High for fresh status-line subscription windows when configured; medium for non-interactive reset/status metadata; medium for `ccusage` estimated runway; medium for auth/subscription metadata and local history |
+| Google Gemini CLI / Code Assist               | Gemini CLI OAuth credentials can be refreshed locally, then the Code Assist backend returns live quota buckets with model IDs, remaining fractions, optional remaining amounts, and reset times.                                                                                                                                                                                                                                                                                                                                                                                                                                       | Quota buckets are percent-style remaining fractions per model with provider reset timestamps.                                                                                                                          | Google account plus Code Assist project is the natural boundary; multiple `GEMINI_CLI_HOME` roots can represent multiple logins.                | Support a Gemini Code Assist live quota connector using Gemini CLI auth. Store only normalized percent pressure and reset times.                                                                                                                                                                                                                           | High for Gemini CLI/Code Assist buckets observed locally                                                                                                                                                          |
+| Google Gemini API / Google AI Studio projects | AI Studio and Cloud Billing show usage. Gemini API rate limits are project-scoped, not API-key-scoped. Service Usage API lists quota limits; Cloud Monitoring exposes quota usage metrics; Cloud Billing export to BigQuery provides detailed cost/usage data.                                                                                                                                                                                                                                                                                                                                                                         | Rate limits are RPM, input TPM, and RPD, with model/tier variation. RPD quotas reset at midnight Pacific time.                                                                                                         | Google project is the natural account boundary. Multiple Google accounts/projects should be supported.                                          | Support Google API projects after OAuth/service-account design. Use Service Usage for limits, Cloud Monitoring for quota usage, and optional Billing export for cost history.                                                                                                                                                                              | Medium-high, but setup is heavier                                                                                                                                                                                 |
+| Google consumer Gemini app subscriptions      | No stable public API for personal Gemini app subscription allowance was found in this pass.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Provider UI likely remains source of truth.                                                                                                                                                                            | Multiple Google accounts may matter, but automation risk is high.                                                                               | Defer for v1 unless a supported API emerges.                                                                                                                                                                                                                                                                                                               | Low                                                                                                                                                                                                               |
 
 ## OpenAI Fast-Mode Forecasting
 
-For the user's immediate OpenAI need, the best product path is not a hidden
-provider API. It is an honest local predictor:
+For the user's immediate OpenAI need, the best product path is a live Codex
+percent-window connector backed by an honest local predictor:
 
 1. Add each OpenAI account separately.
-2. Record plan and relevant buckets, such as GPT-5.5 Thinking weekly allowance.
-3. Capture reset time from the UI when available, or let the user enter it.
-4. Start a local usage ledger from the moment Context Panel is installed.
-5. Allow manual correction when the provider UI reveals a reset or limit state.
-6. Estimate standard and fast-mode burn rates from local usage history.
+2. Record plan and relevant buckets, such as Codex/Fast Mode weekly and
+   five-hour windows.
+3. Fetch current percent-used pressure and reset times when the Codex endpoint
+   is available.
+4. Capture reset time from the UI when no endpoint signal exists, or let the
+   user enter it.
+5. Start a local usage ledger from the moment Context Panel is installed.
+6. Estimate standard and fast-mode burn rates in percent or tokens per hour
+   from local usage history.
 7. Recommend when to enable fast mode only when the forecast has enough margin.
 
 The widget should make confidence visible. Good copy examples:
@@ -79,6 +84,199 @@ The widget should make confidence visible. Good copy examples:
 - `Fast mode safe for about 2h, then switch back.`
 - `Save fast mode: projected to run out 18h before reset.`
 - `Needs calibration: open ChatGPT and set reset time.`
+
+## Local Probe And Every Code Evidence
+
+The first OpenAI Limit Probe run confirmed the uncomfortable but useful shape of
+the problem:
+
+- ChatGPT visible text exposed plan/model language such as model names, `Pro`,
+  `Instant`, and `Thinking`, but did not expose a percent/token counter or a
+  reset time before exhaustion.
+- Sanitized network response-shape scanning found account entitlement and plan
+  fields, including subscription-plan style field names, but no obvious
+  `used_percent`, token pressure, `reset_at`, weekly allowance, or five-hour
+  allowance fields outside the Codex usage surface.
+- The probe should remain useful as a diagnostic harness because it can detect
+  if OpenAI later starts exposing cleaner fields, and it can produce redacted
+  evidence across multiple accounts.
+
+Codex-family tooling exposes a stronger path for Codex/Fast Mode. Upstream
+Codex CLI has an app-server method, `account/rateLimits/read`, backed by a
+backend client call that fetches live snapshots from the ChatGPT Codex backend:
+`GET /backend-api/wham/usage` for ChatGPT-backed auth, or `/api/codex/usage` for
+Codex API-style deployments. The payload maps into rate-limit snapshots with
+provider window buckets, reset times, plan type, credits, reached-limit
+classification, and additional buckets keyed by `limit_id`.
+
+Every Code is useful as a fallback and validation source. It does not derive
+Codex rate-limit snapshots from local token counts. It sends authenticated
+requests to the ChatGPT Codex backend, parses server-reported `x-codex-*`
+response headers into percentage and reset-window snapshots, and persists the
+latest server snapshot under local usage files. The local files are a cache of
+server state plus local token history, which explains why displayed limit
+pressure reflects cloud and other-machine usage for the same account.
+
+Every Code also has a deliberate refresh path: it sends a tiny `"ok"` prompt via
+the selected account, waits for a `RateLimits` event from response headers, then
+persists the snapshot and updates the `/limits` UI. Separately, when the backend
+returns `usage_limit_reached`, it records `plan_type`, `resets_in_seconds`, and
+the reached-limit type as a hint.
+
+That is stronger evidence than visible ChatGPT UI scraping for Codex-style
+limits, but it is still product-surface-specific. Context Panel should separate
+`OpenAI ChatGPT product UI hints` from `OpenAI Codex backend percent windows`.
+The latter looks viable as an automated adapter if Context Panel can reuse the
+same authenticated account flow safely.
+
+Implication: v1 should not promise exact general ChatGPT subscription counters.
+For Codex/Fast Mode, though, the preferred path is a live OpenAI Codex limits
+connector using the same shape as Codex CLI's
+`account/rateLimits/read`/`get_rate_limits_many()` flow. If that cannot be made
+stable or safely testable, fall back to Every Code's local `usage/*.json` cache
+or Codex CLI's app-server request.
+
+### Codex Limits Connector
+
+Preferred v1 connector scope:
+
+- Fetch live Codex limits directly from the Codex backend usage endpoint shape:
+  `GET https://chatgpt.com/backend-api/wham/usage` for ChatGPT-backed auth.
+- Support provider window buckets, reset times, plan type, credits,
+  reached-limit classification, and additional `limit_id` buckets.
+- Keep auth handling isolated and redacted; never log tokens, cookies,
+  authorization headers, account IDs, emails, or raw response bodies.
+- Expose a diagnostic probe that reports only sanitized structure, percentages,
+  reset timing, bucket labels, and staleness.
+- Mark this as an OpenAI Codex/Fast Mode percent-window source, not a general
+  ChatGPT subscription counter.
+- Do not require the Codex CLI binary or app server at runtime. The local
+  `CodexRateLimitProbe` executable exists to prove the direct call path against
+  an existing Codex `auth.json` while printing only redacted summaries.
+
+### Gemini Code Assist Connector
+
+The local Gemini CLI path gives Context Panel a second viable live connector.
+The CLI stores OAuth credentials under `~/.gemini/oauth_creds.json`, while the
+active account metadata lives separately under `~/.gemini/google_accounts.json`.
+The quota values are not persisted as a durable local cache; Gemini CLI keeps
+quota state in memory and refreshes it from the Code Assist backend.
+
+Preferred v1 connector scope:
+
+- Resolve `GEMINI_CLI_HOME`, then default to `~/.gemini`.
+- Read `oauth_creds.json` only to refresh an access token locally; never print,
+  store, or upload token values.
+- Call the Gemini Code Assist load path to resolve the active project internally;
+  never print or persist the raw project identifier.
+- Call the Gemini Code Assist quota path and normalize buckets by model ID,
+  remaining fraction, optional remaining amount, and reset time.
+- Represent each bucket as percent pressure: `used = round((1 - remaining) *
+100)`, `limit = 100`, `unit = percent`.
+- Mark confidence as observed because this is a product backend surface rather
+  than a public quota API contract.
+
+The local `GeminiQuotaProbe` executable proves this path with redacted output.
+On 2026-05-06 it returned seven live model buckets for the local Gemini CLI
+account, including Gemini 2.5 and Gemini 3 preview models, with percent
+remaining and reset timestamps.
+
+### Claude Subscription Connector
+
+Claude subscription pressure should use Claude Code's supported status-line JSON
+surface, not Anthropic API organization usage. Claude Code's status-line input
+can contain `rate_limits.five_hour.used_percentage`,
+`rate_limits.five_hour.resets_at`, `rate_limits.seven_day.used_percentage`, and
+`rate_limits.seven_day.resets_at` for Claude.ai Pro and Max subscribers after a
+Claude Code session receives an API response.
+
+This status-line surface is currently interactive-session scoped. On
+2026-05-06, a local non-interactive probe using `claude -p "Reply with exactly
+OK." --output-format json --verbose` emitted a `rate_limit_event` with
+`rate_limit_info.status`, `rateLimitType`, and `resetsAt`, but did not emit
+`used_percentage` and did not refresh the configured status-line cache. A local
+`claude -p "/usage" --output-format json --verbose` probe returned only that the
+Claude Code subscription was in use, not the five-hour or weekly usage
+percentages. This means Every Code's current external `claude -p` agent path
+does not by itself provide official subscription percent pressure.
+
+Local binary/bundle inspection found runtime strings for
+`anthropic-ratelimit-unified-*`, `utilization`, `five_hour`, and `seven_day` in
+Claude Code/Desktop surfaces. It also found the Claude web/desktop usage hook:
+the installed Claude app calls
+`GET /api/organizations/{active_organization_uuid}/usage` and refreshes it on a
+five-minute interval from the settings usage page. The usage page component is
+what renders "Claude subscription usage", current-session/five-hour usage, and
+weekly limit rows.
+
+That endpoint is the strongest direct subscription API candidate found so far,
+but it is authenticated through the Claude web/app session. A local automated
+browser probe against `https://claude.ai/settings/usage` on 2026-05-06 was
+blocked by Cloudflare before login/session reuse, so Context Panel has not yet
+proven it can call this endpoint without a user-visible web login context. We
+should not extract browser cookies, Keychain credentials, OAuth tokens, local
+storage, raw response bodies, transcripts, account UUIDs, or emails to force the
+call. The next safe implementation path is a Claude web usage probe that runs in
+a user-visible embedded web session and records only sanitized fields such as
+`five_hour`, `seven_day`, `used_percentage`, `remaining_percentage`,
+`utilization`, and `resets_at`.
+
+The local `ClaudeWebUsageProbe` executable implements that path. It opens
+Claude's usage page in a visible WebKit session, lets the user complete login or
+Cloudflare verification normally, observes only `/api/organizations/*/usage`
+responses, and reduces the page response to whitelisted usage windows before
+Swift receives anything. Saving from the probe writes normalized percent/reset
+rows to Context Panel's snapshot store; it does not persist cookies,
+authorization headers, tokens, local storage, account UUIDs, organization UUIDs,
+emails, or raw response bodies.
+
+No safe persisted local Claude Desktop file/cache containing official
+subscription percentages was found. The remaining research target is an
+explicit, privacy-safe metadata capture path for Every Code/non-interactive
+usage, tracked separately in issue #19.
+
+The official Claude Code authentication docs say macOS credentials are stored in
+the encrypted macOS Keychain. Context Panel must not read Keychain secrets or
+try to extract subscription OAuth tokens.
+
+Preferred v1 connector scope:
+
+- Call `claude auth status --json` and keep only non-secret fields such as
+  `loggedIn`, `authMethod`, `apiProvider`, and `subscriptionType`.
+- Offer a tiny status-line helper that receives Claude Code status-line JSON on
+  stdin and writes only observed timestamp, five-hour percentage/reset, and
+  weekly percentage/reset to a Context Panel cache file.
+- Read that sanitized status-line cache and normalize Claude five-hour and
+  weekly windows as percent limits when present.
+- Read `~/.claude/stats-cache.json` only as local historical activity, not live
+  subscription allowance.
+- Summarize local stats by freshness and counts; do not read raw transcript
+  JSONL files, prompts, account UUIDs, emails, organization IDs, or token blobs.
+- Show Claude subscription allowance as unknown until the status-line cache has
+  been populated by a live Claude Code response.
+- Treat `ccusage` and local token aggregates as estimated pressure only; never
+  present them as official Claude subscription percent used.
+
+The local `ClaudeLimitProbe` executable proves the conservative fallback path.
+On 2026-05-06 it confirmed the local Claude CLI is logged in with subscription
+metadata and has a local stats cache. The follow-up subscription path is the
+sanitized status-line cache, not raw Claude auth/session data.
+
+### Every Code Cache Fallback
+
+Fallback connector scope:
+
+- Resolve `CODE_HOME`, then `CODEX_HOME`, then default to `~/.code`.
+- Read only `$CODE_HOME/usage/*.json`.
+- Never read auth files, token files, debug logs, history files, or config files
+  for the connector.
+- Parse `rate_limit.snapshot`, `observed_at`, `primary_next_reset_at`,
+  `secondary_next_reset_at`, `last_usage_limit_hit_at`, and `plan`.
+- Normalize Codex provider window buckets as limits with observed
+  confidence and freshness state.
+- Mark the connector stale when `observed_at` or `last_updated` is older than a
+  conservative threshold; do not trigger refreshes.
+- Show account IDs only as short local labels unless the user assigns names.
 
 ## Product Decisions
 
@@ -98,8 +296,11 @@ The widget should make confidence visible. Good copy examples:
 - [OpenAI o3 and o4-mini usage limits](https://help.openai.com/en/articles/9824962-openai-o1and-o1-mini-usage-limits-on-chatgpt-and-the-api)
 - [Anthropic Usage and Cost API](https://platform.claude.com/docs/en/build-with-claude/usage-cost-api)
 - [Anthropic API rate limits](https://docs.anthropic.com/en/api/rate-limits)
+- [Claude Code authentication](https://code.claude.com/docs/en/authentication)
 - [Claude usage and length limits](https://support.claude.com/en/articles/11647753-how-do-usage-and-length-limits-work)
 - [Models, usage, and limits in Claude Code](https://support.claude.com/en/articles/14552983-models-usage-and-limits-in-claude-code)
+- [Gemini CLI authentication](https://google-gemini.github.io/gemini-cli/docs/get-started/authentication.html)
+- [Gemini CLI quotas and pricing](https://google-gemini.github.io/gemini-cli/docs/quota-and-pricing.html)
 - [Gemini API billing](https://ai.google.dev/gemini-api/docs/billing/)
 - [Gemini API rate limits](https://ai.google.dev/gemini-api/docs/rate-limits)
 - [Google Service Usage consumer quota metrics](https://cloud.google.com/service-usage/docs/reference/rest/v1beta1/services.consumerQuotaMetrics/list)
