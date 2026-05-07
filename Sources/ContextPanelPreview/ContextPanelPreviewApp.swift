@@ -7,7 +7,7 @@ struct ContextPanelPreviewApp: App {
     var body: some Scene {
         WindowGroup {
             AppRoot()
-                .frame(minWidth: 1280, minHeight: 720)
+                .frame(minWidth: 1440, minHeight: 780)
         }
     }
 }
@@ -119,7 +119,6 @@ struct SidebarLimitRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            StatusMark(status: limit.status, size: 7)
             VStack(alignment: .leading, spacing: 2) {
                 Text(limit.accountName)
                     .font(.system(size: 13, weight: .medium))
@@ -176,7 +175,7 @@ struct HeaderCard: View {
             VStack(alignment: .leading, spacing: 10) {
                 CPLabel("Context Panel")
                 Text(snapshot.headline)
-                    .font(.system(size: 28, weight: .semibold))
+                    .font(.system(size: 25, weight: .semibold))
                     .foregroundStyle(CPTheme.primaryText)
                     .lineLimit(2)
                 Text(snapshot.subheadline)
@@ -192,13 +191,7 @@ struct HeaderCard: View {
                 }
             }
             Spacer(minLength: 16)
-            CapacityDial(
-                value: snapshot.tightestCapacityRatio,
-                status: snapshot.aggregateStatus,
-                label: "\(Int(snapshot.tightestCapacityRatio * 100))",
-                sublabel: "tightest",
-                size: 116
-            )
+            HeaderGlance(snapshot: snapshot)
         }
         .padding(22)
         .background(CPTheme.surface)
@@ -249,19 +242,38 @@ struct SetupStatusItem: View {
     let status: UsageStatus
 
     var body: some View {
-        HStack(spacing: 8) {
-            StatusMark(status: status, size: 8)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(CPTheme.tertiaryText)
-                    .textCase(.uppercase)
-                Text(value)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(CPTheme.secondaryText)
-                    .lineLimit(1)
-            }
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(CPTheme.tertiaryText)
+                .textCase(.uppercase)
+            Text(value)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(CPTheme.statusColor(status))
+                .lineLimit(1)
         }
+    }
+}
+
+struct HeaderGlance: View {
+    let snapshot: UsageSnapshot
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 5) {
+            Text(snapshot.tightestLimit?.previewRemainingHeadline ?? "No data")
+                .font(.system(size: 24, weight: .semibold, design: .monospaced))
+                .foregroundStyle(CPTheme.primaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text(snapshot.tightestLimit?.previewWindowLine ?? "Set up accounts")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(CPTheme.secondaryText)
+                .lineLimit(2)
+                .multilineTextAlignment(.trailing)
+            CapacityBar(value: snapshot.tightestLimit?.usageRatio ?? 0, status: snapshot.aggregateStatus, height: 6)
+                .frame(width: 132)
+        }
+        .frame(width: 160, alignment: .trailing)
     }
 }
 
@@ -269,7 +281,7 @@ struct WidgetPreviewGrid: View {
     let snapshot: UsageSnapshot
 
     var body: some View {
-            VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 12) {
             SectionHeader(title: "Usage Glance", trailing: "Native preview")
             HStack(alignment: .top, spacing: 12) {
                 SmallWidgetPreview(snapshot: snapshot)
@@ -416,7 +428,10 @@ struct ProviderGroupGrid: View {
                                 .font(.system(size: 11, weight: .semibold))
                                 .textCase(.uppercase)
                             Spacer()
-                            StatusMark(status: limits.map(\.status).worstStatus, size: 7)
+                            Text(limits.map(\.status).worstStatus.previewStatusText)
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(CPTheme.statusColor(limits.map(\.status).worstStatus))
+                                .textCase(.uppercase)
                         }
                         .foregroundStyle(CPTheme.secondaryText)
                         Divider()
@@ -459,24 +474,20 @@ struct AccountDetail: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(limit.accountName)
                             .font(.system(size: 22, weight: .semibold))
-                        Text("\(limit.provider.displayName) · \(limit.displayLabel) · \(limit.contextLabel)")
+                        Text(limit.previewWindowLine)
                             .font(.system(size: 13))
                             .foregroundStyle(CPTheme.secondaryText)
                     }
                     Spacer()
-                    StatusMark(status: limit.status, size: 10)
+                    Text(limit.status.previewStatusText)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(CPTheme.statusColor(limit.status))
+                        .textCase(.uppercase)
                 }
 
-                CapacityDial(
-                    value: 1 - (limit.usageRatio ?? 0),
-                    status: limit.status,
-                    label: limit.remaining.map(String.init) ?? "?",
-                    sublabel: "left",
-                    size: 140
-                )
-                .frame(maxWidth: .infinity)
+                DetailCapacitySummary(limit: limit)
 
-        DetailCard(title: "Forecast") {
+                DetailCard(title: "Forecast") {
                     Text(forecastCopy)
                         .font(.system(size: 15, weight: .medium))
                     Text("Confidence: \(limit.confidence.rawValue)")
@@ -564,6 +575,32 @@ struct DetailRow: View {
                 .font(.system(.caption, design: .monospaced, weight: .medium))
         }
         .font(.system(size: 13))
+    }
+}
+
+struct DetailCapacitySummary: View {
+    let limit: UsageLimit
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(limit.previewRemainingHeadline)
+                    .font(.system(size: 32, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(CPTheme.primaryText)
+                Spacer()
+                Text(limit.previewUsageText)
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundStyle(CPTheme.secondaryText)
+            }
+            CapacityBar(value: limit.usageRatio ?? 0, status: limit.status, height: 8)
+            Text(limit.previewResetConfidenceText)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(CPTheme.tertiaryText)
+        }
+        .padding(14)
+        .background(CPTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(CPTheme.stroke(cornerRadius: 10))
     }
 }
 
@@ -773,39 +810,6 @@ final class ContextPanelAppModel: ObservableObject {
 
 }
 
-struct CapacityDial: View {
-    let value: Double
-    let status: UsageStatus
-    let label: String
-    let sublabel: String
-    var size: CGFloat = 96
-    var thickness: CGFloat = 6
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .stroke(CPTheme.line, lineWidth: thickness)
-            Circle()
-                .trim(from: 0, to: min(max(value, 0), 1))
-                .stroke(
-                    CPTheme.statusColor(status),
-                    style: StrokeStyle(lineWidth: thickness, lineCap: .round)
-                )
-                .rotationEffect(.degrees(-90))
-            VStack(spacing: 0) {
-                Text(label)
-                    .font(.system(size: size > 100 ? 30 : 22, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(CPTheme.primaryText)
-                Text(sublabel)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(CPTheme.tertiaryText)
-                    .textCase(.uppercase)
-            }
-        }
-        .frame(width: size, height: size)
-    }
-}
-
 struct CapacityBar: View {
     let value: Double
     let status: UsageStatus
@@ -834,33 +838,6 @@ struct ProviderBadge: View {
             .font(.system(size: compact ? 10 : 11, weight: .semibold, design: .monospaced))
             .foregroundStyle(CPTheme.providerColor(provider))
             .lineLimit(1)
-    }
-}
-
-struct StatusMark: View {
-    let status: UsageStatus
-    var size: CGFloat = 8
-
-    var body: some View {
-        Group {
-            switch status {
-            case .healthy:
-                Circle().fill(CPTheme.statusColor(status))
-            case .close:
-                Circle().trim(from: 0, to: 0.75).stroke(CPTheme.statusColor(status), lineWidth: 2)
-            case .limited:
-                RoundedRectangle(cornerRadius: 1).fill(CPTheme.statusColor(status))
-            case .stale:
-                Circle().stroke(CPTheme.statusColor(status), style: StrokeStyle(lineWidth: 1.4, dash: [2, 2]))
-            case .unknown:
-                Text("?").font(.system(size: size + 3, weight: .semibold)).foregroundStyle(CPTheme.statusColor(status))
-            case .failure:
-                Image(systemName: "xmark").font(.system(size: size, weight: .bold)).foregroundStyle(CPTheme.statusColor(status))
-            case .loading:
-                Circle().stroke(CPTheme.statusColor(status), lineWidth: 1.4)
-            }
-        }
-        .frame(width: size, height: size)
     }
 }
 
