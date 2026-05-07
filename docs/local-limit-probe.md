@@ -6,8 +6,8 @@ Last updated: 2026-05-05.
 
 Context Panel needs to know whether subscription limits are exposed anywhere a
 logged-in user can legitimately see them. The first target is OpenAI ChatGPT
-subscription usage: weekly Thinking limits, short rolling message windows, reset
-times, model availability, and any remaining/used counters. If the approach works
+subscription usage: weekly limits, short rolling windows, reset times, model
+availability, and any percent or token pressure signals. If the approach works
 for OpenAI, the same diagnostic shape can be reused for Claude and Gemini.
 
 The probe is a local diagnostic tool, not a production data integration. It
@@ -74,12 +74,13 @@ Initial OpenAI pages and states to inspect:
 
 Detection patterns:
 
-- `reset`, `resets`, `refresh`, `available`, `limit`, `usage`, `messages`,
-  `weekly`, `every 3 hours`, `every 5 hours`, `Thinking`, `fast`, `temporary`.
+- `reset`, `resets`, `refresh`, `available`, `limit`, `usage`, `percent`,
+  `tokens`, `weekly`, `every 3 hours`, `every 5 hours`, `Thinking`, `fast`,
+  `temporary`.
 - Dates and relative durations such as `tomorrow`, `in 42m`, `3h`, `5 hours`,
   `7 days`, `weekly`.
-- JSON field names containing `limit`, `usage`, `remaining`, `reset`, `cap`,
-  `quota`, `message`, `model`, or `plan`.
+- JSON field names containing `limit`, `usage`, `used_percent`, `token`,
+  `remaining`, `reset`, `cap`, `quota`, `model`, or `plan`.
 
 ## Capture Model
 

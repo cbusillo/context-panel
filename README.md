@@ -50,4 +50,82 @@ Useful entry points:
 
 - [Product Goals](docs/product-goals.md)
 - [Architecture](docs/architecture.md)
+- [macOS Release Path](docs/release.md)
 - [Repository Settings](docs/repo-settings.md)
+
+## Local App Bundle
+
+To build the native macOS app with the embedded WidgetKit extension:
+
+```sh
+xcodegen generate --spec project.yml
+xcodebuild \
+  -project ContextPanel.xcodeproj \
+  -scheme ContextPanel \
+  -configuration Debug \
+  -destination 'platform=macOS' \
+  -allowProvisioningUpdates \
+  build
+```
+
+To build a quick launchable macOS app bundle from the SwiftPM app shell:
+
+```sh
+scripts/package-macos-app.sh --output dist --identity auto
+open "dist/Context Panel.app"
+```
+
+When a Developer ID Application identity is available in Keychain, the script
+uses it through `codesign`; otherwise it falls back to ad-hoc signing. This is
+the interim friend-installable path for the app shell only; use the Xcode build
+when testing the widget extension.
+
+## Local Provider Probes
+
+The package includes development probes for validating provider limit signals
+without printing secrets or raw provider responses:
+
+```sh
+swift run CodexRateLimitProbe --auth ~/.codex/auth.json
+GEMINI_OAUTH_CLIENT_ID=... GEMINI_OAUTH_CLIENT_SECRET=... \
+  swift run GeminiQuotaProbe --auth ~/.gemini/oauth_creds.json
+swift run ClaudeLimitProbe
+swift run SnapshotStoreProbe --codex-auth ~/.codex/auth.json --include-claude
+```
+
+The Codex and Gemini probes can return live percent-window quota buckets for
+their respective CLI-backed accounts. The Claude probe intentionally reports
+local auth/subscription metadata and local stats-cache freshness until a Claude
+Code status-line cache has been populated.
+
+To capture Claude subscription usage percentages, configure Claude Code's
+status line to call the helper in this repo. Claude Code sends the helper a JSON
+payload after session responses; the helper stores only five-hour and weekly
+used percentages plus reset timestamps under Context Panel's Application
+Support directory.
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "/absolute/path/to/context-panel/scripts/claude-statusline-cache.sh"
+  }
+}
+```
+
+The helper does not store auth tokens, prompts, transcript contents, emails,
+organization IDs, or raw Claude session JSON. Claude Code's non-interactive
+`claude -p` path does not appear to run the status-line hook, so Context Panel
+marks old Claude subscription readings stale instead of treating them as live.
+For Every Code-driven Claude usage, Context Panel also reads `ccusage` aggregate
+block output when available and shows a clearly marked estimated 5-hour token
+window; that estimate is useful for "am I likely to run out soon?" but is not
+Anthropic's official subscription percentage.
+
+For Gemini, use the OAuth client values from the locally installed Gemini CLI;
+they are intentionally not checked into this repository.
+
+The probes call the same `ContextPanelCore` connectors the app will use, so
+passing probe output is also a smoke test for the production connector runtime.
+`SnapshotStoreProbe` additionally writes and reloads the local JSON cache shape
+that the app and widget will consume.
