@@ -1,0 +1,78 @@
+---
+name: ContextPanel
+options:
+  bundleIdPrefix: com.shinycomputers
+  deploymentTarget:
+    macOS: "14.0"
+settings:
+  base:
+    DEVELOPMENT_TEAM: MM5YXC7T6E
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+packages: {}
+targets:
+  ContextPanelCore:
+    type: library.static
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/ContextPanelCore
+    settings:
+      base:
+        PRODUCT_NAME: ContextPanelCore
+        SKIP_INSTALL: true
+
+  ContextPanel:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/ContextPanelPreview
+    dependencies:
+      - target: ContextPanelCore
+      - target: ContextPanelWidgetExtension
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.shinycomputers.contextpanel
+        PRODUCT_NAME: Context Panel
+        GENERATE_INFOPLIST_FILE: true
+        INFOPLIST_KEY_CFBundleDisplayName: Context Panel
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        INFOPLIST_KEY_LSApplicationCategoryType: >-
+          public.app-category.productivity
+        CODE_SIGN_ENTITLEMENTS: Config/ContextPanel.entitlements
+
+  ContextPanelWidgetExtension:
+    type: app-extension
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/ContextPanelWidget
+    dependencies:
+      - target: ContextPanelCore
+    info:
+      path: Config/ContextPanelWidget-Info.plist
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.shinycomputers.contextpanel.widget
+        PRODUCT_NAME: ContextPanelWidgetExtension
+        GENERATE_INFOPLIST_FILE: false
+        CODE_SIGN_ENTITLEMENTS: Config/ContextPanelWidget.entitlements
+        SKIP_INSTALL: true
+
+schemes:
+  ContextPanel:
+    build:
+      targets:
+        ContextPanel: all
+        ContextPanelWidgetExtension: all
+    run:
+      config: Debug
+    archive:
+      config: Release
