@@ -6,6 +6,9 @@
     "index": "docs/README.md",
     "productGoals": "docs/product-goals.md",
     "architecture": "docs/architecture.md",
+    "designDirection": "docs/design-direction.md",
+    "localLimitProbe": "docs/local-limit-probe.md",
+    "providerUsageAccess": "docs/provider-usage-access.md",
     "repoSettings": "docs/repo-settings.md"
   },
   "qualityGate": {

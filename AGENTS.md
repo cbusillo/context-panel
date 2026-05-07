@@ -31,6 +31,8 @@ history, and settings.
 
 - The widget should be beautiful, dense, and calm: compact charts, rings, bars,
   sparklines, reset countdowns, and provider/account grouping where useful.
+- For weekly or rolling account limits, include forecast language that helps the
+  user decide whether higher-burn modes are safe before reset.
 - Avoid making the widget a dashboard crammed into a rectangle. Put setup,
   troubleshooting, raw details, and long histories in the app.
 - Clicking the widget should open the app to the most relevant provider/account
