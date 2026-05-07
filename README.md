@@ -50,7 +50,22 @@ Useful entry points:
 
 - [Product Goals](docs/product-goals.md)
 - [Architecture](docs/architecture.md)
+- [macOS Release Path](docs/release.md)
 - [Repository Settings](docs/repo-settings.md)
+
+## Local App Bundle
+
+To build a launchable macOS app bundle from the current SwiftPM app shell:
+
+```sh
+scripts/package-macos-app.sh --output dist --identity auto
+open "dist/Context Panel.app"
+```
+
+When a Developer ID Application identity is available in Keychain, the script
+uses it through `codesign`; otherwise it falls back to ad-hoc signing. This is
+the interim friend-installable path until the formal Xcode app and WidgetKit
+extension targets are in place.
 
 ## Local Provider Probes
 
