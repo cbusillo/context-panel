@@ -27,10 +27,9 @@ multi-account data.
 - True neutral gray surfaces, tuned separately for light and dark appearances.
 - One swappable accent color; default accent is a restrained slate blue.
 - Subtle status tints. Avoid alarm-heavy red as the dominant state language.
-- Provider identity should use abstract glyphs plus labels, not provider logos as
-  the only hierarchy.
-- Status must be communicated by color plus shape or text for color-vision
-  safety.
+- Provider identity should use short text badges plus labels, not abstract
+  shapes or provider logos as the only hierarchy.
+- Status must be communicated by color plus nearby text for color-vision safety.
 - Widgets are read-only and deep-link into the app for setup and detail.
 - Failure and stale states isolate to the affected account or provider; never
   blank the whole widget when neighboring data is still valid.
@@ -55,8 +54,8 @@ of copying the React implementation:
 
 - `CapacityDial`: ring/dial for overall or account capacity.
 - `CapacityBar`: compact account/model capacity bar.
-- `ProviderGlyph`: abstract provider symbol.
-- `StatusMark`: shape-coded status marker.
+- `ProviderBadge`: provider short-name text badge.
+- `StatusMark`: compact status marker paired with text.
 - `AccountRow`: reusable account/model row for widgets and app detail.
 - `ContextWidget`: WidgetKit configuration for small, medium, and large layouts.
 - `WidgetTimelineProvider`: timeline backed by cached local snapshots and

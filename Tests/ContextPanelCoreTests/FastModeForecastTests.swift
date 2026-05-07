@@ -103,6 +103,7 @@ private func openAILimit(
         accountID: "openai-\(accountName.lowercased())",
         accountName: accountName,
         label: "GPT-5 Thinking",
+        unit: .percent,
         used: used,
         limit: limit,
         resetsAt: resetsInHours.map { now.addingTimeInterval($0 * 3_600) },
