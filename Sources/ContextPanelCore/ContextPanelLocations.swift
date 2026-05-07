@@ -1,6 +1,8 @@
 import Foundation
 
 public enum ContextPanelLocations {
+    public static let appGroupID = "group.com.shinycomputers.contextpanel"
+
     public static func applicationSupportDirectory() -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support")
@@ -25,4 +27,3 @@ public enum ContextPanelLocations {
         applicationSupportDirectory().appending(path: "accounts.json")
     }
 }
-

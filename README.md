@@ -55,7 +55,20 @@ Useful entry points:
 
 ## Local App Bundle
 
-To build a launchable macOS app bundle from the current SwiftPM app shell:
+To build the native macOS app with the embedded WidgetKit extension:
+
+```sh
+xcodegen generate --spec project.yml
+xcodebuild \
+  -project ContextPanel.xcodeproj \
+  -scheme ContextPanel \
+  -configuration Debug \
+  -destination 'platform=macOS' \
+  -allowProvisioningUpdates \
+  build
+```
+
+To build a quick launchable macOS app bundle from the SwiftPM app shell:
 
 ```sh
 scripts/package-macos-app.sh --output dist --identity auto
@@ -64,8 +77,8 @@ open "dist/Context Panel.app"
 
 When a Developer ID Application identity is available in Keychain, the script
 uses it through `codesign`; otherwise it falls back to ad-hoc signing. This is
-the interim friend-installable path until the formal Xcode app and WidgetKit
-extension targets are in place.
+the interim friend-installable path for the app shell only; use the Xcode build
+when testing the widget extension.
 
 ## Local Provider Probes
 

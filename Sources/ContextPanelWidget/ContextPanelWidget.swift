@@ -10,7 +10,11 @@ struct ContextPanelWidgetEntry: TimelineEntry {
 struct ContextPanelTimelineProvider: TimelineProvider {
     let store: JSONSnapshotStore
 
-    init(store: JSONSnapshotStore = JSONSnapshotStore(rootDirectory: ContextPanelLocations.snapshotDirectory())) {
+    init(
+        store: JSONSnapshotStore = JSONSnapshotStore(
+            rootDirectory: ContextPanelLocations.snapshotDirectory(appGroupID: ContextPanelLocations.appGroupID)
+        )
+    ) {
         self.store = store
     }
 

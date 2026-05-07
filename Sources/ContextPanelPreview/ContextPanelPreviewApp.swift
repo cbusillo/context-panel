@@ -686,7 +686,9 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     init() {
-        store = JSONSnapshotStore(rootDirectory: ContextPanelLocations.snapshotDirectory())
+        store = JSONSnapshotStore(
+            rootDirectory: ContextPanelLocations.snapshotDirectory(appGroupID: ContextPanelLocations.appGroupID)
+        )
         accountStore = AccountConfigurationStore(configurationURL: ContextPanelLocations.accountConfigurationURL())
     }
 
