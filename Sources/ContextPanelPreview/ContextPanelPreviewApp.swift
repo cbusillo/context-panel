@@ -269,8 +269,8 @@ struct WidgetPreviewGrid: View {
     let snapshot: UsageSnapshot
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(title: "Concept A · Instrument", trailing: "Native preview")
+            VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(title: "Usage Glance", trailing: "Native preview")
             HStack(alignment: .top, spacing: 12) {
                 SmallWidgetPreview(snapshot: snapshot)
                 MediumWidgetPreview(snapshot: snapshot)
@@ -288,15 +288,19 @@ struct SmallWidgetPreview: View {
             VStack(alignment: .leading, spacing: 10) {
                 WidgetHeader(status: snapshot.aggregateStatus)
                 Spacer()
-                Text(snapshot.fastModeForecast.copy)
-                    .font(.system(size: 26, weight: .semibold))
+                Text(snapshot.tightestLimit?.previewRemainingHeadline ?? "No data")
+                    .font(.system(size: 30, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(CPTheme.primaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                Text(snapshot.tightestLimit?.previewWindowLine ?? "Add OpenAI, Anthropic, or Google.")
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(CPTheme.primaryText)
                     .lineLimit(2)
-                    .minimumScaleFactor(0.75)
-                Text(snapshot.tightestSupportText)
-                    .font(.system(size: 12))
+                Text(snapshot.tightestLimit?.previewResetConfidenceText ?? snapshot.subheadline)
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(CPTheme.secondaryText)
-                    .lineLimit(2)
+                CapacityBar(value: snapshot.tightestLimit?.usageRatio ?? 0, status: snapshot.aggregateStatus, height: 6)
                 Spacer()
                 ProviderMiniStatus(snapshot: snapshot)
             }
@@ -313,13 +317,16 @@ struct MediumWidgetPreview: View {
                 VStack(alignment: .leading) {
                     WidgetHeader(status: snapshot.aggregateStatus)
                     Spacer()
-                    CapacityDial(
-                        value: snapshot.tightestCapacityRatio,
-                        status: snapshot.aggregateStatus,
-                        label: "\(Int(snapshot.tightestCapacityRatio * 100))",
-                        sublabel: "tightest",
-                        size: 94
-                    )
+                    Text(snapshot.tightestLimit?.previewRemainingHeadline ?? "No data")
+                        .font(.system(size: 30, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(CPTheme.primaryText)
+                        .minimumScaleFactor(0.7)
+                        .lineLimit(1)
+                    Text(snapshot.tightestLimit?.provider.displayName ?? "Set up accounts")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(CPTheme.secondaryText)
+                        .textCase(.uppercase)
+                    CapacityBar(value: snapshot.tightestLimit?.usageRatio ?? 0, status: snapshot.aggregateStatus, height: 6)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(snapshot.fastModeForecast.copy)
                             .font(.system(size: 18, weight: .semibold))
@@ -337,7 +344,7 @@ struct MediumWidgetPreview: View {
                 Divider()
 
                 VStack(alignment: .leading, spacing: 8) {
-                    SectionHeader(title: "Most Constrained", trailing: "4 accounts")
+                    SectionHeader(title: "Tightest Windows", trailing: "4 accounts")
                     ForEach(snapshot.mostConstrainedLimits.prefix(4)) { limit in
                         AccountRow(limit: limit, compact: true)
                     }
@@ -359,18 +366,19 @@ struct LargeWidgetPreview: View {
                         Text(snapshot.fastModeForecast.copy)
                             .font(.system(size: 25, weight: .semibold))
                             .foregroundStyle(CPTheme.primaryText)
-                        Text(snapshot.tightestSupportText)
+                        Text(snapshot.tightestLimit?.previewWindowLine ?? snapshot.tightestSupportText)
                             .font(.system(size: 12))
                             .foregroundStyle(CPTheme.secondaryText)
                     }
                     Spacer()
-                    CapacityDial(
-                        value: snapshot.tightestCapacityRatio,
-                        status: snapshot.aggregateStatus,
-                        label: "\(Int(snapshot.tightestCapacityRatio * 100))",
-                        sublabel: "tightest",
-                        size: 84
-                    )
+                    VStack(alignment: .trailing, spacing: 3) {
+                        Text(snapshot.tightestLimit?.previewRemainingHeadline ?? "No data")
+                            .font(.system(size: 26, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(CPTheme.primaryText)
+                        Text(snapshot.providerPressureText)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(CPTheme.secondaryText)
+                    }
                 }
 
                 ProviderGroupGrid(snapshot: snapshot, compact: true)
@@ -378,11 +386,10 @@ struct LargeWidgetPreview: View {
                 Spacer(minLength: 0)
                 Divider()
                 HStack {
-                    Sparkline(values: [0.72, 0.68, 0.7, 0.64, 0.62, 0.58, 0.64])
-                        .frame(width: 120, height: 20)
-                    Text("pressure trend")
-                        .font(.system(size: 10))
-                        .foregroundStyle(CPTheme.tertiaryText)
+                    Text(snapshot.fastModeForecast.copy)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(CPTheme.accent)
+                        .lineLimit(1)
                     Spacer()
                     Text(snapshot.nearestResetText)
                         .font(.system(size: 10))
@@ -583,7 +590,10 @@ struct WidgetHeader: View {
         HStack {
             CPLabel("Context Panel")
             Spacer()
-            StatusMark(status: status, size: 9)
+            Text(status.previewStatusText)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(CPTheme.statusColor(status))
+                .textCase(.uppercase)
         }
     }
 }
@@ -595,9 +605,10 @@ struct ProviderMiniStatus: View {
         HStack(spacing: 14) {
             ForEach(Provider.allCases) { provider in
                 let limits = snapshot.limits.filter { $0.provider == provider }
-                HStack(spacing: 5) {
-                    ProviderBadge(provider: provider, compact: true)
-                }
+                Text(provider.shortName)
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(limits.isEmpty ? CPTheme.tertiaryText : CPTheme.providerColor(provider))
+                    .lineLimit(1)
                 .opacity(limits.isEmpty ? 0.35 : 1)
             }
         }
@@ -614,21 +625,17 @@ struct AccountRow: View {
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(limit.displayLabel)
+                    Text(limit.previewWindowLine)
                         .font(.system(size: compact ? 12 : 13, weight: .medium))
                         .lineLimit(1)
-                    Text("· \(limit.contextLabel)")
-                        .font(.system(size: compact ? 12 : 13))
-                        .foregroundStyle(CPTheme.tertiaryText)
-                        .lineLimit(1)
                     Spacer()
-                    Text(limit.compactUsageText)
+                    Text(limit.previewUsageText)
                         .font(.system(size: compact ? 10 : 11, weight: .medium, design: .monospaced))
                         .foregroundStyle(CPTheme.secondaryText)
                 }
                 HStack(spacing: 8) {
                     CapacityBar(value: limit.usageRatio ?? 0, status: limit.status)
-                    Text(limit.resetText)
+                    Text(limit.previewResetConfidenceText)
                         .font(.system(size: 10))
                         .foregroundStyle(limit.status == .stale ? CPTheme.statusColor(.stale) : CPTheme.tertiaryText)
                         .lineLimit(1)
@@ -1190,17 +1197,11 @@ struct CPLabel: View {
     }
 
     var body: some View {
-        HStack(spacing: 6) {
-            RoundedRectangle(cornerRadius: 1)
-                .fill(CPTheme.accent)
-                .rotationEffect(.degrees(45))
-                .frame(width: 6, height: 6)
-            Text(text)
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(0.8)
-                .textCase(.uppercase)
-                .foregroundStyle(CPTheme.tertiaryText)
-        }
+        Text(text)
+            .font(.system(size: 10, weight: .semibold))
+            .tracking(0.8)
+            .textCase(.uppercase)
+            .foregroundStyle(CPTheme.tertiaryText)
     }
 }
 
@@ -1277,7 +1278,7 @@ extension UsageSnapshot {
 
     var tightestUsageText: String {
         guard let tightestLimit else { return "Set up accounts" }
-        return tightestLimit.compactUsageText == "?" ? "Unknown limit" : "\(tightestLimit.compactUsageText) left"
+        return tightestLimit.previewRemainingHeadline
     }
 
     var tightestSupportText: String {
@@ -1323,6 +1324,15 @@ extension UsageSnapshot {
 }
 
 extension UsageLimit {
+    var previewRemainingHeadline: String {
+        guard let remaining else {
+            if status == .failure { return "Failed" }
+            return "Unknown"
+        }
+        if unit == .percent { return "\(remaining)% left" }
+        return "\(remaining) left"
+    }
+
     var compactUsageText: String {
         if provider == .anthropic, unit == .unknown, status == .unknown {
             return "unknown"
@@ -1339,11 +1349,87 @@ extension UsageLimit {
         return "\(Int(usageRatio * 100))%"
     }
 
+    var previewUsageText: String {
+        if provider == .anthropic, unit == .unknown, status == .unknown {
+            return "allowance unknown"
+        }
+        if unit == .percent, let used {
+            return "\(used)% used"
+        }
+        if let used, let limit {
+            return "\(used)/\(limit) used"
+        }
+        if status == .failure { return "refresh failed" }
+        return "unknown"
+    }
+
+    var previewWindowLine: String {
+        [provider.shortName, accountName, displayLabel, modelLabel]
+            .compactMap { value in
+                guard let value, !value.isEmpty else { return nil }
+                return value
+            }
+            .deduplicated()
+            .joined(separator: " · ")
+    }
+
     var resetText: String {
         if status == .failure { return "refresh failed" }
         guard let resetsAt else { return "unknown reset" }
         if resetsAt < Date().addingTimeInterval(-60) { return "reset passed" }
         return "resets \(resetsAt.widgetRelativeText)"
+    }
+
+    var previewResetConfidenceText: String {
+        "\(resetText) · \(confidence.previewText)"
+    }
+}
+
+extension UsageStatus {
+    var previewStatusText: String {
+        switch self {
+        case .healthy:
+            "ok"
+        case .close:
+            "close"
+        case .limited:
+            "limited"
+        case .stale:
+            "stale"
+        case .unknown:
+            "unknown"
+        case .failure:
+            "failed"
+        case .loading:
+            "loading"
+        }
+    }
+}
+
+extension UsageConfidence {
+    var previewText: String {
+        switch self {
+        case .official:
+            "official"
+        case .observed:
+            "observed"
+        case .manual:
+            "manual"
+        case .estimated:
+            "estimated"
+        case .unknown:
+            "confidence unknown"
+        }
+    }
+}
+
+extension Array where Element == String {
+    fileprivate func deduplicated() -> [String] {
+        reduce(into: []) { result, value in
+            if !result.contains(value) {
+                result.append(value)
+            }
+        }
     }
 }
 

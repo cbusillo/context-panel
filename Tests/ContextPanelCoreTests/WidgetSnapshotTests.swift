@@ -48,6 +48,7 @@ import Testing
     #expect(widget.state == .ready)
     #expect(summaries[.openAI]?.status == .close)
     #expect(summaries[.openAI]?.limitCount == 1)
+    #expect(summaries[.openAI]?.tightestLimit?.label == "Codex")
     #expect(summaries[.google]?.status == .healthy)
     #expect(summaries[.anthropic]?.limitCount == 0)
 }
@@ -66,4 +67,5 @@ import Testing
     let openAI = widget.providerSummaries.first { $0.provider == .openAI }
 
     #expect(abs((openAI?.capacityRatio ?? 0) - 0.05) < 0.0001)
+    #expect(openAI?.tightestLimit?.label == "Weekly")
 }
