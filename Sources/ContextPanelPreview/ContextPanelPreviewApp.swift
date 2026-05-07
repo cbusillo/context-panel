@@ -1,46 +1,57 @@
 import ContextPanelCore
 import SwiftUI
+import WebKit
 
 @main
 struct ContextPanelPreviewApp: App {
     var body: some Scene {
         WindowGroup {
-            AppRoot(snapshot: SampleUsageData.snapshot)
+            AppRoot()
                 .frame(minWidth: 1280, minHeight: 720)
         }
     }
 }
 
 struct AppRoot: View {
-    let snapshot: UsageSnapshot
+    @StateObject private var model = ContextPanelAppModel()
     @State private var selectedID: UsageLimit.ID?
+
+    private var snapshot: UsageSnapshot {
+        model.currentSnapshot
+    }
 
     private var selectedLimit: UsageLimit {
         if let selectedID, let match = snapshot.limits.first(where: { $0.id == selectedID }) {
             return match
         }
-        return snapshot.mostConstrainedLimits[0]
+        return snapshot.mostConstrainedLimits.first ?? SampleUsageData.snapshot.mostConstrainedLimits[0]
     }
 
     var body: some View {
         HStack(spacing: 0) {
-            AccountsSidebar(snapshot: snapshot, selectedID: $selectedID)
+            AccountsSidebar(model: model, snapshot: snapshot, selectedID: $selectedID)
                 .frame(width: 210)
             Divider()
-            InstrumentDashboard(snapshot: snapshot)
+            InstrumentDashboard(model: model, snapshot: snapshot)
                 .frame(minWidth: 740)
             Divider()
-            AccountDetail(limit: selectedLimit, generatedAt: snapshot.generatedAt)
+            AccountDetail(model: model, limit: selectedLimit, generatedAt: snapshot.generatedAt)
                 .frame(width: 320)
         }
         .tint(CPTheme.accent)
         .onAppear {
+            model.loadSnapshot()
             selectedID = selectedID ?? snapshot.mostConstrainedLimits.first?.id
+        }
+        .sheet(isPresented: $model.isClaudeWebCapturePresented) {
+            ClaudeWebCaptureSheet(model: model)
+                .frame(minWidth: 980, minHeight: 680)
         }
     }
 }
 
 struct AccountsSidebar: View {
+    @ObservedObject var model: ContextPanelAppModel
     let snapshot: UsageSnapshot
     @Binding var selectedID: UsageLimit.ID?
 
@@ -61,12 +72,23 @@ struct AccountsSidebar: View {
         }
         .navigationTitle("Context Panel")
         .safeAreaInset(edge: .bottom) {
-            Button {
-            } label: {
-                Label("Add Account", systemImage: "plus")
-                    .frame(maxWidth: .infinity)
+            VStack(spacing: 8) {
+                Button {
+                    Task { await model.refreshLocalConnectors() }
+                } label: {
+                    Label(model.isRefreshing ? "Refreshing" : "Refresh", systemImage: "arrow.clockwise")
+                        .frame(maxWidth: .infinity)
+                }
+                .disabled(model.isRefreshing)
+
+                Button {
+                    model.openClaudeWebCapture()
+                } label: {
+                    Label("Claude Web", systemImage: "gauge.with.dots.needle.67percent")
+                        .frame(maxWidth: .infinity)
+                }
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.bordered)
             .controlSize(.large)
             .padding(12)
         }
@@ -79,15 +101,15 @@ struct ProviderSidebarRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            ProviderGlyph(provider: provider, size: 12)
+            ProviderBadge(provider: provider)
             Text(provider.displayName)
                 .font(.system(size: 12, weight: .semibold))
                 .textCase(.uppercase)
-                .foregroundStyle(CPTheme.secondaryText)
+                .foregroundStyle(.secondary)
             Spacer()
             Text("\(limits.count)")
                 .font(.system(.caption, design: .monospaced, weight: .medium))
-                .foregroundStyle(CPTheme.tertiaryText)
+                .foregroundStyle(.tertiary)
         }
     }
 }
@@ -101,20 +123,21 @@ struct SidebarLimitRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(limit.accountName)
                     .font(.system(size: 13, weight: .medium))
-                Text(limit.label)
+                Text(limit.displayLabel)
                     .font(.system(size: 11))
-                    .foregroundStyle(CPTheme.tertiaryText)
+                    .foregroundStyle(.secondary)
             }
             Spacer()
             Text(limit.compactUsageText)
                 .font(.system(.caption2, design: .monospaced, weight: .medium))
-                .foregroundStyle(CPTheme.secondaryText)
+                .foregroundStyle(.secondary)
         }
         .padding(.vertical, 3)
     }
 }
 
 struct InstrumentDashboard: View {
+    @ObservedObject var model: ContextPanelAppModel
     let snapshot: UsageSnapshot
 
     private var constrained: [UsageLimit] {
@@ -124,7 +147,8 @@ struct InstrumentDashboard: View {
     var body: some View {
         ScrollView([.vertical, .horizontal]) {
             VStack(alignment: .leading, spacing: 18) {
-                HeaderCard(snapshot: snapshot)
+                HeaderCard(model: model, snapshot: snapshot)
+                SetupStatusStrip(model: model)
                 WidgetPreviewGrid(snapshot: snapshot)
                 SectionHeader(title: "Most Constrained", trailing: "\(snapshot.limits.count) accounts")
                 VStack(spacing: 10) {
@@ -144,6 +168,7 @@ struct InstrumentDashboard: View {
 }
 
 struct HeaderCard: View {
+    @ObservedObject var model: ContextPanelAppModel
     let snapshot: UsageSnapshot
 
     var body: some View {
@@ -157,18 +182,21 @@ struct HeaderCard: View {
                 Text(snapshot.subheadline)
                     .font(.system(size: 13))
                     .foregroundStyle(CPTheme.secondaryText)
+                Text(model.fastModeForecast.copy)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(CPTheme.accent)
                 HStack(spacing: 8) {
                     TagLabel("SwiftUI")
                     TagLabel("WidgetKit")
-                    TagLabel("Keychain-local")
+                    TagLabel(model.storeStatus.rawValue)
                 }
             }
             Spacer(minLength: 16)
             CapacityDial(
-                value: snapshot.aggregateCapacityRatio,
+                value: snapshot.tightestCapacityRatio,
                 status: snapshot.aggregateStatus,
-                label: "\(Int(snapshot.aggregateCapacityRatio * 100))",
-                sublabel: "capacity",
+                label: "\(Int(snapshot.tightestCapacityRatio * 100))",
+                sublabel: "tightest",
                 size: 116
             )
         }
@@ -177,6 +205,63 @@ struct HeaderCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(CPTheme.stroke(cornerRadius: 12))
         .shadow(color: .black.opacity(0.05), radius: 14, x: 0, y: 8)
+    }
+}
+
+struct SetupStatusStrip: View {
+    @ObservedObject var model: ContextPanelAppModel
+
+    var body: some View {
+        HStack(spacing: 12) {
+            SetupStatusItem(
+                title: "Snapshot cache",
+                value: model.storeStatus == .healthy ? "Ready" : model.storeStatus.rawValue,
+                status: model.storeStatus
+            )
+            SetupStatusItem(
+                title: "History",
+                value: "\(model.historyCount) entries",
+                status: model.historyCount > 0 ? .healthy : .unknown
+            )
+            SetupStatusItem(
+                title: "Last refresh",
+                value: model.lastRefreshText,
+                status: model.isRefreshing ? .loading : .healthy
+            )
+            Spacer(minLength: 12)
+            if let errorMessage = model.errorMessage {
+                Text(errorMessage)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(CPTheme.statusColor(.failure))
+                    .lineLimit(1)
+            }
+        }
+        .padding(14)
+        .background(CPTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(CPTheme.stroke(cornerRadius: 10))
+    }
+}
+
+struct SetupStatusItem: View {
+    let title: String
+    let value: String
+    let status: UsageStatus
+
+    var body: some View {
+        HStack(spacing: 8) {
+            StatusMark(status: status, size: 8)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(CPTheme.tertiaryText)
+                    .textCase(.uppercase)
+                Text(value)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(CPTheme.secondaryText)
+                    .lineLimit(1)
+            }
+        }
     }
 }
 
@@ -203,7 +288,7 @@ struct SmallWidgetPreview: View {
             VStack(alignment: .leading, spacing: 10) {
                 WidgetHeader(status: snapshot.aggregateStatus)
                 Spacer()
-                Text(snapshot.tightestUsageText)
+                Text(snapshot.fastModeForecast.copy)
                     .font(.system(size: 26, weight: .semibold))
                     .foregroundStyle(CPTheme.primaryText)
                     .lineLimit(2)
@@ -229,21 +314,21 @@ struct MediumWidgetPreview: View {
                     WidgetHeader(status: snapshot.aggregateStatus)
                     Spacer()
                     CapacityDial(
-                        value: snapshot.aggregateCapacityRatio,
+                        value: snapshot.tightestCapacityRatio,
                         status: snapshot.aggregateStatus,
-                        label: "\(Int(snapshot.aggregateCapacityRatio * 100))",
-                        sublabel: "capacity",
+                        label: "\(Int(snapshot.tightestCapacityRatio * 100))",
+                        sublabel: "tightest",
                         size: 94
                     )
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Working room")
+                        Text(snapshot.fastModeForecast.copy)
                             .font(.system(size: 18, weight: .semibold))
-                        Text("1 limited · 2 close")
+                        Text(snapshot.providerPressureText)
                             .font(.system(size: 11))
                             .foregroundStyle(CPTheme.tertiaryText)
                     }
                     Spacer()
-                    Text("nearest reset · 42m")
+                    Text(snapshot.nearestResetText)
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(CPTheme.tertiaryText)
                 }
@@ -271,19 +356,19 @@ struct LargeWidgetPreview: View {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 6) {
                         CPLabel("Context Panel")
-                        Text("You're good for the afternoon.")
+                        Text(snapshot.fastModeForecast.copy)
                             .font(.system(size: 25, weight: .semibold))
                             .foregroundStyle(CPTheme.primaryText)
-                        Text("Image gen on Team is the only blocker.")
+                        Text(snapshot.tightestSupportText)
                             .font(.system(size: 12))
                             .foregroundStyle(CPTheme.secondaryText)
                     }
                     Spacer()
                     CapacityDial(
-                        value: snapshot.aggregateCapacityRatio,
+                        value: snapshot.tightestCapacityRatio,
                         status: snapshot.aggregateStatus,
-                        label: "\(Int(snapshot.aggregateCapacityRatio * 100))",
-                        sublabel: "cap",
+                        label: "\(Int(snapshot.tightestCapacityRatio * 100))",
+                        sublabel: "tightest",
                         size: 84
                     )
                 }
@@ -295,11 +380,11 @@ struct LargeWidgetPreview: View {
                 HStack {
                     Sparkline(values: [0.72, 0.68, 0.7, 0.64, 0.62, 0.58, 0.64])
                         .frame(width: 120, height: 20)
-                    Text("24h capacity")
+                    Text("pressure trend")
                         .font(.system(size: 10))
                         .foregroundStyle(CPTheme.tertiaryText)
                     Spacer()
-                    Text("next reset in 42m · upd 2m ago")
+                    Text(snapshot.nearestResetText)
                         .font(.system(size: 10))
                         .foregroundStyle(CPTheme.tertiaryText)
                 }
@@ -319,7 +404,7 @@ struct ProviderGroupGrid: View {
                 if !limits.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 6) {
-                            ProviderGlyph(provider: provider, size: 11)
+                            ProviderBadge(provider: provider, compact: true)
                             Text(provider.displayName)
                                 .font(.system(size: 11, weight: .semibold))
                                 .textCase(.uppercase)
@@ -339,7 +424,7 @@ struct ProviderGroupGrid: View {
                                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                                         .foregroundStyle(CPTheme.secondaryText)
                                 }
-                                Text(limit.label)
+                                Text(limit.displayLabel)
                                     .font(.system(size: 10))
                                     .foregroundStyle(CPTheme.tertiaryText)
                                     .lineLimit(1)
@@ -355,6 +440,7 @@ struct ProviderGroupGrid: View {
 }
 
 struct AccountDetail: View {
+    @ObservedObject var model: ContextPanelAppModel
     let limit: UsageLimit
     let generatedAt: Date
 
@@ -362,11 +448,11 @@ struct AccountDetail: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 HStack(spacing: 10) {
-                    ProviderGlyph(provider: limit.provider, size: 16)
+                    ProviderBadge(provider: limit.provider)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(limit.accountName)
                             .font(.system(size: 22, weight: .semibold))
-                        Text("\(limit.provider.displayName) · \(limit.label)")
+                        Text("\(limit.provider.displayName) · \(limit.displayLabel) · \(limit.contextLabel)")
                             .font(.system(size: 13))
                             .foregroundStyle(CPTheme.secondaryText)
                     }
@@ -383,8 +469,8 @@ struct AccountDetail: View {
                 )
                 .frame(maxWidth: .infinity)
 
-                DetailCard(title: "Forecast") {
-                    Text(limit.note ?? "Fast mode looks safe through reset.")
+        DetailCard(title: "Forecast") {
+                    Text(forecastCopy)
                         .font(.system(size: 15, weight: .medium))
                     Text("Confidence: \(limit.confidence.rawValue)")
                         .font(.system(size: 12))
@@ -396,21 +482,48 @@ struct AccountDetail: View {
                     DetailRow(label: "Limit", value: limit.limit.map(String.init) ?? "unknown")
                     DetailRow(label: "Remaining", value: limit.remaining.map(String.init) ?? "unknown")
                     DetailRow(label: "Status", value: limit.status.rawValue)
-                    DetailRow(label: "Updated", value: "2m ago")
+                    DetailRow(label: "Updated", value: limit.lastUpdatedAt.map(model.relativeTime) ?? "unknown")
                 }
 
                 DetailCard(title: "Refresh history") {
                     Sparkline(values: [0.72, 0.68, 0.70, 0.64, 0.62, 0.58, 0.64])
                         .frame(height: 42)
-                    Text("Last good snapshot preserved for stale and failure states.")
+                    Text("\(model.historyCount) cached snapshots. Last good snapshot is preserved for stale and failure states.")
                         .font(.system(size: 12))
                         .foregroundStyle(CPTheme.secondaryText)
+                }
+
+                DetailCard(title: "Setup") {
+                    DetailRow(label: "Store", value: ConnectorRedactor.redactedPath(model.store.rootDirectory.path))
+                    DetailRow(label: "Accounts", value: "\(model.configuredAccounts.filter(\.isEnabled).count) enabled")
+                    ForEach(model.configuredAccounts) { account in
+                        DetailRow(
+                            label: account.displayName,
+                            value: account.isEnabled ? account.connectorKind.rawValue : "disabled"
+                        )
+                    }
                 }
             }
             .padding(22)
         }
         .background(CPTheme.background)
         .navigationTitle("Details")
+    }
+
+    private var forecastCopy: String {
+        if limit.provider == .openAI, limit.unit == .percent {
+            return FastModeForecast(
+                input: FastModeForecastInput(
+                        limit: limit,
+                        now: model.now,
+                    standardBurnRate: BurnRate(mode: .standard, unitsPerHour: 2),
+                    fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 12),
+                    reserveUnits: 6,
+                    minimumSafeHours: 1
+                )
+            ).copy
+        }
+        return limit.note ?? "No fast-mode forecast for this limit yet."
     }
 }
 
@@ -483,10 +596,7 @@ struct ProviderMiniStatus: View {
             ForEach(Provider.allCases) { provider in
                 let limits = snapshot.limits.filter { $0.provider == provider }
                 HStack(spacing: 5) {
-                    ProviderGlyph(provider: provider, size: 10)
-                    Text(provider.shortName)
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundStyle(CPTheme.secondaryText)
+                    ProviderBadge(provider: provider, compact: true)
                 }
                 .opacity(limits.isEmpty ? 0.35 : 1)
             }
@@ -500,14 +610,14 @@ struct AccountRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            ProviderGlyph(provider: limit.provider, size: compact ? 11 : 13)
+            ProviderBadge(provider: limit.provider, compact: true)
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(limit.label)
+                    Text(limit.displayLabel)
                         .font(.system(size: compact ? 12 : 13, weight: .medium))
                         .lineLimit(1)
-                    Text("· \(limit.accountName)")
+                    Text("· \(limit.contextLabel)")
                         .font(.system(size: compact ? 12 : 13))
                         .foregroundStyle(CPTheme.tertiaryText)
                         .lineLimit(1)
@@ -534,6 +644,126 @@ struct AccountRow: View {
             }
         }
     }
+}
+
+@MainActor
+final class ContextPanelAppModel: ObservableObject {
+    @Published private(set) var storedSnapshot: StoredUsageSnapshot?
+    @Published private(set) var storeStatus: UsageStatus = .unknown
+    @Published private(set) var historyCount: Int = 0
+    @Published private(set) var configuredAccounts: [LocalProviderAccountConfiguration] = []
+    @Published private(set) var isRefreshing = false
+    @Published var isClaudeWebCapturePresented = false
+    @Published private(set) var errorMessage: String?
+    @Published private(set) var lastRefreshAt: Date?
+
+    let now = Date()
+    let store: JSONSnapshotStore
+    let accountStore: AccountConfigurationStore
+
+    var currentSnapshot: UsageSnapshot {
+        storedSnapshot?.snapshot ?? SampleUsageData.snapshot
+    }
+
+    var fastModeForecast: FastModePortfolioForecast {
+        let forecasts = currentSnapshot.limits
+            .filter { $0.provider == .openAI && $0.unit == .percent }
+            .map { limit in
+                FastModeForecast(input: FastModeForecastInput(
+                    limit: limit,
+                    now: Date(),
+                    standardBurnRate: BurnRate(mode: .standard, unitsPerHour: 2),
+                    fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 12),
+                    reserveUnits: 6,
+                    minimumSafeHours: 1
+                ))
+            }
+        return FastModePortfolioForecast(forecasts: forecasts)
+    }
+
+    var lastRefreshText: String {
+        lastRefreshAt.map(relativeTime) ?? "not yet"
+    }
+
+    init() {
+        store = JSONSnapshotStore(
+            rootDirectory: ContextPanelLocations.snapshotDirectory(appGroupID: ContextPanelLocations.appGroupID)
+        )
+        accountStore = AccountConfigurationStore(configurationURL: ContextPanelLocations.accountConfigurationURL())
+    }
+
+    func loadSnapshot() {
+        let accounts = accountStore.load().document.accounts
+        configuredAccounts = accounts
+        let result = store.loadCurrent(policy: SnapshotStoreStalenessPolicy(maximumAge: 15 * 60), now: Date())
+        storedSnapshot = result.snapshot
+        storeStatus = result.status
+        errorMessage = result.errorMessage
+        historyCount = store.loadHistory().count
+    }
+
+    func refreshLocalConnectors() async {
+        isRefreshing = true
+        defer { isRefreshing = false }
+
+        let accountDocument = accountStore.load().document
+        configuredAccounts = accountDocument.accounts
+        let connectors = AccountConnectorFactory.connectors(from: accountDocument)
+        let refreshResult = await ProviderConnectorRuntime(connectors: connectors).refreshAll()
+        let savedAt = Date()
+
+        do {
+            try store.saveMerged(refreshResult: refreshResult, savedAt: savedAt)
+            lastRefreshAt = savedAt
+            loadSnapshot()
+        } catch {
+            storeStatus = .failure
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func openClaudeWebCapture() {
+        isClaudeWebCapturePresented = true
+    }
+
+    func closeClaudeWebCapture() {
+        isClaudeWebCapturePresented = false
+    }
+
+    func saveClaudeWebLimits(_ limits: [UsageLimit]) {
+        guard !limits.isEmpty else { return }
+        let savedAt = Date()
+        let report = ProviderConnectorReport(
+            provider: .anthropic,
+            accountID: "claude-web",
+            accountName: "Claude Web",
+            generatedAt: savedAt,
+            limits: limits,
+            status: .healthy
+        )
+        do {
+            try store.saveMerged(
+                refreshResult: ConnectorRefreshResult(generatedAt: savedAt, reports: [report]),
+                savedAt: savedAt
+            )
+            lastRefreshAt = savedAt
+            loadSnapshot()
+        } catch {
+            storeStatus = .failure
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func relativeTime(_ date: Date) -> String {
+        let seconds = max(Int(Date().timeIntervalSince(date)), 0)
+        if seconds < 60 { return "just now" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(minutes)m ago" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours)h ago" }
+        return "\(hours / 24)d ago"
+    }
+
 }
 
 struct CapacityDial: View {
@@ -588,26 +818,15 @@ struct CapacityBar: View {
     }
 }
 
-struct ProviderGlyph: View {
+struct ProviderBadge: View {
     let provider: Provider
-    var size: CGFloat = 12
+    var compact = false
 
     var body: some View {
-        Group {
-            switch provider {
-            case .openAI:
-                RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .stroke(CPTheme.accent, lineWidth: 1.4)
-            case .anthropic:
-                Triangle()
-                    .stroke(CPTheme.accent, lineWidth: 1.4)
-            case .google:
-                RoundedRectangle(cornerRadius: 1, style: .continuous)
-                    .rotation(.degrees(45))
-                    .stroke(CPTheme.accent, lineWidth: 1.4)
-            }
-        }
-        .frame(width: size, height: size)
+        Text(provider.shortName)
+            .font(.system(size: compact ? 10 : 11, weight: .semibold, design: .monospaced))
+            .foregroundStyle(CPTheme.providerColor(provider))
+            .lineLimit(1)
     }
 }
 
@@ -636,6 +855,289 @@ struct StatusMark: View {
         }
         .frame(width: size, height: size)
     }
+}
+
+struct ClaudeWebCaptureSheet: View {
+    @ObservedObject var model: ContextPanelAppModel
+    @StateObject private var captureModel = ClaudeWebCaptureModel()
+
+    var body: some View {
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Claude Web")
+                        .font(.system(size: 22, weight: .semibold))
+                    Text("Complete Claude verification here. The app captures only official usage windows from the Usage page.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(CPTheme.secondaryText)
+                }
+
+                HStack {
+                    Button("Open Usage") { captureModel.openUsagePage() }
+                    Button("Reload") { captureModel.reload() }
+                    Spacer()
+                    Button("Done") { model.closeClaudeWebCapture() }
+                }
+
+                Label(captureModel.statusText, systemImage: captureModel.statusIcon)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(captureModel.limits.isEmpty ? CPTheme.secondaryText : CPTheme.primaryText)
+
+                Divider()
+
+                Text("Captured windows")
+                    .font(.system(size: 11, weight: .semibold))
+                    .textCase(.uppercase)
+                    .foregroundStyle(CPTheme.secondaryText)
+
+                if captureModel.limits.isEmpty {
+                    ContentUnavailableView(
+                        "Waiting for Claude usage",
+                        systemImage: "network",
+                        description: Text("The sheet auto-saves when Claude's usage endpoint returns percent windows.")
+                    )
+                    .frame(maxHeight: 220)
+                } else {
+                    ScrollView {
+                        VStack(spacing: 8) {
+                            ForEach(captureModel.limits) { limit in
+                                ClaudeWebCaptureLimitRow(limit: limit)
+                            }
+                        }
+                    }
+                }
+
+                Spacer()
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("No cookies, tokens, headers, IDs, emails, local storage, or raw bodies are stored.", systemImage: "lock.shield")
+                    Label("Saved rows are merged with OpenAI and Gemini instead of replacing them.", systemImage: "square.stack.3d.up")
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(CPTheme.secondaryText)
+            }
+            .frame(width: 330)
+            .padding(18)
+            .background(CPTheme.surface)
+
+            Divider()
+
+            ClaudeWebCaptureWebView(model: captureModel)
+        }
+        .onReceive(captureModel.$limits) { limits in
+            guard !limits.isEmpty else { return }
+            model.saveClaudeWebLimits(limits)
+        }
+    }
+}
+
+struct ClaudeWebCaptureLimitRow: View {
+    let limit: UsageLimit
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(limit.displayLabel)
+                        .font(.system(size: 13, weight: .semibold))
+                    Text(limit.contextLabel)
+                        .font(.system(size: 11))
+                        .foregroundStyle(CPTheme.secondaryText)
+                }
+                Spacer()
+                Text(limit.compactUsageText)
+                    .font(.system(size: 18, weight: .semibold, design: .rounded))
+            }
+            CapacityBar(value: limit.usageRatio ?? 0, status: limit.status)
+            Text(limit.resetText)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(CPTheme.tertiaryText)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(CPTheme.background)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(CPTheme.stroke(cornerRadius: 8))
+    }
+}
+
+@MainActor
+final class ClaudeWebCaptureModel: ObservableObject {
+    @Published var limits: [UsageLimit] = []
+    @Published var statusText = "Opening Claude usage page"
+    @Published var statusIcon = "safari"
+
+    private lazy var navigationDelegate = ClaudeWebCaptureNavigationDelegate(owner: self)
+
+    lazy var webView: WKWebView = {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .default()
+        configuration.userContentController.add(ClaudeWebCaptureScriptHandler(owner: self), name: "claudeUsageCapture")
+        configuration.userContentController.addUserScript(
+            WKUserScript(source: Self.networkProbeScript, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        )
+        let view = WKWebView(frame: .zero, configuration: configuration)
+        view.navigationDelegate = navigationDelegate
+        return view
+    }()
+
+    init() {
+        openUsagePage()
+    }
+
+    func openUsagePage() {
+        statusText = "Opening Claude usage page"
+        statusIcon = "safari"
+        webView.load(URLRequest(url: URL(string: "https://claude.ai/settings/usage")!))
+    }
+
+    func reload() {
+        statusText = "Reloading Claude usage page"
+        statusIcon = "arrow.clockwise"
+        webView.reload()
+    }
+
+    fileprivate func record(payload: [String: Any]) {
+        let windows = payload["windows"] as? [String: Any] ?? [:]
+        let wrapped = ["rate_limits": windows]
+        do {
+            let data = try JSONSerialization.data(withJSONObject: wrapped)
+            let parsed = try ClaudeWebUsageParser.usageLimits(
+                from: data,
+                accountID: "claude-web",
+                accountName: "Claude Web",
+                observedAt: Date()
+            )
+            guard !parsed.isEmpty else { return }
+            limits = parsed
+            statusText = "Captured and saved Claude web usage"
+            statusIcon = "checkmark.circle.fill"
+        } catch {
+            statusText = "Capture failed: \(error.localizedDescription)"
+            statusIcon = "exclamationmark.triangle"
+        }
+    }
+
+    fileprivate func didFinishNavigation(url: URL?) {
+        if let host = url?.host, host.contains("claude.ai"), limits.isEmpty {
+            statusText = "Claude page loaded; waiting for usage API"
+            statusIcon = "network"
+        }
+    }
+
+    private static let networkProbeScript = #"""
+    (() => {
+      if (window.__contextPanelClaudeUsageCaptureInstalled) return;
+      window.__contextPanelClaudeUsageCaptureInstalled = true;
+
+      const windowKeys = new Set(['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet', 'seven_day_oauth_apps']);
+      const fieldKeys = new Set(['used_percentage', 'remaining_percentage', 'utilization', 'resets_at', 'reset_at']);
+
+      function isUsageURL(rawUrl) {
+        try { return /^\/api\/organizations\/[^/]+\/usage$/.test(new URL(rawUrl, window.location.href).pathname); }
+        catch (_) { return false; }
+      }
+
+      function sanitizeWindow(value) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+        const sanitized = {};
+        for (const key of fieldKeys) {
+          const raw = value[key];
+          if (typeof raw === 'number' || typeof raw === 'string') sanitized[key] = raw;
+        }
+        return Object.keys(sanitized).length ? sanitized : null;
+      }
+
+      function collectWindows(value, out = {}) {
+        if (!value || typeof value !== 'object') return out;
+        if (Array.isArray(value)) {
+          value.slice(0, 3).forEach(item => collectWindows(item, out));
+          return out;
+        }
+        for (const [key, child] of Object.entries(value)) {
+          if (windowKeys.has(key)) {
+            const sanitized = sanitizeWindow(child);
+            if (sanitized) out[key] = sanitized;
+          }
+          collectWindows(child, out);
+        }
+        return out;
+      }
+
+      function post(payload) {
+        try { window.webkit.messageHandlers.claudeUsageCapture.postMessage(payload); }
+        catch (_) {}
+      }
+
+      function inspect(url, contentType, text) {
+        if (!isUsageURL(url) || !/json/i.test(contentType || '')) return;
+        try {
+          const windows = collectWindows(JSON.parse(String(text || '')));
+          if (Object.keys(windows).length) post({ windows });
+        } catch (_) {}
+      }
+
+      const originalFetch = window.fetch;
+      if (originalFetch) {
+        window.fetch = async function(input, init) {
+          const response = await originalFetch.apply(this, arguments);
+          try {
+            const clone = response.clone();
+            const url = typeof input === 'string' ? input : (input && input.url) || '';
+            clone.text().then(text => inspect(url, clone.headers.get('content-type') || '', text)).catch(() => {});
+          } catch (_) {}
+          return response;
+        };
+      }
+
+      const originalOpen = XMLHttpRequest.prototype.open;
+      const originalSend = XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.open = function(method, url) {
+        this.__cpClaudeUsageUrl = url;
+        return originalOpen.apply(this, arguments);
+      };
+      XMLHttpRequest.prototype.send = function() {
+        this.addEventListener('load', function() {
+          try { inspect(this.__cpClaudeUsageUrl || '', this.getResponseHeader('content-type') || '', this.responseText || ''); }
+          catch (_) {}
+        });
+        return originalSend.apply(this, arguments);
+      };
+    })();
+    """#
+}
+
+final class ClaudeWebCaptureScriptHandler: NSObject, WKScriptMessageHandler {
+    weak var owner: ClaudeWebCaptureModel?
+
+    init(owner: ClaudeWebCaptureModel) {
+        self.owner = owner
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let payload = message.body as? [String: Any] else { return }
+        Task { @MainActor [weak owner] in owner?.record(payload: payload) }
+    }
+}
+
+final class ClaudeWebCaptureNavigationDelegate: NSObject, WKNavigationDelegate {
+    weak var owner: ClaudeWebCaptureModel?
+
+    init(owner: ClaudeWebCaptureModel) {
+        self.owner = owner
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        Task { @MainActor [weak webView, weak owner] in owner?.didFinishNavigation(url: webView?.url) }
+    }
+}
+
+struct ClaudeWebCaptureWebView: NSViewRepresentable {
+    @ObservedObject var model: ClaudeWebCaptureModel
+
+    func makeNSView(context: Context) -> WKWebView { model.webView }
+
+    func updateNSView(_ nsView: WKWebView, context: Context) {}
 }
 
 struct Sparkline: View {
@@ -720,17 +1222,6 @@ struct TagLabel: View {
     }
 }
 
-struct Triangle: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-        path.closeSubpath()
-        return path
-    }
-}
-
 enum CPTheme {
     static let background = Color(red: 244 / 255, green: 244 / 255, blue: 245 / 255)
     static let surface = Color.white
@@ -740,6 +1231,17 @@ enum CPTheme {
     static let secondaryText = primaryText.opacity(0.66)
     static let tertiaryText = primaryText.opacity(0.46)
     static let accent = Color(red: 74 / 255, green: 91 / 255, blue: 122 / 255)
+
+    static func providerColor(_ provider: Provider) -> Color {
+        switch provider {
+        case .openAI:
+            Color(red: 56 / 255, green: 92 / 255, blue: 126 / 255)
+        case .anthropic:
+            Color(red: 139 / 255, green: 102 / 255, blue: 51 / 255)
+        case .google:
+            Color(red: 35 / 255, green: 116 / 255, blue: 106 / 255)
+        }
+    }
 
     static func statusColor(_ status: UsageStatus) -> Color {
         switch status {
@@ -780,51 +1282,93 @@ extension UsageSnapshot {
 
     var tightestSupportText: String {
         guard let tightestLimit else { return "Add OpenAI, Anthropic, or Google." }
-        return "\(tightestLimit.label) · \(tightestLimit.accountName) — your tightest account"
+        return "\(tightestLimit.provider.shortName) · \(tightestLimit.displayLabel) · \(tightestLimit.contextLabel)"
+    }
+
+    var tightestCapacityRatio: Double {
+        guard let ratio = tightestLimit?.usageRatio else { return 0 }
+        return max(1 - ratio, 0)
+    }
+
+    var fastModeForecast: FastModePortfolioForecast {
+        let forecasts = limits
+            .filter { $0.provider == .openAI && $0.unit == .percent }
+            .map { limit in
+                FastModeForecast(input: FastModeForecastInput(
+                    limit: limit,
+                    now: Date(),
+                    standardBurnRate: BurnRate(mode: .standard, unitsPerHour: 2),
+                    fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 12),
+                    reserveUnits: 6,
+                    minimumSafeHours: 1
+                ))
+            }
+        return FastModePortfolioForecast(forecasts: forecasts)
+    }
+
+    var providerPressureText: String {
+        let limited = limits.filter { $0.status == .limited }.count
+        let close = limits.filter { $0.status == .close }.count
+        if limited > 0 || close > 0 {
+            return "\(limited) limited · \(close) close"
+        }
+        return "all tracked windows healthy"
+    }
+
+    var nearestResetText: String {
+        let futureResets = limits.compactMap(\.resetsAt).filter { $0 > Date() }.sorted()
+        guard let reset = futureResets.first else { return "reset unknown" }
+        return "nearest reset \(reset.widgetRelativeText)"
     }
 }
 
 extension UsageLimit {
     var compactUsageText: String {
+        if provider == .anthropic, unit == .unknown, status == .unknown {
+            return "unknown"
+        }
         guard let used, let limit else { return status == .failure ? "—" : "?" }
         return "\(used)/\(limit)"
     }
 
     var percentText: String {
+        if provider == .anthropic, unit == .unknown, status == .unknown {
+            return "unknown"
+        }
         guard let usageRatio else { return status == .failure ? "—" : "?" }
         return "\(Int(usageRatio * 100))%"
     }
 
     var resetText: String {
-        switch status {
-        case .failure:
-            "refresh failed"
-        case .unknown:
-            "unknown"
-        default:
-            switch label {
-            case "Image generation":
-                "42m"
-            case "Claude Opus":
-                "1h 15m"
-            case "GPT-5":
-                "3h 20m"
-            case "GPT-5 Thinking":
-                "tomorrow 9:00"
-            default:
-                "tonight"
-            }
+        if status == .failure { return "refresh failed" }
+        guard let resetsAt else { return "unknown reset" }
+        if resetsAt < Date().addingTimeInterval(-60) { return "reset passed" }
+        return "resets \(resetsAt.widgetRelativeText)"
+    }
+}
+
+extension Date {
+    var widgetRelativeText: String {
+        let seconds = Int(timeIntervalSince(Date()))
+        if abs(seconds) < 60 { return "now" }
+        if seconds >= 0 {
+            let minutes = seconds / 60
+            if minutes < 60 { return "in \(minutes)m" }
+            let hours = minutes / 60
+            if hours < 24 { return "in \(hours)h" }
+            return "in \(hours / 24)d"
         }
+        let elapsed = abs(seconds)
+        let minutes = elapsed / 60
+        if minutes < 60 { return "\(minutes)m ago" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours)h ago" }
+        return "\(hours / 24)d ago"
     }
 }
 
 extension [UsageStatus] {
     var worstStatus: UsageStatus {
-        if contains(.limited) { return .limited }
-        if contains(.failure) { return .failure }
-        if contains(.close) { return .close }
-        if contains(.stale) { return .stale }
-        if contains(.unknown) { return .unknown }
-        return .healthy
+        contextPanelWorstStatus
     }
 }
