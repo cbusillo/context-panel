@@ -46,11 +46,13 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     public var providerSummaries: [ProviderSummary] {
         Provider.allCases.map { provider in
             let providerLimits = limits.filter { $0.provider == provider }
+            let tightestLimit = UsageSnapshot(generatedAt: generatedAt, limits: providerLimits).mostConstrainedLimits.first
             return ProviderSummary(
                 provider: provider,
                 limitCount: providerLimits.count,
                 status: providerLimits.map(\.status).contextPanelWorstStatus,
-                capacityRatio: capacityRatio(for: providerLimits)
+                capacityRatio: capacityRatio(for: providerLimits),
+                tightestLimit: tightestLimit
             )
         }
     }
@@ -117,12 +119,20 @@ public struct ProviderSummary: Codable, Equatable, Sendable {
     public let limitCount: Int
     public let status: UsageStatus
     public let capacityRatio: Double
+    public let tightestLimit: UsageLimit?
 
-    public init(provider: Provider, limitCount: Int, status: UsageStatus, capacityRatio: Double) {
+    public init(
+        provider: Provider,
+        limitCount: Int,
+        status: UsageStatus,
+        capacityRatio: Double,
+        tightestLimit: UsageLimit? = nil
+    ) {
         self.provider = provider
         self.limitCount = limitCount
         self.status = status
         self.capacityRatio = capacityRatio
+        self.tightestLimit = tightestLimit
     }
 }
 

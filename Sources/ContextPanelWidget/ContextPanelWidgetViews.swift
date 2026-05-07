@@ -5,23 +5,24 @@ struct ContextPanelSmallWidget: View {
     let snapshot: WidgetSnapshot
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            CPWHeader(status: snapshot.status)
+        VStack(alignment: .leading, spacing: 9) {
+            CPWHeader(status: snapshot.status, text: snapshot.generatedAt.widgetRelativeText)
             Spacer(minLength: 4)
             if let tightest = snapshot.mostConstrainedLimits.first {
-                Text(snapshot.fastModeVerdict)
-                    .font(.system(size: 26, weight: .semibold))
+                Text(tightest.widgetRemainingHeadline)
+                    .font(.system(size: 30, weight: .semibold, design: .monospaced))
                     .foregroundStyle(CPWTheme.primaryText)
-                    .minimumScaleFactor(0.75)
+                    .minimumScaleFactor(0.7)
+                    .lineLimit(1)
+                Text(tightest.widgetWindowLine)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(CPWTheme.primaryText)
                     .lineLimit(2)
-                Text("\(tightest.provider.shortName) · \(tightest.displayLabel) · \(tightest.widgetUsageText)")
-                    .font(.system(size: 11))
+                Text(tightest.widgetResetConfidenceText)
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(CPWTheme.secondaryText)
                     .lineLimit(2)
-                Text(tightest.widgetResetText)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(CPWTheme.tertiaryText)
-                    .lineLimit(1)
+                CPWCapacityBar(value: tightest.usageRatio ?? 0, status: tightest.status, height: 6)
             } else {
                 Text("Set up accounts")
                     .font(.system(size: 22, weight: .semibold))
@@ -45,15 +46,9 @@ struct ContextPanelMediumWidget: View {
     var body: some View {
         HStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 10) {
-                CPWHeader(status: snapshot.status)
+                CPWHeader(status: snapshot.status, text: snapshot.generatedAt.widgetRelativeText)
                 Spacer(minLength: 0)
-                CPWCapacityDial(
-                    value: snapshot.tightestCapacityRatio,
-                    status: snapshot.status,
-                    label: "\(Int(snapshot.tightestCapacityRatio * 100))",
-                    sublabel: "tightest",
-                    size: 86
-                )
+                CPWGlanceNumber(snapshot: snapshot)
                 Text(snapshot.fastModeVerdict)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(CPWTheme.secondaryText)
@@ -65,7 +60,7 @@ struct ContextPanelMediumWidget: View {
             Divider()
 
             VStack(alignment: .leading, spacing: 8) {
-                CPWSectionHeader(title: "Most Constrained", trailing: "\(snapshot.limits.count) limits")
+                CPWSectionHeader(title: "Tightest Windows", trailing: "\(snapshot.limits.count) limits")
                 ForEach(snapshot.mostConstrainedLimits.prefix(4)) { limit in
                     CPWLimitRow(limit: limit)
                 }
@@ -90,19 +85,13 @@ struct ContextPanelLargeWidget: View {
                         .font(.system(size: 24, weight: .semibold))
                         .foregroundStyle(CPWTheme.primaryText)
                         .lineLimit(2)
-                    Text(snapshot.state.rawValue)
+                    Text(snapshot.generatedAt.widgetRelativeText)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(CPWTheme.secondaryText)
                         .textCase(.uppercase)
                 }
                 Spacer()
-                CPWCapacityDial(
-                    value: snapshot.tightestCapacityRatio,
-                    status: snapshot.status,
-                    label: "\(Int(snapshot.tightestCapacityRatio * 100))",
-                    sublabel: "tightest",
-                    size: 82
-                )
+                CPWGlanceNumber(snapshot: snapshot)
             }
 
             CPWProviderSummaryGrid(snapshot: snapshot)
@@ -112,7 +101,7 @@ struct ContextPanelLargeWidget: View {
             VStack(alignment: .leading, spacing: 8) {
                 CPWFastModeCard(snapshot: snapshot)
 
-                CPWSectionHeader(title: "Account Limits", trailing: snapshot.generatedAt.widgetRelativeText)
+                CPWSectionHeader(title: "Tightest Windows", trailing: snapshot.providerPressureText)
                 ForEach(snapshot.mostConstrainedLimits.prefix(6)) { limit in
                     CPWLimitRow(limit: limit)
                 }
@@ -127,13 +116,37 @@ struct ContextPanelLargeWidget: View {
 
 struct CPWHeader: View {
     let status: UsageStatus
+    var text = "Context Panel"
 
     var body: some View {
         HStack {
-            CPWLabel("Context Panel")
+            CPWLabel(text)
             Spacer()
-            CPWStatusMark(status: status, size: 9)
+            Text(status.widgetLabel)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(CPWTheme.statusColor(status))
+                .textCase(.uppercase)
         }
+    }
+}
+
+struct CPWGlanceNumber: View {
+    let snapshot: WidgetSnapshot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(snapshot.tightestHeadline)
+                .font(.system(size: 28, weight: .semibold, design: .monospaced))
+                .foregroundStyle(CPWTheme.primaryText)
+                .minimumScaleFactor(0.65)
+                .lineLimit(1)
+            Text(snapshot.tightestSubheadline)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(CPWTheme.secondaryText)
+                .lineLimit(2)
+            CPWCapacityBar(value: snapshot.tightestUsageRatio, status: snapshot.status, height: 6)
+        }
+        .frame(width: 94, alignment: .leading)
     }
 }
 
@@ -144,13 +157,9 @@ struct CPWLimitRow: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 CPWProviderBadge(provider: limit.provider, compact: true)
-                Text(limit.displayLabel)
+                Text(limit.widgetWindowLine)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(CPWTheme.primaryText)
-                    .lineLimit(1)
-                Text("· \(limit.contextLabel)")
-                    .font(.system(size: 11))
-                    .foregroundStyle(CPWTheme.tertiaryText)
                     .lineLimit(1)
                 Spacer(minLength: 6)
                 Text(limit.widgetUsageText)
@@ -159,7 +168,7 @@ struct CPWLimitRow: View {
             }
             HStack(spacing: 8) {
                 CPWCapacityBar(value: limit.usageRatio ?? 0, status: limit.status)
-                Text(limit.widgetResetText)
+                Text(limit.widgetResetConfidenceText)
                     .font(.system(size: 10))
                     .foregroundStyle(CPWTheme.tertiaryText)
                     .lineLimit(1)
@@ -176,14 +185,21 @@ struct CPWProviderSummaryGrid: View {
             ForEach(snapshot.providerSummaries, id: \.provider) { summary in
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 6) {
-                        CPWProviderBadge(provider: summary.provider, compact: true)
+                        Text(summary.provider.displayName)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(CPWTheme.providerColor(summary.provider))
+                            .lineLimit(1)
                         Spacer()
-                        CPWStatusMark(status: summary.status, size: 7)
+                        Text(summary.status.widgetLabel)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(CPWTheme.statusColor(summary.status))
+                            .textCase(.uppercase)
                     }
-                    Text(summary.limitCount == 0 ? "setup" : "\(Int(summary.capacityRatio * 100))% tightest room")
+                    Text(summary.widgetSummaryText)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(CPWTheme.secondaryText)
-                    CPWCapacityBar(value: 1 - summary.capacityRatio, status: summary.status)
+                        .lineLimit(2)
+                    CPWCapacityBar(value: 1 - summary.capacityRatio, status: summary.status, height: 5)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -197,11 +213,11 @@ struct CPWProviderMiniStatus: View {
     var body: some View {
         HStack(spacing: 12) {
             ForEach(snapshot.providerSummaries, id: \.provider) { summary in
-                HStack(spacing: 5) {
-                    CPWProviderBadge(provider: summary.provider, compact: true)
-                }
-                .foregroundStyle(CPWTheme.secondaryText)
-                .opacity(summary.limitCount == 0 ? 0.35 : 1)
+                Text(summary.provider.shortName)
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(summary.limitCount == 0 ? CPWTheme.tertiaryText : CPWTheme.providerColor(summary.provider))
+                    .lineLimit(1)
+                    .opacity(summary.limitCount == 0 ? 0.35 : 1)
             }
         }
     }
@@ -249,37 +265,10 @@ struct CPWFastModeCard: View {
     }
 }
 
-struct CPWCapacityDial: View {
-    let value: Double
-    let status: UsageStatus
-    let label: String
-    let sublabel: String
-    var size: CGFloat = 86
-
-    var body: some View {
-        ZStack {
-            Circle().stroke(CPWTheme.line, lineWidth: 6)
-            Circle()
-                .trim(from: 0, to: min(max(value, 0), 1))
-                .stroke(CPWTheme.statusColor(status), style: StrokeStyle(lineWidth: 6, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-            VStack(spacing: 0) {
-                Text(label)
-                    .font(.system(size: 22, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(CPWTheme.primaryText)
-                Text(sublabel)
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(CPWTheme.tertiaryText)
-                    .textCase(.uppercase)
-            }
-        }
-        .frame(width: size, height: size)
-    }
-}
-
 struct CPWCapacityBar: View {
     let value: Double
     let status: UsageStatus
+    var height: CGFloat = 4
 
     var body: some View {
         GeometryReader { proxy in
@@ -290,7 +279,7 @@ struct CPWCapacityBar: View {
                     .frame(width: proxy.size.width * min(max(value, 0), 1))
             }
         }
-        .frame(height: 4)
+        .frame(height: height)
     }
 }
 
@@ -362,17 +351,11 @@ struct CPWLabel: View {
     }
 
     var body: some View {
-        HStack(spacing: 6) {
-            RoundedRectangle(cornerRadius: 1)
-                .fill(CPWTheme.accent)
-                .rotationEffect(.degrees(45))
-                .frame(width: 6, height: 6)
-            Text(text)
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(0.8)
-                .textCase(.uppercase)
-                .foregroundStyle(CPWTheme.tertiaryText)
-        }
+        Text(text)
+            .font(.system(size: 10, weight: .semibold))
+            .tracking(0.8)
+            .textCase(.uppercase)
+            .foregroundStyle(CPWTheme.tertiaryText)
     }
 }
 
@@ -423,15 +406,37 @@ enum CPWTheme {
 }
 
 extension UsageLimit {
+    var widgetRemainingHeadline: String {
+        guard let remaining else {
+            if status == .failure { return "Failed" }
+            return "Unknown"
+        }
+        if unit == .percent { return "\(remaining)% left" }
+        return "\(remaining) left"
+    }
+
     var widgetUsageText: String {
         if provider == .anthropic, unit == .unknown, status == .unknown {
             return "allowance unknown"
         }
-        if let remaining, let limit {
-            return "\(remaining)/\(limit) left"
+        if unit == .percent, let used {
+            return "\(used)% used"
+        }
+        if let used, let limit {
+            return "\(used)/\(limit) used"
         }
         if status == .failure { return "refresh failed" }
         return "unknown"
+    }
+
+    var widgetWindowLine: String {
+        [provider.shortName, accountName, displayLabel, modelLabel]
+            .compactMap { value in
+                guard let value, !value.isEmpty else { return nil }
+                return value
+            }
+            .deduplicated()
+            .joined(separator: " · ")
     }
 
     var widgetResetText: String {
@@ -443,12 +448,38 @@ extension UsageLimit {
         }
         return "resets \(resetsAt.widgetRelativeText)"
     }
+
+    var widgetResetConfidenceText: String {
+        "\(widgetResetText) · \(confidence.widgetLabel)"
+    }
 }
 
 extension WidgetSnapshot {
+    var tightestHeadline: String {
+        mostConstrainedLimits.first?.widgetRemainingHeadline ?? "No data"
+    }
+
+    var tightestSubheadline: String {
+        guard let limit = mostConstrainedLimits.first else { return message }
+        return "\(limit.provider.shortName) \(limit.displayLabel)"
+    }
+
+    var tightestUsageRatio: Double {
+        mostConstrainedLimits.first?.usageRatio ?? 0
+    }
+
     var tightestCapacityRatio: Double {
         guard let ratio = mostConstrainedLimits.first?.usageRatio else { return 0 }
         return max(1 - ratio, 0)
+    }
+
+    var providerPressureText: String {
+        let limited = limits.filter { $0.status == .limited }.count
+        let close = limits.filter { $0.status == .close }.count
+        if limited > 0 || close > 0 {
+            return "\(limited) limited · \(close) close"
+        }
+        return "all healthy"
     }
 
     var fastModeForecast: FastModeForecast? {
@@ -492,6 +523,62 @@ extension WidgetSnapshot {
             return "\(rounded)h"
         }
         return "\(Int(hours.rounded()))h"
+    }
+}
+
+extension ProviderSummary {
+    var widgetSummaryText: String {
+        guard let tightestLimit else { return "setup needed" }
+        let remaining = tightestLimit.widgetRemainingHeadline.lowercased()
+        return "\(tightestLimit.accountName) \(tightestLimit.displayLabel) · \(remaining)"
+    }
+}
+
+extension UsageStatus {
+    var widgetLabel: String {
+        switch self {
+        case .healthy:
+            "ok"
+        case .close:
+            "close"
+        case .limited:
+            "limited"
+        case .stale:
+            "stale"
+        case .unknown:
+            "unknown"
+        case .failure:
+            "failed"
+        case .loading:
+            "loading"
+        }
+    }
+}
+
+extension UsageConfidence {
+    var widgetLabel: String {
+        switch self {
+        case .official:
+            "official"
+        case .observed:
+            "observed"
+        case .manual:
+            "manual"
+        case .estimated:
+            "estimated"
+        case .unknown:
+            "confidence unknown"
+        }
+    }
+}
+
+extension Array where Element == String {
+    fileprivate func deduplicated() -> [String] {
+        reduce(into: []) { result, value in
+            if !result.contains(value) {
+                result.append(value)
+            }
+        }
     }
 }
 
