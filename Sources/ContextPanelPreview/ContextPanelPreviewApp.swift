@@ -1054,6 +1054,8 @@ final class ContextPanelAppModel: ObservableObject {
         storeStatus = result.status
         if result.status == .failure || result.errorMessage != nil {
             errorMessage = result.errorMessage
+        } else if errorMessage?.hasPrefix("Background refresh could not be enabled:") != true {
+            errorMessage = nil
         }
         historyCount = refreshService.loadHistory().count
         mirrorSnapshotsForDevelopmentWidget()
@@ -1093,6 +1095,10 @@ final class ContextPanelAppModel: ObservableObject {
 
     func saveClaudeWebLimits(_ limits: [UsageLimit]) {
         guard !limits.isEmpty else { return }
+        Task { await saveClaudeWebLimitsAsync(limits) }
+    }
+
+    private func saveClaudeWebLimitsAsync(_ limits: [UsageLimit]) async {
         let savedAt = Date()
         let report = ProviderConnectorReport(
             provider: .anthropic,
@@ -1103,10 +1109,11 @@ final class ContextPanelAppModel: ObservableObject {
             status: .healthy
         )
         do {
-            try SnapshotRefreshStores.appDefault().primary.saveMerged(
+            let decision = try await refreshRunner.saveMerged(
                 refreshResult: ConnectorRefreshResult(generatedAt: savedAt, reports: [report]),
                 savedAt: savedAt
             )
+            guard case .refreshed = decision else { return }
             lastRefreshAt = savedAt
             loadSnapshot()
             WidgetCenter.shared.reloadAllTimelines()

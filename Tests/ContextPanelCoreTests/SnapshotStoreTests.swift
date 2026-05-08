@@ -285,6 +285,39 @@ import Testing
     #expect(primary.loadCurrent().snapshot == nil)
 }
 
+@Test func snapshotRefreshRunnerSerializesManualSavesWithRefreshLock() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let lockURL = try temporaryDirectory().appending(path: "refresh.lock")
+    try FileManager.default.createDirectory(at: lockURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    FileManager.default.createFile(atPath: lockURL.path, contents: Data())
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary)
+    )
+    let runner = SnapshotRefreshRunner(
+        service: service,
+        lock: SnapshotRefreshLock(lockURL: lockURL, staleAfter: 60)
+    )
+    let savedAt = Date(timeIntervalSince1970: 700)
+    let report = ProviderConnectorReport(
+        provider: .anthropic,
+        accountID: "claude-web",
+        accountName: "Claude Web",
+        generatedAt: savedAt,
+        limits: [usageLimit(provider: .anthropic, accountID: "claude-web", used: 20, savedAt: savedAt)],
+        status: .healthy
+    )
+
+    let decision = try await runner.saveMerged(
+        refreshResult: ConnectorRefreshResult(generatedAt: savedAt, reports: [report]),
+        savedAt: savedAt
+    )
+
+    #expect(decision == .skippedAlreadyRunning)
+    #expect(primary.loadCurrent().snapshot == nil)
+}
+
 private func usageLimit(provider: Provider, accountID: String, used: Int, savedAt: Date) -> UsageLimit {
     UsageLimit(
         provider: provider,
