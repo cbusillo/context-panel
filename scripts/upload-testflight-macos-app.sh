@@ -239,6 +239,11 @@ archive_args=(
 	-authenticationKeyPath "$api_key_path"
 	-authenticationKeyID "$api_key_id"
 	-authenticationKeyIssuerID "$api_issuer_id"
+	CODE_SIGN_STYLE=Manual
+	DEVELOPMENT_TEAM="$team_id"
+	CONTEXT_PANEL_APP_STORE_APP_PROFILE_SPECIFIER="$app_profile_uuid"
+	CONTEXT_PANEL_APP_STORE_WIDGET_PROFILE_SPECIFIER="$widget_profile_uuid"
+	CONTEXT_PANEL_APP_STORE_REFRESH_AGENT_PROFILE_SPECIFIER="$refresh_agent_profile_uuid"
 )
 if [[ -n "$build_number" ]]; then
 	archive_args+=(CURRENT_PROJECT_VERSION="$build_number")

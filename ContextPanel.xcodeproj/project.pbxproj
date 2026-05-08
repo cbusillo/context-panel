@@ -487,7 +487,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = Config/ContextPanel.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Config/ContextPanelAppStore.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Distribution";
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -507,6 +508,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.shinycomputers.contextpanel;
 				PRODUCT_NAME = "Context Panel";
+				PROVISIONING_PROFILE_SPECIFIER = "$(CONTEXT_PANEL_APP_STORE_APP_PROFILE_SPECIFIER)";
 				SDKROOT = macosx;
 			};
 			name = Release;
@@ -531,7 +533,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = Config/ContextPanelRefreshAgent.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Config/ContextPanelRefreshAgentAppStore.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Distribution";
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -550,7 +553,9 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "com.shinycomputers.contextpanel.refresh-agent";
 				PRODUCT_NAME = ContextPanelRefreshAgent;
+				PROVISIONING_PROFILE_SPECIFIER = "$(CONTEXT_PANEL_APP_STORE_REFRESH_AGENT_PROFILE_SPECIFIER)";
 				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
 			};
 			name = Release;
 		};
@@ -720,6 +725,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Config/ContextPanelWidget.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Distribution";
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -737,6 +743,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.shinycomputers.contextpanel.widget;
 				PRODUCT_NAME = ContextPanelWidgetExtension;
+				PROVISIONING_PROFILE_SPECIFIER = "$(CONTEXT_PANEL_APP_STORE_WIDGET_PROFILE_SPECIFIER)";
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
 			};

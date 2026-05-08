@@ -7,6 +7,7 @@
   <key>com.apple.security.application-groups</key>
   <array>
     <string>group.com.shinycomputers.contextpanel</string>
+    <string>MM5YXC7T6E.group.com.shinycomputers.contextpanel</string>
   </array>
 </dict>
 </plist>

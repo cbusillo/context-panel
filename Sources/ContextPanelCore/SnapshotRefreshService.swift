@@ -116,6 +116,30 @@ public struct SnapshotRefreshRunner: Sendable {
     }
 
     public func saveMerged(refreshResult: ConnectorRefreshResult, savedAt: Date) async throws -> SnapshotRefreshRunDecision {
+        try await saveMerged(refreshResult: refreshResult, savedAt: savedAt, retryFor: .zero)
+    }
+
+    public func saveMerged(
+        refreshResult: ConnectorRefreshResult,
+        savedAt: Date,
+        retryFor: Duration,
+        retryInterval: Duration = .milliseconds(250)
+    ) async throws -> SnapshotRefreshRunDecision {
+        let startedAt = ContinuousClock.now
+
+        while true {
+            let decision = try await saveMergedOnce(refreshResult: refreshResult, savedAt: savedAt)
+            if decision != .skippedAlreadyRunning {
+                return decision
+            }
+            if startedAt.duration(to: ContinuousClock.now) >= retryFor {
+                return decision
+            }
+            try await Task.sleep(for: retryInterval)
+        }
+    }
+
+    private func saveMergedOnce(refreshResult: ConnectorRefreshResult, savedAt: Date) async throws -> SnapshotRefreshRunDecision {
         if let lock {
             guard let outcome = try await lock.withLock(now: savedAt, {
                 try service.saveMerged(refreshResult: refreshResult, savedAt: savedAt)
