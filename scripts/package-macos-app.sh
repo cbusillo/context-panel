@@ -129,6 +129,8 @@ cat >"$contents/Info.plist" <<PLIST
   <string>14.0</string>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>ITSAppUsesNonExemptEncryption</key>
+  <false/>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
 </dict>

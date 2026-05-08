@@ -40,6 +40,7 @@ targets:
         PRODUCT_NAME: Context Panel
         GENERATE_INFOPLIST_FILE: true
         INFOPLIST_KEY_CFBundleDisplayName: Context Panel
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: false
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
         INFOPLIST_KEY_LSApplicationCategoryType: >-
