@@ -80,6 +80,17 @@ uses it through `codesign`; otherwise it falls back to ad-hoc signing. This is
 the interim friend-installable path for the app shell only; use the Xcode build
 when testing the widget extension.
 
+To build the native release artifact locally, including the widget extension:
+
+```sh
+scripts/package-native-macos-app.sh --version 1.0.0 --output dist --identity auto
+```
+
+GitHub Actions also has a `Release` workflow for tag or manual releases. Without
+Apple signing secrets it publishes an ad-hoc signed validation artifact; with
+Developer ID and notarization secrets it can produce the friend-installable
+release artifact.
+
 ## Local Provider Probes
 
 The package includes development probes for validating provider limit signals

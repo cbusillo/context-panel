@@ -10,19 +10,23 @@
 		0BBD1DF433F345E62C6A26EF /* LimitProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */; };
 		10A2940E7E3FE6E253ECFEDE /* GeminiCodeAssistQuota.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AC2F76895EE0EFC7F463447 /* GeminiCodeAssistQuota.swift */; };
 		1DD89F5634070B75C09BDE99 /* ClaudeLocalStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2E426A482568BBE85357D7E /* ClaudeLocalStatus.swift */; };
+		29FD4D47A21D08ABAE47E778 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 944A3154A0C2E33C5971E571 /* Assets.xcassets */; };
 		36A035769881D4A450BA3BD8 /* libContextPanelCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = F09182E1FD96DAEEC38F3909 /* libContextPanelCore.a */; };
 		38E9E0A22491522FF4E0A8F4 /* ContextPanelPreviewApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A46D6040EB6F68FC91EC477D /* ContextPanelPreviewApp.swift */; };
+		44DFF437D4762A4D0D2DBAA8 /* BurnRateEstimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FB4BEA57ACE8B84CAE71E75 /* BurnRateEstimator.swift */; };
 		459C8EC82194CE1A950FE1B5 /* UsageLimit.swift in Sources */ = {isa = PBXBuildFile; fileRef = D459054C90410A784EBD308B /* UsageLimit.swift */; };
 		47414B1A42BE473BF1644296 /* CodexRateLimits.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FA8FE4CC9BE058D8F46FBA2 /* CodexRateLimits.swift */; };
 		64BA3F57751ADAB181558D58 /* SampleUsageData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2361E9EED490737FB8306CC7 /* SampleUsageData.swift */; };
 		85EBA57F3F1633F2D6E54103 /* ContextPanelWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 07D959D621E594C0CFC2CEF5 /* ContextPanelWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		9C74713AEFFAC6D85E7ACF3F /* FastModeForecast.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BD985B0213AB5987D3B3170 /* FastModeForecast.swift */; };
+		A9464088796B38105C01F7D3 /* MainLimitSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FC2DAEDD38483FC3A5D4880 /* MainLimitSummary.swift */; };
 		B6C35EBBE9327327BDCA324F /* SnapshotStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32D8515D047F5A8117DB762C /* SnapshotStore.swift */; };
 		B83302BDC1EAC3EE45DBE8B8 /* WidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5233BBC86AE8057D749F71CD /* WidgetSnapshot.swift */; };
 		BE7F8E276624C8E6D93BC329 /* libContextPanelCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = F09182E1FD96DAEEC38F3909 /* libContextPanelCore.a */; };
 		BF04DB8945D058C7A63BEAB3 /* ClaudeWebUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53715ACF982CE590F00C3A75 /* ClaudeWebUsage.swift */; };
 		C1DF7B59257060AC0A6AF44D /* ContextPanelLocations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23E9C71457F4E1F101132FCF /* ContextPanelLocations.swift */; };
 		C6CA96F5E75E32FCCD329736 /* ContextPanelWidgetViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 407B0E4C039FFF22FA8F8542 /* ContextPanelWidgetViews.swift */; };
+		E223E001AF708A36F7976205 /* WidgetDisplayPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBDCF9F49A90CA3576BF2792 /* WidgetDisplayPreferences.swift */; };
 		E77C3B3D8985239A004E8CDC /* AccountConfigurationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 186D607FE2EEFDFFE2E70446 /* AccountConfigurationStore.swift */; };
 		F4B9B4FB75A285E38AE52B1D /* ProviderConnector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 350ED5589FB23C42ED32704A /* ProviderConnector.swift */; };
 		FE093A1996BA546A10A800DA /* ContextPanelWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = E195C6E906DA9C0BF082622F /* ContextPanelWidget.swift */; };
@@ -74,18 +78,22 @@
 		23E9C71457F4E1F101132FCF /* ContextPanelLocations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelLocations.swift; sourceTree = "<group>"; };
 		32D8515D047F5A8117DB762C /* SnapshotStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotStore.swift; sourceTree = "<group>"; };
 		350ED5589FB23C42ED32704A /* ProviderConnector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderConnector.swift; sourceTree = "<group>"; };
+		3FC2DAEDD38483FC3A5D4880 /* MainLimitSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainLimitSummary.swift; sourceTree = "<group>"; };
 		407B0E4C039FFF22FA8F8542 /* ContextPanelWidgetViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelWidgetViews.swift; sourceTree = "<group>"; };
 		5233BBC86AE8057D749F71CD /* WidgetSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSnapshot.swift; sourceTree = "<group>"; };
 		53715ACF982CE590F00C3A75 /* ClaudeWebUsage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeWebUsage.swift; sourceTree = "<group>"; };
 		60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LimitProbe.swift; sourceTree = "<group>"; };
 		7BD985B0213AB5987D3B3170 /* FastModeForecast.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FastModeForecast.swift; sourceTree = "<group>"; };
 		8D6350007C73BEF27D871AB0 /* ContextPanel.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ContextPanel.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		8FB4BEA57ACE8B84CAE71E75 /* BurnRateEstimator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BurnRateEstimator.swift; sourceTree = "<group>"; };
+		944A3154A0C2E33C5971E571 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		9FA8FE4CC9BE058D8F46FBA2 /* CodexRateLimits.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRateLimits.swift; sourceTree = "<group>"; };
 		A46D6040EB6F68FC91EC477D /* ContextPanelPreviewApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelPreviewApp.swift; sourceTree = "<group>"; };
 		D459054C90410A784EBD308B /* UsageLimit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageLimit.swift; sourceTree = "<group>"; };
 		E195C6E906DA9C0BF082622F /* ContextPanelWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelWidget.swift; sourceTree = "<group>"; };
 		E2E426A482568BBE85357D7E /* ClaudeLocalStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeLocalStatus.swift; sourceTree = "<group>"; };
 		F09182E1FD96DAEEC38F3909 /* libContextPanelCore.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libContextPanelCore.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		FBDCF9F49A90CA3576BF2792 /* WidgetDisplayPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetDisplayPreferences.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -122,6 +130,7 @@
 			isa = PBXGroup;
 			children = (
 				186D607FE2EEFDFFE2E70446 /* AccountConfigurationStore.swift */,
+				8FB4BEA57ACE8B84CAE71E75 /* BurnRateEstimator.swift */,
 				E2E426A482568BBE85357D7E /* ClaudeLocalStatus.swift */,
 				53715ACF982CE590F00C3A75 /* ClaudeWebUsage.swift */,
 				9FA8FE4CC9BE058D8F46FBA2 /* CodexRateLimits.swift */,
@@ -129,13 +138,23 @@
 				7BD985B0213AB5987D3B3170 /* FastModeForecast.swift */,
 				0AC2F76895EE0EFC7F463447 /* GeminiCodeAssistQuota.swift */,
 				60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */,
+				3FC2DAEDD38483FC3A5D4880 /* MainLimitSummary.swift */,
 				350ED5589FB23C42ED32704A /* ProviderConnector.swift */,
 				32D8515D047F5A8117DB762C /* SnapshotStore.swift */,
 				D459054C90410A784EBD308B /* UsageLimit.swift */,
+				FBDCF9F49A90CA3576BF2792 /* WidgetDisplayPreferences.swift */,
 				5233BBC86AE8057D749F71CD /* WidgetSnapshot.swift */,
 			);
 			name = ContextPanelCore;
 			path = Sources/ContextPanelCore;
+			sourceTree = "<group>";
+		};
+		6E201F66FEFA138BFA2F4179 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				944A3154A0C2E33C5971E571 /* Assets.xcassets */,
+			);
+			path = Resources;
 			sourceTree = "<group>";
 		};
 		77BADA15D2FF6ABB6F666F43 = {
@@ -144,6 +163,7 @@
 				537271134D87C7167DEBA0C1 /* ContextPanelCore */,
 				F71E88199DC89A225C8F07FC /* ContextPanelPreview */,
 				A538E84B22D9D75DE0FD30D4 /* ContextPanelWidget */,
+				6E201F66FEFA138BFA2F4179 /* Resources */,
 				45E9D2C527D1EF15E9811358 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -213,6 +233,7 @@
 			buildConfigurationList = 54E2B892F7409618FAE8F040 /* Build configuration list for PBXNativeTarget "ContextPanel" */;
 			buildPhases = (
 				8BE7305E45C25AEF658A9E47 /* Sources */,
+				B85F7D0817CF1BFB5778B9D2 /* Resources */,
 				0A536561059AF7F95E2D3FD7 /* Frameworks */,
 				09DAA1F320B84A007C14B253 /* Embed Foundation Extensions */,
 			);
@@ -273,6 +294,17 @@
 		};
 /* End PBXProject section */
 
+/* Begin PBXResourcesBuildPhase section */
+		B85F7D0817CF1BFB5778B9D2 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				29FD4D47A21D08ABAE47E778 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
 /* Begin PBXShellScriptBuildPhase section */
 		A6FD12E22FB2385AD98885D1 /* Copy Swift Objective-C Interface Header */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -307,6 +339,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				E77C3B3D8985239A004E8CDC /* AccountConfigurationStore.swift in Sources */,
+				44DFF437D4762A4D0D2DBAA8 /* BurnRateEstimator.swift in Sources */,
 				1DD89F5634070B75C09BDE99 /* ClaudeLocalStatus.swift in Sources */,
 				BF04DB8945D058C7A63BEAB3 /* ClaudeWebUsage.swift in Sources */,
 				47414B1A42BE473BF1644296 /* CodexRateLimits.swift in Sources */,
@@ -314,9 +347,11 @@
 				9C74713AEFFAC6D85E7ACF3F /* FastModeForecast.swift in Sources */,
 				10A2940E7E3FE6E253ECFEDE /* GeminiCodeAssistQuota.swift in Sources */,
 				0BBD1DF433F345E62C6A26EF /* LimitProbe.swift in Sources */,
+				A9464088796B38105C01F7D3 /* MainLimitSummary.swift in Sources */,
 				F4B9B4FB75A285E38AE52B1D /* ProviderConnector.swift in Sources */,
 				B6C35EBBE9327327BDCA324F /* SnapshotStore.swift in Sources */,
 				459C8EC82194CE1A950FE1B5 /* UsageLimit.swift in Sources */,
+				E223E001AF708A36F7976205 /* WidgetDisplayPreferences.swift in Sources */,
 				B83302BDC1EAC3EE45DBE8B8 /* WidgetSnapshot.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -362,6 +397,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = "Context Panel";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_NSQuitAlwaysKeepsWindows = NO;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -405,6 +441,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = "Context Panel";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_NSQuitAlwaysKeepsWindows = NO;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -442,6 +479,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Config/ContextPanelWidget.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "Config/ContextPanelWidget-Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -450,6 +488,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -531,6 +570,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Config/ContextPanelWidget.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "Config/ContextPanelWidget-Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -539,6 +579,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",

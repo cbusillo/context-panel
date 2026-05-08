@@ -5,21 +5,57 @@ import WidgetKit
 struct ContextPanelWidgetEntry: TimelineEntry {
     let date: Date
     let snapshot: WidgetSnapshot
+    let displayPreferences: WidgetDisplayPreferences
 }
 
 struct ContextPanelTimelineProvider: TimelineProvider {
     let store: JSONSnapshotStore
+    let containerFallbackStore: JSONSnapshotStore
+    let hostFallbackStore: JSONSnapshotStore
+    let fallbackStore: JSONSnapshotStore
+    let preferencesStore: WidgetDisplayPreferencesStore
+    let containerFallbackPreferencesStore: WidgetDisplayPreferencesStore
+    let hostFallbackPreferencesStore: WidgetDisplayPreferencesStore
+    let fallbackPreferencesStore: WidgetDisplayPreferencesStore
 
     init(
         store: JSONSnapshotStore = JSONSnapshotStore(
             rootDirectory: ContextPanelLocations.snapshotDirectory(appGroupID: ContextPanelLocations.appGroupID)
+        ),
+        containerFallbackStore: JSONSnapshotStore = JSONSnapshotStore(
+            rootDirectory: ContextPanelLocations.widgetDevelopmentContainerSnapshotDirectory()
+        ),
+        hostFallbackStore: JSONSnapshotStore = JSONSnapshotStore(
+            rootDirectory: ContextPanelLocations.hostDevelopmentSnapshotDirectory()
+        ),
+        fallbackStore: JSONSnapshotStore = JSONSnapshotStore(
+            rootDirectory: ContextPanelLocations.widgetDevelopmentSnapshotDirectory()
+        ),
+        preferencesStore: WidgetDisplayPreferencesStore = WidgetDisplayPreferencesStore(
+            preferencesURL: ContextPanelLocations.widgetDisplayPreferencesURL(appGroupID: ContextPanelLocations.appGroupID)
+        ),
+        containerFallbackPreferencesStore: WidgetDisplayPreferencesStore = WidgetDisplayPreferencesStore(
+            preferencesURL: ContextPanelLocations.widgetDevelopmentContainerDisplayPreferencesURL()
+        ),
+        hostFallbackPreferencesStore: WidgetDisplayPreferencesStore = WidgetDisplayPreferencesStore(
+            preferencesURL: ContextPanelLocations.hostDevelopmentDisplayPreferencesURL()
+        ),
+        fallbackPreferencesStore: WidgetDisplayPreferencesStore = WidgetDisplayPreferencesStore(
+            preferencesURL: ContextPanelLocations.widgetDevelopmentDisplayPreferencesURL()
         )
     ) {
         self.store = store
+        self.containerFallbackStore = containerFallbackStore
+        self.hostFallbackStore = hostFallbackStore
+        self.fallbackStore = fallbackStore
+        self.preferencesStore = preferencesStore
+        self.containerFallbackPreferencesStore = containerFallbackPreferencesStore
+        self.hostFallbackPreferencesStore = hostFallbackPreferencesStore
+        self.fallbackPreferencesStore = fallbackPreferencesStore
     }
 
     func placeholder(in context: Context) -> ContextPanelWidgetEntry {
-        ContextPanelWidgetEntry(date: Date(), snapshot: .placeholder)
+        ContextPanelWidgetEntry(date: Date(), snapshot: .placeholder, displayPreferences: .defaultPreferences)
     }
 
     func getSnapshot(in context: Context, completion: @escaping (ContextPanelWidgetEntry) -> Void) {
@@ -33,8 +69,41 @@ struct ContextPanelTimelineProvider: TimelineProvider {
     }
 
     private func entry(date: Date) -> ContextPanelWidgetEntry {
+        let displayPreferences = loadDisplayPreferences()
         let result = store.loadCurrent(policy: SnapshotStoreStalenessPolicy(maximumAge: 20 * 60), now: date)
-        return ContextPanelWidgetEntry(date: date, snapshot: WidgetSnapshot.fromStore(result, now: date))
+        if result.snapshot == nil || result.status == .failure {
+            for fallbackStore in [containerFallbackStore, hostFallbackStore, fallbackStore] {
+                let fallback = fallbackStore.loadCurrent(
+                    policy: SnapshotStoreStalenessPolicy(maximumAge: 20 * 60),
+                    now: date
+                )
+                guard fallback.snapshot != nil else { continue }
+                return ContextPanelWidgetEntry(
+                    date: date,
+                    snapshot: WidgetSnapshot.fromStore(fallback, now: date, history: fallbackStore.loadHistory()),
+                    displayPreferences: displayPreferences
+                )
+            }
+        }
+        return ContextPanelWidgetEntry(
+            date: date,
+            snapshot: WidgetSnapshot.fromStore(result, now: date, history: store.loadHistory()),
+            displayPreferences: displayPreferences
+        )
+    }
+
+    private func loadDisplayPreferences() -> WidgetDisplayPreferences {
+        for store in [
+            preferencesStore,
+            containerFallbackPreferencesStore,
+            hostFallbackPreferencesStore,
+            fallbackPreferencesStore,
+        ] {
+            if let preferences = store.loadIfAvailable() {
+                return preferences
+            }
+        }
+        return .defaultPreferences
     }
 }
 
@@ -47,9 +116,9 @@ struct ContextPanelWidgetView: View {
         case .systemSmall:
             ContextPanelSmallWidget(snapshot: entry.snapshot)
         case .systemLarge, .systemExtraLarge:
-            ContextPanelLargeWidget(snapshot: entry.snapshot)
+            ContextPanelLargeWidget(snapshot: entry.snapshot, displayPreferences: entry.displayPreferences)
         default:
-            ContextPanelMediumWidget(snapshot: entry.snapshot)
+            ContextPanelMediumWidget(snapshot: entry.snapshot, displayPreferences: entry.displayPreferences)
         }
     }
 }
@@ -66,6 +135,7 @@ struct ContextPanelWidget: Widget {
         .configurationDisplayName("Context Panel")
         .description("AI account usage limits, reset timing, and fast-mode safety from local snapshots.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+        .contentMarginsDisabled()
     }
 }
 

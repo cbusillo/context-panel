@@ -77,6 +77,12 @@ public struct CodexAuthTokens: Codable, Equatable, Sendable {
     }
 }
 
+private struct CodexAuthRecord: Equatable, Sendable {
+    let tokens: CodexAuthTokens
+    let accountName: String
+    let stableID: String?
+}
+
 public enum CodexAuthFileParser {
     public static func tokens(from data: Data) throws -> CodexAuthTokens {
         let payload = try JSONDecoder().decode(CodexAuthFilePayload.self, from: data)
@@ -88,6 +94,32 @@ public enum CodexAuthFileParser {
             accountID: tokens.accountID,
             idToken: tokens.idToken
         )
+    }
+
+    fileprivate static func authRecords(from data: Data, accountName: String) throws -> [CodexAuthRecord] {
+        if let accountList = try? JSONDecoder().decode(CodexAuthAccountsFilePayload.self, from: data) {
+            let chatGPTAccounts = accountList.accounts.filter { account in
+                account.mode == nil || account.mode == "chatgpt"
+            }
+            let records = chatGPTAccounts.enumerated().compactMap { index, account -> CodexAuthRecord? in
+                guard !account.tokens.accessToken.isEmpty else { return nil }
+                let name = chatGPTAccounts.count == 1 ? accountName : "\(accountName) \(index + 1)"
+                return CodexAuthRecord(
+                    tokens: CodexAuthTokens(
+                        accessToken: account.tokens.accessToken,
+                        accountID: account.tokens.accountID,
+                        idToken: account.tokens.idToken
+                    ),
+                    accountName: name,
+                    stableID: account.id
+                )
+            }
+            if !records.isEmpty {
+                return records
+            }
+        }
+
+        return [CodexAuthRecord(tokens: try tokens(from: data), accountName: accountName, stableID: nil)]
     }
 }
 
@@ -150,30 +182,65 @@ public struct CodexRateLimitConnector: ProviderConnector {
         var reports: [ProviderConnectorReport] = []
         reports.reserveCapacity(accounts.count)
         for account in accounts {
-            reports.append(await refresh(account: account, now: now))
+            reports.append(contentsOf: await refresh(account: account, now: now))
         }
         return ConnectorRefreshResult(generatedAt: now, reports: reports)
     }
 
-    private func refresh(account: CodexAccountConfiguration, now: Date) async -> ProviderConnectorReport {
-        let localAccountID = ConnectorRedactor.localAccountID(provider: provider, path: account.authPath)
+    private func refresh(account: CodexAccountConfiguration, now: Date) async -> [ProviderConnectorReport] {
+        do {
+            let records = try CodexAuthFileParser.authRecords(
+                from: try fileLoader(account.authPath),
+                accountName: account.accountName
+            )
+            var reports: [ProviderConnectorReport] = []
+            reports.reserveCapacity(records.count)
+            for record in records {
+                reports.append(try await refresh(authRecord: record, account: account, now: now))
+            }
+            return reports
+        } catch {
+            let localAccountID = ConnectorRedactor.localAccountID(provider: provider, path: account.authPath)
+            return [ProviderConnectorReport(
+                provider: provider,
+                accountID: localAccountID,
+                accountName: account.accountName,
+                generatedAt: now,
+                limits: [],
+                status: .failure,
+                errorMessage: error.localizedDescription
+            )]
+        }
+    }
+
+    private func refresh(
+        authRecord: CodexAuthRecord,
+        account: CodexAccountConfiguration,
+        now: Date
+    ) async throws -> ProviderConnectorReport {
+        let auth = authRecord.tokens
+        let providerAccountID = auth.accountID ?? CodexAccountIDExtractor.accountID(fromIDToken: auth.idToken)
+        let localAccountID = providerAccountID.map {
+            ConnectorRedactor.localAccountID(provider: provider, stableID: "chatgpt:\($0)")
+        } ?? authRecord.stableID.map {
+            ConnectorRedactor.localAccountID(provider: provider, stableID: "local:\($0)")
+        } ?? ConnectorRedactor.localAccountID(provider: provider, path: account.authPath)
 
         do {
-            let auth = try CodexAuthFileParser.tokens(from: try fileLoader(account.authPath))
             let data = try await fetchUsage(endpoint: account.endpoint, auth: auth)
             let snapshots = try CodexUsagePayloadParser.snapshots(from: data)
             let limits = snapshots.flatMap { snapshot in
                 codexUsageLimits(
                     from: snapshot,
                     accountID: localAccountID,
-                    accountName: account.accountName,
+                    accountName: authRecord.accountName,
                     observedAt: now
                 )
             }
             return ProviderConnectorReport(
                 provider: provider,
                 accountID: localAccountID,
-                accountName: account.accountName,
+                accountName: authRecord.accountName,
                 generatedAt: now,
                 limits: limits
             )
@@ -181,7 +248,7 @@ public struct CodexRateLimitConnector: ProviderConnector {
             return ProviderConnectorReport(
                 provider: provider,
                 accountID: localAccountID,
-                accountName: account.accountName,
+                accountName: authRecord.accountName,
                 generatedAt: now,
                 limits: [],
                 status: .failure,
@@ -298,6 +365,16 @@ private struct CodexUsagePayload: Decodable {
 
 private struct CodexAuthFilePayload: Decodable {
     let tokens: CodexAuthTokenPayload?
+}
+
+private struct CodexAuthAccountsFilePayload: Decodable {
+    let accounts: [CodexAuthListedAccountPayload]
+}
+
+private struct CodexAuthListedAccountPayload: Decodable {
+    let id: String
+    let mode: String?
+    let tokens: CodexAuthTokenPayload
 }
 
 private struct CodexAuthTokenPayload: Decodable {

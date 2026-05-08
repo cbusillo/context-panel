@@ -4,7 +4,8 @@ import Testing
 @testable import ContextPanelCore
 
 @Test func codexConnectorRefreshesMultipleAccountsIntoNormalizedLimits() async throws {
-    let auth = #"{"tokens":{"access_token":"token-secret"}}"#.data(using: .utf8)!
+    let authA = #"{"tokens":{"access_token":"token-secret-a","account_id":"account-a"}}"#.data(using: .utf8)!
+    let authB = #"{"tokens":{"access_token":"token-secret-b","account_id":"account-b"}}"#.data(using: .utf8)!
     let usage = #"""
     {
       "plan_type": "pro",
@@ -21,7 +22,9 @@ import Testing
             CodexAccountConfiguration(authPath: "/tmp/openai-b.json", accountName: "OpenAI B"),
         ],
         httpClient: http,
-        fileLoader: { _ in auth }
+        fileLoader: { path in
+            path.contains("openai-a") ? authA : authB
+        }
     )
 
     let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
@@ -29,9 +32,102 @@ import Testing
     #expect(result.reports.count == 2)
     #expect(result.snapshot.limits.count == 4)
     #expect(Set(result.snapshot.limits.map(\.accountName)) == ["OpenAI A", "OpenAI B"])
+    #expect(Set(result.reports.map(\.accountID)).count == 2)
     #expect(result.snapshot.limits.allSatisfy { $0.provider == .openAI && $0.unit == .percent })
     #expect(result.snapshot.limits.contains { $0.used == 50 && $0.windowLabel == "5-hour" })
     #expect(http.requests.count == 2)
+    #expect(http.requests.map { $0.headers["ChatGPT-Account-Id"] } == ["account-a", "account-b"])
+}
+
+@Test func providerRuntimeDeduplicatesSameProviderAccountID() async throws {
+    let auth = #"{"tokens":{"access_token":"token-secret","account_id":"same-account"}}"#.data(using: .utf8)!
+    let usage = #"""
+    {
+      "plan_type": "pro",
+      "rate_limit": {
+        "primary_window": { "used_percent": 50, "limit_window_seconds": 18000, "reset_at": 1788393600 },
+        "secondary_window": { "used_percent": 99, "limit_window_seconds": 604800, "reset_at": 1788998400 }
+      }
+    }
+    """#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: usage),
+        ConnectorHTTPResponse(statusCode: 200, data: usage),
+    ])
+    let connector = CodexRateLimitConnector(
+        accounts: [
+            CodexAccountConfiguration(authPath: "/tmp/openai-a.json", accountName: "OpenAI A"),
+            CodexAccountConfiguration(authPath: "/tmp/openai-b.json", accountName: "OpenAI B"),
+        ],
+        httpClient: http,
+        fileLoader: { _ in auth }
+    )
+
+    let result = await ProviderConnectorRuntime(connectors: [connector]).refreshAll(now: Date(timeIntervalSince1970: 0))
+
+    #expect(http.requests.count == 2)
+    #expect(result.reports.count == 1)
+    #expect(result.snapshot.limits.count == 2)
+    #expect(result.snapshot.limits.map(\.accountName) == ["OpenAI A", "OpenAI A"])
+}
+
+@Test func codexConnectorReadsAuthAccountsFile() async throws {
+    let authAccounts = #"""
+    {
+      "version": 1,
+      "active_account_id": "local-account-a",
+      "accounts": [
+        {
+          "id": "local-account-a",
+          "mode": "chatgpt",
+          "label": "first@example.com",
+          "tokens": {
+            "access_token": "token-secret-a",
+            "account_id": "account-a",
+            "id_token": "id-secret-a",
+            "refresh_token": "refresh-secret-a"
+          }
+        },
+        {
+          "id": "local-account-b",
+          "mode": "chatgpt",
+          "label": "second@example.com",
+          "tokens": {
+            "access_token": "token-secret-b",
+            "account_id": "account-b",
+            "id_token": "id-secret-b",
+            "refresh_token": "refresh-secret-b"
+          }
+        }
+      ]
+    }
+    """#.data(using: .utf8)!
+    let usage = #"""
+    {
+      "plan_type": "pro",
+      "rate_limit": {
+        "primary_window": { "used_percent": 1, "limit_window_seconds": 18000, "reset_at": 1788393600 },
+        "secondary_window": { "used_percent": 2, "limit_window_seconds": 604800, "reset_at": 1788998400 }
+      }
+    }
+    """#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: usage),
+        ConnectorHTTPResponse(statusCode: 200, data: usage),
+    ])
+    let connector = CodexRateLimitConnector(
+        accounts: [CodexAccountConfiguration(authPath: "/tmp/auth_accounts.json", accountName: "OpenAI Code")],
+        httpClient: http,
+        fileLoader: { _ in authAccounts }
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
+
+    #expect(result.reports.count == 2)
+    #expect(result.snapshot.limits.count == 4)
+    #expect(result.reports.map(\.accountName) == ["OpenAI Code 1", "OpenAI Code 2"])
+    #expect(http.requests.map { $0.headers["ChatGPT-Account-Id"] } == ["account-a", "account-b"])
+    #expect(Set(result.reports.map(\.accountID)).count == 2)
 }
 
 @Test func codexConnectorRedactsHTTPFailures() async {

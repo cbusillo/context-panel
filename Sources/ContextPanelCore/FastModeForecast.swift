@@ -75,7 +75,7 @@ public struct FastModeForecast: Codable, Equatable, Sendable {
                 "Fast mode safe for a limited time."
             }
         case .saveFastMode:
-            "Save fast mode before reset."
+            "Fast mode will not last."
         case .needsCalibration:
             "Needs calibration before fast mode."
         case .limited:
@@ -146,7 +146,16 @@ public struct FastModeForecast: Codable, Equatable, Sendable {
             }
             return "\(rounded)h"
         }
-        return "\(Int(hours.rounded()))h"
+        if hours < 24 {
+            return "\(Int(hours.rounded()))h"
+        }
+        let roundedHours = Int(hours.rounded())
+        let days = roundedHours / 24
+        let remainingHours = roundedHours % 24
+        if remainingHours == 0 {
+            return "\(days)d"
+        }
+        return "\(days)d \(remainingHours)h"
     }
 }
 
@@ -165,6 +174,275 @@ public struct FastModePortfolioForecast: Codable, Equatable, Sendable {
 
     public var copy: String {
         bestForecast?.copy ?? "Add an OpenAI account to forecast fast mode."
+    }
+}
+
+public struct FastModeCapacityForecast: Codable, Equatable, Sendable {
+    public let limitID: String
+    public let accountName: String
+    public let recommendation: FastModeRecommendation
+    public let confidence: UsageConfidence
+    public let remainingUnits: Double?
+    public let totalUnits: Double?
+    public let nextResetAt: Date?
+    public let hoursUntilReset: Double?
+    public let standardBurnRateUnitsPerHour: Double?
+    public let fastBurnRateUnitsPerHour: Double?
+    public let standardModeRunwayHours: Double?
+    public let fastModeRunwayHours: Double?
+    public let projectedStandardUseUntilReset: Double?
+    public let projectedFastUseUntilReset: Double?
+    public let reserveUnits: Double
+
+    public var copy: String {
+        switch recommendation {
+        case .safeThroughReset:
+            "Use fast mode"
+        case .safeForLimitedTime:
+            "Use fast mode briefly"
+        case .saveFastMode, .limited:
+            "Use normal mode"
+        case .needsCalibration:
+            "Measuring burn"
+        }
+    }
+
+    public var detailCopy: String {
+        if let percent = remainingPercent {
+            let remaining = "\(Int(percent.rounded()))% left"
+            if let standardBurnRatePercentPerHour {
+                return "\(remaining) · \(Self.format(percentPerHour: standardBurnRatePercentPerHour))/h observed"
+            }
+            return remaining
+        }
+
+        guard let remainingUnits else {
+            return "No capacity data"
+        }
+        if let standardBurnRateUnitsPerHour {
+            return "\(Int(remainingUnits.rounded())) left · \(Self.format(unitsPerHour: standardBurnRateUnitsPerHour))/h observed"
+        }
+        return "\(Int(remainingUnits.rounded())) left"
+    }
+
+    public var burnRateCopy: String {
+        if let standardBurnRatePercentPerHour {
+            return "\(Self.format(percentPerHour: standardBurnRatePercentPerHour))/h observed"
+        }
+        if let standardBurnRateUnitsPerHour {
+            return "\(Self.format(unitsPerHour: standardBurnRateUnitsPerHour))/h observed"
+        }
+        return "measuring burn"
+    }
+
+    public var runwayCopy: String {
+        guard let hoursUntilReset else {
+            return "reset unknown"
+        }
+        switch recommendation {
+        case .safeThroughReset:
+            return "lasts past reset in \(Self.format(hours: hoursUntilReset))"
+        case .safeForLimitedTime:
+            if let fastModeRunwayHours {
+                return "fast out \(Self.format(hours: fastModeRunwayHours))"
+            }
+            return "fast runway unknown"
+        case .saveFastMode, .limited:
+            if let standardModeRunwayHours, standardModeRunwayHours < hoursUntilReset {
+                return "out \(Self.format(hours: standardModeRunwayHours))"
+            }
+            if let fastModeRunwayHours {
+                return "fast out \(Self.format(hours: fastModeRunwayHours))"
+            }
+            return "next reset in \(Self.format(hours: hoursUntilReset))"
+        case .needsCalibration:
+            return "next reset in \(Self.format(hours: hoursUntilReset))"
+        }
+    }
+
+    public var usableRemainingUnits: Double? {
+        guard let remainingUnits else { return nil }
+        return max(remainingUnits - reserveUnits, 0)
+    }
+
+    public var requiredBurnRateUnitsPerHour: Double? {
+        guard let usableRemainingUnits, let hoursUntilReset, hoursUntilReset > 0 else { return nil }
+        return usableRemainingUnits / hoursUntilReset
+    }
+
+    public var standardBurnRatePercentPerHour: Double? {
+        guard let standardBurnRateUnitsPerHour, let totalUnits, totalUnits > 0 else { return nil }
+        return (standardBurnRateUnitsPerHour / totalUnits) * 100
+    }
+
+    public var requiredBurnRatePercentPerHour: Double? {
+        guard let requiredBurnRateUnitsPerHour, let totalUnits, totalUnits > 0 else { return nil }
+        return (requiredBurnRateUnitsPerHour / totalUnits) * 100
+    }
+
+    public var burnPaceRatio: Double? {
+        guard let standardBurnRateUnitsPerHour else { return nil }
+        guard let requiredBurnRateUnitsPerHour, requiredBurnRateUnitsPerHour > 0 else {
+            return standardBurnRateUnitsPerHour == 0 ? 0 : .infinity
+        }
+        return standardBurnRateUnitsPerHour / requiredBurnRateUnitsPerHour
+    }
+
+    public var burnPaceCopy: String {
+        guard let burnPaceRatio else { return "measuring burn" }
+        if !burnPaceRatio.isFinite { return "over pace" }
+        if burnPaceRatio <= 0.05 { return "idle" }
+        if burnPaceRatio <= 0.9 { return "under pace" }
+        if burnPaceRatio <= 1.1 { return "on pace" }
+        return "over pace"
+    }
+
+    public init(
+        limitID: String,
+        accountName: String,
+        providerLimits: [UsageLimit],
+        now: Date,
+        standardBurnRate: BurnRate? = nil,
+        fastBurnRate: BurnRate?,
+        reserveUnits: Double = 6,
+        minimumSafeHours: Double = 1
+    ) {
+        precondition(reserveUnits >= 0, "reserveUnits must not be negative")
+        precondition(minimumSafeHours >= 0, "minimumSafeHours must not be negative")
+
+        self.limitID = limitID
+        self.accountName = accountName
+        self.reserveUnits = reserveUnits
+
+        let numericLimits = providerLimits.filter { $0.used != nil && $0.limit != nil }
+        let remaining = numericLimits.compactMap(\.remaining).reduce(0, +)
+        let total = numericLimits.compactMap(\.limit).reduce(0, +)
+        remainingUnits = numericLimits.isEmpty ? nil : Double(remaining)
+        totalUnits = numericLimits.isEmpty ? nil : Double(total)
+        confidence = Self.worstConfidence(providerLimits.map(\.confidence))
+        standardBurnRateUnitsPerHour = standardBurnRate?.unitsPerHour
+        fastBurnRateUnitsPerHour = fastBurnRate?.unitsPerHour
+
+        let nextReset = providerLimits.compactMap(\.resetsAt).filter { $0 > now }.sorted().first
+        nextResetAt = nextReset
+        if let nextReset {
+            hoursUntilReset = max(nextReset.timeIntervalSince(now) / 3_600, 0)
+        } else {
+            hoursUntilReset = nil
+        }
+
+        guard
+            !numericLimits.isEmpty,
+            let fastRate = fastBurnRate?.unitsPerHour,
+            fastRate > 0,
+            let hoursUntilReset
+        else {
+            recommendation = .needsCalibration
+            standardModeRunwayHours = nil
+            fastModeRunwayHours = nil
+            projectedStandardUseUntilReset = nil
+            projectedFastUseUntilReset = nil
+            return
+        }
+
+        let usableRemaining = max(Double(remaining) - reserveUnits, 0)
+        let standardRate = standardBurnRate?.unitsPerHour
+        let standardRunway = standardRate.map { rate in rate > 0 ? usableRemaining / rate : nil } ?? nil
+        let standardProjected = standardRate.map { rate in rate > 0 ? rate * hoursUntilReset : nil } ?? nil
+        let fastRunway = usableRemaining / fastRate
+        let fastProjected = fastRate * hoursUntilReset
+
+        standardModeRunwayHours = standardRunway
+        fastModeRunwayHours = fastRunway
+        projectedStandardUseUntilReset = standardProjected
+        projectedFastUseUntilReset = fastProjected
+
+        if remaining <= 0 {
+            recommendation = .limited
+        } else if usableRemaining <= 0 {
+            recommendation = .saveFastMode
+        } else if fastProjected <= usableRemaining {
+            recommendation = .safeThroughReset
+        } else if fastRunway >= minimumSafeHours, standardProjected == nil || (standardProjected ?? .infinity) <= usableRemaining {
+            recommendation = .safeForLimitedTime
+        } else {
+            recommendation = .saveFastMode
+        }
+    }
+
+    private var remainingPercent: Double? {
+        guard let remainingUnits, let totalUnits, totalUnits > 0 else { return nil }
+        return max(min(remainingUnits / totalUnits, 1), 0) * 100
+    }
+
+    private static func worstConfidence(_ confidences: [UsageConfidence]) -> UsageConfidence {
+        if confidences.contains(.unknown) { return .unknown }
+        if confidences.contains(.estimated) { return .estimated }
+        if confidences.contains(.manual) { return .manual }
+        if confidences.contains(.observed) { return .observed }
+        return confidences.first ?? .unknown
+    }
+
+    private static func format(hours: Double) -> String {
+        if hours < 1 {
+            let minutes = max(Int((hours * 60).rounded()), 1)
+            return "\(minutes)m"
+        }
+        if hours < 10 {
+            let rounded = (hours * 2).rounded() / 2
+            if rounded.rounded() == rounded {
+                return "\(Int(rounded))h"
+            }
+            return "\(rounded)h"
+        }
+        if hours < 24 {
+            return "\(Int(hours.rounded()))h"
+        }
+        let roundedHours = Int(hours.rounded())
+        let days = roundedHours / 24
+        let remainingHours = roundedHours % 24
+        if remainingHours == 0 {
+            return "\(days)d"
+        }
+        return "\(days)d \(remainingHours)h"
+    }
+
+    private static func format(percentPerHour: Double) -> String {
+        if percentPerHour < 10 {
+            let rounded = (percentPerHour * 10).rounded() / 10
+            if rounded == rounded.rounded() {
+                return "\(Int(rounded))%"
+            }
+            return "\(rounded)%"
+        }
+        return "\(Int(percentPerHour.rounded()))%"
+    }
+
+    private static func format(unitsPerHour: Double) -> String {
+        if unitsPerHour < 10 {
+            let rounded = (unitsPerHour * 10).rounded() / 10
+            if rounded == rounded.rounded() {
+                return "\(Int(rounded))"
+            }
+            return "\(rounded)"
+        }
+        return "\(Int(unitsPerHour.rounded()))"
+    }
+}
+
+public struct FastModeCapacityPortfolioForecast: Codable, Equatable, Sendable {
+    public let forecasts: [FastModeCapacityForecast]
+
+    public init(forecasts: [FastModeCapacityForecast]) {
+        self.forecasts = forecasts
+    }
+
+    public var bestForecast: FastModeCapacityForecast? {
+        forecasts.first
+    }
+
+    public var copy: String {
+        bestForecast?.copy ?? "Add OpenAI weekly limits to forecast fast mode."
     }
 }
 

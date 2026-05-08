@@ -29,6 +29,7 @@ targets:
     deploymentTarget: "14.0"
     sources:
       - path: Sources/ContextPanelPreview
+      - path: Resources/Assets.xcassets
     dependencies:
       - target: ContextPanelCore
       - target: ContextPanelWidgetExtension
@@ -44,7 +45,9 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         INFOPLIST_KEY_LSApplicationCategoryType: >-
           public.app-category.productivity
+        INFOPLIST_KEY_NSQuitAlwaysKeepsWindows: false
         CODE_SIGN_ENTITLEMENTS: Config/ContextPanel.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
   ContextPanelWidgetExtension:
     type: app-extension
@@ -57,6 +60,9 @@ targets:
     info:
       path: Config/ContextPanelWidget-Info.plist
       properties:
+        CFBundleDisplayName: Context Panel Widget
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
@@ -64,8 +70,10 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.shinycomputers.contextpanel.widget
         PRODUCT_NAME: ContextPanelWidgetExtension
         GENERATE_INFOPLIST_FILE: false
-        CODE_SIGN_ENTITLEMENTS: Config/ContextPanelWidget.entitlements
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
         SKIP_INSTALL: true
+        CODE_SIGN_ENTITLEMENTS: Config/ContextPanelWidget.entitlements
 
 schemes:
   ContextPanel:
