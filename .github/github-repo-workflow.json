@@ -30,7 +30,29 @@
       "release or signing changes"
     ]
   },
-  "importantWorkflows": ["CI", "CodeQL", "Release"],
+  "importantWorkflows": ["CI", "CodeQL", "Release", "TestFlight"],
+  "branchProtection": {
+    "ruleset": {
+      "name": "Protect main",
+      "target": "defaultBranch",
+      "enforcement": "active"
+    },
+    "pullRequestsRequired": true,
+    "requiredStatusChecks": {
+      "strict": true,
+      "contexts": ["swift", "Analyze Swift"]
+    },
+    "codeScanning": {
+      "tool": "CodeQL",
+      "alertsThreshold": "errors",
+      "securityAlertsThreshold": "high_or_higher"
+    },
+    "codeQuality": {
+      "severity": "errors"
+    },
+    "blocksForcePushes": true,
+    "blocksDeletion": true
+  },
   "qaLabels": [],
   "deployLabels": [],
   "healthUrls": [],
