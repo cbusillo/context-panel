@@ -64,7 +64,9 @@ To notarize, also configure:
 - `APPLE_TEAM_ID`
 - `APPLE_APP_SPECIFIC_PASSWORD`
 
-Then run the workflow with `notarize: true`.
+Or configure `APPLE_NOTARY_KEYCHAIN_PROFILE` if the CI keychain is provisioned
+with a notarytool profile before packaging. Then run the workflow with
+`notarize: true`.
 
 ## Build The Native App And Widget
 
@@ -102,8 +104,21 @@ The native packaging script regenerates `ContextPanel.xcodeproj`, builds the
 `Context Panel.app` to `dist`, signs the embedded widget extension and the app,
 verifies the resulting bundle, optionally notarizes, and writes a zip artifact.
 
-Use `--identity -` for ad-hoc local validation. Use `--notarize` only with a
-Developer ID identity and Apple notarization environment variables.
+Use `--identity -` for ad-hoc local validation. With `--identity auto`, the
+script prefers the local Developer ID Application certificate, signs with
+hardened runtime and timestamp options, and verifies the bundle.
+
+Use `--notarize` only with a Developer ID identity and either Apple notarization
+environment variables or a stored notarytool profile:
+
+```sh
+scripts/package-native-macos-app.sh \
+  --version 1.0.0 \
+  --output dist \
+  --identity auto \
+  --notarize \
+  --notary-keychain-profile context-panel
+```
 
 ## Build The SwiftPM App Shell
 
@@ -151,3 +166,9 @@ On 2026-05-07, `scripts/package-native-macos-app.sh --version 1.0.0 --output
 dist --identity -` produced `dist/ContextPanel-1.0.0-macOS.zip`, embedded the
 WidgetKit extension, ad-hoc signed the app and widget with their entitlements,
 and passed `codesign --verify --deep --strict`.
+
+On 2026-05-08, `scripts/package-native-macos-app.sh --version
+1.0.1-signed-test --output dist --identity auto` produced a Developer ID signed
+app and widget with hardened runtime and trusted timestamp, passed
+`codesign --verify --deep --strict`, and passed local Gatekeeper assessment as
+`source=Developer ID`.

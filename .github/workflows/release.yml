@@ -38,6 +38,7 @@ jobs:
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_NOTARY_KEYCHAIN_PROFILE: ${{ secrets.APPLE_NOTARY_KEYCHAIN_PROFILE }}
       MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
       MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
       MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
@@ -96,11 +97,10 @@ jobs:
             security import "${certificate_path}" \
               -P "${MACOS_CERTIFICATE_PASSWORD:-}" \
               -A \
-              -t cert \
-              -f pkcs12 \
               -k "${keychain_path}"
             security list-keychains -d user -s "${keychain_path}" $(security list-keychains -d user | tr -d '"')
             security set-key-partition-list -S apple-tool:,apple: -s -k "${keychain_password}" "${keychain_path}"
+            security find-identity -v -p codesigning "${keychain_path}"
             identity="auto"
           fi
 
@@ -135,6 +135,9 @@ jobs:
           fi
           if [[ "${{ inputs.notarize || false }}" == "true" ]]; then
             args+=(--notarize)
+            if [[ -n "${APPLE_NOTARY_KEYCHAIN_PROFILE:-}" ]]; then
+              args+=(--notary-keychain-profile "${APPLE_NOTARY_KEYCHAIN_PROFILE}")
+            fi
           fi
 
           scripts/package-native-macos-app.sh "${args[@]}"
