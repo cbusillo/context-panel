@@ -10,15 +10,19 @@
 		0BBD1DF433F345E62C6A26EF /* LimitProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */; };
 		10A2940E7E3FE6E253ECFEDE /* GeminiCodeAssistQuota.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AC2F76895EE0EFC7F463447 /* GeminiCodeAssistQuota.swift */; };
 		1DD89F5634070B75C09BDE99 /* ClaudeLocalStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2E426A482568BBE85357D7E /* ClaudeLocalStatus.swift */; };
+		28FDF54D88C9CB4A982643A6 /* SnapshotRefreshService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45E8D3C3E45C1B6B3FACE828 /* SnapshotRefreshService.swift */; };
 		29FD4D47A21D08ABAE47E778 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 944A3154A0C2E33C5971E571 /* Assets.xcassets */; };
 		36A035769881D4A450BA3BD8 /* libContextPanelCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = F09182E1FD96DAEEC38F3909 /* libContextPanelCore.a */; };
 		38E9E0A22491522FF4E0A8F4 /* ContextPanelPreviewApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A46D6040EB6F68FC91EC477D /* ContextPanelPreviewApp.swift */; };
 		44DFF437D4762A4D0D2DBAA8 /* BurnRateEstimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FB4BEA57ACE8B84CAE71E75 /* BurnRateEstimator.swift */; };
 		459C8EC82194CE1A950FE1B5 /* UsageLimit.swift in Sources */ = {isa = PBXBuildFile; fileRef = D459054C90410A784EBD308B /* UsageLimit.swift */; };
 		47414B1A42BE473BF1644296 /* CodexRateLimits.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FA8FE4CC9BE058D8F46FBA2 /* CodexRateLimits.swift */; };
+		5873091E47623CBEB29253EF /* ContextPanelRefreshAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC712405A58ED12AA33BDC68 /* ContextPanelRefreshAgent.swift */; };
 		64BA3F57751ADAB181558D58 /* SampleUsageData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2361E9EED490737FB8306CC7 /* SampleUsageData.swift */; };
 		85EBA57F3F1633F2D6E54103 /* ContextPanelWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 07D959D621E594C0CFC2CEF5 /* ContextPanelWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		86D64E082F50479344767059 /* ContextPanelRefreshAgent.app in Embed Dependencies */ = {isa = PBXBuildFile; fileRef = 086B12021073A6F2A49850A1 /* ContextPanelRefreshAgent.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		9C74713AEFFAC6D85E7ACF3F /* FastModeForecast.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BD985B0213AB5987D3B3170 /* FastModeForecast.swift */; };
+		A83D074D710D28DEF7375292 /* libContextPanelCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = F09182E1FD96DAEEC38F3909 /* libContextPanelCore.a */; };
 		A9464088796B38105C01F7D3 /* MainLimitSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FC2DAEDD38483FC3A5D4880 /* MainLimitSummary.swift */; };
 		B6C35EBBE9327327BDCA324F /* SnapshotStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32D8515D047F5A8117DB762C /* SnapshotStore.swift */; };
 		B83302BDC1EAC3EE45DBE8B8 /* WidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5233BBC86AE8057D749F71CD /* WidgetSnapshot.swift */; };
@@ -47,12 +51,26 @@
 			remoteGlobalIDString = 92EF616FEBA46FCB02E887BE;
 			remoteInfo = ContextPanelWidgetExtension;
 		};
+		414DF92795D70A46FF7F1240 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 194387DBD3D0F10E17F284F9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = EE4B8035BB7A9BD03B668BB8;
+			remoteInfo = ContextPanelCore;
+		};
 		A81BFB53BF2A07F0375FCF7E /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 194387DBD3D0F10E17F284F9 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = EE4B8035BB7A9BD03B668BB8;
 			remoteInfo = ContextPanelCore;
+		};
+		EA5CB043A52E103A63373F09 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 194387DBD3D0F10E17F284F9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 2CBF2D7A344180F87098B384;
+			remoteInfo = ContextPanelRefreshAgent;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -68,10 +86,22 @@
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		88F350B59E49D87CBBACFFE3 /* Embed Dependencies */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Library/LoginItems;
+			dstSubfolderSpec = 1;
+			files = (
+				86D64E082F50479344767059 /* ContextPanelRefreshAgent.app in Embed Dependencies */,
+			);
+			name = "Embed Dependencies";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		07D959D621E594C0CFC2CEF5 /* ContextPanelWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ContextPanelWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		086B12021073A6F2A49850A1 /* ContextPanelRefreshAgent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ContextPanelRefreshAgent.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		0AC2F76895EE0EFC7F463447 /* GeminiCodeAssistQuota.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiCodeAssistQuota.swift; sourceTree = "<group>"; };
 		186D607FE2EEFDFFE2E70446 /* AccountConfigurationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountConfigurationStore.swift; sourceTree = "<group>"; };
 		2361E9EED490737FB8306CC7 /* SampleUsageData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleUsageData.swift; sourceTree = "<group>"; };
@@ -80,6 +110,7 @@
 		350ED5589FB23C42ED32704A /* ProviderConnector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderConnector.swift; sourceTree = "<group>"; };
 		3FC2DAEDD38483FC3A5D4880 /* MainLimitSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainLimitSummary.swift; sourceTree = "<group>"; };
 		407B0E4C039FFF22FA8F8542 /* ContextPanelWidgetViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelWidgetViews.swift; sourceTree = "<group>"; };
+		45E8D3C3E45C1B6B3FACE828 /* SnapshotRefreshService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotRefreshService.swift; sourceTree = "<group>"; };
 		5233BBC86AE8057D749F71CD /* WidgetSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSnapshot.swift; sourceTree = "<group>"; };
 		53715ACF982CE590F00C3A75 /* ClaudeWebUsage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeWebUsage.swift; sourceTree = "<group>"; };
 		60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LimitProbe.swift; sourceTree = "<group>"; };
@@ -89,6 +120,7 @@
 		944A3154A0C2E33C5971E571 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		9FA8FE4CC9BE058D8F46FBA2 /* CodexRateLimits.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRateLimits.swift; sourceTree = "<group>"; };
 		A46D6040EB6F68FC91EC477D /* ContextPanelPreviewApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelPreviewApp.swift; sourceTree = "<group>"; };
+		AC712405A58ED12AA33BDC68 /* ContextPanelRefreshAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelRefreshAgent.swift; sourceTree = "<group>"; };
 		D459054C90410A784EBD308B /* UsageLimit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageLimit.swift; sourceTree = "<group>"; };
 		E195C6E906DA9C0BF082622F /* ContextPanelWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelWidget.swift; sourceTree = "<group>"; };
 		E2E426A482568BBE85357D7E /* ClaudeLocalStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeLocalStatus.swift; sourceTree = "<group>"; };
@@ -113,6 +145,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B8497808399846766439FAE7 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A83D074D710D28DEF7375292 /* libContextPanelCore.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -120,6 +160,7 @@
 			isa = PBXGroup;
 			children = (
 				8D6350007C73BEF27D871AB0 /* ContextPanel.app */,
+				086B12021073A6F2A49850A1 /* ContextPanelRefreshAgent.app */,
 				07D959D621E594C0CFC2CEF5 /* ContextPanelWidgetExtension.appex */,
 				F09182E1FD96DAEEC38F3909 /* libContextPanelCore.a */,
 			);
@@ -140,6 +181,7 @@
 				60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */,
 				3FC2DAEDD38483FC3A5D4880 /* MainLimitSummary.swift */,
 				350ED5589FB23C42ED32704A /* ProviderConnector.swift */,
+				45E8D3C3E45C1B6B3FACE828 /* SnapshotRefreshService.swift */,
 				32D8515D047F5A8117DB762C /* SnapshotStore.swift */,
 				D459054C90410A784EBD308B /* UsageLimit.swift */,
 				FBDCF9F49A90CA3576BF2792 /* WidgetDisplayPreferences.swift */,
@@ -162,6 +204,7 @@
 			children = (
 				537271134D87C7167DEBA0C1 /* ContextPanelCore */,
 				F71E88199DC89A225C8F07FC /* ContextPanelPreview */,
+				E31529C218A60C30ED319763 /* ContextPanelRefreshAgent */,
 				A538E84B22D9D75DE0FD30D4 /* ContextPanelWidget */,
 				6E201F66FEFA138BFA2F4179 /* Resources */,
 				45E9D2C527D1EF15E9811358 /* Products */,
@@ -178,6 +221,15 @@
 			path = Sources/ContextPanelWidget;
 			sourceTree = "<group>";
 		};
+		E31529C218A60C30ED319763 /* ContextPanelRefreshAgent */ = {
+			isa = PBXGroup;
+			children = (
+				AC712405A58ED12AA33BDC68 /* ContextPanelRefreshAgent.swift */,
+			);
+			name = ContextPanelRefreshAgent;
+			path = Sources/ContextPanelRefreshAgent;
+			sourceTree = "<group>";
+		};
 		F71E88199DC89A225C8F07FC /* ContextPanelPreview */ = {
 			isa = PBXGroup;
 			children = (
@@ -191,6 +243,25 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		2CBF2D7A344180F87098B384 /* ContextPanelRefreshAgent */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 92BBFCCC0845D1666D05CD89 /* Build configuration list for PBXNativeTarget "ContextPanelRefreshAgent" */;
+			buildPhases = (
+				77969DC24638A98197EC0211 /* Sources */,
+				B8497808399846766439FAE7 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				608EA68F5BD8816B4B843293 /* PBXTargetDependency */,
+			);
+			name = ContextPanelRefreshAgent;
+			packageProductDependencies = (
+			);
+			productName = ContextPanelRefreshAgent;
+			productReference = 086B12021073A6F2A49850A1 /* ContextPanelRefreshAgent.app */;
+			productType = "com.apple.product-type.application";
+		};
 		92EF616FEBA46FCB02E887BE /* ContextPanelWidgetExtension */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 6CB2601991081CFCCB5C6E04 /* Build configuration list for PBXNativeTarget "ContextPanelWidgetExtension" */;
@@ -236,12 +307,14 @@
 				B85F7D0817CF1BFB5778B9D2 /* Resources */,
 				0A536561059AF7F95E2D3FD7 /* Frameworks */,
 				09DAA1F320B84A007C14B253 /* Embed Foundation Extensions */,
+				88F350B59E49D87CBBACFFE3 /* Embed Dependencies */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				D29DE5B6DB7D5B324359BCA0 /* PBXTargetDependency */,
 				4A468DA4B7F0B61AAE457FF9 /* PBXTargetDependency */,
+				95EF038F28306DBE4F1E8B06 /* PBXTargetDependency */,
 			);
 			name = ContextPanel;
 			packageProductDependencies = (
@@ -259,6 +332,10 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					2CBF2D7A344180F87098B384 = {
+						DevelopmentTeam = MM5YXC7T6E;
+						ProvisioningStyle = Automatic;
+					};
 					92EF616FEBA46FCB02E887BE = {
 						DevelopmentTeam = MM5YXC7T6E;
 						ProvisioningStyle = Automatic;
@@ -289,6 +366,7 @@
 			targets = (
 				FF80548BA14604BB9B1E9115 /* ContextPanel */,
 				EE4B8035BB7A9BD03B668BB8 /* ContextPanelCore */,
+				2CBF2D7A344180F87098B384 /* ContextPanelRefreshAgent */,
 				92EF616FEBA46FCB02E887BE /* ContextPanelWidgetExtension */,
 			);
 		};
@@ -349,10 +427,19 @@
 				0BBD1DF433F345E62C6A26EF /* LimitProbe.swift in Sources */,
 				A9464088796B38105C01F7D3 /* MainLimitSummary.swift in Sources */,
 				F4B9B4FB75A285E38AE52B1D /* ProviderConnector.swift in Sources */,
+				28FDF54D88C9CB4A982643A6 /* SnapshotRefreshService.swift in Sources */,
 				B6C35EBBE9327327BDCA324F /* SnapshotStore.swift in Sources */,
 				459C8EC82194CE1A950FE1B5 /* UsageLimit.swift in Sources */,
 				E223E001AF708A36F7976205 /* WidgetDisplayPreferences.swift in Sources */,
 				B83302BDC1EAC3EE45DBE8B8 /* WidgetSnapshot.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		77969DC24638A98197EC0211 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5873091E47623CBEB29253EF /* ContextPanelRefreshAgent.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -373,10 +460,20 @@
 			target = 92EF616FEBA46FCB02E887BE /* ContextPanelWidgetExtension */;
 			targetProxy = 3C3392E33451B979623C2996 /* PBXContainerItemProxy */;
 		};
+		608EA68F5BD8816B4B843293 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = EE4B8035BB7A9BD03B668BB8 /* ContextPanelCore */;
+			targetProxy = 414DF92795D70A46FF7F1240 /* PBXContainerItemProxy */;
+		};
 		8361FD30418655D673073A5A /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = EE4B8035BB7A9BD03B668BB8 /* ContextPanelCore */;
 			targetProxy = 32954FE71C65F1FD1E590272 /* PBXContainerItemProxy */;
+		};
+		95EF038F28306DBE4F1E8B06 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 2CBF2D7A344180F87098B384 /* ContextPanelRefreshAgent */;
+			targetProxy = EA5CB043A52E103A63373F09 /* PBXContainerItemProxy */;
 		};
 		D29DE5B6DB7D5B324359BCA0 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -429,6 +526,33 @@
 				SKIP_INSTALL = YES;
 			};
 			name = Debug;
+		};
+		74F8EA40BF488B2B3B3DCB73 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Config/ContextPanelRefreshAgent.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Context Panel Refresh Agent";
+				INFOPLIST_KEY_LSBackgroundOnly = YES;
+				INFOPLIST_KEY_LSUIElement = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-ObjC",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.shinycomputers.contextpanel.refresh-agent";
+				PRODUCT_NAME = ContextPanelRefreshAgent;
+				SDKROOT = macosx;
+			};
+			name = Release;
 		};
 		7FFB726DFDD92831614DCE30 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -565,6 +689,33 @@
 			};
 			name = Debug;
 		};
+		B0FD7974BA6DB0042C14D612 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Config/ContextPanelRefreshAgent.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Context Panel Refresh Agent";
+				INFOPLIST_KEY_LSBackgroundOnly = YES;
+				INFOPLIST_KEY_LSUIElement = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-ObjC",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.shinycomputers.contextpanel.refresh-agent";
+				PRODUCT_NAME = ContextPanelRefreshAgent;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
 		C37F715DCB05E50AB0896150 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -666,6 +817,15 @@
 			buildConfigurations = (
 				8FBB69A1251FDC3C8BC250F6 /* Debug */,
 				C37F715DCB05E50AB0896150 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		92BBFCCC0845D1666D05CD89 /* Build configuration list for PBXNativeTarget "ContextPanelRefreshAgent" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B0FD7974BA6DB0042C14D612 /* Debug */,
+				74F8EA40BF488B2B3B3DCB73 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

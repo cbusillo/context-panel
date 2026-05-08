@@ -29,6 +29,20 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
+               BlueprintIdentifier = "2CBF2D7A344180F87098B384"
+               BuildableName = "ContextPanelRefreshAgent.app"
+               BlueprintName = "ContextPanelRefreshAgent"
+               ReferencedContainer = "container:ContextPanel.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
                BlueprintIdentifier = "92EF616FEBA46FCB02E887BE"
                BuildableName = "ContextPanelWidgetExtension.appex"
                BlueprintName = "ContextPanelWidgetExtension"

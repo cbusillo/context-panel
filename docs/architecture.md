@@ -10,8 +10,10 @@ Context Panel is expected to split into a few native boundaries:
   each service without leaking provider quirks into the UI.
 - Snapshot store: the latest normalized usage state plus refresh history for
   widgets and charts.
-- macOS app: account setup, credentials, refresh scheduling, detailed charts,
+- macOS app: account setup, credentials, manual refresh, detailed charts,
   provider health, and settings.
+- Refresh agent: a bundled native login item that performs periodic provider
+  refreshes when the app UI is not running.
 - Widget extension: compact read-only display backed by the app's latest local
   snapshot.
 
@@ -51,8 +53,18 @@ history directory of timestamped snapshots. The schema is intentionally simple:
 
 The widget should read `current-snapshot.json` and apply a staleness policy. It
 must not read provider credential files or make provider network calls. The app
-owns connector refreshes, account setup, diagnostics, and future migration from
-JSON to a richer store if history queries become more complex.
+and the refresh agent own connector refreshes through the same
+`SnapshotRefreshService` in `ContextPanelCore`; account setup, diagnostics, and
+future migration from JSON to a richer store stay in the app.
+
+`ContextPanelRefreshAgent` is embedded in the native app under
+`Contents/Library/LoginItems` and registered by the main app with
+`SMAppService`. The agent has the same App Group entitlement as the app and
+widget so it can write the shared snapshot store while the main app is not
+running. It imports `ContextPanelCore` and uses `SnapshotRefreshRunner`, keeping
+provider checks DRY across app-initiated and background refreshes. A simple
+file lock in the App Group snapshot directory prevents the app and agent from
+writing overlapping refresh results.
 
 The WidgetKit implementation uses a `WidgetSnapshot` projection from the stored
 snapshot. That projection owns setup-needed, stale, failure, provider-summary,

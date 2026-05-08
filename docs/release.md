@@ -88,10 +88,11 @@ xcodebuild \
   build
 ```
 
-This builds `Context Panel.app` and embeds
-`ContextPanelWidgetExtension.appex` under `Contents/PlugIns`. The app and widget
-both carry the `group.com.shinycomputers.contextpanel` App Group entitlement and
-share snapshots through the App Group container when it is available.
+This builds `Context Panel.app`, embeds `ContextPanelWidgetExtension.appex`
+under `Contents/PlugIns`, and embeds `ContextPanelRefreshAgent.app` under
+`Contents/Library/LoginItems`. The app, refresh agent, and widget carry the
+`group.com.shinycomputers.contextpanel` App Group entitlement and share snapshots
+through the App Group container when it is available.
 
 The Xcode project is generated from `project.yml`; update the spec and
 regenerate rather than editing the project by hand.

@@ -1,5 +1,6 @@
 import ContextPanelCore
 import AppKit
+import ServiceManagement
 import SwiftUI
 import WidgetKit
 import WebKit
@@ -24,22 +25,21 @@ struct ContextPanelPreviewApp: App {
 @MainActor
 final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
     let model = ContextPanelAppModel()
-    private var refreshTask: Task<Void, Never>?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        refreshTask = Task { @MainActor [model] in
-            model.loadSnapshot()
-            WidgetCenter.shared.reloadAllTimelines()
-            await model.runAutomaticRefreshLoop()
+        registerRefreshAgent()
+        model.loadSnapshot()
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    private func registerRefreshAgent() {
+        let service = SMAppService.loginItem(identifier: ContextPanelLocations.refreshAgentBundleID)
+        guard service.status != .enabled else { return }
+        do {
+            try service.register()
+        } catch {
+            model.setError("Background refresh could not be enabled: \(error.localizedDescription)")
         }
-    }
-
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        false
-    }
-
-    func applicationWillTerminate(_ notification: Notification) {
-        refreshTask?.cancel()
     }
 }
 
@@ -1053,25 +1053,6 @@ final class ContextPanelAppModel: ObservableObject {
         mirrorDisplayPreferencesForDevelopmentWidget()
     }
 
-    func runAutomaticRefreshLoop() async {
-        await refreshIfNeeded()
-
-        while !Task.isCancelled {
-            do {
-                try await Task.sleep(for: .seconds(5 * 60))
-            } catch {
-                return
-            }
-            await refreshLocalConnectors()
-        }
-    }
-
-    func refreshIfNeeded() async {
-        if storedSnapshot == nil || storeStatus == .stale || storeStatus == .unknown || storeStatus == .failure {
-            await refreshLocalConnectors()
-        }
-    }
-
     func refreshLocalConnectors() async {
         guard !isRefreshing else { return }
         isRefreshing = true
@@ -1086,6 +1067,11 @@ final class ContextPanelAppModel: ObservableObject {
             storeStatus = .failure
             errorMessage = error.localizedDescription
         }
+    }
+
+    func setError(_ message: String) {
+        storeStatus = .failure
+        errorMessage = ConnectorRedactor.redact(message)
     }
 
     func openClaudeWebCapture() {

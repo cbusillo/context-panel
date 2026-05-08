@@ -240,6 +240,51 @@ import Testing
     #expect(mirror.loadHistory().map(\.savedAt) == [second, first])
 }
 
+@Test func snapshotRefreshRunnerSkipsFreshSnapshots() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary)
+    )
+    let savedAt = Date(timeIntervalSince1970: 500)
+    try primary.save(StoredUsageSnapshot(savedAt: savedAt, snapshot: UsageSnapshot(
+        generatedAt: savedAt,
+        limits: [usageLimit(provider: .openAI, accountID: "openai", used: 10, savedAt: savedAt)]
+    )))
+    let runner = SnapshotRefreshRunner(
+        service: service,
+        stalenessPolicy: SnapshotStoreStalenessPolicy(maximumAge: 60),
+        lock: nil
+    )
+
+    let decision = try await runner.refreshIfNeeded(now: savedAt.addingTimeInterval(30))
+
+    #expect(decision == .skippedFresh)
+    #expect(primary.loadHistory().count == 1)
+}
+
+@Test func snapshotRefreshRunnerSkipsWhenRefreshLockIsHeld() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let lockURL = try temporaryDirectory().appending(path: "refresh.lock")
+    try FileManager.default.createDirectory(at: lockURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    FileManager.default.createFile(atPath: lockURL.path, contents: Data())
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary)
+    )
+    let runner = SnapshotRefreshRunner(
+        service: service,
+        lock: SnapshotRefreshLock(lockURL: lockURL, staleAfter: 60)
+    )
+
+    let decision = try await runner.refresh(now: Date(timeIntervalSince1970: 600))
+
+    #expect(decision == .skippedAlreadyRunning)
+    #expect(primary.loadCurrent().snapshot == nil)
+}
+
 private func usageLimit(provider: Provider, accountID: String, used: Int, savedAt: Date) -> UsageLimit {
     UsageLimit(
         provider: provider,
