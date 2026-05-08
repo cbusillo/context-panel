@@ -60,6 +60,13 @@ To produce a signed build, configure:
 
 To notarize, also configure:
 
+- `APP_STORE_CONNECT_KEY_ID`
+- `APP_STORE_CONNECT_ISSUER_ID`
+- `APP_STORE_CONNECT_API_KEY_P8_BASE64`: base64-encoded App Store Connect API
+  `.p8` key.
+
+The workflow also supports the older Apple ID app-specific password path:
+
 - `APPLE_ID`
 - `APPLE_TEAM_ID`
 - `APPLE_APP_SPECIFIC_PASSWORD`
@@ -109,7 +116,8 @@ script prefers the local Developer ID Application certificate, signs with
 hardened runtime and timestamp options, and verifies the bundle.
 
 Use `--notarize` only with a Developer ID identity and either Apple notarization
-environment variables or a stored notarytool profile:
+environment variables, App Store Connect API credentials, or a stored notarytool
+profile:
 
 ```sh
 scripts/package-native-macos-app.sh \
@@ -117,7 +125,9 @@ scripts/package-native-macos-app.sh \
   --output dist \
   --identity auto \
   --notarize \
-  --notary-keychain-profile context-panel
+  --notary-key ~/.appstoreconnect/private_keys/AuthKey_EXAMPLE.p8 \
+  --notary-key-id EXAMPLE \
+  --notary-issuer 00000000-0000-0000-0000-000000000000
 ```
 
 ## Build The SwiftPM App Shell
@@ -172,3 +182,9 @@ On 2026-05-08, `scripts/package-native-macos-app.sh --version
 app and widget with hardened runtime and trusted timestamp, passed
 `codesign --verify --deep --strict`, and passed local Gatekeeper assessment as
 `source=Developer ID`.
+
+On 2026-05-08, `scripts/package-native-macos-app.sh --version
+1.0.2-notary-test --output dist --identity auto --notarize` with App Store
+Connect API key options was accepted by Apple notarization, stapled the ticket,
+passed `xcrun stapler validate`, and passed local Gatekeeper assessment as
+`source=Notarized Developer ID`.
