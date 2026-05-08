@@ -114,6 +114,17 @@ public struct SnapshotRefreshRunner: Sendable {
         let outcome = try await service.refresh(now: now)
         return .refreshed(outcome)
     }
+
+    public func saveMerged(refreshResult: ConnectorRefreshResult, savedAt: Date) async throws -> SnapshotRefreshRunDecision {
+        if let lock {
+            guard let outcome = try await lock.withLock(now: savedAt, {
+                try service.saveMerged(refreshResult: refreshResult, savedAt: savedAt)
+            }) else { return .skippedAlreadyRunning }
+            return .refreshed(outcome)
+        }
+
+        return .refreshed(try service.saveMerged(refreshResult: refreshResult, savedAt: savedAt))
+    }
 }
 
 public struct SnapshotRefreshService: Sendable {
@@ -127,7 +138,10 @@ public struct SnapshotRefreshService: Sendable {
 
     public static func appDefault() -> SnapshotRefreshService {
         SnapshotRefreshService(
-            accountStore: AccountConfigurationStore(configurationURL: ContextPanelLocations.accountConfigurationURL()),
+            accountStore: AccountConfigurationStore(
+                configurationURL: ContextPanelLocations.accountConfigurationURL(),
+                fallbackConfigurationURL: ContextPanelLocations.legacyAccountConfigurationURL()
+            ),
             stores: .appDefault()
         )
     }
@@ -148,9 +162,13 @@ public struct SnapshotRefreshService: Sendable {
         let accountDocument = accountStore.load(now: now).document
         let connectors = AccountConnectorFactory.connectors(from: accountDocument)
         let refreshResult = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: now)
-        try stores.primary.saveMerged(refreshResult: refreshResult, savedAt: now)
+        return try saveMerged(refreshResult: refreshResult, savedAt: now)
+    }
+
+    public func saveMerged(refreshResult: ConnectorRefreshResult, savedAt: Date = Date()) throws -> SnapshotRefreshOutcome {
+        try stores.primary.saveMerged(refreshResult: refreshResult, savedAt: savedAt)
         try mirrorPrimarySnapshotToDevelopmentStores()
-        return SnapshotRefreshOutcome(savedAt: now, refreshResult: refreshResult)
+        return SnapshotRefreshOutcome(savedAt: savedAt, refreshResult: refreshResult)
     }
 
     public func mirrorPrimarySnapshotToDevelopmentStores() throws {

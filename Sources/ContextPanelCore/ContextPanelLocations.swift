@@ -66,6 +66,16 @@ public enum ContextPanelLocations {
     }
 
     public static func accountConfigurationURL() -> URL {
+        if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
+            return containerURL
+                .appending(path: "Context Panel", directoryHint: .isDirectory)
+                .appending(path: "accounts.json")
+        }
+
+        return applicationSupportDirectory().appending(path: "accounts.json")
+    }
+
+    public static func legacyAccountConfigurationURL() -> URL {
         applicationSupportDirectory().appending(path: "accounts.json")
     }
 

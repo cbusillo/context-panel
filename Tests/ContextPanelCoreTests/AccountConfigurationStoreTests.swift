@@ -34,6 +34,65 @@ import Testing
     #expect(result.document == document)
 }
 
+@Test func accountConfigurationStoreLoadsFallbackWhenPrimaryIsMissing() throws {
+    let primaryURL = try temporaryDirectory().appending(path: "group/accounts.json")
+    let fallbackURL = try temporaryDirectory().appending(path: "accounts.json")
+    let store = AccountConfigurationStore(
+        configurationURL: primaryURL,
+        fallbackConfigurationURL: fallbackURL
+    )
+    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 10), accounts: [
+        LocalProviderAccountConfiguration(
+            id: "codex-a",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "OpenAI A",
+            authPath: "/tmp/codex-a.json"
+        )
+    ])
+
+    try AccountConfigurationStore(configurationURL: fallbackURL).save(document)
+
+    let result = store.load()
+    #expect(result.status == .healthy)
+    #expect(result.document == document)
+    #expect(AccountConfigurationStore(configurationURL: primaryURL).load().document == document)
+}
+
+@Test func accountConfigurationStorePrefersPrimaryOverFallback() throws {
+    let primaryURL = try temporaryDirectory().appending(path: "group/accounts.json")
+    let fallbackURL = try temporaryDirectory().appending(path: "accounts.json")
+    let store = AccountConfigurationStore(
+        configurationURL: primaryURL,
+        fallbackConfigurationURL: fallbackURL
+    )
+    let primary = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 20), accounts: [
+        LocalProviderAccountConfiguration(
+            id: "primary",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "Primary",
+            authPath: "/tmp/primary.json"
+        )
+    ])
+    let fallback = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 10), accounts: [
+        LocalProviderAccountConfiguration(
+            id: "fallback",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "Fallback",
+            authPath: "/tmp/fallback.json"
+        )
+    ])
+
+    try AccountConfigurationStore(configurationURL: primaryURL).save(primary)
+    try AccountConfigurationStore(configurationURL: fallbackURL).save(fallback)
+
+    let result = store.load()
+    #expect(result.status == .healthy)
+    #expect(result.document == primary)
+}
+
 @Test func accountConnectorFactorySkipsDisabledAndMissingSecretEnvironment() {
     let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
         LocalProviderAccountConfiguration(

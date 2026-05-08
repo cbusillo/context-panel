@@ -69,23 +69,31 @@ public struct AccountConfigurationLoadResult: Equatable, Sendable {
 
 public struct AccountConfigurationStore: Sendable {
     public let configurationURL: URL
+    public let fallbackConfigurationURL: URL?
 
-    public init(configurationURL: URL) {
+    public init(configurationURL: URL, fallbackConfigurationURL: URL? = nil) {
         self.configurationURL = configurationURL
+        self.fallbackConfigurationURL = fallbackConfigurationURL
     }
 
     public func load(now: Date = Date()) -> AccountConfigurationLoadResult {
-        guard FileManager.default.fileExists(atPath: configurationURL.path) else {
+        let loadURL = FileManager.default.fileExists(atPath: configurationURL.path)
+            ? configurationURL
+            : fallbackConfigurationURL
+        guard let loadURL, FileManager.default.fileExists(atPath: loadURL.path) else {
             return AccountConfigurationLoadResult(document: Self.defaultDocument(now: now), status: .unknown)
         }
 
         do {
             let document = try Self.makeDecoder().decode(
                 AccountConfigurationDocument.self,
-                from: try Data(contentsOf: configurationURL)
+                from: try Data(contentsOf: loadURL)
             )
             guard document.schemaVersion == 1 else {
                 throw SnapshotStoreError.unsupportedSchema(version: document.schemaVersion)
+            }
+            if loadURL != configurationURL {
+                try? save(document)
             }
             return AccountConfigurationLoadResult(document: document, status: .healthy)
         } catch {

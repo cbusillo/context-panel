@@ -145,7 +145,10 @@ final class SettingsPaneModel: ObservableObject {
     @Published private(set) var status: UsageStatus = .unknown
     @Published private(set) var errorMessage: String?
 
-    private let store = AccountConfigurationStore(configurationURL: ContextPanelLocations.accountConfigurationURL())
+    private let store = AccountConfigurationStore(
+        configurationURL: ContextPanelLocations.accountConfigurationURL(),
+        fallbackConfigurationURL: ContextPanelLocations.legacyAccountConfigurationURL()
+    )
     private let widgetPreferenceStore = WidgetDisplayPreferencesStore(
         preferencesURL: ContextPanelLocations.widgetDisplayPreferencesURL(appGroupID: ContextPanelLocations.appGroupID)
     )
@@ -1049,7 +1052,11 @@ final class ContextPanelAppModel: ObservableObject {
         let result = refreshService.loadCurrent(policy: SnapshotStoreStalenessPolicy(maximumAge: 15 * 60), now: Date())
         storedSnapshot = result.snapshot
         storeStatus = result.status
-        errorMessage = result.errorMessage
+        if result.status == .failure || result.errorMessage != nil {
+            errorMessage = result.errorMessage
+        } else if errorMessage?.hasPrefix("Background refresh could not be enabled:") != true {
+            errorMessage = nil
+        }
         historyCount = refreshService.loadHistory().count
         mirrorSnapshotsForDevelopmentWidget()
         mirrorDisplayPreferencesForDevelopmentWidget()
@@ -1088,6 +1095,10 @@ final class ContextPanelAppModel: ObservableObject {
 
     func saveClaudeWebLimits(_ limits: [UsageLimit]) {
         guard !limits.isEmpty else { return }
+        Task { await saveClaudeWebLimitsAsync(limits) }
+    }
+
+    private func saveClaudeWebLimitsAsync(_ limits: [UsageLimit]) async {
         let savedAt = Date()
         let report = ProviderConnectorReport(
             provider: .anthropic,
@@ -1098,10 +1109,11 @@ final class ContextPanelAppModel: ObservableObject {
             status: .healthy
         )
         do {
-            try SnapshotRefreshStores.appDefault().primary.saveMerged(
+            let decision = try await refreshRunner.saveMerged(
                 refreshResult: ConnectorRefreshResult(generatedAt: savedAt, reports: [report]),
                 savedAt: savedAt
             )
+            guard case .refreshed = decision else { return }
             lastRefreshAt = savedAt
             loadSnapshot()
             WidgetCenter.shared.reloadAllTimelines()
