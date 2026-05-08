@@ -112,7 +112,10 @@ struct SnapshotStoreProbe {
 
     private static func makeConnectors(configuration: ProbeConfiguration) -> [any ProviderConnector] {
         if configuration.includeConfiguredAccounts {
-            let store = AccountConfigurationStore(configurationURL: ContextPanelLocations.accountConfigurationURL())
+            let store = AccountConfigurationStore(
+                configurationURL: ContextPanelLocations.accountConfigurationURL(),
+                fallbackConfigurationURL: ContextPanelLocations.legacyAccountConfigurationURL()
+            )
             return AccountConnectorFactory.connectors(from: store.load().document)
         }
 

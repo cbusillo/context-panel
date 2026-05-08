@@ -145,7 +145,10 @@ final class SettingsPaneModel: ObservableObject {
     @Published private(set) var status: UsageStatus = .unknown
     @Published private(set) var errorMessage: String?
 
-    private let store = AccountConfigurationStore(configurationURL: ContextPanelLocations.accountConfigurationURL())
+    private let store = AccountConfigurationStore(
+        configurationURL: ContextPanelLocations.accountConfigurationURL(),
+        fallbackConfigurationURL: ContextPanelLocations.legacyAccountConfigurationURL()
+    )
     private let widgetPreferenceStore = WidgetDisplayPreferencesStore(
         preferencesURL: ContextPanelLocations.widgetDisplayPreferencesURL(appGroupID: ContextPanelLocations.appGroupID)
     )
@@ -1049,7 +1052,9 @@ final class ContextPanelAppModel: ObservableObject {
         let result = refreshService.loadCurrent(policy: SnapshotStoreStalenessPolicy(maximumAge: 15 * 60), now: Date())
         storedSnapshot = result.snapshot
         storeStatus = result.status
-        errorMessage = result.errorMessage
+        if result.status == .failure || result.errorMessage != nil {
+            errorMessage = result.errorMessage
+        }
         historyCount = refreshService.loadHistory().count
         mirrorSnapshotsForDevelopmentWidget()
         mirrorDisplayPreferencesForDevelopmentWidget()

@@ -127,7 +127,10 @@ public struct SnapshotRefreshService: Sendable {
 
     public static func appDefault() -> SnapshotRefreshService {
         SnapshotRefreshService(
-            accountStore: AccountConfigurationStore(configurationURL: ContextPanelLocations.accountConfigurationURL()),
+            accountStore: AccountConfigurationStore(
+                configurationURL: ContextPanelLocations.accountConfigurationURL(),
+                fallbackConfigurationURL: ContextPanelLocations.legacyAccountConfigurationURL()
+            ),
             stores: .appDefault()
         )
     }
