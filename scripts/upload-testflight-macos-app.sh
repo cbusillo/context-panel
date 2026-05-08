@@ -239,7 +239,6 @@ archive_args=(
 	-authenticationKeyPath "$api_key_path"
 	-authenticationKeyID "$api_key_id"
 	-authenticationKeyIssuerID "$api_issuer_id"
-	CODE_SIGN_ENTITLEMENTS=Config/ContextPanelAppStore.entitlements
 )
 if [[ -n "$build_number" ]]; then
 	archive_args+=(CURRENT_PROJECT_VERSION="$build_number")
