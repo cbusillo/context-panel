@@ -6,9 +6,11 @@ import WebKit
 
 @main
 struct ContextPanelPreviewApp: App {
+    @NSApplicationDelegateAdaptor(ContextPanelAppDelegate.self) private var appDelegate
+
     var body: some Scene {
         WindowGroup {
-            AppRoot()
+            AppRoot(model: appDelegate.model)
                 .frame(minWidth: 1080, idealWidth: 1080, minHeight: 720, idealHeight: 720)
         }
         .defaultSize(width: 1080, height: 720)
@@ -19,6 +21,28 @@ struct ContextPanelPreviewApp: App {
     }
 }
 
+@MainActor
+final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
+    let model = ContextPanelAppModel()
+    private var refreshTask: Task<Void, Never>?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        refreshTask = Task { @MainActor [model] in
+            model.loadSnapshot()
+            WidgetCenter.shared.reloadAllTimelines()
+            await model.runAutomaticRefreshLoop()
+        }
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        refreshTask?.cancel()
+    }
+}
+
 enum AppNavigationSelection: Hashable {
     case overview
     case provider(Provider)
@@ -26,7 +50,7 @@ enum AppNavigationSelection: Hashable {
 }
 
 struct AppRoot: View {
-    @StateObject private var model = ContextPanelAppModel()
+    @ObservedObject var model: ContextPanelAppModel
     @State private var selection: AppNavigationSelection? = .overview
 
     private var snapshot: UsageSnapshot {
@@ -42,13 +66,6 @@ struct AppRoot: View {
                 .frame(minWidth: 760)
         }
         .tint(CPTheme.accent)
-        .onAppear {
-            model.loadSnapshot()
-            WidgetCenter.shared.reloadAllTimelines()
-        }
-        .task {
-            await model.runAutomaticRefreshLoop()
-        }
         .sheet(isPresented: $model.isClaudeWebCapturePresented) {
             ClaudeWebCaptureSheet(model: model)
                 .frame(minWidth: 980, minHeight: 680)
@@ -865,7 +882,7 @@ struct MainLimitDetail: View {
                 limitID: summary.id,
                 accountName: limit.accountName,
                 providerLimits: summary.limits,
-                now: model.now,
+                now: Date(),
                 standardBurnRate: BurnRate(mode: .standard, unitsPerHour: 2),
                 fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 4),
                 reserveUnits: 6,
@@ -1006,9 +1023,7 @@ final class ContextPanelAppModel: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var lastRefreshAt: Date?
 
-    let now = Date()
-    let store: JSONSnapshotStore
-    let accountStore: AccountConfigurationStore
+    private let refreshService: SnapshotRefreshService
 
     var currentSnapshot: UsageSnapshot {
         storedSnapshot?.snapshot ?? SampleUsageData.snapshot
@@ -1023,20 +1038,17 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     init() {
-        store = JSONSnapshotStore(
-            rootDirectory: ContextPanelLocations.snapshotDirectory(appGroupID: ContextPanelLocations.appGroupID)
-        )
-        accountStore = AccountConfigurationStore(configurationURL: ContextPanelLocations.accountConfigurationURL())
+        refreshService = .appDefault()
     }
 
     func loadSnapshot() {
-        let accounts = accountStore.load().document.accounts
+        let accounts = refreshService.loadConfiguredAccounts().document.accounts
         configuredAccounts = accounts
-        let result = store.loadCurrent(policy: SnapshotStoreStalenessPolicy(maximumAge: 15 * 60), now: Date())
+        let result = refreshService.loadCurrent(policy: SnapshotStoreStalenessPolicy(maximumAge: 15 * 60), now: Date())
         storedSnapshot = result.snapshot
         storeStatus = result.status
         errorMessage = result.errorMessage
-        historyCount = store.loadHistory().count
+        historyCount = refreshService.loadHistory().count
         mirrorSnapshotsForDevelopmentWidget()
         mirrorDisplayPreferencesForDevelopmentWidget()
     }
@@ -1065,15 +1077,9 @@ final class ContextPanelAppModel: ObservableObject {
         isRefreshing = true
         defer { isRefreshing = false }
 
-        let accountDocument = accountStore.load().document
-        configuredAccounts = accountDocument.accounts
-        let connectors = AccountConnectorFactory.connectors(from: accountDocument)
-        let refreshResult = await ProviderConnectorRuntime(connectors: connectors).refreshAll()
-        let savedAt = Date()
-
         do {
-            try store.saveMerged(refreshResult: refreshResult, savedAt: savedAt)
-            lastRefreshAt = savedAt
+            let outcome = try await refreshService.refresh()
+            lastRefreshAt = outcome.savedAt
             loadSnapshot()
             WidgetCenter.shared.reloadAllTimelines()
         } catch {
@@ -1102,7 +1108,7 @@ final class ContextPanelAppModel: ObservableObject {
             status: .healthy
         )
         do {
-            try store.saveMerged(
+            try SnapshotRefreshStores.appDefault().primary.saveMerged(
                 refreshResult: ConnectorRefreshResult(generatedAt: savedAt, reports: [report]),
                 savedAt: savedAt
             )
@@ -1126,24 +1132,8 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     private func mirrorSnapshotsForDevelopmentWidget() {
-        let sourceURL = store.currentSnapshotURL
-        guard FileManager.default.fileExists(atPath: sourceURL.path) else { return }
-
         do {
-            for destinationStore in [
-                JSONSnapshotStore(rootDirectory: ContextPanelLocations.widgetDevelopmentContainerSnapshotDirectory()),
-                JSONSnapshotStore(rootDirectory: ContextPanelLocations.hostDevelopmentSnapshotDirectory()),
-            ] {
-                try FileManager.default.createDirectory(
-                    at: destinationStore.rootDirectory,
-                    withIntermediateDirectories: true
-                )
-                if FileManager.default.fileExists(atPath: destinationStore.currentSnapshotURL.path) {
-                    try FileManager.default.removeItem(at: destinationStore.currentSnapshotURL)
-                }
-                try FileManager.default.copyItem(at: sourceURL, to: destinationStore.currentSnapshotURL)
-                try mirrorHistoryForDevelopmentWidget(to: destinationStore)
-            }
+            try refreshService.mirrorPrimarySnapshotToDevelopmentStores()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -1176,32 +1166,6 @@ final class ContextPanelAppModel: ObservableObject {
         }
     }
 
-    private func mirrorHistoryForDevelopmentWidget(to destinationStore: JSONSnapshotStore) throws {
-        guard FileManager.default.fileExists(atPath: store.historyDirectoryURL.path) else { return }
-        try FileManager.default.createDirectory(
-            at: destinationStore.historyDirectoryURL,
-            withIntermediateDirectories: true
-        )
-        let historyURLs = try FileManager.default.contentsOfDirectory(
-            at: store.historyDirectoryURL,
-            includingPropertiesForKeys: nil
-        )
-        .filter { $0.pathExtension == "json" }
-
-        for destinationURL in try FileManager.default.contentsOfDirectory(
-            at: destinationStore.historyDirectoryURL,
-            includingPropertiesForKeys: nil
-        ) where destinationURL.pathExtension == "json" {
-            try FileManager.default.removeItem(at: destinationURL)
-        }
-
-        for sourceURL in historyURLs {
-            try FileManager.default.copyItem(
-                at: sourceURL,
-                to: destinationStore.historyDirectoryURL.appending(path: sourceURL.lastPathComponent)
-            )
-        }
-    }
 }
 
 struct CapacityDial: View {
