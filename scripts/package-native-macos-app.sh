@@ -11,6 +11,7 @@ signing_identity="auto"
 app_provisioning_profile=""
 widget_provisioning_profile=""
 notarize="false"
+notary_keychain_profile=""
 
 usage() {
 	cat <<'USAGE'
@@ -28,11 +29,13 @@ Options:
   --app-provisioning-profile PATH      Optional app embedded.provisionprofile.
   --widget-provisioning-profile PATH   Optional widget embedded.provisionprofile.
   --notarize                           Submit the zipped app to Apple notarization.
+  --notary-keychain-profile NAME       notarytool keychain profile for notarization.
   -h, --help                           Show this help.
 
-Notarization reads APPLE_ID, APPLE_TEAM_ID, and APPLE_APP_SPECIFIC_PASSWORD
-from the environment. The script does not read private keys or credentials;
-signing is performed by macOS Keychain through codesign.
+Notarization uses --notary-keychain-profile when provided. Otherwise it reads
+APPLE_ID, APPLE_TEAM_ID, and APPLE_APP_SPECIFIC_PASSWORD from the environment.
+The script does not read private keys or credentials; signing is performed by
+macOS Keychain through codesign.
 USAGE
 }
 
@@ -69,6 +72,10 @@ while [[ $# -gt 0 ]]; do
 	--notarize)
 		notarize="true"
 		shift
+		;;
+	--notary-keychain-profile)
+		notary_keychain_profile="${2:?--notary-keychain-profile requires a value}"
+		shift 2
 		;;
 	-h | --help)
 		usage
@@ -128,6 +135,7 @@ require_command xcodegen
 require_command xcodebuild
 require_command codesign
 require_command ditto
+require_command xcrun
 
 resolved_identity=$(resolve_identity)
 app_name="$display_name.app"
@@ -166,10 +174,17 @@ fi
 copy_profile_if_present "$widget_provisioning_profile" "$widget_path/Contents/embedded.provisionprofile"
 copy_profile_if_present "$app_provisioning_profile" "$app_path/Contents/embedded.provisionprofile"
 
-codesign --force --sign "$resolved_identity" \
+codesign_options=(--force --sign "$resolved_identity")
+hardened_runtime="false"
+if [[ "$resolved_identity" != "-" ]]; then
+	codesign_options+=(--options runtime --timestamp)
+	hardened_runtime="true"
+fi
+
+codesign "${codesign_options[@]}" \
 	--entitlements Config/ContextPanelWidget.entitlements \
 	"$widget_path"
-codesign --force --sign "$resolved_identity" \
+codesign "${codesign_options[@]}" \
 	--entitlements Config/ContextPanel.entitlements \
 	"$app_path"
 codesign --verify --deep --strict --verbose=2 "$app_path"
@@ -179,21 +194,26 @@ if [[ "$notarize" == "true" ]]; then
 		echo "notarization requires a non-ad-hoc signing identity" >&2
 		exit 1
 	fi
-	for name in APPLE_ID APPLE_TEAM_ID APPLE_APP_SPECIFIC_PASSWORD; do
-		if [[ -z "${!name:-}" ]]; then
-			echo "notarization requires $name" >&2
-			exit 1
-		fi
-	done
-
 	notary_zip="$output_dir/ContextPanel-$version-notary.zip"
 	rm -f "$notary_zip"
 	ditto -c -k --keepParent "$app_path" "$notary_zip"
-	xcrun notarytool submit "$notary_zip" \
-		--apple-id "$APPLE_ID" \
-		--team-id "$APPLE_TEAM_ID" \
-		--password "$APPLE_APP_SPECIFIC_PASSWORD" \
-		--wait
+	notary_args=(notarytool submit "$notary_zip" --wait)
+	if [[ -n "$notary_keychain_profile" ]]; then
+		notary_args+=(--keychain-profile "$notary_keychain_profile")
+	else
+		for name in APPLE_ID APPLE_TEAM_ID APPLE_APP_SPECIFIC_PASSWORD; do
+			if [[ -z "${!name:-}" ]]; then
+				echo "notarization requires --notary-keychain-profile or $name" >&2
+				exit 1
+			fi
+		done
+		notary_args+=(
+			--apple-id "$APPLE_ID"
+			--team-id "$APPLE_TEAM_ID"
+			--password "$APPLE_APP_SPECIFIC_PASSWORD"
+		)
+	fi
+	xcrun "${notary_args[@]}"
 	xcrun stapler staple "$app_path"
 	xcrun stapler validate "$app_path"
 fi
@@ -207,6 +227,7 @@ cat >"$metadata_path" <<JSON
   "app": "$app_path",
   "zip": "$zip_path",
   "signingIdentity": "$resolved_identity",
+  "hardenedRuntime": $hardened_runtime,
   "notarized": $notarize
 }
 JSON
