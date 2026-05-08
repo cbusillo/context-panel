@@ -10,6 +10,7 @@
 		0BBD1DF433F345E62C6A26EF /* LimitProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */; };
 		10A2940E7E3FE6E253ECFEDE /* GeminiCodeAssistQuota.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AC2F76895EE0EFC7F463447 /* GeminiCodeAssistQuota.swift */; };
 		1DD89F5634070B75C09BDE99 /* ClaudeLocalStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2E426A482568BBE85357D7E /* ClaudeLocalStatus.swift */; };
+		29FD4D47A21D08ABAE47E778 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 944A3154A0C2E33C5971E571 /* Assets.xcassets */; };
 		36A035769881D4A450BA3BD8 /* libContextPanelCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = F09182E1FD96DAEEC38F3909 /* libContextPanelCore.a */; };
 		38E9E0A22491522FF4E0A8F4 /* ContextPanelPreviewApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A46D6040EB6F68FC91EC477D /* ContextPanelPreviewApp.swift */; };
 		44DFF437D4762A4D0D2DBAA8 /* BurnRateEstimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FB4BEA57ACE8B84CAE71E75 /* BurnRateEstimator.swift */; };
@@ -85,6 +86,7 @@
 		7BD985B0213AB5987D3B3170 /* FastModeForecast.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FastModeForecast.swift; sourceTree = "<group>"; };
 		8D6350007C73BEF27D871AB0 /* ContextPanel.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ContextPanel.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8FB4BEA57ACE8B84CAE71E75 /* BurnRateEstimator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BurnRateEstimator.swift; sourceTree = "<group>"; };
+		944A3154A0C2E33C5971E571 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		9FA8FE4CC9BE058D8F46FBA2 /* CodexRateLimits.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRateLimits.swift; sourceTree = "<group>"; };
 		A46D6040EB6F68FC91EC477D /* ContextPanelPreviewApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelPreviewApp.swift; sourceTree = "<group>"; };
 		D459054C90410A784EBD308B /* UsageLimit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageLimit.swift; sourceTree = "<group>"; };
@@ -147,12 +149,21 @@
 			path = Sources/ContextPanelCore;
 			sourceTree = "<group>";
 		};
+		6E201F66FEFA138BFA2F4179 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				944A3154A0C2E33C5971E571 /* Assets.xcassets */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
 		77BADA15D2FF6ABB6F666F43 = {
 			isa = PBXGroup;
 			children = (
 				537271134D87C7167DEBA0C1 /* ContextPanelCore */,
 				F71E88199DC89A225C8F07FC /* ContextPanelPreview */,
 				A538E84B22D9D75DE0FD30D4 /* ContextPanelWidget */,
+				6E201F66FEFA138BFA2F4179 /* Resources */,
 				45E9D2C527D1EF15E9811358 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -222,6 +233,7 @@
 			buildConfigurationList = 54E2B892F7409618FAE8F040 /* Build configuration list for PBXNativeTarget "ContextPanel" */;
 			buildPhases = (
 				8BE7305E45C25AEF658A9E47 /* Sources */,
+				B85F7D0817CF1BFB5778B9D2 /* Resources */,
 				0A536561059AF7F95E2D3FD7 /* Frameworks */,
 				09DAA1F320B84A007C14B253 /* Embed Foundation Extensions */,
 			);
@@ -281,6 +293,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		B85F7D0817CF1BFB5778B9D2 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				29FD4D47A21D08ABAE47E778 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
 		A6FD12E22FB2385AD98885D1 /* Copy Swift Objective-C Interface Header */ = {

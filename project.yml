@@ -29,6 +29,7 @@ targets:
     deploymentTarget: "14.0"
     sources:
       - path: Sources/ContextPanelPreview
+      - path: Resources/Assets.xcassets
     dependencies:
       - target: ContextPanelCore
       - target: ContextPanelWidgetExtension
@@ -45,6 +46,7 @@ targets:
           public.app-category.productivity
         INFOPLIST_KEY_NSQuitAlwaysKeepsWindows: false
         CODE_SIGN_ENTITLEMENTS: Config/ContextPanel.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
   ContextPanelWidgetExtension:
     type: app-extension
