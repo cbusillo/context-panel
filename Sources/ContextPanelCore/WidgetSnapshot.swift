@@ -12,6 +12,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     public let generatedAt: Date
     public let limits: [UsageLimit]
     public let reports: [StoredProviderReport]
+    public let observedBurnRates: [String: ObservedBurnRate]
     public let status: UsageStatus
     public let message: String
 
@@ -20,6 +21,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         generatedAt: Date,
         limits: [UsageLimit],
         reports: [StoredProviderReport] = [],
+        observedBurnRates: [String: ObservedBurnRate] = [:],
         status: UsageStatus,
         message: String
     ) {
@@ -27,6 +29,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         self.generatedAt = generatedAt
         self.limits = limits
         self.reports = reports
+        self.observedBurnRates = observedBurnRates
         self.status = status
         self.message = message
     }
@@ -59,7 +62,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
 
     public static func fromStore(
         _ result: SnapshotStoreLoadResult,
-        now: Date = Date()
+        now: Date = Date(),
+        history: [StoredUsageSnapshot] = []
     ) -> WidgetSnapshot {
         guard let stored = result.snapshot else {
             return WidgetSnapshot(
@@ -85,6 +89,11 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             generatedAt: stored.snapshot.generatedAt,
             limits: stored.snapshot.limits,
             reports: stored.reports,
+            observedBurnRates: MainLimitBurnRateEstimator.observedBurnRates(
+                current: stored.snapshot,
+                history: history,
+                now: now
+            ),
             status: result.status,
             message: message(state: state, stored: stored)
         )

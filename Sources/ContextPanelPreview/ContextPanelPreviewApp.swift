@@ -1,5 +1,7 @@
 import ContextPanelCore
+import AppKit
 import SwiftUI
+import WidgetKit
 import WebKit
 
 @main
@@ -7,41 +9,45 @@ struct ContextPanelPreviewApp: App {
     var body: some Scene {
         WindowGroup {
             AppRoot()
-                .frame(minWidth: 1280, minHeight: 720)
+                .frame(minWidth: 1080, idealWidth: 1080, minHeight: 720, idealHeight: 720)
+        }
+        .defaultSize(width: 1080, height: 720)
+
+        Settings {
+            SettingsPane()
         }
     }
 }
 
+enum AppNavigationSelection: Hashable {
+    case overview
+    case provider(Provider)
+    case mainLimit(MainLimitSummary.ID)
+}
+
 struct AppRoot: View {
     @StateObject private var model = ContextPanelAppModel()
-    @State private var selectedID: UsageLimit.ID?
+    @State private var selection: AppNavigationSelection? = .overview
 
     private var snapshot: UsageSnapshot {
         model.currentSnapshot
     }
 
-    private var selectedLimit: UsageLimit {
-        if let selectedID, let match = snapshot.limits.first(where: { $0.id == selectedID }) {
-            return match
-        }
-        return snapshot.mostConstrainedLimits.first ?? SampleUsageData.snapshot.mostConstrainedLimits[0]
-    }
-
     var body: some View {
         HStack(spacing: 0) {
-            AccountsSidebar(model: model, snapshot: snapshot, selectedID: $selectedID)
-                .frame(width: 210)
+            AccountsSidebar(model: model, snapshot: snapshot, selection: $selection)
+                .frame(width: 240)
             Divider()
-            InstrumentDashboard(model: model, snapshot: snapshot)
-                .frame(minWidth: 740)
-            Divider()
-            AccountDetail(model: model, limit: selectedLimit, generatedAt: snapshot.generatedAt)
-                .frame(width: 320)
+            MainContent(model: model, snapshot: snapshot, selection: selection ?? .overview)
+                .frame(minWidth: 760)
         }
         .tint(CPTheme.accent)
         .onAppear {
             model.loadSnapshot()
-            selectedID = selectedID ?? snapshot.mostConstrainedLimits.first?.id
+            WidgetCenter.shared.reloadAllTimelines()
+        }
+        .task {
+            await model.runAutomaticRefreshLoop()
         }
         .sheet(isPresented: $model.isClaudeWebCapturePresented) {
             ClaudeWebCaptureSheet(model: model)
@@ -50,21 +56,188 @@ struct AppRoot: View {
     }
 }
 
+struct SettingsPane: View {
+    @StateObject private var model = SettingsPaneModel()
+
+    var body: some View {
+        Form {
+            Section("Accounts") {
+                ForEach(model.accounts) { account in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            ProviderBadge(provider: account.provider)
+                            Text(account.displayName)
+                                .font(.system(size: 13, weight: .medium))
+                            Spacer()
+                            Text(account.isEnabled ? "Enabled" : "Disabled")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(account.isEnabled ? CPTheme.statusColor(.healthy) : CPTheme.tertiaryText)
+                        }
+                        Text(model.detailText(for: account))
+                            .font(.system(size: 11))
+                            .foregroundStyle(CPTheme.secondaryText)
+                            .lineLimit(2)
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+
+            Section("Diagnostics") {
+                DetailRow(label: "Config", value: ConnectorRedactor.redactedPath(model.configurationPath))
+                DetailRow(label: "Status", value: model.status.rawValue)
+                if let errorMessage = model.errorMessage {
+                    Text(errorMessage)
+                        .font(.system(size: 12))
+                        .foregroundStyle(CPTheme.statusColor(.failure))
+                }
+            }
+
+            Section("Widget Main Limits") {
+                Text("Drag to reorder. The medium widget uses the first 3 visible limits; the large widget uses the first 5.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(CPTheme.secondaryText)
+
+                List {
+                    ForEach(model.widgetPreferences.mainLimits) { preference in
+                        WidgetMainLimitPreferenceRow(
+                            preference: preference,
+                            isVisible: Binding(
+                                get: { preference.isVisible },
+                                set: { model.setWidgetMainLimit(preference, isVisible: $0) }
+                            )
+                        )
+                    }
+                    .onMove(perform: model.moveWidgetMainLimits)
+                }
+                .listStyle(.inset)
+                .frame(height: 184)
+            }
+        }
+        .formStyle(.grouped)
+        .padding(20)
+        .frame(width: 560)
+        .frame(minHeight: 360)
+        .onAppear { model.load() }
+    }
+}
+
+@MainActor
+final class SettingsPaneModel: ObservableObject {
+    @Published private(set) var accounts: [LocalProviderAccountConfiguration] = []
+    @Published private(set) var widgetPreferences: WidgetDisplayPreferences = .defaultPreferences
+    @Published private(set) var status: UsageStatus = .unknown
+    @Published private(set) var errorMessage: String?
+
+    private let store = AccountConfigurationStore(configurationURL: ContextPanelLocations.accountConfigurationURL())
+    private let widgetPreferenceStore = WidgetDisplayPreferencesStore(
+        preferencesURL: ContextPanelLocations.widgetDisplayPreferencesURL(appGroupID: ContextPanelLocations.appGroupID)
+    )
+    private let widgetApplicationSupportPreferenceStore = WidgetDisplayPreferencesStore(
+        preferencesURL: ContextPanelLocations.widgetDevelopmentDisplayPreferencesURL()
+    )
+    private let widgetContainerPreferenceStore = WidgetDisplayPreferencesStore(
+        preferencesURL: ContextPanelLocations.widgetDevelopmentContainerDisplayPreferencesURL()
+    )
+    private let widgetHostPreferenceStore = WidgetDisplayPreferencesStore(
+        preferencesURL: ContextPanelLocations.hostDevelopmentDisplayPreferencesURL()
+    )
+
+    var configurationPath: String {
+        store.configurationURL.path
+    }
+
+    func load() {
+        let result = store.load()
+        accounts = result.document.accounts
+        widgetPreferences = [
+            widgetPreferenceStore,
+            widgetApplicationSupportPreferenceStore,
+            widgetContainerPreferenceStore,
+            widgetHostPreferenceStore,
+        ]
+        .compactMap { $0.loadIfAvailable() }
+        .first ?? .defaultPreferences
+        status = result.status
+        errorMessage = result.errorMessage
+    }
+
+    func setWidgetMainLimit(_ preference: WidgetMainLimitPreference, isVisible: Bool) {
+        var updated = widgetPreferences
+        updated.setMainLimit(provider: preference.provider, window: preference.window, isVisible: isVisible)
+        saveWidgetPreferences(updated)
+    }
+
+    func moveWidgetMainLimits(from source: IndexSet, to destination: Int) {
+        var updated = widgetPreferences
+        updated.moveMainLimits(fromOffsets: source, toOffset: destination)
+        saveWidgetPreferences(updated)
+    }
+
+    private func saveWidgetPreferences(_ updated: WidgetDisplayPreferences) {
+        do {
+            try widgetPreferenceStore.save(updated)
+            try widgetApplicationSupportPreferenceStore.save(updated)
+            try widgetContainerPreferenceStore.save(updated)
+            try widgetHostPreferenceStore.save(updated)
+            widgetPreferences = updated
+            WidgetCenter.shared.reloadAllTimelines()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func detailText(for account: LocalProviderAccountConfiguration) -> String {
+        let path = account.authPath ?? account.statsPath ?? account.commandPath ?? account.connectorKind.rawValue
+        return "\(account.connectorKind.rawValue) · \(ConnectorRedactor.redactedPath(path))"
+    }
+}
+
+struct WidgetMainLimitPreferenceRow: View {
+    let preference: WidgetMainLimitPreference
+    @Binding var isVisible: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(CPTheme.tertiaryText)
+                .frame(width: 14)
+            Toggle(isOn: $isVisible) {
+                HStack(spacing: 8) {
+                    ProviderBadge(provider: preference.provider)
+                    Text(preference.window.displayName)
+                    Spacer()
+                    Text(preference.isVisible ? "Shown" : "Hidden")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(CPTheme.secondaryText)
+                }
+            }
+            .toggleStyle(.switch)
+        }
+        .padding(.vertical, 2)
+    }
+}
+
 struct AccountsSidebar: View {
     @ObservedObject var model: ContextPanelAppModel
     let snapshot: UsageSnapshot
-    @Binding var selectedID: UsageLimit.ID?
+    @Binding var selection: AppNavigationSelection?
 
     var body: some View {
-        List(selection: $selectedID) {
-            Section("Accounts") {
+        List(selection: $selection) {
+            Section {
+                Label("Overview", systemImage: "gauge.with.dots.needle.67percent")
+                    .tag(AppNavigationSelection.overview)
+            }
+            Section("Providers") {
                 ForEach(Provider.allCases) { provider in
-                    let limits = snapshot.limits.filter { $0.provider == provider }
-                    if !limits.isEmpty {
-                        ProviderSidebarRow(provider: provider, limits: limits)
-                        ForEach(limits) { limit in
-                            SidebarLimitRow(limit: limit)
-                                .tag(limit.id)
+                    let summaries = snapshot.mainLimitSummaries.filter { $0.provider == provider }
+                    if !summaries.isEmpty {
+                        ProviderSidebarRow(provider: provider, summaries: summaries)
+                            .tag(AppNavigationSelection.provider(provider))
+                        ForEach(summaries) { summary in
+                            SidebarMainLimitRow(summary: summary)
+                                .tag(AppNavigationSelection.mainLimit(summary.id))
                         }
                     }
                 }
@@ -97,7 +270,7 @@ struct AccountsSidebar: View {
 
 struct ProviderSidebarRow: View {
     let provider: Provider
-    let limits: [UsageLimit]
+    let summaries: [MainLimitSummary]
 
     var body: some View {
         HStack(spacing: 8) {
@@ -107,28 +280,28 @@ struct ProviderSidebarRow: View {
                 .textCase(.uppercase)
                 .foregroundStyle(.secondary)
             Spacer()
-            Text("\(limits.count)")
+            Text("\(summaries.count)")
                 .font(.system(.caption, design: .monospaced, weight: .medium))
                 .foregroundStyle(.tertiary)
         }
     }
 }
 
-struct SidebarLimitRow: View {
-    let limit: UsageLimit
+struct SidebarMainLimitRow: View {
+    let summary: MainLimitSummary
 
     var body: some View {
         HStack(spacing: 10) {
-            StatusMark(status: limit.status, size: 7)
+            StatusMark(status: summary.status, size: 7)
             VStack(alignment: .leading, spacing: 2) {
-                Text(limit.accountName)
+                Text(summary.window.displayName)
                     .font(.system(size: 13, weight: .medium))
-                Text(limit.displayLabel)
+                Text(summary.sidebarDetailText)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Text(limit.compactUsageText)
+            Text(summary.compactUsageText)
                 .font(.system(.caption2, design: .monospaced, weight: .medium))
                 .foregroundStyle(.secondary)
         }
@@ -136,34 +309,88 @@ struct SidebarLimitRow: View {
     }
 }
 
-struct InstrumentDashboard: View {
+struct MainContent: View {
+    @ObservedObject var model: ContextPanelAppModel
+    let snapshot: UsageSnapshot
+    let selection: AppNavigationSelection
+
+    var body: some View {
+        switch selection {
+        case .overview:
+            OverviewDashboard(model: model, snapshot: snapshot)
+        case .provider(let provider):
+            ProviderDashboard(model: model, snapshot: snapshot, provider: provider)
+        case .mainLimit(let id):
+            if let summary = snapshot.mainLimitSummaries.first(where: { $0.id == id }) {
+                MainLimitDetail(model: model, summary: summary, generatedAt: snapshot.generatedAt)
+            } else {
+                OverviewDashboard(model: model, snapshot: snapshot)
+            }
+        }
+    }
+}
+
+struct OverviewDashboard: View {
     @ObservedObject var model: ContextPanelAppModel
     let snapshot: UsageSnapshot
 
-    private var constrained: [UsageLimit] {
-        Array(snapshot.mostConstrainedLimits.prefix(4))
+    private var constrainedSummaries: [MainLimitSummary] {
+        Array(snapshot.mostConstrainedMainLimitSummaries.prefix(5))
     }
 
     var body: some View {
-        ScrollView([.vertical, .horizontal]) {
+        ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 18) {
                 HeaderCard(model: model, snapshot: snapshot)
                 SetupStatusStrip(model: model)
-                WidgetPreviewGrid(snapshot: snapshot)
-                SectionHeader(title: "Most Constrained", trailing: "\(snapshot.limits.count) accounts")
+                SectionHeader(title: "Main Limits", trailing: "\(snapshot.mainLimitSummaries.count) windows")
                 VStack(spacing: 10) {
-                    ForEach(constrained) { limit in
-                        AccountRow(limit: limit)
+                    ForEach(constrainedSummaries) { summary in
+                        MainLimitRow(summary: summary)
                     }
                 }
-                SectionHeader(title: "Provider Groups", trailing: "Last update 2m ago")
+                SectionHeader(title: "Provider Groups", trailing: snapshot.nearestResetText)
                 ProviderGroupGrid(snapshot: snapshot)
+                AdditionalLimitsSection(snapshot: snapshot)
             }
             .padding(24)
-            .frame(minWidth: 720, alignment: .topLeading)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .background(CPTheme.background)
-        .navigationTitle("Glance")
+    }
+}
+
+struct ProviderDashboard: View {
+    @ObservedObject var model: ContextPanelAppModel
+    let snapshot: UsageSnapshot
+    let provider: Provider
+
+    private var summaries: [MainLimitSummary] {
+        snapshot.mainLimitSummaries.filter { $0.provider == provider }
+    }
+
+    private var additionalLimits: [UsageLimit] {
+        snapshot.additionalLimits.filter { $0.provider == provider }
+    }
+
+    var body: some View {
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 18) {
+                ProviderHeaderCard(model: model, provider: provider, summaries: summaries)
+                SectionHeader(title: "Main Limits", trailing: "\(summaries.count) windows")
+                VStack(spacing: 10) {
+                    ForEach(summaries) { summary in
+                        MainLimitRow(summary: summary)
+                    }
+                }
+                if !additionalLimits.isEmpty {
+                    AdditionalLimitsSection(snapshot: snapshot, provider: provider)
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .background(CPTheme.background)
     }
 }
 
@@ -174,7 +401,6 @@ struct HeaderCard: View {
     var body: some View {
         HStack(alignment: .center, spacing: 22) {
             VStack(alignment: .leading, spacing: 10) {
-                CPLabel("Context Panel")
                 Text(snapshot.headline)
                     .font(.system(size: 28, weight: .semibold))
                     .foregroundStyle(CPTheme.primaryText)
@@ -185,9 +411,12 @@ struct HeaderCard: View {
                 Text(model.fastModeForecast.copy)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(CPTheme.accent)
+                Text("Fast mode assumes 1.5x throughput for 2x limit spend.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(CPTheme.tertiaryText)
                 HStack(spacing: 8) {
-                    TagLabel("SwiftUI")
-                    TagLabel("WidgetKit")
+                    TagLabel("\(snapshot.mainLimitSummaries.count) main windows")
+                    TagLabel("accounts folded")
                     TagLabel(model.storeStatus.rawValue)
                 }
             }
@@ -196,7 +425,7 @@ struct HeaderCard: View {
                 value: snapshot.tightestCapacityRatio,
                 status: snapshot.aggregateStatus,
                 label: "\(Int(snapshot.tightestCapacityRatio * 100))",
-                sublabel: "tightest",
+                sublabel: "left",
                 size: 116
             )
         }
@@ -205,6 +434,61 @@ struct HeaderCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(CPTheme.stroke(cornerRadius: 12))
         .shadow(color: .black.opacity(0.05), radius: 14, x: 0, y: 8)
+    }
+}
+
+struct ProviderHeaderCard: View {
+    @ObservedObject var model: ContextPanelAppModel
+    let provider: Provider
+    let summaries: [MainLimitSummary]
+
+    private var tightestSummary: MainLimitSummary? {
+        summaries.sorted { lhs, rhs in
+            (lhs.usageRatio ?? 0) > (rhs.usageRatio ?? 0)
+        }.first
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 22) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    ProviderBadge(provider: provider)
+                    Text(provider.displayName)
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundStyle(CPTheme.primaryText)
+                }
+                Text(providerSummaryText)
+                    .font(.system(size: 13))
+                    .foregroundStyle(CPTheme.secondaryText)
+                HStack(spacing: 8) {
+                    TagLabel("\(summaries.count) main windows")
+                    TagLabel("\(summaries.reduce(0) { $0 + $1.accountCount }) account windows")
+                    TagLabel(model.storeStatus.rawValue)
+                }
+            }
+            Spacer(minLength: 16)
+            if let tightestSummary {
+                CapacityDial(
+                    value: tightestSummary.capacityRatio,
+                    status: tightestSummary.status,
+                    label: "\(Int((tightestSummary.capacityRatio * 100).rounded()))",
+                    sublabel: "left",
+                    size: 116
+                )
+            }
+        }
+        .padding(22)
+        .background(CPTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(CPTheme.stroke(cornerRadius: 12))
+        .shadow(color: .black.opacity(0.05), radius: 14, x: 0, y: 8)
+    }
+
+    private var providerSummaryText: String {
+        guard !summaries.isEmpty else { return "No main limits available yet." }
+        return summaries
+            .map { "\($0.window.displayName.lowercased()) \($0.previewRemainingHeadline.lowercased())" }
+            .joined(separator: " · ")
     }
 }
 
@@ -288,19 +572,19 @@ struct SmallWidgetPreview: View {
             VStack(alignment: .leading, spacing: 10) {
                 WidgetHeader(status: snapshot.aggregateStatus)
                 Spacer()
-                Text(snapshot.tightestLimit?.previewRemainingHeadline ?? "No data")
+                Text(snapshot.tightestMainLimitSummary?.previewRemainingHeadline ?? "No data")
                     .font(.system(size: 30, weight: .semibold, design: .monospaced))
                     .foregroundStyle(CPTheme.primaryText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
-                Text(snapshot.tightestLimit?.previewWindowLine ?? "Add OpenAI, Anthropic, or Google.")
+                Text(snapshot.tightestMainLimitSummary?.previewWindowLine ?? "Add OpenAI, Anthropic, or Google.")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(CPTheme.primaryText)
                     .lineLimit(2)
-                Text(snapshot.tightestLimit?.previewResetConfidenceText ?? snapshot.subheadline)
+                Text(snapshot.tightestMainLimitSummary?.previewResetConfidenceText ?? snapshot.subheadline)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(CPTheme.secondaryText)
-                CapacityBar(value: snapshot.tightestLimit?.usageRatio ?? 0, status: snapshot.aggregateStatus, height: 6)
+                CapacityBar(value: snapshot.tightestMainLimitSummary?.usageRatio ?? 0, status: snapshot.aggregateStatus, height: 6)
                 Spacer()
                 ProviderMiniStatus(snapshot: snapshot)
             }
@@ -317,16 +601,16 @@ struct MediumWidgetPreview: View {
                 VStack(alignment: .leading) {
                     WidgetHeader(status: snapshot.aggregateStatus)
                     Spacer()
-                    Text(snapshot.tightestLimit?.previewRemainingHeadline ?? "No data")
+                    Text(snapshot.tightestMainLimitSummary?.previewRemainingHeadline ?? "No data")
                         .font(.system(size: 30, weight: .semibold, design: .monospaced))
                         .foregroundStyle(CPTheme.primaryText)
                         .minimumScaleFactor(0.7)
                         .lineLimit(1)
-                    Text(snapshot.tightestLimit?.provider.displayName ?? "Set up accounts")
+                    Text(snapshot.tightestMainLimitSummary?.provider.displayName ?? "Set up accounts")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(CPTheme.secondaryText)
                         .textCase(.uppercase)
-                    CapacityBar(value: snapshot.tightestLimit?.usageRatio ?? 0, status: snapshot.aggregateStatus, height: 6)
+                    CapacityBar(value: snapshot.tightestMainLimitSummary?.usageRatio ?? 0, status: snapshot.aggregateStatus, height: 6)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(snapshot.fastModeForecast.copy)
                             .font(.system(size: 18, weight: .semibold))
@@ -344,9 +628,9 @@ struct MediumWidgetPreview: View {
                 Divider()
 
                 VStack(alignment: .leading, spacing: 8) {
-                    SectionHeader(title: "Tightest Windows", trailing: "4 accounts")
-                    ForEach(snapshot.mostConstrainedLimits.prefix(4)) { limit in
-                        AccountRow(limit: limit, compact: true)
+                    SectionHeader(title: "Main Limits", trailing: "\(snapshot.mainLimitSummaries.count) windows")
+                    ForEach(snapshot.mostConstrainedMainLimitSummaries.prefix(4)) { summary in
+                        MainLimitRow(summary: summary, compact: true)
                     }
                 }
             }
@@ -366,13 +650,13 @@ struct LargeWidgetPreview: View {
                         Text(snapshot.fastModeForecast.copy)
                             .font(.system(size: 25, weight: .semibold))
                             .foregroundStyle(CPTheme.primaryText)
-                        Text(snapshot.tightestLimit?.previewWindowLine ?? snapshot.tightestSupportText)
+                        Text(snapshot.tightestMainLimitSummary?.previewWindowLine ?? snapshot.tightestSupportText)
                             .font(.system(size: 12))
                             .foregroundStyle(CPTheme.secondaryText)
                     }
                     Spacer()
                     VStack(alignment: .trailing, spacing: 3) {
-                        Text(snapshot.tightestLimit?.previewRemainingHeadline ?? "No data")
+                        Text(snapshot.tightestMainLimitSummary?.previewRemainingHeadline ?? "No data")
                             .font(.system(size: 26, weight: .semibold, design: .monospaced))
                             .foregroundStyle(CPTheme.primaryText)
                         Text(snapshot.providerPressureText)
@@ -407,8 +691,8 @@ struct ProviderGroupGrid: View {
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
             ForEach(Provider.allCases) { provider in
-                let limits = snapshot.limits.filter { $0.provider == provider }
-                if !limits.isEmpty {
+                let summaries = snapshot.mainLimitSummaries.filter { $0.provider == provider }
+                if !summaries.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 6) {
                             ProviderBadge(provider: provider, compact: true)
@@ -416,27 +700,12 @@ struct ProviderGroupGrid: View {
                                 .font(.system(size: 11, weight: .semibold))
                                 .textCase(.uppercase)
                             Spacer()
-                            StatusMark(status: limits.map(\.status).worstStatus, size: 7)
+                            StatusMark(status: summaries.map(\.status).worstStatus, size: 7)
                         }
                         .foregroundStyle(CPTheme.secondaryText)
                         Divider()
-                        ForEach(limits.prefix(compact ? 3 : 4)) { limit in
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack(alignment: .firstTextBaseline) {
-                                    Text(limit.accountName)
-                                        .font(.system(size: compact ? 11 : 12, weight: .medium))
-                                        .lineLimit(1)
-                                    Spacer()
-                                    Text(limit.percentText)
-                                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                        .foregroundStyle(CPTheme.secondaryText)
-                                }
-                                Text(limit.displayLabel)
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(CPTheme.tertiaryText)
-                                    .lineLimit(1)
-                                CapacityBar(value: limit.usageRatio ?? 0, status: limit.status)
-                            }
+                        ForEach(summaries.prefix(compact ? 3 : 4)) { summary in
+                            MainLimitRow(summary: summary, compact: true)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -446,67 +715,137 @@ struct ProviderGroupGrid: View {
     }
 }
 
-struct AccountDetail: View {
-    @ObservedObject var model: ContextPanelAppModel
+struct AdditionalLimitsSection: View {
+    let snapshot: UsageSnapshot
+    var provider: Provider?
+    @State private var isExpanded = false
+
+    private var limits: [UsageLimit] {
+        snapshot.additionalLimits
+            .filter { provider == nil || $0.provider == provider }
+            .sorted { lhs, rhs in
+                if lhs.provider != rhs.provider {
+                    let lhsIndex = Provider.allCases.firstIndex(of: lhs.provider) ?? 0
+                    let rhsIndex = Provider.allCases.firstIndex(of: rhs.provider) ?? 0
+                    return lhsIndex < rhsIndex
+                }
+                if lhs.accountName != rhs.accountName {
+                    return lhs.accountName < rhs.accountName
+                }
+                return lhs.displayLabel < rhs.displayLabel
+            }
+    }
+
+    var body: some View {
+        if !limits.isEmpty {
+            DisclosureGroup(isExpanded: $isExpanded) {
+                VStack(spacing: 8) {
+                    ForEach(limits) { limit in
+                        AdditionalLimitRow(limit: limit)
+                    }
+                }
+                .padding(.top, 10)
+            } label: {
+                SectionHeader(title: "Additional Limits", trailing: "\(limits.count) hidden from widget")
+            }
+            .padding(14)
+            .background(CPTheme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(CPTheme.stroke(cornerRadius: 10))
+        }
+    }
+}
+
+struct AdditionalLimitRow: View {
     let limit: UsageLimit
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ProviderBadge(provider: limit.provider, compact: true)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(limit.displayLabel)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(CPTheme.primaryText)
+                    .lineLimit(1)
+                Text(limit.contextLabel.isEmpty ? limit.accountName : limit.contextLabel)
+                    .font(.system(size: 11))
+                    .foregroundStyle(CPTheme.secondaryText)
+                    .lineLimit(1)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(limit.previewUsageText)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(CPTheme.secondaryText)
+                Text(limit.resetText)
+                    .font(.system(size: 10))
+                    .foregroundStyle(CPTheme.tertiaryText)
+            }
+        }
+        .padding(10)
+        .background(CPTheme.surface2)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+struct MainLimitDetail: View {
+    @ObservedObject var model: ContextPanelAppModel
+    let summary: MainLimitSummary
     let generatedAt: Date
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 HStack(spacing: 10) {
-                    ProviderBadge(provider: limit.provider)
+                    ProviderBadge(provider: summary.provider)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(limit.accountName)
+                        Text(summary.window.displayName)
                             .font(.system(size: 22, weight: .semibold))
-                        Text("\(limit.provider.displayName) · \(limit.displayLabel) · \(limit.contextLabel)")
+                        Text("\(summary.provider.displayName) · \(summary.accountText)")
                             .font(.system(size: 13))
                             .foregroundStyle(CPTheme.secondaryText)
                     }
                     Spacer()
-                    StatusMark(status: limit.status, size: 10)
+                    StatusMark(status: summary.status, size: 10)
                 }
 
                 CapacityDial(
-                    value: 1 - (limit.usageRatio ?? 0),
-                    status: limit.status,
-                    label: limit.remaining.map(String.init) ?? "?",
+                    value: summary.capacityRatio,
+                    status: summary.status,
+                    label: summary.detailRemainingValue,
                     sublabel: "left",
                     size: 140
                 )
                 .frame(maxWidth: .infinity)
 
-        DetailCard(title: "Forecast") {
+                DetailCard(title: "Forecast") {
                     Text(forecastCopy)
                         .font(.system(size: 15, weight: .medium))
-                    Text("Confidence: \(limit.confidence.rawValue)")
+                    Text("Fast mode spends 2x capacity for about 1.5x throughput.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(CPTheme.secondaryText)
+                    Text("Confidence: \(summary.confidence.rawValue)")
                         .font(.system(size: 12))
                         .foregroundStyle(CPTheme.secondaryText)
                 }
 
-                DetailCard(title: "Normalized limit") {
-                    DetailRow(label: "Used", value: limit.used.map(String.init) ?? "unknown")
-                    DetailRow(label: "Limit", value: limit.limit.map(String.init) ?? "unknown")
-                    DetailRow(label: "Remaining", value: limit.remaining.map(String.init) ?? "unknown")
-                    DetailRow(label: "Status", value: limit.status.rawValue)
-                    DetailRow(label: "Updated", value: limit.lastUpdatedAt.map(model.relativeTime) ?? "unknown")
+                DetailCard(title: "Pooled limit") {
+                    DetailRow(label: "Provider", value: summary.provider.displayName)
+                    DetailRow(label: "Window", value: summary.window.displayName)
+                    DetailRow(label: "Accounts", value: "\(summary.accountCount)")
+                    DetailRow(label: "Used", value: summary.used.map(String.init) ?? "unknown")
+                    DetailRow(label: "Limit", value: summary.limit.map(String.init) ?? "unknown")
+                    DetailRow(label: "Remaining", value: summary.remaining.map(String.init) ?? "unknown")
+                    DetailRow(label: "Status", value: summary.status.rawValue)
+                    DetailRow(label: "Updated", value: summary.lastUpdatedAt.map(model.relativeTime) ?? "unknown")
                 }
 
-                DetailCard(title: "Refresh history") {
-                    Sparkline(values: [0.72, 0.68, 0.70, 0.64, 0.62, 0.58, 0.64])
-                        .frame(height: 42)
-                    Text("\(model.historyCount) cached snapshots. Last good snapshot is preserved for stale and failure states.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(CPTheme.secondaryText)
-                }
-
-                DetailCard(title: "Setup") {
-                    DetailRow(label: "Store", value: ConnectorRedactor.redactedPath(model.store.rootDirectory.path))
-                    DetailRow(label: "Accounts", value: "\(model.configuredAccounts.filter(\.isEnabled).count) enabled")
-                    ForEach(model.configuredAccounts) { account in
+                DetailCard(title: "Accounts") {
+                    ForEach(summary.limits) { limit in
                         DetailRow(
-                            label: account.displayName,
-                            value: account.isEnabled ? account.connectorKind.rawValue : "disabled"
+                            label: limit.accountName,
+                            value: "\(limit.remaining.map(String.init) ?? "?") left · \(limit.status.rawValue)"
                         )
                     }
                 }
@@ -518,19 +857,22 @@ struct AccountDetail: View {
     }
 
     private var forecastCopy: String {
-        if limit.provider == .openAI, limit.unit == .percent {
-            return FastModeForecast(
-                input: FastModeForecastInput(
-                        limit: limit,
-                        now: model.now,
-                    standardBurnRate: BurnRate(mode: .standard, unitsPerHour: 2),
-                    fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 12),
-                    reserveUnits: 6,
-                    minimumSafeHours: 1
-                )
+        guard let limit = summary.pooledLimit else {
+            return "No limit data for this window yet."
+        }
+        if summary.provider == .openAI, limit.unit == .percent {
+            return FastModeCapacityForecast(
+                limitID: summary.id,
+                accountName: limit.accountName,
+                providerLimits: summary.limits,
+                now: model.now,
+                standardBurnRate: BurnRate(mode: .standard, unitsPerHour: 2),
+                fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 4),
+                reserveUnits: 6,
+                minimumSafeHours: 1
             ).copy
         }
-        return limit.note ?? "No fast-mode forecast for this limit yet."
+        return limit.note ?? "Fast-mode forecast currently applies to OpenAI main windows."
     }
 }
 
@@ -604,40 +946,40 @@ struct ProviderMiniStatus: View {
     var body: some View {
         HStack(spacing: 14) {
             ForEach(Provider.allCases) { provider in
-                let limits = snapshot.limits.filter { $0.provider == provider }
+                let hasMainLimits = snapshot.mainLimitSummaries.contains { $0.provider == provider }
                 Text(provider.shortName)
                     .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(limits.isEmpty ? CPTheme.tertiaryText : CPTheme.providerColor(provider))
+                    .foregroundStyle(hasMainLimits ? CPTheme.providerColor(provider) : CPTheme.tertiaryText)
                     .lineLimit(1)
-                .opacity(limits.isEmpty ? 0.35 : 1)
+                    .opacity(hasMainLimits ? 1 : 0.35)
             }
         }
     }
 }
 
-struct AccountRow: View {
-    let limit: UsageLimit
+struct MainLimitRow: View {
+    let summary: MainLimitSummary
     var compact = false
 
     var body: some View {
         HStack(spacing: 10) {
-            ProviderBadge(provider: limit.provider, compact: true)
+            ProviderBadge(provider: summary.provider, compact: true)
                 .frame(width: 16)
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: compact ? 3 : 4) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(limit.previewWindowLine)
+                    Text(compact ? summary.compactPreviewWindowLine : summary.previewWindowLine)
                         .font(.system(size: compact ? 12 : 13, weight: .medium))
                         .lineLimit(1)
                     Spacer()
-                    Text(limit.previewUsageText)
+                    Text(summary.previewUsageText)
                         .font(.system(size: compact ? 10 : 11, weight: .medium, design: .monospaced))
                         .foregroundStyle(CPTheme.secondaryText)
                 }
                 HStack(spacing: 8) {
-                    CapacityBar(value: limit.usageRatio ?? 0, status: limit.status)
-                    Text(limit.previewResetConfidenceText)
+                    CapacityBar(value: summary.usageRatio ?? 0, status: summary.status)
+                    Text(compact ? summary.resetText : summary.previewResetConfidenceText)
                         .font(.system(size: 10))
-                        .foregroundStyle(limit.status == .stale ? CPTheme.statusColor(.stale) : CPTheme.tertiaryText)
+                        .foregroundStyle(summary.status == .stale ? CPTheme.statusColor(.stale) : CPTheme.tertiaryText)
                         .lineLimit(1)
                 }
             }
@@ -672,20 +1014,8 @@ final class ContextPanelAppModel: ObservableObject {
         storedSnapshot?.snapshot ?? SampleUsageData.snapshot
     }
 
-    var fastModeForecast: FastModePortfolioForecast {
-        let forecasts = currentSnapshot.limits
-            .filter { $0.provider == .openAI && $0.unit == .percent }
-            .map { limit in
-                FastModeForecast(input: FastModeForecastInput(
-                    limit: limit,
-                    now: Date(),
-                    standardBurnRate: BurnRate(mode: .standard, unitsPerHour: 2),
-                    fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 12),
-                    reserveUnits: 6,
-                    minimumSafeHours: 1
-                ))
-            }
-        return FastModePortfolioForecast(forecasts: forecasts)
+    var fastModeForecast: FastModeCapacityPortfolioForecast {
+        currentSnapshot.fastModeForecast
     }
 
     var lastRefreshText: String {
@@ -707,9 +1037,31 @@ final class ContextPanelAppModel: ObservableObject {
         storeStatus = result.status
         errorMessage = result.errorMessage
         historyCount = store.loadHistory().count
+        mirrorSnapshotsForDevelopmentWidget()
+        mirrorDisplayPreferencesForDevelopmentWidget()
+    }
+
+    func runAutomaticRefreshLoop() async {
+        await refreshIfNeeded()
+
+        while !Task.isCancelled {
+            do {
+                try await Task.sleep(for: .seconds(5 * 60))
+            } catch {
+                return
+            }
+            await refreshLocalConnectors()
+        }
+    }
+
+    func refreshIfNeeded() async {
+        if storedSnapshot == nil || storeStatus == .stale || storeStatus == .unknown || storeStatus == .failure {
+            await refreshLocalConnectors()
+        }
     }
 
     func refreshLocalConnectors() async {
+        guard !isRefreshing else { return }
         isRefreshing = true
         defer { isRefreshing = false }
 
@@ -723,6 +1075,7 @@ final class ContextPanelAppModel: ObservableObject {
             try store.saveMerged(refreshResult: refreshResult, savedAt: savedAt)
             lastRefreshAt = savedAt
             loadSnapshot()
+            WidgetCenter.shared.reloadAllTimelines()
         } catch {
             storeStatus = .failure
             errorMessage = error.localizedDescription
@@ -755,6 +1108,7 @@ final class ContextPanelAppModel: ObservableObject {
             )
             lastRefreshAt = savedAt
             loadSnapshot()
+            WidgetCenter.shared.reloadAllTimelines()
         } catch {
             storeStatus = .failure
             errorMessage = error.localizedDescription
@@ -771,6 +1125,83 @@ final class ContextPanelAppModel: ObservableObject {
         return "\(hours / 24)d ago"
     }
 
+    private func mirrorSnapshotsForDevelopmentWidget() {
+        let sourceURL = store.currentSnapshotURL
+        guard FileManager.default.fileExists(atPath: sourceURL.path) else { return }
+
+        do {
+            for destinationStore in [
+                JSONSnapshotStore(rootDirectory: ContextPanelLocations.widgetDevelopmentContainerSnapshotDirectory()),
+                JSONSnapshotStore(rootDirectory: ContextPanelLocations.hostDevelopmentSnapshotDirectory()),
+            ] {
+                try FileManager.default.createDirectory(
+                    at: destinationStore.rootDirectory,
+                    withIntermediateDirectories: true
+                )
+                if FileManager.default.fileExists(atPath: destinationStore.currentSnapshotURL.path) {
+                    try FileManager.default.removeItem(at: destinationStore.currentSnapshotURL)
+                }
+                try FileManager.default.copyItem(at: sourceURL, to: destinationStore.currentSnapshotURL)
+                try mirrorHistoryForDevelopmentWidget(to: destinationStore)
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func mirrorDisplayPreferencesForDevelopmentWidget() {
+        let sourceURL = ContextPanelLocations.widgetDisplayPreferencesURL(appGroupID: ContextPanelLocations.appGroupID)
+        guard FileManager.default.fileExists(atPath: sourceURL.path) else { return }
+
+        do {
+            for destinationURL in [
+                ContextPanelLocations.widgetDevelopmentDisplayPreferencesURL(),
+                ContextPanelLocations.widgetDevelopmentContainerDisplayPreferencesURL(),
+                ContextPanelLocations.hostDevelopmentDisplayPreferencesURL(),
+            ] {
+                if destinationURL.standardizedFileURL == sourceURL.standardizedFileURL {
+                    continue
+                }
+                try FileManager.default.createDirectory(
+                    at: destinationURL.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                if FileManager.default.fileExists(atPath: destinationURL.path) {
+                    try FileManager.default.removeItem(at: destinationURL)
+                }
+                try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func mirrorHistoryForDevelopmentWidget(to destinationStore: JSONSnapshotStore) throws {
+        guard FileManager.default.fileExists(atPath: store.historyDirectoryURL.path) else { return }
+        try FileManager.default.createDirectory(
+            at: destinationStore.historyDirectoryURL,
+            withIntermediateDirectories: true
+        )
+        let historyURLs = try FileManager.default.contentsOfDirectory(
+            at: store.historyDirectoryURL,
+            includingPropertiesForKeys: nil
+        )
+        .filter { $0.pathExtension == "json" }
+
+        for destinationURL in try FileManager.default.contentsOfDirectory(
+            at: destinationStore.historyDirectoryURL,
+            includingPropertiesForKeys: nil
+        ) where destinationURL.pathExtension == "json" {
+            try FileManager.default.removeItem(at: destinationURL)
+        }
+
+        for sourceURL in historyURLs {
+            try FileManager.default.copyItem(
+                at: sourceURL,
+                to: destinationStore.historyDirectoryURL.appending(path: sourceURL.lastPathComponent)
+            )
+        }
+    }
 }
 
 struct CapacityDial: View {
@@ -1224,13 +1655,34 @@ struct TagLabel: View {
 }
 
 enum CPTheme {
-    static let background = Color(red: 244 / 255, green: 244 / 255, blue: 245 / 255)
-    static let surface = Color.white
-    static let surface2 = Color(red: 250 / 255, green: 250 / 255, blue: 250 / 255)
-    static let line = Color.black.opacity(0.07)
-    static let primaryText = Color(red: 10 / 255, green: 10 / 255, blue: 11 / 255)
-    static let secondaryText = primaryText.opacity(0.66)
-    static let tertiaryText = primaryText.opacity(0.46)
+    static let background = adaptiveColor(
+        light: NSColor(red: 244 / 255, green: 244 / 255, blue: 245 / 255, alpha: 1),
+        dark: NSColor(red: 22 / 255, green: 23 / 255, blue: 25 / 255, alpha: 1)
+    )
+    static let surface = adaptiveColor(
+        light: .white,
+        dark: NSColor(red: 34 / 255, green: 35 / 255, blue: 38 / 255, alpha: 1)
+    )
+    static let surface2 = adaptiveColor(
+        light: NSColor(red: 250 / 255, green: 250 / 255, blue: 250 / 255, alpha: 1),
+        dark: NSColor(red: 43 / 255, green: 44 / 255, blue: 48 / 255, alpha: 1)
+    )
+    static let line = adaptiveColor(
+        light: NSColor.black.withAlphaComponent(0.07),
+        dark: NSColor.white.withAlphaComponent(0.10)
+    )
+    static let primaryText = adaptiveColor(
+        light: NSColor(red: 10 / 255, green: 10 / 255, blue: 11 / 255, alpha: 1),
+        dark: NSColor(red: 238 / 255, green: 239 / 255, blue: 241 / 255, alpha: 1)
+    )
+    static let secondaryText = adaptiveColor(
+        light: NSColor(red: 87 / 255, green: 87 / 255, blue: 92 / 255, alpha: 1),
+        dark: NSColor(red: 178 / 255, green: 180 / 255, blue: 186 / 255, alpha: 1)
+    )
+    static let tertiaryText = adaptiveColor(
+        light: NSColor(red: 130 / 255, green: 130 / 255, blue: 136 / 255, alpha: 1),
+        dark: NSColor(red: 128 / 255, green: 131 / 255, blue: 139 / 255, alpha: 1)
+    )
     static let accent = Color(red: 74 / 255, green: 91 / 255, blue: 122 / 255)
 
     static func providerColor(_ provider: Provider) -> Color {
@@ -1261,6 +1713,13 @@ enum CPTheme {
         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
             .stroke(line, lineWidth: 1)
     }
+
+    private static func adaptiveColor(light: NSColor, dark: NSColor) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            let best = appearance.bestMatch(from: [.darkAqua, .aqua])
+            return best == .darkAqua ? dark : light
+        })
+    }
 }
 
 extension UsageSnapshot {
@@ -1272,54 +1731,138 @@ extension UsageSnapshot {
         "OpenAI, Anthropic, and Google capacity with local confidence."
     }
 
-    var tightestLimit: UsageLimit? {
-        mostConstrainedLimits.first
+    var tightestMainLimitSummary: MainLimitSummary? {
+        mostConstrainedMainLimitSummaries.first
     }
 
     var tightestUsageText: String {
-        guard let tightestLimit else { return "Set up accounts" }
-        return tightestLimit.previewRemainingHeadline
+        guard let tightestMainLimitSummary else { return "Set up accounts" }
+        return tightestMainLimitSummary.previewRemainingHeadline
     }
 
     var tightestSupportText: String {
-        guard let tightestLimit else { return "Add OpenAI, Anthropic, or Google." }
-        return "\(tightestLimit.provider.shortName) · \(tightestLimit.displayLabel) · \(tightestLimit.contextLabel)"
+        guard let tightestMainLimitSummary else { return "Add OpenAI, Anthropic, or Google." }
+        return "\(tightestMainLimitSummary.provider.shortName) · \(tightestMainLimitSummary.window.displayName) · \(tightestMainLimitSummary.accountText)"
     }
 
     var tightestCapacityRatio: Double {
-        guard let ratio = tightestLimit?.usageRatio else { return 0 }
+        guard let ratio = tightestMainLimitSummary?.usageRatio else { return 0 }
         return max(1 - ratio, 0)
     }
 
-    var fastModeForecast: FastModePortfolioForecast {
-        let forecasts = limits
+    var fastModeForecast: FastModeCapacityPortfolioForecast {
+        let forecasts = mainLimitSummaries.sorted { lhs, rhs in
+            let lhsPriority = lhs.defaultWidgetSortRank
+            let rhsPriority = rhs.defaultWidgetSortRank
+            if lhsPriority != rhsPriority {
+                return lhsPriority > rhsPriority
+            }
+            return (lhs.usageRatio ?? 0) > (rhs.usageRatio ?? 0)
+        }
             .filter { $0.provider == .openAI && $0.unit == .percent }
-            .map { limit in
-                FastModeForecast(input: FastModeForecastInput(
-                    limit: limit,
+            .map { summary in
+                FastModeCapacityForecast(
+                    limitID: summary.id,
+                    accountName: "\(summary.provider.displayName) \(summary.window.displayName) pool",
+                    providerLimits: summary.limits,
                     now: Date(),
                     standardBurnRate: BurnRate(mode: .standard, unitsPerHour: 2),
-                    fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 12),
+                    fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 4),
                     reserveUnits: 6,
                     minimumSafeHours: 1
-                ))
+                )
             }
-        return FastModePortfolioForecast(forecasts: forecasts)
+        return FastModeCapacityPortfolioForecast(forecasts: forecasts)
     }
 
     var providerPressureText: String {
-        let limited = limits.filter { $0.status == .limited }.count
-        let close = limits.filter { $0.status == .close }.count
+        let limited = mainLimitSummaries.filter { $0.status == .limited }.count
+        let close = mainLimitSummaries.filter { $0.status == .close }.count
         if limited > 0 || close > 0 {
             return "\(limited) limited · \(close) close"
         }
-        return "all tracked windows healthy"
+        return "main windows healthy"
     }
 
     var nearestResetText: String {
-        let futureResets = limits.compactMap(\.resetsAt).filter { $0 > Date() }.sorted()
+        let futureResets = mainLimitSummaries.compactMap(\.resetsAt).filter { $0 > Date() }.sorted()
         guard let reset = futureResets.first else { return "reset unknown" }
         return "nearest reset \(reset.widgetRelativeText)"
+    }
+
+    var additionalLimits: [UsageLimit] {
+        limits.filter { !$0.isMainLimit }
+    }
+}
+
+extension MainLimitSummary {
+    var previewRemainingHeadline: String {
+        guard unit != nil, remaining != nil else {
+            if status == .failure { return "Failed" }
+            return "Unknown"
+        }
+        if usageRatio != nil { return "\(Int((capacityRatio * 100).rounded()))% left" }
+        guard let remaining else { return "Unknown" }
+        return "\(remaining) left"
+    }
+
+    var compactUsageText: String {
+        guard unit != nil, used != nil, limit != nil else {
+            return status == .failure ? "—" : "?"
+        }
+        if usageRatio != nil {
+            return "\(Int(((usageRatio ?? 0) * 100).rounded()))% used"
+        }
+        guard let used, let limit else { return "?" }
+        return "\(used)/\(limit)"
+    }
+
+    var previewUsageText: String {
+        guard unit != nil, used != nil, limit != nil else {
+            return status == .failure ? "refresh failed" : "unknown"
+        }
+        if usageRatio != nil {
+            return "\(Int(((usageRatio ?? 0) * 100).rounded()))% used"
+        }
+        guard let used, let limit else { return "unknown" }
+        return "\(used)/\(limit) used"
+    }
+
+    var previewWindowLine: String {
+        "\(window.displayName) · \(accountText)"
+    }
+
+    var compactPreviewWindowLine: String {
+        "\(window.shortName) · \(accountText)"
+    }
+
+    var sidebarDetailText: String {
+        "\(accountText) · \(previewRemainingHeadline.lowercased())"
+    }
+
+    var accountText: String {
+        accountCount == 1 ? "1 account" : "\(accountCount) accounts"
+    }
+
+    var resetText: String {
+        if status == .failure { return "refresh failed" }
+        guard let resetsAt else { return "unknown reset" }
+        if resetsAt < Date().addingTimeInterval(-60) { return "reset passed" }
+        if resetsAt.shouldShowWidgetDateTime {
+            return "resets \(resetsAt.widgetRelativeText) · \(resetsAt.widgetDateTimeText)"
+        }
+        return "resets \(resetsAt.widgetRelativeText)"
+    }
+
+    var previewResetConfidenceText: String {
+        "\(resetText) · \(confidence.previewText)"
+    }
+
+    var detailRemainingValue: String {
+        guard unit != .percent else {
+            return "\(Int((capacityRatio * 100).rounded()))%"
+        }
+        return remaining.map(String.init) ?? "?"
     }
 }
 
@@ -1377,6 +1920,9 @@ extension UsageLimit {
         if status == .failure { return "refresh failed" }
         guard let resetsAt else { return "unknown reset" }
         if resetsAt < Date().addingTimeInterval(-60) { return "reset passed" }
+        if resetsAt.shouldShowWidgetDateTime {
+            return "resets \(resetsAt.widgetRelativeText) · \(resetsAt.widgetDateTimeText)"
+        }
         return "resets \(resetsAt.widgetRelativeText)"
     }
 
@@ -1442,14 +1988,33 @@ extension Date {
             if minutes < 60 { return "in \(minutes)m" }
             let hours = minutes / 60
             if hours < 24 { return "in \(hours)h" }
-            return "in \(hours / 24)d"
+            return "in \(Self.formatDaysAndHours(hours: hours))"
         }
         let elapsed = abs(seconds)
         let minutes = elapsed / 60
         if minutes < 60 { return "\(minutes)m ago" }
         let hours = minutes / 60
         if hours < 24 { return "\(hours)h ago" }
-        return "\(hours / 24)d ago"
+        return "\(Self.formatDaysAndHours(hours: hours)) ago"
+    }
+
+    var shouldShowWidgetDateTime: Bool {
+        abs(timeIntervalSince(Date())) >= 24 * 3_600
+    }
+
+    var widgetDateTimeText: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEE h:mm a"
+        return formatter.string(from: self)
+    }
+
+    private static func formatDaysAndHours(hours: Int) -> String {
+        let days = hours / 24
+        let remainingHours = hours % 24
+        if remainingHours == 0 {
+            return "\(days)d"
+        }
+        return "\(days)d \(remainingHours)h"
     }
 }
 

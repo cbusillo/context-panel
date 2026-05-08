@@ -68,9 +68,10 @@ enum SampleUsageData {
                     provider: .anthropic,
                     accountID: "anthropic-work",
                     accountName: "Work",
-                    label: "Claude Sonnet Daily",
-                    windowLabel: "Daily",
+                    label: "Claude Sonnet Weekly",
+                    windowLabel: "Weekly",
                     modelLabel: "Claude Sonnet",
+                    unit: .percent,
                     used: 12,
                     limit: 100,
                     resetsAt: referenceNow.addingTimeInterval(21_600),
@@ -81,14 +82,15 @@ enum SampleUsageData {
                     provider: .google,
                     accountID: "google-personal",
                     accountName: "Personal",
-                    label: "Gemini Pro",
+                    label: "Gemini Pro Daily",
+                    windowLabel: "Daily",
                     modelLabel: "Gemini Pro",
-                    used: nil,
-                    limit: nil,
+                    unit: .percent,
+                    used: 28,
+                    limit: 100,
+                    resetsAt: referenceNow.addingTimeInterval(42_000),
                     lastUpdatedAt: referenceNow.addingTimeInterval(-120),
-                    confidence: .unknown,
-                    statusOverride: .unknown,
-                    note: "Provider does not expose this limit."
+                    confidence: .observed
                 ),
                 UsageLimit(
                     provider: .google,
@@ -107,21 +109,21 @@ enum SampleUsageData {
         )
     }
 
-    static var fastModeForecast: FastModePortfolioForecast {
-        let forecasts = snapshot.limits
-            .filter { $0.provider == .openAI && $0.label.contains("GPT-5") }
-            .map { limit in
-                FastModeForecast(
-                    input: FastModeForecastInput(
-                        limit: limit,
-                        now: referenceNow,
-                        standardBurnRate: BurnRate(mode: .standard, unitsPerHour: 2),
-                        fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 12),
-                        reserveUnits: 6,
-                        minimumSafeHours: 1
-                    )
+    static var fastModeForecast: FastModeCapacityPortfolioForecast {
+        let forecasts = snapshot.mainLimitSummaries
+            .filter { $0.provider == .openAI && $0.unit == .percent }
+            .map { summary in
+                FastModeCapacityForecast(
+                    limitID: summary.id,
+                    accountName: "\(summary.provider.displayName) \(summary.window.displayName) pool",
+                    providerLimits: summary.limits,
+                    now: referenceNow,
+                    standardBurnRate: BurnRate(mode: .standard, unitsPerHour: 2),
+                    fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 4),
+                    reserveUnits: 6,
+                    minimumSafeHours: 1
                 )
             }
-        return FastModePortfolioForecast(forecasts: forecasts)
+        return FastModeCapacityPortfolioForecast(forecasts: forecasts)
     }
 }

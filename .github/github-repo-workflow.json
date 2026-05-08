@@ -30,7 +30,7 @@
       "release or signing changes"
     ]
   },
-  "importantWorkflows": ["CI", "CodeQL"],
+  "importantWorkflows": ["CI", "CodeQL", "Release"],
   "qaLabels": [],
   "deployLabels": [],
   "healthUrls": [],
