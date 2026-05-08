@@ -43,6 +43,7 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         INFOPLIST_KEY_LSApplicationCategoryType: >-
           public.app-category.productivity
+        INFOPLIST_KEY_NSQuitAlwaysKeepsWindows: false
         CODE_SIGN_ENTITLEMENTS: Config/ContextPanel.entitlements
 
   ContextPanelWidgetExtension:
@@ -63,8 +64,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.shinycomputers.contextpanel.widget
         PRODUCT_NAME: ContextPanelWidgetExtension
         GENERATE_INFOPLIST_FILE: false
-        CODE_SIGN_ENTITLEMENTS: Config/ContextPanelWidget.entitlements
         SKIP_INSTALL: true
+        CODE_SIGN_ENTITLEMENTS: Config/ContextPanelWidget.entitlements
 
 schemes:
   ContextPanel:

@@ -81,8 +81,34 @@ public struct ProviderConnectorRuntime: Sendable {
             let result = await connector.refresh(now: now)
             reports.append(contentsOf: result.reports)
         }
-        return ConnectorRefreshResult(generatedAt: now, reports: reports)
+        return ConnectorRefreshResult(generatedAt: now, reports: Self.deduplicatedReports(reports))
     }
+
+    private static func deduplicatedReports(_ reports: [ProviderConnectorReport]) -> [ProviderConnectorReport] {
+        var indexesByAccount: [ConnectorProviderAccountKey: Int] = [:]
+        var deduplicated: [ProviderConnectorReport] = []
+        deduplicated.reserveCapacity(reports.count)
+
+        for report in reports {
+            let key = ConnectorProviderAccountKey(provider: report.provider, accountID: report.accountID)
+            if let existingIndex = indexesByAccount[key] {
+                let existing = deduplicated[existingIndex]
+                if existing.limits.isEmpty, !report.limits.isEmpty {
+                    deduplicated[existingIndex] = report
+                }
+            } else {
+                indexesByAccount[key] = deduplicated.count
+                deduplicated.append(report)
+            }
+        }
+
+        return deduplicated
+    }
+}
+
+private struct ConnectorProviderAccountKey: Hashable {
+    let provider: Provider
+    let accountID: String
 }
 
 public struct ConnectorHTTPRequest: Sendable {
@@ -185,6 +211,10 @@ public enum ConnectorRedactor {
 
     public static func localAccountID(provider: Provider, path: String) -> String {
         "\(provider.rawValue)-\(fnv1a(path))"
+    }
+
+    public static func localAccountID(provider: Provider, stableID: String) -> String {
+        "\(provider.rawValue)-\(fnv1a(stableID))"
     }
 
     private static func fnv1a(_ value: String) -> String {

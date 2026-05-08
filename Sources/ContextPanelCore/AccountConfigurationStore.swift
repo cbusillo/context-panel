@@ -170,7 +170,7 @@ public enum AccountConnectorFactory {
             case .codexRateLimits:
                 guard let authPath = account.authPath else { return nil }
                 return CodexRateLimitConnector(accounts: [CodexAccountConfiguration(
-                    authPath: authPath,
+                    authPath: codexAuthPath(for: authPath),
                     accountName: account.displayName
                 )])
             case .geminiCodeAssist:
@@ -210,5 +210,19 @@ public enum AccountConnectorFactory {
             let clientSecret = environment[clientSecretName], !clientSecret.isEmpty
         else { return nil }
         return GeminiOAuthClientMetadata(clientID: clientID, clientSecret: clientSecret)
+    }
+
+    private static func codexAuthPath(for authPath: String) -> String {
+        let expanded = NSString(string: authPath).expandingTildeInPath
+        let url = URL(fileURLWithPath: expanded)
+        guard url.lastPathComponent == "auth.json" else { return authPath }
+
+        let accountListURL = url
+            .deletingLastPathComponent()
+            .appending(path: "auth_accounts.json")
+        if FileManager.default.fileExists(atPath: accountListURL.path) {
+            return accountListURL.path
+        }
+        return authPath
     }
 }

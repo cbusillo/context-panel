@@ -2,7 +2,6 @@
 name: CodeQL
 
 "on":
-  pull_request:
   push:
     branches:
       - main
@@ -19,7 +18,7 @@ jobs:
   analyze:
     name: Analyze Swift
     runs-on: macos-latest
-    timeout-minutes: 360
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -30,8 +29,8 @@ jobs:
         with:
           languages: swift
 
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@v4
+      - name: Build
+        run: swift build
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4

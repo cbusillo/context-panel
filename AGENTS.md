@@ -51,6 +51,42 @@ scripts/commit-gate.sh
 For UI work, also run the native app/widget locally and inspect the actual macOS
 presentation before calling the work ready.
 
+For widget/app UI changes, the SwiftPM gate is not sufficient by itself. Also
+regenerate the Xcode project when `project.yml` or source membership changes,
+build the real Xcode app target, replace the installed development app, and
+restart the app/widget extension:
+
+```sh
+xcodegen generate
+xcodebuild -project ContextPanel.xcodeproj -scheme ContextPanel -configuration Debug -derivedDataPath .build/xcode-derived-signed build
+pkill -9 -f '/Applications/Context Panel.app/Contents/MacOS/Context Panel' || true
+pkill -9 -f 'ContextPanelWidgetExtension.appex' || true
+rm -rf "/Applications/Context Panel.app"
+ditto ".build/xcode-derived-signed/Build/Products/Debug/Context Panel.app" "/Applications/Context Panel.app"
+open "/Applications/Context Panel.app"
+```
+
+Do not create backup copies of `/Applications/Context Panel.app` during normal
+development installs.
+
+The installed widget can still be older than the rebuilt app. Check
+`pluginkit -m -A -D -vvv | rg contextpanel` and verify the registered extension
+path. If WidgetKit is registered to an old DerivedData path, rebuild/register
+that path or remove the stale registration before judging the widget.
+
+The widget needs access to `group.com.shinycomputers.contextpanel`. A wildcard
+Mac Team provisioning profile may not carry that app-group entitlement, which
+can make the widget show a `current-snapshot.json` read error even while the app
+can read data. For release, use a provisioning profile with the app group
+enabled. For local development, prefer an ad-hoc-signed install over a wildcard
+profile when testing the live widget. If building with `CODE_SIGNING_ALLOWED=NO`,
+ad-hoc sign the app, extension, and debug dylibs with their entitlements before
+installing. The app also mirrors the current snapshot to the widget extension
+container as a local-development fallback. The app-side copy path is the widget
+container under `~/Library/Containers`, while the widget reads it through its
+sandbox-local Application Support directory; keep that split in mind when
+debugging why the app and widget disagree.
+
 ## Repo Workflow
 
 - Default branch: `main`.

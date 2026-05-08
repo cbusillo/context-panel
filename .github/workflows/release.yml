@@ -1,0 +1,188 @@
+---
+name: Release
+
+"on":
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version without the leading v. Defaults to the current date build.
+        required: false
+        type: string
+      create_github_release:
+        description: Create or update a GitHub Release.
+        required: true
+        default: true
+        type: boolean
+      notarize:
+        description: Notarize when Apple signing secrets are configured.
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  macos:
+    name: Build macOS App
+    runs-on: macos-latest
+
+    env:
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+      MACOS_APP_PROVISIONING_PROFILE_BASE64: ${{ secrets.MACOS_APP_PROVISIONING_PROFILE_BASE64 }}
+      MACOS_WIDGET_PROVISIONING_PROFILE_BASE64: ${{ secrets.MACOS_WIDGET_PROVISIONING_PROFILE_BASE64 }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+
+      - name: Resolve Version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            tag="${GITHUB_REF_NAME}"
+          elif [[ -n "${{ inputs.version }}" ]]; then
+            version="${{ inputs.version }}"
+            tag="v${version}"
+          else
+            version="$(date -u +%Y.%m.%d)-${GITHUB_SHA::7}"
+            tag="v${version}"
+          fi
+          echo "version=${version}" >>"${GITHUB_OUTPUT}"
+          echo "tag=${tag}" >>"${GITHUB_OUTPUT}"
+
+      - name: Import Apple Signing Assets
+        id: signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          identity="-"
+          app_profile=""
+          widget_profile=""
+
+          if [[ -n "${MACOS_CERTIFICATE_P12:-}" ]]; then
+            keychain_password="${MACOS_KEYCHAIN_PASSWORD:-$(uuidgen)}"
+            keychain_path="${RUNNER_TEMP}/context-panel-signing.keychain-db"
+            certificate_path="${RUNNER_TEMP}/certificate.p12"
+
+            echo "${MACOS_CERTIFICATE_P12}" | base64 -D >"${certificate_path}"
+            security create-keychain -p "${keychain_password}" "${keychain_path}"
+            security set-keychain-settings -lut 21600 "${keychain_path}"
+            security unlock-keychain -p "${keychain_password}" "${keychain_path}"
+            security import "${certificate_path}" \
+              -P "${MACOS_CERTIFICATE_PASSWORD:-}" \
+              -A \
+              -t cert \
+              -f pkcs12 \
+              -k "${keychain_path}"
+            security list-keychains -d user -s "${keychain_path}" $(security list-keychains -d user | tr -d '"')
+            security set-key-partition-list -S apple-tool:,apple: -s -k "${keychain_password}" "${keychain_path}"
+            identity="auto"
+          fi
+
+          if [[ -n "${MACOS_APP_PROVISIONING_PROFILE_BASE64:-}" ]]; then
+            app_profile="${RUNNER_TEMP}/ContextPanel.provisionprofile"
+            echo "${MACOS_APP_PROVISIONING_PROFILE_BASE64}" | base64 -D >"${app_profile}"
+          fi
+          if [[ -n "${MACOS_WIDGET_PROVISIONING_PROFILE_BASE64:-}" ]]; then
+            widget_profile="${RUNNER_TEMP}/ContextPanelWidgetExtension.provisionprofile"
+            echo "${MACOS_WIDGET_PROVISIONING_PROFILE_BASE64}" | base64 -D >"${widget_profile}"
+          fi
+
+          echo "identity=${identity}" >>"${GITHUB_OUTPUT}"
+          echo "app_profile=${app_profile}" >>"${GITHUB_OUTPUT}"
+          echo "widget_profile=${widget_profile}" >>"${GITHUB_OUTPUT}"
+
+      - name: Build Release Artifact
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(
+            --version "${{ steps.version.outputs.version }}"
+            --output dist
+            --identity "${{ steps.signing.outputs.identity }}"
+          )
+          if [[ -n "${{ steps.signing.outputs.app_profile }}" ]]; then
+            args+=(--app-provisioning-profile "${{ steps.signing.outputs.app_profile }}")
+          fi
+          if [[ -n "${{ steps.signing.outputs.widget_profile }}" ]]; then
+            args+=(--widget-provisioning-profile "${{ steps.signing.outputs.widget_profile }}")
+          fi
+          if [[ "${{ inputs.notarize || false }}" == "true" ]]; then
+            args+=(--notarize)
+          fi
+
+          scripts/package-native-macos-app.sh "${args[@]}"
+          zip_path="dist/ContextPanel-${{ steps.version.outputs.version }}-macOS.zip"
+          echo "zip_path=${zip_path}" >>"${GITHUB_OUTPUT}"
+          echo "metadata_path=dist/release-metadata.json" >>"${GITHUB_OUTPUT}"
+
+      - name: Upload Workflow Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ContextPanel-${{ steps.version.outputs.version }}-macOS
+          path: |
+            ${{ steps.package.outputs.zip_path }}
+            ${{ steps.package.outputs.metadata_path }}
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: ${{ github.ref_type == 'tag' || inputs.create_github_release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ZIP_PATH: ${{ steps.package.outputs.zip_path }}
+          METADATA_PATH: ${{ steps.package.outputs.metadata_path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          notes="${RUNNER_TEMP}/release-notes.md"
+          {
+            echo "Context Panel ${VERSION}"
+            echo
+            notarized="$(sed -n 's/^  "notarized": \(.*\)$/\1/p' "${METADATA_PATH}" | tr -d ',')"
+            signing_identity="$(sed -n 's/^  "signingIdentity": "\(.*\)",$/\1/p' "${METADATA_PATH}")"
+            if [[ "${notarized}" == "true" ]]; then
+              echo "This build is signed and notarized."
+            elif [[ "${signing_identity}" != "-" ]]; then
+              echo "This build is signed but was not notarized by this workflow run."
+            else
+              echo "This build is ad-hoc signed for CI validation. Configure Apple signing and notarization secrets before using it as a friend-installable release."
+            fi
+          } >"${notes}"
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" "${ZIP_PATH}" "${METADATA_PATH}" --clobber
+            gh release edit "${TAG}" --title "Context Panel ${VERSION}" --notes-file "${notes}"
+          else
+            gh release create "${TAG}" "${ZIP_PATH}" "${METADATA_PATH}" \
+              --target "${GITHUB_SHA}" \
+              --title "Context Panel ${VERSION}" \
+              --notes-file "${notes}"
+          fi

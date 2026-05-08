@@ -1,22 +1,26 @@
 import ContextPanelCore
+import AppKit
 import SwiftUI
 
 struct ContextPanelSmallWidget: View {
     let snapshot: WidgetSnapshot
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            CPWHeader(status: snapshot.status, text: snapshot.generatedAt.widgetRelativeText)
+        VStack(alignment: .leading, spacing: 8) {
+            if let problem = snapshot.widgetProblemText {
+                CPWProblemLabel(problem, status: snapshot.status)
+            }
             Spacer(minLength: 4)
-            if let tightest = snapshot.mostConstrainedLimits.first {
+            if let tightest = snapshot.tightestMainLimitSummary {
                 Text(tightest.widgetRemainingHeadline)
                     .font(.system(size: 30, weight: .semibold, design: .monospaced))
                     .foregroundStyle(CPWTheme.primaryText)
                     .minimumScaleFactor(0.7)
                     .lineLimit(1)
-                Text(tightest.widgetWindowLine)
-                    .font(.system(size: 12, weight: .semibold))
+                Text(tightest.widgetSmallWindowLine)
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(CPWTheme.primaryText)
+                    .minimumScaleFactor(0.85)
                     .lineLimit(2)
                 Text(tightest.widgetResetConfidenceText)
                     .font(.system(size: 10, weight: .medium))
@@ -36,97 +40,130 @@ struct ContextPanelSmallWidget: View {
             Spacer(minLength: 4)
             CPWProviderMiniStatus(snapshot: snapshot)
         }
-        .padding(16)
+        .padding(14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
 struct ContextPanelMediumWidget: View {
     let snapshot: WidgetSnapshot
+    let displayPreferences: WidgetDisplayPreferences
 
     var body: some View {
-        HStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 10) {
-                CPWHeader(status: snapshot.status, text: snapshot.generatedAt.widgetRelativeText)
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 5) {
+                if let problem = snapshot.widgetProblemText {
+                    CPWProblemLabel(problem, status: snapshot.status)
+                }
                 Spacer(minLength: 0)
                 CPWGlanceNumber(snapshot: snapshot)
                 Text(snapshot.fastModeVerdict)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(CPWTheme.primaryText)
+                    .lineLimit(2)
+                Text(snapshot.fastModeDetail)
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(CPWTheme.secondaryText)
                     .lineLimit(2)
+                Text(snapshot.fastModeResetDetail)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(CPWTheme.tertiaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
                 Spacer(minLength: 0)
             }
-            .frame(width: 142, alignment: .leading)
+            .frame(width: 134, alignment: .leading)
 
             Divider()
 
-            VStack(alignment: .leading, spacing: 8) {
-                CPWSectionHeader(title: "Tightest Windows", trailing: "\(snapshot.limits.count) limits")
-                ForEach(snapshot.mostConstrainedLimits.prefix(4)) { limit in
-                    CPWLimitRow(limit: limit)
+            VStack(alignment: .leading, spacing: 7) {
+                let lanes = snapshot.visibleMainLimitLanes(
+                    displayPreferences: displayPreferences,
+                    maximumCount: 3
+                )
+                CPWSectionHeader(title: "Main Limits")
+                ForEach(lanes) { lane in
+                    CPWMainLimitRow(lane: lane)
                 }
                 if snapshot.limits.isEmpty {
                     CPWEmptyRow(message: snapshot.message)
                 }
             }
         }
-        .padding(16)
+        .padding(14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
 struct ContextPanelLargeWidget: View {
     let snapshot: WidgetSnapshot
+    let displayPreferences: WidgetDisplayPreferences
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    CPWLabel("Context Panel")
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    if let problem = snapshot.widgetProblemText {
+                        CPWProblemLabel(problem, status: snapshot.status)
+                    }
                     Text(snapshot.fastModeVerdict)
-                        .font(.system(size: 24, weight: .semibold))
+                        .font(.system(size: 20, weight: .semibold))
                         .foregroundStyle(CPWTheme.primaryText)
                         .lineLimit(2)
-                    Text(snapshot.generatedAt.widgetRelativeText)
+                        .minimumScaleFactor(0.75)
+                    Text(snapshot.fastModeDetail)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(CPWTheme.secondaryText)
-                        .textCase(.uppercase)
+                        .lineLimit(1)
+                    Text(snapshot.fastModeResetDetail)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(CPWTheme.tertiaryText)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
                 }
                 Spacer()
                 CPWGlanceNumber(snapshot: snapshot)
             }
 
-            CPWProviderSummaryGrid(snapshot: snapshot)
+            CPWProviderSummaryGrid(snapshot: snapshot, compact: true)
 
             Divider()
 
-            VStack(alignment: .leading, spacing: 8) {
-                CPWFastModeCard(snapshot: snapshot)
-
-                CPWSectionHeader(title: "Tightest Windows", trailing: snapshot.providerPressureText)
-                ForEach(snapshot.mostConstrainedLimits.prefix(6)) { limit in
-                    CPWLimitRow(limit: limit)
+            VStack(alignment: .leading, spacing: 6) {
+                let lanes = snapshot.visibleMainLimitLanes(
+                    displayPreferences: displayPreferences,
+                    maximumCount: 5
+                )
+                CPWSectionHeader(title: "Main Limits")
+                ForEach(lanes) { lane in
+                    CPWMainLimitRow(lane: lane)
                 }
                 if snapshot.limits.isEmpty {
                     CPWEmptyRow(message: snapshot.message)
                 }
             }
         }
-        .padding(16)
+        .padding(14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
-struct CPWHeader: View {
+struct CPWProblemLabel: View {
+    let text: String
     let status: UsageStatus
-    var text = "Context Panel"
+
+    init(_ text: String, status: UsageStatus) {
+        self.text = text
+        self.status = status
+    }
 
     var body: some View {
-        HStack {
-            CPWLabel(text)
-            Spacer()
-            Text(status.widgetLabel)
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(CPWTheme.statusColor(status))
-                .textCase(.uppercase)
-        }
+        Text(text)
+            .font(.system(size: 10, weight: .semibold))
+            .tracking(0.5)
+            .textCase(.uppercase)
+            .foregroundStyle(CPWTheme.statusColor(status))
+            .lineLimit(1)
     }
 }
 
@@ -144,34 +181,57 @@ struct CPWGlanceNumber: View {
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(CPWTheme.secondaryText)
                 .lineLimit(2)
-            CPWCapacityBar(value: snapshot.tightestUsageRatio, status: snapshot.status, height: 6)
+            CPWBurnPaceBar(forecast: snapshot.fastModeForecast)
         }
         .frame(width: 94, alignment: .leading)
     }
 }
 
-struct CPWLimitRow: View {
-    let limit: UsageLimit
+struct CPWMainLimitRow: View {
+    let summary: MainLimitSummary?
+    let fallbackProvider: Provider
+    let fallbackWindow: MainLimitWindow
+
+    init(summary: MainLimitSummary) {
+        self.summary = summary
+        fallbackProvider = summary.provider
+        fallbackWindow = summary.window
+    }
+
+    init(lane: WidgetMainLimitLane) {
+        summary = lane.summary
+        fallbackProvider = lane.provider
+        fallbackWindow = lane.window
+    }
+
+    private var provider: Provider {
+        summary?.provider ?? fallbackProvider
+    }
+
+    private var status: UsageStatus {
+        summary?.status ?? .unknown
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                CPWProviderBadge(provider: limit.provider, compact: true)
-                Text(limit.widgetWindowLine)
-                    .font(.system(size: 12, weight: .medium))
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                CPWProviderBadge(provider: provider, compact: true)
+                Text(summary?.widgetWindowLine ?? fallbackWindow.displayName)
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(CPWTheme.primaryText)
                     .lineLimit(1)
                 Spacer(minLength: 6)
-                Text(limit.widgetUsageText)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                Text(summary?.widgetUsageText ?? "no data")
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
                     .foregroundStyle(CPWTheme.secondaryText)
             }
-            HStack(spacing: 8) {
-                CPWCapacityBar(value: limit.usageRatio ?? 0, status: limit.status)
-                Text(limit.widgetResetConfidenceText)
-                    .font(.system(size: 10))
+            HStack(spacing: 6) {
+                CPWCapacityBar(value: summary?.usageRatio ?? 0, status: status)
+                Text(summary?.widgetResetConfidenceText ?? "not observed")
+                    .font(.system(size: 9))
                     .foregroundStyle(CPWTheme.tertiaryText)
                     .lineLimit(1)
+                    .frame(minWidth: 72, alignment: .trailing)
             }
         }
     }
@@ -179,28 +239,33 @@ struct CPWLimitRow: View {
 
 struct CPWProviderSummaryGrid: View {
     let snapshot: WidgetSnapshot
+    var compact = false
 
     var body: some View {
-        HStack(spacing: 12) {
-            ForEach(snapshot.providerSummaries, id: \.provider) { summary in
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 6) {
-                        Text(summary.provider.displayName)
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(CPWTheme.providerColor(summary.provider))
-                            .lineLimit(1)
-                        Spacer()
-                        Text(summary.status.widgetLabel)
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(CPWTheme.statusColor(summary.status))
-                            .textCase(.uppercase)
+        HStack(spacing: compact ? 10 : 12) {
+            ForEach(Provider.allCases) { provider in
+                let summaries = snapshot.mainLimitSummaries.filter { $0.provider == provider }
+                let status = summaries.map(\.status).contextPanelWorstStatus
+                VStack(alignment: .leading, spacing: compact ? 3 : 5) {
+                    HStack(spacing: 5) {
+                        CPWProviderBadge(provider: provider, compact: true)
+                        if status.shouldShowWidgetIssue {
+                            Text(status.widgetLabel)
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(CPWTheme.statusColor(status))
+                                .textCase(.uppercase)
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+                        }
+                        Spacer(minLength: 0)
                     }
-                    Text(summary.widgetSummaryText)
-                        .font(.system(size: 11, weight: .medium))
+                    Text(snapshot.widgetProviderSummaryText(provider: provider))
+                        .font(.system(size: compact ? 10 : 11, weight: .medium))
                         .foregroundStyle(CPWTheme.secondaryText)
-                        .lineLimit(2)
-                    CPWCapacityBar(value: 1 - summary.capacityRatio, status: summary.status, height: 5)
+                        .lineLimit(compact ? 1 : 2)
+                    CPWCapacityBar(value: summaries.map { $0.usageRatio ?? 0 }.max() ?? 0, status: status, height: 5)
                 }
+                .opacity(summaries.isEmpty ? 0.45 : 1)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -212,12 +277,13 @@ struct CPWProviderMiniStatus: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            ForEach(snapshot.providerSummaries, id: \.provider) { summary in
-                Text(summary.provider.shortName)
+            ForEach(Provider.allCases) { provider in
+                let hasMainLimits = snapshot.mainLimitSummaries.contains { $0.provider == provider }
+                Text(provider.shortName)
                     .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(summary.limitCount == 0 ? CPWTheme.tertiaryText : CPWTheme.providerColor(summary.provider))
+                    .foregroundStyle(hasMainLimits ? CPWTheme.providerColor(provider) : CPWTheme.tertiaryText)
                     .lineLimit(1)
-                    .opacity(summary.limitCount == 0 ? 0.35 : 1)
+                    .opacity(hasMainLimits ? 1 : 0.35)
             }
         }
     }
@@ -280,6 +346,54 @@ struct CPWCapacityBar: View {
             }
         }
         .frame(height: height)
+    }
+}
+
+struct CPWBurnPaceBar: View {
+    let forecast: FastModeCapacityForecast?
+
+    private var markerPosition: Double? {
+        guard let ratio = forecast?.burnPaceRatio, ratio.isFinite else { return nil }
+        if ratio <= 1 {
+            return max(min(ratio * 0.5, 0.5), 0)
+        }
+        return min(0.5 + ((ratio - 1) / 2 * 0.5), 1)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            GeometryReader { proxy in
+                let width = proxy.size.width
+                ZStack(alignment: .leading) {
+                    Capsule().fill(CPWTheme.line)
+                    Capsule()
+                        .fill(CPWTheme.statusColor(.healthy).opacity(0.85))
+                        .frame(width: width * 0.5)
+                    Capsule()
+                        .fill(CPWTheme.statusColor(.limited).opacity(0.78))
+                        .frame(width: width * 0.5)
+                        .offset(x: width * 0.5)
+                    Rectangle()
+                        .fill(CPWTheme.primaryText.opacity(0.72))
+                        .frame(width: 1, height: 8)
+                        .offset(x: width * 0.5)
+                    if let markerPosition {
+                        Circle()
+                            .fill(CPWTheme.primaryText)
+                            .frame(width: 7, height: 7)
+                            .shadow(color: .black.opacity(0.35), radius: 1, y: 1)
+                            .offset(x: max(min(width * markerPosition - 3.5, width - 7), 0))
+                    }
+                }
+            }
+            .frame(height: 7)
+
+            Text(forecast?.burnPaceCopy ?? "measuring burn")
+                .font(.system(size: 8, weight: .medium))
+                .foregroundStyle(CPWTheme.tertiaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
     }
 }
 
@@ -360,11 +474,26 @@ struct CPWLabel: View {
 }
 
 enum CPWTheme {
-    static let surface = Color(red: 250 / 255, green: 250 / 255, blue: 250 / 255)
-    static let line = Color.black.opacity(0.08)
-    static let primaryText = Color(red: 10 / 255, green: 10 / 255, blue: 11 / 255)
-    static let secondaryText = primaryText.opacity(0.66)
-    static let tertiaryText = primaryText.opacity(0.46)
+    static let surface = adaptiveColor(
+        light: NSColor(red: 250 / 255, green: 250 / 255, blue: 250 / 255, alpha: 1),
+        dark: NSColor(red: 32 / 255, green: 33 / 255, blue: 36 / 255, alpha: 1)
+    )
+    static let line = adaptiveColor(
+        light: NSColor.black.withAlphaComponent(0.08),
+        dark: NSColor.white.withAlphaComponent(0.11)
+    )
+    static let primaryText = adaptiveColor(
+        light: NSColor(red: 10 / 255, green: 10 / 255, blue: 11 / 255, alpha: 1),
+        dark: NSColor(red: 239 / 255, green: 240 / 255, blue: 242 / 255, alpha: 1)
+    )
+    static let secondaryText = adaptiveColor(
+        light: NSColor(red: 87 / 255, green: 87 / 255, blue: 92 / 255, alpha: 1),
+        dark: NSColor(red: 178 / 255, green: 180 / 255, blue: 186 / 255, alpha: 1)
+    )
+    static let tertiaryText = adaptiveColor(
+        light: NSColor(red: 130 / 255, green: 130 / 255, blue: 136 / 255, alpha: 1),
+        dark: NSColor(red: 128 / 255, green: 131 / 255, blue: 139 / 255, alpha: 1)
+    )
     static let accent = Color(red: 74 / 255, green: 91 / 255, blue: 122 / 255)
 
     static func providerColor(_ provider: Provider) -> Color {
@@ -402,6 +531,13 @@ enum CPWTheme {
         case .stale, .unknown, .loading:
             Color(red: 106 / 255, green: 106 / 255, blue: 114 / 255)
         }
+    }
+
+    private static func adaptiveColor(light: NSColor, dark: NSColor) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            let best = appearance.bestMatch(from: [.darkAqua, .aqua])
+            return best == .darkAqua ? dark : light
+        })
     }
 }
 
@@ -446,56 +582,95 @@ extension UsageLimit {
         if resetsAt < Date().addingTimeInterval(-60) {
             return "reset passed"
         }
-        return "resets \(resetsAt.widgetRelativeText)"
+        return resetsAt.widgetCompactResetText
     }
 
     var widgetResetConfidenceText: String {
-        "\(widgetResetText) · \(confidence.widgetLabel)"
+        if confidence.shouldShowWidgetResetQualifier {
+            return "\(widgetResetText) · \(confidence.widgetLabel)"
+        }
+        return widgetResetText
     }
 }
 
 extension WidgetSnapshot {
+    var mainLimitSummaries: [MainLimitSummary] {
+        usageSnapshot.mainLimitSummaries
+    }
+
+    var mostConstrainedMainLimitSummaries: [MainLimitSummary] {
+        usageSnapshot.mostConstrainedMainLimitSummaries
+    }
+
+    var largeWidgetMainLimitSummaries: [MainLimitSummary] {
+        mainLimitSummaries.sorted { lhs, rhs in
+            let lhsPriority = lhs.defaultWidgetSortRank
+            let rhsPriority = rhs.defaultWidgetSortRank
+            if lhsPriority != rhsPriority {
+                return lhsPriority > rhsPriority
+            }
+            return (lhs.usageRatio ?? 0) > (rhs.usageRatio ?? 0)
+        }
+    }
+
+    var tightestMainLimitSummary: MainLimitSummary? {
+        largeWidgetMainLimitSummaries.first ?? mostConstrainedMainLimitSummaries.first
+    }
+
+    func visibleMainLimitLanes(
+        displayPreferences: WidgetDisplayPreferences,
+        maximumCount: Int = 4
+    ) -> [WidgetMainLimitLane] {
+        displayPreferences.visibleMainLimitLanes(from: mainLimitSummaries, maximumCount: maximumCount)
+    }
+
     var tightestHeadline: String {
-        mostConstrainedLimits.first?.widgetRemainingHeadline ?? "No data"
+        tightestMainLimitSummary?.widgetRemainingHeadline ?? "No data"
     }
 
     var tightestSubheadline: String {
-        guard let limit = mostConstrainedLimits.first else { return message }
-        return "\(limit.provider.shortName) \(limit.displayLabel)"
+        guard let summary = tightestMainLimitSummary else { return message }
+        return "\(summary.provider.shortName) \(summary.window.displayName)"
     }
 
     var tightestUsageRatio: Double {
-        mostConstrainedLimits.first?.usageRatio ?? 0
+        tightestMainLimitSummary?.usageRatio ?? 0
     }
 
     var tightestCapacityRatio: Double {
-        guard let ratio = mostConstrainedLimits.first?.usageRatio else { return 0 }
+        guard let ratio = tightestMainLimitSummary?.usageRatio else { return 0 }
         return max(1 - ratio, 0)
     }
 
     var providerPressureText: String {
-        let limited = limits.filter { $0.status == .limited }.count
-        let close = limits.filter { $0.status == .close }.count
+        let limited = mainLimitSummaries.filter { $0.status == .limited }.count
+        let close = mainLimitSummaries.filter { $0.status == .close }.count
         if limited > 0 || close > 0 {
             return "\(limited) limited · \(close) close"
         }
         return "all healthy"
     }
 
-    var fastModeForecast: FastModeForecast? {
-        let forecasts = limits
+    var fastModeForecast: FastModeCapacityForecast? {
+        let forecasts = largeWidgetMainLimitSummaries
             .filter { $0.provider == .openAI && $0.unit == .percent }
-            .map { limit in
-                FastModeForecast(input: FastModeForecastInput(
-                    limit: limit,
+            .map { summary in
+                FastModeCapacityForecast(
+                    limitID: summary.id,
+                    accountName: "\(summary.provider.displayName) \(summary.window.displayName) pool",
+                    providerLimits: summary.limits,
                     now: Date(),
-                    standardBurnRate: BurnRate(mode: .standard, unitsPerHour: 2),
-                    fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 12),
+                    standardBurnRate: observedBurnRates[summary.id].map {
+                        BurnRate(mode: .standard, unitsPerHour: $0.unitsPerHour)
+                    },
+                    fastBurnRate: observedBurnRates[summary.id].map {
+                        BurnRate(mode: .fast, unitsPerHour: $0.unitsPerHour * 2)
+                    },
                     reserveUnits: 6,
                     minimumSafeHours: 1
-                ))
+                )
             }
-        return FastModePortfolioForecast(forecasts: forecasts).bestForecast
+        return FastModeCapacityPortfolioForecast(forecasts: forecasts).bestForecast
     }
 
     var fastModeStatus: FastModeRecommendation? {
@@ -508,9 +683,40 @@ extension WidgetSnapshot {
 
     var fastModeDetail: String {
         guard let forecast = fastModeForecast else { return "OpenAI account needed for fast-mode forecast" }
-        let runway = forecast.fastModeRunwayHours.map { "runway \(Self.format(hours: $0))" } ?? "runway unknown"
-        let reset = forecast.hoursUntilReset.map { "reset \(Self.format(hours: $0))" } ?? "reset unknown"
-        return "\(forecast.accountName) · \(runway) · \(reset)"
+        return "\(forecast.burnRateCopy) · \(forecast.runwayCopy)"
+    }
+
+    var fastModeResetDetail: String {
+        guard let resetAt = fastModeForecast?.nextResetAt else { return "next reset unknown" }
+        if resetAt.shouldShowWidgetDateTime {
+            return "next reset \(resetAt.widgetDateTimeText)"
+        }
+        return "next reset \(resetAt.widgetCompactResetText)"
+    }
+
+    var widgetProblemText: String? {
+        switch state {
+        case .failure:
+            return "Refresh failed"
+        case .stale:
+            return "Data stale"
+        case .setupNeeded:
+            return limits.isEmpty ? nil : "Setup needed"
+        case .ready:
+            if status == .failure { return "Refresh failed" }
+            if status == .stale { return "Data stale" }
+            if status == .unknown { return "Data unknown" }
+            return nil
+        }
+    }
+
+    func widgetProviderSummaryText(provider: Provider) -> String {
+        let summaries = mainLimitSummaries.filter { $0.provider == provider }
+        guard !summaries.isEmpty else { return "setup needed" }
+        guard let tightest = summaries.sorted(by: { ($0.usageRatio ?? 0) > ($1.usageRatio ?? 0) }).first else {
+            return "setup needed"
+        }
+        return "\(tightest.window.shortName) \(tightest.widgetRemainingHeadline.lowercased())"
     }
 
     private static func format(hours: Double) -> String {
@@ -526,11 +732,55 @@ extension WidgetSnapshot {
     }
 }
 
-extension ProviderSummary {
-    var widgetSummaryText: String {
-        guard let tightestLimit else { return "setup needed" }
-        let remaining = tightestLimit.widgetRemainingHeadline.lowercased()
-        return "\(tightestLimit.accountName) \(tightestLimit.displayLabel) · \(remaining)"
+extension MainLimitSummary {
+    var widgetRemainingHeadline: String {
+        guard unit != nil, remaining != nil else {
+            if status == .failure { return "Failed" }
+            return "Unknown"
+        }
+        if usageRatio != nil {
+            return "\(Int((capacityRatio * 100).rounded()))% left"
+        }
+        guard let remaining else { return "Unknown" }
+        return "\(remaining) left"
+    }
+
+    var widgetUsageText: String {
+        guard unit != nil, used != nil, limit != nil else {
+            return status == .failure ? "refresh failed" : "unknown"
+        }
+        if usageRatio != nil {
+            return "\(Int(((usageRatio ?? 0) * 100).rounded()))% used"
+        }
+        guard let used, let limit else { return "unknown" }
+        return "\(used)/\(limit) used"
+    }
+
+    var widgetWindowLine: String {
+        let accounts = accountCount == 1 ? "1 account" : "\(accountCount) accounts"
+        return "\(window.displayName) · \(accounts)"
+    }
+
+    var widgetSmallWindowLine: String {
+        let accounts = accountCount == 1 ? "1 acct" : "\(accountCount) accts"
+        return "\(provider.shortName) \(window.displayName) · \(accounts)"
+    }
+
+    var widgetResetText: String {
+        guard let resetsAt else {
+            return status == .failure ? "refresh failed" : "unknown reset"
+        }
+        if resetsAt < Date().addingTimeInterval(-60) {
+            return "reset passed"
+        }
+        return resetsAt.widgetCompactResetText
+    }
+
+    var widgetResetConfidenceText: String {
+        if confidence.shouldShowWidgetResetQualifier {
+            return "\(widgetResetText) · \(confidence.widgetLabel)"
+        }
+        return widgetResetText
     }
 }
 
@@ -553,6 +803,15 @@ extension UsageStatus {
             "loading"
         }
     }
+
+    var shouldShowWidgetIssue: Bool {
+        switch self {
+        case .failure, .stale, .unknown, .limited:
+            true
+        case .healthy, .close, .loading:
+            false
+        }
+    }
 }
 
 extension UsageConfidence {
@@ -568,6 +827,15 @@ extension UsageConfidence {
             "estimated"
         case .unknown:
             "confidence unknown"
+        }
+    }
+
+    var shouldShowWidgetResetQualifier: Bool {
+        switch self {
+        case .manual, .estimated, .unknown:
+            true
+        case .official, .observed:
+            false
         }
     }
 }
@@ -591,13 +859,41 @@ extension Date {
             if minutes < 60 { return "in \(minutes)m" }
             let hours = minutes / 60
             if hours < 24 { return "in \(hours)h" }
-            return "in \(hours / 24)d"
+            return "in \(Self.formatDaysAndHours(hours: hours))"
         }
         let elapsed = abs(seconds)
         let minutes = elapsed / 60
         if minutes < 60 { return "\(minutes)m ago" }
         let hours = minutes / 60
         if hours < 24 { return "\(hours)h ago" }
-        return "\(hours / 24)d ago"
+        return "\(Self.formatDaysAndHours(hours: hours)) ago"
+    }
+
+    var widgetCompactResetText: String {
+        let relative = widgetRelativeText
+        let compactRelative = relative.hasPrefix("in ") ? String(relative.dropFirst(3)) : relative
+        if shouldShowWidgetDateTime {
+            return "\(compactRelative) · \(widgetDateTimeText)"
+        }
+        return compactRelative
+    }
+
+    var shouldShowWidgetDateTime: Bool {
+        abs(timeIntervalSince(Date())) >= 24 * 3_600
+    }
+
+    var widgetDateTimeText: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEE h:mm a"
+        return formatter.string(from: self)
+    }
+
+    private static func formatDaysAndHours(hours: Int) -> String {
+        let days = hours / 24
+        let remainingHours = hours % 24
+        if remainingHours == 0 {
+            return "\(days)d"
+        }
+        return "\(days)d \(remainingHours)h"
     }
 }
