@@ -34,6 +34,11 @@ targets:
       - target: ContextPanelCore
       - target: ContextPanelWidgetExtension
         embed: true
+      - target: ContextPanelRefreshAgent
+        embed: true
+        copy:
+          destination: wrapper
+          subpath: Contents/Library/LoginItems
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.shinycomputers.contextpanel
@@ -49,6 +54,26 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Config/ContextPanel.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
+  ContextPanelRefreshAgent:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/ContextPanelRefreshAgent
+    dependencies:
+      - target: ContextPanelCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.shinycomputers.contextpanel.refresh-agent
+        PRODUCT_NAME: ContextPanelRefreshAgent
+        GENERATE_INFOPLIST_FILE: true
+        INFOPLIST_KEY_CFBundleDisplayName: Context Panel Refresh Agent
+        INFOPLIST_KEY_LSBackgroundOnly: true
+        INFOPLIST_KEY_LSUIElement: true
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        CODE_SIGN_ENTITLEMENTS: Config/ContextPanelRefreshAgent.entitlements
+
   ContextPanelWidgetExtension:
     type: app-extension
     platform: macOS
@@ -63,6 +88,7 @@ targets:
         CFBundleDisplayName: Context Panel Widget
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        ITSAppUsesNonExemptEncryption: false
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
@@ -80,6 +106,7 @@ schemes:
     build:
       targets:
         ContextPanel: all
+        ContextPanelRefreshAgent: all
         ContextPanelWidgetExtension: all
     run:
       config: Debug

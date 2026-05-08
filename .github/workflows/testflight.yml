@@ -44,6 +44,7 @@ jobs:
       MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
       MACOS_APP_STORE_APP_PROVISIONING_PROFILE_BASE64: ${{ secrets.MACOS_APP_STORE_APP_PROVISIONING_PROFILE_BASE64 }}
       MACOS_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64: ${{ secrets.MACOS_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64 }}
+      MACOS_APP_STORE_REFRESH_AGENT_PROVISIONING_PROFILE_BASE64: ${{ secrets.MACOS_APP_STORE_REFRESH_AGENT_PROVISIONING_PROFILE_BASE64 }}
 
     steps:
       - name: Checkout
@@ -107,12 +108,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .build/provisioning-appstore
-          if [[ -z "${MACOS_APP_STORE_APP_PROVISIONING_PROFILE_BASE64:-}" || -z "${MACOS_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64:-}" ]]; then
-            echo "Mac App Store app and widget provisioning profile secrets are required." >&2
+          if [[ -z "${MACOS_APP_STORE_APP_PROVISIONING_PROFILE_BASE64:-}" || -z "${MACOS_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64:-}" || -z "${MACOS_APP_STORE_REFRESH_AGENT_PROVISIONING_PROFILE_BASE64:-}" ]]; then
+            echo "Mac App Store app, widget, and refresh agent provisioning profile secrets are required." >&2
             exit 1
           fi
           printf '%s' "${MACOS_APP_STORE_APP_PROVISIONING_PROFILE_BASE64}" | base64 -D > .build/provisioning-appstore/ContextPanel.provisionprofile
           printf '%s' "${MACOS_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64}" | base64 -D > .build/provisioning-appstore/ContextPanelWidgetExtension.provisionprofile
+          printf '%s' "${MACOS_APP_STORE_REFRESH_AGENT_PROVISIONING_PROFILE_BASE64}" | base64 -D > .build/provisioning-appstore/ContextPanelRefreshAgent.provisionprofile
 
       - name: Archive and Upload
         shell: bash

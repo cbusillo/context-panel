@@ -4,6 +4,7 @@ public enum ContextPanelLocations {
     public static let appGroupID = "group.com.shinycomputers.contextpanel"
     public static let macAppStoreAppGroupID = "MM5YXC7T6E.group.com.shinycomputers.contextpanel"
     public static let widgetExtensionBundleID = "com.shinycomputers.contextpanel.widget"
+    public static let refreshAgentBundleID = "com.shinycomputers.contextpanel.refresh-agent"
 
     public static func applicationSupportDirectory() -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first

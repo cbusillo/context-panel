@@ -10,6 +10,7 @@ export_path=".build/testflight/upload"
 export_options_path=".build/testflight/UploadOptions.plist"
 app_profile="${MACOS_APP_STORE_APP_PROVISIONING_PROFILE:-.build/provisioning-appstore/ContextPanel.provisionprofile}"
 widget_profile="${MACOS_APP_STORE_WIDGET_PROVISIONING_PROFILE:-.build/provisioning-appstore/ContextPanelWidgetExtension.provisionprofile}"
+refresh_agent_profile="${MACOS_APP_STORE_REFRESH_AGENT_PROVISIONING_PROFILE:-.build/provisioning-appstore/ContextPanelRefreshAgent.provisionprofile}"
 api_key_path="${APP_STORE_CONNECT_API_KEY_PATH:-}"
 api_key_id="${APP_STORE_CONNECT_KEY_ID:-}"
 api_issuer_id="${APP_STORE_CONNECT_ISSUER_ID:-}"
@@ -34,6 +35,7 @@ Options:
   --export-options-path PATH           Generated ExportOptions.plist path.
   --app-profile PATH                   Mac App Store app provisioning profile.
   --widget-profile PATH                Mac App Store widget provisioning profile.
+  --refresh-agent-profile PATH         Mac App Store refresh agent provisioning profile.
   --api-key PATH                       App Store Connect API private key path.
   --api-key-id ID                      App Store Connect API key ID.
   --api-issuer-id ID                   App Store Connect API issuer ID.
@@ -78,6 +80,10 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--widget-profile)
 		widget_profile="${2:?--widget-profile requires a value}"
+		shift 2
+		;;
+	--refresh-agent-profile)
+		refresh_agent_profile="${2:?--refresh-agent-profile requires a value}"
 		shift 2
 		;;
 	--api-key)
@@ -149,6 +155,10 @@ if [[ ! -f "$widget_profile" ]]; then
 	echo "widget provisioning profile not found: $widget_profile" >&2
 	exit 1
 fi
+if [[ ! -f "$refresh_agent_profile" ]]; then
+	echo "refresh agent provisioning profile not found: $refresh_agent_profile" >&2
+	exit 1
+fi
 
 tmp_api_key=""
 if [[ -z "$api_key_path" && -n "${APP_STORE_CONNECT_API_KEY_P8_BASE64:-}" ]]; then
@@ -174,8 +184,10 @@ fi
 
 app_profile_uuid="$(profile_uuid "$app_profile")"
 widget_profile_uuid="$(profile_uuid "$widget_profile")"
+refresh_agent_profile_uuid="$(profile_uuid "$refresh_agent_profile")"
 install_profile "$app_profile" "$app_profile_uuid"
 install_profile "$widget_profile" "$widget_profile_uuid"
+install_profile "$refresh_agent_profile" "$refresh_agent_profile_uuid"
 
 mkdir -p "$(dirname "$export_options_path")"
 cat >"$export_options_path" <<PLIST
@@ -201,6 +213,8 @@ cat >"$export_options_path" <<PLIST
 		<string>$app_profile_uuid</string>
 		<key>com.shinycomputers.contextpanel.widget</key>
 		<string>$widget_profile_uuid</string>
+		<key>com.shinycomputers.contextpanel.refresh-agent</key>
+		<string>$refresh_agent_profile_uuid</string>
 	</dict>
 	<key>manageAppVersionAndBuildNumber</key>
 	<true/>

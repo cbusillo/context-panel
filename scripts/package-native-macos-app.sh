@@ -10,6 +10,7 @@ version="1.0.0"
 signing_identity="auto"
 app_provisioning_profile=""
 widget_provisioning_profile=""
+refresh_agent_provisioning_profile=""
 notarize="false"
 notary_keychain_profile=""
 notary_key=""
@@ -31,6 +32,8 @@ Options:
   --identity VALUE                     codesign identity, "auto", or "-" for ad-hoc.
   --app-provisioning-profile PATH      Optional app embedded.provisionprofile.
   --widget-provisioning-profile PATH   Optional widget embedded.provisionprofile.
+  --refresh-agent-provisioning-profile PATH
+                                      Optional refresh agent embedded.provisionprofile.
   --notarize                           Submit the zipped app to Apple notarization.
   --notary-keychain-profile NAME       notarytool keychain profile for notarization.
   --notary-key PATH                    App Store Connect API private key path.
@@ -74,6 +77,10 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--widget-provisioning-profile)
 		widget_provisioning_profile="${2:?--widget-provisioning-profile requires a value}"
+		shift 2
+		;;
+	--refresh-agent-provisioning-profile)
+		refresh_agent_provisioning_profile="${2:?--refresh-agent-provisioning-profile requires a value}"
 		shift 2
 		;;
 	--notarize)
@@ -189,8 +196,14 @@ if [[ ! -d "$widget_path" ]]; then
 	echo "embedded widget extension not found: $widget_path" >&2
 	exit 1
 fi
+refresh_agent_path="$app_path/Contents/Library/LoginItems/ContextPanelRefreshAgent.app"
+if [[ ! -d "$refresh_agent_path" ]]; then
+	echo "embedded refresh agent not found: $refresh_agent_path" >&2
+	exit 1
+fi
 
 copy_profile_if_present "$widget_provisioning_profile" "$widget_path/Contents/embedded.provisionprofile"
+copy_profile_if_present "$refresh_agent_provisioning_profile" "$refresh_agent_path/Contents/embedded.provisionprofile"
 copy_profile_if_present "$app_provisioning_profile" "$app_path/Contents/embedded.provisionprofile"
 
 codesign_options=(--force --sign "$resolved_identity")
@@ -203,6 +216,9 @@ fi
 codesign "${codesign_options[@]}" \
 	--entitlements Config/ContextPanelWidget.entitlements \
 	"$widget_path"
+codesign "${codesign_options[@]}" \
+	--entitlements Config/ContextPanelRefreshAgent.entitlements \
+	"$refresh_agent_path"
 codesign "${codesign_options[@]}" \
 	--entitlements Config/ContextPanel.entitlements \
 	"$app_path"

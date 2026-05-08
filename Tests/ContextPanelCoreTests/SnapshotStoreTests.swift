@@ -186,6 +186,105 @@ import Testing
     #expect(stored.errorMessage?.contains("sk-secret") == false)
 }
 
+@Test func snapshotRefreshServiceSavesEmptyRefreshWhenNoAccountsAreEnabled() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary)
+    )
+    let savedAt = Date(timeIntervalSince1970: 300)
+    try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
+        updatedAt: savedAt,
+        accounts: [LocalProviderAccountConfiguration(
+            id: "disabled-openai",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "OpenAI",
+            isEnabled: false,
+            authPath: "/tmp/missing-auth.json"
+        )]
+    ))
+
+    let outcome = try await service.refresh(now: savedAt)
+
+    #expect(outcome.savedAt == savedAt)
+    #expect(outcome.refreshResult.reports.isEmpty)
+    let stored = try #require(primary.loadCurrent().snapshot)
+    #expect(stored.savedAt == savedAt)
+    #expect(stored.snapshot.limits.isEmpty)
+    #expect(primary.loadHistory().count == 1)
+}
+
+@Test func snapshotRefreshServiceMirrorsPrimaryStoreForDevelopmentWidget() throws {
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let mirror = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: try temporaryDirectory().appending(path: "accounts.json")),
+        stores: SnapshotRefreshStores(primary: primary, developmentMirrors: [mirror])
+    )
+    let first = Date(timeIntervalSince1970: 100)
+    let second = Date(timeIntervalSince1970: 200)
+    try primary.save(StoredUsageSnapshot(savedAt: first, snapshot: UsageSnapshot(
+        generatedAt: first,
+        limits: [usageLimit(provider: .openAI, accountID: "openai", used: 10, savedAt: first)]
+    )))
+    try primary.save(StoredUsageSnapshot(savedAt: second, snapshot: UsageSnapshot(
+        generatedAt: second,
+        limits: [usageLimit(provider: .google, accountID: "google", used: 20, savedAt: second)]
+    )))
+
+    try service.mirrorPrimarySnapshotToDevelopmentStores()
+
+    #expect(mirror.loadCurrent().snapshot?.savedAt == second)
+    #expect(mirror.loadHistory().map(\.savedAt) == [second, first])
+}
+
+@Test func snapshotRefreshRunnerSkipsFreshSnapshots() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary)
+    )
+    let savedAt = Date(timeIntervalSince1970: 500)
+    try primary.save(StoredUsageSnapshot(savedAt: savedAt, snapshot: UsageSnapshot(
+        generatedAt: savedAt,
+        limits: [usageLimit(provider: .openAI, accountID: "openai", used: 10, savedAt: savedAt)]
+    )))
+    let runner = SnapshotRefreshRunner(
+        service: service,
+        stalenessPolicy: SnapshotStoreStalenessPolicy(maximumAge: 60),
+        lock: nil
+    )
+
+    let decision = try await runner.refreshIfNeeded(now: savedAt.addingTimeInterval(30))
+
+    #expect(decision == .skippedFresh)
+    #expect(primary.loadHistory().count == 1)
+}
+
+@Test func snapshotRefreshRunnerSkipsWhenRefreshLockIsHeld() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let lockURL = try temporaryDirectory().appending(path: "refresh.lock")
+    try FileManager.default.createDirectory(at: lockURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    FileManager.default.createFile(atPath: lockURL.path, contents: Data())
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary)
+    )
+    let runner = SnapshotRefreshRunner(
+        service: service,
+        lock: SnapshotRefreshLock(lockURL: lockURL, staleAfter: 60)
+    )
+
+    let decision = try await runner.refresh(now: Date(timeIntervalSince1970: 600))
+
+    #expect(decision == .skippedAlreadyRunning)
+    #expect(primary.loadCurrent().snapshot == nil)
+}
+
 private func usageLimit(provider: Provider, accountID: String, used: Int, savedAt: Date) -> UsageLimit {
     UsageLimit(
         provider: provider,

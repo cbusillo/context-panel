@@ -17,6 +17,10 @@ let package = Package(
             targets: ["ContextPanelPreview"]
         ),
         .executable(
+            name: "ContextPanelRefreshAgent",
+            targets: ["ContextPanelRefreshAgent"]
+        ),
+        .executable(
             name: "OpenAILimitProbe",
             targets: ["OpenAILimitProbe"]
         ),
@@ -49,6 +53,10 @@ let package = Package(
         .target(name: "ContextPanelCore"),
         .executableTarget(
             name: "ContextPanelPreview",
+            dependencies: ["ContextPanelCore"]
+        ),
+        .executableTarget(
+            name: "ContextPanelRefreshAgent",
             dependencies: ["ContextPanelCore"]
         ),
         .executableTarget(
