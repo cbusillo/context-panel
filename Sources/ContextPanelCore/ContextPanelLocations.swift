@@ -2,6 +2,7 @@ import Foundation
 
 public enum ContextPanelLocations {
     public static let appGroupID = "group.com.shinycomputers.contextpanel"
+    public static let macAppStoreAppGroupID = "MM5YXC7T6E.group.com.shinycomputers.contextpanel"
     public static let widgetExtensionBundleID = "com.shinycomputers.contextpanel.widget"
 
     public static func applicationSupportDirectory() -> URL {
@@ -11,10 +12,7 @@ public enum ContextPanelLocations {
     }
 
     public static func snapshotDirectory(appGroupID: String? = nil) -> URL {
-        if
-            let appGroupID,
-            let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID)
-        {
+        if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
             return containerURL
                 .appending(path: "Context Panel", directoryHint: .isDirectory)
                 .appending(path: "Snapshots", directoryHint: .isDirectory)
@@ -71,10 +69,7 @@ public enum ContextPanelLocations {
     }
 
     public static func widgetDisplayPreferencesURL(appGroupID: String? = nil) -> URL {
-        if
-            let appGroupID,
-            let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID)
-        {
+        if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
             return containerURL
                 .appending(path: "Context Panel", directoryHint: .isDirectory)
                 .appending(path: "widget-display-preferences.json")
@@ -88,6 +83,20 @@ public enum ContextPanelLocations {
             .appending(path: "Library", directoryHint: .isDirectory)
             .appending(path: "Application Support", directoryHint: .isDirectory)
             .appending(path: "Context Panel", directoryHint: .isDirectory)
+    }
+
+    private static func appGroupContainerURL(appGroupID: String?) -> URL? {
+        let groupIDs = appGroupID == Self.appGroupID
+            ? [Self.appGroupID, Self.macAppStoreAppGroupID]
+            : [appGroupID].compactMap { $0 }
+
+        for groupID in groupIDs {
+            if let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupID) {
+                return containerURL
+            }
+        }
+
+        return nil
     }
 
     private static func realUserHomeDirectory() -> URL {

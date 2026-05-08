@@ -59,6 +59,9 @@ targets:
     info:
       path: Config/ContextPanelWidget-Info.plist
       properties:
+        CFBundleDisplayName: Context Panel Widget
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
@@ -66,6 +69,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.shinycomputers.contextpanel.widget
         PRODUCT_NAME: ContextPanelWidgetExtension
         GENERATE_INFOPLIST_FILE: false
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
         SKIP_INSTALL: true
         CODE_SIGN_ENTITLEMENTS: Config/ContextPanelWidget.entitlements
 
