@@ -39,6 +39,9 @@ jobs:
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
       APPLE_NOTARY_KEYCHAIN_PROFILE: ${{ secrets.APPLE_NOTARY_KEYCHAIN_PROFILE }}
+      APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      APP_STORE_CONNECT_API_KEY_P8_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8_BASE64 }}
       MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
       MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
       MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
@@ -137,6 +140,19 @@ jobs:
             args+=(--notarize)
             if [[ -n "${APPLE_NOTARY_KEYCHAIN_PROFILE:-}" ]]; then
               args+=(--notary-keychain-profile "${APPLE_NOTARY_KEYCHAIN_PROFILE}")
+            elif [[ -n "${APP_STORE_CONNECT_API_KEY_P8_BASE64:-}" || -n "${APP_STORE_CONNECT_KEY_ID:-}" || -n "${APP_STORE_CONNECT_ISSUER_ID:-}" ]]; then
+              if [[ -z "${APP_STORE_CONNECT_API_KEY_P8_BASE64:-}" || -z "${APP_STORE_CONNECT_KEY_ID:-}" || -z "${APP_STORE_CONNECT_ISSUER_ID:-}" ]]; then
+                echo "notarization requires APP_STORE_CONNECT_API_KEY_P8_BASE64, APP_STORE_CONNECT_KEY_ID, and APP_STORE_CONNECT_ISSUER_ID" >&2
+                exit 1
+              fi
+              notary_key="${RUNNER_TEMP}/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
+              echo "${APP_STORE_CONNECT_API_KEY_P8_BASE64}" | base64 -D >"${notary_key}"
+              chmod 600 "${notary_key}"
+              args+=(
+                --notary-key "${notary_key}"
+                --notary-key-id "${APP_STORE_CONNECT_KEY_ID}"
+                --notary-issuer "${APP_STORE_CONNECT_ISSUER_ID}"
+              )
             fi
           fi
 

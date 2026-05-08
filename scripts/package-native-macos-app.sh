@@ -12,6 +12,9 @@ app_provisioning_profile=""
 widget_provisioning_profile=""
 notarize="false"
 notary_keychain_profile=""
+notary_key=""
+notary_key_id="${APP_STORE_CONNECT_KEY_ID:-}"
+notary_issuer="${APP_STORE_CONNECT_ISSUER_ID:-}"
 
 usage() {
 	cat <<'USAGE'
@@ -30,11 +33,15 @@ Options:
   --widget-provisioning-profile PATH   Optional widget embedded.provisionprofile.
   --notarize                           Submit the zipped app to Apple notarization.
   --notary-keychain-profile NAME       notarytool keychain profile for notarization.
+  --notary-key PATH                    App Store Connect API private key path.
+  --notary-key-id ID                   App Store Connect API key ID.
+  --notary-issuer ID                   App Store Connect API issuer ID.
   -h, --help                           Show this help.
 
-Notarization uses --notary-keychain-profile when provided. Otherwise it reads
-APPLE_ID, APPLE_TEAM_ID, and APPLE_APP_SPECIFIC_PASSWORD from the environment.
-The script does not read private keys or credentials; signing is performed by
+Notarization uses --notary-keychain-profile when provided, then App Store
+Connect API key options or APP_STORE_CONNECT_KEY_ID and APP_STORE_CONNECT_ISSUER_ID
+from the environment, then APPLE_ID, APPLE_TEAM_ID, and
+APPLE_APP_SPECIFIC_PASSWORD from the environment. Signing is performed by
 macOS Keychain through codesign.
 USAGE
 }
@@ -75,6 +82,18 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--notary-keychain-profile)
 		notary_keychain_profile="${2:?--notary-keychain-profile requires a value}"
+		shift 2
+		;;
+	--notary-key)
+		notary_key="${2:?--notary-key requires a value}"
+		shift 2
+		;;
+	--notary-key-id)
+		notary_key_id="${2:?--notary-key-id requires a value}"
+		shift 2
+		;;
+	--notary-issuer)
+		notary_issuer="${2:?--notary-issuer requires a value}"
 		shift 2
 		;;
 	-h | --help)
@@ -200,10 +219,24 @@ if [[ "$notarize" == "true" ]]; then
 	notary_args=(notarytool submit "$notary_zip" --wait)
 	if [[ -n "$notary_keychain_profile" ]]; then
 		notary_args+=(--keychain-profile "$notary_keychain_profile")
+	elif [[ -n "$notary_key" || -n "$notary_key_id" || -n "$notary_issuer" ]]; then
+		if [[ -z "$notary_key" || -z "$notary_key_id" || -z "$notary_issuer" ]]; then
+			echo "notarization with App Store Connect API requires --notary-key, --notary-key-id, and --notary-issuer" >&2
+			exit 1
+		fi
+		if [[ ! -f "$notary_key" ]]; then
+			echo "notary API private key not found: $notary_key" >&2
+			exit 1
+		fi
+		notary_args+=(
+			--key "$notary_key"
+			--key-id "$notary_key_id"
+			--issuer "$notary_issuer"
+		)
 	else
 		for name in APPLE_ID APPLE_TEAM_ID APPLE_APP_SPECIFIC_PASSWORD; do
 			if [[ -z "${!name:-}" ]]; then
-				echo "notarization requires --notary-keychain-profile or $name" >&2
+				echo "notarization requires --notary-keychain-profile, App Store Connect API credentials, or $name" >&2
 				exit 1
 			fi
 		done
