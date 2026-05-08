@@ -53,6 +53,9 @@ targets:
         INFOPLIST_KEY_NSQuitAlwaysKeepsWindows: false
         CODE_SIGN_ENTITLEMENTS: Config/ContextPanel.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      configs:
+        Release:
+          CODE_SIGN_ENTITLEMENTS: Config/ContextPanelAppStore.entitlements
 
   ContextPanelRefreshAgent:
     type: application
@@ -73,6 +76,10 @@ targets:
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
         CODE_SIGN_ENTITLEMENTS: Config/ContextPanelRefreshAgent.entitlements
+      configs:
+        Release:
+          CODE_SIGN_ENTITLEMENTS: >-
+            Config/ContextPanelRefreshAgentAppStore.entitlements
 
   ContextPanelWidgetExtension:
     type: app-extension

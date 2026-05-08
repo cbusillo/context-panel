@@ -1111,9 +1111,13 @@ final class ContextPanelAppModel: ObservableObject {
         do {
             let decision = try await refreshRunner.saveMerged(
                 refreshResult: ConnectorRefreshResult(generatedAt: savedAt, reports: [report]),
-                savedAt: savedAt
+                savedAt: savedAt,
+                retryFor: .seconds(5)
             )
-            guard case .refreshed = decision else { return }
+            guard case .refreshed = decision else {
+                setError("Snapshot is refreshing. Try saving Claude Web usage again in a moment.")
+                return
+            }
             lastRefreshAt = savedAt
             loadSnapshot()
             WidgetCenter.shared.reloadAllTimelines()
