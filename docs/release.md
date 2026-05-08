@@ -57,6 +57,8 @@ To produce a signed build, configure:
   profile when the signing identity requires one for entitlements.
 - `MACOS_WIDGET_PROVISIONING_PROFILE_BASE64`: optional base64 widget extension
   provisioning profile.
+- `MACOS_REFRESH_AGENT_PROVISIONING_PROFILE_BASE64`: optional base64 refresh
+  agent provisioning profile.
 
 To notarize, also configure:
 
@@ -92,7 +94,10 @@ This builds `Context Panel.app`, embeds `ContextPanelWidgetExtension.appex`
 under `Contents/PlugIns`, and embeds `ContextPanelRefreshAgent.app` under
 `Contents/Library/LoginItems`. The app, refresh agent, and widget carry the
 `group.com.shinycomputers.contextpanel` App Group entitlement and share snapshots
-through the App Group container when it is available.
+through the App Group container when it is available. Release and TestFlight
+signing need explicit provisioning profiles for all three bundle identifiers:
+`com.shinycomputers.contextpanel`, `com.shinycomputers.contextpanel.widget`, and
+`com.shinycomputers.contextpanel.refresh-agent`.
 
 The Xcode project is generated from `project.yml`; update the spec and
 regenerate rather than editing the project by hand.

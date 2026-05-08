@@ -1024,6 +1024,7 @@ final class ContextPanelAppModel: ObservableObject {
     @Published private(set) var lastRefreshAt: Date?
 
     private let refreshService: SnapshotRefreshService
+    private let refreshRunner: SnapshotRefreshRunner
 
     var currentSnapshot: UsageSnapshot {
         storedSnapshot?.snapshot ?? SampleUsageData.snapshot
@@ -1039,6 +1040,7 @@ final class ContextPanelAppModel: ObservableObject {
 
     init() {
         refreshService = .appDefault()
+        refreshRunner = SnapshotRefreshRunner(service: refreshService)
     }
 
     func loadSnapshot() {
@@ -1059,10 +1061,12 @@ final class ContextPanelAppModel: ObservableObject {
         defer { isRefreshing = false }
 
         do {
-            let outcome = try await refreshService.refresh()
-            lastRefreshAt = outcome.savedAt
+            let decision = try await refreshRunner.refresh()
+            if case let .refreshed(outcome) = decision {
+                lastRefreshAt = outcome.savedAt
+                WidgetCenter.shared.reloadAllTimelines()
+            }
             loadSnapshot()
-            WidgetCenter.shared.reloadAllTimelines()
         } catch {
             storeStatus = .failure
             errorMessage = error.localizedDescription

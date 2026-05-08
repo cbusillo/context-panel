@@ -47,6 +47,7 @@ jobs:
       MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
       MACOS_APP_PROVISIONING_PROFILE_BASE64: ${{ secrets.MACOS_APP_PROVISIONING_PROFILE_BASE64 }}
       MACOS_WIDGET_PROVISIONING_PROFILE_BASE64: ${{ secrets.MACOS_WIDGET_PROVISIONING_PROFILE_BASE64 }}
+      MACOS_REFRESH_AGENT_PROVISIONING_PROFILE_BASE64: ${{ secrets.MACOS_REFRESH_AGENT_PROVISIONING_PROFILE_BASE64 }}
 
     steps:
       - name: Checkout
@@ -87,6 +88,7 @@ jobs:
           identity="-"
           app_profile=""
           widget_profile=""
+          refresh_agent_profile=""
 
           if [[ -n "${MACOS_CERTIFICATE_P12:-}" ]]; then
             keychain_password="${MACOS_KEYCHAIN_PASSWORD:-$(uuidgen)}"
@@ -115,10 +117,15 @@ jobs:
             widget_profile="${RUNNER_TEMP}/ContextPanelWidgetExtension.provisionprofile"
             echo "${MACOS_WIDGET_PROVISIONING_PROFILE_BASE64}" | base64 -D >"${widget_profile}"
           fi
+          if [[ -n "${MACOS_REFRESH_AGENT_PROVISIONING_PROFILE_BASE64:-}" ]]; then
+            refresh_agent_profile="${RUNNER_TEMP}/ContextPanelRefreshAgent.provisionprofile"
+            echo "${MACOS_REFRESH_AGENT_PROVISIONING_PROFILE_BASE64}" | base64 -D >"${refresh_agent_profile}"
+          fi
 
           echo "identity=${identity}" >>"${GITHUB_OUTPUT}"
           echo "app_profile=${app_profile}" >>"${GITHUB_OUTPUT}"
           echo "widget_profile=${widget_profile}" >>"${GITHUB_OUTPUT}"
+          echo "refresh_agent_profile=${refresh_agent_profile}" >>"${GITHUB_OUTPUT}"
 
       - name: Build Release Artifact
         id: package
@@ -135,6 +142,9 @@ jobs:
           fi
           if [[ -n "${{ steps.signing.outputs.widget_profile }}" ]]; then
             args+=(--widget-provisioning-profile "${{ steps.signing.outputs.widget_profile }}")
+          fi
+          if [[ -n "${{ steps.signing.outputs.refresh_agent_profile }}" ]]; then
+            args+=(--refresh-agent-provisioning-profile "${{ steps.signing.outputs.refresh_agent_profile }}")
           fi
           if [[ "${{ inputs.notarize || false }}" == "true" ]]; then
             args+=(--notarize)
