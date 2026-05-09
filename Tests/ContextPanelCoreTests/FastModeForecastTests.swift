@@ -332,6 +332,43 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(settings.preference(for: "claude-disabled")?.isEnabled == false)
 }
 
+@Test func resetPrimerSettingsSyncHandlesDuplicatePersistedAccountIDs() {
+    var settings = ResetPrimerSettings(accountPreferences: [
+        ResetPrimerAccountPreference(
+            accountID: "openai-a",
+            provider: .openAI,
+            accountName: "OpenAI A",
+            isEnabled: true
+        ),
+        ResetPrimerAccountPreference(
+            accountID: "openai-a",
+            provider: .openAI,
+            accountName: "Duplicate OpenAI A",
+            isEnabled: false
+        ),
+    ])
+    settings.accountPreferences.append(ResetPrimerAccountPreference(
+        accountID: "openai-a",
+        provider: .openAI,
+        accountName: "Manually Corrupted Duplicate",
+        isEnabled: false
+    ))
+    let accounts = [
+        LocalProviderAccountConfiguration(
+            id: "openai-a",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "OpenAI A"
+        ),
+    ]
+
+    settings.syncAccounts(accounts)
+
+    #expect(settings.accountPreferences.count == 1)
+    #expect(settings.preference(for: "openai-a")?.isEnabled == true)
+    #expect(settings.preference(for: "openai-a")?.accountName == "OpenAI A")
+}
+
 @Test func resetPrimerSettingsStoreRoundTripsSettings() throws {
     let directory = FileManager.default.temporaryDirectory
         .appending(path: "context-panel-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
