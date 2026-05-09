@@ -12,6 +12,9 @@ import Testing
     #expect(result.document.accounts.count == 3)
     #expect(result.document.accounts.contains { $0.connectorKind == .codexRateLimits && $0.isEnabled })
     #expect(result.document.accounts.contains { $0.connectorKind == .geminiCodeAssist && !$0.isEnabled })
+    let claude = try #require(result.document.accounts.first { $0.connectorKind == .claudeLocalStatus })
+    #expect(claude.rateLimitSnapshotPath?.hasSuffix("ClaudeRateLimits/statusline-cache.json") == true)
+    #expect(claude.usageBlocksPath?.hasSuffix("ClaudeRateLimits/ccusage-blocks-cache.json") == true)
 }
 
 @Test func accountConfigurationStoreRoundTripsAccounts() throws {

@@ -167,6 +167,80 @@ import Testing
     #expect(snapshot.windows.map { Int($0.usedPercent.rounded()) } == [42, 52])
 }
 
+@Test func claudeStatuslineSetupMergesCommandWithoutDroppingSettings() throws {
+    let settings = #"""
+    {
+      "permissions": { "allow": ["Bash(date:*)"] },
+      "statusLine": {
+        "type": "command",
+        "command": "old-helper"
+      }
+    }
+    """#.data(using: .utf8)
+
+    let merged = try ClaudeStatuslineSetup.mergedSettingsData(
+        existingData: settings,
+        command: "scripts/claude-statusline-cache.sh"
+    )
+
+    let object = try JSONSerialization.jsonObject(with: merged) as? [String: Any]
+    let permissions = object?["permissions"] as? [String: Any]
+    let statusLine = object?["statusLine"] as? [String: Any]
+    #expect((permissions?["allow"] as? [String]) == ["Bash(date:*)"])
+    #expect(statusLine?["type"] as? String == "command")
+    #expect(statusLine?["command"] as? String == "scripts/claude-statusline-cache.sh")
+    #expect(statusLine?["padding"] as? Int == 0)
+}
+
+@Test func claudeStatuslineSetupReportsHookAndCacheStates() throws {
+    let authStatus = ClaudeAuthStatus(
+        loggedIn: true,
+        authMethod: "claude.ai",
+        apiProvider: "firstParty",
+        subscriptionType: "pro"
+    )
+    let settings = #"{"statusLine":{"type":"command","command":"scripts/claude-statusline-cache.sh"}}"#
+        .data(using: .utf8)
+    let now = Date(timeIntervalSince1970: 2_000)
+
+    let missingHook = ClaudeStatuslineSetup.diagnostic(
+        claudeBinaryAvailable: true,
+        authStatus: authStatus,
+        settingsData: nil,
+        rateLimitSnapshot: nil,
+        now: now
+    )
+    let waiting = ClaudeStatuslineSetup.diagnostic(
+        claudeBinaryAvailable: true,
+        authStatus: authStatus,
+        settingsData: settings,
+        rateLimitSnapshot: nil,
+        now: now
+    )
+    let healthy = ClaudeStatuslineSetup.diagnostic(
+        claudeBinaryAvailable: true,
+        authStatus: authStatus,
+        settingsData: settings,
+        rateLimitSnapshot: ClaudeSubscriptionRateLimitSnapshot(observedAt: Date(timeIntervalSince1970: 1_900), windows: []),
+        maximumCacheAge: 300,
+        now: now
+    )
+    let stale = ClaudeStatuslineSetup.diagnostic(
+        claudeBinaryAvailable: true,
+        authStatus: authStatus,
+        settingsData: settings,
+        rateLimitSnapshot: ClaudeSubscriptionRateLimitSnapshot(observedAt: Date(timeIntervalSince1970: 1_000), windows: []),
+        maximumCacheAge: 300,
+        now: now
+    )
+
+    #expect(missingHook.status == .hookMissing)
+    #expect(waiting.status == .waitingForFirstInteractiveResponse)
+    #expect(healthy.status == .cacheHealthy)
+    #expect(healthy.cacheAgeSeconds == 100)
+    #expect(stale.status == .cacheStale)
+}
+
 @Test func claudeLocalStatusLimitsPrefersStatuslineSubscriptionWindows() {
     let limits = claudeLocalStatusLimits(
         authStatus: ClaudeAuthStatus(

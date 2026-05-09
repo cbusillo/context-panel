@@ -245,7 +245,10 @@ Preferred v1 connector scope:
   `loggedIn`, `authMethod`, `apiProvider`, and `subscriptionType`.
 - Offer a tiny status-line helper that receives Claude Code status-line JSON on
   stdin and writes only observed timestamp, five-hour percentage/reset, and
-  weekly percentage/reset to a Context Panel cache file.
+  weekly percentage/reset to a Context Panel cache file. `swift run
+  ClaudeStatuslineSetup` installs the documented `statusLine` command shape in
+  `~/.claude/settings.json` while preserving existing settings; `--diagnose`
+  prints the current hook and cache path.
 - Read that sanitized status-line cache and normalize Claude five-hour and
   weekly windows as percent limits when present.
 - Read `~/.claude/stats-cache.json` only as local historical activity, not live

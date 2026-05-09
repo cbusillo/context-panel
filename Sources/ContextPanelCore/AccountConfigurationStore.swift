@@ -15,6 +15,8 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
     public var authPath: String?
     public var commandPath: String?
     public var statsPath: String?
+    public var rateLimitSnapshotPath: String?
+    public var usageBlocksPath: String?
     public var oauthClientIDEnvironmentName: String?
     public var oauthClientSecretEnvironmentName: String?
 
@@ -27,6 +29,8 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
         authPath: String? = nil,
         commandPath: String? = nil,
         statsPath: String? = nil,
+        rateLimitSnapshotPath: String? = nil,
+        usageBlocksPath: String? = nil,
         oauthClientIDEnvironmentName: String? = nil,
         oauthClientSecretEnvironmentName: String? = nil
     ) {
@@ -38,6 +42,8 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
         self.authPath = authPath
         self.commandPath = commandPath
         self.statsPath = statsPath
+        self.rateLimitSnapshotPath = rateLimitSnapshotPath
+        self.usageBlocksPath = usageBlocksPath
         self.oauthClientIDEnvironmentName = oauthClientIDEnvironmentName
         self.oauthClientSecretEnvironmentName = oauthClientSecretEnvironmentName
     }
@@ -128,7 +134,9 @@ public struct AccountConfigurationStore: Sendable {
                 connectorKind: .claudeLocalStatus,
                 displayName: "Claude",
                 commandPath: "claude",
-                statsPath: "\(home)/.claude/stats-cache.json"
+                statsPath: "\(home)/.claude/stats-cache.json",
+                rateLimitSnapshotPath: ContextPanelLocations.claudeStatuslineCacheURL().path,
+                usageBlocksPath: ContextPanelLocations.claudeCCUsageBlocksCacheURL().path
             ),
             LocalProviderAccountConfiguration(
                 id: "gemini-code-assist-default",
@@ -201,7 +209,9 @@ public enum AccountConnectorFactory {
                 return ClaudeLocalStatusConnector(accounts: [ClaudeAccountConfiguration(
                     accountName: account.displayName,
                     claudeBinary: account.commandPath ?? "claude",
-                    statsPath: account.statsPath
+                    statsPath: account.statsPath,
+                    rateLimitSnapshotPath: account.rateLimitSnapshotPath,
+                    usageBlocksPath: account.usageBlocksPath
                 )])
             }
         }
