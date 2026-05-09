@@ -245,7 +245,7 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(best.limitID == "openai:weekly")
     #expect(best.roleCopy == "weekly pool")
     #expect(portfolio.forecasts.map(\.roleCopy) == ["weekly pool", "5-hour guardrail"])
-    #expect(portfolio.detailCopy.contains("weekly pool:"))
+    #expect(portfolio.detailCopy.contains("weekly pool:") == false)
     #expect(portfolio.detailCopy.contains("5h guardrail:"))
 }
 
