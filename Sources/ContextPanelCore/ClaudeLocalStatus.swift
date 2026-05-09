@@ -189,10 +189,10 @@ public struct ClaudeAccountConfiguration: Equatable, Sendable {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         self.statsPath = statsPath ?? "\(home)/.claude/stats-cache.json"
         self.rateLimitSnapshotPath = rateLimitSnapshotPath
-            ?? "\(home)/Library/Application Support/Context Panel/ClaudeRateLimits/statusline-cache.json"
+            ?? ContextPanelLocations.claudeStatuslineCacheURL().path
         self.rateLimitSnapshotMaximumAge = rateLimitSnapshotMaximumAge
         self.usageBlocksPath = usageBlocksPath
-            ?? "\(home)/Library/Application Support/Context Panel/ClaudeRateLimits/ccusage-blocks-cache.json"
+            ?? ContextPanelLocations.claudeCCUsageBlocksCacheURL().path
     }
 }
 

@@ -20,6 +20,19 @@ public enum ContextPanelLocations {
         return base.appending(path: "Context Panel", directoryHint: .isDirectory)
     }
 
+    public static func claudeRateLimitDirectory() -> URL {
+        applicationSupportDirectory()
+            .appending(path: "ClaudeRateLimits", directoryHint: .isDirectory)
+    }
+
+    public static func claudeStatuslineCacheURL() -> URL {
+        claudeRateLimitDirectory().appending(path: "statusline-cache.json")
+    }
+
+    public static func claudeCCUsageBlocksCacheURL() -> URL {
+        claudeRateLimitDirectory().appending(path: "ccusage-blocks-cache.json")
+    }
+
     public static func snapshotDirectory(appGroupID: String? = nil) -> URL {
         if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
             return containerURL
