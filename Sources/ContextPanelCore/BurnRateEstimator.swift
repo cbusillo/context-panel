@@ -66,7 +66,7 @@ public enum MainLimitBurnRateEstimator {
                     date: stored.savedAt,
                     used: Double(used),
                     limit: Double(limit),
-                    resetsAt: summary.resetsAt
+                    resetsAt: summary.nextReset(after: stored.savedAt) ?? summary.firstKnownReset
                 )
             }
             .sorted { $0.date < $1.date }

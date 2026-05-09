@@ -222,6 +222,47 @@ import Testing
     #expect(summary.status == .healthy)
 }
 
+@Test func mainLimitSummaryExposesDeterministicPoolResetHelpers() throws {
+    let reference = Date(timeIntervalSinceReferenceDate: 900_000_000)
+    let soonerReset = reference.addingTimeInterval(2 * 3_600)
+    let laterReset = reference.addingTimeInterval(24 * 3_600)
+    let snapshot = UsageSnapshot(
+        generatedAt: reference,
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "personal",
+                accountName: "Personal",
+                label: "OpenAI Weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 100,
+                limit: 100,
+                resetsAt: soonerReset
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "work",
+                accountName: "Work",
+                label: "OpenAI Weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 10,
+                limit: 100,
+                resetsAt: laterReset
+            ),
+        ]
+    )
+
+    let summary = try #require(snapshot.mainLimitSummaries.first)
+
+    #expect(summary.capacityPool.totalRemainingUnits == 90)
+    #expect(summary.capacityPool.totalUnits == 200)
+    #expect(summary.firstKnownReset == soonerReset)
+    #expect(summary.nextReset(after: reference) == soonerReset)
+    #expect(summary.nextReset(after: soonerReset) == laterReset)
+}
+
 @Test func widgetDisplayPreferencesUseOrderedVisiblePrefixes() {
     let snapshot = UsageSnapshot(
         generatedAt: Date(),

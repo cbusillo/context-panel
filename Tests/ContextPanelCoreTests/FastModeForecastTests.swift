@@ -333,6 +333,28 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(estimate.sampleCount == 2)
 }
 
+@Test func observedBurnRateUsesSampleRelativeResetWhenResetIsNowInPast() throws {
+    let historicalNow = Date(timeIntervalSinceReferenceDate: 700_000_000)
+    let reset = historicalNow.addingTimeInterval(90 * 60)
+    let history = [
+        storedOpenAIWeekly(savedAt: historicalNow, used: 80, reset: reset),
+        storedOpenAIWeekly(savedAt: historicalNow.addingTimeInterval(2 * 3_600), used: 6, reset: reset.addingTimeInterval(7 * 24 * 3_600)),
+        storedOpenAIWeekly(savedAt: historicalNow.addingTimeInterval(3 * 3_600), used: 8, reset: reset.addingTimeInterval(7 * 24 * 3_600)),
+    ]
+    let current = try #require(history.last?.snapshot)
+
+    let estimates = MainLimitBurnRateEstimator.observedBurnRates(
+        current: current,
+        history: history,
+        now: historicalNow.addingTimeInterval(3 * 3_600),
+        lookback: 4 * 3_600
+    )
+    let estimate = try #require(estimates["openai:weekly"])
+
+    #expect(abs(estimate.unitsPerHour - 2) < 0.0001)
+    #expect(estimate.sampleCount == 2)
+}
+
 private func openAILimit(
     accountName: String = "Personal",
     used: Int,

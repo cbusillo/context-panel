@@ -86,8 +86,11 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
         UsageSnapshot(generatedAt: Date(), limits: limits).mostConstrainedLimits.first
     }
 
+    public var capacityPool: CapacityPool {
+        CapacityPool(limits: numericLimits)
+    }
+
     public var unit: UsageUnit? {
-        let numericLimits = limits.filter { $0.used != nil && $0.limit != nil }
         guard let firstUnit = numericLimits.first?.unit else { return nil }
         guard numericLimits.allSatisfy({ $0.unit == firstUnit }) else { return nil }
         return firstUnit
@@ -146,8 +149,15 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
     }
 
     public var resetsAt: Date? {
-        let futureResets = limits.compactMap(\.resetsAt).filter { $0 > Date() }.sorted()
-        return futureResets.first ?? limits.compactMap(\.resetsAt).sorted().first
+        nextReset(after: Date()) ?? firstKnownReset
+    }
+
+    public var firstKnownReset: Date? {
+        limits.compactMap(\.resetsAt).sorted().first
+    }
+
+    public func nextReset(after date: Date) -> Date? {
+        capacityPool.nextReset(after: date)
     }
 
     public var lastUpdatedAt: Date? {
@@ -192,6 +202,10 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
         self.provider = provider
         self.window = window
         self.limits = limits
+    }
+
+    private var numericLimits: [UsageLimit] {
+        limits.filter { $0.used != nil && $0.limit != nil }
     }
 }
 
