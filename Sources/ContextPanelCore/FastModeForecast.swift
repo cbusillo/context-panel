@@ -194,6 +194,23 @@ public struct FastModeCapacityForecast: Codable, Equatable, Sendable {
     public let projectedFastUseUntilReset: Double?
     public let reserveUnits: Double
 
+    public var window: MainLimitWindow? {
+        limitID.split(separator: ":").last.flatMap { MainLimitWindow(rawValue: String($0)) }
+    }
+
+    public var roleCopy: String {
+        switch window {
+        case .weekly:
+            "weekly pool"
+        case .fiveHour:
+            "5-hour guardrail"
+        case .daily:
+            "daily pool"
+        case nil:
+            "capacity pool"
+        }
+    }
+
     public var copy: String {
         switch recommendation {
         case .safeThroughReset:
@@ -448,6 +465,62 @@ public struct FastModeCapacityPortfolioForecast: Codable, Equatable, Sendable {
 
     public var copy: String {
         bestForecast?.copy ?? "Add OpenAI weekly limits to forecast fast mode."
+    }
+
+    public var detailCopy: String {
+        guard let bestForecast else { return "OpenAI account needed for fast-mode forecast" }
+        let guardrail = forecasts.first { $0.window == .fiveHour }
+        if bestForecast.window == .weekly, let guardrail, guardrail.recommendation == .saveFastMode || guardrail.recommendation == .limited {
+            return "\(bestForecast.roleCopy): \(bestForecast.runwayCopy) · 5h guardrail: \(guardrail.runwayCopy)"
+        }
+        return "\(bestForecast.roleCopy): \(bestForecast.burnRateCopy) · \(bestForecast.runwayCopy)"
+    }
+}
+
+public extension Sequence where Element == MainLimitSummary {
+    func openAIFastModeCapacityForecast(
+        now: Date = Date(),
+        observedBurnRates: [String: ObservedBurnRate] = [:],
+        defaultStandardBurnRateUnitsPerHour: Double? = nil,
+        fastModeMultiplier: Double = 2,
+        reserveUnits: Double = 6,
+        minimumSafeHours: Double = 1
+    ) -> FastModeCapacityPortfolioForecast {
+        let forecasts = self.sorted { lhs, rhs in
+            let lhsRank = lhs.openAIFastModeForecastRank
+            let rhsRank = rhs.openAIFastModeForecastRank
+            if lhsRank != rhsRank { return lhsRank < rhsRank }
+            return (lhs.usageRatio ?? 0) > (rhs.usageRatio ?? 0)
+        }
+        .filter { $0.provider == .openAI && $0.unit == .percent }
+        .map { summary in
+            let observedRate = observedBurnRates[summary.id].map(\.unitsPerHour)
+            let standardRate = observedRate ?? defaultStandardBurnRateUnitsPerHour
+            return FastModeCapacityForecast(
+                limitID: summary.id,
+                accountName: "\(summary.provider.displayName) \(summary.window.displayName) pool",
+                providerLimits: summary.limits,
+                now: now,
+                standardBurnRate: standardRate.map { BurnRate(mode: .standard, unitsPerHour: $0) },
+                fastBurnRate: standardRate.map { BurnRate(mode: .fast, unitsPerHour: $0 * fastModeMultiplier) },
+                reserveUnits: reserveUnits,
+                minimumSafeHours: minimumSafeHours
+            )
+        }
+        return FastModeCapacityPortfolioForecast(forecasts: forecasts)
+    }
+}
+
+private extension MainLimitSummary {
+    var openAIFastModeForecastRank: Int {
+        switch window {
+        case .weekly:
+            0
+        case .fiveHour:
+            1
+        case .daily:
+            2
+        }
     }
 }
 

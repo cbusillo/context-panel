@@ -652,25 +652,12 @@ extension WidgetSnapshot {
     }
 
     var fastModeForecast: FastModeCapacityForecast? {
-        let forecasts = largeWidgetMainLimitSummaries
-            .filter { $0.provider == .openAI && $0.unit == .percent }
-            .map { summary in
-                FastModeCapacityForecast(
-                    limitID: summary.id,
-                    accountName: "\(summary.provider.displayName) \(summary.window.displayName) pool",
-                    providerLimits: summary.limits,
-                    now: Date(),
-                    standardBurnRate: observedBurnRates[summary.id].map {
-                        BurnRate(mode: .standard, unitsPerHour: $0.unitsPerHour)
-                    },
-                    fastBurnRate: observedBurnRates[summary.id].map {
-                        BurnRate(mode: .fast, unitsPerHour: $0.unitsPerHour * 2)
-                    },
-                    reserveUnits: 6,
-                    minimumSafeHours: 1
-                )
-            }
-        return FastModeCapacityPortfolioForecast(forecasts: forecasts).bestForecast
+        mainLimitSummaries.openAIFastModeCapacityForecast(
+            observedBurnRates: observedBurnRates,
+            fastModeMultiplier: 2,
+            reserveUnits: 6,
+            minimumSafeHours: 1
+        ).bestForecast
     }
 
     var fastModeStatus: FastModeRecommendation? {
@@ -682,8 +669,12 @@ extension WidgetSnapshot {
     }
 
     var fastModeDetail: String {
-        guard let forecast = fastModeForecast else { return "OpenAI account needed for fast-mode forecast" }
-        return "\(forecast.burnRateCopy) · \(forecast.runwayCopy)"
+        mainLimitSummaries.openAIFastModeCapacityForecast(
+            observedBurnRates: observedBurnRates,
+            fastModeMultiplier: 2,
+            reserveUnits: 6,
+            minimumSafeHours: 1
+        ).detailCopy
     }
 
     var fastModeResetDetail: String {

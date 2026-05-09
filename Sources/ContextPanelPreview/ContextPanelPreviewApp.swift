@@ -1723,28 +1723,12 @@ extension UsageSnapshot {
     }
 
     var fastModeForecast: FastModeCapacityPortfolioForecast {
-        let forecasts = mainLimitSummaries.sorted { lhs, rhs in
-            let lhsPriority = lhs.defaultWidgetSortRank
-            let rhsPriority = rhs.defaultWidgetSortRank
-            if lhsPriority != rhsPriority {
-                return lhsPriority > rhsPriority
-            }
-            return (lhs.usageRatio ?? 0) > (rhs.usageRatio ?? 0)
-        }
-            .filter { $0.provider == .openAI && $0.unit == .percent }
-            .map { summary in
-                FastModeCapacityForecast(
-                    limitID: summary.id,
-                    accountName: "\(summary.provider.displayName) \(summary.window.displayName) pool",
-                    providerLimits: summary.limits,
-                    now: Date(),
-                    standardBurnRate: BurnRate(mode: .standard, unitsPerHour: 2),
-                    fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 4),
-                    reserveUnits: 6,
-                    minimumSafeHours: 1
-                )
-            }
-        return FastModeCapacityPortfolioForecast(forecasts: forecasts)
+        mainLimitSummaries.openAIFastModeCapacityForecast(
+            defaultStandardBurnRateUnitsPerHour: 2,
+            fastModeMultiplier: 2,
+            reserveUnits: 6,
+            minimumSafeHours: 1
+        )
     }
 
     var providerPressureText: String {

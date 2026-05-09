@@ -225,6 +225,30 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(portfolio.copy == "Use normal mode")
 }
 
+@Test func openAIFastModeForecastHelperPrefersWeeklyAndLabelsGuardrail() throws {
+    let snapshot = UsageSnapshot(
+        generatedAt: now,
+        limits: [
+            openAILimit(accountName: "Personal", used: 35, limit: 100, resetsInHours: 120, windowLabel: "Weekly"),
+            openAILimit(accountName: "Personal", used: 94, limit: 100, resetsInHours: 5, windowLabel: "5-hour"),
+        ]
+    )
+
+    let portfolio = snapshot.mainLimitSummaries.openAIFastModeCapacityForecast(
+        now: now,
+        defaultStandardBurnRateUnitsPerHour: 2,
+        fastModeMultiplier: 2,
+        reserveUnits: 6
+    )
+
+    let best = try #require(portfolio.bestForecast)
+    #expect(best.limitID == "openai:weekly")
+    #expect(best.roleCopy == "weekly pool")
+    #expect(portfolio.forecasts.map(\.roleCopy) == ["weekly pool", "5-hour guardrail"])
+    #expect(portfolio.detailCopy.contains("weekly pool:"))
+    #expect(portfolio.detailCopy.contains("5h guardrail:"))
+}
+
 @Test func capacityForecastMeasuresBurnWhenNoObservedRateExists() {
     let forecast = FastModeCapacityForecast(
         limitID: "openai:weekly",
