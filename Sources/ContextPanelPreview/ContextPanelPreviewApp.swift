@@ -881,15 +881,20 @@ struct MainLimitDetail: View {
             return "No limit data for this window yet."
         }
         if summary.provider == .openAI, limit.unit == .percent {
+            let settings = model.fastModeForecastSettings
             return FastModeCapacityForecast(
                 limitID: summary.id,
                 accountName: limit.accountName,
                 providerLimits: summary.limits,
                 now: Date(),
-                standardBurnRate: BurnRate(mode: .standard, unitsPerHour: 2),
-                fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 4),
-                reserveUnits: 6,
-                minimumSafeHours: 1
+                standardBurnRate: settings.defaultStandardBurnRateUnitsPerHour.map {
+                    BurnRate(mode: .standard, unitsPerHour: $0)
+                },
+                fastBurnRate: settings.defaultStandardBurnRateUnitsPerHour.map {
+                    BurnRate(mode: .fast, unitsPerHour: $0 * settings.fastModeMultiplier)
+                },
+                reserveUnits: settings.reserveUnits,
+                minimumSafeHours: settings.minimumSafeHours
             ).copy
         }
         return limit.note ?? "Fast-mode forecast currently applies to OpenAI main windows."
@@ -1021,6 +1026,7 @@ final class ContextPanelAppModel: ObservableObject {
     @Published private(set) var storeStatus: UsageStatus = .unknown
     @Published private(set) var historyCount: Int = 0
     @Published private(set) var configuredAccounts: [LocalProviderAccountConfiguration] = []
+    @Published private(set) var fastModeForecastSettings: FastModeForecastSettings = .defaultSettings
     @Published private(set) var isRefreshing = false
     @Published var isClaudeWebCapturePresented = false
     @Published private(set) var errorMessage: String?
@@ -1028,13 +1034,16 @@ final class ContextPanelAppModel: ObservableObject {
 
     private let refreshService: SnapshotRefreshService
     private let refreshRunner: SnapshotRefreshRunner
+    private let forecastSettingsStore = FastModeForecastSettingsStore(
+        settingsURL: ContextPanelLocations.fastModeForecastSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
+    )
 
     var currentSnapshot: UsageSnapshot {
         storedSnapshot?.snapshot ?? SampleUsageData.snapshot
     }
 
     var fastModeForecast: FastModeCapacityPortfolioForecast {
-        currentSnapshot.fastModeForecast
+        currentSnapshot.fastModeForecast(settings: fastModeForecastSettings)
     }
 
     var lastRefreshText: String {
@@ -1047,6 +1056,7 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     func loadSnapshot() {
+        fastModeForecastSettings = forecastSettingsStore.load()
         let accounts = refreshService.loadConfiguredAccounts().document.accounts
         configuredAccounts = accounts
         let result = refreshService.loadCurrent(policy: SnapshotStoreStalenessPolicy(maximumAge: 15 * 60), now: Date())
@@ -1723,11 +1733,12 @@ extension UsageSnapshot {
     }
 
     var fastModeForecast: FastModeCapacityPortfolioForecast {
+        fastModeForecast(settings: .defaultSettings)
+    }
+
+    func fastModeForecast(settings: FastModeForecastSettings) -> FastModeCapacityPortfolioForecast {
         mainLimitSummaries.openAIFastModeCapacityForecast(
-            defaultStandardBurnRateUnitsPerHour: 2,
-            fastModeMultiplier: 2,
-            reserveUnits: 6,
-            minimumSafeHours: 1
+            settings: settings
         )
     }
 

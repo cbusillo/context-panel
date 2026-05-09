@@ -17,6 +17,88 @@ public struct BurnRate: Codable, Equatable, Sendable {
     }
 }
 
+public struct FastModeForecastSettings: Codable, Equatable, Sendable {
+    public let schemaVersion: Int
+    public var defaultStandardBurnRateUnitsPerHour: Double?
+    public var fastModeMultiplier: Double
+    public var reserveUnits: Double
+    public var minimumSafeHours: Double
+
+    public init(
+        defaultStandardBurnRateUnitsPerHour: Double? = 2,
+        fastModeMultiplier: Double = 2,
+        reserveUnits: Double = 6,
+        minimumSafeHours: Double = 1
+    ) {
+        precondition(defaultStandardBurnRateUnitsPerHour.map { $0 >= 0 } ?? true, "defaultStandardBurnRateUnitsPerHour must not be negative")
+        precondition(fastModeMultiplier >= 0, "fastModeMultiplier must not be negative")
+        precondition(reserveUnits >= 0, "reserveUnits must not be negative")
+        precondition(minimumSafeHours >= 0, "minimumSafeHours must not be negative")
+
+        schemaVersion = 1
+        self.defaultStandardBurnRateUnitsPerHour = defaultStandardBurnRateUnitsPerHour
+        self.fastModeMultiplier = fastModeMultiplier
+        self.reserveUnits = reserveUnits
+        self.minimumSafeHours = minimumSafeHours
+    }
+
+    public static var defaultSettings: FastModeForecastSettings {
+        FastModeForecastSettings()
+    }
+}
+
+public struct FastModeForecastSettingsStore: Sendable {
+    public let settingsURL: URL
+
+    public init(settingsURL: URL) {
+        self.settingsURL = settingsURL
+    }
+
+    public var exists: Bool {
+        FileManager.default.fileExists(atPath: settingsURL.path)
+    }
+
+    public func load() -> FastModeForecastSettings {
+        loadIfAvailable() ?? .defaultSettings
+    }
+
+    public func loadIfAvailable() -> FastModeForecastSettings? {
+        guard FileManager.default.fileExists(atPath: settingsURL.path) else {
+            return nil
+        }
+
+        do {
+            let settings = try Self.makeDecoder().decode(
+                FastModeForecastSettings.self,
+                from: try Data(contentsOf: settingsURL)
+            )
+            guard settings.schemaVersion == 1 else {
+                return nil
+            }
+            return settings
+        } catch {
+            return nil
+        }
+    }
+
+    public func save(_ settings: FastModeForecastSettings) throws {
+        let directory = settingsURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let data = try Self.makeEncoder().encode(settings)
+        try data.write(to: settingsURL, options: [.atomic])
+    }
+
+    private static func makeEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        return encoder
+    }
+
+    private static func makeDecoder() -> JSONDecoder {
+        JSONDecoder()
+    }
+}
+
 public struct FastModeForecastInput: Codable, Equatable, Sendable {
     public let limit: UsageLimit
     public let now: Date
@@ -478,6 +560,21 @@ public struct FastModeCapacityPortfolioForecast: Codable, Equatable, Sendable {
 }
 
 public extension Sequence where Element == MainLimitSummary {
+    func openAIFastModeCapacityForecast(
+        now: Date = Date(),
+        observedBurnRates: [String: ObservedBurnRate] = [:],
+        settings: FastModeForecastSettings
+    ) -> FastModeCapacityPortfolioForecast {
+        openAIFastModeCapacityForecast(
+            now: now,
+            observedBurnRates: observedBurnRates,
+            defaultStandardBurnRateUnitsPerHour: settings.defaultStandardBurnRateUnitsPerHour,
+            fastModeMultiplier: settings.fastModeMultiplier,
+            reserveUnits: settings.reserveUnits,
+            minimumSafeHours: settings.minimumSafeHours
+        )
+    }
+
     func openAIFastModeCapacityForecast(
         now: Date = Date(),
         observedBurnRates: [String: ObservedBurnRate] = [:],

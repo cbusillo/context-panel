@@ -249,6 +249,50 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(portfolio.detailCopy.contains("5h guardrail:"))
 }
 
+@Test func openAIFastModeForecastHelperUsesSharedSettings() throws {
+    let snapshot = UsageSnapshot(
+        generatedAt: now,
+        limits: [
+            openAILimit(accountName: "Personal", used: 50, limit: 100, resetsInHours: 24, windowLabel: "Weekly"),
+        ]
+    )
+    let settings = FastModeForecastSettings(
+        defaultStandardBurnRateUnitsPerHour: 1,
+        fastModeMultiplier: 3,
+        reserveUnits: 8,
+        minimumSafeHours: 2
+    )
+
+    let forecast = try #require(snapshot.mainLimitSummaries.openAIFastModeCapacityForecast(
+        now: now,
+        settings: settings
+    ).bestForecast)
+
+    #expect(forecast.standardBurnRateUnitsPerHour == 1)
+    #expect(forecast.fastBurnRateUnitsPerHour == 3)
+    #expect(forecast.reserveUnits == 8)
+}
+
+@Test func fastModeForecastSettingsStoreRoundTripsSettings() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = FastModeForecastSettingsStore(
+        settingsURL: directory.appending(path: "fast-mode-forecast-settings.json")
+    )
+    let settings = FastModeForecastSettings(
+        defaultStandardBurnRateUnitsPerHour: 1.5,
+        fastModeMultiplier: 2.5,
+        reserveUnits: 7,
+        minimumSafeHours: 1.25
+    )
+
+    try store.save(settings)
+
+    #expect(store.exists)
+    #expect(store.load() == settings)
+}
+
 @Test func capacityForecastMeasuresBurnWhenNoObservedRateExists() {
     let forecast = FastModeCapacityForecast(
         limitID: "openai:weekly",
