@@ -10,10 +10,12 @@ struct ClaudeProbeError: LocalizedError {
 struct ProbeConfiguration {
     let claudeBinary: String
     let statsPath: String
+    let rateLimitCachePath: String
 
     static func fromArguments(_ arguments: [String]) throws -> ProbeConfiguration {
         var claudeBinary = "claude"
         var statsPath: String?
+        var rateLimitCachePath: String?
         var iterator = arguments.dropFirst().makeIterator()
 
         while let argument = iterator.next() {
@@ -28,6 +30,11 @@ struct ProbeConfiguration {
                     throw ClaudeProbeError(message: "--stats requires a path")
                 }
                 statsPath = value
+            case "--rate-limit-cache":
+                guard let value = iterator.next() else {
+                    throw ClaudeProbeError(message: "--rate-limit-cache requires a path")
+                }
+                rateLimitCachePath = value
             case "--help", "-h":
                 printHelp()
                 Foundation.exit(0)
@@ -38,7 +45,8 @@ struct ProbeConfiguration {
 
         return ProbeConfiguration(
             claudeBinary: claudeBinary,
-            statsPath: statsPath ?? defaultStatsPath()
+            statsPath: statsPath ?? defaultStatsPath(),
+            rateLimitCachePath: rateLimitCachePath ?? ContextPanelLocations.claudeStatuslineCacheURL().path
         )
     }
 
@@ -50,7 +58,7 @@ struct ProbeConfiguration {
 
     private static func printHelp() {
         print("""
-        Usage: swift run ClaudeLimitProbe [--claude-bin claude] [--stats ~/.claude/stats-cache.json]
+        Usage: swift run ClaudeLimitProbe [--claude-bin claude] [--stats ~/.claude/stats-cache.json] [--rate-limit-cache PATH]
 
         Prints a redacted Claude local status summary. This probe intentionally
         does not read Keychain secrets, token files, raw transcripts, emails,
@@ -67,20 +75,26 @@ struct ClaudeLimitProbe {
             let connector = ClaudeLocalStatusConnector(accounts: [
                 ClaudeAccountConfiguration(
                     claudeBinary: configuration.claudeBinary,
-                    statsPath: configuration.statsPath
+                    statsPath: configuration.statsPath,
+                    rateLimitSnapshotPath: configuration.rateLimitCachePath
                 )
             ])
             let result = await connector.refresh(now: Date())
-            printSummary(result: result, statsPath: configuration.statsPath)
+            printSummary(
+                result: result,
+                statsPath: configuration.statsPath,
+                rateLimitCachePath: configuration.rateLimitCachePath
+            )
         } catch {
             fputs("ClaudeLimitProbe failed: \(error.localizedDescription)\n", stderr)
             Foundation.exit(1)
         }
     }
 
-    private static func printSummary(result: ConnectorRefreshResult, statsPath: String) {
+    private static func printSummary(result: ConnectorRefreshResult, statsPath: String, rateLimitCachePath: String) {
         print("Claude local status probe")
         print("stats cache: \(ConnectorRedactor.redactedPath(statsPath))")
+        print("statusline cache: \(ConnectorRedactor.redactedPath(rateLimitCachePath))")
         print("accounts: \(result.reports.count)")
         print("limits: \(result.snapshot.limits.count)")
         print("redacted: tokens, Keychain secrets, account identifiers, org identifiers, emails, raw transcripts, raw provider responses")
@@ -92,7 +106,10 @@ struct ClaudeLimitProbe {
                 print("  error: \(errorMessage)")
             }
             for limit in report.limits {
-                print("  - \(limit.label): \(limit.status.rawValue)")
+                let usage = limit.used.map { " \($0)" } ?? ""
+                let total = limit.limit.map { "/\($0)" } ?? ""
+                let unit = limit.unit == .unknown ? "" : " \(limit.unit.rawValue)"
+                print("  - \(limit.label): \(limit.status.rawValue)\(usage)\(total)\(unit)")
                 if let note = limit.note {
                     print("    \(note)")
                 }
