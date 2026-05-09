@@ -57,8 +57,16 @@ public enum ContextPanelLocations {
         applicationSupportDirectory().appending(path: "widget-display-preferences.json")
     }
 
+    public static func widgetDevelopmentFastModeForecastSettingsURL() -> URL {
+        applicationSupportDirectory().appending(path: "fast-mode-forecast-settings.json")
+    }
+
     public static func hostDevelopmentDisplayPreferencesURL() -> URL {
         hostApplicationSupportDirectory().appending(path: "widget-display-preferences.json")
+    }
+
+    public static func hostDevelopmentFastModeForecastSettingsURL() -> URL {
+        hostApplicationSupportDirectory().appending(path: "fast-mode-forecast-settings.json")
     }
 
     public static func widgetDevelopmentContainerDisplayPreferencesURL() -> URL {
@@ -71,6 +79,18 @@ public enum ContextPanelLocations {
             .appending(path: "Application Support", directoryHint: .isDirectory)
             .appending(path: "Context Panel", directoryHint: .isDirectory)
             .appending(path: "widget-display-preferences.json")
+    }
+
+    public static func widgetDevelopmentContainerFastModeForecastSettingsURL() -> URL {
+        realUserHomeDirectory()
+            .appending(path: "Library", directoryHint: .isDirectory)
+            .appending(path: "Containers", directoryHint: .isDirectory)
+            .appending(path: widgetExtensionBundleID, directoryHint: .isDirectory)
+            .appending(path: "Data", directoryHint: .isDirectory)
+            .appending(path: "Library", directoryHint: .isDirectory)
+            .appending(path: "Application Support", directoryHint: .isDirectory)
+            .appending(path: "Context Panel", directoryHint: .isDirectory)
+            .appending(path: "fast-mode-forecast-settings.json")
     }
 
     public static func accountConfigurationURL() -> URL {
@@ -95,6 +115,16 @@ public enum ContextPanelLocations {
         }
 
         return applicationSupportDirectory().appending(path: "widget-display-preferences.json")
+    }
+
+    public static func fastModeForecastSettingsURL(appGroupID: String? = nil) -> URL {
+        if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
+            return containerURL
+                .appending(path: "Context Panel", directoryHint: .isDirectory)
+                .appending(path: "fast-mode-forecast-settings.json")
+        }
+
+        return applicationSupportDirectory().appending(path: "fast-mode-forecast-settings.json")
     }
 
     private static func hostApplicationSupportDirectory() -> URL {

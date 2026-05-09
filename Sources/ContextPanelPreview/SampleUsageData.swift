@@ -112,10 +112,7 @@ enum SampleUsageData {
     static var fastModeForecast: FastModeCapacityPortfolioForecast {
         snapshot.mainLimitSummaries.openAIFastModeCapacityForecast(
             now: referenceNow,
-            defaultStandardBurnRateUnitsPerHour: 2,
-            fastModeMultiplier: 2,
-            reserveUnits: 6,
-            minimumSafeHours: 1
+            settings: .defaultSettings
         )
     }
 }

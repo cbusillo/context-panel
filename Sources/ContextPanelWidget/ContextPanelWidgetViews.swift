@@ -654,9 +654,7 @@ extension WidgetSnapshot {
     var fastModeForecast: FastModeCapacityForecast? {
         mainLimitSummaries.openAIFastModeCapacityForecast(
             observedBurnRates: observedBurnRates,
-            fastModeMultiplier: 2,
-            reserveUnits: 6,
-            minimumSafeHours: 1
+            settings: fastModeForecastSettings
         ).bestForecast
     }
 
@@ -671,9 +669,7 @@ extension WidgetSnapshot {
     var fastModeDetail: String {
         mainLimitSummaries.openAIFastModeCapacityForecast(
             observedBurnRates: observedBurnRates,
-            fastModeMultiplier: 2,
-            reserveUnits: 6,
-            minimumSafeHours: 1
+            settings: fastModeForecastSettings
         ).detailCopy
     }
 

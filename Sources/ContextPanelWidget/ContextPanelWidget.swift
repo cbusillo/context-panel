@@ -17,6 +17,10 @@ struct ContextPanelTimelineProvider: TimelineProvider {
     let containerFallbackPreferencesStore: WidgetDisplayPreferencesStore
     let hostFallbackPreferencesStore: WidgetDisplayPreferencesStore
     let fallbackPreferencesStore: WidgetDisplayPreferencesStore
+    let forecastSettingsStore: FastModeForecastSettingsStore
+    let containerFallbackForecastSettingsStore: FastModeForecastSettingsStore
+    let hostFallbackForecastSettingsStore: FastModeForecastSettingsStore
+    let fallbackForecastSettingsStore: FastModeForecastSettingsStore
 
     init(
         store: JSONSnapshotStore = JSONSnapshotStore(
@@ -42,6 +46,18 @@ struct ContextPanelTimelineProvider: TimelineProvider {
         ),
         fallbackPreferencesStore: WidgetDisplayPreferencesStore = WidgetDisplayPreferencesStore(
             preferencesURL: ContextPanelLocations.widgetDevelopmentDisplayPreferencesURL()
+        ),
+        forecastSettingsStore: FastModeForecastSettingsStore = FastModeForecastSettingsStore(
+            settingsURL: ContextPanelLocations.fastModeForecastSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
+        ),
+        containerFallbackForecastSettingsStore: FastModeForecastSettingsStore = FastModeForecastSettingsStore(
+            settingsURL: ContextPanelLocations.widgetDevelopmentContainerFastModeForecastSettingsURL()
+        ),
+        hostFallbackForecastSettingsStore: FastModeForecastSettingsStore = FastModeForecastSettingsStore(
+            settingsURL: ContextPanelLocations.hostDevelopmentFastModeForecastSettingsURL()
+        ),
+        fallbackForecastSettingsStore: FastModeForecastSettingsStore = FastModeForecastSettingsStore(
+            settingsURL: ContextPanelLocations.widgetDevelopmentFastModeForecastSettingsURL()
         )
     ) {
         self.store = store
@@ -52,6 +68,10 @@ struct ContextPanelTimelineProvider: TimelineProvider {
         self.containerFallbackPreferencesStore = containerFallbackPreferencesStore
         self.hostFallbackPreferencesStore = hostFallbackPreferencesStore
         self.fallbackPreferencesStore = fallbackPreferencesStore
+        self.forecastSettingsStore = forecastSettingsStore
+        self.containerFallbackForecastSettingsStore = containerFallbackForecastSettingsStore
+        self.hostFallbackForecastSettingsStore = hostFallbackForecastSettingsStore
+        self.fallbackForecastSettingsStore = fallbackForecastSettingsStore
     }
 
     func placeholder(in context: Context) -> ContextPanelWidgetEntry {
@@ -70,6 +90,7 @@ struct ContextPanelTimelineProvider: TimelineProvider {
 
     private func entry(date: Date) -> ContextPanelWidgetEntry {
         let displayPreferences = loadDisplayPreferences()
+        let forecastSettings = loadForecastSettings()
         let result = store.loadCurrent(policy: SnapshotStoreStalenessPolicy(maximumAge: 20 * 60), now: date)
         if result.snapshot == nil || result.status == .failure {
             for fallbackStore in [containerFallbackStore, hostFallbackStore, fallbackStore] {
@@ -80,14 +101,24 @@ struct ContextPanelTimelineProvider: TimelineProvider {
                 guard fallback.snapshot != nil else { continue }
                 return ContextPanelWidgetEntry(
                     date: date,
-                    snapshot: WidgetSnapshot.fromStore(fallback, now: date, history: fallbackStore.loadHistory()),
+                    snapshot: WidgetSnapshot.fromStore(
+                        fallback,
+                        now: date,
+                        history: fallbackStore.loadHistory(),
+                        fastModeForecastSettings: forecastSettings
+                    ),
                     displayPreferences: displayPreferences
                 )
             }
         }
         return ContextPanelWidgetEntry(
             date: date,
-            snapshot: WidgetSnapshot.fromStore(result, now: date, history: store.loadHistory()),
+            snapshot: WidgetSnapshot.fromStore(
+                result,
+                now: date,
+                history: store.loadHistory(),
+                fastModeForecastSettings: forecastSettings
+            ),
             displayPreferences: displayPreferences
         )
     }
@@ -104,6 +135,20 @@ struct ContextPanelTimelineProvider: TimelineProvider {
             }
         }
         return .defaultPreferences
+    }
+
+    private func loadForecastSettings() -> FastModeForecastSettings {
+        for store in [
+            forecastSettingsStore,
+            containerFallbackForecastSettingsStore,
+            hostFallbackForecastSettingsStore,
+            fallbackForecastSettingsStore,
+        ] {
+            if let settings = store.loadIfAvailable() {
+                return settings
+            }
+        }
+        return .defaultSettings
     }
 }
 

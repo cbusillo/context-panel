@@ -13,6 +13,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     public let limits: [UsageLimit]
     public let reports: [StoredProviderReport]
     public let observedBurnRates: [String: ObservedBurnRate]
+    public let fastModeForecastSettings: FastModeForecastSettings
     public let status: UsageStatus
     public let message: String
 
@@ -22,6 +23,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         limits: [UsageLimit],
         reports: [StoredProviderReport] = [],
         observedBurnRates: [String: ObservedBurnRate] = [:],
+        fastModeForecastSettings: FastModeForecastSettings = .defaultSettings,
         status: UsageStatus,
         message: String
     ) {
@@ -30,6 +32,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         self.limits = limits
         self.reports = reports
         self.observedBurnRates = observedBurnRates
+        self.fastModeForecastSettings = fastModeForecastSettings
         self.status = status
         self.message = message
     }
@@ -63,13 +66,15 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     public static func fromStore(
         _ result: SnapshotStoreLoadResult,
         now: Date = Date(),
-        history: [StoredUsageSnapshot] = []
+        history: [StoredUsageSnapshot] = [],
+        fastModeForecastSettings: FastModeForecastSettings = .defaultSettings
     ) -> WidgetSnapshot {
         guard let stored = result.snapshot else {
             return WidgetSnapshot(
                 state: result.status == .failure ? .failure : .setupNeeded,
                 generatedAt: now,
                 limits: [],
+                fastModeForecastSettings: fastModeForecastSettings,
                 status: result.status,
                 message: result.errorMessage ?? "Set up Context Panel in the app."
             )
@@ -94,6 +99,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
                 history: history,
                 now: now
             ),
+            fastModeForecastSettings: fastModeForecastSettings,
             status: result.status,
             message: message(state: state, stored: stored)
         )
