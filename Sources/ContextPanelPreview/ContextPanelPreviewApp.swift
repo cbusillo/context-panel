@@ -173,7 +173,7 @@ struct SettingsPane: View {
                             preference: preference,
                             isEnabled: Binding(
                                 get: { preference.isEnabled },
-                                set: { model.setResetPrimerAccount(preference.accountID, isEnabled: $0) }
+                                set: { model.setResetPrimerAccount(preference.accountID, provider: preference.provider, isEnabled: $0) }
                             )
                         )
                     }
@@ -235,11 +235,18 @@ final class SettingsPaneModel: ObservableObject {
         let result = store.load()
         accounts = result.document.accounts
         widgetPreferences = widgetPreferenceStores.load()
-        var primerSettings = resetPrimerSettingsStore.load()
-        primerSettings.syncAccounts(result.document.accounts)
-        resetPrimerSettings = primerSettings
+        do {
+            resetPrimerSettings = try resetPrimerSettingsStore.loadSynced(accounts: result.document.accounts)
+        } catch {
+            var primerSettings = resetPrimerSettingsStore.load()
+            primerSettings.syncAccounts(result.document.accounts)
+            resetPrimerSettings = primerSettings
+            errorMessage = error.localizedDescription
+        }
         status = result.status
-        errorMessage = result.errorMessage
+        if errorMessage == nil {
+            errorMessage = result.errorMessage
+        }
     }
 
     func setWidgetMainLimit(_ preference: WidgetMainLimitPreference, isVisible: Bool) {
@@ -282,9 +289,9 @@ final class SettingsPaneModel: ObservableObject {
         saveResetPrimerSettings(updated)
     }
 
-    func setResetPrimerAccount(_ accountID: String, isEnabled: Bool) {
+    func setResetPrimerAccount(_ accountID: String, provider: Provider, isEnabled: Bool) {
         var updated = resetPrimerSettings
-        updated.setAccount(accountID, isEnabled: isEnabled)
+        updated.setAccount(accountID, provider: provider, isEnabled: isEnabled)
         saveResetPrimerSettings(updated)
     }
 

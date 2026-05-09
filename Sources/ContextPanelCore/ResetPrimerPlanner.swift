@@ -163,10 +163,10 @@ public enum ResetPrimerPlanner {
             return ResetPrimerPlan(due: [], upcoming: [])
         }
 
-        let enabledAccounts = Set(enabledPreferences.map(\.accountID))
+        let enabledAccounts = Set(enabledPreferences.map(\.id))
         let candidates = groupedLimits(snapshot.limits.filter { limit in
-            guard enabledAccounts.contains(limit.accountID), limit.resetsAt != nil else { return false }
-            guard settings.preference(for: limit.accountID)?.provider == limit.provider else { return false }
+            guard enabledAccounts.contains(ResetPrimerAccountPreference.id(provider: limit.provider, accountID: limit.accountID)), limit.resetsAt != nil else { return false }
+            guard settings.preference(for: limit.accountID, provider: limit.provider) != nil else { return false }
             return limit.status != .failure && limit.status != .unknown && limit.status != .stale
         })
 
@@ -215,13 +215,13 @@ public enum ResetPrimerPlanner {
         Dictionary(grouping: candidates, by: \.key.resetAt)
             .flatMap { resetAt, resetCandidates in
                 let accountOrder = Dictionary(
-                    uniqueKeysWithValues: Array(Set(resetCandidates.map(\.key.accountID))).sorted().enumerated().map { index, accountID in
-                        (accountID, index)
+                    uniqueKeysWithValues: Array(Set(resetCandidates.map(\.key.accountStaggerKey))).sorted().enumerated().map { index, accountKey in
+                        (accountKey, index)
                     }
                 )
 
                 return resetCandidates.map { candidate in
-                    let staggerIndex = accountOrder[candidate.key.accountID] ?? 0
+                    let staggerIndex = accountOrder[candidate.key.accountStaggerKey] ?? 0
                     let scheduledAt = resetAt
                         .addingTimeInterval(TimeInterval(max(delayMinutesAfterReset, 0) * 60))
                         .addingTimeInterval(TimeInterval(max(accountStaggerMinutes, 0) * 60 * staggerIndex))
@@ -370,6 +370,10 @@ private extension ResetPrimerRunKey {
     var stableID: String {
         let reset = ISO8601DateFormatter().string(from: resetAt)
         return "\(provider.rawValue):\(accountID):\(reset)"
+    }
+
+    var accountStaggerKey: String {
+        "\(provider.rawValue):\(accountID)"
     }
 }
 

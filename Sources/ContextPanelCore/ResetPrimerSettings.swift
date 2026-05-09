@@ -6,13 +6,17 @@ public struct ResetPrimerAccountPreference: Codable, Equatable, Identifiable, Se
     public var accountName: String
     public var isEnabled: Bool
 
-    public var id: String { accountID }
+    public var id: String { Self.id(provider: provider, accountID: accountID) }
 
     public init(accountID: String, provider: Provider, accountName: String, isEnabled: Bool = false) {
         self.accountID = accountID
         self.provider = provider
         self.accountName = accountName
         self.isEnabled = isEnabled
+    }
+
+    public static func id(provider: Provider, accountID: String) -> String {
+        "\(provider.rawValue):\(accountID)"
     }
 }
 
@@ -43,16 +47,16 @@ public struct ResetPrimerSettings: Codable, Equatable, Sendable {
         ResetPrimerSettings()
     }
 
-    public func preference(for accountID: String) -> ResetPrimerAccountPreference? {
-        accountPreferences.first { $0.accountID == accountID }
+    public func preference(for accountID: String, provider: Provider) -> ResetPrimerAccountPreference? {
+        accountPreferences.first { $0.accountID == accountID && $0.provider == provider }
     }
 
     public mutating func syncAccounts(_ accounts: [LocalProviderAccountConfiguration]) {
         let existingByID = Dictionary(
-            uniqueKeysWithValues: Self.normalized(accountPreferences).map { ($0.accountID, $0) }
+            uniqueKeysWithValues: Self.normalized(accountPreferences).map { ($0.id, $0) }
         )
         accountPreferences = Self.normalized(accounts.map { account in
-            var preference = existingByID[account.id] ?? ResetPrimerAccountPreference(
+            var preference = existingByID[ResetPrimerAccountPreference.id(provider: account.provider, accountID: account.id)] ?? ResetPrimerAccountPreference(
                 accountID: account.id,
                 provider: account.provider,
                 accountName: account.displayName
@@ -66,8 +70,8 @@ public struct ResetPrimerSettings: Codable, Equatable, Sendable {
         })
     }
 
-    public mutating func setAccount(_ accountID: String, isEnabled: Bool) {
-        guard let index = accountPreferences.firstIndex(where: { $0.accountID == accountID }) else { return }
+    public mutating func setAccount(_ accountID: String, provider: Provider, isEnabled: Bool) {
+        guard let index = accountPreferences.firstIndex(where: { $0.accountID == accountID && $0.provider == provider }) else { return }
         accountPreferences[index].isEnabled = isEnabled
     }
 
@@ -80,7 +84,7 @@ public struct ResetPrimerSettings: Codable, Equatable, Sendable {
     }
 
     private static func normalized(_ preferences: [ResetPrimerAccountPreference]) -> [ResetPrimerAccountPreference] {
-        Dictionary(grouping: preferences, by: \.accountID)
+        Dictionary(grouping: preferences, by: \.id)
             .compactMap { $0.value.first }
             .sorted { lhs, rhs in
                 if lhs.provider != rhs.provider {
@@ -107,6 +111,17 @@ public struct ResetPrimerSettingsStore: Sendable {
 
     public func load() -> ResetPrimerSettings {
         loadIfAvailable() ?? .defaultSettings
+    }
+
+    @discardableResult
+    public func loadSynced(accounts: [LocalProviderAccountConfiguration]) throws -> ResetPrimerSettings {
+        let loaded = load()
+        var synced = loaded
+        synced.syncAccounts(accounts)
+        if synced != loaded {
+            try save(synced)
+        }
+        return synced
     }
 
     public func loadIfAvailable() -> ResetPrimerSettings? {
