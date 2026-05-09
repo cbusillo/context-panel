@@ -1,6 +1,6 @@
 # Local Limit Probe Design
 
-Last updated: 2026-05-05.
+Last updated: 2026-05-09.
 
 ## Goal
 
@@ -37,7 +37,8 @@ should help answer:
 ## Recommended Implementation
 
 Build a local macOS diagnostic surface called **Limit Probe** inside the
-companion app or as a development-only target.
+companion app or as a development-only target. The current implementation is
+the `OpenAILimitProbe` SwiftPM executable.
 
 For the first implementation, prefer a native `WKWebView`-based probe because it
 lets the user log in normally while keeping the session isolated from Safari or
@@ -60,7 +61,9 @@ WKWebView cannot observe enough.
 7. Probe scans visible text and sanitized network metadata for usage/reset
    signals.
 8. User can press `Record Observation` to save a sanitized event.
-9. User can press `Export Redacted Report` for a local Markdown/JSON report.
+9. User can press `Save Redacted Report` to write a local Markdown report to
+   `.local/limit-probes/openai/latest.md`, then optionally export it elsewhere
+   through the file picker.
 
 ### OpenAI Targets
 
@@ -182,7 +185,8 @@ review:
 - Probe can record a manual observation when the UI exposes reset or limit state.
 - Probe can show whether any structured candidate responses appear, without
   revealing raw response bodies or tokens.
-- Probe writes only redacted local artifacts under a gitignored directory.
+- Probe writes only redacted local artifacts under `.local/limit-probes/`, which
+  is gitignored.
 - Findings can update `docs/provider-usage-access.md` with evidence and
   confidence.
 

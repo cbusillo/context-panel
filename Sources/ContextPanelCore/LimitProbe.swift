@@ -120,6 +120,30 @@ public struct LimitProbeReport: Codable, Equatable, Sendable {
     }
 }
 
+public struct LimitProbeReportStore: Sendable {
+    public let reportURL: URL
+
+    public init(reportURL: URL) {
+        self.reportURL = reportURL
+    }
+
+    public static func localMarkdownReportURL(
+        provider: Provider,
+        rootDirectory: URL = URL(fileURLWithPath: ".local", isDirectory: true)
+    ) -> URL {
+        rootDirectory
+            .appending(path: "limit-probes", directoryHint: .isDirectory)
+            .appending(path: provider.rawValue, directoryHint: .isDirectory)
+            .appending(path: "latest.md")
+    }
+
+    public func saveMarkdown(_ report: LimitProbeReport) throws {
+        let directory = reportURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try report.markdownSummary.write(to: reportURL, atomically: true, encoding: .utf8)
+    }
+}
+
 public struct NetworkProbeEvent: Codable, Equatable, Identifiable, Sendable {
     public let id: UUID
     public let observedAt: Date

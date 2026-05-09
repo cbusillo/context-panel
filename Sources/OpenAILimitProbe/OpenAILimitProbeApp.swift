@@ -69,10 +69,17 @@ struct ProbeRootView: View {
                 Button("Record Manual Observation") {
                     model.recordManualObservation()
                 }
-                Button("Export Redacted Report") {
+                Button("Save Redacted Report") {
                     model.exportReport()
                 }
                 .keyboardShortcut("e", modifiers: [.command])
+            }
+
+            if let savedReportPath = model.savedReportPath {
+                Text("Saved to \(savedReportPath)")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
             }
 
             TextField("Manual note, e.g. resets tomorrow 9:00 AM", text: $model.manualObservation)
@@ -194,6 +201,7 @@ final class ProbeModel: ObservableObject {
     @Published var networkEvents: [NetworkProbeEvent] = []
     @Published var manualObservation = ""
     @Published var isExportingReport = false
+    @Published var savedReportPath: String?
 
     lazy var webView: WKWebView = {
         let configuration = WKWebViewConfiguration()
@@ -210,12 +218,16 @@ final class ProbeModel: ObservableObject {
     }
 
     var reportMarkdown: String {
+        report.markdownSummary
+    }
+
+    private var report: LimitProbeReport {
         LimitProbeReport(
             provider: .openAI,
             capturedAt: Date(),
             observations: observations,
             networkEvents: networkEvents
-        ).markdownSummary
+        )
     }
 
     func loadChatGPT() {
@@ -263,6 +275,15 @@ final class ProbeModel: ObservableObject {
     }
 
     func exportReport() {
+        let store = LimitProbeReportStore(
+            reportURL: LimitProbeReportStore.localMarkdownReportURL(provider: .openAI)
+        )
+        do {
+            try store.saveMarkdown(report)
+            savedReportPath = store.reportURL.path
+        } catch {
+            savedReportPath = "Save failed: \(error.localizedDescription)"
+        }
         isExportingReport = true
     }
 
