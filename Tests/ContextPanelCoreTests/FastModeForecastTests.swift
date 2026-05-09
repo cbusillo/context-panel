@@ -327,9 +327,9 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     settings.syncAccounts(accounts)
 
     #expect(settings.accountPreferences.map(\.accountID) == ["claude-disabled", "openai-a"])
-    #expect(settings.preference(for: "openai-a")?.accountName == "OpenAI A")
-    #expect(settings.preference(for: "openai-a")?.isEnabled == true)
-    #expect(settings.preference(for: "claude-disabled")?.isEnabled == false)
+    #expect(settings.preference(for: "openai-a", provider: .openAI)?.accountName == "OpenAI A")
+    #expect(settings.preference(for: "openai-a", provider: .openAI)?.isEnabled == true)
+    #expect(settings.preference(for: "claude-disabled", provider: .anthropic)?.isEnabled == false)
 }
 
 @Test func resetPrimerSettingsSyncHandlesDuplicatePersistedAccountIDs() {
@@ -365,8 +365,8 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     settings.syncAccounts(accounts)
 
     #expect(settings.accountPreferences.count == 1)
-    #expect(settings.preference(for: "openai-a")?.isEnabled == true)
-    #expect(settings.preference(for: "openai-a")?.accountName == "OpenAI A")
+    #expect(settings.preference(for: "openai-a", provider: .openAI)?.isEnabled == true)
+    #expect(settings.preference(for: "openai-a", provider: .openAI)?.accountName == "OpenAI A")
 }
 
 @Test func resetPrimerSettingsStoreRoundTripsSettings() throws {
@@ -394,6 +394,29 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
 
     #expect(store.exists)
     #expect(store.load() == settings)
+}
+
+@Test func resetPrimerSettingsStorePersistsSyncedAccountsForPlannerReloads() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = ResetPrimerSettingsStore(
+        settingsURL: directory.appending(path: "reset-primer-settings.json")
+    )
+    let accounts = [
+        LocalProviderAccountConfiguration(
+            id: "openai-a",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "OpenAI A"
+        ),
+    ]
+
+    let synced = try store.loadSynced(accounts: accounts)
+
+    #expect(synced.accountPreferences.map(\.accountID) == ["openai-a"])
+    #expect(store.exists)
+    #expect(store.load().accountPreferences.map(\.accountID) == ["openai-a"])
 }
 
 @Test func capacityForecastMeasuresBurnWhenNoObservedRateExists() {

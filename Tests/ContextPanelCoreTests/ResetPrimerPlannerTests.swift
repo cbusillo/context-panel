@@ -48,6 +48,34 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(plan.upcoming.first?.scheduledAt == resetAt.addingTimeInterval(15 * 60))
 }
 
+@Test func resetPrimerPlannerStaggersSameAccountIDsAcrossProviders() {
+    let resetAt = now.addingTimeInterval(-10 * 60)
+    let settings = ResetPrimerSettings(
+        isEnabled: true,
+        delayMinutesAfterReset: 0,
+        accountStaggerMinutes: 10,
+        accountPreferences: [
+            preference(accountID: "default", provider: .anthropic),
+            preference(accountID: "default", provider: .openAI),
+        ]
+    )
+    let snapshot = UsageSnapshot(
+        generatedAt: now,
+        limits: [
+            limit(accountID: "default", accountName: "Claude", provider: .anthropic, resetAt: resetAt),
+            limit(accountID: "default", accountName: "OpenAI", provider: .openAI, resetAt: resetAt),
+        ]
+    )
+
+    let plan = ResetPrimerPlanner.plan(settings: settings, snapshot: snapshot, now: now)
+
+    #expect(plan.due.map(\.provider) == [.anthropic, .openAI])
+    #expect(plan.due.map(\.scheduledAt) == [
+        resetAt,
+        resetAt.addingTimeInterval(10 * 60),
+    ])
+}
+
 @Test func resetPrimerPlannerGroupsModelBucketsByAccountWindowAndReset() throws {
     let resetAt = now.addingTimeInterval(-10 * 60)
     let settings = ResetPrimerSettings(
