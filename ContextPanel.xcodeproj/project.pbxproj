@@ -15,6 +15,7 @@
 		29FD4D47A21D08ABAE47E778 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 944A3154A0C2E33C5971E571 /* Assets.xcassets */; };
 		36A035769881D4A450BA3BD8 /* libContextPanelCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = F09182E1FD96DAEEC38F3909 /* libContextPanelCore.a */; };
 		38E9E0A22491522FF4E0A8F4 /* ContextPanelPreviewApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A46D6040EB6F68FC91EC477D /* ContextPanelPreviewApp.swift */; };
+		44B9C8ACA1DFFB743B5BD86A /* ResetPrimerPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C30C085B935F62134E5C8C5 /* ResetPrimerPlanner.swift */; };
 		44DFF437D4762A4D0D2DBAA8 /* BurnRateEstimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FB4BEA57ACE8B84CAE71E75 /* BurnRateEstimator.swift */; };
 		459C8EC82194CE1A950FE1B5 /* UsageLimit.swift in Sources */ = {isa = PBXBuildFile; fileRef = D459054C90410A784EBD308B /* UsageLimit.swift */; };
 		47414B1A42BE473BF1644296 /* CodexRateLimits.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FA8FE4CC9BE058D8F46FBA2 /* CodexRateLimits.swift */; };
@@ -107,6 +108,7 @@
 		086B12021073A6F2A49850A1 /* ContextPanelRefreshAgent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ContextPanelRefreshAgent.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		0AC2F76895EE0EFC7F463447 /* GeminiCodeAssistQuota.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiCodeAssistQuota.swift; sourceTree = "<group>"; };
 		186D607FE2EEFDFFE2E70446 /* AccountConfigurationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountConfigurationStore.swift; sourceTree = "<group>"; };
+		1C30C085B935F62134E5C8C5 /* ResetPrimerPlanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResetPrimerPlanner.swift; sourceTree = "<group>"; };
 		2361E9EED490737FB8306CC7 /* SampleUsageData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleUsageData.swift; sourceTree = "<group>"; };
 		23E9C71457F4E1F101132FCF /* ContextPanelLocations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelLocations.swift; sourceTree = "<group>"; };
 		2D9602BF84ECDE08C7275504 /* ResetPrimerSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResetPrimerSettings.swift; sourceTree = "<group>"; };
@@ -189,6 +191,7 @@
 				60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */,
 				3FC2DAEDD38483FC3A5D4880 /* MainLimitSummary.swift */,
 				350ED5589FB23C42ED32704A /* ProviderConnector.swift */,
+				1C30C085B935F62134E5C8C5 /* ResetPrimerPlanner.swift */,
 				2D9602BF84ECDE08C7275504 /* ResetPrimerSettings.swift */,
 				45E8D3C3E45C1B6B3FACE828 /* SnapshotRefreshService.swift */,
 				32D8515D047F5A8117DB762C /* SnapshotStore.swift */,
@@ -438,6 +441,7 @@
 				0BBD1DF433F345E62C6A26EF /* LimitProbe.swift in Sources */,
 				A9464088796B38105C01F7D3 /* MainLimitSummary.swift in Sources */,
 				F4B9B4FB75A285E38AE52B1D /* ProviderConnector.swift in Sources */,
+				44B9C8ACA1DFFB743B5BD86A /* ResetPrimerPlanner.swift in Sources */,
 				66D9A9D36B46051B1C1EA722 /* ResetPrimerSettings.swift in Sources */,
 				28FDF54D88C9CB4A982643A6 /* SnapshotRefreshService.swift in Sources */,
 				B6C35EBBE9327327BDCA324F /* SnapshotStore.swift in Sources */,
