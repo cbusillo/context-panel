@@ -110,20 +110,12 @@ enum SampleUsageData {
     }
 
     static var fastModeForecast: FastModeCapacityPortfolioForecast {
-        let forecasts = snapshot.mainLimitSummaries
-            .filter { $0.provider == .openAI && $0.unit == .percent }
-            .map { summary in
-                FastModeCapacityForecast(
-                    limitID: summary.id,
-                    accountName: "\(summary.provider.displayName) \(summary.window.displayName) pool",
-                    providerLimits: summary.limits,
-                    now: referenceNow,
-                    standardBurnRate: BurnRate(mode: .standard, unitsPerHour: 2),
-                    fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 4),
-                    reserveUnits: 6,
-                    minimumSafeHours: 1
-                )
-            }
-        return FastModeCapacityPortfolioForecast(forecasts: forecasts)
+        snapshot.mainLimitSummaries.openAIFastModeCapacityForecast(
+            now: referenceNow,
+            defaultStandardBurnRateUnitsPerHour: 2,
+            fastModeMultiplier: 2,
+            reserveUnits: 6,
+            minimumSafeHours: 1
+        )
     }
 }
