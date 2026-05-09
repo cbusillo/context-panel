@@ -129,6 +129,58 @@ struct SettingsPane: View {
                 .listStyle(.inset)
                 .frame(height: 184)
             }
+
+            Section("Reset Primer") {
+                Toggle(isOn: Binding(
+                    get: { model.resetPrimerSettings.isEnabled },
+                    set: { model.setResetPrimerEnabled($0) }
+                )) {
+                    Text("Enable reset primer")
+                }
+                .toggleStyle(.switch)
+
+                Stepper(
+                    value: Binding(
+                        get: { model.resetPrimerSettings.delayMinutesAfterReset },
+                        set: { model.setResetPrimerDelay($0) }
+                    ),
+                    in: 0...120,
+                    step: 5
+                ) {
+                    DetailRow(
+                        label: "Delay after reset",
+                        value: "\(model.resetPrimerSettings.delayMinutesAfterReset) min"
+                    )
+                }
+
+                Stepper(
+                    value: Binding(
+                        get: { model.resetPrimerSettings.accountStaggerMinutes },
+                        set: { model.setResetPrimerStagger($0) }
+                    ),
+                    in: 0...120,
+                    step: 5
+                ) {
+                    DetailRow(
+                        label: "Stagger accounts",
+                        value: "\(model.resetPrimerSettings.accountStaggerMinutes) min"
+                    )
+                }
+
+                List {
+                    ForEach(model.resetPrimerSettings.accountPreferences) { preference in
+                        ResetPrimerAccountPreferenceRow(
+                            preference: preference,
+                            isEnabled: Binding(
+                                get: { preference.isEnabled },
+                                set: { model.setResetPrimerAccount(preference.accountID, isEnabled: $0) }
+                            )
+                        )
+                    }
+                }
+                .listStyle(.inset)
+                .frame(height: 150)
+            }
         }
         .formStyle(.grouped)
         .padding(20)
@@ -142,6 +194,7 @@ struct SettingsPane: View {
 final class SettingsPaneModel: ObservableObject {
     @Published private(set) var accounts: [LocalProviderAccountConfiguration] = []
     @Published private(set) var widgetPreferences: WidgetDisplayPreferences = .defaultPreferences
+    @Published private(set) var resetPrimerSettings: ResetPrimerSettings = .defaultSettings
     @Published private(set) var status: UsageStatus = .unknown
     @Published private(set) var errorMessage: String?
 
@@ -161,6 +214,9 @@ final class SettingsPaneModel: ObservableObject {
     private let widgetHostPreferenceStore = WidgetDisplayPreferencesStore(
         preferencesURL: ContextPanelLocations.hostDevelopmentDisplayPreferencesURL()
     )
+    private let resetPrimerSettingsStore = ResetPrimerSettingsStore(
+        settingsURL: ContextPanelLocations.resetPrimerSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
+    )
 
     private var widgetPreferenceStores: WidgetDisplayPreferencesStoreSet {
         WidgetDisplayPreferencesStoreSet(stores: [
@@ -179,6 +235,9 @@ final class SettingsPaneModel: ObservableObject {
         let result = store.load()
         accounts = result.document.accounts
         widgetPreferences = widgetPreferenceStores.load()
+        var primerSettings = resetPrimerSettingsStore.load()
+        primerSettings.syncAccounts(result.document.accounts)
+        resetPrimerSettings = primerSettings
         status = result.status
         errorMessage = result.errorMessage
     }
@@ -205,9 +264,62 @@ final class SettingsPaneModel: ObservableObject {
         }
     }
 
+    func setResetPrimerEnabled(_ isEnabled: Bool) {
+        var updated = resetPrimerSettings
+        updated.isEnabled = isEnabled
+        saveResetPrimerSettings(updated)
+    }
+
+    func setResetPrimerDelay(_ minutes: Int) {
+        var updated = resetPrimerSettings
+        updated.setDelayMinutesAfterReset(minutes)
+        saveResetPrimerSettings(updated)
+    }
+
+    func setResetPrimerStagger(_ minutes: Int) {
+        var updated = resetPrimerSettings
+        updated.setAccountStaggerMinutes(minutes)
+        saveResetPrimerSettings(updated)
+    }
+
+    func setResetPrimerAccount(_ accountID: String, isEnabled: Bool) {
+        var updated = resetPrimerSettings
+        updated.setAccount(accountID, isEnabled: isEnabled)
+        saveResetPrimerSettings(updated)
+    }
+
+    private func saveResetPrimerSettings(_ updated: ResetPrimerSettings) {
+        do {
+            try resetPrimerSettingsStore.save(updated)
+            resetPrimerSettings = updated
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func detailText(for account: LocalProviderAccountConfiguration) -> String {
         let path = account.authPath ?? account.statsPath ?? account.commandPath ?? account.connectorKind.rawValue
         return "\(account.connectorKind.rawValue) · \(ConnectorRedactor.redactedPath(path))"
+    }
+}
+
+struct ResetPrimerAccountPreferenceRow: View {
+    let preference: ResetPrimerAccountPreference
+    @Binding var isEnabled: Bool
+
+    var body: some View {
+        Toggle(isOn: $isEnabled) {
+            HStack(spacing: 8) {
+                ProviderBadge(provider: preference.provider)
+                Text(preference.accountName)
+                Spacer()
+                Text(preference.isEnabled ? "Enabled" : "Off")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(CPTheme.secondaryText)
+            }
+        }
+        .toggleStyle(.switch)
+        .padding(.vertical, 2)
     }
 }
 

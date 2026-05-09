@@ -82,6 +82,10 @@ public enum ContextPanelLocations {
         hostApplicationSupportDirectory().appending(path: "fast-mode-forecast-settings.json")
     }
 
+    public static func hostDevelopmentResetPrimerSettingsURL() -> URL {
+        hostApplicationSupportDirectory().appending(path: "reset-primer-settings.json")
+    }
+
     public static func widgetDevelopmentContainerDisplayPreferencesURL() -> URL {
         realUserHomeDirectory()
             .appending(path: "Library", directoryHint: .isDirectory)
@@ -104,6 +108,18 @@ public enum ContextPanelLocations {
             .appending(path: "Application Support", directoryHint: .isDirectory)
             .appending(path: "Context Panel", directoryHint: .isDirectory)
             .appending(path: "fast-mode-forecast-settings.json")
+    }
+
+    public static func widgetDevelopmentContainerResetPrimerSettingsURL() -> URL {
+        realUserHomeDirectory()
+            .appending(path: "Library", directoryHint: .isDirectory)
+            .appending(path: "Containers", directoryHint: .isDirectory)
+            .appending(path: widgetExtensionBundleID, directoryHint: .isDirectory)
+            .appending(path: "Data", directoryHint: .isDirectory)
+            .appending(path: "Library", directoryHint: .isDirectory)
+            .appending(path: "Application Support", directoryHint: .isDirectory)
+            .appending(path: "Context Panel", directoryHint: .isDirectory)
+            .appending(path: "reset-primer-settings.json")
     }
 
     public static func accountConfigurationURL() -> URL {
@@ -138,6 +154,16 @@ public enum ContextPanelLocations {
         }
 
         return applicationSupportDirectory().appending(path: "fast-mode-forecast-settings.json")
+    }
+
+    public static func resetPrimerSettingsURL(appGroupID: String? = nil) -> URL {
+        if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
+            return containerURL
+                .appending(path: "Context Panel", directoryHint: .isDirectory)
+                .appending(path: "reset-primer-settings.json")
+        }
+
+        return applicationSupportDirectory().appending(path: "reset-primer-settings.json")
     }
 
     private static func hostApplicationSupportDirectory() -> URL {
