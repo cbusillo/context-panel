@@ -315,15 +315,16 @@ public struct FastModeCapacityForecast: Codable, Equatable, Sendable {
         self.reserveUnits = reserveUnits
 
         let numericLimits = providerLimits.filter { $0.used != nil && $0.limit != nil }
-        let remaining = numericLimits.compactMap(\.remaining).reduce(0, +)
-        let total = numericLimits.compactMap(\.limit).reduce(0, +)
-        remainingUnits = numericLimits.isEmpty ? nil : Double(remaining)
-        totalUnits = numericLimits.isEmpty ? nil : Double(total)
+        let capacityPool = CapacityPool(limits: numericLimits)
+        let remaining = capacityPool.totalRemainingUnits
+        let total = capacityPool.totalUnits
+        remainingUnits = remaining
+        totalUnits = total
         confidence = Self.worstConfidence(providerLimits.map(\.confidence))
         standardBurnRateUnitsPerHour = standardBurnRate?.unitsPerHour
         fastBurnRateUnitsPerHour = fastBurnRate?.unitsPerHour
 
-        let nextReset = providerLimits.compactMap(\.resetsAt).filter { $0 > now }.sorted().first
+        let nextReset = capacityPool.nextReset(after: now)
         nextResetAt = nextReset
         if let nextReset {
             hoursUntilReset = max(nextReset.timeIntervalSince(now) / 3_600, 0)
@@ -345,25 +346,29 @@ public struct FastModeCapacityForecast: Codable, Equatable, Sendable {
             return
         }
 
-        let usableRemaining = max(Double(remaining) - reserveUnits, 0)
+        let usableRemaining = max((remaining ?? 0) - reserveUnits, 0)
         let standardRate = standardBurnRate?.unitsPerHour
-        let standardRunway = standardRate.map { rate in rate > 0 ? usableRemaining / rate : nil } ?? nil
-        let standardProjected = standardRate.map { rate in rate > 0 ? rate * hoursUntilReset : nil } ?? nil
-        let fastRunway = usableRemaining / fastRate
-        let fastProjected = fastRate * hoursUntilReset
+        let standardPoolRunway = standardRate.flatMap { rate in
+            rate > 0 ? capacityPool.runway(burnRateUnitsPerHour: rate, now: now, reserveUnits: reserveUnits) : nil
+        }
+        let fastPoolRunway = capacityPool.runway(burnRateUnitsPerHour: fastRate, now: now, reserveUnits: reserveUnits)
+        let standardRunway = standardPoolRunway?.runwayHours
+        let standardProjected = standardPoolRunway?.projectedUseUntilHorizon
+        let fastRunway = fastPoolRunway?.runwayHours ?? (usableRemaining / fastRate)
+        let fastProjected = fastPoolRunway?.projectedUseUntilHorizon ?? (fastRate * hoursUntilReset)
 
         standardModeRunwayHours = standardRunway
         fastModeRunwayHours = fastRunway
         projectedStandardUseUntilReset = standardProjected
         projectedFastUseUntilReset = fastProjected
 
-        if remaining <= 0 {
+        if (remaining ?? 0) <= 0 {
             recommendation = .limited
         } else if usableRemaining <= 0 {
             recommendation = .saveFastMode
-        } else if fastProjected <= usableRemaining {
+        } else if fastPoolRunway?.lastsThroughHorizon == true {
             recommendation = .safeThroughReset
-        } else if fastRunway >= minimumSafeHours, standardProjected == nil || (standardProjected ?? .infinity) <= usableRemaining {
+        } else if fastRunway >= minimumSafeHours, standardPoolRunway == nil || standardPoolRunway?.lastsThroughHorizon == true {
             recommendation = .safeForLimitedTime
         } else {
             recommendation = .saveFastMode
