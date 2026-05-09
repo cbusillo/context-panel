@@ -1,0 +1,389 @@
+import Foundation
+
+public enum ResetPrimerRunStatus: String, Codable, Equatable, Sendable {
+    case completed
+    case failed
+    case skipped
+}
+
+public struct ResetPrimerRunKey: Codable, Equatable, Hashable, Sendable {
+    public let provider: Provider
+    public let accountID: String
+    public let windowLabel: String
+    public let resetAt: Date
+
+    public init(provider: Provider, accountID: String, windowLabel: String, resetAt: Date) {
+        self.provider = provider
+        self.accountID = accountID
+        self.windowLabel = windowLabel
+        self.resetAt = resetAt
+    }
+}
+
+public struct ResetPrimerRunRecord: Codable, Equatable, Identifiable, Sendable {
+    public let key: ResetPrimerRunKey
+    public var accountName: String
+    public var scheduledAt: Date
+    public var status: ResetPrimerRunStatus
+    public var updatedAt: Date
+    public var errorMessage: String?
+
+    public var id: String { key.stableID }
+
+    public init(
+        key: ResetPrimerRunKey,
+        accountName: String,
+        scheduledAt: Date,
+        status: ResetPrimerRunStatus,
+        updatedAt: Date,
+        errorMessage: String? = nil
+    ) {
+        self.key = key
+        self.accountName = accountName
+        self.scheduledAt = scheduledAt
+        self.status = status
+        self.updatedAt = updatedAt
+        self.errorMessage = errorMessage.map(ConnectorRedactor.redact)
+    }
+}
+
+public struct ResetPrimerRunState: Codable, Equatable, Sendable {
+    public let schemaVersion: Int
+    public var records: [ResetPrimerRunRecord]
+
+    public init(records: [ResetPrimerRunRecord] = []) {
+        schemaVersion = 1
+        self.records = Self.normalized(records)
+    }
+
+    public static var empty: ResetPrimerRunState { ResetPrimerRunState() }
+
+    public func record(for key: ResetPrimerRunKey) -> ResetPrimerRunRecord? {
+        records.first { $0.key == key }
+    }
+
+    public mutating func upsert(_ record: ResetPrimerRunRecord) {
+        records.removeAll { $0.key == record.key }
+        records.append(record)
+        records = Self.normalized(records)
+    }
+
+    private static func normalized(_ records: [ResetPrimerRunRecord]) -> [ResetPrimerRunRecord] {
+        Dictionary(grouping: records, by: \.key)
+            .compactMap { _, duplicateRecords in
+                duplicateRecords.max { lhs, rhs in lhs.updatedAt < rhs.updatedAt }
+            }
+            .sorted { lhs, rhs in
+                if lhs.key.resetAt != rhs.key.resetAt {
+                    return lhs.key.resetAt < rhs.key.resetAt
+                }
+                if lhs.key.provider != rhs.key.provider {
+                    return lhs.key.provider.displayName < rhs.key.provider.displayName
+                }
+                if lhs.accountName != rhs.accountName {
+                    return lhs.accountName.localizedCaseInsensitiveCompare(rhs.accountName) == .orderedAscending
+                }
+                if lhs.key.windowLabel != rhs.key.windowLabel {
+                    return lhs.key.windowLabel.localizedCaseInsensitiveCompare(rhs.key.windowLabel) == .orderedAscending
+                }
+                return lhs.key.accountID < rhs.key.accountID
+            }
+    }
+}
+
+public struct ResetPrimerCandidate: Equatable, Identifiable, Sendable {
+    public let key: ResetPrimerRunKey
+    public let accountName: String
+    public let scheduledAt: Date
+    public let sourceLimitIDs: [String]
+
+    public var id: String { key.stableID }
+    public var provider: Provider { key.provider }
+    public var accountID: String { key.accountID }
+    public var windowLabel: String { key.windowLabel }
+    public var resetAt: Date { key.resetAt }
+
+    public init(
+        key: ResetPrimerRunKey,
+        accountName: String,
+        scheduledAt: Date,
+        sourceLimitIDs: [String]
+    ) {
+        self.key = key
+        self.accountName = accountName
+        self.scheduledAt = scheduledAt
+        self.sourceLimitIDs = sourceLimitIDs.sorted()
+    }
+
+    public func isDue(now: Date) -> Bool {
+        scheduledAt <= now
+    }
+}
+
+public struct ResetPrimerPlan: Equatable, Sendable {
+    public let due: [ResetPrimerCandidate]
+    public let upcoming: [ResetPrimerCandidate]
+
+    public init(due: [ResetPrimerCandidate], upcoming: [ResetPrimerCandidate]) {
+        self.due = due
+        self.upcoming = upcoming
+    }
+
+    public var candidates: [ResetPrimerCandidate] {
+        (due + upcoming).sortedBySchedule
+    }
+
+    public var isEmpty: Bool {
+        due.isEmpty && upcoming.isEmpty
+    }
+}
+
+public enum ResetPrimerPlanner {
+    public static func plan(
+        settings: ResetPrimerSettings,
+        snapshot: UsageSnapshot,
+        state: ResetPrimerRunState = .empty,
+        now: Date
+    ) -> ResetPrimerPlan {
+        guard settings.isEnabled else {
+            return ResetPrimerPlan(due: [], upcoming: [])
+        }
+
+        let enabledPreferences = settings.accountPreferences.filter(\.isEnabled)
+        guard !enabledPreferences.isEmpty else {
+            return ResetPrimerPlan(due: [], upcoming: [])
+        }
+
+        let enabledAccounts = Set(enabledPreferences.map(\.accountID))
+        let candidates = groupedLimits(snapshot.limits.filter { limit in
+            guard enabledAccounts.contains(limit.accountID), limit.resetsAt != nil else { return false }
+            guard settings.preference(for: limit.accountID)?.provider == limit.provider else { return false }
+            return limit.status != .failure && limit.status != .unknown && limit.status != .stale
+        })
+
+        let scheduled = applySchedule(
+            candidates: candidates,
+            delayMinutesAfterReset: settings.delayMinutesAfterReset,
+            accountStaggerMinutes: settings.accountStaggerMinutes
+        )
+        .filter { candidate in
+            guard let record = state.record(for: candidate.key) else { return true }
+            return record.status == .failed
+        }
+        .sortedBySchedule
+
+        return ResetPrimerPlan(
+            due: scheduled.filter { $0.isDue(now: now) },
+            upcoming: scheduled.filter { !$0.isDue(now: now) }
+        )
+    }
+
+    private static func groupedLimits(_ limits: [UsageLimit]) -> [UnscheduledResetPrimerCandidate] {
+        let grouped = Dictionary(grouping: limits) { limit in
+            ResetPrimerRunKey(
+                provider: limit.provider,
+                accountID: limit.accountID,
+                windowLabel: normalizedWindowLabel(for: limit),
+                resetAt: limit.resetsAt ?? Date.distantFuture
+            )
+        }
+
+        return grouped.compactMap { key, limits in
+            guard key.resetAt != Date.distantFuture, let first = limits.sortedByLimitID.first else { return nil }
+            return UnscheduledResetPrimerCandidate(
+                key: key,
+                accountName: first.accountName,
+                sourceLimitIDs: limits.map(\.id)
+            )
+        }
+    }
+
+    private static func applySchedule(
+        candidates: [UnscheduledResetPrimerCandidate],
+        delayMinutesAfterReset: Int,
+        accountStaggerMinutes: Int
+    ) -> [ResetPrimerCandidate] {
+        Dictionary(grouping: candidates, by: \.key.resetAt)
+            .flatMap { resetAt, resetCandidates in
+                let accountOrder = Dictionary(
+                    uniqueKeysWithValues: Array(Set(resetCandidates.map(\.key.accountID))).sorted().enumerated().map { index, accountID in
+                        (accountID, index)
+                    }
+                )
+
+                return resetCandidates.map { candidate in
+                    let staggerIndex = accountOrder[candidate.key.accountID] ?? 0
+                    let scheduledAt = resetAt
+                        .addingTimeInterval(TimeInterval(max(delayMinutesAfterReset, 0) * 60))
+                        .addingTimeInterval(TimeInterval(max(accountStaggerMinutes, 0) * 60 * staggerIndex))
+                    return ResetPrimerCandidate(
+                        key: candidate.key,
+                        accountName: candidate.accountName,
+                        scheduledAt: scheduledAt,
+                        sourceLimitIDs: candidate.sourceLimitIDs
+                    )
+                }
+            }
+    }
+
+    private static func normalizedWindowLabel(for limit: UsageLimit) -> String {
+        let label = limit.windowLabel ?? limit.label
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? limit.label : trimmed
+    }
+}
+
+public struct ResetPrimerRunStateStore: Sendable {
+    public let stateURL: URL
+
+    public init(stateURL: URL) {
+        self.stateURL = stateURL
+    }
+
+    public var exists: Bool {
+        FileManager.default.fileExists(atPath: stateURL.path)
+    }
+
+    public func load() -> ResetPrimerRunState {
+        loadIfAvailable() ?? .empty
+    }
+
+    public func loadIfAvailable() -> ResetPrimerRunState? {
+        guard FileManager.default.fileExists(atPath: stateURL.path) else {
+            return nil
+        }
+
+        do {
+            let state = try Self.makeDecoder().decode(
+                ResetPrimerRunState.self,
+                from: try Data(contentsOf: stateURL)
+            )
+            guard state.schemaVersion == 1 else {
+                return nil
+            }
+            return state
+        } catch {
+            return nil
+        }
+    }
+
+    public func save(_ state: ResetPrimerRunState) throws {
+        let directory = stateURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let data = try Self.makeEncoder().encode(state)
+        try data.write(to: stateURL, options: [.atomic])
+    }
+
+    private static func makeEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }
+
+    private static func makeDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }
+}
+
+public struct ResetPrimerPlanService: Sendable {
+    private let settingsStore: ResetPrimerSettingsStore
+    private let stateStore: ResetPrimerRunStateStore
+    private let snapshotStore: JSONSnapshotStore
+
+    public init(
+        settingsStore: ResetPrimerSettingsStore,
+        stateStore: ResetPrimerRunStateStore,
+        snapshotStore: JSONSnapshotStore
+    ) {
+        self.settingsStore = settingsStore
+        self.stateStore = stateStore
+        self.snapshotStore = snapshotStore
+    }
+
+    public static func appDefault(appGroupID: String = ContextPanelLocations.appGroupID) -> ResetPrimerPlanService {
+        ResetPrimerPlanService(
+            settingsStore: ResetPrimerSettingsStore(
+                settingsURL: ContextPanelLocations.resetPrimerSettingsURL(appGroupID: appGroupID)
+            ),
+            stateStore: ResetPrimerRunStateStore(
+                stateURL: ContextPanelLocations.resetPrimerRunStateURL(appGroupID: appGroupID)
+            ),
+            snapshotStore: JSONSnapshotStore(
+                rootDirectory: ContextPanelLocations.snapshotDirectory(appGroupID: appGroupID)
+            )
+        )
+    }
+
+    public func plan(now: Date = Date()) -> ResetPrimerPlan {
+        guard let snapshot = snapshotStore.loadCurrent().snapshot?.snapshot else {
+            return ResetPrimerPlan(due: [], upcoming: [])
+        }
+
+        return ResetPrimerPlanner.plan(
+            settings: settingsStore.load(),
+            snapshot: snapshot,
+            state: stateStore.load(),
+            now: now
+        )
+    }
+
+    public func mark(
+        _ candidate: ResetPrimerCandidate,
+        status: ResetPrimerRunStatus,
+        now: Date = Date(),
+        errorMessage: String? = nil
+    ) throws {
+        var state = stateStore.load()
+        state.upsert(ResetPrimerRunRecord(
+            key: candidate.key,
+            accountName: candidate.accountName,
+            scheduledAt: candidate.scheduledAt,
+            status: status,
+            updatedAt: now,
+            errorMessage: errorMessage
+        ))
+        try stateStore.save(state)
+    }
+}
+
+private struct UnscheduledResetPrimerCandidate: Equatable {
+    let key: ResetPrimerRunKey
+    let accountName: String
+    let sourceLimitIDs: [String]
+}
+
+private extension ResetPrimerRunKey {
+    var stableID: String {
+        let reset = ISO8601DateFormatter().string(from: resetAt)
+        return "\(provider.rawValue):\(accountID):\(windowLabel):\(reset)"
+    }
+}
+
+private extension Array where Element == UsageLimit {
+    var sortedByLimitID: [UsageLimit] {
+        sorted { lhs, rhs in lhs.id < rhs.id }
+    }
+}
+
+private extension Array where Element == ResetPrimerCandidate {
+    var sortedBySchedule: [ResetPrimerCandidate] {
+        sorted { lhs, rhs in
+            if lhs.scheduledAt != rhs.scheduledAt {
+                return lhs.scheduledAt < rhs.scheduledAt
+            }
+            if lhs.provider != rhs.provider {
+                return lhs.provider.displayName < rhs.provider.displayName
+            }
+            if lhs.accountName != rhs.accountName {
+                return lhs.accountName.localizedCaseInsensitiveCompare(rhs.accountName) == .orderedAscending
+            }
+            if lhs.windowLabel != rhs.windowLabel {
+                return lhs.windowLabel.localizedCaseInsensitiveCompare(rhs.windowLabel) == .orderedAscending
+            }
+            return lhs.accountID < rhs.accountID
+        }
+    }
+}

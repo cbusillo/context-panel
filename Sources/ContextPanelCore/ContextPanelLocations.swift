@@ -166,6 +166,16 @@ public enum ContextPanelLocations {
         return applicationSupportDirectory().appending(path: "reset-primer-settings.json")
     }
 
+    public static func resetPrimerRunStateURL(appGroupID: String? = nil) -> URL {
+        if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
+            return containerURL
+                .appending(path: "Context Panel", directoryHint: .isDirectory)
+                .appending(path: "reset-primer-runs.json")
+        }
+
+        return applicationSupportDirectory().appending(path: "reset-primer-runs.json")
+    }
+
     private static func hostApplicationSupportDirectory() -> URL {
         realUserHomeDirectory()
             .appending(path: "Library", directoryHint: .isDirectory)
