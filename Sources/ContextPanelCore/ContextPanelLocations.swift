@@ -6,6 +6,14 @@ public enum ContextPanelLocations {
     public static let widgetExtensionBundleID = "com.shinycomputers.contextpanel.widget"
     public static let refreshAgentBundleID = "com.shinycomputers.contextpanel.refresh-agent"
 
+    public static var isRunningInAppSandbox: Bool {
+        ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] != nil
+    }
+
+    public static var usesDevelopmentWidgetMirrors: Bool {
+        !isRunningInAppSandbox
+    }
+
     public static func applicationSupportDirectory() -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support")

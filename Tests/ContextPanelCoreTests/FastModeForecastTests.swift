@@ -156,6 +156,45 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(forecast.runwayCopy == "out 1d 22h")
 }
 
+@Test func capacityForecastUsesStaggeredResetBucketsBeforeSavingFastMode() {
+    let forecast = FastModeCapacityForecast(
+        limitID: "openai:weekly",
+        accountName: "OpenAI Weekly pool",
+        providerLimits: [
+            openAILimit(accountName: "Personal", used: 100, limit: 100, resetsInHours: 2, windowLabel: "Weekly"),
+            openAILimit(accountName: "Work", used: 50, limit: 100, resetsInHours: 168, windowLabel: "Weekly"),
+        ],
+        now: now,
+        standardBurnRate: BurnRate(mode: .standard, unitsPerHour: 8),
+        fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 20),
+        reserveUnits: 6
+    )
+
+    #expect(forecast.remainingUnits == 50)
+    #expect(forecast.recommendation == .safeThroughReset)
+    #expect(forecast.runwayCopy == "lasts past reset in 2h")
+}
+
+@Test func capacityForecastStopsBeforeNextResetWhenBucketsCannotBridgeGap() {
+    let forecast = FastModeCapacityForecast(
+        limitID: "openai:weekly",
+        accountName: "OpenAI Weekly pool",
+        providerLimits: [
+            openAILimit(accountName: "Personal", used: 100, limit: 100, resetsInHours: 24, windowLabel: "Weekly"),
+            openAILimit(accountName: "Work", used: 95, limit: 100, resetsInHours: 168, windowLabel: "Weekly"),
+        ],
+        now: now,
+        standardBurnRate: nil,
+        fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 2),
+        reserveUnits: 0
+    )
+
+    #expect(forecast.remainingUnits == 5)
+    #expect(forecast.recommendation == .safeForLimitedTime)
+    #expect(forecast.fastModeRunwayHours == 2.5)
+    #expect(forecast.runwayCopy == "fast out 2.5h")
+}
+
 @Test func capacityPortfolioKeepsWeeklyAheadOfShorterOpenAIWindow() {
     let weekly = FastModeCapacityForecast(
         limitID: "openai:weekly",
@@ -165,7 +204,7 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
         ],
         now: now,
         standardBurnRate: BurnRate(mode: .standard, unitsPerHour: 2),
-        fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 4),
+        fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 3),
         reserveUnits: 6
     )
     let fiveHour = FastModeCapacityForecast(
@@ -203,6 +242,38 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(forecast.copy == "Measuring burn")
     #expect(forecast.burnRateCopy == "measuring burn")
     #expect(forecast.burnPaceCopy == "measuring burn")
+}
+
+@Test func capacityPoolIgnoresUnknownBucketsForNumericRunway() {
+    let forecast = FastModeCapacityForecast(
+        limitID: "openai:weekly",
+        accountName: "OpenAI Weekly pool",
+        providerLimits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "openai-unknown",
+                accountName: "Unknown",
+                label: "OpenAI Weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: nil,
+                limit: nil,
+                resetsAt: now.addingTimeInterval(2 * 3_600),
+                confidence: .unknown
+            ),
+            openAILimit(accountName: "Work", used: 10, limit: 100, resetsInHours: 24, windowLabel: "Weekly"),
+        ],
+        now: now,
+        standardBurnRate: BurnRate(mode: .standard, unitsPerHour: 2),
+        fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 4),
+        reserveUnits: 6
+    )
+
+    #expect(forecast.remainingUnits == 90)
+    #expect(forecast.totalUnits == 100)
+    #expect(forecast.confidence == .unknown)
+    #expect(forecast.recommendation == .safeForLimitedTime)
+    #expect(forecast.fastModeRunwayHours == 21)
 }
 
 @Test func observedBurnRateUsesRollingHistoryIncludingIdleIntervals() throws {

@@ -1138,6 +1138,7 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     private func mirrorSnapshotsForDevelopmentWidget() {
+        guard ContextPanelLocations.usesDevelopmentWidgetMirrors else { return }
         do {
             try refreshService.mirrorPrimarySnapshotToDevelopmentStores()
         } catch {
@@ -1146,6 +1147,7 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     private func mirrorDisplayPreferencesForDevelopmentWidget() {
+        guard ContextPanelLocations.usesDevelopmentWidgetMirrors else { return }
         let sourceURL = ContextPanelLocations.widgetDisplayPreferencesURL(appGroupID: ContextPanelLocations.appGroupID)
         guard FileManager.default.fileExists(atPath: sourceURL.path) else { return }
 

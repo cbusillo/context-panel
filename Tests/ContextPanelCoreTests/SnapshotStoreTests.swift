@@ -240,6 +240,22 @@ import Testing
     #expect(mirror.loadHistory().map(\.savedAt) == [second, first])
 }
 
+@Test func snapshotRefreshStoresSkipDevelopmentMirrorsInSandbox() throws {
+    let originalValue = getenv("APP_SANDBOX_CONTAINER_ID").map { String(cString: $0) }
+    setenv("APP_SANDBOX_CONTAINER_ID", "com.shinycomputers.contextpanel", 1)
+    defer {
+        if let originalValue {
+            setenv("APP_SANDBOX_CONTAINER_ID", originalValue, 1)
+        } else {
+            unsetenv("APP_SANDBOX_CONTAINER_ID")
+        }
+    }
+
+    let stores = SnapshotRefreshStores.appDefault(appGroupID: "group.invalid.contextpanel.tests")
+
+    #expect(stores.developmentMirrors.isEmpty)
+}
+
 @Test func snapshotRefreshRunnerSkipsFreshSnapshots() async throws {
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())

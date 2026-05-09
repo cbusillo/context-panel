@@ -11,12 +11,16 @@ public struct SnapshotRefreshStores: Sendable {
     }
 
     public static func appDefault(appGroupID: String = ContextPanelLocations.appGroupID) -> SnapshotRefreshStores {
-        SnapshotRefreshStores(
-            primary: JSONSnapshotStore(rootDirectory: ContextPanelLocations.snapshotDirectory(appGroupID: appGroupID)),
-            developmentMirrors: [
+        let developmentMirrors = ContextPanelLocations.usesDevelopmentWidgetMirrors
+            ? [
                 JSONSnapshotStore(rootDirectory: ContextPanelLocations.widgetDevelopmentContainerSnapshotDirectory()),
                 JSONSnapshotStore(rootDirectory: ContextPanelLocations.hostDevelopmentSnapshotDirectory()),
             ]
+            : []
+
+        return SnapshotRefreshStores(
+            primary: JSONSnapshotStore(rootDirectory: ContextPanelLocations.snapshotDirectory(appGroupID: appGroupID)),
+            developmentMirrors: developmentMirrors
         )
     }
 }

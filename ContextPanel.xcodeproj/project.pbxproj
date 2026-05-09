@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		0BBD1DF433F345E62C6A26EF /* LimitProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */; };
 		10A2940E7E3FE6E253ECFEDE /* GeminiCodeAssistQuota.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AC2F76895EE0EFC7F463447 /* GeminiCodeAssistQuota.swift */; };
+		198493F605C07AB87B0BDFA9 /* CapacityPool.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8862B929FE544FCB2C3D06B /* CapacityPool.swift */; };
 		1DD89F5634070B75C09BDE99 /* ClaudeLocalStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2E426A482568BBE85357D7E /* ClaudeLocalStatus.swift */; };
 		28FDF54D88C9CB4A982643A6 /* SnapshotRefreshService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45E8D3C3E45C1B6B3FACE828 /* SnapshotRefreshService.swift */; };
 		29FD4D47A21D08ABAE47E778 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 944A3154A0C2E33C5971E571 /* Assets.xcassets */; };
@@ -121,6 +122,7 @@
 		9FA8FE4CC9BE058D8F46FBA2 /* CodexRateLimits.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRateLimits.swift; sourceTree = "<group>"; };
 		A46D6040EB6F68FC91EC477D /* ContextPanelPreviewApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelPreviewApp.swift; sourceTree = "<group>"; };
 		AC712405A58ED12AA33BDC68 /* ContextPanelRefreshAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelRefreshAgent.swift; sourceTree = "<group>"; };
+		B8862B929FE544FCB2C3D06B /* CapacityPool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapacityPool.swift; sourceTree = "<group>"; };
 		D459054C90410A784EBD308B /* UsageLimit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageLimit.swift; sourceTree = "<group>"; };
 		E195C6E906DA9C0BF082622F /* ContextPanelWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelWidget.swift; sourceTree = "<group>"; };
 		E2E426A482568BBE85357D7E /* ClaudeLocalStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeLocalStatus.swift; sourceTree = "<group>"; };
@@ -172,6 +174,7 @@
 			children = (
 				186D607FE2EEFDFFE2E70446 /* AccountConfigurationStore.swift */,
 				8FB4BEA57ACE8B84CAE71E75 /* BurnRateEstimator.swift */,
+				B8862B929FE544FCB2C3D06B /* CapacityPool.swift */,
 				E2E426A482568BBE85357D7E /* ClaudeLocalStatus.swift */,
 				53715ACF982CE590F00C3A75 /* ClaudeWebUsage.swift */,
 				9FA8FE4CC9BE058D8F46FBA2 /* CodexRateLimits.swift */,
@@ -418,6 +421,7 @@
 			files = (
 				E77C3B3D8985239A004E8CDC /* AccountConfigurationStore.swift in Sources */,
 				44DFF437D4762A4D0D2DBAA8 /* BurnRateEstimator.swift in Sources */,
+				198493F605C07AB87B0BDFA9 /* CapacityPool.swift in Sources */,
 				1DD89F5634070B75C09BDE99 /* ClaudeLocalStatus.swift in Sources */,
 				BF04DB8945D058C7A63BEAB3 /* ClaudeWebUsage.swift in Sources */,
 				47414B1A42BE473BF1644296 /* CodexRateLimits.swift in Sources */,
