@@ -162,6 +162,15 @@ final class SettingsPaneModel: ObservableObject {
         preferencesURL: ContextPanelLocations.hostDevelopmentDisplayPreferencesURL()
     )
 
+    private var widgetPreferenceStores: WidgetDisplayPreferencesStoreSet {
+        WidgetDisplayPreferencesStoreSet(stores: [
+            widgetPreferenceStore,
+            widgetApplicationSupportPreferenceStore,
+            widgetContainerPreferenceStore,
+            widgetHostPreferenceStore,
+        ])
+    }
+
     var configurationPath: String {
         store.configurationURL.path
     }
@@ -169,14 +178,7 @@ final class SettingsPaneModel: ObservableObject {
     func load() {
         let result = store.load()
         accounts = result.document.accounts
-        widgetPreferences = [
-            widgetPreferenceStore,
-            widgetApplicationSupportPreferenceStore,
-            widgetContainerPreferenceStore,
-            widgetHostPreferenceStore,
-        ]
-        .compactMap { $0.loadIfAvailable() }
-        .first ?? .defaultPreferences
+        widgetPreferences = widgetPreferenceStores.load()
         status = result.status
         errorMessage = result.errorMessage
     }
@@ -195,10 +197,7 @@ final class SettingsPaneModel: ObservableObject {
 
     private func saveWidgetPreferences(_ updated: WidgetDisplayPreferences) {
         do {
-            try widgetPreferenceStore.save(updated)
-            try widgetApplicationSupportPreferenceStore.save(updated)
-            try widgetContainerPreferenceStore.save(updated)
-            try widgetHostPreferenceStore.save(updated)
+            try widgetPreferenceStores.save(updated)
             widgetPreferences = updated
             WidgetCenter.shared.reloadAllTimelines()
         } catch {

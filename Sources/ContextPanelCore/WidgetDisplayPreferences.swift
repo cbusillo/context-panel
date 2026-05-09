@@ -193,6 +193,38 @@ public struct WidgetDisplayPreferencesStore: Sendable {
     }
 }
 
+public struct WidgetDisplayPreferencesStoreSet: Sendable {
+    public let stores: [WidgetDisplayPreferencesStore]
+
+    public init(stores: [WidgetDisplayPreferencesStore]) {
+        self.stores = stores
+    }
+
+    public func load() -> WidgetDisplayPreferences {
+        stores.compactMap { $0.loadIfAvailable() }.first ?? .defaultPreferences
+    }
+
+    public func save(_ preferences: WidgetDisplayPreferences) throws {
+        var firstError: Error?
+        var successfulWriteCount = 0
+
+        for store in stores {
+            do {
+                try store.save(preferences)
+                successfulWriteCount += 1
+            } catch {
+                if firstError == nil {
+                    firstError = error
+                }
+            }
+        }
+
+        if successfulWriteCount == 0, let firstError {
+            throw firstError
+        }
+    }
+}
+
 public struct WidgetMainLimitLane: Equatable, Identifiable, Sendable {
     public let preference: WidgetMainLimitPreference
     public let summary: MainLimitSummary?

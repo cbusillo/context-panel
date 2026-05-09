@@ -422,3 +422,27 @@ import Testing
     ])
     #expect(loaded.preference(for: MainLimitSummary(provider: .anthropic, window: .weekly, limits: []))?.isVisible == false)
 }
+
+@Test func widgetDisplayPreferencesStoreSetSavesToReachableMirrorsWhenOneFails() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+    let blockedFile = directory.appending(path: "blocked")
+    try Data().write(to: blockedFile)
+    let failingStore = WidgetDisplayPreferencesStore(
+        preferencesURL: blockedFile.appending(path: "widget-display-preferences.json")
+    )
+    let reachableStore = WidgetDisplayPreferencesStore(
+        preferencesURL: directory.appending(path: "reachable/widget-display-preferences.json")
+    )
+    let storeSet = WidgetDisplayPreferencesStoreSet(stores: [failingStore, reachableStore])
+    var preferences = WidgetDisplayPreferences.defaultPreferences
+    preferences.setMainLimit(provider: .openAI, window: .fiveHour, isVisible: true)
+
+    try storeSet.save(preferences)
+
+    #expect(reachableStore.loadIfAvailable() == preferences)
+    #expect(storeSet.load() == preferences)
+}
