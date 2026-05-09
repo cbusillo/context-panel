@@ -124,17 +124,12 @@ struct ContextPanelTimelineProvider: TimelineProvider {
     }
 
     private func loadDisplayPreferences() -> WidgetDisplayPreferences {
-        for store in [
+        WidgetDisplayPreferencesStoreSet(stores: [
             preferencesStore,
             containerFallbackPreferencesStore,
             hostFallbackPreferencesStore,
             fallbackPreferencesStore,
-        ] {
-            if let preferences = store.loadIfAvailable() {
-                return preferences
-            }
-        }
-        return .defaultPreferences
+        ]).load()
     }
 
     private func loadForecastSettings() -> FastModeForecastSettings {
