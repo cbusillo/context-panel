@@ -249,6 +249,40 @@ import Testing
     #expect(result.snapshot.limits[0].note?.contains("stale Claude Code statusline") == true)
 }
 
+@Test func claudeConnectorUsesUsageEstimateWhenStatuslineCacheIsStale() async throws {
+    let auth = #"{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","subscriptionType":"pro"}"#.data(using: .utf8)!
+    let stats = #"{"version":3,"lastComputedDate":"2026-04-26","dailyActivity":[],"modelUsage":{},"totalSessions":2,"totalMessages":3}"#.data(using: .utf8)!
+    let cache = #"{"observed_at":1788379200,"rate_limits":{"five_hour":{"used_percentage":4,"resets_at":1788397200},"seven_day":{"used_percentage":0,"resets_at":1788984000}}}"#.data(using: .utf8)!
+    let blocks = #"{"blocks":[{"isActive":false,"totalTokens":1000},{"isActive":true,"totalTokens":500,"projection":{"totalTokens":1200,"remainingMinutes":30},"models":["claude-sonnet-4-6"]}]}"#.data(using: .utf8)!
+    let connector = ClaudeLocalStatusConnector(
+        accounts: [ClaudeAccountConfiguration(
+            accountName: "Claude",
+            claudeBinary: "claude",
+            statsPath: "/tmp/stats.json",
+            rateLimitSnapshotPath: "/tmp/claude-statusline.json",
+            rateLimitSnapshotMaximumAge: 60,
+            usageBlocksPath: "/tmp/ccusage-blocks.json"
+        )],
+        processClient: StubProcessClient(result: ConnectorProcessResult(exitCode: 0, stdout: auth)),
+        fileLoader: { path in
+            switch path {
+            case "/tmp/claude-statusline.json": cache
+            case "/tmp/ccusage-blocks.json": blocks
+            default: stats
+            }
+        },
+        fileExists: { path in path == "/tmp/stats.json" || path == "/tmp/claude-statusline.json" || path == "/tmp/ccusage-blocks.json" }
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_788_379_500))
+
+    #expect(result.reports[0].status == .healthy)
+    #expect(result.snapshot.limits.count == 1)
+    #expect(result.snapshot.limits[0].label == "Claude 5-hour estimate")
+    #expect(result.snapshot.limits[0].confidence == .estimated)
+    #expect(result.snapshot.limits[0].lastUpdatedAt == Date(timeIntervalSince1970: 1_788_379_500))
+}
+
 @Test func claudeConnectorReportsEveryCodeUsageEstimate() async throws {
     let auth = #"{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","subscriptionType":"pro"}"#.data(using: .utf8)!
     let stats = #"{"version":3,"lastComputedDate":"2026-04-26","dailyActivity":[],"modelUsage":{},"totalSessions":2,"totalMessages":3}"#.data(using: .utf8)!

@@ -9,14 +9,24 @@ public enum ResetPrimerRunStatus: String, Codable, Equatable, Sendable {
 public struct ResetPrimerRunKey: Codable, Equatable, Hashable, Sendable {
     public let provider: Provider
     public let accountID: String
-    public let windowLabel: String
     public let resetAt: Date
 
     public init(provider: Provider, accountID: String, windowLabel: String, resetAt: Date) {
         self.provider = provider
         self.accountID = accountID
-        self.windowLabel = windowLabel
         self.resetAt = resetAt
+    }
+
+    public init(provider: Provider, accountID: String, resetAt: Date) {
+        self.provider = provider
+        self.accountID = accountID
+        self.resetAt = resetAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case provider
+        case accountID
+        case resetAt
     }
 }
 
@@ -83,9 +93,6 @@ public struct ResetPrimerRunState: Codable, Equatable, Sendable {
                 if lhs.accountName != rhs.accountName {
                     return lhs.accountName.localizedCaseInsensitiveCompare(rhs.accountName) == .orderedAscending
                 }
-                if lhs.key.windowLabel != rhs.key.windowLabel {
-                    return lhs.key.windowLabel.localizedCaseInsensitiveCompare(rhs.key.windowLabel) == .orderedAscending
-                }
                 return lhs.key.accountID < rhs.key.accountID
             }
     }
@@ -94,23 +101,25 @@ public struct ResetPrimerRunState: Codable, Equatable, Sendable {
 public struct ResetPrimerCandidate: Equatable, Identifiable, Sendable {
     public let key: ResetPrimerRunKey
     public let accountName: String
+    public let windowLabel: String
     public let scheduledAt: Date
     public let sourceLimitIDs: [String]
 
     public var id: String { key.stableID }
     public var provider: Provider { key.provider }
     public var accountID: String { key.accountID }
-    public var windowLabel: String { key.windowLabel }
     public var resetAt: Date { key.resetAt }
 
     public init(
         key: ResetPrimerRunKey,
         accountName: String,
+        windowLabel: String,
         scheduledAt: Date,
         sourceLimitIDs: [String]
     ) {
         self.key = key
         self.accountName = accountName
+        self.windowLabel = windowLabel
         self.scheduledAt = scheduledAt
         self.sourceLimitIDs = sourceLimitIDs.sorted()
     }
@@ -183,7 +192,6 @@ public enum ResetPrimerPlanner {
             ResetPrimerRunKey(
                 provider: limit.provider,
                 accountID: limit.accountID,
-                windowLabel: normalizedWindowLabel(for: limit),
                 resetAt: limit.resetsAt ?? Date.distantFuture
             )
         }
@@ -193,6 +201,7 @@ public enum ResetPrimerPlanner {
             return UnscheduledResetPrimerCandidate(
                 key: key,
                 accountName: first.accountName,
+                windowLabel: normalizedWindowLabel(for: first),
                 sourceLimitIDs: limits.map(\.id)
             )
         }
@@ -219,6 +228,7 @@ public enum ResetPrimerPlanner {
                     return ResetPrimerCandidate(
                         key: candidate.key,
                         accountName: candidate.accountName,
+                        windowLabel: candidate.windowLabel,
                         scheduledAt: scheduledAt,
                         sourceLimitIDs: candidate.sourceLimitIDs
                     )
@@ -352,13 +362,14 @@ public struct ResetPrimerPlanService: Sendable {
 private struct UnscheduledResetPrimerCandidate: Equatable {
     let key: ResetPrimerRunKey
     let accountName: String
+    let windowLabel: String
     let sourceLimitIDs: [String]
 }
 
 private extension ResetPrimerRunKey {
     var stableID: String {
         let reset = ISO8601DateFormatter().string(from: resetAt)
-        return "\(provider.rawValue):\(accountID):\(windowLabel):\(reset)"
+        return "\(provider.rawValue):\(accountID):\(reset)"
     }
 }
 

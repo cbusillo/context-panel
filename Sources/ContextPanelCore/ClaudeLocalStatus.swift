@@ -306,6 +306,16 @@ public func claudeLocalStatusLimits(
 ) -> [UsageLimit] {
     if authStatus.loggedIn, let rateLimitSnapshot, !rateLimitSnapshot.windows.isEmpty {
         let isStale = observedAt.timeIntervalSince(rateLimitSnapshot.observedAt) > rateLimitSnapshotMaximumAge
+        if isStale, let estimatedLimit = claudeUsageBlockEstimate(
+            usageBlocksSummary: usageBlocksSummary,
+            authStatus: authStatus,
+            accountID: accountID,
+            accountName: accountName,
+            observedAt: observedAt
+        ) {
+            return [estimatedLimit]
+        }
+
         let sourceNote = isStale ? "source: stale Claude Code statusline" : "source: Claude Code statusline"
         return rateLimitSnapshot.windows.map { window in
             UsageLimit(
