@@ -82,6 +82,33 @@ import Testing
     #expect(report.markdownSummary.contains("authorization headers"))
 }
 
+@Test func limitProbeReportStoreWritesGitignoredLocalMarkdownReport() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let report = LimitProbeReport(
+        provider: .openAI,
+        capturedAt: Date(timeIntervalSinceReferenceDate: 1),
+        observations: [
+            LimitProbeObservation(
+                provider: .openAI,
+                observedAt: Date(timeIntervalSinceReferenceDate: 1),
+                source: .manualUserEntry,
+                signalKind: .resetLanguage,
+                confidence: .manual,
+                sanitizedEvidence: "resets tomorrow"
+            )
+        ]
+    )
+    let reportURL = LimitProbeReportStore.localMarkdownReportURL(provider: .openAI, rootDirectory: directory)
+    let store = LimitProbeReportStore(reportURL: reportURL)
+
+    try store.saveMarkdown(report)
+
+    #expect(reportURL.path.hasSuffix("limit-probes/openai/latest.md"))
+    #expect(try String(contentsOf: reportURL, encoding: .utf8).contains("resets tomorrow"))
+}
+
 @Test func networkProbeEventRedactsPathIdentifiers() {
     let event = NetworkProbeEvent(
         observedAt: Date(),
