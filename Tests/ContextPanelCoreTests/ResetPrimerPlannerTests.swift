@@ -166,6 +166,38 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(plan.isEmpty)
 }
 
+@Test func resetPrimerPlannerDoesNotRepeatCompletedRunsWhenWindowCopyChanges() {
+    let resetAt = now.addingTimeInterval(-10 * 60)
+    let key = ResetPrimerRunKey(
+        provider: .openAI,
+        accountID: "openai-a",
+        windowLabel: "Weekly",
+        resetAt: resetAt
+    )
+    let settings = ResetPrimerSettings(
+        isEnabled: true,
+        delayMinutesAfterReset: 0,
+        accountPreferences: [preference(accountID: "openai-a", provider: .openAI)]
+    )
+    let snapshot = UsageSnapshot(
+        generatedAt: now,
+        limits: [limit(accountID: "openai-a", provider: .openAI, windowLabel: "7-day pool", resetAt: resetAt)]
+    )
+    let state = ResetPrimerRunState(records: [
+        ResetPrimerRunRecord(
+            key: key,
+            accountName: "OpenAI A",
+            scheduledAt: resetAt,
+            status: .completed,
+            updatedAt: now
+        )
+    ])
+
+    let plan = ResetPrimerPlanner.plan(settings: settings, snapshot: snapshot, state: state, now: now)
+
+    #expect(plan.isEmpty)
+}
+
 @Test func resetPrimerPlannerRetriesFailedRunsForTheSameReset() {
     let resetAt = now.addingTimeInterval(-10 * 60)
     let key = ResetPrimerRunKey(
