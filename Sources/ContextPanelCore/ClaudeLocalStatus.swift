@@ -304,16 +304,6 @@ public func claudeLocalStatusLimits(
     accountName: String,
     observedAt: Date
 ) -> [UsageLimit] {
-    if let estimatedLimit = claudeUsageBlockEstimate(
-        usageBlocksSummary: usageBlocksSummary,
-        authStatus: authStatus,
-        accountID: accountID,
-        accountName: accountName,
-        observedAt: observedAt
-    ) {
-        return [estimatedLimit]
-    }
-
     if authStatus.loggedIn, let rateLimitSnapshot, !rateLimitSnapshot.windows.isEmpty {
         let isStale = observedAt.timeIntervalSince(rateLimitSnapshot.observedAt) > rateLimitSnapshotMaximumAge
         let sourceNote = isStale ? "source: stale Claude Code statusline" : "source: Claude Code statusline"
@@ -335,6 +325,16 @@ public func claudeLocalStatusLimits(
                 note: "\(sourceNote); subscription: \(authStatus.subscriptionType ?? "unknown")"
             )
         }
+    }
+
+    if let estimatedLimit = claudeUsageBlockEstimate(
+        usageBlocksSummary: usageBlocksSummary,
+        authStatus: authStatus,
+        accountID: accountID,
+        accountName: accountName,
+        observedAt: observedAt
+    ) {
+        return [estimatedLimit]
     }
 
     var noteParts = [

@@ -287,10 +287,7 @@ import Testing
             subscriptionType: "pro"
         ),
         statsSummary: nil,
-        rateLimitSnapshot: ClaudeSubscriptionRateLimitSnapshot(
-            observedAt: Date(timeIntervalSince1970: 10),
-            windows: [ClaudeSubscriptionRateLimitWindow(label: "5-hour", usedPercent: 4, resetsAt: nil)]
-        ),
+        rateLimitSnapshot: nil,
         usageBlocksSummary: ClaudeUsageBlocksSummary(
             activeBlock: ClaudeUsageBlock(
                 isActive: true,
@@ -315,4 +312,41 @@ import Testing
     #expect(limits[0].confidence == .estimated)
     #expect(limits[0].resetsAt == Date(timeIntervalSince1970: 3_700))
     #expect(limits[0].note?.contains("official subscription percentage unavailable") == true)
+}
+
+@Test func claudeLocalStatusLimitsPrefersOfficialStatuslineOverEveryCodeEstimate() {
+    let limits = claudeLocalStatusLimits(
+        authStatus: ClaudeAuthStatus(
+            loggedIn: true,
+            authMethod: "claude.ai",
+            apiProvider: "firstParty",
+            subscriptionType: "pro"
+        ),
+        statsSummary: nil,
+        rateLimitSnapshot: ClaudeSubscriptionRateLimitSnapshot(
+            observedAt: Date(timeIntervalSince1970: 10),
+            windows: [ClaudeSubscriptionRateLimitWindow(label: "5-hour", usedPercent: 4, resetsAt: nil)]
+        ),
+        usageBlocksSummary: ClaudeUsageBlocksSummary(
+            activeBlock: ClaudeUsageBlock(
+                isActive: true,
+                totalTokens: 500,
+                endTime: Date(timeIntervalSince1970: 9_000),
+                projectedTotalTokens: 1_200,
+                remainingMinutes: 45,
+                modelCount: 2
+            ),
+            completedBlockTokenLimitEstimate: 1_000
+        ),
+        accountID: "local",
+        accountName: "Claude",
+        observedAt: Date(timeIntervalSince1970: 1_000)
+    )
+
+    #expect(limits.count == 1)
+    #expect(limits[0].label == "Claude 5-hour")
+    #expect(limits[0].unit == .percent)
+    #expect(limits[0].used == 4)
+    #expect(limits[0].limit == 100)
+    #expect(limits[0].confidence == .observed)
 }
