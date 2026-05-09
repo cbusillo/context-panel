@@ -20,6 +20,8 @@
 		47414B1A42BE473BF1644296 /* CodexRateLimits.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FA8FE4CC9BE058D8F46FBA2 /* CodexRateLimits.swift */; };
 		5873091E47623CBEB29253EF /* ContextPanelRefreshAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC712405A58ED12AA33BDC68 /* ContextPanelRefreshAgent.swift */; };
 		64BA3F57751ADAB181558D58 /* SampleUsageData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2361E9EED490737FB8306CC7 /* SampleUsageData.swift */; };
+		66D9A9D36B46051B1C1EA722 /* ResetPrimerSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D9602BF84ECDE08C7275504 /* ResetPrimerSettings.swift */; };
+		7BA3559FC81F11DF2B9493F9 /* ClaudeStatuslineSetup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51474C30B520517CB01103A9 /* ClaudeStatuslineSetup.swift */; };
 		85EBA57F3F1633F2D6E54103 /* ContextPanelWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 07D959D621E594C0CFC2CEF5 /* ContextPanelWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		86D64E082F50479344767059 /* ContextPanelRefreshAgent.app in Embed Dependencies */ = {isa = PBXBuildFile; fileRef = 086B12021073A6F2A49850A1 /* ContextPanelRefreshAgent.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		9C74713AEFFAC6D85E7ACF3F /* FastModeForecast.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BD985B0213AB5987D3B3170 /* FastModeForecast.swift */; };
@@ -107,11 +109,13 @@
 		186D607FE2EEFDFFE2E70446 /* AccountConfigurationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountConfigurationStore.swift; sourceTree = "<group>"; };
 		2361E9EED490737FB8306CC7 /* SampleUsageData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleUsageData.swift; sourceTree = "<group>"; };
 		23E9C71457F4E1F101132FCF /* ContextPanelLocations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelLocations.swift; sourceTree = "<group>"; };
+		2D9602BF84ECDE08C7275504 /* ResetPrimerSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResetPrimerSettings.swift; sourceTree = "<group>"; };
 		32D8515D047F5A8117DB762C /* SnapshotStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotStore.swift; sourceTree = "<group>"; };
 		350ED5589FB23C42ED32704A /* ProviderConnector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderConnector.swift; sourceTree = "<group>"; };
 		3FC2DAEDD38483FC3A5D4880 /* MainLimitSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainLimitSummary.swift; sourceTree = "<group>"; };
 		407B0E4C039FFF22FA8F8542 /* ContextPanelWidgetViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelWidgetViews.swift; sourceTree = "<group>"; };
 		45E8D3C3E45C1B6B3FACE828 /* SnapshotRefreshService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotRefreshService.swift; sourceTree = "<group>"; };
+		51474C30B520517CB01103A9 /* ClaudeStatuslineSetup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeStatuslineSetup.swift; sourceTree = "<group>"; };
 		5233BBC86AE8057D749F71CD /* WidgetSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSnapshot.swift; sourceTree = "<group>"; };
 		53715ACF982CE590F00C3A75 /* ClaudeWebUsage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeWebUsage.swift; sourceTree = "<group>"; };
 		60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LimitProbe.swift; sourceTree = "<group>"; };
@@ -176,6 +180,7 @@
 				8FB4BEA57ACE8B84CAE71E75 /* BurnRateEstimator.swift */,
 				B8862B929FE544FCB2C3D06B /* CapacityPool.swift */,
 				E2E426A482568BBE85357D7E /* ClaudeLocalStatus.swift */,
+				51474C30B520517CB01103A9 /* ClaudeStatuslineSetup.swift */,
 				53715ACF982CE590F00C3A75 /* ClaudeWebUsage.swift */,
 				9FA8FE4CC9BE058D8F46FBA2 /* CodexRateLimits.swift */,
 				23E9C71457F4E1F101132FCF /* ContextPanelLocations.swift */,
@@ -184,6 +189,7 @@
 				60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */,
 				3FC2DAEDD38483FC3A5D4880 /* MainLimitSummary.swift */,
 				350ED5589FB23C42ED32704A /* ProviderConnector.swift */,
+				2D9602BF84ECDE08C7275504 /* ResetPrimerSettings.swift */,
 				45E8D3C3E45C1B6B3FACE828 /* SnapshotRefreshService.swift */,
 				32D8515D047F5A8117DB762C /* SnapshotStore.swift */,
 				D459054C90410A784EBD308B /* UsageLimit.swift */,
@@ -423,6 +429,7 @@
 				44DFF437D4762A4D0D2DBAA8 /* BurnRateEstimator.swift in Sources */,
 				198493F605C07AB87B0BDFA9 /* CapacityPool.swift in Sources */,
 				1DD89F5634070B75C09BDE99 /* ClaudeLocalStatus.swift in Sources */,
+				7BA3559FC81F11DF2B9493F9 /* ClaudeStatuslineSetup.swift in Sources */,
 				BF04DB8945D058C7A63BEAB3 /* ClaudeWebUsage.swift in Sources */,
 				47414B1A42BE473BF1644296 /* CodexRateLimits.swift in Sources */,
 				C1DF7B59257060AC0A6AF44D /* ContextPanelLocations.swift in Sources */,
@@ -431,6 +438,7 @@
 				0BBD1DF433F345E62C6A26EF /* LimitProbe.swift in Sources */,
 				A9464088796B38105C01F7D3 /* MainLimitSummary.swift in Sources */,
 				F4B9B4FB75A285E38AE52B1D /* ProviderConnector.swift in Sources */,
+				66D9A9D36B46051B1C1EA722 /* ResetPrimerSettings.swift in Sources */,
 				28FDF54D88C9CB4A982643A6 /* SnapshotRefreshService.swift in Sources */,
 				B6C35EBBE9327327BDCA324F /* SnapshotStore.swift in Sources */,
 				459C8EC82194CE1A950FE1B5 /* UsageLimit.swift in Sources */,

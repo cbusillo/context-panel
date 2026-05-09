@@ -293,6 +293,72 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(store.load() == settings)
 }
 
+@Test func resetPrimerSettingsSyncsConfiguredAccountsAndPreservesEnabledChoices() {
+    var settings = ResetPrimerSettings(accountPreferences: [
+        ResetPrimerAccountPreference(
+            accountID: "openai-old",
+            provider: .openAI,
+            accountName: "Old OpenAI",
+            isEnabled: true
+        ),
+        ResetPrimerAccountPreference(
+            accountID: "openai-a",
+            provider: .openAI,
+            accountName: "Old Name",
+            isEnabled: true
+        ),
+    ])
+    let accounts = [
+        LocalProviderAccountConfiguration(
+            id: "openai-a",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "OpenAI A"
+        ),
+        LocalProviderAccountConfiguration(
+            id: "claude-disabled",
+            provider: .anthropic,
+            connectorKind: .claudeLocalStatus,
+            displayName: "Claude",
+            isEnabled: false
+        ),
+    ]
+
+    settings.syncAccounts(accounts)
+
+    #expect(settings.accountPreferences.map(\.accountID) == ["claude-disabled", "openai-a"])
+    #expect(settings.preference(for: "openai-a")?.accountName == "OpenAI A")
+    #expect(settings.preference(for: "openai-a")?.isEnabled == true)
+    #expect(settings.preference(for: "claude-disabled")?.isEnabled == false)
+}
+
+@Test func resetPrimerSettingsStoreRoundTripsSettings() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = ResetPrimerSettingsStore(
+        settingsURL: directory.appending(path: "reset-primer-settings.json")
+    )
+    let settings = ResetPrimerSettings(
+        isEnabled: true,
+        delayMinutesAfterReset: 15,
+        accountStaggerMinutes: 20,
+        accountPreferences: [
+            ResetPrimerAccountPreference(
+                accountID: "openai-a",
+                provider: .openAI,
+                accountName: "OpenAI A",
+                isEnabled: true
+            )
+        ]
+    )
+
+    try store.save(settings)
+
+    #expect(store.exists)
+    #expect(store.load() == settings)
+}
+
 @Test func capacityForecastMeasuresBurnWhenNoObservedRateExists() {
     let forecast = FastModeCapacityForecast(
         limitID: "openai:weekly",
