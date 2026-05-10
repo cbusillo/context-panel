@@ -56,7 +56,21 @@
   "qaLabels": [],
   "deployLabels": [],
   "healthUrls": [],
-  "validatedThrough": [],
+  "validatedThrough": [
+    {
+      "date": "2026-05-10",
+      "source": "cbusillo/context-panel#59",
+      "checks": [
+        "jq empty .github/github.json",
+        "rg github-repo-workflow\\.json",
+        "codex-skills github-repo-snapshot.sh --json",
+        "GitHub Actions swift and Analyze Swift"
+      ],
+      "caveats": [
+        "Validation was metadata-focused; App Store/TestFlight release gates were not triggered."
+      ]
+    }
+  ],
   "githubSignals": {
     "postMerge": {
       "waitForActions": true,
