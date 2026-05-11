@@ -30,7 +30,12 @@
       "release or signing changes"
     ]
   },
-  "importantWorkflows": ["CI", "CodeQL", "Release", "TestFlight"],
+  "importantWorkflows": [
+    "CI",
+    "CodeQL",
+    "Release",
+    "TestFlight"
+  ],
   "branchProtection": {
     "ruleset": {
       "name": "Protect main",
@@ -40,7 +45,10 @@
     "pullRequestsRequired": true,
     "requiredStatusChecks": {
       "strict": true,
-      "contexts": ["swift", "Analyze Swift"]
+      "contexts": [
+        "swift",
+        "Analyze Swift"
+      ]
     },
     "codeScanning": {
       "tool": "CodeQL",
@@ -56,21 +64,6 @@
   "qaLabels": [],
   "deployLabels": [],
   "healthUrls": [],
-  "validatedThrough": [
-    {
-      "date": "2026-05-10",
-      "source": "cbusillo/context-panel#59",
-      "checks": [
-        "jq empty .github/github.json",
-        "rg github-repo-workflow\\.json",
-        "codex-skills github-repo-snapshot.sh --json",
-        "GitHub Actions swift and Analyze Swift"
-      ],
-      "caveats": [
-        "Validation was metadata-focused; App Store/TestFlight release gates were not triggered."
-      ]
-    }
-  ],
   "githubSignals": {
     "postMerge": {
       "waitForActions": true,
