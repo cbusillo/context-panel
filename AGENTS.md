@@ -42,6 +42,54 @@ history, and settings.
 
 ## Validation
 
+Before changing or validating app/widget/provider behavior, identify the active
+runtime. Mixed runtimes caused repeated false positives during App Store release
+prep, so treat them as a blocker rather than background noise.
+
+- Record the current branch, default branch, and dirty state with
+  `git status --short --branch` before editing, packaging, or installing.
+- Do not package or install from a dirty multi-workstream tree unless Chris
+  explicitly asks for a scratch dogfood build. If the tree already contains
+  broad unrelated changes, pause and propose a cleanup/split plan first.
+- Before judging UI, widget, login-item, provider, sandbox, or storage behavior,
+  verify that the foreground app process, WidgetKit extension, and refresh agent
+  all come from the intended bundle root. A DerivedData app paired with a
+  `/Applications` widget or login item is a mixed runtime and must not be called
+  fixed.
+- For signed/App Store-style validation, terminal success is not proof that the
+  app works. Reproduce provider reads from the signed app or signed refresh
+  agent, because sandbox, TCC prompts, security-scoped bookmarks, app groups,
+  and login-item environment differ from an interactive shell.
+- When touching app groups, widget mirrors, bookmarks, account IDs, or snapshot
+  merging, inspect the active storage roots before and after validation:
+  `~/Library/Application Support/Context Panel`,
+  `~/Library/Group Containers/group.com.shinycomputers.contextpanel/Context Panel`,
+  and
+  <!-- markdownlint-disable-next-line MD013 -->
+  `~/Library/Containers/com.shinycomputers.contextpanel.widget/Data/Library/Application Support/Context Panel`.
+- Snapshot merge or account-ID changes must include a duplicate-account check.
+  Preserving failed provider data is useful, but old logical account IDs must not
+  accumulate as separate live lanes.
+- App Store/TestFlight work must not remove, hide, or narrow product UI such as
+  provider setup, diagnostics, history, settings, or account management without
+  an explicit product decision from Chris.
+
+Minimum runtime evidence before saying a signed dogfood build is ready:
+
+```sh
+git status --short --branch
+ps axww -o pid,ppid,command | rg -i 'Context Panel|ContextPanel|RefreshAgent'
+pluginkit -m -A -D -vvv | rg contextpanel
+lsof -p <refresh-agent-pid> \
+  | rg 'ContextPanelRefreshAgent|Context Panel.app|DerivedData|/Applications'
+codesign -d --entitlements :- "/Applications/Context Panel.app" 2>/dev/null
+shasum -a 256 \
+  "/Applications/Context Panel.app/Contents/MacOS/Context Panel"
+```
+
+If any of those point to different build roots or unexpected entitlements, stop
+and report the mixed-runtime state before making more fixes.
+
 Run the commit gate before publishing changes:
 
 ```sh
@@ -58,11 +106,14 @@ restart the app/widget extension:
 
 ```sh
 xcodegen generate
-xcodebuild -project ContextPanel.xcodeproj -scheme ContextPanel -configuration Debug -derivedDataPath .build/xcode-derived-signed build
+xcodebuild -project ContextPanel.xcodeproj -scheme ContextPanel \
+  -configuration Debug -derivedDataPath .build/xcode-derived-signed build
 pkill -9 -f '/Applications/Context Panel.app/Contents/MacOS/Context Panel' || true
 pkill -9 -f 'ContextPanelWidgetExtension.appex' || true
 rm -rf "/Applications/Context Panel.app"
-ditto ".build/xcode-derived-signed/Build/Products/Debug/Context Panel.app" "/Applications/Context Panel.app"
+ditto \
+  ".build/xcode-derived-signed/Build/Products/Debug/Context Panel.app" \
+  "/Applications/Context Panel.app"
 open "/Applications/Context Panel.app"
 ```
 
