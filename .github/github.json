@@ -30,7 +30,12 @@
       "release or signing changes"
     ]
   },
-  "importantWorkflows": ["CI", "CodeQL", "Release", "TestFlight"],
+  "importantWorkflows": [
+    "CI",
+    "CodeQL",
+    "Release",
+    "TestFlight"
+  ],
   "branchProtection": {
     "ruleset": {
       "name": "Protect main",
@@ -40,7 +45,10 @@
     "pullRequestsRequired": true,
     "requiredStatusChecks": {
       "strict": true,
-      "contexts": ["swift", "Analyze Swift"]
+      "contexts": [
+        "swift",
+        "Analyze Swift"
+      ]
     },
     "codeScanning": {
       "tool": "CodeQL",
@@ -56,7 +64,6 @@
   "qaLabels": [],
   "deployLabels": [],
   "healthUrls": [],
-  "validatedThrough": [],
   "githubSignals": {
     "postMerge": {
       "waitForActions": true,

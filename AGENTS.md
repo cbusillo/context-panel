@@ -142,5 +142,5 @@ debugging why the app and widget disagree.
 
 - Default branch: `main`.
 - Work on focused branches and open pull requests.
-- Keep `.github/github-repo-workflow.json` current when docs, validation gates,
+- Keep `.github/github.json` current when docs, validation gates,
   important workflows, or repo ownership assumptions change.
