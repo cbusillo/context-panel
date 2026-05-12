@@ -172,7 +172,7 @@ jobs:
           echo "metadata_path=dist/release-metadata.json" >>"${GITHUB_OUTPUT}"
 
       - name: Upload Workflow Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ContextPanel-${{ steps.version.outputs.version }}-macOS
           path: |
