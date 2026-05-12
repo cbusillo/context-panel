@@ -181,6 +181,54 @@ import Testing
     #expect(http.requests[2].body.flatMap { String(data: $0, encoding: .utf8) }?.contains("project-secret") == true)
 }
 
+@Test func geminiConnectorPrefersImportedCredentials() async throws {
+    let importedCredentials = #"{"refresh_token":"imported-refresh"}"#.data(using: .utf8)!
+    let fileCredentials = #"{"refresh_token":"file-refresh"}"#.data(using: .utf8)!
+    let key = ProviderCredentialKey(provider: .google, accountID: "gemini", kind: "gemini-oauth")
+    let store = InMemoryProviderCredentialStore(values: [key: importedCredentials])
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: #"{"access_token":"access"}"#.data(using: .utf8)!),
+        ConnectorHTTPResponse(statusCode: 200, data: #"{"cloudaicompanionProject":"project","currentTier":{"name":"Gemini Code Assist"}}"#.data(using: .utf8)!),
+        ConnectorHTTPResponse(statusCode: 200, data: #"{"buckets":[]}"#.data(using: .utf8)!),
+    ])
+    let connector = GeminiCodeAssistConnector(
+        accounts: [GeminiAccountConfiguration(authPath: "/tmp/gemini.json", accountName: "Gemini", clientID: "client", clientSecret: "secret")],
+        httpClient: http,
+        fileLoader: { _ in fileCredentials },
+        credentialStore: store,
+        credentialKey: key
+    )
+
+    _ = await connector.refresh(now: Date(timeIntervalSince1970: 0))
+
+    let body = try #require(http.requests.first?.body.flatMap { String(data: $0, encoding: .utf8) })
+    #expect(body.contains("imported-refresh"))
+    #expect(body.contains("file-refresh") == false)
+}
+
+@Test func geminiConnectorFallsBackToAuthFileWhenImportedCredentialsAreMissing() async throws {
+    let fileCredentials = #"{"refresh_token":"file-refresh"}"#.data(using: .utf8)!
+    let key = ProviderCredentialKey(provider: .google, accountID: "gemini", kind: "gemini-oauth")
+    let store = InMemoryProviderCredentialStore()
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: #"{"access_token":"access"}"#.data(using: .utf8)!),
+        ConnectorHTTPResponse(statusCode: 200, data: #"{"cloudaicompanionProject":"project","currentTier":{"name":"Gemini Code Assist"}}"#.data(using: .utf8)!),
+        ConnectorHTTPResponse(statusCode: 200, data: #"{"buckets":[]}"#.data(using: .utf8)!),
+    ])
+    let connector = GeminiCodeAssistConnector(
+        accounts: [GeminiAccountConfiguration(authPath: "/tmp/gemini.json", accountName: "Gemini", clientID: "client", clientSecret: "secret")],
+        httpClient: http,
+        fileLoader: { _ in fileCredentials },
+        credentialStore: store,
+        credentialKey: key
+    )
+
+    _ = await connector.refresh(now: Date(timeIntervalSince1970: 0))
+
+    let body = try #require(http.requests.first?.body.flatMap { String(data: $0, encoding: .utf8) })
+    #expect(body.contains("file-refresh"))
+}
+
 @Test func claudeConnectorReportsUnknownLiveAllowanceFromLocalStatus() async throws {
     let auth = #"{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","subscriptionType":"pro"}"#.data(using: .utf8)!
     let stats = #"{"version":3,"lastComputedDate":"2026-04-26","dailyActivity":[],"modelUsage":{},"totalSessions":2,"totalMessages":3}"#.data(using: .utf8)!
