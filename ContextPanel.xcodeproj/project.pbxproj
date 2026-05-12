@@ -31,7 +31,6 @@
 		B6C35EBBE9327327BDCA324F /* SnapshotStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32D8515D047F5A8117DB762C /* SnapshotStore.swift */; };
 		B83302BDC1EAC3EE45DBE8B8 /* WidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5233BBC86AE8057D749F71CD /* WidgetSnapshot.swift */; };
 		BE7F8E276624C8E6D93BC329 /* libContextPanelCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = F09182E1FD96DAEEC38F3909 /* libContextPanelCore.a */; };
-		BF04DB8945D058C7A63BEAB3 /* ClaudeWebUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53715ACF982CE590F00C3A75 /* ClaudeWebUsage.swift */; };
 		C1DF7B59257060AC0A6AF44D /* ContextPanelLocations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23E9C71457F4E1F101132FCF /* ContextPanelLocations.swift */; };
 		C6CA96F5E75E32FCCD329736 /* ContextPanelWidgetViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 407B0E4C039FFF22FA8F8542 /* ContextPanelWidgetViews.swift */; };
 		E223E001AF708A36F7976205 /* WidgetDisplayPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBDCF9F49A90CA3576BF2792 /* WidgetDisplayPreferences.swift */; };
@@ -119,7 +118,6 @@
 		45E8D3C3E45C1B6B3FACE828 /* SnapshotRefreshService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotRefreshService.swift; sourceTree = "<group>"; };
 		51474C30B520517CB01103A9 /* ClaudeStatuslineSetup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeStatuslineSetup.swift; sourceTree = "<group>"; };
 		5233BBC86AE8057D749F71CD /* WidgetSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSnapshot.swift; sourceTree = "<group>"; };
-		53715ACF982CE590F00C3A75 /* ClaudeWebUsage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeWebUsage.swift; sourceTree = "<group>"; };
 		60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LimitProbe.swift; sourceTree = "<group>"; };
 		7BD985B0213AB5987D3B3170 /* FastModeForecast.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FastModeForecast.swift; sourceTree = "<group>"; };
 		8D6350007C73BEF27D871AB0 /* ContextPanel.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ContextPanel.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -183,7 +181,6 @@
 				B8862B929FE544FCB2C3D06B /* CapacityPool.swift */,
 				E2E426A482568BBE85357D7E /* ClaudeLocalStatus.swift */,
 				51474C30B520517CB01103A9 /* ClaudeStatuslineSetup.swift */,
-				53715ACF982CE590F00C3A75 /* ClaudeWebUsage.swift */,
 				9FA8FE4CC9BE058D8F46FBA2 /* CodexRateLimits.swift */,
 				23E9C71457F4E1F101132FCF /* ContextPanelLocations.swift */,
 				7BD985B0213AB5987D3B3170 /* FastModeForecast.swift */,
@@ -433,7 +430,6 @@
 				198493F605C07AB87B0BDFA9 /* CapacityPool.swift in Sources */,
 				1DD89F5634070B75C09BDE99 /* ClaudeLocalStatus.swift in Sources */,
 				7BA3559FC81F11DF2B9493F9 /* ClaudeStatuslineSetup.swift in Sources */,
-				BF04DB8945D058C7A63BEAB3 /* ClaudeWebUsage.swift in Sources */,
 				47414B1A42BE473BF1644296 /* CodexRateLimits.swift in Sources */,
 				C1DF7B59257060AC0A6AF44D /* ContextPanelLocations.swift in Sources */,
 				9C74713AEFFAC6D85E7ACF3F /* FastModeForecast.swift in Sources */,
