@@ -158,10 +158,16 @@ public struct SnapshotRefreshRunner: Sendable {
 public struct SnapshotRefreshService: Sendable {
     private let accountStore: AccountConfigurationStore
     private let stores: SnapshotRefreshStores
+    private let credentialStore: (any ProviderCredentialStore)?
 
-    public init(accountStore: AccountConfigurationStore, stores: SnapshotRefreshStores) {
+    public init(
+        accountStore: AccountConfigurationStore,
+        stores: SnapshotRefreshStores,
+        credentialStore: (any ProviderCredentialStore)? = nil
+    ) {
         self.accountStore = accountStore
         self.stores = stores
+        self.credentialStore = credentialStore
     }
 
     public static func appDefault() -> SnapshotRefreshService {
@@ -170,7 +176,8 @@ public struct SnapshotRefreshService: Sendable {
                 configurationURL: ContextPanelLocations.accountConfigurationURL(),
                 fallbackConfigurationURL: ContextPanelLocations.legacyAccountConfigurationURL()
             ),
-            stores: .appDefault()
+            stores: .appDefault(),
+            credentialStore: KeychainProviderCredentialStore()
         )
     }
 
@@ -188,7 +195,10 @@ public struct SnapshotRefreshService: Sendable {
 
     public func refresh(now: Date = Date()) async throws -> SnapshotRefreshOutcome {
         let accountDocument = accountStore.load(now: now).document
-        let connectors = AccountConnectorFactory.connectors(from: accountDocument)
+        let connectors = AccountConnectorFactory.connectors(
+            from: accountDocument,
+            credentialStore: credentialStore
+        )
         let refreshResult = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: now)
         return try saveMerged(refreshResult: refreshResult, savedAt: now)
     }

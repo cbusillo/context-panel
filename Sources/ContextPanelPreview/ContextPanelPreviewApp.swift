@@ -84,6 +84,10 @@ struct SettingsPane: View {
                             Text(account.isEnabled ? "Enabled" : "Disabled")
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(account.isEnabled ? CPTheme.statusColor(.healthy) : CPTheme.tertiaryText)
+                            if model.canImportCredentials(for: account) {
+                                Button("Import") { model.importCredentials(for: account) }
+                                    .controlSize(.small)
+                            }
                         }
                         Text(model.detailText(for: account))
                             .font(.system(size: 11))
@@ -212,6 +216,7 @@ final class SettingsPaneModel: ObservableObject {
     private let resetPrimerSettingsStore = ResetPrimerSettingsStore(
         settingsURL: ContextPanelLocations.resetPrimerSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
     )
+    private let credentialStore = KeychainProviderCredentialStore()
 
     private var widgetPreferenceStores: WidgetDisplayPreferencesStoreSet {
         WidgetDisplayPreferencesStoreSet(stores: [
@@ -288,6 +293,22 @@ final class SettingsPaneModel: ObservableObject {
         var updated = resetPrimerSettings
         updated.setAccount(accountID, provider: provider, isEnabled: isEnabled)
         saveResetPrimerSettings(updated)
+    }
+
+    func canImportCredentials(for account: LocalProviderAccountConfiguration) -> Bool {
+        account.connectorKind == .geminiCodeAssist && account.authPath != nil
+    }
+
+    func importCredentials(for account: LocalProviderAccountConfiguration) {
+        guard let authPath = account.authPath else { return }
+        do {
+            let expanded = NSString(string: authPath).expandingTildeInPath
+            let data = try Data(contentsOf: URL(fileURLWithPath: expanded))
+            try credentialStore.store(data, for: AccountConnectorFactory.geminiCredentialKey(for: account))
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func saveResetPrimerSettings(_ updated: ResetPrimerSettings) {
