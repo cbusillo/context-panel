@@ -168,6 +168,7 @@ public struct AccountConfigurationStore: Sendable {
 public enum AccountConnectorFactory {
     public static func connectors(
         from document: AccountConfigurationDocument,
+        credentialStore: (any ProviderCredentialStore)? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         geminiMetadataFileLoader: @escaping @Sendable (String) throws -> String = { path in
             try String(contentsOfFile: NSString(string: path).expandingTildeInPath, encoding: .utf8)
@@ -204,7 +205,7 @@ public enum AccountConnectorFactory {
                     accountName: account.displayName,
                     clientID: metadata.clientID,
                     clientSecret: metadata.clientSecret
-                )])
+                )], credentialStore: credentialStore, credentialKey: geminiCredentialKey(for: account))
             case .claudeLocalStatus:
                 return ClaudeLocalStatusConnector(accounts: [ClaudeAccountConfiguration(
                     accountName: account.displayName,
@@ -228,6 +229,10 @@ public enum AccountConnectorFactory {
             let clientSecret = environment[clientSecretName], !clientSecret.isEmpty
         else { return nil }
         return GeminiOAuthClientMetadata(clientID: clientID, clientSecret: clientSecret)
+    }
+
+    public static func geminiCredentialKey(for account: LocalProviderAccountConfiguration) -> ProviderCredentialKey {
+        ProviderCredentialKey(provider: .google, accountID: account.id, kind: "gemini-oauth")
     }
 
     private static func codexAuthPath(for authPath: String) -> String {

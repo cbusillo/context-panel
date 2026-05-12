@@ -3,7 +3,6 @@ import AppKit
 import ServiceManagement
 import SwiftUI
 import WidgetKit
-import WebKit
 
 @main
 struct ContextPanelPreviewApp: App {
@@ -66,10 +65,6 @@ struct AppRoot: View {
                 .frame(minWidth: 760)
         }
         .tint(CPTheme.accent)
-        .sheet(isPresented: $model.isClaudeWebCapturePresented) {
-            ClaudeWebCaptureSheet(model: model)
-                .frame(minWidth: 980, minHeight: 680)
-        }
     }
 }
 
@@ -89,6 +84,10 @@ struct SettingsPane: View {
                             Text(account.isEnabled ? "Enabled" : "Disabled")
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(account.isEnabled ? CPTheme.statusColor(.healthy) : CPTheme.tertiaryText)
+                            if model.canImportCredentials(for: account) {
+                                Button("Import") { model.importCredentials(for: account) }
+                                    .controlSize(.small)
+                            }
                         }
                         Text(model.detailText(for: account))
                             .font(.system(size: 11))
@@ -217,6 +216,7 @@ final class SettingsPaneModel: ObservableObject {
     private let resetPrimerSettingsStore = ResetPrimerSettingsStore(
         settingsURL: ContextPanelLocations.resetPrimerSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
     )
+    private let credentialStore = KeychainProviderCredentialStore()
 
     private var widgetPreferenceStores: WidgetDisplayPreferencesStoreSet {
         WidgetDisplayPreferencesStoreSet(stores: [
@@ -293,6 +293,22 @@ final class SettingsPaneModel: ObservableObject {
         var updated = resetPrimerSettings
         updated.setAccount(accountID, provider: provider, isEnabled: isEnabled)
         saveResetPrimerSettings(updated)
+    }
+
+    func canImportCredentials(for account: LocalProviderAccountConfiguration) -> Bool {
+        account.connectorKind == .geminiCodeAssist && account.authPath != nil
+    }
+
+    func importCredentials(for account: LocalProviderAccountConfiguration) {
+        guard let authPath = account.authPath else { return }
+        do {
+            let expanded = NSString(string: authPath).expandingTildeInPath
+            let data = try Data(contentsOf: URL(fileURLWithPath: expanded))
+            try credentialStore.store(data, for: AccountConnectorFactory.geminiCredentialKey(for: account))
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func saveResetPrimerSettings(_ updated: ResetPrimerSettings) {
@@ -392,12 +408,6 @@ struct AccountsSidebar: View {
                 }
                 .disabled(model.isRefreshing)
 
-                Button {
-                    model.openClaudeWebCapture()
-                } label: {
-                    Label("Claude Web", systemImage: "gauge.with.dots.needle.67percent")
-                        .frame(maxWidth: .infinity)
-                }
             }
             .buttonStyle(.bordered)
             .controlSize(.large)
@@ -1146,7 +1156,6 @@ final class ContextPanelAppModel: ObservableObject {
     @Published private(set) var configuredAccounts: [LocalProviderAccountConfiguration] = []
     @Published private(set) var fastModeForecastSettings: FastModeForecastSettings = .defaultSettings
     @Published private(set) var isRefreshing = false
-    @Published var isClaudeWebCapturePresented = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var lastRefreshAt: Date?
 
@@ -1211,48 +1220,6 @@ final class ContextPanelAppModel: ObservableObject {
     func setError(_ message: String) {
         storeStatus = .failure
         errorMessage = ConnectorRedactor.redact(message)
-    }
-
-    func openClaudeWebCapture() {
-        isClaudeWebCapturePresented = true
-    }
-
-    func closeClaudeWebCapture() {
-        isClaudeWebCapturePresented = false
-    }
-
-    func saveClaudeWebLimits(_ limits: [UsageLimit]) {
-        guard !limits.isEmpty else { return }
-        Task { await saveClaudeWebLimitsAsync(limits) }
-    }
-
-    private func saveClaudeWebLimitsAsync(_ limits: [UsageLimit]) async {
-        let savedAt = Date()
-        let report = ProviderConnectorReport(
-            provider: .anthropic,
-            accountID: "claude-web",
-            accountName: "Claude Web",
-            generatedAt: savedAt,
-            limits: limits,
-            status: .healthy
-        )
-        do {
-            let decision = try await refreshRunner.saveMerged(
-                refreshResult: ConnectorRefreshResult(generatedAt: savedAt, reports: [report]),
-                savedAt: savedAt,
-                retryFor: .seconds(5)
-            )
-            guard case .refreshed = decision else {
-                setError("Snapshot is refreshing. Try saving Claude Web usage again in a moment.")
-                return
-            }
-            lastRefreshAt = savedAt
-            loadSnapshot()
-            WidgetCenter.shared.reloadAllTimelines()
-        } catch {
-            storeStatus = .failure
-            errorMessage = error.localizedDescription
-        }
     }
 
     func relativeTime(_ date: Date) -> String {
@@ -1393,289 +1360,6 @@ struct StatusMark: View {
         }
         .frame(width: size, height: size)
     }
-}
-
-struct ClaudeWebCaptureSheet: View {
-    @ObservedObject var model: ContextPanelAppModel
-    @StateObject private var captureModel = ClaudeWebCaptureModel()
-
-    var body: some View {
-        HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 14) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Claude Web")
-                        .font(.system(size: 22, weight: .semibold))
-                    Text("Complete Claude verification here. The app captures only official usage windows from the Usage page.")
-                        .font(.system(size: 13))
-                        .foregroundStyle(CPTheme.secondaryText)
-                }
-
-                HStack {
-                    Button("Open Usage") { captureModel.openUsagePage() }
-                    Button("Reload") { captureModel.reload() }
-                    Spacer()
-                    Button("Done") { model.closeClaudeWebCapture() }
-                }
-
-                Label(captureModel.statusText, systemImage: captureModel.statusIcon)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(captureModel.limits.isEmpty ? CPTheme.secondaryText : CPTheme.primaryText)
-
-                Divider()
-
-                Text("Captured windows")
-                    .font(.system(size: 11, weight: .semibold))
-                    .textCase(.uppercase)
-                    .foregroundStyle(CPTheme.secondaryText)
-
-                if captureModel.limits.isEmpty {
-                    ContentUnavailableView(
-                        "Waiting for Claude usage",
-                        systemImage: "network",
-                        description: Text("The sheet auto-saves when Claude's usage endpoint returns percent windows.")
-                    )
-                    .frame(maxHeight: 220)
-                } else {
-                    ScrollView {
-                        VStack(spacing: 8) {
-                            ForEach(captureModel.limits) { limit in
-                                ClaudeWebCaptureLimitRow(limit: limit)
-                            }
-                        }
-                    }
-                }
-
-                Spacer()
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Label("No cookies, tokens, headers, IDs, emails, local storage, or raw bodies are stored.", systemImage: "lock.shield")
-                    Label("Saved rows are merged with OpenAI and Gemini instead of replacing them.", systemImage: "square.stack.3d.up")
-                }
-                .font(.system(size: 11))
-                .foregroundStyle(CPTheme.secondaryText)
-            }
-            .frame(width: 330)
-            .padding(18)
-            .background(CPTheme.surface)
-
-            Divider()
-
-            ClaudeWebCaptureWebView(model: captureModel)
-        }
-        .onReceive(captureModel.$limits) { limits in
-            guard !limits.isEmpty else { return }
-            model.saveClaudeWebLimits(limits)
-        }
-    }
-}
-
-struct ClaudeWebCaptureLimitRow: View {
-    let limit: UsageLimit
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(limit.displayLabel)
-                        .font(.system(size: 13, weight: .semibold))
-                    Text(limit.contextLabel)
-                        .font(.system(size: 11))
-                        .foregroundStyle(CPTheme.secondaryText)
-                }
-                Spacer()
-                Text(limit.compactUsageText)
-                    .font(.system(size: 18, weight: .semibold, design: .rounded))
-            }
-            CapacityBar(value: limit.usageRatio ?? 0, status: limit.status)
-            Text(limit.resetText)
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(CPTheme.tertiaryText)
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(CPTheme.background)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(CPTheme.stroke(cornerRadius: 8))
-    }
-}
-
-@MainActor
-final class ClaudeWebCaptureModel: ObservableObject {
-    @Published var limits: [UsageLimit] = []
-    @Published var statusText = "Opening Claude usage page"
-    @Published var statusIcon = "safari"
-
-    private lazy var navigationDelegate = ClaudeWebCaptureNavigationDelegate(owner: self)
-
-    lazy var webView: WKWebView = {
-        let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .default()
-        configuration.userContentController.add(ClaudeWebCaptureScriptHandler(owner: self), name: "claudeUsageCapture")
-        configuration.userContentController.addUserScript(
-            WKUserScript(source: Self.networkProbeScript, injectionTime: .atDocumentStart, forMainFrameOnly: false)
-        )
-        let view = WKWebView(frame: .zero, configuration: configuration)
-        view.navigationDelegate = navigationDelegate
-        return view
-    }()
-
-    init() {
-        openUsagePage()
-    }
-
-    func openUsagePage() {
-        statusText = "Opening Claude usage page"
-        statusIcon = "safari"
-        webView.load(URLRequest(url: URL(string: "https://claude.ai/settings/usage")!))
-    }
-
-    func reload() {
-        statusText = "Reloading Claude usage page"
-        statusIcon = "arrow.clockwise"
-        webView.reload()
-    }
-
-    fileprivate func record(payload: [String: Any]) {
-        let windows = payload["windows"] as? [String: Any] ?? [:]
-        let wrapped = ["rate_limits": windows]
-        do {
-            let data = try JSONSerialization.data(withJSONObject: wrapped)
-            let parsed = try ClaudeWebUsageParser.usageLimits(
-                from: data,
-                accountID: "claude-web",
-                accountName: "Claude Web",
-                observedAt: Date()
-            )
-            guard !parsed.isEmpty else { return }
-            limits = parsed
-            statusText = "Captured and saved Claude web usage"
-            statusIcon = "checkmark.circle.fill"
-        } catch {
-            statusText = "Capture failed: \(error.localizedDescription)"
-            statusIcon = "exclamationmark.triangle"
-        }
-    }
-
-    fileprivate func didFinishNavigation(url: URL?) {
-        if let host = url?.host, host.contains("claude.ai"), limits.isEmpty {
-            statusText = "Claude page loaded; waiting for usage API"
-            statusIcon = "network"
-        }
-    }
-
-    private static let networkProbeScript = #"""
-    (() => {
-      if (window.__contextPanelClaudeUsageCaptureInstalled) return;
-      window.__contextPanelClaudeUsageCaptureInstalled = true;
-
-      const windowKeys = new Set(['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet', 'seven_day_oauth_apps']);
-      const fieldKeys = new Set(['used_percentage', 'remaining_percentage', 'utilization', 'resets_at', 'reset_at']);
-
-      function isUsageURL(rawUrl) {
-        try { return /^\/api\/organizations\/[^/]+\/usage$/.test(new URL(rawUrl, window.location.href).pathname); }
-        catch (_) { return false; }
-      }
-
-      function sanitizeWindow(value) {
-        if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-        const sanitized = {};
-        for (const key of fieldKeys) {
-          const raw = value[key];
-          if (typeof raw === 'number' || typeof raw === 'string') sanitized[key] = raw;
-        }
-        return Object.keys(sanitized).length ? sanitized : null;
-      }
-
-      function collectWindows(value, out = {}) {
-        if (!value || typeof value !== 'object') return out;
-        if (Array.isArray(value)) {
-          value.slice(0, 3).forEach(item => collectWindows(item, out));
-          return out;
-        }
-        for (const [key, child] of Object.entries(value)) {
-          if (windowKeys.has(key)) {
-            const sanitized = sanitizeWindow(child);
-            if (sanitized) out[key] = sanitized;
-          }
-          collectWindows(child, out);
-        }
-        return out;
-      }
-
-      function post(payload) {
-        try { window.webkit.messageHandlers.claudeUsageCapture.postMessage(payload); }
-        catch (_) {}
-      }
-
-      function inspect(url, contentType, text) {
-        if (!isUsageURL(url) || !/json/i.test(contentType || '')) return;
-        try {
-          const windows = collectWindows(JSON.parse(String(text || '')));
-          if (Object.keys(windows).length) post({ windows });
-        } catch (_) {}
-      }
-
-      const originalFetch = window.fetch;
-      if (originalFetch) {
-        window.fetch = async function(input, init) {
-          const response = await originalFetch.apply(this, arguments);
-          try {
-            const clone = response.clone();
-            const url = typeof input === 'string' ? input : (input && input.url) || '';
-            clone.text().then(text => inspect(url, clone.headers.get('content-type') || '', text)).catch(() => {});
-          } catch (_) {}
-          return response;
-        };
-      }
-
-      const originalOpen = XMLHttpRequest.prototype.open;
-      const originalSend = XMLHttpRequest.prototype.send;
-      XMLHttpRequest.prototype.open = function(method, url) {
-        this.__cpClaudeUsageUrl = url;
-        return originalOpen.apply(this, arguments);
-      };
-      XMLHttpRequest.prototype.send = function() {
-        this.addEventListener('load', function() {
-          try { inspect(this.__cpClaudeUsageUrl || '', this.getResponseHeader('content-type') || '', this.responseText || ''); }
-          catch (_) {}
-        });
-        return originalSend.apply(this, arguments);
-      };
-    })();
-    """#
-}
-
-final class ClaudeWebCaptureScriptHandler: NSObject, WKScriptMessageHandler {
-    weak var owner: ClaudeWebCaptureModel?
-
-    init(owner: ClaudeWebCaptureModel) {
-        self.owner = owner
-    }
-
-    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard let payload = message.body as? [String: Any] else { return }
-        Task { @MainActor [weak owner] in owner?.record(payload: payload) }
-    }
-}
-
-final class ClaudeWebCaptureNavigationDelegate: NSObject, WKNavigationDelegate {
-    weak var owner: ClaudeWebCaptureModel?
-
-    init(owner: ClaudeWebCaptureModel) {
-        self.owner = owner
-    }
-
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        Task { @MainActor [weak webView, weak owner] in owner?.didFinishNavigation(url: webView?.url) }
-    }
-}
-
-struct ClaudeWebCaptureWebView: NSViewRepresentable {
-    @ObservedObject var model: ClaudeWebCaptureModel
-
-    func makeNSView(context: Context) -> WKWebView { model.webView }
-
-    func updateNSView(_ nsView: WKWebView, context: Context) {}
 }
 
 struct Sparkline: View {

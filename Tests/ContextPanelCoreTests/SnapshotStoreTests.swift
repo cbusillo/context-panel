@@ -77,10 +77,10 @@ import Testing
     let claudeRefresh = ConnectorRefreshResult(generatedAt: second, reports: [
         ProviderConnectorReport(
             provider: .anthropic,
-            accountID: "claude-web",
-            accountName: "Claude Web",
+            accountID: "claude-local",
+            accountName: "Claude",
             generatedAt: second,
-            limits: [usageLimit(provider: .anthropic, accountID: "claude-web", used: 3, savedAt: second)]
+            limits: [usageLimit(provider: .anthropic, accountID: "claude-local", used: 3, savedAt: second)]
         )
     ])
 
@@ -318,10 +318,10 @@ import Testing
     let savedAt = Date(timeIntervalSince1970: 800)
     let report = ProviderConnectorReport(
         provider: .anthropic,
-        accountID: "claude-web",
-        accountName: "Claude Web",
+        accountID: "claude-local",
+        accountName: "Claude",
         generatedAt: savedAt,
-        limits: [usageLimit(provider: .anthropic, accountID: "claude-web", used: 20, savedAt: savedAt)],
+        limits: [usageLimit(provider: .anthropic, accountID: "claude-local", used: 20, savedAt: savedAt)],
         status: .healthy
     )
 
@@ -338,7 +338,7 @@ import Testing
     )
 
     #expect(decision != .skippedAlreadyRunning)
-    #expect(primary.loadCurrent().snapshot?.snapshot.limits.first?.accountID == "claude-web")
+    #expect(primary.loadCurrent().snapshot?.snapshot.limits.first?.accountID == "claude-local")
 }
 
 @Test func snapshotRefreshRunnerSerializesManualSavesWithRefreshLock() async throws {
@@ -358,10 +358,10 @@ import Testing
     let savedAt = Date(timeIntervalSince1970: 700)
     let report = ProviderConnectorReport(
         provider: .anthropic,
-        accountID: "claude-web",
-        accountName: "Claude Web",
+        accountID: "claude-local",
+        accountName: "Claude",
         generatedAt: savedAt,
-        limits: [usageLimit(provider: .anthropic, accountID: "claude-web", used: 20, savedAt: savedAt)],
+        limits: [usageLimit(provider: .anthropic, accountID: "claude-local", used: 20, savedAt: savedAt)],
         status: .healthy
     )
 
