@@ -41,10 +41,6 @@ let package = Package(
             targets: ["ClaudeStatuslineSetup"]
         ),
         .executable(
-            name: "ClaudeWebUsageProbe",
-            targets: ["ClaudeWebUsageProbe"]
-        ),
-        .executable(
             name: "SnapshotStoreProbe",
             targets: ["SnapshotStoreProbe"]
         ),
@@ -81,10 +77,6 @@ let package = Package(
         ),
         .executableTarget(
             name: "ClaudeStatuslineSetup",
-            dependencies: ["ContextPanelCore"]
-        ),
-        .executableTarget(
-            name: "ClaudeWebUsageProbe",
             dependencies: ["ContextPanelCore"]
         ),
         .executableTarget(

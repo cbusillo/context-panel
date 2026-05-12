@@ -176,10 +176,6 @@ Useful variants:
 ```sh
 scripts/package-macos-app.sh --debug
 scripts/package-macos-app.sh --identity -
-scripts/package-macos-app.sh \
-  --product ClaudeWebUsageProbe \
-  --display-name "Claude Usage Probe" \
-  --bundle-id com.shinycomputers.contextpanel.claudeprobe
 ```
 
 ## Current Constraints
