@@ -43,7 +43,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.shinycomputers.contextpanel
         PRODUCT_NAME: Context Panel
-        GENERATE_INFOPLIST_FILE: true
+        GENERATE_INFOPLIST_FILE: false
+        INFOPLIST_FILE: Config/ContextPanel-Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Context Panel
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: false
         MARKETING_VERSION: "1.0"

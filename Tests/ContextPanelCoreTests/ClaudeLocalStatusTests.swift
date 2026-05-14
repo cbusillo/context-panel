@@ -3,27 +3,6 @@ import Testing
 
 @testable import ContextPanelCore
 
-@Test func claudeAuthStatusParserReducesStatusToNonSecretFields() throws {
-    let json = #"""
-    {
-      "loggedIn": true,
-      "authMethod": "claude.ai",
-      "apiProvider": "firstParty",
-      "email": "friend@example.com",
-      "orgId": "org_secret",
-      "subscriptionType": "pro"
-    }
-    """#
-
-    let status = try ClaudeAuthStatusParser.status(from: Data(json.utf8))
-
-    #expect(status.loggedIn)
-    #expect(status.authMethod == "claude.ai")
-    #expect(status.apiProvider == "firstParty")
-    #expect(status.subscriptionType == "pro")
-    #expect(status.subscriptionDisplayName == "Claude Pro")
-}
-
 @Test func claudeStatsCacheParserSummarizesLocalActivityOnly() throws {
     let json = #"""
     {
@@ -124,19 +103,14 @@ import Testing
 
 @Test func claudeLocalStatusLimitMakesUnknownAllowanceExplicit() {
     let limit = claudeLocalStatusLimits(
-        authStatus: ClaudeAuthStatus(
-            loggedIn: true,
-            authMethod: "claude.ai",
-            apiProvider: "firstParty",
-            subscriptionType: "pro"
-        ),
+        loggedIn: true,
         statsSummary: nil,
         accountID: "local",
         accountName: "Claude",
         observedAt: Date(timeIntervalSince1970: 0)
     ).first!
 
-    #expect(limit.label == "Claude Pro status")
+    #expect(limit.label == "Claude status")
     #expect(limit.modelLabel == "Claude Code")
     #expect(limit.confidence == .observed)
     #expect(limit.status == .unknown)
@@ -193,41 +167,35 @@ import Testing
 }
 
 @Test func claudeStatuslineSetupReportsHookAndCacheStates() throws {
-    let authStatus = ClaudeAuthStatus(
-        loggedIn: true,
-        authMethod: "claude.ai",
-        apiProvider: "firstParty",
-        subscriptionType: "pro"
-    )
     let settings = #"{"statusLine":{"type":"command","command":"scripts/claude-statusline-cache.sh"}}"#
         .data(using: .utf8)
     let now = Date(timeIntervalSince1970: 2_000)
 
     let missingHook = ClaudeStatuslineSetup.diagnostic(
-        claudeBinaryAvailable: true,
-        authStatus: authStatus,
+        binaryExists: true,
+        loggedIn: true,
         settingsData: nil,
         rateLimitSnapshot: nil,
         now: now
     )
     let waiting = ClaudeStatuslineSetup.diagnostic(
-        claudeBinaryAvailable: true,
-        authStatus: authStatus,
+        binaryExists: true,
+        loggedIn: true,
         settingsData: settings,
         rateLimitSnapshot: nil,
         now: now
     )
     let healthy = ClaudeStatuslineSetup.diagnostic(
-        claudeBinaryAvailable: true,
-        authStatus: authStatus,
+        binaryExists: true,
+        loggedIn: true,
         settingsData: settings,
         rateLimitSnapshot: ClaudeSubscriptionRateLimitSnapshot(observedAt: Date(timeIntervalSince1970: 1_900), windows: []),
         maximumCacheAge: 300,
         now: now
     )
     let stale = ClaudeStatuslineSetup.diagnostic(
-        claudeBinaryAvailable: true,
-        authStatus: authStatus,
+        binaryExists: true,
+        loggedIn: true,
         settingsData: settings,
         rateLimitSnapshot: ClaudeSubscriptionRateLimitSnapshot(observedAt: Date(timeIntervalSince1970: 1_000), windows: []),
         maximumCacheAge: 300,
@@ -243,12 +211,7 @@ import Testing
 
 @Test func claudeLocalStatusLimitsPrefersStatuslineSubscriptionWindows() {
     let limits = claudeLocalStatusLimits(
-        authStatus: ClaudeAuthStatus(
-            loggedIn: true,
-            authMethod: "claude.ai",
-            apiProvider: "firstParty",
-            subscriptionType: "pro"
-        ),
+        loggedIn: true,
         statsSummary: nil,
         rateLimitSnapshot: ClaudeSubscriptionRateLimitSnapshot(
             observedAt: Date(timeIntervalSince1970: 10),
@@ -273,19 +236,14 @@ import Testing
     #expect(limits.count == 2)
     #expect(limits.map(\.provider) == [.anthropic, .anthropic])
     #expect(limits.map(\.windowLabel) == ["5-hour", "Weekly"])
-    #expect(limits.map(\.modelLabel) == ["Claude Pro", "Claude Pro"])
+    #expect(limits.map(\.modelLabel) == ["Claude", "Claude"])
     #expect(limits.map(\.used) == [42, 52])
     #expect(limits.allSatisfy { $0.unit == .percent && $0.limit == 100 && $0.confidence == .observed })
 }
 
 @Test func claudeLocalStatusLimitsUsesEveryCodeEstimateWhenAvailable() {
     let limits = claudeLocalStatusLimits(
-        authStatus: ClaudeAuthStatus(
-            loggedIn: true,
-            authMethod: "claude.ai",
-            apiProvider: "firstParty",
-            subscriptionType: "pro"
-        ),
+        loggedIn: true,
         statsSummary: nil,
         rateLimitSnapshot: nil,
         usageBlocksSummary: ClaudeUsageBlocksSummary(
@@ -316,12 +274,7 @@ import Testing
 
 @Test func claudeLocalStatusLimitsPrefersOfficialStatuslineOverEveryCodeEstimate() {
     let limits = claudeLocalStatusLimits(
-        authStatus: ClaudeAuthStatus(
-            loggedIn: true,
-            authMethod: "claude.ai",
-            apiProvider: "firstParty",
-            subscriptionType: "pro"
-        ),
+        loggedIn: true,
         statsSummary: nil,
         rateLimitSnapshot: ClaudeSubscriptionRateLimitSnapshot(
             observedAt: Date(timeIntervalSince1970: 10),

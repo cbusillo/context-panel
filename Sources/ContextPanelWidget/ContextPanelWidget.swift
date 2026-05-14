@@ -11,67 +11,37 @@ struct ContextPanelWidgetEntry: TimelineEntry {
 struct ContextPanelTimelineProvider: TimelineProvider {
     let store: JSONSnapshotStore
     let containerFallbackStore: JSONSnapshotStore
-    let hostFallbackStore: JSONSnapshotStore
-    let fallbackStore: JSONSnapshotStore
     let preferencesStore: WidgetDisplayPreferencesStore
     let containerFallbackPreferencesStore: WidgetDisplayPreferencesStore
-    let hostFallbackPreferencesStore: WidgetDisplayPreferencesStore
-    let fallbackPreferencesStore: WidgetDisplayPreferencesStore
     let forecastSettingsStore: FastModeForecastSettingsStore
     let containerFallbackForecastSettingsStore: FastModeForecastSettingsStore
-    let hostFallbackForecastSettingsStore: FastModeForecastSettingsStore
-    let fallbackForecastSettingsStore: FastModeForecastSettingsStore
 
     init(
         store: JSONSnapshotStore = JSONSnapshotStore(
             rootDirectory: ContextPanelLocations.snapshotDirectory(appGroupID: ContextPanelLocations.appGroupID)
         ),
         containerFallbackStore: JSONSnapshotStore = JSONSnapshotStore(
-            rootDirectory: ContextPanelLocations.widgetDevelopmentContainerSnapshotDirectory()
-        ),
-        hostFallbackStore: JSONSnapshotStore = JSONSnapshotStore(
-            rootDirectory: ContextPanelLocations.hostDevelopmentSnapshotDirectory()
-        ),
-        fallbackStore: JSONSnapshotStore = JSONSnapshotStore(
-            rootDirectory: ContextPanelLocations.widgetDevelopmentSnapshotDirectory()
+            rootDirectory: ContextPanelLocations.widgetSandboxLocalSnapshotDirectory()
         ),
         preferencesStore: WidgetDisplayPreferencesStore = WidgetDisplayPreferencesStore(
             preferencesURL: ContextPanelLocations.widgetDisplayPreferencesURL(appGroupID: ContextPanelLocations.appGroupID)
         ),
         containerFallbackPreferencesStore: WidgetDisplayPreferencesStore = WidgetDisplayPreferencesStore(
-            preferencesURL: ContextPanelLocations.widgetDevelopmentContainerDisplayPreferencesURL()
-        ),
-        hostFallbackPreferencesStore: WidgetDisplayPreferencesStore = WidgetDisplayPreferencesStore(
-            preferencesURL: ContextPanelLocations.hostDevelopmentDisplayPreferencesURL()
-        ),
-        fallbackPreferencesStore: WidgetDisplayPreferencesStore = WidgetDisplayPreferencesStore(
-            preferencesURL: ContextPanelLocations.widgetDevelopmentDisplayPreferencesURL()
+            preferencesURL: ContextPanelLocations.widgetSandboxLocalDisplayPreferencesURL()
         ),
         forecastSettingsStore: FastModeForecastSettingsStore = FastModeForecastSettingsStore(
             settingsURL: ContextPanelLocations.fastModeForecastSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
         ),
         containerFallbackForecastSettingsStore: FastModeForecastSettingsStore = FastModeForecastSettingsStore(
-            settingsURL: ContextPanelLocations.widgetDevelopmentContainerFastModeForecastSettingsURL()
-        ),
-        hostFallbackForecastSettingsStore: FastModeForecastSettingsStore = FastModeForecastSettingsStore(
-            settingsURL: ContextPanelLocations.hostDevelopmentFastModeForecastSettingsURL()
-        ),
-        fallbackForecastSettingsStore: FastModeForecastSettingsStore = FastModeForecastSettingsStore(
-            settingsURL: ContextPanelLocations.widgetDevelopmentFastModeForecastSettingsURL()
+            settingsURL: ContextPanelLocations.widgetSandboxLocalFastModeForecastSettingsURL()
         )
     ) {
         self.store = store
         self.containerFallbackStore = containerFallbackStore
-        self.hostFallbackStore = hostFallbackStore
-        self.fallbackStore = fallbackStore
         self.preferencesStore = preferencesStore
         self.containerFallbackPreferencesStore = containerFallbackPreferencesStore
-        self.hostFallbackPreferencesStore = hostFallbackPreferencesStore
-        self.fallbackPreferencesStore = fallbackPreferencesStore
         self.forecastSettingsStore = forecastSettingsStore
         self.containerFallbackForecastSettingsStore = containerFallbackForecastSettingsStore
-        self.hostFallbackForecastSettingsStore = hostFallbackForecastSettingsStore
-        self.fallbackForecastSettingsStore = fallbackForecastSettingsStore
     }
 
     func placeholder(in context: Context) -> ContextPanelWidgetEntry {
@@ -93,18 +63,17 @@ struct ContextPanelTimelineProvider: TimelineProvider {
         let forecastSettings = loadForecastSettings()
         let result = store.loadCurrent(policy: SnapshotStoreStalenessPolicy(maximumAge: 20 * 60), now: date)
         if result.snapshot == nil || result.status == .failure {
-            for fallbackStore in [containerFallbackStore, hostFallbackStore, fallbackStore] {
-                let fallback = fallbackStore.loadCurrent(
-                    policy: SnapshotStoreStalenessPolicy(maximumAge: 20 * 60),
-                    now: date
-                )
-                guard fallback.snapshot != nil else { continue }
+            let fallback = containerFallbackStore.loadCurrent(
+                policy: SnapshotStoreStalenessPolicy(maximumAge: 20 * 60),
+                now: date
+            )
+            if fallback.snapshot != nil {
                 return ContextPanelWidgetEntry(
                     date: date,
                     snapshot: WidgetSnapshot.fromStore(
                         fallback,
                         now: date,
-                        history: fallbackStore.loadHistory(),
+                        history: containerFallbackStore.loadHistory(),
                         fastModeForecastSettings: forecastSettings
                     ),
                     displayPreferences: displayPreferences
@@ -127,18 +96,11 @@ struct ContextPanelTimelineProvider: TimelineProvider {
         WidgetDisplayPreferencesStoreSet(stores: [
             preferencesStore,
             containerFallbackPreferencesStore,
-            hostFallbackPreferencesStore,
-            fallbackPreferencesStore,
         ]).load()
     }
 
     private func loadForecastSettings() -> FastModeForecastSettings {
-        for store in [
-            forecastSettingsStore,
-            containerFallbackForecastSettingsStore,
-            hostFallbackForecastSettingsStore,
-            fallbackForecastSettingsStore,
-        ] {
+        for store in [forecastSettingsStore, containerFallbackForecastSettingsStore] {
             if let settings = store.loadIfAvailable() {
                 return settings
             }
@@ -152,15 +114,29 @@ struct ContextPanelWidgetView: View {
     let entry: ContextPanelWidgetEntry
 
     var body: some View {
-        switch family {
-        case .systemSmall:
-            ContextPanelSmallWidget(snapshot: entry.snapshot)
-        case .systemLarge, .systemExtraLarge:
-            ContextPanelLargeWidget(snapshot: entry.snapshot, displayPreferences: entry.displayPreferences)
-        default:
-            ContextPanelMediumWidget(snapshot: entry.snapshot, displayPreferences: entry.displayPreferences)
+        content
+            .widgetURL(ContextPanelWidgetURL.overview)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if entry.snapshot.shouldShowSetupPlaceholder {
+            CPWSetupPlaceholderWidget(family: family)
+        } else {
+            switch family {
+            case .systemSmall:
+                ContextPanelSmallWidget(snapshot: entry.snapshot)
+            case .systemLarge, .systemExtraLarge:
+                ContextPanelLargeWidget(snapshot: entry.snapshot, displayPreferences: entry.displayPreferences)
+            default:
+                ContextPanelMediumWidget(snapshot: entry.snapshot, displayPreferences: entry.displayPreferences)
+            }
         }
     }
+}
+
+enum ContextPanelWidgetURL {
+    static let overview = URL(string: "contextpanel://overview")!
 }
 
 @main
@@ -173,7 +149,7 @@ struct ContextPanelWidget: Widget {
                 .containerBackground(CPWTheme.surface, for: .widget)
         }
         .configurationDisplayName("Context Panel")
-        .description("AI account usage limits, reset timing, and fast-mode safety from local snapshots.")
+        .description("Track AI usage limits, reset windows, and fast-mode status at a glance.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
         .contentMarginsDisabled()
     }
@@ -181,42 +157,12 @@ struct ContextPanelWidget: Widget {
 
 extension WidgetSnapshot {
     static var placeholder: WidgetSnapshot {
-        let now = Date()
         return WidgetSnapshot(
-            state: .ready,
-            generatedAt: now,
-            limits: [
-                UsageLimit(
-                    provider: .openAI,
-                    accountID: "placeholder-openai",
-                    accountName: "OpenAI",
-                    label: "Codex Weekly",
-                    windowLabel: "Weekly",
-                    modelLabel: "Codex",
-                    unit: .percent,
-                    used: 52,
-                    limit: 100,
-                    resetsAt: now.addingTimeInterval(18_000),
-                    lastUpdatedAt: now.addingTimeInterval(-90),
-                    confidence: .observed
-                ),
-                UsageLimit(
-                    provider: .google,
-                    accountID: "placeholder-google",
-                    accountName: "Gemini",
-                    label: "gemini-3-pro-preview",
-                    windowLabel: "Daily",
-                    modelLabel: "gemini-3-pro-preview",
-                    unit: .percent,
-                    used: 12,
-                    limit: 100,
-                    resetsAt: now.addingTimeInterval(86_400),
-                    lastUpdatedAt: now.addingTimeInterval(-90),
-                    confidence: .observed
-                ),
-            ],
-            status: .healthy,
-            message: "Fast mode looks safe."
+            state: .setupNeeded,
+            generatedAt: Date(),
+            limits: [],
+            status: .unknown,
+            message: "Set up Context Panel in the app."
         )
     }
 }

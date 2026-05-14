@@ -1,6 +1,58 @@
 import ContextPanelCore
 import AppKit
 import SwiftUI
+import WidgetKit
+
+struct CPWSetupPlaceholderWidget: View {
+    let family: WidgetFamily
+
+    private var isSmall: Bool {
+        family == .systemSmall
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: isSmall ? 8 : 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "gauge.medium")
+                    .font(.system(size: isSmall ? 16 : 18, weight: .semibold))
+                    .foregroundStyle(CPWTheme.accent)
+                    .frame(width: isSmall ? 22 : 26, height: isSmall ? 22 : 26)
+                Text("Context Panel")
+                    .font(.system(size: isSmall ? 11 : 12, weight: .semibold))
+                    .foregroundStyle(CPWTheme.tertiaryText)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+
+            Text("Set up Context Panel")
+                .font(.system(size: isSmall ? 19 : 23, weight: .semibold))
+                .foregroundStyle(CPWTheme.primaryText)
+                .lineLimit(2)
+                .minimumScaleFactor(0.82)
+
+            Text("Open the app to add your first account.")
+                .font(.system(size: isSmall ? 11 : 13, weight: .medium))
+                .foregroundStyle(CPWTheme.secondaryText)
+                .lineLimit(isSmall ? 2 : 1)
+                .minimumScaleFactor(0.88)
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: 6) {
+                Text("Open app")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(CPWTheme.primaryText)
+                Image(systemName: "arrow.up.forward")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(CPWTheme.secondaryText)
+            }
+            .accessibilityHidden(true)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
 
 struct ContextPanelSmallWidget: View {
     let snapshot: WidgetSnapshot
@@ -221,13 +273,13 @@ struct CPWMainLimitRow: View {
                     .foregroundStyle(CPWTheme.primaryText)
                     .lineLimit(1)
                 Spacer(minLength: 6)
-                Text(summary?.widgetUsageText ?? "no data")
+                Text(summary?.widgetUsageText ?? "No data yet")
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
                     .foregroundStyle(CPWTheme.secondaryText)
             }
             HStack(spacing: 6) {
                 CPWCapacityBar(value: summary?.usageRatio ?? 0, status: status)
-                Text(summary?.widgetResetConfidenceText ?? "not observed")
+                Text(summary?.widgetResetConfidenceText ?? "no reset data")
                     .font(.system(size: 9))
                     .foregroundStyle(CPWTheme.tertiaryText)
                     .lineLimit(1)
@@ -388,7 +440,7 @@ struct CPWBurnPaceBar: View {
             }
             .frame(height: 7)
 
-            Text(forecast?.burnPaceCopy ?? "measuring burn")
+            Text(forecast?.burnPaceCopy ?? "calibrating")
                 .font(.system(size: 8, weight: .medium))
                 .foregroundStyle(CPWTheme.tertiaryText)
                 .lineLimit(1)
@@ -553,7 +605,7 @@ extension UsageLimit {
 
     var widgetUsageText: String {
         if provider == .anthropic, unit == .unknown, status == .unknown {
-            return "allowance unknown"
+            return "limit unknown"
         }
         if unit == .percent, let used {
             return "\(used)% used"
@@ -594,6 +646,10 @@ extension UsageLimit {
 }
 
 extension WidgetSnapshot {
+    var shouldShowSetupPlaceholder: Bool {
+        state == .setupNeeded && limits.isEmpty
+    }
+
     var mainLimitSummaries: [MainLimitSummary] {
         usageSnapshot.mainLimitSummaries
     }
@@ -684,15 +740,15 @@ extension WidgetSnapshot {
     var widgetProblemText: String? {
         switch state {
         case .failure:
-            return "Refresh failed"
+            return "Update failed"
         case .stale:
-            return "Data stale"
+            return "Old data"
         case .setupNeeded:
             return limits.isEmpty ? nil : "Setup needed"
         case .ready:
-            if status == .failure { return "Refresh failed" }
-            if status == .stale { return "Data stale" }
-            if status == .unknown { return "Data unknown" }
+            if status == .failure { return "Update failed" }
+            if status == .stale { return "Old data" }
+            if status == .unknown { return "Awaiting data" }
             return nil
         }
     }

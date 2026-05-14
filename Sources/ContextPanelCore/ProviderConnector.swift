@@ -11,11 +11,17 @@ public enum ConnectorError: LocalizedError, Equatable, Sendable {
     public var errorDescription: String? {
         switch self {
         case let .missingAuth(message), let .invalidAuth(message), let .nonHTTPResponse(message), let .decodingFailure(message):
-            message
+            return message
         case let .httpFailure(operation, statusCode):
-            "\(operation) returned HTTP \(statusCode); raw body redacted"
+            if statusCode == 401 || statusCode == 403 {
+                return "\(operation) was not authorized. Reauthorize this account and try again."
+            }
+            if statusCode == 429 {
+                return "\(operation) is rate limited. Try again after the provider reset window."
+            }
+            return "\(operation) returned HTTP \(statusCode); raw body redacted"
         case let .processFailure(operation, exitCode):
-            "\(operation) failed with exit code \(exitCode); stderr redacted"
+            return "\(operation) failed with exit code \(exitCode); stderr redacted"
         }
     }
 }
@@ -66,6 +72,34 @@ public protocol ProviderConnector: Sendable {
     var provider: Provider { get }
 
     func refresh(now: Date) async -> ConnectorRefreshResult
+}
+
+public struct FailingProviderConnector: ProviderConnector {
+    public let provider: Provider
+    private let accountID: String
+    private let accountName: String
+    private let message: String
+
+    public init(provider: Provider, accountID: String, accountName: String, message: String) {
+        self.provider = provider
+        self.accountID = accountID
+        self.accountName = accountName
+        self.message = message
+    }
+
+    public func refresh(now: Date) async -> ConnectorRefreshResult {
+        ConnectorRefreshResult(generatedAt: now, reports: [
+            ProviderConnectorReport(
+                provider: provider,
+                accountID: accountID,
+                accountName: accountName,
+                generatedAt: now,
+                limits: [],
+                status: .failure,
+                errorMessage: message
+            ),
+        ])
+    }
 }
 
 public struct ProviderConnectorRuntime: Sendable {
@@ -158,43 +192,6 @@ public struct URLSessionConnectorHTTPClient: ConnectorHTTPClient {
     }
 }
 
-public struct ConnectorProcessResult: Sendable {
-    public let exitCode: Int32
-    public let stdout: Data
-
-    public init(exitCode: Int32, stdout: Data) {
-        self.exitCode = exitCode
-        self.stdout = stdout
-    }
-}
-
-public protocol ConnectorProcessClient: Sendable {
-    func run(executable: String, arguments: [String]) throws -> ConnectorProcessResult
-}
-
-public struct DefaultConnectorProcessClient: ConnectorProcessClient {
-    public init() {}
-
-    public func run(executable: String, arguments: [String]) throws -> ConnectorProcessResult {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = [executable] + arguments
-
-        let output = Pipe()
-        let error = Pipe()
-        process.standardOutput = output
-        process.standardError = error
-
-        try process.run()
-        process.waitUntilExit()
-
-        return ConnectorProcessResult(
-            exitCode: process.terminationStatus,
-            stdout: output.fileHandleForReading.readDataToEndOfFile()
-        )
-    }
-}
-
 public enum ConnectorRedactor {
     public static func redact(_ value: String) -> String {
         EvidenceRedactor.redact(value)
@@ -202,7 +199,7 @@ public enum ConnectorRedactor {
 
     public static func redactedPath(_ path: String) -> String {
         let expanded = NSString(string: path).expandingTildeInPath
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let home = ContextPanelLocations.realUserHomeDirectory().path
         if expanded.hasPrefix(home) {
             return "~" + expanded.dropFirst(home.count)
         }

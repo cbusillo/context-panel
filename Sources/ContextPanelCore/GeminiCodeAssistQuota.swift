@@ -129,6 +129,7 @@ public struct GeminiOAuthClientMetadata: Equatable, Sendable {
 public enum GeminiOAuthClientMetadataDiscovery {
     public static func discover(
         environment: [String: String] = ProcessInfo.processInfo.environment,
+        useBundledFallback: Bool = true,
         fileLoader: @escaping @Sendable (String) throws -> String = { path in
             try String(contentsOfFile: NSString(string: path).expandingTildeInPath, encoding: .utf8)
         },
@@ -422,7 +423,7 @@ public enum ContextPanelDateFormatting {
     }
 }
 
-func formEncoded(_ values: [String: String]) -> Data {
+public func formEncoded(_ values: [String: String]) -> Data {
     values
         .map { key, value in
             "\(urlFormEscape(key))=\(urlFormEscape(value))"
@@ -431,7 +432,7 @@ func formEncoded(_ values: [String: String]) -> Data {
         .data(using: .utf8) ?? Data()
 }
 
-func urlFormEscape(_ value: String) -> String {
+public func urlFormEscape(_ value: String) -> String {
     var allowed = CharacterSet.urlQueryAllowed
     allowed.remove(charactersIn: "&+=")
     return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value

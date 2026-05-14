@@ -81,6 +81,7 @@ private struct CodexAuthRecord: Equatable, Sendable {
     let tokens: CodexAuthTokens
     let accountName: String
     let stableID: String?
+    let planType: String?
 }
 
 public enum CodexAuthFileParser {
@@ -103,7 +104,13 @@ public enum CodexAuthFileParser {
             }
             let records = chatGPTAccounts.enumerated().compactMap { index, account -> CodexAuthRecord? in
                 guard !account.tokens.accessToken.isEmpty else { return nil }
-                let name = chatGPTAccounts.count == 1 ? accountName : "\(accountName) \(index + 1)"
+                let tokenIdentity = CodexTokenIdentity.extract(fromIDToken: account.tokens.idToken)
+                let name = Self.accountDisplayName(
+                    configuredName: accountName,
+                    accountLabel: account.label,
+                    tokenIdentity: tokenIdentity,
+                    fallbackSuffix: chatGPTAccounts.count == 1 ? nil : "\(index + 1)"
+                )
                 return CodexAuthRecord(
                     tokens: CodexAuthTokens(
                         accessToken: account.tokens.accessToken,
@@ -111,7 +118,8 @@ public enum CodexAuthFileParser {
                         idToken: account.tokens.idToken
                     ),
                     accountName: name,
-                    stableID: account.id
+                    stableID: account.id,
+                    planType: tokenIdentity.planType
                 )
             }
             if !records.isEmpty {
@@ -119,15 +127,64 @@ public enum CodexAuthFileParser {
             }
         }
 
-        return [CodexAuthRecord(tokens: try tokens(from: data), accountName: accountName, stableID: nil)]
+        let authTokens = try tokens(from: data)
+        let tokenIdentity = CodexTokenIdentity.extract(fromIDToken: authTokens.idToken)
+        return [CodexAuthRecord(
+            tokens: authTokens,
+            accountName: Self.accountDisplayName(
+                configuredName: accountName,
+                accountLabel: nil,
+                tokenIdentity: tokenIdentity,
+                fallbackSuffix: nil
+            ),
+            stableID: nil,
+            planType: tokenIdentity.planType
+        )]
+    }
+
+    private static func accountDisplayName(
+        configuredName: String,
+        accountLabel: String?,
+        tokenIdentity: CodexTokenIdentity,
+        fallbackSuffix: String?
+    ) -> String {
+        let baseName = [accountLabel, tokenIdentity.email, tokenIdentity.name]
+            .compactMap { value -> String? in
+                guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+                return value
+            }
+            .first ?? fallbackSuffix.map { "\(configuredName) \($0)" } ?? configuredName
+        guard let planType = tokenIdentity.planType?.trimmingCharacters(in: .whitespacesAndNewlines), !planType.isEmpty else {
+            return baseName
+        }
+        return "\(baseName) · \(planType)"
     }
 }
 
 public enum CodexAccountIDExtractor {
     public static func accountID(fromIDToken token: String?) -> String? {
-        guard let token else { return nil }
+        CodexTokenIdentity.extract(fromIDToken: token).chatGPTAccountID
+    }
+}
+
+public struct CodexTokenIdentity: Equatable, Sendable {
+    public let chatGPTAccountID: String?
+    public let email: String?
+    public let name: String?
+    public let planType: String?
+
+    public init(chatGPTAccountID: String?, email: String?, name: String?, planType: String?) {
+        self.chatGPTAccountID = chatGPTAccountID
+        self.email = email
+        self.name = name
+        self.planType = planType
+    }
+
+    public static func extract(fromIDToken token: String?) -> CodexTokenIdentity {
+        let empty = CodexTokenIdentity(chatGPTAccountID: nil, email: nil, name: nil, planType: nil)
+        guard let token else { return empty }
         let parts = token.split(separator: ".")
-        guard parts.count >= 2 else { return nil }
+        guard parts.count >= 2 else { return empty }
         var payload = String(parts[1]).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
         while payload.count % 4 != 0 {
             payload.append("=")
@@ -137,9 +194,14 @@ public enum CodexAccountIDExtractor {
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let auth = object["https://api.openai.com/auth"] as? [String: Any]
         else {
-            return nil
+            return empty
         }
-        return auth["chatgpt_account_id"] as? String
+        return CodexTokenIdentity(
+            chatGPTAccountID: auth["chatgpt_account_id"] as? String,
+            email: object["email"] as? String,
+            name: object["name"] as? String,
+            planType: auth["chatgpt_plan_type"] as? String
+        )
     }
 }
 
@@ -374,6 +436,7 @@ private struct CodexAuthAccountsFilePayload: Decodable {
 private struct CodexAuthListedAccountPayload: Decodable {
     let id: String
     let mode: String?
+    let label: String?
     let tokens: CodexAuthTokenPayload
 }
 

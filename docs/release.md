@@ -1,6 +1,6 @@
 # macOS Release Path
 
-Last verified: 2026-05-09.
+Last verified: 2026-05-12.
 
 Context Panel has two CI release paths and two local packaging paths:
 
@@ -97,6 +97,12 @@ Xcode project, installs the supplied provisioning profiles, archives with manual
 `installerSigningCertificate = Mac Installer Distribution`. Pass `upload: false`
 when dispatching the workflow to export the `.pkg` without uploading it.
 
+The app and refresh-agent App Store entitlements must keep the sandbox enabled
+with App Group, outbound network, read-only user-selected file access, and
+app-scope bookmark permissions. The widget should keep only the sandbox and App
+Group entitlements. The TestFlight upload script fails early when any supplied
+provisioning profile is missing the Context Panel App Group.
+
 ## Build The Native App And Widget
 
 ```sh
@@ -113,8 +119,9 @@ xcodebuild \
 This builds `Context Panel.app`, embeds `ContextPanelWidgetExtension.appex`
 under `Contents/PlugIns`, and embeds `ContextPanelRefreshAgent.app` under
 `Contents/Library/LoginItems`. The app, refresh agent, and widget carry the
-`group.com.shinycomputers.contextpanel` App Group entitlement and share snapshots
-through the App Group container when it is available. Release and TestFlight
+`MM5YXC7T6E.group.com.shinycomputers.contextpanel` App Group entitlement and
+share snapshots through the App Group container when it is available. Release
+and TestFlight
 signing need explicit provisioning profiles for all three bundle identifiers:
 `com.shinycomputers.contextpanel`, `com.shinycomputers.contextpanel.widget`, and
 `com.shinycomputers.contextpanel.refresh-agent`.
@@ -176,10 +183,6 @@ Useful variants:
 ```sh
 scripts/package-macos-app.sh --debug
 scripts/package-macos-app.sh --identity -
-scripts/package-macos-app.sh \
-  --product ClaudeWebUsageProbe \
-  --display-name "Claude Usage Probe" \
-  --bundle-id com.shinycomputers.contextpanel.claudeprobe
 ```
 
 ## Current Constraints
@@ -190,6 +193,13 @@ scripts/package-macos-app.sh \
   notarization secrets.
 - The older `scripts/package-macos-app.sh` bundle contains the SwiftPM preview
   app only and does not embed the WidgetKit extension.
+- Release builds must keep the
+  `MM5YXC7T6E.group.com.shinycomputers.contextpanel` App
+  Group entitlement on the app, WidgetKit extension, and refresh agent. The app
+  and refresh agent must also keep sandbox, outbound network, and app-scope file
+  bookmark entitlements. The native packaging script verifies those entitlements
+  after signing and fails before producing an artifact if any required bundle is
+  missing them.
 
 ## Validation
 
@@ -215,8 +225,9 @@ Connect API key options was accepted by Apple notarization, stapled the ticket,
 passed `xcrun stapler validate`, and passed local Gatekeeper assessment as
 `source=Notarized Developer ID`.
 
-On 2026-05-09, the TestFlight export path was verified for current signing
+On 2026-05-12, the TestFlight export path was verified for current signing
 configuration in code review: Release archive signing is manual per target,
-uses Apple Distribution profile build settings, and the export plist uses the
+uses Apple Distribution profile build settings, the export plist uses the
 current App Store Connect method plus the Mac Installer Distribution certificate
-label.
+label, and the upload script checks that all three provisioning profiles carry
+the Context Panel App Group before archiving.

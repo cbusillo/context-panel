@@ -183,10 +183,19 @@ remaining and reset timestamps.
 
 ### Claude Subscription Connector
 
-Claude subscription pressure should use Claude Code's supported status-line JSON
-surface, not Anthropic API organization usage. Claude Code's status-line input
-can contain `rate_limits.five_hour.used_percentage`,
-`rate_limits.five_hour.resets_at`, `rate_limits.seven_day.used_percentage`, and
+Claude subscription pressure should use a Context Panel-owned Claude OAuth
+credential when the user explicitly connects Claude in Settings. The refresh
+agent calls `GET https://api.anthropic.com/api/oauth/usage` and stores only
+normalized percent windows such as `five_hour`, `seven_day`,
+`seven_day_opus`, `seven_day_sonnet`, `seven_day_oauth_apps`, `utilization`,
+and reset timestamps. Tokens are stored in Context Panel's own Keychain item;
+Context Panel must not read Claude Code's Keychain item or Claude Desktop
+cookies/storage.
+
+Claude Code's supported status-line JSON remains a fallback and diagnostic
+surface. Claude Code's status-line input can contain
+`rate_limits.five_hour.used_percentage`, `rate_limits.five_hour.resets_at`,
+`rate_limits.seven_day.used_percentage`, and
 `rate_limits.seven_day.resets_at` for Claude.ai Pro and Max subscribers after a
 Claude Code session receives an API response.
 
@@ -209,48 +218,42 @@ five-minute interval from the settings usage page. The usage page component is
 what renders "Claude subscription usage", current-session/five-hour usage, and
 weekly limit rows.
 
-That endpoint is the strongest direct subscription API candidate found so far,
-but it is authenticated through the Claude web/app session. A local automated
-browser probe against `https://claude.ai/settings/usage` on 2026-05-06 was
-blocked by Cloudflare before login/session reuse, so Context Panel has not yet
-proven it can call this endpoint without a user-visible web login context. We
-should not extract browser cookies, Keychain credentials, OAuth tokens, local
-storage, raw response bodies, transcripts, account UUIDs, or emails to force the
-call. The next safe implementation path is a Claude web usage probe that runs in
-a user-visible embedded web session and records only sanitized fields such as
-`five_hour`, `seven_day`, `used_percentage`, `remaining_percentage`,
-`utilization`, and `resets_at`.
+That endpoint was the strongest direct subscription API candidate found, but it
+is authenticated through the Claude web/app session. A local automated browser
+probe against `https://claude.ai/settings/usage` on 2026-05-06 was blocked by
+Cloudflare before login/session reuse, so Context Panel must not treat embedded
+WebKit scraping or Claude Desktop session replay as a background refresh source.
+The old manual Claude web capture flow has been removed in favor of explicit
+OAuth setup.
 
-The local `ClaudeWebUsageProbe` executable implements that path. It opens
-Claude's usage page in a visible WebKit session, lets the user complete login or
-Cloudflare verification normally, observes only `/api/organizations/*/usage`
-responses, and reduces the page response to whitelisted usage windows before
-Swift receives anything. Saving from the probe writes normalized percent/reset
-rows to Context Panel's snapshot store; it does not persist cookies,
-authorization headers, tokens, local storage, account UUIDs, organization UUIDs,
-emails, or raw response bodies.
+On 2026-05-14, `claude setup-token` was verified as insufficient for usage
+refresh because its token is inference-only and `/api/oauth/usage` rejects it
+for missing `user:profile`. A full-scope Claude Code OAuth credential with
+`user:profile` and `user:inference` returned HTTP 200 from
+`/api/oauth/usage`, including five-hour and weekly utilization/reset windows.
+This was proof only; shipping code should use Context Panel's own
+user-consented OAuth credential rather than reading Claude Code credentials.
 
 No safe persisted local Claude Desktop file/cache containing official
-subscription percentages was found. The remaining research target is an
-explicit, privacy-safe metadata capture path for Every Code/non-interactive
-usage, tracked separately in issue #19.
+subscription percentages was found.
 
 The official Claude Code authentication docs say macOS credentials are stored in
-the encrypted macOS Keychain. Context Panel must not read Keychain secrets or
-try to extract subscription OAuth tokens.
+the encrypted macOS Keychain. Context Panel must not read Claude Code Keychain
+secrets or try to extract existing subscription OAuth tokens.
 
 Preferred v1 connector scope:
 
-- Call `claude auth status --json` and keep only non-secret fields such as
-  `loggedIn`, `authMethod`, `apiProvider`, and `subscriptionType`.
+- Let the user connect Claude from Settings using the visible Claude OAuth code
+  flow. Store only the resulting Context Panel-owned OAuth tokens in Keychain.
+- Refresh `/api/oauth/usage` in the app and background agent. Treat
+  `utilization` as percent used and persist only normalized limit windows.
 - Offer a tiny status-line helper that receives Claude Code status-line JSON on
   stdin and writes only observed timestamp, five-hour percentage/reset, and
   weekly percentage/reset to a Context Panel cache file. `swift run
   ClaudeStatuslineSetup` installs the documented `statusLine` command shape in
   `~/.claude/settings.json` while preserving existing settings; `--diagnose`
   prints the current hook and cache path.
-- Read that sanitized status-line cache and normalize Claude five-hour and
-  weekly windows as percent limits when present.
+- Read that sanitized status-line cache only as fallback/diagnostic data.
 - Read `~/.claude/stats-cache.json` only as local historical activity, not live
   subscription allowance.
 - Summarize local stats by freshness and counts; do not read raw transcript

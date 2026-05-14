@@ -85,7 +85,7 @@ and the refresh agent own connector refreshes through the same
 future migration from JSON to a richer store stay in the app.
 
 The app, widget, and refresh agent share durable state through the
-`group.com.shinycomputers.contextpanel` App Group. The account configuration
+`MM5YXC7T6E.group.com.shinycomputers.contextpanel` App Group. The account configuration
 store keeps non-secret connector settings in that group container so the login
 item can refresh data after the main app exits. Provider tokens and raw account
 identifiers stay outside normalized snapshots and logs.
