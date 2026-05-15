@@ -94,8 +94,9 @@ bundle identifiers:
 The workflow calls `scripts/upload-testflight-macos-app.sh`, which generates the
 Xcode project, installs the supplied provisioning profiles, archives with manual
 `Apple Distribution` signing, and exports with `method = app-store-connect` and
-`installerSigningCertificate = Mac Installer Distribution`. Pass `upload: false`
-when dispatching the workflow to export the `.pkg` without uploading it.
+`installerSigningCertificate = 3rd Party Mac Developer Installer`. Pass
+`upload: false` when dispatching the workflow to export the `.pkg` without
+uploading it.
 
 The app and refresh-agent App Store entitlements must keep the sandbox enabled
 with App Group, outbound network, read-only user-selected file access, and
@@ -230,6 +231,6 @@ passed `xcrun stapler validate`, and passed local Gatekeeper assessment as
 On 2026-05-12, the TestFlight export path was verified for current signing
 configuration in code review: Release archive signing is manual per target,
 uses Apple Distribution profile build settings, the export plist uses the
-current App Store Connect method plus the Mac Installer Distribution certificate
-label, and the upload script checks that all three provisioning profiles carry
-the Context Panel App Group before archiving.
+current App Store Connect method plus the 3rd Party Mac Developer Installer
+certificate label, and the upload script checks that all three provisioning
+profiles authorize the Context Panel App Group before archiving.

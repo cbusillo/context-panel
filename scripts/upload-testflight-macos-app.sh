@@ -270,7 +270,7 @@ cat >"$export_options_path" <<PLIST
 	<key>signingCertificate</key>
 	<string>Apple Distribution</string>
 	<key>installerSigningCertificate</key>
-	<string>Mac Installer Distribution</string>
+	<string>3rd Party Mac Developer Installer</string>
 	<key>provisioningProfiles</key>
 	<dict>
 		<key>com.shinycomputers.contextpanel</key>
