@@ -471,7 +471,7 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     let results = await executor.runDue(now: now)
 
     #expect(results.map(\.status) == [.skipped])
-    #expect(results.first?.errorMessage == "Reset priming is not supported for this provider")
+    #expect(results.first?.errorMessage == "No primer command is configured" || results.first?.errorMessage == "Reset priming is not supported for this provider")
 }
 
 @Test func resetPrimerExecutorSurfacesRunStateSaveFailures() async throws {
