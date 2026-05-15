@@ -135,16 +135,59 @@ profile_uuid() {
 	rm -f "$plist"
 }
 
+plist_array_contains_authorized_value() {
+	local plist="$1"
+	local key="$2"
+	local required_value="$3"
+	local values
+	local value
+	local wildcard_prefix
+	values="$(/usr/libexec/PlistBuddy -c "Print :$key" "$plist" 2>/dev/null || true)"
+	while IFS= read -r value; do
+		value="${value#"${value%%[![:space:]]*}"}"
+		value="${value%"${value##*[![:space:]]}"}"
+		[[ -n "$value" && "$value" != "Array {" && "$value" != "}" ]] || continue
+		if [[ "$value" == "$required_value" ]]; then
+			return 0
+		fi
+		if [[ "$value" == *'.*' ]]; then
+			wildcard_prefix="${value%\*}"
+			if [[ "$required_value" == "$wildcard_prefix"* ]]; then
+				return 0
+			fi
+		fi
+	done <<<"$values"
+	return 1
+}
+
+assert_profile_bundle_id() {
+	local profile="$1"
+	local label="$2"
+	local bundle_id="$3"
+	local plist
+	local expected_app_id
+	local profile_app_id
+	plist="$(mktemp)"
+	security cms -D -i "$profile" -o "$plist"
+	expected_app_id="$team_id.$bundle_id"
+	profile_app_id="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.application-identifier' "$plist" 2>/dev/null || true)"
+	rm -f "$plist"
+	if [[ "$profile_app_id" != "$expected_app_id" ]]; then
+		echo "$label provisioning profile has application identifier '$profile_app_id', expected '$expected_app_id'" >&2
+		exit 1
+	fi
+}
+
 assert_profile_app_group() {
 	local profile="$1"
 	local label="$2"
+	local app_group="$team_id.group.com.shinycomputers.contextpanel"
 	local plist
 	plist="$(mktemp)"
 	security cms -D -i "$profile" -o "$plist"
-	if ! /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.security.application-groups' "$plist" 2>/dev/null |
-		grep -Fq 'MM5YXC7T6E.group.com.shinycomputers.contextpanel'; then
+	if ! plist_array_contains_authorized_value "$plist" 'Entitlements:com.apple.security.application-groups' "$app_group"; then
 		rm -f "$plist"
-		echo "$label provisioning profile is missing app group: MM5YXC7T6E.group.com.shinycomputers.contextpanel" >&2
+		echo "$label provisioning profile does not authorize app group: $app_group" >&2
 		exit 1
 	fi
 	rm -f "$plist"
@@ -200,6 +243,9 @@ fi
 app_profile_uuid="$(profile_uuid "$app_profile")"
 widget_profile_uuid="$(profile_uuid "$widget_profile")"
 refresh_agent_profile_uuid="$(profile_uuid "$refresh_agent_profile")"
+assert_profile_bundle_id "$app_profile" "app" "com.shinycomputers.contextpanel"
+assert_profile_bundle_id "$widget_profile" "widget" "com.shinycomputers.contextpanel.widget"
+assert_profile_bundle_id "$refresh_agent_profile" "refresh agent" "com.shinycomputers.contextpanel.refresh-agent"
 assert_profile_app_group "$app_profile" "app"
 assert_profile_app_group "$widget_profile" "widget"
 assert_profile_app_group "$refresh_agent_profile" "refresh agent"

@@ -101,7 +101,9 @@ The app and refresh-agent App Store entitlements must keep the sandbox enabled
 with App Group, outbound network, read-only user-selected file access, and
 app-scope bookmark permissions. The widget should keep only the sandbox and App
 Group entitlements. The TestFlight upload script fails early when any supplied
-provisioning profile is missing the Context Panel App Group.
+provisioning profile does not authorize the Context Panel App Group; App Store
+profiles may express that authorization as either the exact app group or a
+same-team wildcard.
 
 ## Build The Native App And Widget
 
