@@ -216,17 +216,23 @@ public struct GeminiCodeAssistConnector: ProviderConnector {
     private let accounts: [GeminiAccountConfiguration]
     private let httpClient: any ConnectorHTTPClient
     private let fileLoader: @Sendable (String) throws -> Data
+    private let credentialStore: (any ProviderCredentialLoading)?
+    private let credentialAccountID: String?
 
     public init(
         accounts: [GeminiAccountConfiguration],
         httpClient: any ConnectorHTTPClient = URLSessionConnectorHTTPClient(),
         fileLoader: @escaping @Sendable (String) throws -> Data = { path in
             try Data(contentsOf: URL(fileURLWithPath: NSString(string: path).expandingTildeInPath))
-        }
+        },
+        credentialStore: (any ProviderCredentialLoading)? = nil,
+        credentialAccountID: String? = nil
     ) {
         self.accounts = accounts
         self.httpClient = httpClient
         self.fileLoader = fileLoader
+        self.credentialStore = credentialStore
+        self.credentialAccountID = credentialAccountID
     }
 
     public func refresh(now: Date) async -> ConnectorRefreshResult {
@@ -242,7 +248,7 @@ public struct GeminiCodeAssistConnector: ProviderConnector {
         let localAccountID = ConnectorRedactor.localAccountID(provider: provider, path: account.authPath)
 
         do {
-            let credentials = try JSONDecoder().decode(GeminiOAuthCredentials.self, from: try fileLoader(account.authPath))
+            let credentials = try JSONDecoder().decode(GeminiOAuthCredentials.self, from: try credentialData(for: account))
             let accessToken = try await refreshedAccessToken(credentials: credentials, account: account)
             let loadResponse = try await loadCodeAssist(accessToken: accessToken, endpoint: account.codeAssistEndpoint)
             guard let project = loadResponse.cloudaicompanionProject, !project.isEmpty else {
@@ -275,6 +281,19 @@ public struct GeminiCodeAssistConnector: ProviderConnector {
                 errorMessage: error.localizedDescription
             )
         }
+    }
+
+    private func credentialData(for account: GeminiAccountConfiguration) throws -> Data {
+        if let credentialStore, let credentialAccountID {
+            do {
+                if let data = try credentialStore.load(accountID: credentialAccountID) {
+                    return data
+                }
+            } catch {
+                // Keychain cache failures should not block the original user-authorized file path.
+            }
+        }
+        return try fileLoader(account.authPath)
     }
 
     private func refreshedAccessToken(credentials: GeminiOAuthCredentials, account: GeminiAccountConfiguration) async throws -> String {

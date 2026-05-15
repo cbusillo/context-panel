@@ -194,37 +194,7 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
 
         do {
             var credentials = try loadCredentials(accountID: account.accountID)
-            let accessToken = try await accessToken(credentials: &credentials, account: account, now: now)
-            let response = try await httpClient.data(for: ConnectorHTTPRequest(
-                url: account.usageEndpoint,
-                method: "GET",
-                headers: [
-                    "Authorization": "Bearer \(accessToken)",
-                    "Accept": "application/json",
-                    "Content-Type": "application/json",
-                    "User-Agent": "claude-code/2.1.141",
-                    "anthropic-beta": "oauth-2025-04-20",
-                    "anthropic-version": "2023-06-01",
-                    "anthropic-client-platform": "context-panel",
-                ]
-            ))
-            guard (200..<300).contains(response.statusCode) else {
-                throw ConnectorError.httpFailure(operation: "Claude usage", statusCode: response.statusCode)
-            }
-            let limits = try ClaudeOAuthUsageParser.usageLimits(
-                from: response.data,
-                accountID: localAccountID,
-                accountName: account.accountName,
-                observedAt: now
-            )
-            return ProviderConnectorReport(
-                provider: provider,
-                accountID: localAccountID,
-                accountName: account.accountName,
-                generatedAt: now,
-                limits: limits,
-                status: limits.isEmpty ? .unknown : nil
-            )
+            return try await refresh(account: account, credentials: &credentials, now: now, localAccountID: localAccountID)
         } catch {
             return ProviderConnectorReport(
                 provider: provider,
@@ -236,6 +206,80 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
                 errorMessage: error.localizedDescription
             )
         }
+    }
+
+    private func refresh(
+        account: ClaudeOAuthAccountConfiguration,
+        credentials: inout ClaudeOAuthCredentials,
+        now: Date,
+        localAccountID: String
+    ) async throws -> ProviderConnectorReport {
+        let currentAccessToken = try await accessToken(credentials: &credentials, account: account, now: now, forceRefresh: false)
+        let response = try await httpClient.data(for: ConnectorHTTPRequest(
+            url: account.usageEndpoint,
+            method: "GET",
+            headers: [
+                "Authorization": "Bearer \(currentAccessToken)",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "User-Agent": "claude-code/2.1.141",
+                "anthropic-beta": "oauth-2025-04-20",
+                "anthropic-version": "2023-06-01",
+                "anthropic-client-platform": "context-panel",
+            ]
+        ))
+
+        if response.statusCode == 401 || response.statusCode == 403 {
+            let refreshedToken = try await accessToken(credentials: &credentials, account: account, now: now, forceRefresh: true)
+            let retryResponse = try await httpClient.data(for: ConnectorHTTPRequest(
+                url: account.usageEndpoint,
+                method: "GET",
+                headers: [
+                    "Authorization": "Bearer \(refreshedToken)",
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                    "User-Agent": "claude-code/2.1.141",
+                    "anthropic-beta": "oauth-2025-04-20",
+                    "anthropic-version": "2023-06-01",
+                    "anthropic-client-platform": "context-panel",
+                ]
+            ))
+            guard (200..<300).contains(retryResponse.statusCode) else {
+                throw ConnectorError.httpFailure(operation: "Claude usage", statusCode: retryResponse.statusCode)
+            }
+            let retryLimits = try ClaudeOAuthUsageParser.usageLimits(
+                from: retryResponse.data,
+                accountID: localAccountID,
+                accountName: account.accountName,
+                observedAt: now
+            )
+            return ProviderConnectorReport(
+                provider: provider,
+                accountID: localAccountID,
+                accountName: account.accountName,
+                generatedAt: now,
+                limits: retryLimits,
+                status: retryLimits.isEmpty ? .unknown : nil
+            )
+        }
+
+        guard (200..<300).contains(response.statusCode) else {
+            throw ConnectorError.httpFailure(operation: "Claude usage", statusCode: response.statusCode)
+        }
+        let limits = try ClaudeOAuthUsageParser.usageLimits(
+            from: response.data,
+            accountID: localAccountID,
+            accountName: account.accountName,
+            observedAt: now
+        )
+        return ProviderConnectorReport(
+            provider: provider,
+            accountID: localAccountID,
+            accountName: account.accountName,
+            generatedAt: now,
+            limits: limits,
+            status: limits.isEmpty ? .unknown : nil
+        )
     }
 
     private func loadCredentials(accountID: String) throws -> ClaudeOAuthCredentials {
@@ -255,12 +299,14 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
     private func accessToken(
         credentials: inout ClaudeOAuthCredentials,
         account: ClaudeOAuthAccountConfiguration,
-        now: Date
+        now: Date,
+        forceRefresh: Bool
     ) async throws -> String {
         if
+            !forceRefresh,
             let accessToken = credentials.accessToken,
             !accessToken.isEmpty,
-            credentials.expiresAt.map({ $0.timeIntervalSince(now) > expirationSkew }) ?? true
+            credentials.expiresAt.map({ $0.timeIntervalSince(now) > expirationSkew }) ?? false
         {
             return accessToken
         }

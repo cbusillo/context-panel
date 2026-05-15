@@ -453,6 +453,42 @@ import Testing
     #expect(primary.loadHistory().isEmpty)
 }
 
+@Test func snapshotRefreshServiceMigratesClaudeCredentialsBeforeRefreshingMigratedAccount() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let credentials = Data(#"{"accessToken":"old-access","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.utf8)
+    let credentialStore = InMemoryProviderCredentialStore(storage: ["claude-local-default": credentials])
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary),
+        credentialStore: credentialStore
+    )
+    let savedAt = Date(timeIntervalSince1970: 300)
+    try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
+        updatedAt: savedAt,
+        accounts: [LocalProviderAccountConfiguration(
+            id: "claude-local-default",
+            provider: .anthropic,
+            connectorKind: .claudeLocalStatus,
+            displayName: "Claude"
+        )]
+    ))
+
+    let accountDocument = service.loadConfiguredAccounts(now: savedAt).document
+    let connectors = AccountConnectorFactory.connectors(
+        from: accountDocument,
+        credentialStore: credentialStore,
+        requiresBookmarkedAuthFiles: false
+    )
+    let refreshResult = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: savedAt)
+
+    #expect(try credentialStore.load(accountID: "claude-oauth-default") == credentials)
+    #expect(accountDocument.accounts.contains { $0.id == "claude-oauth-default" && $0.connectorKind == .claudeOAuthUsage })
+    #expect(refreshResult.reports.count == 1)
+    #expect(refreshResult.reports[0].accountName == "Claude")
+    #expect(refreshResult.reports[0].errorMessage != "Claude is not connected. Sign in to Claude from Settings.")
+}
+
 @Test func snapshotRefreshRunnerSkipsEmptyRefreshes() async throws {
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())

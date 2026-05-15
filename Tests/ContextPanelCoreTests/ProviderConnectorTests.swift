@@ -329,6 +329,31 @@ import Testing
     #expect(store.savedData.flatMap { try? JSONDecoder.contextPanelISO8601.decode(ClaudeOAuthCredentials.self, from: $0) }?.refreshToken == "new-refresh")
 }
 
+@Test func claudeOAuthConnectorRefreshesWhenUsageCallIsUnauthorized() async throws {
+    let credentials = #"{"accessToken":"old-access","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
+    let token = #"{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600,"scope":"user:profile user:inference"}"#.data(using: .utf8)!
+    let usage = #"{"five_hour":{"utilization":1,"resets_at":"2026-05-14T23:10:00Z"}}"#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 401, data: Data(#"{"error":"invalid_token"}"#.utf8)),
+        ConnectorHTTPResponse(statusCode: 200, data: token),
+        ConnectorHTTPResponse(statusCode: 200, data: usage),
+    ])
+    let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
+    let connector = ClaudeOAuthUsageConnector(
+        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
+        httpClient: http,
+        credentialStore: store
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+
+    #expect(result.reports[0].status == .healthy)
+    #expect(http.requests.map(\.method) == ["GET", "POST", "GET"])
+    #expect(http.requests[1].body.flatMap { String(data: $0, encoding: .utf8) }?.contains("refresh-secret") == true)
+    #expect(http.requests[2].headers["Authorization"] == "Bearer new-access")
+    #expect(store.savedAccountID == "claude-oauth-default")
+}
+
 @Test func claudeConnectorReportsUnknownLiveAllowanceFromLocalStatus() async throws {
     let stats = #"{"version":3,"lastComputedDate":"2026-04-26","dailyActivity":[],"modelUsage":{},"totalSessions":2,"totalMessages":3}"#.data(using: .utf8)!
     let connector = ClaudeLocalStatusConnector(

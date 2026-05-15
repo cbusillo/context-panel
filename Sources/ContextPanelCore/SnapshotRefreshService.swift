@@ -198,7 +198,9 @@ public struct SnapshotRefreshService: Sendable {
     }
 
     public func loadConfiguredAccounts(now: Date = Date()) -> AccountConfigurationLoadResult {
-        accountStore.load(now: now)
+        let result = accountStore.load(now: now)
+        migrateClaudeStateIfNeeded(accounts: result.document.accounts, now: now)
+        return result
     }
 
     public func loadCurrent(policy: SnapshotStoreStalenessPolicy, now: Date = Date()) -> SnapshotStoreLoadResult {
@@ -224,7 +226,9 @@ public struct SnapshotRefreshService: Sendable {
 
     public func refresh(now: Date = Date()) async throws -> SnapshotRefreshOutcome {
         importConfiguredAuthFiles(now: now)
-        let accountDocument = accountStore.load(now: now).document
+        let accountResult = accountStore.load(now: now)
+        migrateClaudeStateIfNeeded(accounts: accountResult.document.accounts, now: now)
+        let accountDocument = accountResult.document
         let connectors = AccountConnectorFactory.connectors(
             from: accountDocument,
             bookmarkStore: bookmarkStore,
@@ -249,6 +253,21 @@ public struct SnapshotRefreshService: Sendable {
             preservesUnreportedAccounts: preservesUnreportedAccounts
         )
         return SnapshotRefreshOutcome(savedAt: savedAt, refreshResult: refreshResult)
+    }
+
+    private func migrateClaudeStateIfNeeded(accounts: [LocalProviderAccountConfiguration], now: Date) {
+        if let credentialStore {
+            ClaudeAccountMigration.migrateClaudeCredentials(credentialStore)
+        }
+        guard accounts.contains(where: { $0.id == ClaudeAccountMigration.oldAccountID && $0.connectorKind == .claudeLocalStatus }) else { return }
+
+        let migratedDocument = ClaudeAccountMigration.migrateAccountConfiguration(
+            AccountConfigurationDocument(updatedAt: now, accounts: accounts),
+            now: now
+        )
+        if migratedDocument.accounts != accounts {
+            try? accountStore.save(migratedDocument)
+        }
     }
 }
 

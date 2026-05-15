@@ -282,7 +282,9 @@ public enum AccountConnectorFactory {
                         clientID: metadata.clientID,
                         clientSecret: metadata.clientSecret
                     )],
-                    fileLoader: authFileLoader
+                    fileLoader: authFileLoader,
+                    credentialStore: credentialStore,
+                    credentialAccountID: account.id
                 )
             case .claudeLocalStatus:
                 return ClaudeLocalStatusConnector(accounts: [ClaudeAccountConfiguration(
@@ -292,20 +294,13 @@ public enum AccountConnectorFactory {
                     usageBlocksPath: account.usageBlocksPath
                 )])
             case .claudeOAuthUsage:
-                guard let credentialStore else {
-                    return FailingProviderConnector(
-                        provider: .anthropic,
-                        accountID: ConnectorRedactor.localAccountID(provider: .anthropic, stableID: account.id),
-                        accountName: account.displayName,
-                        message: "Claude OAuth credentials are not available in this runtime."
-                    )
-                }
+                let effectiveCredentialStore: any ProviderCredentialStoring = credentialStore ?? ProviderCredentialStore()
                 return ClaudeOAuthUsageConnector(
                     accounts: [ClaudeOAuthAccountConfiguration(
                         accountID: account.id,
                         accountName: account.displayName
                     )],
-                    credentialStore: credentialStore
+                    credentialStore: effectiveCredentialStore
                 )
             }
         }
