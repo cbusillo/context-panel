@@ -46,16 +46,75 @@ Before changing or validating app/widget/provider behavior, identify the active
 runtime. Mixed runtimes caused repeated false positives during App Store release
 prep, so treat them as a blocker rather than background noise.
 
+The only valid local runtime for app/widget testing is the canonical installed
+app:
+
+```text
+/Applications/Context Panel.app
+```
+
+Do not test app, widget, login-item, provider, sandbox, or storage behavior from
+an arbitrary DerivedData, `.build`, `/tmp`, or worktree app bundle. Build outputs
+are allowed as intermediate artifacts only; the runtime gate must install the
+fresh build to `/Applications/Context Panel.app`, register that app and its
+embedded widget, and quarantine or unregister competing bundles with the same
+bundle identifiers.
+
+Before telling Chris the app/widget are ready to test, run the runtime baseline
+receipt and require it to pass:
+
+```sh
+scripts/context-panel-runtime-baseline.sh check
+```
+
+After rebuilding or reinstalling during normal development, use the in-place
+install gate. It updates `/Applications/Context Panel.app` and verifies the same
+runtime receipt while preserving the user's placed widget:
+
+```sh
+scripts/context-panel-runtime-baseline.sh install --launch
+```
+
+Use the full reset gate only when Chris explicitly asks for a fresh install,
+container/storage reset, or when cleaning up a mixed runtime:
+
+```sh
+scripts/context-panel-runtime-baseline.sh reset --launch
+```
+
+Do not claim readiness unless the receipt shows `baseline=OK`, the foreground
+app process, PluginKit widget registration, and `contextpanel://` URL handler all
+point to `/Applications/Context Panel.app`, the build fingerprint in that app
+matches the current source tree, and the storage/cache check reports no persisted
+account config, bookmarks, snapshots, widget timelines, reset-primer settings,
+reset-primer run state, or background-refresh settings
+when a fresh install was requested. Treat any mismatch as a blocker. Avoid
+repeatedly opening `contextpanel://` during ordinary validation; use that only
+for explicit widget click-through testing, because URL activation can change the
+visible app window state.
+
+The install gate is the normal "ready to test" path. The reset gate can make
+macOS refresh widget registrations and may still disturb placement; after a
+reset, verify whether the widget is still present before asking Chris to test
+widget UI. Do not clear WidgetKit/Chrono placement directories or restart
+`chronod` unless explicitly testing widget placement/reset behavior; use
+`--reset-widget-placement` only when removing the widget from the UI is
+acceptable.
+
 - Record the current branch, default branch, and dirty state with
   `git status --short --branch` before editing, packaging, or installing.
 - Do not package or install from a dirty multi-workstream tree unless Chris
   explicitly asks for a scratch dogfood build. If the tree already contains
   broad unrelated changes, pause and propose a cleanup/split plan first.
 - Before judging UI, widget, login-item, provider, sandbox, or storage behavior,
-  verify that the foreground app process, WidgetKit extension, and refresh agent
-  all come from the intended bundle root. A DerivedData app paired with a
-  `/Applications` widget or login item is a mixed runtime and must not be called
-  fixed.
+  verify that the foreground app process, WidgetKit extension, URL handler, and
+  refresh agent all resolve under `/Applications/Context Panel.app`. A DerivedData
+  app, widget, or login item is a mixed runtime and must not be called fixed.
+- Auto-review or agent worktrees must not leave globally registered WidgetKit or
+  LaunchServices bundles behind. Prefer `swift build`/`swift test` for review
+  work. If an agent must build the Xcode app target, run the runtime reset gate
+  afterward so stale `.code/working`, DerivedData, `/tmp`, and repo `.build`
+  app/widget artifacts are quarantined or unregistered.
 - For signed/App Store-style validation, terminal success is not proof that the
   app works. Reproduce provider reads from the signed app or signed refresh
   agent, because sandbox, TCC prompts, security-scoped bookmarks, app groups,
@@ -63,7 +122,8 @@ prep, so treat them as a blocker rather than background noise.
 - When touching app groups, widget mirrors, bookmarks, account IDs, or snapshot
   merging, inspect the active storage roots before and after validation:
   `~/Library/Application Support/Context Panel`,
-  `~/Library/Group Containers/group.com.shinycomputers.contextpanel/Context Panel`,
+  <!-- markdownlint-disable-next-line MD013 -->
+  `~/Library/Group Containers/MM5YXC7T6E.group.com.shinycomputers.contextpanel/Context Panel`,
   and
   <!-- markdownlint-disable-next-line MD013 -->
   `~/Library/Containers/com.shinycomputers.contextpanel.widget/Data/Library/Application Support/Context Panel`.
@@ -81,7 +141,7 @@ git status --short --branch
 ps axww -o pid,ppid,command | rg -i 'Context Panel|ContextPanel|RefreshAgent'
 pluginkit -m -A -D -vvv | rg contextpanel
 lsof -p <refresh-agent-pid> \
-  | rg 'ContextPanelRefreshAgent|Context Panel.app|DerivedData|/Applications'
+  | rg 'ContextPanelRefreshAgent|/Applications/Context Panel.app'
 codesign -d --entitlements :- "/Applications/Context Panel.app" 2>/dev/null
 shasum -a 256 \
   "/Applications/Context Panel.app/Contents/MacOS/Context Panel"
@@ -99,22 +159,14 @@ scripts/commit-gate.sh
 For UI work, also run the native app/widget locally and inspect the actual macOS
 presentation before calling the work ready.
 
-For widget/app UI changes, the SwiftPM gate is not sufficient by itself. Also
-regenerate the Xcode project when `project.yml` or source membership changes,
-build the real Xcode app target, replace the installed development app, and
-restart the app/widget extension:
+For widget/app UI changes, the SwiftPM gate is not sufficient by itself. Use the
+install gate instead of manually opening or copying DerivedData builds; it
+regenerates the Xcode project, builds the real Xcode app target, installs the
+fresh app to `/Applications/Context Panel.app`, refreshes the app/widget runtime,
+and prints the runtime receipt:
 
 ```sh
-xcodegen generate
-xcodebuild -project ContextPanel.xcodeproj -scheme ContextPanel \
-  -configuration Debug -derivedDataPath .build/xcode-derived-signed build
-pkill -9 -f '/Applications/Context Panel.app/Contents/MacOS/Context Panel' || true
-pkill -9 -f 'ContextPanelWidgetExtension.appex' || true
-rm -rf "/Applications/Context Panel.app"
-ditto \
-  ".build/xcode-derived-signed/Build/Products/Debug/Context Panel.app" \
-  "/Applications/Context Panel.app"
-open "/Applications/Context Panel.app"
+scripts/context-panel-runtime-baseline.sh install --launch
 ```
 
 Do not create backup copies of `/Applications/Context Panel.app` during normal
@@ -122,21 +174,25 @@ development installs.
 
 The installed widget can still be older than the rebuilt app. Check
 `pluginkit -m -A -D -vvv | rg contextpanel` and verify the registered extension
-path. If WidgetKit is registered to an old DerivedData path, rebuild/register
-that path or remove the stale registration before judging the widget.
+path is under `/Applications/Context Panel.app`. If WidgetKit is registered to
+any other path, run the full reset gate before judging the widget.
 
-The widget needs access to `group.com.shinycomputers.contextpanel`. A wildcard
-Mac Team provisioning profile may not carry that app-group entitlement, which
-can make the widget show a `current-snapshot.json` read error even while the app
-can read data. For release, use a provisioning profile with the app group
-enabled. For local development, prefer an ad-hoc-signed install over a wildcard
-profile when testing the live widget. If building with `CODE_SIGNING_ALLOWED=NO`,
-ad-hoc sign the app, extension, and debug dylibs with their entitlements before
-installing. The app also mirrors the current snapshot to the widget extension
-container as a local-development fallback. The app-side copy path is the widget
-container under `~/Library/Containers`, while the widget reads it through its
-sandbox-local Application Support directory; keep that split in mind when
-debugging why the app and widget disagree.
+The app, widget, refresh agent, and Claude cache scripts use
+`MM5YXC7T6E.group.com.shinycomputers.contextpanel` as canonical shared storage.
+Do not reintroduce `group.com.shinycomputers.contextpanel` as a runtime fallback;
+probing that container can trigger macOS protected app-data prompts in local
+builds and can split app/widget state. A wildcard Mac Team provisioning profile
+may not carry the app-group entitlement, which can make the widget show a
+`current-snapshot.json` read error even while the app can read data. For release,
+use a provisioning profile with the app group enabled. For local development,
+prefer an ad-hoc-signed install over a wildcard profile when testing the live
+widget. If building with `CODE_SIGNING_ALLOWED=NO`, ad-hoc sign the app,
+extension, and debug dylibs with their entitlements before installing. The app
+also mirrors the current snapshot to the widget extension container as a
+local-development fallback. The app-side copy path is the widget container under
+`~/Library/Containers`, while the widget reads it through its sandbox-local
+Application Support directory; keep that split in mind when debugging why the app
+and widget disagree.
 
 ## Repo Workflow
 

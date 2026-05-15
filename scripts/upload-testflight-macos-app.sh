@@ -135,6 +135,21 @@ profile_uuid() {
 	rm -f "$plist"
 }
 
+assert_profile_app_group() {
+	local profile="$1"
+	local label="$2"
+	local plist
+	plist="$(mktemp)"
+	security cms -D -i "$profile" -o "$plist"
+	if ! /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.security.application-groups' "$plist" 2>/dev/null |
+		grep -Fq 'MM5YXC7T6E.group.com.shinycomputers.contextpanel'; then
+		rm -f "$plist"
+		echo "$label provisioning profile is missing app group: MM5YXC7T6E.group.com.shinycomputers.contextpanel" >&2
+		exit 1
+	fi
+	rm -f "$plist"
+}
+
 install_profile() {
 	local profile="$1"
 	local uuid="$2"
@@ -185,6 +200,9 @@ fi
 app_profile_uuid="$(profile_uuid "$app_profile")"
 widget_profile_uuid="$(profile_uuid "$widget_profile")"
 refresh_agent_profile_uuid="$(profile_uuid "$refresh_agent_profile")"
+assert_profile_app_group "$app_profile" "app"
+assert_profile_app_group "$widget_profile" "widget"
+assert_profile_app_group "$refresh_agent_profile" "refresh agent"
 install_profile "$app_profile" "$app_profile_uuid"
 install_profile "$widget_profile" "$widget_profile_uuid"
 install_profile "$refresh_agent_profile" "$refresh_agent_profile_uuid"

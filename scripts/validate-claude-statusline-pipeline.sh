@@ -7,19 +7,6 @@ trap 'rm -rf "$tmp_dir"' EXIT
 
 cache_dir="$tmp_dir/ClaudeRateLimits"
 stats_path="$tmp_dir/stats-cache.json"
-claude_stub="$tmp_dir/claude"
-
-cat >"$claude_stub" <<'STUB'
-#!/usr/bin/env bash
-set -euo pipefail
-if [ "$1" = "auth" ] && [ "$2" = "status" ] && [ "$3" = "--json" ]; then
-  printf '%s\n' '{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","subscriptionType":"pro","email":"redacted@example.com","orgId":"org_secret"}'
-  exit 0
-fi
-printf 'unexpected claude stub arguments\n' >&2
-exit 2
-STUB
-chmod +x "$claude_stub"
 
 cat >"$stats_path" <<'JSON'
 {
@@ -49,7 +36,6 @@ test -s "$cache_path"
 output="$(
   cd "$repo_root"
   swift run ClaudeLimitProbe \
-    --claude-bin "$claude_stub" \
     --stats "$stats_path" \
     --rate-limit-cache "$cache_path"
 )"

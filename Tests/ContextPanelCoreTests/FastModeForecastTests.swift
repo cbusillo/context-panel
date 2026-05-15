@@ -131,7 +131,7 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(forecast.totalUnits == 200)
     #expect(forecast.recommendation == .safeThroughReset)
     #expect(forecast.copy == "Use fast mode")
-    #expect(forecast.detailCopy == "55% left · 1%/h observed")
+    #expect(forecast.detailCopy == "55% left · 2%/h observed")
 }
 
 @Test func capacityForecastDoesNotTreatOneLimitedAccountAsProviderLimited() {
@@ -151,8 +151,8 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(forecast.remainingUnits == 98)
     #expect(forecast.recommendation == .saveFastMode)
     #expect(forecast.copy == "Use normal mode")
-    #expect(forecast.detailCopy == "49% left · 1%/h observed")
-    #expect(forecast.burnRateCopy == "1%/h observed")
+    #expect(forecast.detailCopy == "49% left · 2%/h observed")
+    #expect(forecast.burnRateCopy == "2%/h observed")
     #expect(forecast.runwayCopy == "out 1d 22h")
 }
 
@@ -419,6 +419,47 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(store.load().accountPreferences.map(\.accountID) == ["openai-a"])
 }
 
+@Test func backgroundRefreshSettingsClampsIntervalsAndRoundTrips() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = BackgroundRefreshSettingsStore(
+        settingsURL: directory.appending(path: "background-refresh-settings.json")
+    )
+    var settings = BackgroundRefreshSettings(isEnabled: false, intervalMinutes: 1)
+
+    #expect(settings.intervalMinutes == 5)
+    #expect(settings.intervalSeconds == 300)
+    settings.setIntervalMinutes(90)
+    #expect(settings.intervalMinutes == 60)
+
+    try store.save(settings)
+
+    #expect(store.exists)
+    #expect(store.load() == settings)
+}
+
+@Test func backgroundRefreshSettingsClampsPersistedIntervalsOnLoad() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let settingsURL = directory.appending(path: "background-refresh-settings.json")
+    let store = BackgroundRefreshSettingsStore(settingsURL: settingsURL)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try Data("""
+    {
+      "schemaVersion": 1,
+      "isEnabled": true,
+      "intervalMinutes": 1
+    }
+    """.utf8).write(to: settingsURL)
+
+    let settings = store.load()
+
+    #expect(settings.intervalMinutes == 5)
+    #expect(settings.intervalSeconds == 300)
+}
+
 @Test func capacityForecastMeasuresBurnWhenNoObservedRateExists() {
     let forecast = FastModeCapacityForecast(
         limitID: "openai:weekly",
@@ -435,6 +476,23 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(forecast.recommendation == .needsCalibration)
     #expect(forecast.copy == "Measuring burn")
     #expect(forecast.burnRateCopy == "measuring burn")
+    #expect(forecast.burnPaceCopy == "measuring burn")
+}
+
+@Test func capacityForecastMeasuresBurnWhenPaceCannotBeComputedAtResetBoundary() {
+    let forecast = FastModeCapacityForecast(
+        limitID: "openai:weekly",
+        accountName: "OpenAI Weekly pool",
+        providerLimits: [
+            openAILimit(accountName: "Personal", used: 30, limit: 100, resetsInHours: 0, windowLabel: "Weekly")
+        ],
+        now: now,
+        standardBurnRate: BurnRate(mode: .standard, unitsPerHour: 2),
+        fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 4),
+        reserveUnits: 6
+    )
+
+    #expect(forecast.burnPaceRatio == nil)
     #expect(forecast.burnPaceCopy == "measuring burn")
 }
 
@@ -486,13 +544,30 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(estimate.sampleCount == 3)
 }
 
-@Test func observedBurnRateSkipsIntervalsThatCrossResets() throws {
-    let oldReset = now.addingTimeInterval(-90 * 60)
-    let nextReset = now.addingTimeInterval(96 * 3_600)
+@Test func observedBurnRateUsesCurrentWindowPaceWhenItExceedsRecentAverage() throws {
+    let reset = now.addingTimeInterval((7 * 24 - 2) * 3_600)
     let history = [
-        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-2 * 3_600), used: 90, reset: oldReset),
-        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-1 * 3_600), used: 4, reset: nextReset),
-        storedOpenAIWeekly(savedAt: now, used: 6, reset: nextReset),
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-2 * 3_600), used: 1, reset: reset),
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-1 * 3_600), used: 2, reset: reset),
+        storedOpenAIWeekly(savedAt: now, used: 7, reset: reset),
+    ]
+    let current = try #require(history.last?.snapshot)
+
+    let estimates = MainLimitBurnRateEstimator.observedBurnRates(current: current, history: history, now: now)
+    let estimate = try #require(estimates["openai:weekly"])
+
+    #expect(abs(estimate.unitsPerHour - 3.5) < 0.0001)
+    #expect(estimate.sampleCount == 1)
+}
+
+@Test func observedBurnRateUsesAverageInsteadOfRoundedFastestTick() throws {
+    let reset = now.addingTimeInterval(96 * 3_600)
+    let history = [
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-60 * 60), used: 0, reset: reset),
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-50 * 60), used: 0, reset: reset),
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-40 * 60), used: 1, reset: reset),
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-30 * 60), used: 1, reset: reset),
+        storedOpenAIWeekly(savedAt: now, used: 2, reset: reset),
     ]
     let current = try #require(history.last?.snapshot)
 
@@ -500,7 +575,140 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     let estimate = try #require(estimates["openai:weekly"])
 
     #expect(abs(estimate.unitsPerHour - 2) < 0.0001)
-    #expect(estimate.sampleCount == 2)
+    #expect(estimate.sampleCount == 5)
+}
+
+@Test func observedBurnRateUsesRecentDrainWhenLongerAverageIsTooOptimistic() throws {
+    let reset = now.addingTimeInterval(96 * 3_600)
+    let history = [
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-12 * 3_600), used: 20, reset: reset),
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-8 * 3_600), used: 20, reset: reset),
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-4 * 3_600), used: 20, reset: reset),
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-2 * 3_600), used: 28, reset: reset),
+        storedOpenAIWeekly(savedAt: now, used: 36, reset: reset),
+    ]
+    let current = try #require(history.last?.snapshot)
+
+    let estimates = MainLimitBurnRateEstimator.observedBurnRates(current: current, history: history, now: now)
+    let estimate = try #require(estimates["openai:weekly"])
+
+    #expect(abs(estimate.unitsPerHour - 4) < 0.0001)
+    #expect(abs(estimate.observedDurationHours - 4) < 0.0001)
+    #expect(estimate.sampleCount == 3)
+}
+
+@Test func observedBurnRatePreservesZeroBurnForIdleWindows() throws {
+    let reset = now.addingTimeInterval(96 * 3_600)
+    let history = [
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-3 * 3_600), used: 12, reset: reset),
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-2 * 3_600), used: 12, reset: reset),
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-1 * 3_600), used: 12, reset: reset),
+        storedOpenAIWeekly(savedAt: now, used: 12, reset: reset),
+    ]
+    let current = try #require(history.last?.snapshot)
+
+    let estimates = MainLimitBurnRateEstimator.observedBurnRates(current: current, history: history, now: now)
+    let estimate = try #require(estimates["openai:weekly"])
+
+    #expect(estimate.unitsPerHour == 0)
+    #expect(estimate.sampleCount == 4)
+}
+
+@Test func observedBurnRateUsesActiveAccountAverageForPooledLimits() throws {
+    let activeReset = now.addingTimeInterval(7 * 24 * 3_600)
+    let fullReset = now.addingTimeInterval(36 * 3_600)
+    let history = [
+        storedOpenAIWeeklyAccounts(savedAt: now.addingTimeInterval(-3 * 3_600), activeUsed: 1, fullUsed: 100, activeReset: activeReset, fullReset: fullReset),
+        storedOpenAIWeeklyAccounts(savedAt: now.addingTimeInterval(-2 * 3_600), activeUsed: 3, fullUsed: 100, activeReset: activeReset, fullReset: fullReset),
+        storedOpenAIWeeklyAccounts(savedAt: now.addingTimeInterval(-1 * 3_600), activeUsed: 5, fullUsed: 100, activeReset: activeReset, fullReset: fullReset),
+        storedOpenAIWeeklyAccounts(savedAt: now, activeUsed: 5, fullUsed: 100, activeReset: activeReset, fullReset: fullReset),
+    ]
+    let current = try #require(history.last?.snapshot)
+
+    let estimates = MainLimitBurnRateEstimator.observedBurnRates(current: current, history: history, now: now)
+    let estimate = try #require(estimates["openai:weekly"])
+
+    #expect(abs(estimate.unitsPerHour - 4.0 / 3.0) < 0.0001)
+    #expect(estimate.sampleCount == 8)
+}
+
+@Test func observedBurnRateAggregatesActivePooledAccountAverages() throws {
+    let activeReset = now.addingTimeInterval(7 * 24 * 3_600)
+    let fullReset = now.addingTimeInterval(36 * 3_600)
+    let history = [
+        storedOpenAIWeeklyAccounts(savedAt: now.addingTimeInterval(-3 * 3_600), activeUsed: 1, fullUsed: 90, activeReset: activeReset, fullReset: fullReset),
+        storedOpenAIWeeklyAccounts(savedAt: now.addingTimeInterval(-2 * 3_600), activeUsed: 3, fullUsed: 91, activeReset: activeReset, fullReset: fullReset),
+        storedOpenAIWeeklyAccounts(savedAt: now.addingTimeInterval(-1 * 3_600), activeUsed: 5, fullUsed: 92, activeReset: activeReset, fullReset: fullReset),
+        storedOpenAIWeeklyAccounts(savedAt: now, activeUsed: 5, fullUsed: 93, activeReset: activeReset, fullReset: fullReset),
+    ]
+    let current = try #require(history.last?.snapshot)
+
+    let estimates = MainLimitBurnRateEstimator.observedBurnRates(current: current, history: history, now: now)
+    let estimate = try #require(estimates["openai:weekly"])
+
+    #expect(abs(estimate.unitsPerHour - (7.0 / 3.0)) < 0.0001)
+    #expect(estimate.sampleCount == 8)
+}
+
+@Test func observedBurnRateAllowsConsistentlyUnknownResets() throws {
+    let reset = now.addingTimeInterval(96 * 3_600)
+    let history = [
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-2 * 3_600), used: 10, reset: reset, includeReset: false),
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-1 * 3_600), used: 11, reset: reset, includeReset: false),
+        storedOpenAIWeekly(savedAt: now, used: 12, reset: reset, includeReset: false),
+    ]
+    let current = try #require(history.last?.snapshot)
+
+    let estimates = MainLimitBurnRateEstimator.observedBurnRates(current: current, history: history, now: now)
+    let estimate = try #require(estimates["openai:weekly"])
+
+    #expect(abs(estimate.unitsPerHour - 1) < 0.0001)
+}
+
+@Test func observedBurnRateSkipsIntervalsThatCrossResets() throws {
+    let oldReset = now.addingTimeInterval(-90 * 60)
+    let nextReset = now.addingTimeInterval(96 * 3_600)
+    let history = [
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-3 * 3_600), used: 90, reset: oldReset),
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-2 * 3_600), used: 4, reset: nextReset),
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-1 * 3_600), used: 6, reset: nextReset),
+        storedOpenAIWeekly(savedAt: now, used: 7, reset: nextReset),
+    ]
+    let current = try #require(history.last?.snapshot)
+
+    let estimates = MainLimitBurnRateEstimator.observedBurnRates(current: current, history: history, now: now)
+    let estimate = try #require(estimates["openai:weekly"])
+
+    #expect(abs(estimate.unitsPerHour - 1.5) < 0.0001)
+    #expect(estimate.sampleCount == 3)
+}
+
+@Test func observedBurnRateRequiresMoreThanOneUsableInterval() throws {
+    let reset = now.addingTimeInterval(96 * 3_600)
+    let history = [
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-1 * 3_600), used: 10, reset: reset),
+        storedOpenAIWeekly(savedAt: now, used: 12, reset: reset),
+    ]
+    let current = try #require(history.last?.snapshot)
+
+    let estimates = MainLimitBurnRateEstimator.observedBurnRates(current: current, history: history, now: now)
+
+    #expect(estimates["openai:weekly"] == nil)
+}
+
+@Test func observedBurnRateRejectsAmbiguousResetBoundaries() throws {
+    let reset = now.addingTimeInterval(96 * 3_600)
+    let history = [
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-3 * 3_600), used: 8, reset: reset),
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-2 * 3_600), used: 10, reset: reset),
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-1 * 3_600), used: 12, reset: reset, includeReset: false),
+        storedOpenAIWeekly(savedAt: now, used: 14, reset: reset),
+    ]
+    let current = try #require(history.last?.snapshot)
+
+    let estimates = MainLimitBurnRateEstimator.observedBurnRates(current: current, history: history, now: now)
+
+    #expect(estimates["openai:weekly"] == nil)
 }
 
 @Test func observedBurnRateUsesSampleRelativeResetWhenResetIsNowInPast() throws {
@@ -510,19 +718,20 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
         storedOpenAIWeekly(savedAt: historicalNow, used: 80, reset: reset),
         storedOpenAIWeekly(savedAt: historicalNow.addingTimeInterval(2 * 3_600), used: 6, reset: reset.addingTimeInterval(7 * 24 * 3_600)),
         storedOpenAIWeekly(savedAt: historicalNow.addingTimeInterval(3 * 3_600), used: 8, reset: reset.addingTimeInterval(7 * 24 * 3_600)),
+        storedOpenAIWeekly(savedAt: historicalNow.addingTimeInterval(4 * 3_600), used: 9, reset: reset.addingTimeInterval(7 * 24 * 3_600)),
     ]
-    let current = try #require(history.last?.snapshot)
+    let current = UsageSnapshot(generatedAt: historicalNow.addingTimeInterval(3 * 3_600), limits: history[2].snapshot.limits)
 
     let estimates = MainLimitBurnRateEstimator.observedBurnRates(
         current: current,
         history: history,
-        now: historicalNow.addingTimeInterval(3 * 3_600),
-        lookback: 4 * 3_600
+        now: historicalNow.addingTimeInterval(4 * 3_600),
+        lookback: 5 * 3_600
     )
     let estimate = try #require(estimates["openai:weekly"])
 
-    #expect(abs(estimate.unitsPerHour - 2) < 0.0001)
-    #expect(estimate.sampleCount == 2)
+    #expect(abs(estimate.unitsPerHour - 1.5) < 0.0001)
+    #expect(estimate.sampleCount == 3)
 }
 
 private func openAILimit(
@@ -546,7 +755,7 @@ private func openAILimit(
     )
 }
 
-private func storedOpenAIWeekly(savedAt: Date, used: Int, reset: Date) -> StoredUsageSnapshot {
+private func storedOpenAIWeekly(savedAt: Date, used: Int, reset: Date, includeReset: Bool = true) -> StoredUsageSnapshot {
     StoredUsageSnapshot(
         savedAt: savedAt,
         snapshot: UsageSnapshot(
@@ -561,10 +770,53 @@ private func storedOpenAIWeekly(savedAt: Date, used: Int, reset: Date) -> Stored
                     unit: .percent,
                     used: used,
                     limit: 100,
-                    resetsAt: reset,
+                    resetsAt: includeReset ? reset : nil,
                     lastUpdatedAt: savedAt,
                     confidence: .observed
                 )
+            ]
+        )
+    )
+}
+
+private func storedOpenAIWeeklyAccounts(
+    savedAt: Date,
+    activeUsed: Int,
+    fullUsed: Int,
+    activeReset: Date,
+    fullReset: Date
+) -> StoredUsageSnapshot {
+    StoredUsageSnapshot(
+        savedAt: savedAt,
+        snapshot: UsageSnapshot(
+            generatedAt: savedAt,
+            limits: [
+                UsageLimit(
+                    provider: .openAI,
+                    accountID: "openai-active",
+                    accountName: "Active",
+                    label: "OpenAI Weekly",
+                    windowLabel: "Weekly",
+                    unit: .percent,
+                    used: activeUsed,
+                    limit: 100,
+                    resetsAt: activeReset,
+                    lastUpdatedAt: savedAt,
+                    confidence: .observed
+                ),
+                UsageLimit(
+                    provider: .openAI,
+                    accountID: "openai-full",
+                    accountName: "Full",
+                    label: "OpenAI Weekly",
+                    windowLabel: "Weekly",
+                    unit: .percent,
+                    used: fullUsed,
+                    limit: 100,
+                    resetsAt: fullReset,
+                    lastUpdatedAt: savedAt,
+                    confidence: .observed
+                ),
             ]
         )
     )

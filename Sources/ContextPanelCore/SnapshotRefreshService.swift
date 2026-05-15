@@ -3,24 +3,14 @@ import Darwin
 
 public struct SnapshotRefreshStores: Sendable {
     public let primary: JSONSnapshotStore
-    public let developmentMirrors: [JSONSnapshotStore]
 
-    public init(primary: JSONSnapshotStore, developmentMirrors: [JSONSnapshotStore] = []) {
+    public init(primary: JSONSnapshotStore) {
         self.primary = primary
-        self.developmentMirrors = developmentMirrors
     }
 
     public static func appDefault(appGroupID: String = ContextPanelLocations.appGroupID) -> SnapshotRefreshStores {
-        let developmentMirrors = ContextPanelLocations.usesDevelopmentWidgetMirrors
-            ? [
-                JSONSnapshotStore(rootDirectory: ContextPanelLocations.widgetDevelopmentContainerSnapshotDirectory()),
-                JSONSnapshotStore(rootDirectory: ContextPanelLocations.hostDevelopmentSnapshotDirectory()),
-            ]
-            : []
-
         return SnapshotRefreshStores(
-            primary: JSONSnapshotStore(rootDirectory: ContextPanelLocations.snapshotDirectory(appGroupID: appGroupID)),
-            developmentMirrors: developmentMirrors
+            primary: JSONSnapshotStore(rootDirectory: ContextPanelLocations.snapshotDirectory(appGroupID: appGroupID))
         )
     }
 }
@@ -39,6 +29,7 @@ public enum SnapshotRefreshRunDecision: Equatable, Sendable {
     case refreshed(SnapshotRefreshOutcome)
     case skippedFresh
     case skippedAlreadyRunning
+    case skippedNoReports
 }
 
 public struct SnapshotRefreshLock: Sendable {
@@ -100,6 +91,7 @@ public struct SnapshotRefreshRunner: Sendable {
     }
 
     public func refreshIfNeeded(now: Date = Date()) async throws -> SnapshotRefreshRunDecision {
+        service.importConfiguredAuthFiles(now: now)
         let current = service.loadCurrent(policy: stalenessPolicy, now: now)
         guard current.snapshot == nil || current.status == .unknown || current.status == .stale || current.status == .failure else {
             return .skippedFresh
@@ -112,10 +104,12 @@ public struct SnapshotRefreshRunner: Sendable {
             guard let outcome = try await lock.withLock(now: now, {
                 try await service.refresh(now: now)
             }) else { return .skippedAlreadyRunning }
+            guard !outcome.refreshResult.reports.isEmpty else { return .skippedNoReports }
             return .refreshed(outcome)
         }
 
         let outcome = try await service.refresh(now: now)
+        guard !outcome.refreshResult.reports.isEmpty else { return .skippedNoReports }
         return .refreshed(outcome)
     }
 
@@ -127,12 +121,17 @@ public struct SnapshotRefreshRunner: Sendable {
         refreshResult: ConnectorRefreshResult,
         savedAt: Date,
         retryFor: Duration,
-        retryInterval: Duration = .milliseconds(250)
+        retryInterval: Duration = .milliseconds(250),
+        preservesUnreportedAccounts: Bool = false
     ) async throws -> SnapshotRefreshRunDecision {
         let startedAt = ContinuousClock.now
 
         while true {
-            let decision = try await saveMergedOnce(refreshResult: refreshResult, savedAt: savedAt)
+            let decision = try await saveMergedOnce(
+                refreshResult: refreshResult,
+                savedAt: savedAt,
+                preservesUnreportedAccounts: preservesUnreportedAccounts
+            )
             if decision != .skippedAlreadyRunning {
                 return decision
             }
@@ -143,30 +142,46 @@ public struct SnapshotRefreshRunner: Sendable {
         }
     }
 
-    private func saveMergedOnce(refreshResult: ConnectorRefreshResult, savedAt: Date) async throws -> SnapshotRefreshRunDecision {
+    private func saveMergedOnce(
+        refreshResult: ConnectorRefreshResult,
+        savedAt: Date,
+        preservesUnreportedAccounts: Bool
+    ) async throws -> SnapshotRefreshRunDecision {
+        guard !refreshResult.reports.isEmpty else { return .skippedNoReports }
         if let lock {
             guard let outcome = try await lock.withLock(now: savedAt, {
-                try service.saveMerged(refreshResult: refreshResult, savedAt: savedAt)
+                try service.saveMerged(
+                    refreshResult: refreshResult,
+                    savedAt: savedAt,
+                    preservesUnreportedAccounts: preservesUnreportedAccounts
+                )
             }) else { return .skippedAlreadyRunning }
             return .refreshed(outcome)
         }
 
-        return .refreshed(try service.saveMerged(refreshResult: refreshResult, savedAt: savedAt))
+        return .refreshed(try service.saveMerged(
+            refreshResult: refreshResult,
+            savedAt: savedAt,
+            preservesUnreportedAccounts: preservesUnreportedAccounts
+        ))
     }
 }
 
 public struct SnapshotRefreshService: Sendable {
     private let accountStore: AccountConfigurationStore
     private let stores: SnapshotRefreshStores
-    private let credentialStore: (any ProviderCredentialStore)?
+    private let bookmarkStore: SecureFileBookmarkStore?
+    private let credentialStore: (any ProviderCredentialStoring)?
 
     public init(
         accountStore: AccountConfigurationStore,
         stores: SnapshotRefreshStores,
-        credentialStore: (any ProviderCredentialStore)? = nil
+        bookmarkStore: SecureFileBookmarkStore? = nil,
+        credentialStore: (any ProviderCredentialStoring)? = nil
     ) {
         self.accountStore = accountStore
         self.stores = stores
+        self.bookmarkStore = bookmarkStore
         self.credentialStore = credentialStore
     }
 
@@ -177,16 +192,32 @@ public struct SnapshotRefreshService: Sendable {
                 fallbackConfigurationURL: ContextPanelLocations.legacyAccountConfigurationURL()
             ),
             stores: .appDefault(),
-            credentialStore: KeychainProviderCredentialStore()
+            bookmarkStore: SecureFileBookmarkStore(storeURL: ContextPanelLocations.bookmarkStoreURL()),
+            credentialStore: ProviderCredentialStore()
         )
     }
 
     public func loadConfiguredAccounts(now: Date = Date()) -> AccountConfigurationLoadResult {
-        accountStore.load(now: now)
+        let result = accountStore.load(now: now)
+        migrateClaudeStateIfNeeded(accounts: result.document.accounts, now: now)
+        return result
     }
 
     public func loadCurrent(policy: SnapshotStoreStalenessPolicy, now: Date = Date()) -> SnapshotStoreLoadResult {
         stores.primary.loadCurrent(policy: policy, now: now)
+    }
+
+    public func importConfiguredAuthFiles(now: Date = Date()) {
+        guard let bookmarkStore, let credentialStore else { return }
+        let accountDocument = accountStore.load(now: now).document
+        for account in accountDocument.accounts where account.isEnabled {
+            guard account.connectorKind.importsAuthFileCredential,
+                  let authPath = account.authPath
+            else { continue }
+            let expanded = NSString(string: authPath).expandingTildeInPath
+            guard let data = try? bookmarkStore.readData(for: expanded) else { continue }
+            try? credentialStore.save(data, accountID: account.id)
+        }
     }
 
     public func loadHistory(query: SnapshotStoreQuery = SnapshotStoreQuery()) -> [StoredUsageSnapshot] {
@@ -194,74 +225,59 @@ public struct SnapshotRefreshService: Sendable {
     }
 
     public func refresh(now: Date = Date()) async throws -> SnapshotRefreshOutcome {
-        let accountDocument = accountStore.load(now: now).document
+        importConfiguredAuthFiles(now: now)
+        let accountResult = accountStore.load(now: now)
+        migrateClaudeStateIfNeeded(accounts: accountResult.document.accounts, now: now)
+        let accountDocument = accountResult.document
         let connectors = AccountConnectorFactory.connectors(
             from: accountDocument,
-            credentialStore: credentialStore
+            bookmarkStore: bookmarkStore,
+            credentialStore: credentialStore,
+            requiresBookmarkedAuthFiles: ContextPanelLocations.isRunningInAppSandbox
         )
         let refreshResult = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: now)
+        guard !refreshResult.reports.isEmpty else {
+            return SnapshotRefreshOutcome(savedAt: now, refreshResult: refreshResult)
+        }
         return try saveMerged(refreshResult: refreshResult, savedAt: now)
     }
 
-    public func saveMerged(refreshResult: ConnectorRefreshResult, savedAt: Date = Date()) throws -> SnapshotRefreshOutcome {
-        try stores.primary.saveMerged(refreshResult: refreshResult, savedAt: savedAt)
-        try mirrorPrimarySnapshotToDevelopmentStores()
+    public func saveMerged(
+        refreshResult: ConnectorRefreshResult,
+        savedAt: Date = Date(),
+        preservesUnreportedAccounts: Bool = false
+    ) throws -> SnapshotRefreshOutcome {
+        try stores.primary.saveMerged(
+            refreshResult: refreshResult,
+            savedAt: savedAt,
+            preservesUnreportedAccounts: preservesUnreportedAccounts
+        )
         return SnapshotRefreshOutcome(savedAt: savedAt, refreshResult: refreshResult)
     }
 
-    public func mirrorPrimarySnapshotToDevelopmentStores() throws {
-        try mirrorCurrentSnapshotToDevelopmentStores()
-        try mirrorHistoryToDevelopmentStores()
-    }
+    private func migrateClaudeStateIfNeeded(accounts: [LocalProviderAccountConfiguration], now: Date) {
+        if let credentialStore {
+            ClaudeAccountMigration.migrateClaudeCredentials(credentialStore)
+        }
+        guard accounts.contains(where: { $0.id == ClaudeAccountMigration.oldAccountID && $0.connectorKind == .claudeLocalStatus }) else { return }
 
-    private func mirrorCurrentSnapshotToDevelopmentStores() throws {
-        let sourceURL = stores.primary.currentSnapshotURL
-        guard FileManager.default.fileExists(atPath: sourceURL.path) else { return }
-
-        for destinationStore in stores.developmentMirrors {
-            if destinationStore.currentSnapshotURL.standardizedFileURL == sourceURL.standardizedFileURL {
-                continue
-            }
-            try FileManager.default.createDirectory(
-                at: destinationStore.rootDirectory,
-                withIntermediateDirectories: true
-            )
-            if FileManager.default.fileExists(atPath: destinationStore.currentSnapshotURL.path) {
-                try FileManager.default.removeItem(at: destinationStore.currentSnapshotURL)
-            }
-            try FileManager.default.copyItem(at: sourceURL, to: destinationStore.currentSnapshotURL)
+        let migratedDocument = ClaudeAccountMigration.migrateAccountConfiguration(
+            AccountConfigurationDocument(updatedAt: now, accounts: accounts),
+            now: now
+        )
+        if migratedDocument.accounts != accounts {
+            try? accountStore.save(migratedDocument)
         }
     }
+}
 
-    private func mirrorHistoryToDevelopmentStores() throws {
-        guard FileManager.default.fileExists(atPath: stores.primary.historyDirectoryURL.path) else { return }
-        let historyURLs = try FileManager.default.contentsOfDirectory(
-            at: stores.primary.historyDirectoryURL,
-            includingPropertiesForKeys: nil
-        )
-        .filter { $0.pathExtension == "json" }
-
-        for destinationStore in stores.developmentMirrors {
-            if destinationStore.historyDirectoryURL.standardizedFileURL == stores.primary.historyDirectoryURL.standardizedFileURL {
-                continue
-            }
-            try FileManager.default.createDirectory(
-                at: destinationStore.historyDirectoryURL,
-                withIntermediateDirectories: true
-            )
-            for destinationURL in try FileManager.default.contentsOfDirectory(
-                at: destinationStore.historyDirectoryURL,
-                includingPropertiesForKeys: nil
-            ) where destinationURL.pathExtension == "json" {
-                try FileManager.default.removeItem(at: destinationURL)
-            }
-
-            for sourceURL in historyURLs {
-                try FileManager.default.copyItem(
-                    at: sourceURL,
-                    to: destinationStore.historyDirectoryURL.appending(path: sourceURL.lastPathComponent)
-                )
-            }
+private extension AccountConnectorKind {
+    var importsAuthFileCredential: Bool {
+        switch self {
+        case .codexRateLimits, .geminiCodeAssist:
+            true
+        case .claudeLocalStatus, .claudeOAuthUsage:
+            false
         }
     }
 }

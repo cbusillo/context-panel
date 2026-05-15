@@ -129,6 +129,7 @@ public struct GeminiOAuthClientMetadata: Equatable, Sendable {
 public enum GeminiOAuthClientMetadataDiscovery {
     public static func discover(
         environment: [String: String] = ProcessInfo.processInfo.environment,
+        useBundledFallback: Bool = true,
         fileLoader: @escaping @Sendable (String) throws -> String = { path in
             try String(contentsOfFile: NSString(string: path).expandingTildeInPath, encoding: .utf8)
         },
@@ -215,8 +216,8 @@ public struct GeminiCodeAssistConnector: ProviderConnector {
     private let accounts: [GeminiAccountConfiguration]
     private let httpClient: any ConnectorHTTPClient
     private let fileLoader: @Sendable (String) throws -> Data
-    private let credentialStore: (any ProviderCredentialStore)?
-    private let credentialKey: ProviderCredentialKey?
+    private let credentialStore: (any ProviderCredentialLoading)?
+    private let credentialAccountID: String?
 
     public init(
         accounts: [GeminiAccountConfiguration],
@@ -224,14 +225,14 @@ public struct GeminiCodeAssistConnector: ProviderConnector {
         fileLoader: @escaping @Sendable (String) throws -> Data = { path in
             try Data(contentsOf: URL(fileURLWithPath: NSString(string: path).expandingTildeInPath))
         },
-        credentialStore: (any ProviderCredentialStore)? = nil,
-        credentialKey: ProviderCredentialKey? = nil
+        credentialStore: (any ProviderCredentialLoading)? = nil,
+        credentialAccountID: String? = nil
     ) {
         self.accounts = accounts
         self.httpClient = httpClient
         self.fileLoader = fileLoader
         self.credentialStore = credentialStore
-        self.credentialKey = credentialKey
+        self.credentialAccountID = credentialAccountID
     }
 
     public func refresh(now: Date) async -> ConnectorRefreshResult {
@@ -283,8 +284,14 @@ public struct GeminiCodeAssistConnector: ProviderConnector {
     }
 
     private func credentialData(for account: GeminiAccountConfiguration) throws -> Data {
-        if let credentialStore, let credentialKey, let data = try credentialStore.data(for: credentialKey) {
-            return data
+        if let credentialStore, let credentialAccountID {
+            do {
+                if let data = try credentialStore.load(accountID: credentialAccountID) {
+                    return data
+                }
+            } catch {
+                // Keychain cache failures should not block the original user-authorized file path.
+            }
         }
         return try fileLoader(account.authPath)
     }
@@ -435,7 +442,7 @@ public enum ContextPanelDateFormatting {
     }
 }
 
-func formEncoded(_ values: [String: String]) -> Data {
+public func formEncoded(_ values: [String: String]) -> Data {
     values
         .map { key, value in
             "\(urlFormEscape(key))=\(urlFormEscape(value))"
@@ -444,7 +451,7 @@ func formEncoded(_ values: [String: String]) -> Data {
         .data(using: .utf8) ?? Data()
 }
 
-func urlFormEscape(_ value: String) -> String {
+public func urlFormEscape(_ value: String) -> String {
     var allowed = CharacterSet.urlQueryAllowed
     allowed.remove(charactersIn: "&+=")
     return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value

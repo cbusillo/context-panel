@@ -1,22 +1,29 @@
 import ContextPanelCore
 import AppKit
+import os
 import ServiceManagement
 import SwiftUI
 import WidgetKit
+
+private let contextPanelLogger = Logger(subsystem: "com.shinycomputers.contextpanel", category: "app")
 
 @main
 struct ContextPanelPreviewApp: App {
     @NSApplicationDelegateAdaptor(ContextPanelAppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        WindowGroup {
+        Window("Context Panel", id: "main") {
             AppRoot(model: appDelegate.model)
                 .frame(minWidth: 1080, idealWidth: 1080, minHeight: 720, idealHeight: 720)
+                .onOpenURL { _ in
+                    NSApp.activate(ignoringOtherApps: true)
+                    NSApp.windows.first?.makeKeyAndOrderFront(nil)
+                }
         }
         .defaultSize(width: 1080, height: 720)
 
         Settings {
-            SettingsPane()
+            SettingsPane(appModel: appDelegate.model)
         }
     }
 }
@@ -24,20 +31,53 @@ struct ContextPanelPreviewApp: App {
 @MainActor
 final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
     let model = ContextPanelAppModel()
+    private let backgroundRefreshSettingsStore = BackgroundRefreshSettingsStore(
+        settingsURL: ContextPanelLocations.backgroundRefreshSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
+    )
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        registerRefreshAgent()
+        if handleCommandLineUtilityMode() {
+            return
+        }
+        reconcileRefreshAgentRegistration()
         model.loadSnapshot()
         WidgetCenter.shared.reloadAllTimelines()
     }
 
-    private func registerRefreshAgent() {
+    private func handleCommandLineUtilityMode() -> Bool {
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("--refresh-local-connectors") {
+            Task {
+                await model.refreshLocalConnectors()
+                await MainActor.run {
+                    NSApp.terminate(nil)
+                }
+            }
+            return true
+        }
+        guard arguments.contains("--unregister-refresh-agent") else { return false }
+
         let service = SMAppService.loginItem(identifier: ContextPanelLocations.refreshAgentBundleID)
-        guard service.status != .enabled else { return }
         do {
-            try service.register()
+            try service.unregister()
         } catch {
-            model.setError("Background refresh could not be enabled: \(error.localizedDescription)")
+            model.setError("Background refresh could not be disabled: \(error.localizedDescription)")
+        }
+        NSApp.terminate(nil)
+        return true
+    }
+
+    private func reconcileRefreshAgentRegistration() {
+        let settings = backgroundRefreshSettingsStore.load()
+        let service = SMAppService.loginItem(identifier: ContextPanelLocations.refreshAgentBundleID)
+        do {
+            if settings.isEnabled {
+                try service.register()
+            } else {
+                try service.unregister()
+            }
+        } catch {
+            model.setError("Background refresh could not be updated: \(error.localizedDescription)")
         }
     }
 }
@@ -69,6 +109,7 @@ struct AppRoot: View {
 }
 
 struct SettingsPane: View {
+    @ObservedObject var appModel: ContextPanelAppModel
     @StateObject private var model = SettingsPaneModel()
 
     var body: some View {
@@ -81,35 +122,119 @@ struct SettingsPane: View {
                             Text(account.displayName)
                                 .font(.system(size: 13, weight: .medium))
                             Spacer()
-                            Text(account.isEnabled ? "Enabled" : "Disabled")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(account.isEnabled ? CPTheme.statusColor(.healthy) : CPTheme.tertiaryText)
-                            if model.canImportCredentials(for: account) {
-                                Button("Import") { model.importCredentials(for: account) }
-                                    .controlSize(.small)
+                            Toggle("", isOn: Binding(
+                                get: { account.isEnabled },
+                                set: { model.setAccount(account.id, isEnabled: $0) }
+                            ))
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                            .controlSize(.mini)
+                            if !account.isEnabled {
+                                Text("Off")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(CPTheme.tertiaryText)
+                            } else if model.hasSavedAuthorization(account) {
+                                HStack(spacing: 8) {
+                                    Text(model.authorizationSavedText(for: account))
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundStyle(CPTheme.statusColor(.healthy))
+                                    if model.canAuthorizeAuthFile(for: account) {
+                                        Button("Change") { authorizeAuthFile(for: account) }
+                                            .buttonStyle(.bordered)
+                                            .controlSize(.small)
+                                    }
+                                }
+                            } else if model.hasLegacyAuthorization(account) {
+                                HStack(spacing: 8) {
+                                    Text("File access needs update")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundStyle(CPTheme.statusColor(.stale))
+                                    Button("Update") { authorizeAuthFile(for: account) }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+                                }
+                            } else if model.needsAuthorization(account) {
+                                if model.canAuthorizeAuthFile(for: account) {
+                                    Button("Select File") { authorizeAuthFile(for: account) }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+                                } else if account.connectorKind == .claudeOAuthUsage {
+                                    Button("Connect") { model.authorizeClaudeOAuth(for: account) }
+                                        .buttonStyle(.borderedProminent)
+                                        .controlSize(.small)
+                                }
+                            } else {
+                                Text(account.isEnabled ? "Enabled" : "Disabled")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(account.isEnabled ? CPTheme.statusColor(.healthy) : CPTheme.tertiaryText)
                             }
                         }
                         Text(model.detailText(for: account))
                             .font(.system(size: 11))
                             .foregroundStyle(CPTheme.secondaryText)
                             .lineLimit(2)
+                        if let refreshSummary = model.refreshSummary(for: account, storedSnapshot: appModel.storedSnapshot) {
+                            Text(refreshSummary.text)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(CPTheme.statusColor(refreshSummary.status))
+                                .lineLimit(2)
+                        }
                     }
                     .padding(.vertical, 4)
                 }
             }
 
             Section("Diagnostics") {
-                DetailRow(label: "Config", value: ConnectorRedactor.redactedPath(model.configurationPath))
-                DetailRow(label: "Status", value: model.status.rawValue)
+                DetailRow(label: "Status", value: model.status.previewStatusText)
+                DetailRow(label: "Last refresh", value: appModel.lastRefreshText)
+                if let successfulRefreshText = appModel.lastSuccessfulProviderRefreshText {
+                    DetailRow(label: "Last successful refresh", value: successfulRefreshText)
+                }
+                ForEach(appModel.diagnosticProviderReports) { report in
+                    VStack(alignment: .leading, spacing: 4) {
+                        DetailRow(label: report.title, value: report.summary)
+                        if let detail = report.detail {
+                            Text(detail)
+                                .font(.system(size: 11))
+                                .foregroundStyle(CPTheme.tertiaryText)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
                 if let errorMessage = model.errorMessage {
                     Text(errorMessage)
                         .font(.system(size: 12))
                         .foregroundStyle(CPTheme.statusColor(.failure))
+                        .textSelection(.enabled)
                 }
             }
 
+            Section("Background Refresh") {
+                Toggle(isOn: Binding(
+                    get: { model.backgroundRefreshSettings.isEnabled },
+                    set: { model.setBackgroundRefreshEnabled($0) }
+                )) {
+                    Text("Refresh in background")
+                }
+                .toggleStyle(.switch)
+
+                Picker("Refresh every", selection: Binding(
+                    get: { model.backgroundRefreshSettings.intervalMinutes },
+                    set: { model.setBackgroundRefreshInterval($0) }
+                )) {
+                    ForEach([5, 10, 15, 30, 60], id: \.self) { minutes in
+                        Text(minutes == 60 ? "1 hour" : "\(minutes) min").tag(minutes)
+                    }
+                }
+                .disabled(!model.backgroundRefreshSettings.isEnabled)
+
+                Text(model.backgroundRefreshStatusText)
+                    .font(.system(size: 11))
+                    .foregroundStyle(CPTheme.secondaryText)
+            }
+
             Section("Widget Main Limits") {
-                Text("Drag to reorder. The medium widget uses the first 3 visible limits; the large widget uses the first 5.")
+                Text("Choose which main limits appear in the widget and drag rows to set their priority.")
                     .font(.system(size: 11))
                     .foregroundStyle(CPTheme.secondaryText)
 
@@ -130,13 +255,13 @@ struct SettingsPane: View {
             }
 
             Section("Reset Primer") {
-                Toggle(isOn: Binding(
-                    get: { model.resetPrimerSettings.isEnabled },
-                    set: { model.setResetPrimerEnabled($0) }
-                )) {
-                    Text("Enable reset primer")
-                }
-                .toggleStyle(.switch)
+                Text("Coming soon. Context Panel will be able to run a minimal refresh shortly after provider limits reset.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(CPTheme.secondaryText)
+
+                Toggle("Reset primer", isOn: .constant(false))
+                    .toggleStyle(.switch)
+                    .disabled(true)
 
                 Stepper(
                     value: Binding(
@@ -151,6 +276,7 @@ struct SettingsPane: View {
                         value: "\(model.resetPrimerSettings.delayMinutesAfterReset) min"
                     )
                 }
+                .disabled(true)
 
                 Stepper(
                     value: Binding(
@@ -165,6 +291,7 @@ struct SettingsPane: View {
                         value: "\(model.resetPrimerSettings.accountStaggerMinutes) min"
                     )
                 }
+                .disabled(true)
 
                 List {
                     ForEach(model.resetPrimerSettings.accountPreferences) { preference in
@@ -179,14 +306,88 @@ struct SettingsPane: View {
                 }
                 .listStyle(.inset)
                 .frame(height: 150)
+                .disabled(true)
             }
         }
         .formStyle(.grouped)
         .padding(20)
         .frame(width: 560)
         .frame(minHeight: 360)
+        .sheet(isPresented: $model.isClaudeOAuthCodeSheetPresented) {
+            ClaudeOAuthCodeSheet(model: model) {
+                Task {
+                    await appModel.refreshLocalConnectors()
+                    model.load()
+                }
+            }
+        }
         .onAppear { model.load() }
     }
+
+    private func authorizeAuthFile(for account: LocalProviderAccountConfiguration) {
+        model.authorizeAuthFile(for: account) {
+            Task {
+                await appModel.refreshLocalConnectors()
+                model.load()
+            }
+        }
+    }
+}
+
+struct ClaudeOAuthCodeSheet: View {
+    @ObservedObject var model: SettingsPaneModel
+    let onConnected: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var code = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Connect Claude")
+                .font(.system(size: 18, weight: .semibold))
+            Text("After approving Claude in the browser, paste the authorization code here.")
+                .font(.system(size: 12))
+                .foregroundStyle(CPTheme.secondaryText)
+            if let url = model.pendingClaudeOAuthAuthorizationURL {
+                Link("Open Claude authorization", destination: url)
+                    .font(.system(size: 12, weight: .medium))
+                Text(url.absoluteString)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(CPTheme.tertiaryText)
+                    .textSelection(.enabled)
+                    .lineLimit(4)
+            }
+            TextField("Authorization code", text: $code)
+                .textFieldStyle(.roundedBorder)
+            if let errorMessage = model.errorMessage {
+                Text(errorMessage)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(CPTheme.statusColor(.failure))
+                    .textSelection(.enabled)
+            }
+            HStack {
+                Button("Cancel") {
+                    model.cancelClaudeOAuth()
+                    dismiss()
+                }
+                Spacer()
+                Button(model.isCompletingClaudeOAuth ? "Connecting" : "Connect") {
+                    model.completeClaudeOAuth(code: code) {
+                        onConnected()
+                        dismiss()
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isCompletingClaudeOAuth)
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+    }
+}
+
+struct SettingsAccountRefreshSummary: Equatable {
+    let text: String
+    let status: UsageStatus
 }
 
 @MainActor
@@ -194,8 +395,23 @@ final class SettingsPaneModel: ObservableObject {
     @Published private(set) var accounts: [LocalProviderAccountConfiguration] = []
     @Published private(set) var widgetPreferences: WidgetDisplayPreferences = .defaultPreferences
     @Published private(set) var resetPrimerSettings: ResetPrimerSettings = .defaultSettings
+    @Published private(set) var backgroundRefreshSettings: BackgroundRefreshSettings = .defaultSettings
     @Published private(set) var status: UsageStatus = .unknown
     @Published private(set) var errorMessage: String?
+    @Published private(set) var authorizedPaths: Set<String> = []
+    @Published private(set) var missingAuthPaths: Set<String> = []
+    @Published private(set) var legacyAuthPaths: Set<String> = []
+    @Published var isClaudeOAuthCodeSheetPresented = false
+    @Published private(set) var isCompletingClaudeOAuth = false
+
+    private let bookmarkStore = SecureFileBookmarkStore(storeURL: ContextPanelLocations.bookmarkStoreURL())
+    private let credentialStore = ProviderCredentialStore()
+    private var recentlyVerifiedAuthPaths: Set<String> = []
+    private var pendingClaudeOAuth: PendingClaudeOAuth?
+
+    var pendingClaudeOAuthAuthorizationURL: URL? {
+        pendingClaudeOAuth?.authorizationURL
+    }
 
     private let store = AccountConfigurationStore(
         configurationURL: ContextPanelLocations.accountConfigurationURL(),
@@ -204,49 +420,114 @@ final class SettingsPaneModel: ObservableObject {
     private let widgetPreferenceStore = WidgetDisplayPreferencesStore(
         preferencesURL: ContextPanelLocations.widgetDisplayPreferencesURL(appGroupID: ContextPanelLocations.appGroupID)
     )
-    private let widgetApplicationSupportPreferenceStore = WidgetDisplayPreferencesStore(
-        preferencesURL: ContextPanelLocations.widgetDevelopmentDisplayPreferencesURL()
-    )
-    private let widgetContainerPreferenceStore = WidgetDisplayPreferencesStore(
-        preferencesURL: ContextPanelLocations.widgetDevelopmentContainerDisplayPreferencesURL()
-    )
-    private let widgetHostPreferenceStore = WidgetDisplayPreferencesStore(
-        preferencesURL: ContextPanelLocations.hostDevelopmentDisplayPreferencesURL()
-    )
     private let resetPrimerSettingsStore = ResetPrimerSettingsStore(
         settingsURL: ContextPanelLocations.resetPrimerSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
     )
-    private let credentialStore = KeychainProviderCredentialStore()
+    private let backgroundRefreshSettingsStore = BackgroundRefreshSettingsStore(
+        settingsURL: ContextPanelLocations.backgroundRefreshSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
+    )
 
     private var widgetPreferenceStores: WidgetDisplayPreferencesStoreSet {
-        WidgetDisplayPreferencesStoreSet(stores: [
-            widgetPreferenceStore,
-            widgetApplicationSupportPreferenceStore,
-            widgetContainerPreferenceStore,
-            widgetHostPreferenceStore,
-        ])
+        WidgetDisplayPreferencesStoreSet(stores: [widgetPreferenceStore])
     }
 
     var configurationPath: String {
         store.configurationURL.path
     }
 
+    var backgroundRefreshStatusText: String {
+        if backgroundRefreshSettings.isEnabled {
+            return "Updates run every \(backgroundRefreshSettings.intervalMinutes) minutes in the background."
+        }
+        return "Background updates are off. Manual refresh still works."
+    }
+
     func load() {
         let result = store.load()
         accounts = result.document.accounts
+        var loadedAuthorizedPaths = Set(accounts.compactMap { account -> String? in
+            guard let authPath = account.effectiveAuthPath else { return nil }
+            guard account.connectorKind.requiresSecurityScopedAuthFile else { return nil }
+            let expanded = NSString(string: authPath).expandingTildeInPath
+            return bookmarkStore.hasCurrentBookmark(for: expanded) || hasImportedCredential(for: account) ? expanded : nil
+        })
+        loadedAuthorizedPaths.formUnion(recentlyVerifiedAuthPaths)
+        authorizedPaths = loadedAuthorizedPaths
+
+        var loadedMissingPaths = Set(accounts.compactMap { account -> String? in
+            guard let authPath = account.effectiveAuthPath else { return nil }
+            guard account.connectorKind.requiresSecurityScopedAuthFile else { return nil }
+            let expanded = NSString(string: authPath).expandingTildeInPath
+            return bookmarkStore.hasBookmark(for: expanded) || hasImportedCredential(for: account) ? nil : expanded
+        })
+        loadedMissingPaths.subtract(recentlyVerifiedAuthPaths)
+        missingAuthPaths = loadedMissingPaths
+
+        var loadedLegacyPaths = Set(accounts.compactMap { account -> String? in
+            guard let authPath = account.effectiveAuthPath else { return nil }
+            guard account.connectorKind.requiresSecurityScopedAuthFile else { return nil }
+            let expanded = NSString(string: authPath).expandingTildeInPath
+            guard !hasImportedCredential(for: account) else { return nil }
+            return bookmarkStore.hasBookmark(for: expanded) && !bookmarkStore.hasCurrentBookmark(for: expanded) ? expanded : nil
+        })
+        loadedLegacyPaths.subtract(recentlyVerifiedAuthPaths)
+        legacyAuthPaths = loadedLegacyPaths
         widgetPreferences = widgetPreferenceStores.load()
-        do {
-            resetPrimerSettings = try resetPrimerSettingsStore.loadSynced(accounts: result.document.accounts)
-        } catch {
-            var primerSettings = resetPrimerSettingsStore.load()
-            primerSettings.syncAccounts(result.document.accounts)
-            resetPrimerSettings = primerSettings
-            errorMessage = error.localizedDescription
-        }
+        backgroundRefreshSettings = backgroundRefreshSettingsStore.load()
+        var primerSettings = resetPrimerSettingsStore.load()
+        primerSettings.syncAccounts(result.document.accounts)
+        resetPrimerSettings = primerSettings
         status = result.status
         if errorMessage == nil {
             errorMessage = result.errorMessage
         }
+    }
+
+    func setBackgroundRefreshEnabled(_ isEnabled: Bool) {
+        var updated = backgroundRefreshSettings
+        updated.isEnabled = isEnabled
+        if saveBackgroundRefreshSettings(updated) {
+            reconcileRefreshAgentRegistration(settings: updated)
+        }
+    }
+
+    func setBackgroundRefreshInterval(_ minutes: Int) {
+        var updated = backgroundRefreshSettings
+        updated.setIntervalMinutes(minutes)
+        if saveBackgroundRefreshSettings(updated) {
+            reconcileRefreshAgentRegistration(settings: updated)
+        }
+    }
+
+    @discardableResult
+    private func saveBackgroundRefreshSettings(_ updated: BackgroundRefreshSettings) -> Bool {
+        do {
+            try backgroundRefreshSettingsStore.save(updated)
+            backgroundRefreshSettings = updated
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    private func reconcileRefreshAgentRegistration(settings: BackgroundRefreshSettings) {
+        let service = SMAppService.loginItem(identifier: ContextPanelLocations.refreshAgentBundleID)
+        do {
+            if settings.isEnabled {
+                try service.register()
+            } else {
+                try service.unregister()
+            }
+        } catch {
+            errorMessage = "Background refresh could not be updated: \(error.localizedDescription)"
+        }
+    }
+
+    func setAccount(_ accountID: String, isEnabled: Bool) {
+        guard let index = accounts.firstIndex(where: { $0.id == accountID }) else { return }
+        accounts[index].isEnabled = isEnabled
+        saveAccounts()
     }
 
     func setWidgetMainLimit(_ preference: WidgetMainLimitPreference, isVisible: Bool) {
@@ -295,22 +576,6 @@ final class SettingsPaneModel: ObservableObject {
         saveResetPrimerSettings(updated)
     }
 
-    func canImportCredentials(for account: LocalProviderAccountConfiguration) -> Bool {
-        account.connectorKind == .geminiCodeAssist && account.authPath != nil
-    }
-
-    func importCredentials(for account: LocalProviderAccountConfiguration) {
-        guard let authPath = account.authPath else { return }
-        do {
-            let expanded = NSString(string: authPath).expandingTildeInPath
-            let data = try Data(contentsOf: URL(fileURLWithPath: expanded))
-            try credentialStore.store(data, for: AccountConnectorFactory.geminiCredentialKey(for: account))
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
     private func saveResetPrimerSettings(_ updated: ResetPrimerSettings) {
         do {
             try resetPrimerSettingsStore.save(updated)
@@ -320,9 +585,299 @@ final class SettingsPaneModel: ObservableObject {
         }
     }
 
+    private func saveAccounts() {
+        do {
+            try store.save(AccountConfigurationDocument(updatedAt: Date(), accounts: accounts))
+            var primerSettings = resetPrimerSettings
+            primerSettings.syncAccounts(accounts)
+            try resetPrimerSettingsStore.save(primerSettings)
+            resetPrimerSettings = primerSettings
+            WidgetCenter.shared.reloadAllTimelines()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func needsAuthorization(_ account: LocalProviderAccountConfiguration) -> Bool {
+        guard account.isEnabled else { return false }
+        if account.connectorKind == .claudeOAuthUsage {
+            return !hasImportedCredential(for: account)
+        }
+        guard let authPath = account.effectiveAuthPath else { return false }
+        guard account.connectorKind.requiresSecurityScopedAuthFile else { return false }
+        let expanded = NSString(string: authPath).expandingTildeInPath
+        return !bookmarkStore.hasBookmark(for: expanded)
+    }
+
+    func hasSavedAuthorization(_ account: LocalProviderAccountConfiguration) -> Bool {
+        if account.connectorKind == .claudeOAuthUsage {
+            return hasImportedCredential(for: account)
+        }
+        guard let authPath = account.effectiveAuthPath else { return false }
+        guard account.connectorKind.requiresSecurityScopedAuthFile else { return false }
+        let expanded = NSString(string: authPath).expandingTildeInPath
+        return authorizedPaths.contains(expanded)
+    }
+
+    func hasLegacyAuthorization(_ account: LocalProviderAccountConfiguration) -> Bool {
+        guard account.isEnabled else { return false }
+        guard let authPath = account.effectiveAuthPath else { return false }
+        guard account.connectorKind.requiresSecurityScopedAuthFile else { return false }
+        let expanded = NSString(string: authPath).expandingTildeInPath
+        return legacyAuthPaths.contains(expanded)
+    }
+
+    func canAuthorizeAuthFile(for account: LocalProviderAccountConfiguration) -> Bool {
+        account.connectorKind.requiresSecurityScopedAuthFile
+    }
+
+    func authorizationSavedText(for account: LocalProviderAccountConfiguration) -> String {
+        account.connectorKind == .claudeOAuthUsage ? "Connected" : "File saved"
+    }
+
+    func refreshSummary(for account: LocalProviderAccountConfiguration, storedSnapshot: StoredUsageSnapshot?) -> SettingsAccountRefreshSummary? {
+        guard account.isEnabled else { return nil }
+        guard !needsAuthorization(account) else { return nil }
+        guard !hasLegacyAuthorization(account) else { return nil }
+
+        guard let storedSnapshot else {
+            return SettingsAccountRefreshSummary(text: "No refresh yet", status: .unknown)
+        }
+        let reports = storedSnapshot.reports.filter { report in
+            switch account.connectorKind {
+            case .codexRateLimits:
+                report.provider == .openAI
+            case .geminiCodeAssist:
+                report.provider == .google
+            case .claudeLocalStatus, .claudeOAuthUsage:
+                report.provider == .anthropic
+            }
+        }
+        guard !reports.isEmpty else {
+            return SettingsAccountRefreshSummary(text: "No refresh report yet", status: .unknown)
+        }
+
+        let refreshSubject = refreshSubjectText(for: account)
+        if reports.contains(where: { $0.status == .failure }) {
+            return SettingsAccountRefreshSummary(text: "Last \(refreshSubject) failed; see Diagnostics", status: .failure)
+        }
+        if reports.contains(where: { $0.status == .stale }) {
+            return SettingsAccountRefreshSummary(text: "Last \(refreshSubject) stale", status: .stale)
+        }
+        if reports.contains(where: { $0.status == .unknown }) {
+            return SettingsAccountRefreshSummary(text: "Last \(refreshSubject) unknown", status: .unknown)
+        }
+
+        let count = reports.count
+        let accountText: String
+        if account.connectorKind == .codexRateLimits, count > 1 {
+            accountText = "\(count) OpenAI accounts"
+        } else {
+            accountText = reports.first?.accountName ?? account.displayName
+        }
+        return SettingsAccountRefreshSummary(text: "Last \(refreshSubject) healthy: \(accountText)", status: .healthy)
+    }
+
+    private func refreshSubjectText(for account: LocalProviderAccountConfiguration) -> String {
+        switch account.connectorKind {
+        case .codexRateLimits:
+            "OpenAI refresh"
+        case .geminiCodeAssist:
+            "Gemini refresh"
+        case .claudeLocalStatus, .claudeOAuthUsage:
+            "Claude refresh"
+        }
+    }
+
+    func authorizeClaudeOAuth(for account: LocalProviderAccountConfiguration) {
+        guard account.connectorKind == .claudeOAuthUsage else { return }
+        do {
+            let flow = try PendingClaudeOAuth(accountID: account.id)
+            pendingClaudeOAuth = flow
+            isClaudeOAuthCodeSheetPresented = true
+            contextPanelLogger.info("Claude OAuth connect clicked for accountID=\(account.id, privacy: .public)")
+            let opened = NSWorkspace.shared.open(flow.authorizationURL)
+            contextPanelLogger.info("Claude OAuth authorization URL open result=\(opened, privacy: .public)")
+            if !opened {
+                errorMessage = "Claude authorization did not open automatically. Use the link in the Connect Claude sheet."
+            }
+        } catch {
+            contextPanelLogger.error("Claude OAuth connect failed: \(error.localizedDescription, privacy: .public)")
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func cancelClaudeOAuth() {
+        pendingClaudeOAuth = nil
+        isCompletingClaudeOAuth = false
+    }
+
+    func completeClaudeOAuth(code: String, onConnected: @escaping () -> Void) {
+        guard let flow = pendingClaudeOAuth else { return }
+        let authorizationCode = ClaudeOAuthFlow.normalizedAuthorizationCode(from: code)
+        guard !authorizationCode.code.isEmpty else { return }
+        isCompletingClaudeOAuth = true
+        contextPanelLogger.info("Claude OAuth code exchange started")
+        Task { [weak self] in
+            do {
+                let credentials = try await Self.exchangeClaudeOAuthCode(authorizationCode: authorizationCode, flow: flow)
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.sortedKeys]
+                encoder.dateEncodingStrategy = .iso8601
+                try self?.credentialStore.save(try encoder.encode(credentials), accountID: flow.accountID)
+                await MainActor.run {
+                    contextPanelLogger.info("Claude OAuth code exchange succeeded")
+                    self?.pendingClaudeOAuth = nil
+                    self?.isCompletingClaudeOAuth = false
+                    self?.isClaudeOAuthCodeSheetPresented = false
+                    self?.errorMessage = nil
+                    self?.load()
+                    onConnected()
+                }
+            } catch {
+                await MainActor.run {
+                    contextPanelLogger.error("Claude OAuth code exchange failed: \(error.localizedDescription, privacy: .public)")
+                    self?.isCompletingClaudeOAuth = false
+                    self?.errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    func authorizeAuthFile(for account: LocalProviderAccountConfiguration, onVerified: @escaping () -> Void = {}) {
+        guard let authPath = account.effectiveAuthPath else { return }
+        guard account.connectorKind.requiresSecurityScopedAuthFile else { return }
+        let expanded = NSString(string: authPath).expandingTildeInPath
+        let fileURL = URL(fileURLWithPath: expanded)
+
+        let panel = NSOpenPanel()
+        panel.message = "Select \(fileURL.lastPathComponent) for \(account.displayName)."
+        panel.prompt = "Select File"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = fileURL.deletingLastPathComponent()
+        panel.nameFieldStringValue = fileURL.lastPathComponent
+        if #available(macOS 11.0, *) {
+            panel.allowedContentTypes = [.json]
+        } else {
+            panel.allowedFileTypes = ["json"]
+        }
+
+        panel.begin { [weak self] response in
+            guard let self, response == .OK, let url = panel.url else { return }
+            guard url.lastPathComponent == fileURL.lastPathComponent else {
+                errorMessage = "Select \(fileURL.lastPathComponent) for \(account.displayName)."
+                return
+            }
+            do {
+                try bookmarkStore.createAndStoreBookmark(for: url, path: expanded)
+                guard bookmarkStore.canReadBookmark(for: expanded) else {
+                    errorMessage = "File access could not be verified for \(account.displayName)."
+                    missingAuthPaths.insert(expanded)
+                    authorizedPaths.remove(expanded)
+                    return
+                }
+                try credentialStore.save(try bookmarkStore.readData(for: expanded) ?? Data(), accountID: account.id)
+                authorizedPaths.insert(expanded)
+                missingAuthPaths.remove(expanded)
+                legacyAuthPaths.remove(expanded)
+                recentlyVerifiedAuthPaths.insert(expanded)
+                errorMessage = nil
+                onVerified()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
     func detailText(for account: LocalProviderAccountConfiguration) -> String {
-        let path = account.authPath ?? account.statsPath ?? account.commandPath ?? account.connectorKind.rawValue
-        return "\(account.connectorKind.rawValue) · \(ConnectorRedactor.redactedPath(path))"
+        let path = account.effectiveAuthPath ?? account.connectorKind.rawValue
+        return "\(setupInstruction(for: account)) · \(ConnectorRedactor.redactedPath(path))"
+    }
+
+    private func setupInstruction(for account: LocalProviderAccountConfiguration) -> String {
+        switch account.connectorKind {
+        case .codexRateLimits:
+            if account.displayName.localizedCaseInsensitiveContains("code") {
+                return "Select auth_accounts.json. All Code accounts are read from this file"
+            }
+            if account.displayName.localizedCaseInsensitiveContains("codex") {
+                return "Select auth.json for Codex users"
+            }
+            return "Select the OpenAI CLI auth JSON file"
+        case .geminiCodeAssist:
+            return "Select oauth_creds.json from the Gemini CLI"
+        case .claudeLocalStatus:
+            return "Claude reads Context Panel's statusline cache; no auth file selection is needed"
+        case .claudeOAuthUsage:
+            return "Connect Claude with OAuth for automatic background refresh"
+        }
+    }
+
+    private func hasImportedCredential(for account: LocalProviderAccountConfiguration) -> Bool {
+        (try? credentialStore.load(accountID: account.id)) != nil
+    }
+
+    private static func exchangeClaudeOAuthCode(
+        authorizationCode: ClaudeOAuthAuthorizationCode,
+        flow: PendingClaudeOAuth
+    ) async throws -> ClaudeOAuthCredentials {
+        let body = try ClaudeOAuthFlow.authorizationCodeTokenRequestBody(
+            code: authorizationCode,
+            codeVerifier: flow.pkce.verifier,
+            state: flow.state,
+            redirectURI: flow.redirectURI
+        )
+        var request = URLRequest(url: ClaudeOAuthMetadata.tokenEndpoint)
+        request.httpMethod = "POST"
+        request.httpBody = body
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw ConnectorError.nonHTTPResponse("Claude OAuth token exchange returned a non-HTTP response")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            let rawBody = String(data: data, encoding: .utf8) ?? ""
+            let redactedBody = ConnectorRedactor.redact(rawBody)
+            throw ConnectorError.invalidAuth("Claude OAuth token exchange returned HTTP \(http.statusCode): \(redactedBody)")
+        }
+        let token = try JSONDecoder().decode(ClaudeOAuthTokenResponse.self, from: data)
+        return ClaudeOAuthCredentials(
+            accessToken: token.accessToken,
+            refreshToken: token.refreshToken,
+            expiresAt: token.expiresIn.map { Date().addingTimeInterval(TimeInterval($0)) },
+            scopes: token.scopes
+        )
+    }
+}
+
+private struct PendingClaudeOAuth {
+    let accountID: String
+    let pkce: OAuthPKCEChallenge
+    let state: String
+    let redirectURI: String
+    let authorizationURL: URL
+
+    init(accountID: String) throws {
+        self.accountID = accountID
+        pkce = try OAuthPKCE.makeChallenge()
+        state = try OAuthPKCE.makeChallenge(byteCount: 24).verifier
+        redirectURI = ClaudeOAuthFlow.manualRedirectURI
+        authorizationURL = try ClaudeOAuthFlow.authorizationURL(codeChallenge: pkce.challenge, state: state, redirectURI: redirectURI)
+    }
+}
+
+private extension AccountConnectorKind {
+    var requiresSecurityScopedAuthFile: Bool {
+        switch self {
+        case .codexRateLimits, .geminiCodeAssist:
+            return true
+        case .claudeLocalStatus, .claudeOAuthUsage:
+            return false
+        }
     }
 }
 
@@ -387,10 +942,10 @@ struct AccountsSidebar: View {
                 ForEach(Provider.allCases) { provider in
                     let summaries = snapshot.mainLimitSummaries.filter { $0.provider == provider }
                     if !summaries.isEmpty {
-                        ProviderSidebarRow(provider: provider, summaries: summaries)
+                        ProviderSidebarRow(provider: provider, limitCount: summaries.count)
                             .tag(AppNavigationSelection.provider(provider))
-                        ForEach(summaries) { summary in
-                            SidebarMainLimitRow(summary: summary)
+                        ForEach(summaries.sortedForSidebar) { summary in
+                            SidebarRateLimitRow(summary: summary)
                                 .tag(AppNavigationSelection.mainLimit(summary.id))
                         }
                     }
@@ -418,7 +973,7 @@ struct AccountsSidebar: View {
 
 struct ProviderSidebarRow: View {
     let provider: Provider
-    let summaries: [MainLimitSummary]
+    let limitCount: Int
 
     var body: some View {
         HStack(spacing: 8) {
@@ -428,25 +983,27 @@ struct ProviderSidebarRow: View {
                 .textCase(.uppercase)
                 .foregroundStyle(.secondary)
             Spacer()
-            Text("\(summaries.count)")
+            Text("\(limitCount)")
                 .font(.system(.caption, design: .monospaced, weight: .medium))
                 .foregroundStyle(.tertiary)
         }
     }
 }
 
-struct SidebarMainLimitRow: View {
+struct SidebarRateLimitRow: View {
     let summary: MainLimitSummary
 
     var body: some View {
         HStack(spacing: 10) {
             StatusMark(status: summary.status, size: 7)
             VStack(alignment: .leading, spacing: 2) {
-                Text(summary.window.displayName)
+                Text(summary.previewWindowLine)
                     .font(.system(size: 13, weight: .medium))
+                    .lineLimit(2)
                 Text(summary.sidebarDetailText)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
+                    .lineLimit(2)
             }
             Spacer()
             Text(summary.compactUsageText)
@@ -454,6 +1011,31 @@ struct SidebarMainLimitRow: View {
                 .foregroundStyle(.secondary)
         }
         .padding(.vertical, 3)
+    }
+}
+
+private extension Array where Element == MainLimitSummary {
+    var sortedForSidebar: [MainLimitSummary] {
+        sorted(by: { lhs, rhs in
+            let lhsWindowRank = lhs.window.sortRankForSidebar
+            let rhsWindowRank = rhs.window.sortRankForSidebar
+            if lhsWindowRank != rhsWindowRank { return lhsWindowRank < rhsWindowRank }
+            if lhs.previewWindowLine != rhs.previewWindowLine { return lhs.previewWindowLine < rhs.previewWindowLine }
+            return lhs.id < rhs.id
+        })
+    }
+}
+
+private extension MainLimitWindow {
+    var sortRankForSidebar: Int {
+        switch self {
+        case .fiveHour:
+            0
+        case .weekly:
+            1
+        case .daily:
+            2
+        }
     }
 }
 
@@ -531,6 +1113,11 @@ struct ProviderDashboard: View {
                         MainLimitRow(summary: summary)
                     }
                 }
+                if provider == .openAI {
+                    OpenAIAccountLimitsSection(summaries: summaries)
+                } else {
+                    ProviderAccountLimitsSection(summaries: summaries)
+                }
                 if !additionalLimits.isEmpty {
                     AdditionalLimitsSection(snapshot: snapshot, provider: provider)
                 }
@@ -539,6 +1126,164 @@ struct ProviderDashboard: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .background(CPTheme.background)
+    }
+}
+
+struct ProviderAccountLimitsSection: View {
+    let summaries: [MainLimitSummary]
+
+    var body: some View {
+        if !summaries.isEmpty {
+            DetailCard(title: "Account Limits") {
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(summaries.sortedForSidebar) { summary in
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(summary.window.displayName)
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(CPTheme.primaryText)
+                                Spacer()
+                                Text(summary.previewRemainingHeadline)
+                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(CPTheme.secondaryText)
+                            }
+                            ForEach(summary.limits) { limit in
+                                MainLimitAccountRow(limit: limit)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct OpenAIAccountLimitsSection: View {
+    let summaries: [MainLimitSummary]
+
+    private var accounts: [OpenAIAccountLimitSummary] {
+        OpenAIAccountLimitSummary.accounts(from: summaries)
+    }
+
+    var body: some View {
+        if !accounts.isEmpty {
+            DetailCard(title: "OpenAI Accounts") {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(accounts) { account in
+                        OpenAIAccountLimitRow(account: account)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct OpenAIAccountLimitRow: View {
+    let account: OpenAIAccountLimitSummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(account.displayName)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(CPTheme.primaryText)
+                        .lineLimit(1)
+                    if let planText = account.planText {
+                        Text(planText)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(CPTheme.secondaryText)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 12)
+                StatusMark(status: account.status, size: 8)
+            }
+            HStack(spacing: 8) {
+                OpenAIAccountWindowPill(title: "Weekly", limit: account.limit(for: .weekly))
+                OpenAIAccountWindowPill(title: "5h", limit: account.limit(for: .fiveHour))
+            }
+        }
+        .padding(10)
+        .background(CPTheme.surface2)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+private struct OpenAIAccountWindowPill: View {
+    let title: String
+    let limit: UsageLimit?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(CPTheme.secondaryText)
+            Text(limit?.previewUsageText ?? "unknown")
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundStyle(CPTheme.primaryText)
+            CapacityBar(value: limit?.usageRatio ?? 0, status: limit?.status ?? .unknown, height: 4)
+            Text(limit?.resetText ?? "unknown reset")
+                .font(.system(size: 10))
+                .foregroundStyle(CPTheme.tertiaryText)
+                .lineLimit(1)
+        }
+        .padding(9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(CPTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+private struct OpenAIAccountLimitSummary: Identifiable {
+    let accountID: String
+    let accountName: String
+    let limits: [UsageLimit]
+
+    var id: String { accountID }
+
+    var displayName: String {
+        accountNameParts.first ?? accountName
+    }
+
+    var planText: String? {
+        if accountNameParts.count > 1 {
+            return accountNameParts.dropFirst().joined(separator: " · ")
+        }
+        return limits.lazy.compactMap(\.planText).first
+    }
+
+    var status: UsageStatus {
+        limits.map(\.status).contextPanelWorstStatus
+    }
+
+    func limit(for window: MainLimitWindow) -> UsageLimit? {
+        limits.first { $0.mainLimitWindow == window }
+    }
+
+    private var accountNameParts: [String] {
+        accountName
+            .split(separator: "·")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    static func accounts(from summaries: [MainLimitSummary]) -> [OpenAIAccountLimitSummary] {
+        let limits = summaries
+            .filter { $0.provider == .openAI }
+            .flatMap(\.limits)
+            .filter { $0.isMainLimit }
+        return Dictionary(grouping: limits, by: \.accountID)
+            .map { accountID, accountLimits in
+                OpenAIAccountLimitSummary(
+                    accountID: accountID,
+                    accountName: accountLimits.first?.accountName ?? "OpenAI Account",
+                    limits: accountLimits.sortedForOpenAIAccount
+                )
+            }
+            .sorted { lhs, rhs in
+                lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
+            }
     }
 }
 
@@ -559,13 +1304,15 @@ struct HeaderCard: View {
                 Text(model.fastModeForecast.copy)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(CPTheme.accent)
-                Text("Fast mode assumes 1.5x throughput for 2x limit spend.")
+                Text("Fast mode works 50% faster, but uses limits about twice as quickly.")
                     .font(.system(size: 12))
                     .foregroundStyle(CPTheme.tertiaryText)
                 HStack(spacing: 8) {
                     TagLabel("\(snapshot.mainLimitSummaries.count) main windows")
-                    TagLabel("accounts folded")
-                    TagLabel(model.storeStatus.rawValue)
+                    TagLabel("Accounts pooled")
+                    if model.storeStatus != .healthy {
+                        TagLabel(model.storeStatus.previewStatusText.capitalized)
+                    }
                 }
             }
             Spacer(minLength: 16)
@@ -611,7 +1358,9 @@ struct ProviderHeaderCard: View {
                 HStack(spacing: 8) {
                     TagLabel("\(summaries.count) main windows")
                     TagLabel("\(summaries.reduce(0) { $0 + $1.accountCount }) account windows")
-                    TagLabel(model.storeStatus.rawValue)
+                    if model.storeStatus != .healthy {
+                        TagLabel(model.storeStatus.previewStatusText.capitalized)
+                    }
                 }
             }
             Spacer(minLength: 16)
@@ -647,7 +1396,7 @@ struct SetupStatusStrip: View {
         HStack(spacing: 12) {
             SetupStatusItem(
                 title: "Snapshot cache",
-                value: model.storeStatus == .healthy ? "Ready" : model.storeStatus.rawValue,
+                value: model.storeStatus == .healthy ? "Ready" : model.storeStatus.previewStatusText.capitalized,
                 status: model.storeStatus
             )
             SetupStatusItem(
@@ -662,10 +1411,11 @@ struct SetupStatusStrip: View {
             )
             Spacer(minLength: 12)
             if let errorMessage = model.errorMessage {
-                Text(errorMessage)
+                Text(model.primaryErrorStatusText)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(CPTheme.statusColor(.failure))
                     .lineLimit(1)
+                    .help(errorMessage)
             }
         }
         .padding(14)
@@ -982,19 +1732,16 @@ struct MainLimitDetail: View {
                     DetailRow(label: "Provider", value: summary.provider.displayName)
                     DetailRow(label: "Window", value: summary.window.displayName)
                     DetailRow(label: "Accounts", value: "\(summary.accountCount)")
-                    DetailRow(label: "Used", value: summary.used.map(String.init) ?? "unknown")
-                    DetailRow(label: "Limit", value: summary.limit.map(String.init) ?? "unknown")
-                    DetailRow(label: "Remaining", value: summary.remaining.map(String.init) ?? "unknown")
+                    DetailRow(label: "Used", value: summary.detailUsedValue)
+                    DetailRow(label: "Limit", value: summary.detailLimitValue)
+                    DetailRow(label: "Remaining", value: summary.detailRemainingText)
                     DetailRow(label: "Status", value: summary.status.rawValue)
                     DetailRow(label: "Updated", value: summary.lastUpdatedAt.map(model.relativeTime) ?? "unknown")
                 }
 
                 DetailCard(title: "Accounts") {
                     ForEach(summary.limits) { limit in
-                        DetailRow(
-                            label: limit.accountName,
-                            value: "\(limit.remaining.map(String.init) ?? "?") left · \(limit.status.rawValue)"
-                        )
+                        MainLimitAccountRow(limit: limit)
                     }
                 }
             }
@@ -1026,6 +1773,42 @@ struct MainLimitDetail: View {
             ).copy
         }
         return limit.note ?? "Fast-mode forecast currently applies to OpenAI main windows."
+    }
+}
+
+struct MainLimitAccountRow: View {
+    let limit: UsageLimit
+
+    var body: some View {
+        HStack(spacing: 12) {
+            StatusMark(status: limit.status, size: 8)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(limit.accountName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(CPTheme.primaryText)
+                    .lineLimit(1)
+                Text(limit.displayLabel)
+                    .font(.system(size: 11))
+                    .foregroundStyle(CPTheme.secondaryText)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 16)
+            VStack(alignment: .trailing, spacing: 3) {
+                Text(usageText)
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundStyle(CPTheme.primaryText)
+                Text("\(limit.resetText) · \(limit.status.rawValue)")
+                    .font(.system(size: 10))
+                    .foregroundStyle(CPTheme.tertiaryText)
+            }
+        }
+        .padding(10)
+        .background(CPTheme.surface2)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private var usageText: String {
+        limit.previewRemainingHeadline
     }
 }
 
@@ -1166,7 +1949,7 @@ final class ContextPanelAppModel: ObservableObject {
     )
 
     var currentSnapshot: UsageSnapshot {
-        storedSnapshot?.snapshot ?? SampleUsageData.snapshot
+        storedSnapshot?.snapshot ?? UsageSnapshot(generatedAt: Date(), limits: [])
     }
 
     var fastModeForecast: FastModeCapacityPortfolioForecast {
@@ -1175,6 +1958,45 @@ final class ContextPanelAppModel: ObservableObject {
 
     var lastRefreshText: String {
         lastRefreshAt.map(relativeTime) ?? "not yet"
+    }
+
+    var primaryErrorStatusText: String {
+        switch storeStatus {
+        case .failure:
+            "Update failed; see Settings"
+        case .stale:
+            "Old data; see Settings"
+        case .unknown:
+            "Awaiting data; see Settings"
+        default:
+            "Needs attention; see Settings"
+        }
+    }
+
+    var lastSuccessfulProviderRefreshText: String? {
+        guard let report = storedSnapshot?.reports
+            .filter({ $0.status != .failure && $0.status != .unknown })
+            .max(by: { $0.generatedAt < $1.generatedAt })
+        else { return nil }
+        return "\(report.provider.displayName) · \(report.accountName) · \(relativeTime(report.generatedAt))"
+    }
+
+    var diagnosticProviderReports: [DiagnosticProviderReport] {
+        storedSnapshot?.reports
+            .filter { $0.status == .failure || $0.status == .stale }
+            .sorted { lhs, rhs in
+                if lhs.status != rhs.status { return lhs.status == .failure }
+                if lhs.provider != rhs.provider { return lhs.provider.displayName < rhs.provider.displayName }
+                return lhs.accountName < rhs.accountName
+            }
+            .map { report in
+                DiagnosticProviderReport(
+                    id: "\(report.provider.rawValue)-\(report.accountID)-\(report.status.rawValue)",
+                    title: "\(report.provider.displayName) · \(report.accountName)",
+                    summary: "\(report.status.previewStatusText) · \(relativeTime(report.generatedAt))",
+                    detail: report.errorMessage
+                )
+            } ?? []
     }
 
     init() {
@@ -1191,12 +2013,11 @@ final class ContextPanelAppModel: ObservableObject {
         storeStatus = result.status
         if result.status == .failure || result.errorMessage != nil {
             errorMessage = result.errorMessage
-        } else if errorMessage?.hasPrefix("Background refresh could not be enabled:") != true {
+        } else {
             errorMessage = nil
         }
         historyCount = refreshService.loadHistory().count
-        mirrorSnapshotsForDevelopmentWidget()
-        mirrorDisplayPreferencesForDevelopmentWidget()
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
     func refreshLocalConnectors() async {
@@ -1208,7 +2029,6 @@ final class ContextPanelAppModel: ObservableObject {
             let decision = try await refreshRunner.refresh()
             if case let .refreshed(outcome) = decision {
                 lastRefreshAt = outcome.savedAt
-                WidgetCenter.shared.reloadAllTimelines()
             }
             loadSnapshot()
         } catch {
@@ -1232,43 +2052,13 @@ final class ContextPanelAppModel: ObservableObject {
         return "\(hours / 24)d ago"
     }
 
-    private func mirrorSnapshotsForDevelopmentWidget() {
-        guard ContextPanelLocations.usesDevelopmentWidgetMirrors else { return }
-        do {
-            try refreshService.mirrorPrimarySnapshotToDevelopmentStores()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
+}
 
-    private func mirrorDisplayPreferencesForDevelopmentWidget() {
-        guard ContextPanelLocations.usesDevelopmentWidgetMirrors else { return }
-        let sourceURL = ContextPanelLocations.widgetDisplayPreferencesURL(appGroupID: ContextPanelLocations.appGroupID)
-        guard FileManager.default.fileExists(atPath: sourceURL.path) else { return }
-
-        do {
-            for destinationURL in [
-                ContextPanelLocations.widgetDevelopmentDisplayPreferencesURL(),
-                ContextPanelLocations.widgetDevelopmentContainerDisplayPreferencesURL(),
-                ContextPanelLocations.hostDevelopmentDisplayPreferencesURL(),
-            ] {
-                if destinationURL.standardizedFileURL == sourceURL.standardizedFileURL {
-                    continue
-                }
-                try FileManager.default.createDirectory(
-                    at: destinationURL.deletingLastPathComponent(),
-                    withIntermediateDirectories: true
-                )
-                if FileManager.default.fileExists(atPath: destinationURL.path) {
-                    try FileManager.default.removeItem(at: destinationURL)
-                }
-                try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
-            }
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
+struct DiagnosticProviderReport: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let summary: String
+    let detail: String?
 }
 
 struct CapacityDial: View {
@@ -1633,9 +2423,33 @@ extension MainLimitSummary {
         }
         return remaining.map(String.init) ?? "?"
     }
+
+    var detailUsedValue: String {
+        guard let used else { return "unknown" }
+        return unit == .percent ? "\(used)%" : "\(used)"
+    }
+
+    var detailLimitValue: String {
+        guard let limit else { return "unknown" }
+        return unit == .percent ? "\(limit)%" : "\(limit)"
+    }
+
+    var detailRemainingText: String {
+        guard let remaining else { return "unknown" }
+        return unit == .percent ? "\(remaining)%" : "\(remaining)"
+    }
 }
 
 extension UsageLimit {
+    var planText: String? {
+        guard let note else { return nil }
+        let prefix = "plan:"
+        guard note.lowercased().hasPrefix(prefix) else { return nil }
+        let rawPlan = note.dropFirst(prefix.count).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawPlan.isEmpty else { return nil }
+        return rawPlan.capitalized
+    }
+
     var previewRemainingHeadline: String {
         guard let remaining else {
             if status == .failure { return "Failed" }
@@ -1663,7 +2477,7 @@ extension UsageLimit {
 
     var previewUsageText: String {
         if provider == .anthropic, unit == .unknown, status == .unknown {
-            return "allowance unknown"
+            return "limit unknown"
         }
         if unit == .percent, let used {
             return "\(used)% used"
@@ -1673,6 +2487,55 @@ extension UsageLimit {
         }
         if status == .failure { return "refresh failed" }
         return "unknown"
+    }
+
+    var sidebarUsageText: String {
+        if provider == .anthropic, unit == .unknown, status == .unknown {
+            return "unknown"
+        }
+        if unit == .percent, let used {
+            return "\(used)%"
+        }
+        guard let used, let limit else { return status == .failure ? "—" : "?" }
+        return "\(used)/\(limit)"
+    }
+
+    var sidebarTitleText: String {
+        if let mainLimitWindow {
+            let title = [mainLimitWindow.shortName, modelLabel ?? displayLabel]
+                .compactMap { value in
+                    guard !value.isEmpty else { return nil }
+                    return value
+                }
+                .deduplicated()
+                .joined(separator: " ")
+            return title.isEmpty ? mainLimitWindow.displayName : title
+        }
+        let title = [windowLabel, modelLabel, displayLabel]
+            .compactMap { value in
+                guard let value, !value.isEmpty else { return nil }
+                return value
+            }
+            .deduplicated()
+            .joined(separator: " · ")
+        return title.isEmpty ? displayLabel : title
+    }
+
+    var isVisibleInSidebar: Bool {
+        if provider == .anthropic, unit == .unknown, displayLabel == "Claude status" {
+            return false
+        }
+        return true
+    }
+
+    var sidebarDetailText: String {
+        let parts = [accountName, resetText]
+            .compactMap { value in
+                guard !value.isEmpty else { return nil }
+                return value
+            }
+            .deduplicated()
+        return parts.joined(separator: " · ")
     }
 
     var previewWindowLine: String {
@@ -1697,6 +2560,27 @@ extension UsageLimit {
 
     var previewResetConfidenceText: String {
         "\(resetText) · \(confidence.previewText)"
+    }
+}
+
+private extension Array where Element == UsageLimit {
+    var sortedForOpenAIAccount: [UsageLimit] {
+        sorted { lhs, rhs in
+            let lhsRank = lhs.mainLimitWindow?.openAIAccountSortRank ?? Int.max
+            let rhsRank = rhs.mainLimitWindow?.openAIAccountSortRank ?? Int.max
+            if lhsRank != rhsRank { return lhsRank < rhsRank }
+            return lhs.displayLabel.localizedCaseInsensitiveCompare(rhs.displayLabel) == .orderedAscending
+        }
+    }
+}
+
+private extension MainLimitWindow {
+    var openAIAccountSortRank: Int {
+        switch self {
+        case .weekly: return 0
+        case .fiveHour: return 1
+        case .daily: return 2
+        }
     }
 }
 

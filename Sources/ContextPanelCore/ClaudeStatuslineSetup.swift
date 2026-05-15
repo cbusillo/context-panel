@@ -43,14 +43,14 @@ public enum ClaudeStatuslineSettingsError: LocalizedError, Equatable {
 }
 
 public enum ClaudeStatuslineSetup {
-    public static func defaultSettingsURL(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
+    public static func defaultSettingsURL(homeDirectory: URL = ContextPanelLocations.realUserHomeDirectory()) -> URL {
         homeDirectory
             .appending(path: ".claude", directoryHint: .isDirectory)
             .appending(path: "settings.json")
     }
 
-    public static func defaultRateLimitCacheURL(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
-        if homeDirectory == FileManager.default.homeDirectoryForCurrentUser {
+    public static func defaultRateLimitCacheURL(homeDirectory: URL = ContextPanelLocations.realUserHomeDirectory()) -> URL {
+        if homeDirectory == ContextPanelLocations.realUserHomeDirectory() {
             return ContextPanelLocations.claudeStatuslineCacheURL()
         }
         return homeDirectory
@@ -86,14 +86,14 @@ public enum ClaudeStatuslineSetup {
     }
 
     public static func diagnostic(
-        claudeBinaryAvailable: Bool,
-        authStatus: ClaudeAuthStatus?,
+        binaryExists: Bool,
+        loggedIn: Bool,
         settingsData: Data?,
         rateLimitSnapshot: ClaudeSubscriptionRateLimitSnapshot?,
         maximumCacheAge: TimeInterval = 30 * 60,
         now: Date = Date()
     ) -> ClaudeStatuslineSetupDiagnostic {
-        guard claudeBinaryAvailable else {
+        guard binaryExists else {
             return ClaudeStatuslineSetupDiagnostic(
                 status: .notInstalled,
                 statusLineCommand: nil,
@@ -102,7 +102,7 @@ public enum ClaudeStatuslineSetup {
             )
         }
 
-        guard authStatus?.loggedIn == true else {
+        guard loggedIn else {
             return ClaudeStatuslineSetupDiagnostic(
                 status: .notAuthenticated,
                 statusLineCommand: try? statusLineCommand(in: settingsData),

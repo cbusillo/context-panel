@@ -9,15 +9,14 @@ import Testing
     let result = store.load(now: Date(timeIntervalSince1970: 0))
 
     #expect(result.status == .unknown)
-    #expect(result.document.accounts.count == 3)
-    #expect(result.document.accounts.contains { $0.connectorKind == .codexRateLimits && $0.isEnabled })
-    #expect(result.document.accounts.contains { $0.connectorKind == .geminiCodeAssist && !$0.isEnabled })
-    let claude = try #require(result.document.accounts.first { $0.connectorKind == .claudeLocalStatus })
-    #expect(claude.rateLimitSnapshotPath?.hasSuffix("ClaudeRateLimits/statusline-cache.json") == true)
-    #expect(claude.usageBlocksPath?.hasSuffix("ClaudeRateLimits/ccusage-blocks-cache.json") == true)
+    #expect(result.document.accounts.count == 4)
+    #expect(result.document.accounts.contains { $0.id == "openai-code-default" && $0.displayName == "Code" && $0.isEnabled })
+    #expect(result.document.accounts.contains { $0.id == "openai-codex-default" && $0.displayName == "Codex" && !$0.isEnabled })
+    #expect(result.document.accounts.contains { $0.connectorKind == .geminiCodeAssist && $0.isEnabled })
+    #expect(result.document.accounts.contains { $0.connectorKind == .claudeOAuthUsage && $0.effectiveAuthPath == nil })
 }
 
-@Test func accountConfigurationStoreRoundTripsAccounts() throws {
+@Test func accountConfigurationStorePreservesCustomAccountsWithoutAddingDefaults() throws {
     let url = try temporaryDirectory().appending(path: "accounts.json")
     let store = AccountConfigurationStore(configurationURL: url)
     let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 10), accounts: [
@@ -35,6 +34,36 @@ import Testing
 
     #expect(result.status == .healthy)
     #expect(result.document == document)
+}
+
+@Test func accountConfigurationStoreMigratesDefaultClaudeLocalStatusToOAuth() throws {
+    let url = try temporaryDirectory().appending(path: "accounts.json")
+    let store = AccountConfigurationStore(configurationURL: url)
+    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 10), accounts: [
+        LocalProviderAccountConfiguration(
+            id: "claude-local-default",
+            provider: .anthropic,
+            connectorKind: .claudeLocalStatus,
+            displayName: "Claude",
+            rateLimitSnapshotPath: "/tmp/statusline-cache.json"
+        ),
+        LocalProviderAccountConfiguration(
+            id: "claude-custom-local",
+            provider: .anthropic,
+            connectorKind: .claudeLocalStatus,
+            displayName: "Claude Local",
+            rateLimitSnapshotPath: "/tmp/custom-statusline-cache.json"
+        ),
+    ])
+
+    try store.save(document)
+    let result = store.load(now: Date(timeIntervalSince1970: 20))
+
+    #expect(result.status == .healthy)
+    #expect(result.document.updatedAt == Date(timeIntervalSince1970: 20))
+    #expect(result.document.accounts.contains { $0.id == "claude-oauth-default" && $0.connectorKind == .claudeOAuthUsage })
+    #expect(!result.document.accounts.contains { $0.id == "claude-local-default" })
+    #expect(result.document.accounts.contains { $0.id == "claude-custom-local" && $0.connectorKind == .claudeLocalStatus })
 }
 
 @Test func accountConfigurationStoreLoadsFallbackWhenPrimaryIsMissing() throws {
@@ -58,8 +87,9 @@ import Testing
 
     let result = store.load()
     #expect(result.status == .healthy)
-    #expect(result.document == document)
-    #expect(AccountConfigurationStore(configurationURL: primaryURL).load().document == document)
+    #expect(result.document.accounts.contains(document.accounts[0]))
+    #expect(!result.document.accounts.contains { $0.id == "openai-code-default" })
+    #expect(AccountConfigurationStore(configurationURL: primaryURL).load().document.accounts.contains(document.accounts[0]))
 }
 
 @Test func accountConfigurationStorePrefersPrimaryOverFallback() throws {
@@ -93,10 +123,12 @@ import Testing
 
     let result = store.load()
     #expect(result.status == .healthy)
-    #expect(result.document == primary)
+    #expect(result.document.accounts.contains(primary.accounts[0]))
+    #expect(!result.document.accounts.contains(fallback.accounts[0]))
+    #expect(!result.document.accounts.contains { $0.id == "openai-code-default" })
 }
 
-@Test func accountConnectorFactorySkipsDisabledAndMissingSecretEnvironment() {
+@Test func accountConnectorFactorySkipsDisabledAndRequiresGeminiMetadata() async {
     let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
         LocalProviderAccountConfiguration(
             id: "codex",
@@ -123,21 +155,77 @@ import Testing
         ),
     ])
 
-    let withoutGeminiEnvironment = AccountConnectorFactory.connectors(
+    let withoutGeminiMetadata = AccountConnectorFactory.connectors(
         from: document,
         environment: [:],
         geminiMetadataFileLoader: { _ in "" },
         geminiMetadataFileExists: { _ in false }
     )
+    let missingMetadataResult = await ProviderConnectorRuntime(connectors: withoutGeminiMetadata).refreshAll(now: Date(timeIntervalSince1970: 0))
     let withGeminiEnvironment = AccountConnectorFactory.connectors(from: document, environment: [
         "GEMINI_ID": "client",
         "GEMINI_SECRET": "secret",
     ])
 
-    #expect(withoutGeminiEnvironment.count == 1)
-    #expect(withoutGeminiEnvironment[0].provider == .openAI)
+    #expect(withoutGeminiMetadata.count == 2)
+    #expect(Set(withoutGeminiMetadata.map(\.provider)) == [.openAI, .google])
+    #expect(missingMetadataResult.reports.contains { $0.provider == .google && $0.status == .failure })
     #expect(withGeminiEnvironment.count == 2)
     #expect(Set(withGeminiEnvironment.map(\.provider)) == [.openAI, .google])
+}
+
+@Test func accountConnectorFactoryReportsGeminiMetadataDiscoveryFailure() async {
+    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
+        LocalProviderAccountConfiguration(
+            id: "gemini",
+            provider: .google,
+            connectorKind: .geminiCodeAssist,
+            displayName: "Gemini",
+            authPath: "/tmp/gemini.json",
+            oauthClientIDEnvironmentName: "GEMINI_ID",
+            oauthClientSecretEnvironmentName: "GEMINI_SECRET"
+        ),
+    ])
+
+    let connectors = AccountConnectorFactory.connectors(
+        from: document,
+        environment: [:],
+        useBundledGeminiMetadataFallback: false,
+        geminiMetadataFileLoader: { _ in "" },
+        geminiMetadataFileExists: { _ in false }
+    )
+    let result = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: Date(timeIntervalSince1970: 0))
+
+    #expect(connectors.count == 1)
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].provider == .google)
+    #expect(result.reports[0].status == .failure)
+    #expect(result.reports[0].errorMessage?.contains("Gemini OAuth client metadata") == true)
+}
+
+@Test func accountConnectorFactoryFallsBackToGeminiDiscoveryForPartialMetadataEnvironment() async {
+    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
+        LocalProviderAccountConfiguration(
+            id: "gemini",
+            provider: .google,
+            connectorKind: .geminiCodeAssist,
+            displayName: "Gemini",
+            authPath: "/tmp/gemini.json",
+            oauthClientIDEnvironmentName: "GEMINI_ID",
+            oauthClientSecretEnvironmentName: "GEMINI_SECRET"
+        ),
+    ])
+
+    let connectors = AccountConnectorFactory.connectors(
+        from: document,
+        environment: ["GEMINI_ID": "client"],
+        useBundledGeminiMetadataFallback: false,
+        geminiMetadataFileLoader: { _ in #"var OAUTH_CLIENT_ID = "discovered"; var OAUTH_CLIENT_SECRET = "secret";"# },
+        geminiMetadataFileExists: { _ in true }
+    )
+
+    #expect(connectors.count == 1)
+    #expect(connectors[0].provider == .google)
 }
 
 @Test func accountConnectorFactoryCanDiscoverGeminiMetadataFromInstalledCLI() {
@@ -166,6 +254,131 @@ import Testing
     #expect(connectors[0].provider == .google)
 }
 
+@Test func sandboxedAuthLoaderRequiresSecurityScopedBookmark() async {
+    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
+        LocalProviderAccountConfiguration(
+            id: "codex",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "OpenAI",
+            authPath: "/tmp/context-panel-missing-bookmark.json"
+        )
+    ])
+    let connectors = AccountConnectorFactory.connectors(
+        from: document,
+        requiresBookmarkedAuthFiles: true
+    )
+
+    let result = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: Date(timeIntervalSince1970: 0))
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].status == .failure)
+    #expect(result.snapshot.limits.isEmpty)
+    #expect(result.reports[0].errorMessage?.contains("permission") == true)
+}
+
+@Test func sandboxedAuthLoaderPrefersImportedCredentialStore() async {
+    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
+        LocalProviderAccountConfiguration(
+            id: "codex",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "OpenAI",
+            authPath: "/tmp/context-panel-missing-bookmark.json"
+        )
+    ])
+    let connectors = AccountConnectorFactory.connectors(
+        from: document,
+        credentialStore: InMemoryProviderCredentialStore(storage: ["codex": Data(#"{}"#.utf8)]),
+        requiresBookmarkedAuthFiles: true
+    )
+
+    let result = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: Date(timeIntervalSince1970: 0))
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].errorMessage?.contains("permission") != true)
+    #expect(result.reports[0].errorMessage?.contains("token auth") == true)
+}
+
+@Test func sandboxedAuthLoaderFallsBackWhenCredentialStoreThrows() async throws {
+    let authURL = try temporaryDirectory().appending(path: "auth_accounts.json")
+    try Data(#"{}"#.utf8).write(to: authURL)
+    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
+        LocalProviderAccountConfiguration(
+            id: "codex",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "OpenAI",
+            authPath: authURL.path
+        )
+    ])
+    let connectors = AccountConnectorFactory.connectors(
+        from: document,
+        credentialStore: ThrowingProviderCredentialStore(),
+        requiresBookmarkedAuthFiles: false
+    )
+
+    let result = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: Date(timeIntervalSince1970: 0))
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].errorMessage?.contains("Keychain") != true)
+    #expect(result.reports[0].errorMessage?.contains("token auth") == true)
+}
+
+@Test func authLoaderCanReadDirectlyWhenBookmarksAreOptional() async throws {
+    let authURL = try temporaryDirectory().appending(path: "codex.json")
+    try Data(#"{}"#.utf8).write(to: authURL)
+    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
+        LocalProviderAccountConfiguration(
+            id: "codex",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "OpenAI",
+            authPath: authURL.path
+        )
+    ])
+    let connectors = AccountConnectorFactory.connectors(
+        from: document,
+        requiresBookmarkedAuthFiles: false
+    )
+
+    let result = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: Date(timeIntervalSince1970: 0))
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].errorMessage?.contains("permission") != true)
+    #expect(result.reports[0].errorMessage?.contains("token auth") == true)
+}
+
+@Test func localAccountConfigurationUsesConfiguredCodexAuthPathWithoutProbing() throws {
+    let authURL = try temporaryDirectory().appending(path: "auth_accounts.json")
+    let account = LocalProviderAccountConfiguration(
+        id: "codex",
+        provider: .openAI,
+        connectorKind: .codexRateLimits,
+        displayName: "Codex",
+        authPath: authURL.path
+    )
+
+    #expect(account.effectiveAuthPath == authURL.path)
+}
+
+@Test func defaultAccountPathsUseRealUserHome() throws {
+    let document = AccountConfigurationStore.defaultDocument(now: Date(timeIntervalSince1970: 0))
+    let expectedHome = try #require(getpwuid(getuid()).map { String(cString: $0.pointee.pw_dir) })
+
+    let code = try #require(document.accounts.first { $0.id == "openai-code-default" })
+    let codex = try #require(document.accounts.first { $0.id == "openai-codex-default" })
+    let gemini = try #require(document.accounts.first { $0.id == "gemini-code-assist-default" })
+
+    #expect(code.authPath == "\(expectedHome)/.code/auth_accounts.json")
+    #expect(codex.authPath == "\(expectedHome)/.codex/auth.json")
+    #expect(codex.isEnabled == false)
+    #expect(gemini.authPath == "\(expectedHome)/.gemini/oauth_creds.json")
+    #expect(code.authPath?.contains("/Library/Containers/") == false)
+    #expect(codex.authPath?.contains("/Library/Containers/") == false)
+    #expect(gemini.authPath?.contains("/Library/Containers/") == false)
+}
+
 @Test func accountConfigurationStoreReportsCorruptFilesAsFailure() throws {
     let url = try temporaryDirectory().appending(path: "accounts.json")
     try Data("nope".utf8).write(to: url)
@@ -173,7 +386,7 @@ import Testing
     let result = AccountConfigurationStore(configurationURL: url).load(now: Date(timeIntervalSince1970: 0))
 
     #expect(result.status == .failure)
-    #expect(result.document.accounts.count == 3)
+    #expect(result.document.accounts.count == 4)
     #expect(result.errorMessage?.isEmpty == false)
 }
 
@@ -183,4 +396,14 @@ private func temporaryDirectory() throws -> URL {
         .appending(path: UUID().uuidString, directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     return url
+}
+
+private struct ThrowingProviderCredentialStore: ProviderCredentialStoring {
+    func load(accountID: String) throws -> Data? {
+        throw ProviderCredentialStore.StoreError.unhandledStatus(errSecInteractionNotAllowed)
+    }
+
+    func save(_ data: Data, accountID: String) throws {
+        throw ProviderCredentialStore.StoreError.unhandledStatus(errSecInteractionNotAllowed)
+    }
 }

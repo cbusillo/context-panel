@@ -359,6 +359,214 @@ public struct ResetPrimerPlanService: Sendable {
     }
 }
 
+public struct ResetPrimerExecutionResult: Equatable, Sendable {
+    public let candidate: ResetPrimerCandidate
+    public let status: ResetPrimerRunStatus
+    public let errorMessage: String?
+
+    public init(candidate: ResetPrimerCandidate, status: ResetPrimerRunStatus, errorMessage: String? = nil) {
+        self.candidate = candidate
+        self.status = status
+        self.errorMessage = errorMessage.map(ConnectorRedactor.redact)
+    }
+}
+
+public struct ResetPrimerExecutor: Sendable {
+    private let planService: ResetPrimerPlanService
+    private let accountStore: AccountConfigurationStore
+    private let processRunner: @Sendable (URL, [String], TimeInterval) async throws -> Int32
+
+    public init(
+        planService: ResetPrimerPlanService,
+        accountStore: AccountConfigurationStore,
+        processRunner: @escaping @Sendable (URL, [String], TimeInterval) async throws -> Int32 = ResetPrimerExecutor.defaultProcessRunner
+    ) {
+        self.planService = planService
+        self.accountStore = accountStore
+        self.processRunner = processRunner
+    }
+
+    public static func appDefault(appGroupID: String = ContextPanelLocations.appGroupID) -> ResetPrimerExecutor {
+        ResetPrimerExecutor(
+            planService: .appDefault(appGroupID: appGroupID),
+            accountStore: AccountConfigurationStore(
+                configurationURL: ContextPanelLocations.accountConfigurationURL(),
+                fallbackConfigurationURL: ContextPanelLocations.legacyAccountConfigurationURL()
+            )
+        )
+    }
+
+    @discardableResult
+    public func runDue(now: Date = Date()) async -> [ResetPrimerExecutionResult] {
+        let candidates = planService.plan(now: now).due
+        guard !candidates.isEmpty else { return [] }
+
+        let accountsByID = Dictionary(
+            accountStore.load(now: now).document.accounts.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        var results: [ResetPrimerExecutionResult] = []
+        for candidate in candidates {
+            let action = primerAction(candidate: candidate, account: accountsByID[candidate.accountID])
+            switch action {
+            case let .skip(errorMessage):
+                let result = ResetPrimerExecutionResult(candidate: candidate, status: .skipped, errorMessage: errorMessage)
+                do {
+                    try planService.mark(
+                        candidate,
+                        status: result.status,
+                        now: now,
+                        errorMessage: result.errorMessage
+                    )
+                    results.append(result)
+                } catch {
+                    results.append(stateSaveFailureResult(candidate: candidate, error: error))
+                }
+
+            case let .run(commandURL, arguments):
+                do {
+                    try planService.mark(
+                        candidate,
+                        status: .skipped,
+                        now: now,
+                        errorMessage: "Reset primer command started"
+                    )
+                } catch {
+                    results.append(stateSaveFailureResult(candidate: candidate, error: error))
+                    continue
+                }
+
+                let result = await runCommand(commandURL, arguments, candidate: candidate)
+                do {
+                    try planService.mark(
+                        candidate,
+                        status: result.status,
+                        now: now,
+                        errorMessage: result.errorMessage
+                    )
+                    results.append(result)
+                } catch {
+                    results.append(stateSaveFailureResult(candidate: candidate, error: error))
+                }
+            }
+        }
+        return results
+    }
+
+    private func stateSaveFailureResult(candidate: ResetPrimerCandidate, error: Error) -> ResetPrimerExecutionResult {
+        ResetPrimerExecutionResult(
+            candidate: candidate,
+            status: .failed,
+            errorMessage: "Reset primer state could not be saved: \(ConnectorRedactor.redact(error.localizedDescription))"
+        )
+    }
+
+    private func primerAction(
+        candidate: ResetPrimerCandidate,
+        account: LocalProviderAccountConfiguration?
+    ) -> PrimerAction {
+        guard let account, account.isEnabled else {
+            return .skip("Account is disabled or missing")
+        }
+        guard let commandURL = primerCommandURL(for: account) else {
+            return .skip("No primer command is configured")
+        }
+        let arguments = primerArguments(for: account)
+        guard !arguments.isEmpty else {
+            return .skip("Reset priming is not supported for this provider")
+        }
+
+        return .run(commandURL, arguments)
+    }
+
+    private func runCommand(
+        _ commandURL: URL,
+        _ arguments: [String],
+        candidate: ResetPrimerCandidate
+    ) async -> ResetPrimerExecutionResult {
+        do {
+            let status = try await processRunner(commandURL, arguments, 60)
+            if status == 0 {
+                return ResetPrimerExecutionResult(candidate: candidate, status: .completed)
+            }
+            return ResetPrimerExecutionResult(
+                candidate: candidate,
+                status: .failed,
+                errorMessage: "Primer command exited with status \(status)"
+            )
+        } catch {
+            return ResetPrimerExecutionResult(
+                candidate: candidate,
+                status: .failed,
+                errorMessage: error.localizedDescription
+            )
+        }
+    }
+
+    private enum PrimerAction {
+        case skip(String)
+        case run(URL, [String])
+    }
+
+    private func primerCommandURL(for account: LocalProviderAccountConfiguration) -> URL? {
+        let path: String?
+        switch account.connectorKind {
+        case .codexRateLimits:
+            path = account.commandPath ?? defaultCodeCommandPath()
+        case .claudeLocalStatus, .claudeOAuthUsage, .geminiCodeAssist:
+            path = account.commandPath
+        }
+
+        guard let path, !path.isEmpty else { return nil }
+        let expanded = NSString(string: path).expandingTildeInPath
+        guard FileManager.default.isExecutableFile(atPath: expanded) else { return nil }
+        return URL(fileURLWithPath: expanded)
+    }
+
+    public static func primerArguments(for account: LocalProviderAccountConfiguration) -> [String] {
+        switch account.connectorKind {
+        case .codexRateLimits:
+            return []
+        case .claudeLocalStatus, .claudeOAuthUsage, .geminiCodeAssist:
+            return []
+        }
+    }
+
+    private func primerArguments(for account: LocalProviderAccountConfiguration) -> [String] {
+        Self.primerArguments(for: account)
+    }
+
+    public static func defaultProcessRunner(commandURL: URL, arguments: [String], timeout: TimeInterval) async throws -> Int32 {
+        let process = Process()
+        process.executableURL = commandURL
+        process.arguments = arguments
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+
+        try process.run()
+
+        let timeoutTask = Task {
+            try? await Task.sleep(for: .seconds(timeout))
+            if process.isRunning {
+                process.terminate()
+            }
+        }
+        process.waitUntilExit()
+        timeoutTask.cancel()
+        return process.terminationStatus
+    }
+
+    private func defaultCodeCommandPath() -> String? {
+        let candidates = [
+            "\(ContextPanelLocations.realUserHomeDirectory().path)/.local/bin/code",
+            "/opt/homebrew/bin/code",
+            "/usr/local/bin/code",
+        ]
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+}
+
 private struct UnscheduledResetPrimerCandidate: Equatable {
     let key: ResetPrimerRunKey
     let accountName: String

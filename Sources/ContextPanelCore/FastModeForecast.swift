@@ -140,6 +140,7 @@ public struct FastModeForecast: Codable, Equatable, Sendable {
     public let accountName: String
     public let recommendation: FastModeRecommendation
     public let confidence: UsageConfidence
+    public let unit: UsageUnit?
     public let remainingUnits: Double?
     public let hoursUntilReset: Double?
     public let fastModeRunwayHours: Double?
@@ -169,6 +170,7 @@ public struct FastModeForecast: Codable, Equatable, Sendable {
         limitID = input.limit.id
         accountName = input.limit.accountName
         confidence = input.limit.confidence
+        unit = input.limit.unit
         reserveUnits = input.reserveUnits
 
         let remaining = input.limit.remaining.map(Double.init)
@@ -264,6 +266,7 @@ public struct FastModeCapacityForecast: Codable, Equatable, Sendable {
     public let accountName: String
     public let recommendation: FastModeRecommendation
     public let confidence: UsageConfidence
+    public let unit: UsageUnit?
     public let remainingUnits: Double?
     public let totalUnits: Double?
     public let nextResetAt: Date?
@@ -370,19 +373,23 @@ public struct FastModeCapacityForecast: Codable, Equatable, Sendable {
     }
 
     public var standardBurnRatePercentPerHour: Double? {
-        guard let standardBurnRateUnitsPerHour, let totalUnits, totalUnits > 0 else { return nil }
+        guard let standardBurnRateUnitsPerHour else { return nil }
+        if unit == .percent { return standardBurnRateUnitsPerHour }
+        guard let totalUnits, totalUnits > 0 else { return nil }
         return (standardBurnRateUnitsPerHour / totalUnits) * 100
     }
 
     public var requiredBurnRatePercentPerHour: Double? {
-        guard let requiredBurnRateUnitsPerHour, let totalUnits, totalUnits > 0 else { return nil }
+        guard let requiredBurnRateUnitsPerHour else { return nil }
+        if unit == .percent { return requiredBurnRateUnitsPerHour }
+        guard let totalUnits, totalUnits > 0 else { return nil }
         return (requiredBurnRateUnitsPerHour / totalUnits) * 100
     }
 
     public var burnPaceRatio: Double? {
         guard let standardBurnRateUnitsPerHour else { return nil }
         guard let requiredBurnRateUnitsPerHour, requiredBurnRateUnitsPerHour > 0 else {
-            return standardBurnRateUnitsPerHour == 0 ? 0 : .infinity
+            return standardBurnRateUnitsPerHour == 0 ? 0 : nil
         }
         return standardBurnRateUnitsPerHour / requiredBurnRateUnitsPerHour
     }
@@ -419,6 +426,7 @@ public struct FastModeCapacityForecast: Codable, Equatable, Sendable {
         let total = capacityPool.totalUnits
         remainingUnits = remaining
         totalUnits = total
+        unit = Self.sharedUnit(numericLimits)
         confidence = Self.worstConfidence(providerLimits.map(\.confidence))
         standardBurnRateUnitsPerHour = standardBurnRate?.unitsPerHour
         fastBurnRateUnitsPerHour = fastBurnRate?.unitsPerHour
@@ -485,6 +493,11 @@ public struct FastModeCapacityForecast: Codable, Equatable, Sendable {
         if confidences.contains(.manual) { return .manual }
         if confidences.contains(.observed) { return .observed }
         return confidences.first ?? .unknown
+    }
+
+    private static func sharedUnit(_ limits: [UsageLimit]) -> UsageUnit? {
+        guard let first = limits.first?.unit else { return nil }
+        return limits.allSatisfy { $0.unit == first } ? first : nil
     }
 
     private static func format(hours: Double) -> String {

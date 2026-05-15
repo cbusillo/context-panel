@@ -157,6 +157,44 @@ copy_profile_if_present() {
 	fi
 }
 
+assert_app_group_entitlement() {
+	local bundle_path="$1"
+	local label="$2"
+	local plist
+	plist=$(mktemp)
+	if ! codesign -d --entitlements :- "$bundle_path" >"$plist" 2>/dev/null; then
+		rm -f "$plist"
+		echo "could not read signed entitlements for $label: $bundle_path" >&2
+		exit 1
+	fi
+	if ! /usr/libexec/PlistBuddy -c "Print :com.apple.security.application-groups" "$plist" 2>/dev/null |
+		grep -Fq "MM5YXC7T6E.group.com.shinycomputers.contextpanel"; then
+		rm -f "$plist"
+		echo "$label is missing app group entitlement: MM5YXC7T6E.group.com.shinycomputers.contextpanel" >&2
+		exit 1
+	fi
+	rm -f "$plist"
+}
+
+assert_entitlement_enabled() {
+	local bundle_path="$1"
+	local label="$2"
+	local entitlement="$3"
+	local plist
+	plist=$(mktemp)
+	if ! codesign -d --entitlements :- "$bundle_path" >"$plist" 2>/dev/null; then
+		rm -f "$plist"
+		echo "could not read signed entitlements for $label: $bundle_path" >&2
+		exit 1
+	fi
+	if [[ "$(/usr/libexec/PlistBuddy -c "Print :$entitlement" "$plist" 2>/dev/null || true)" != "true" ]]; then
+		rm -f "$plist"
+		echo "$label is missing entitlement: $entitlement" >&2
+		exit 1
+	fi
+	rm -f "$plist"
+}
+
 require_command xcodegen
 require_command xcodebuild
 require_command codesign
@@ -170,6 +208,12 @@ built_app_path="$product_dir/$app_name"
 app_path="$output_dir/$app_name"
 zip_path="$output_dir/ContextPanel-$version-macOS.zip"
 metadata_path="$output_dir/release-metadata.json"
+app_entitlements="Config/ContextPanel.entitlements"
+refresh_agent_entitlements="Config/ContextPanelRefreshAgent.entitlements"
+if [[ "$configuration" == "Release" ]]; then
+	app_entitlements="Config/ContextPanelAppStore.entitlements"
+	refresh_agent_entitlements="Config/ContextPanelRefreshAgentAppStore.entitlements"
+fi
 
 xcodegen generate --spec project.yml
 
@@ -217,12 +261,21 @@ codesign "${codesign_options[@]}" \
 	--entitlements Config/ContextPanelWidget.entitlements \
 	"$widget_path"
 codesign "${codesign_options[@]}" \
-	--entitlements Config/ContextPanelRefreshAgent.entitlements \
+	--entitlements "$refresh_agent_entitlements" \
 	"$refresh_agent_path"
 codesign "${codesign_options[@]}" \
-	--entitlements Config/ContextPanel.entitlements \
+	--entitlements "$app_entitlements" \
 	"$app_path"
 codesign --verify --deep --strict --verbose=2 "$app_path"
+assert_app_group_entitlement "$app_path" "Context Panel app"
+assert_app_group_entitlement "$widget_path" "Context Panel widget"
+assert_app_group_entitlement "$refresh_agent_path" "Context Panel refresh agent"
+assert_entitlement_enabled "$app_path" "Context Panel app" "com.apple.security.app-sandbox"
+assert_entitlement_enabled "$app_path" "Context Panel app" "com.apple.security.network.client"
+assert_entitlement_enabled "$app_path" "Context Panel app" "com.apple.security.files.bookmarks.app-scope"
+assert_entitlement_enabled "$refresh_agent_path" "Context Panel refresh agent" "com.apple.security.app-sandbox"
+assert_entitlement_enabled "$refresh_agent_path" "Context Panel refresh agent" "com.apple.security.network.client"
+assert_entitlement_enabled "$refresh_agent_path" "Context Panel refresh agent" "com.apple.security.files.bookmarks.app-scope"
 
 if [[ "$notarize" == "true" ]]; then
 	if [[ "$resolved_identity" == "-" ]]; then

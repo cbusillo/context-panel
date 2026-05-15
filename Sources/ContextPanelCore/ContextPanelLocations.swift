@@ -1,17 +1,14 @@
 import Foundation
+import Darwin
 
 public enum ContextPanelLocations {
-    public static let appGroupID = "group.com.shinycomputers.contextpanel"
-    public static let macAppStoreAppGroupID = "MM5YXC7T6E.group.com.shinycomputers.contextpanel"
+    public static let appGroupID = "MM5YXC7T6E.group.com.shinycomputers.contextpanel"
     public static let widgetExtensionBundleID = "com.shinycomputers.contextpanel.widget"
     public static let refreshAgentBundleID = "com.shinycomputers.contextpanel.refresh-agent"
 
     public static var isRunningInAppSandbox: Bool {
-        ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] != nil
-    }
-
-    public static var usesDevelopmentWidgetMirrors: Bool {
-        !isRunningInAppSandbox
+        getenv("APP_SANDBOX_CONTAINER_ID") != nil
+            || environmentFlag("CONTEXT_PANEL_APP_SANDBOX")
     }
 
     public static func applicationSupportDirectory() -> URL {
@@ -26,11 +23,28 @@ public enum ContextPanelLocations {
     }
 
     public static func claudeStatuslineCacheURL() -> URL {
-        claudeRateLimitDirectory().appending(path: "statusline-cache.json")
+        claudeStatuslineCacheURLs().first ?? claudeRateLimitDirectory().appending(path: "statusline-cache.json")
+    }
+
+    public static func claudeStatuslineCacheURLs() -> [URL] {
+        claudeRateLimitStorageDirectories().map { $0.appending(path: "statusline-cache.json") }
     }
 
     public static func claudeCCUsageBlocksCacheURL() -> URL {
-        claudeRateLimitDirectory().appending(path: "ccusage-blocks-cache.json")
+        claudeCCUsageBlocksCacheURLs().first ?? claudeRateLimitDirectory().appending(path: "ccusage-blocks-cache.json")
+    }
+
+    public static func claudeCCUsageBlocksCacheURLs() -> [URL] {
+        claudeRateLimitStorageDirectories().map { $0.appending(path: "ccusage-blocks-cache.json") }
+    }
+
+    public static func bookmarkStoreURL() -> URL {
+        if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
+            return containerURL
+                .appending(path: "Context Panel", directoryHint: .isDirectory)
+                .appending(path: "file-bookmarks.json")
+        }
+        return applicationSupportDirectory().appending(path: "file-bookmarks.json")
     }
 
     public static func snapshotDirectory(appGroupID: String? = nil) -> URL {
@@ -44,82 +58,17 @@ public enum ContextPanelLocations {
             .appending(path: "Snapshots", directoryHint: .isDirectory)
     }
 
-    public static func widgetDevelopmentSnapshotDirectory() -> URL {
+    public static func widgetSandboxLocalSnapshotDirectory() -> URL {
         applicationSupportDirectory()
             .appending(path: "Snapshots", directoryHint: .isDirectory)
     }
 
-    public static func hostDevelopmentSnapshotDirectory() -> URL {
-        hostApplicationSupportDirectory()
-            .appending(path: "Snapshots", directoryHint: .isDirectory)
-    }
-
-    public static func widgetDevelopmentContainerSnapshotDirectory() -> URL {
-        realUserHomeDirectory()
-            .appending(path: "Library", directoryHint: .isDirectory)
-            .appending(path: "Containers", directoryHint: .isDirectory)
-            .appending(path: widgetExtensionBundleID, directoryHint: .isDirectory)
-            .appending(path: "Data", directoryHint: .isDirectory)
-            .appending(path: "Library", directoryHint: .isDirectory)
-            .appending(path: "Application Support", directoryHint: .isDirectory)
-            .appending(path: "Context Panel", directoryHint: .isDirectory)
-            .appending(path: "Snapshots", directoryHint: .isDirectory)
-    }
-
-    public static func widgetDevelopmentDisplayPreferencesURL() -> URL {
+    public static func widgetSandboxLocalDisplayPreferencesURL() -> URL {
         applicationSupportDirectory().appending(path: "widget-display-preferences.json")
     }
 
-    public static func widgetDevelopmentFastModeForecastSettingsURL() -> URL {
+    public static func widgetSandboxLocalFastModeForecastSettingsURL() -> URL {
         applicationSupportDirectory().appending(path: "fast-mode-forecast-settings.json")
-    }
-
-    public static func hostDevelopmentDisplayPreferencesURL() -> URL {
-        hostApplicationSupportDirectory().appending(path: "widget-display-preferences.json")
-    }
-
-    public static func hostDevelopmentFastModeForecastSettingsURL() -> URL {
-        hostApplicationSupportDirectory().appending(path: "fast-mode-forecast-settings.json")
-    }
-
-    public static func hostDevelopmentResetPrimerSettingsURL() -> URL {
-        hostApplicationSupportDirectory().appending(path: "reset-primer-settings.json")
-    }
-
-    public static func widgetDevelopmentContainerDisplayPreferencesURL() -> URL {
-        realUserHomeDirectory()
-            .appending(path: "Library", directoryHint: .isDirectory)
-            .appending(path: "Containers", directoryHint: .isDirectory)
-            .appending(path: widgetExtensionBundleID, directoryHint: .isDirectory)
-            .appending(path: "Data", directoryHint: .isDirectory)
-            .appending(path: "Library", directoryHint: .isDirectory)
-            .appending(path: "Application Support", directoryHint: .isDirectory)
-            .appending(path: "Context Panel", directoryHint: .isDirectory)
-            .appending(path: "widget-display-preferences.json")
-    }
-
-    public static func widgetDevelopmentContainerFastModeForecastSettingsURL() -> URL {
-        realUserHomeDirectory()
-            .appending(path: "Library", directoryHint: .isDirectory)
-            .appending(path: "Containers", directoryHint: .isDirectory)
-            .appending(path: widgetExtensionBundleID, directoryHint: .isDirectory)
-            .appending(path: "Data", directoryHint: .isDirectory)
-            .appending(path: "Library", directoryHint: .isDirectory)
-            .appending(path: "Application Support", directoryHint: .isDirectory)
-            .appending(path: "Context Panel", directoryHint: .isDirectory)
-            .appending(path: "fast-mode-forecast-settings.json")
-    }
-
-    public static func widgetDevelopmentContainerResetPrimerSettingsURL() -> URL {
-        realUserHomeDirectory()
-            .appending(path: "Library", directoryHint: .isDirectory)
-            .appending(path: "Containers", directoryHint: .isDirectory)
-            .appending(path: widgetExtensionBundleID, directoryHint: .isDirectory)
-            .appending(path: "Data", directoryHint: .isDirectory)
-            .appending(path: "Library", directoryHint: .isDirectory)
-            .appending(path: "Application Support", directoryHint: .isDirectory)
-            .appending(path: "Context Panel", directoryHint: .isDirectory)
-            .appending(path: "reset-primer-settings.json")
     }
 
     public static func accountConfigurationURL() -> URL {
@@ -166,6 +115,16 @@ public enum ContextPanelLocations {
         return applicationSupportDirectory().appending(path: "reset-primer-settings.json")
     }
 
+    public static func backgroundRefreshSettingsURL(appGroupID: String? = nil) -> URL {
+        if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
+            return containerURL
+                .appending(path: "Context Panel", directoryHint: .isDirectory)
+                .appending(path: "background-refresh-settings.json")
+        }
+
+        return applicationSupportDirectory().appending(path: "background-refresh-settings.json")
+    }
+
     public static func resetPrimerRunStateURL(appGroupID: String? = nil) -> URL {
         if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
             return containerURL
@@ -176,6 +135,20 @@ public enum ContextPanelLocations {
         return applicationSupportDirectory().appending(path: "reset-primer-runs.json")
     }
 
+    public static func realUserHomeDirectory() -> URL {
+        if let passwd = getpwuid(getuid()), let homeDirectory = passwd.pointee.pw_dir {
+            let home = String(cString: homeDirectory)
+            if !home.isEmpty {
+                return URL(fileURLWithPath: home, isDirectory: true)
+            }
+        }
+        if let user = ProcessInfo.processInfo.environment["USER"],
+           let home = NSHomeDirectoryForUser(user), !home.isEmpty {
+            return URL(fileURLWithPath: home, isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+    }
+
     private static func hostApplicationSupportDirectory() -> URL {
         realUserHomeDirectory()
             .appending(path: "Library", directoryHint: .isDirectory)
@@ -183,24 +156,32 @@ public enum ContextPanelLocations {
             .appending(path: "Context Panel", directoryHint: .isDirectory)
     }
 
-    private static func appGroupContainerURL(appGroupID: String?) -> URL? {
-        let groupIDs = appGroupID == Self.appGroupID
-            ? [Self.appGroupID, Self.macAppStoreAppGroupID]
-            : [appGroupID].compactMap { $0 }
+    private static func environmentFlag(_ name: String) -> Bool {
+        guard let value = getenv(name) else { return false }
+        return String(cString: value) == "1"
+    }
 
-        for groupID in groupIDs {
-            if let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupID) {
-                return containerURL
+    private static func claudeRateLimitStorageDirectories() -> [URL] {
+        var directories: [URL] = []
+        if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
+            directories.append(containerURL
+                .appending(path: "Context Panel", directoryHint: .isDirectory)
+                .appending(path: "ClaudeRateLimits", directoryHint: .isDirectory))
+        }
+        directories.append(claudeRateLimitDirectory())
+        return directories.reduce(into: []) { result, url in
+            if !result.contains(url) {
+                result.append(url)
             }
         }
+    }
 
+    private static func appGroupContainerURL(appGroupID: String?) -> URL? {
+        guard let appGroupID else { return nil }
+        if let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID) {
+            return containerURL
+        }
         return nil
     }
 
-    private static func realUserHomeDirectory() -> URL {
-        if let home = NSHomeDirectoryForUser(NSUserName()), !home.isEmpty {
-            return URL(fileURLWithPath: home, isDirectory: true)
-        }
-        return FileManager.default.homeDirectoryForCurrentUser
-    }
 }

@@ -4,6 +4,7 @@ public enum AccountConnectorKind: String, Codable, Equatable, Sendable {
     case codexRateLimits
     case geminiCodeAssist
     case claudeLocalStatus
+    case claudeOAuthUsage
 }
 
 public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiable, Sendable {
@@ -46,6 +47,19 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
         self.usageBlocksPath = usageBlocksPath
         self.oauthClientIDEnvironmentName = oauthClientIDEnvironmentName
         self.oauthClientSecretEnvironmentName = oauthClientSecretEnvironmentName
+    }
+
+    public var effectiveAuthPath: String? {
+        switch connectorKind {
+        case .codexRateLimits:
+            return authPath
+        case .geminiCodeAssist:
+            return authPath
+        case .claudeLocalStatus:
+            return rateLimitSnapshotPath ?? ContextPanelLocations.claudeStatuslineCacheURL().path
+        case .claudeOAuthUsage:
+            return nil
+        }
     }
 }
 
@@ -98,10 +112,11 @@ public struct AccountConfigurationStore: Sendable {
             guard document.schemaVersion == 1 else {
                 throw SnapshotStoreError.unsupportedSchema(version: document.schemaVersion)
             }
-            if loadURL != configurationURL {
-                try? save(document)
+            let migratedDocument = Self.migratedDocument(document, now: now)
+            if loadURL != configurationURL || migratedDocument != document {
+                try? save(migratedDocument)
             }
-            return AccountConfigurationLoadResult(document: document, status: .healthy)
+            return AccountConfigurationLoadResult(document: migratedDocument, status: .healthy)
         } catch {
             return AccountConfigurationLoadResult(
                 document: Self.defaultDocument(now: now),
@@ -119,36 +134,62 @@ public struct AccountConfigurationStore: Sendable {
     }
 
     public static func defaultDocument(now: Date = Date()) -> AccountConfigurationDocument {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let home = ContextPanelLocations.realUserHomeDirectory().path
         return AccountConfigurationDocument(updatedAt: now, accounts: [
+            LocalProviderAccountConfiguration(
+                id: "openai-code-default",
+                provider: .openAI,
+                connectorKind: .codexRateLimits,
+                displayName: "Code",
+                authPath: "\(home)/.code/auth_accounts.json"
+            ),
             LocalProviderAccountConfiguration(
                 id: "openai-codex-default",
                 provider: .openAI,
                 connectorKind: .codexRateLimits,
                 displayName: "Codex",
+                isEnabled: false,
                 authPath: "\(home)/.codex/auth.json"
             ),
             LocalProviderAccountConfiguration(
-                id: "claude-local-default",
+                id: "claude-oauth-default",
                 provider: .anthropic,
-                connectorKind: .claudeLocalStatus,
-                displayName: "Claude",
-                commandPath: "claude",
-                statsPath: "\(home)/.claude/stats-cache.json",
-                rateLimitSnapshotPath: ContextPanelLocations.claudeStatuslineCacheURL().path,
-                usageBlocksPath: ContextPanelLocations.claudeCCUsageBlocksCacheURL().path
+                connectorKind: .claudeOAuthUsage,
+                displayName: "Claude"
             ),
             LocalProviderAccountConfiguration(
                 id: "gemini-code-assist-default",
                 provider: .google,
                 connectorKind: .geminiCodeAssist,
                 displayName: "Gemini",
-                isEnabled: false,
+                isEnabled: true,
                 authPath: "\(home)/.gemini/oauth_creds.json",
                 oauthClientIDEnvironmentName: "GEMINI_OAUTH_CLIENT_ID",
                 oauthClientSecretEnvironmentName: "GEMINI_OAUTH_CLIENT_SECRET"
             ),
         ])
+    }
+
+    private static func migratedDocument(_ document: AccountConfigurationDocument, now: Date) -> AccountConfigurationDocument {
+        var document = document
+        var changed = false
+        document.accounts = document.accounts.map { account in
+            guard account.id == "claude-local-default", account.connectorKind == .claudeLocalStatus else {
+                return account
+            }
+            changed = true
+            return LocalProviderAccountConfiguration(
+                id: "claude-oauth-default",
+                provider: .anthropic,
+                connectorKind: .claudeOAuthUsage,
+                displayName: account.displayName.isEmpty ? "Claude" : account.displayName,
+                isEnabled: account.isEnabled
+            )
+        }
+        if changed {
+            document.updatedAt = now
+        }
+        return document
     }
 
     private static func makeEncoder() -> JSONEncoder {
@@ -168,8 +209,11 @@ public struct AccountConfigurationStore: Sendable {
 public enum AccountConnectorFactory {
     public static func connectors(
         from document: AccountConfigurationDocument,
-        credentialStore: (any ProviderCredentialStore)? = nil,
+        bookmarkStore: SecureFileBookmarkStore? = nil,
+        credentialStore: (any ProviderCredentialStoring)? = nil,
+        requiresBookmarkedAuthFiles: Bool = ContextPanelLocations.isRunningInAppSandbox,
         environment: [String: String] = ProcessInfo.processInfo.environment,
+        useBundledGeminiMetadataFallback: Bool = true,
         geminiMetadataFileLoader: @escaping @Sendable (String) throws -> String = { path in
             try String(contentsOfFile: NSString(string: path).expandingTildeInPath, encoding: .utf8)
         },
@@ -181,71 +225,152 @@ public enum AccountConnectorFactory {
             return (try? FileManager.default.contentsOfDirectory(atPath: expanded).map { "\(expanded)/\($0)" }) ?? []
         }
     ) -> [any ProviderConnector] {
-        document.accounts.compactMap { account in
+        return document.accounts.compactMap { account -> (any ProviderConnector)? in
             guard account.isEnabled else { return nil }
             switch account.connectorKind {
             case .codexRateLimits:
                 guard let authPath = account.authPath else { return nil }
-                return CodexRateLimitConnector(accounts: [CodexAccountConfiguration(
-                    authPath: codexAuthPath(for: authPath),
-                    accountName: account.displayName
-                )])
+                let authFileLoader = makeAuthFileLoader(
+                    accountID: account.id,
+                    bookmarkStore: bookmarkStore,
+                    credentialStore: credentialStore,
+                    requiresBookmarkedAuthFiles: requiresBookmarkedAuthFiles
+                )
+                return CodexRateLimitConnector(
+                    accounts: [CodexAccountConfiguration(
+                        authPath: authPath,
+                        accountName: codexAccountName(for: authPath, fallback: account.displayName)
+                    )],
+                    fileLoader: authFileLoader
+                )
             case .geminiCodeAssist:
                 guard let authPath = account.authPath else { return nil }
+                let authFileLoader = makeAuthFileLoader(
+                    accountID: account.id,
+                    bookmarkStore: bookmarkStore,
+                    credentialStore: credentialStore,
+                    requiresBookmarkedAuthFiles: requiresBookmarkedAuthFiles
+                )
                 let configuredMetadata = geminiMetadata(account: account, environment: environment)
+                let configuredMetadataValue: GeminiOAuthClientMetadata?
+                switch configuredMetadata {
+                case .complete(let metadata):
+                    configuredMetadataValue = metadata
+                case .missing, .partial:
+                    configuredMetadataValue = nil
+                }
                 let discoveredMetadata = GeminiOAuthClientMetadataDiscovery.discover(
                     environment: environment,
+                    useBundledFallback: useBundledGeminiMetadataFallback,
                     fileLoader: geminiMetadataFileLoader,
                     fileExists: geminiMetadataFileExists,
                     directoryLister: geminiMetadataDirectoryLister
                 )
-                guard let metadata = configuredMetadata ?? discoveredMetadata else { return nil }
-                return GeminiCodeAssistConnector(accounts: [GeminiAccountConfiguration(
-                    authPath: authPath,
-                    accountName: account.displayName,
-                    clientID: metadata.clientID,
-                    clientSecret: metadata.clientSecret
-                )], credentialStore: credentialStore, credentialKey: geminiCredentialKey(for: account))
+                guard let metadata = configuredMetadataValue ?? discoveredMetadata else {
+                    let expanded = NSString(string: authPath).expandingTildeInPath
+                    return FailingProviderConnector(
+                        provider: .google,
+                        accountID: ConnectorRedactor.localAccountID(provider: .google, path: expanded),
+                        accountName: account.displayName,
+                        message: "Gemini OAuth client metadata could not be found. Reinstall Gemini CLI or configure Gemini OAuth client metadata."
+                    )
+                }
+                return GeminiCodeAssistConnector(
+                    accounts: [GeminiAccountConfiguration(
+                        authPath: authPath,
+                        accountName: account.displayName,
+                        clientID: metadata.clientID,
+                        clientSecret: metadata.clientSecret
+                    )],
+                    fileLoader: authFileLoader,
+                    credentialStore: credentialStore,
+                    credentialAccountID: account.id
+                )
             case .claudeLocalStatus:
                 return ClaudeLocalStatusConnector(accounts: [ClaudeAccountConfiguration(
                     accountName: account.displayName,
-                    claudeBinary: account.commandPath ?? "claude",
-                    statsPath: account.statsPath,
+                    statsPath: nil,
                     rateLimitSnapshotPath: account.rateLimitSnapshotPath,
                     usageBlocksPath: account.usageBlocksPath
                 )])
+            case .claudeOAuthUsage:
+                let effectiveCredentialStore: any ProviderCredentialStoring = credentialStore ?? ProviderCredentialStore()
+                return ClaudeOAuthUsageConnector(
+                    accounts: [ClaudeOAuthAccountConfiguration(
+                        accountID: account.id,
+                        accountName: account.displayName
+                    )],
+                    credentialStore: effectiveCredentialStore
+                )
             }
+        }
+    }
+
+    private static func makeAuthFileLoader(
+        accountID: String,
+        bookmarkStore: SecureFileBookmarkStore?,
+        credentialStore: (any ProviderCredentialLoading)?,
+        requiresBookmarkedAuthFiles: Bool
+    ) -> @Sendable (String) throws -> Data {
+        { path in
+            let expanded = NSString(string: path).expandingTildeInPath
+            if let credentialStore {
+                do {
+                    if let data = try credentialStore.load(accountID: accountID) {
+                        return data
+                    }
+                } catch {
+                    // Keychain cache failures should not block the original user-authorized file path.
+                }
+            }
+            if let store = bookmarkStore, store.hasBookmark(for: expanded) {
+                do {
+                    if let data = try store.readData(for: expanded) {
+                        return data
+                    }
+                } catch {
+                    if requiresBookmarkedAuthFiles {
+                        throw CocoaError(.fileReadNoPermission)
+                    }
+                }
+            }
+            if requiresBookmarkedAuthFiles {
+                throw CocoaError(.fileReadNoPermission)
+            }
+            return try Data(contentsOf: URL(fileURLWithPath: expanded))
         }
     }
 
     private static func geminiMetadata(
         account: LocalProviderAccountConfiguration,
         environment: [String: String]
-    ) -> GeminiOAuthClientMetadata? {
+    ) -> ConfiguredGeminiMetadata {
         guard
             let clientIDName = account.oauthClientIDEnvironmentName,
-            let clientSecretName = account.oauthClientSecretEnvironmentName,
-            let clientID = environment[clientIDName], !clientID.isEmpty,
-            let clientSecret = environment[clientSecretName], !clientSecret.isEmpty
-        else { return nil }
-        return GeminiOAuthClientMetadata(clientID: clientID, clientSecret: clientSecret)
+            let clientSecretName = account.oauthClientSecretEnvironmentName
+        else { return .missing }
+        let clientID = environment[clientIDName]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let clientSecret = environment[clientSecretName]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if clientID.isEmpty && clientSecret.isEmpty { return .missing }
+        guard !clientID.isEmpty, !clientSecret.isEmpty else { return .partial }
+        return .complete(GeminiOAuthClientMetadata(clientID: clientID, clientSecret: clientSecret))
     }
 
-    public static func geminiCredentialKey(for account: LocalProviderAccountConfiguration) -> ProviderCredentialKey {
-        ProviderCredentialKey(provider: .google, accountID: account.id, kind: "gemini-oauth")
-    }
-
-    private static func codexAuthPath(for authPath: String) -> String {
+    private static func codexAccountName(for authPath: String, fallback: String) -> String {
         let expanded = NSString(string: authPath).expandingTildeInPath
         let url = URL(fileURLWithPath: expanded)
-        guard url.lastPathComponent == "auth.json" else { return authPath }
-
-        let accountListURL = url
-            .deletingLastPathComponent()
-            .appending(path: "auth_accounts.json")
-        if FileManager.default.fileExists(atPath: accountListURL.path) {
-            return accountListURL.path
+        if url.deletingLastPathComponent().lastPathComponent == ".code" {
+            return "Code"
         }
-        return authPath
+        if url.deletingLastPathComponent().lastPathComponent == ".codex" {
+            return "Codex"
+        }
+        return fallback
     }
+}
+
+private enum ConfiguredGeminiMetadata: Equatable {
+    case missing
+    case partial
+    case complete(GeminiOAuthClientMetadata)
 }

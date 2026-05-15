@@ -139,20 +139,60 @@ public struct JSONSnapshotStore: Sendable {
     }
 
     public func saveMerged(refreshResult: ConnectorRefreshResult, savedAt: Date) throws {
-        let replacementAccounts = Set(
+        try saveMerged(refreshResult: refreshResult, savedAt: savedAt, preservesUnreportedAccounts: true)
+    }
+
+    public func saveMerged(
+        refreshResult: ConnectorRefreshResult,
+        savedAt: Date,
+        preservesUnreportedAccounts: Bool
+    ) throws {
+        let reportedAccounts = Set(
             refreshResult.reports.map { ProviderAccountKey(provider: $0.provider, accountID: $0.accountID) }
         )
+        let replacementAccounts = Set(
+            refreshResult.reports
+                .filter { !$0.limits.isEmpty }
+                .map { ProviderAccountKey(provider: $0.provider, accountID: $0.accountID) }
+        )
         let current = loadCurrent().snapshot
-        let preservedLimits = current?.snapshot.limits.filter { limit in
-            !replacementAccounts.contains(ProviderAccountKey(provider: limit.provider, accountID: limit.accountID))
-        } ?? []
-        let preservedReports = current?.reports.filter { report in
-            !replacementAccounts.contains(ProviderAccountKey(provider: report.provider, accountID: report.accountID))
+        let preservedLimits: [UsageLimit]
+        let preservedReports: [StoredProviderReport]
+        if preservesUnreportedAccounts {
+            preservedLimits = current?.snapshot.limits.filter { limit in
+                !replacementAccounts.contains(ProviderAccountKey(provider: limit.provider, accountID: limit.accountID))
+            } ?? []
+            preservedReports = current?.reports.filter { report in
+                !reportedAccounts.contains(ProviderAccountKey(provider: report.provider, accountID: report.accountID))
+            } ?? []
+        } else {
+            preservedLimits = current?.snapshot.limits.filter { limit in
+                reportedAccounts.contains(ProviderAccountKey(provider: limit.provider, accountID: limit.accountID))
+                    && !replacementAccounts.contains(ProviderAccountKey(provider: limit.provider, accountID: limit.accountID))
+            } ?? []
+            preservedReports = []
+        }
+
+        let currentAccountKeys = Set(
+            current?.snapshot.limits.map { ProviderAccountKey(provider: $0.provider, accountID: $0.accountID) } ?? []
+        )
+        let successfulProviders = Set(refreshResult.reports.filter { !$0.limits.isEmpty }.map(\.provider))
+        let preservedFailureLimits = current?.snapshot.limits.filter { limit in
+            refreshResult.reports.contains { report in
+                guard report.status == .failure, report.limits.isEmpty, report.provider == limit.provider else {
+                    return false
+                }
+                let reportKey = ProviderAccountKey(provider: report.provider, accountID: report.accountID)
+                if currentAccountKeys.contains(reportKey) {
+                    return report.accountID == limit.accountID
+                }
+                return !successfulProviders.contains(report.provider)
+            }
         } ?? []
 
         let mergedSnapshot = UsageSnapshot(
             generatedAt: refreshResult.generatedAt,
-            limits: preservedLimits + refreshResult.snapshot.limits
+            limits: (preservedLimits + preservedFailureLimits + refreshResult.snapshot.limits).deduplicatedByID()
         )
         let mergedReports = preservedReports + refreshResult.reports.map(StoredProviderReport.init(report:))
 
@@ -251,6 +291,15 @@ public struct JSONSnapshotStore: Sendable {
 private struct ProviderAccountKey: Hashable {
     let provider: Provider
     let accountID: String
+}
+
+private extension Array where Element == UsageLimit {
+    func deduplicatedByID() -> [UsageLimit] {
+        var seen = Set<String>()
+        return filter { limit in
+            seen.insert(limit.id).inserted
+        }
+    }
 }
 
 extension ContextPanelDateFormatting {

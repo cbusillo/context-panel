@@ -112,6 +112,245 @@ import Testing
     #expect(replaced.map(\.provider).contains(.anthropic))
 }
 
+@Test func jsonSnapshotStorePreservesPreviousLimitsWhenRefreshFails() throws {
+    let root = try temporaryDirectory()
+    let store = JSONSnapshotStore(rootDirectory: root)
+    let first = Date(timeIntervalSince1970: 100)
+    let second = Date(timeIntervalSince1970: 200)
+    let accountID = "gemini-a"
+
+    try store.save(StoredUsageSnapshot(
+        savedAt: first,
+        refreshResult: ConnectorRefreshResult(generatedAt: first, reports: [
+            ProviderConnectorReport(
+                provider: .google,
+                accountID: accountID,
+                accountName: "Gemini A",
+                generatedAt: first,
+                limits: [usageLimit(provider: .google, accountID: accountID, used: 10, savedAt: first)]
+            )
+        ])
+    ))
+
+    try store.saveMerged(
+        refreshResult: ConnectorRefreshResult(generatedAt: second, reports: [
+            ProviderConnectorReport(
+                provider: .google,
+                accountID: accountID,
+                accountName: "Gemini A",
+                generatedAt: second,
+                limits: [],
+                status: .failure,
+                errorMessage: "permission denied"
+            )
+        ]),
+        savedAt: second
+    )
+
+    let current = try #require(store.loadCurrent().snapshot)
+    let limits = current.snapshot.limits.filter { $0.provider == .google && $0.accountID == accountID }
+    #expect(limits.count == 1)
+    #expect(limits[0].used == 10)
+    let report = try #require(current.reports.first { $0.provider == .google && $0.accountID == accountID })
+    #expect(report.status == .failure)
+    #expect(report.errorMessage?.contains("permission") == true)
+}
+
+@Test func jsonSnapshotStorePreservesMultiAccountLimitsWhenConnectorFileRefreshFails() throws {
+    let root = try temporaryDirectory()
+    let store = JSONSnapshotStore(rootDirectory: root)
+    let first = Date(timeIntervalSince1970: 100)
+    let second = Date(timeIntervalSince1970: 200)
+
+    try store.save(StoredUsageSnapshot(
+        savedAt: first,
+        refreshResult: ConnectorRefreshResult(generatedAt: first, reports: [
+            ProviderConnectorReport(
+                provider: .openAI,
+                accountID: "openai-a",
+                accountName: "Code A",
+                generatedAt: first,
+                limits: [usageLimit(provider: .openAI, accountID: "openai-a", used: 10, savedAt: first)]
+            ),
+            ProviderConnectorReport(
+                provider: .openAI,
+                accountID: "openai-b",
+                accountName: "Code B",
+                generatedAt: first,
+                limits: [usageLimit(provider: .openAI, accountID: "openai-b", used: 20, savedAt: first)]
+            ),
+        ])
+    ))
+
+    try store.saveMerged(
+        refreshResult: ConnectorRefreshResult(generatedAt: second, reports: [
+            ProviderConnectorReport(
+                provider: .openAI,
+                accountID: "openai-auth-file",
+                accountName: "Code",
+                generatedAt: second,
+                limits: [],
+                status: .failure,
+                errorMessage: "permission denied"
+            )
+        ]),
+        savedAt: second,
+        preservesUnreportedAccounts: false
+    )
+
+    let current = try #require(store.loadCurrent().snapshot)
+    #expect(current.snapshot.limits.map(\.accountID).sorted() == ["openai-a", "openai-b"])
+    #expect(current.reports.map(\.accountID) == ["openai-auth-file"])
+}
+
+@Test func jsonSnapshotStoreDoesNotPreserveStaleSiblingsWhenProviderPartlySucceeds() throws {
+    let root = try temporaryDirectory()
+    let store = JSONSnapshotStore(rootDirectory: root)
+    let first = Date(timeIntervalSince1970: 100)
+    let second = Date(timeIntervalSince1970: 200)
+
+    try store.save(StoredUsageSnapshot(
+        savedAt: first,
+        refreshResult: ConnectorRefreshResult(generatedAt: first, reports: [
+            ProviderConnectorReport(
+                provider: .openAI,
+                accountID: "openai-a",
+                accountName: "Code A",
+                generatedAt: first,
+                limits: [usageLimit(provider: .openAI, accountID: "openai-a", used: 10, savedAt: first)]
+            ),
+            ProviderConnectorReport(
+                provider: .openAI,
+                accountID: "openai-b",
+                accountName: "Code B",
+                generatedAt: first,
+                limits: [usageLimit(provider: .openAI, accountID: "openai-b", used: 20, savedAt: first)]
+            ),
+        ])
+    ))
+
+    try store.saveMerged(
+        refreshResult: ConnectorRefreshResult(generatedAt: second, reports: [
+            ProviderConnectorReport(
+                provider: .openAI,
+                accountID: "openai-a",
+                accountName: "Code A",
+                generatedAt: second,
+                limits: [usageLimit(provider: .openAI, accountID: "openai-a", used: 30, savedAt: second)]
+            ),
+            ProviderConnectorReport(
+                provider: .openAI,
+                accountID: "openai-auth-file",
+                accountName: "Code",
+                generatedAt: second,
+                limits: [],
+                status: .failure,
+                errorMessage: "permission denied"
+            ),
+        ]),
+        savedAt: second,
+        preservesUnreportedAccounts: false
+    )
+
+    let current = try #require(store.loadCurrent().snapshot)
+    #expect(current.snapshot.limits.map(\.accountID) == ["openai-a"])
+    #expect(current.snapshot.limits.first?.used == 30)
+}
+
+@Test func jsonSnapshotStorePreservesOnlyFailedAccountLimitWhenSiblingNamesMatch() throws {
+    let root = try temporaryDirectory()
+    let store = JSONSnapshotStore(rootDirectory: root)
+    let first = Date(timeIntervalSince1970: 100)
+    let second = Date(timeIntervalSince1970: 200)
+
+    try store.save(StoredUsageSnapshot(
+        savedAt: first,
+        refreshResult: ConnectorRefreshResult(generatedAt: first, reports: [
+            ProviderConnectorReport(
+                provider: .openAI,
+                accountID: "openai-a",
+                accountName: "Code",
+                generatedAt: first,
+                limits: [usageLimit(provider: .openAI, accountID: "openai-a", used: 10, savedAt: first)]
+            ),
+            ProviderConnectorReport(
+                provider: .openAI,
+                accountID: "openai-b",
+                accountName: "Code",
+                generatedAt: first,
+                limits: [usageLimit(provider: .openAI, accountID: "openai-b", used: 20, savedAt: first)]
+            ),
+        ])
+    ))
+
+    try store.saveMerged(
+        refreshResult: ConnectorRefreshResult(generatedAt: second, reports: [
+            ProviderConnectorReport(
+                provider: .openAI,
+                accountID: "openai-a",
+                accountName: "Code",
+                generatedAt: second,
+                limits: [],
+                status: .failure,
+                errorMessage: "permission denied"
+            ),
+        ]),
+        savedAt: second,
+        preservesUnreportedAccounts: false
+    )
+
+    let current = try #require(store.loadCurrent().snapshot)
+    #expect(current.snapshot.limits.map(\.accountID) == ["openai-a"])
+    #expect(current.snapshot.limits.first?.used == 10)
+}
+
+@Test func jsonSnapshotStoreCanDropUnreportedAccountsDuringFullRefresh() throws {
+    let root = try temporaryDirectory()
+    let store = JSONSnapshotStore(rootDirectory: root)
+    let first = Date(timeIntervalSince1970: 100)
+    let second = Date(timeIntervalSince1970: 200)
+
+    try store.save(StoredUsageSnapshot(
+        savedAt: first,
+        refreshResult: ConnectorRefreshResult(generatedAt: first, reports: [
+            ProviderConnectorReport(
+                provider: .openAI,
+                accountID: "openai-good",
+                accountName: "Code",
+                generatedAt: first,
+                limits: [usageLimit(provider: .openAI, accountID: "openai-good", used: 20, savedAt: first)]
+            ),
+            ProviderConnectorReport(
+                provider: .openAI,
+                accountID: "openai-removed",
+                accountName: "Code 2",
+                generatedAt: first,
+                limits: [],
+                status: .failure,
+                errorMessage: "401"
+            ),
+        ])
+    ))
+
+    try store.saveMerged(
+        refreshResult: ConnectorRefreshResult(generatedAt: second, reports: [
+            ProviderConnectorReport(
+                provider: .openAI,
+                accountID: "openai-good",
+                accountName: "Code",
+                generatedAt: second,
+                limits: [usageLimit(provider: .openAI, accountID: "openai-good", used: 30, savedAt: second)]
+            )
+        ]),
+        savedAt: second,
+        preservesUnreportedAccounts: false
+    )
+
+    let current = try #require(store.loadCurrent().snapshot)
+    #expect(current.snapshot.limits.map(\.accountID) == ["openai-good"])
+    #expect(current.reports.map(\.accountID) == ["openai-good"])
+}
+
 @Test func jsonSnapshotStoreReportsMissingCurrentAsUnknown() throws {
     let store = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
 
@@ -186,7 +425,7 @@ import Testing
     #expect(stored.errorMessage?.contains("sk-secret") == false)
 }
 
-@Test func snapshotRefreshServiceSavesEmptyRefreshWhenNoAccountsAreEnabled() async throws {
+@Test func snapshotRefreshServiceDoesNotSaveEmptyRefreshWhenNoAccountsAreEnabled() async throws {
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
     let service = SnapshotRefreshService(
@@ -210,50 +449,78 @@ import Testing
 
     #expect(outcome.savedAt == savedAt)
     #expect(outcome.refreshResult.reports.isEmpty)
-    let stored = try #require(primary.loadCurrent().snapshot)
-    #expect(stored.savedAt == savedAt)
-    #expect(stored.snapshot.limits.isEmpty)
-    #expect(primary.loadHistory().count == 1)
+    #expect(primary.loadCurrent().snapshot == nil)
+    #expect(primary.loadHistory().isEmpty)
 }
 
-@Test func snapshotRefreshServiceMirrorsPrimaryStoreForDevelopmentWidget() throws {
+@Test func snapshotRefreshServiceMigratesClaudeCredentialsBeforeRefreshingMigratedAccount() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
-    let mirror = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let credentials = Data(#"{"accessToken":"old-access","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.utf8)
+    let credentialStore = InMemoryProviderCredentialStore(storage: ["claude-local-default": credentials])
     let service = SnapshotRefreshService(
-        accountStore: AccountConfigurationStore(configurationURL: try temporaryDirectory().appending(path: "accounts.json")),
-        stores: SnapshotRefreshStores(primary: primary, developmentMirrors: [mirror])
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary),
+        credentialStore: credentialStore
     )
-    let first = Date(timeIntervalSince1970: 100)
-    let second = Date(timeIntervalSince1970: 200)
-    try primary.save(StoredUsageSnapshot(savedAt: first, snapshot: UsageSnapshot(
-        generatedAt: first,
-        limits: [usageLimit(provider: .openAI, accountID: "openai", used: 10, savedAt: first)]
-    )))
-    try primary.save(StoredUsageSnapshot(savedAt: second, snapshot: UsageSnapshot(
-        generatedAt: second,
-        limits: [usageLimit(provider: .google, accountID: "google", used: 20, savedAt: second)]
-    )))
+    let savedAt = Date(timeIntervalSince1970: 300)
+    try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
+        updatedAt: savedAt,
+        accounts: [LocalProviderAccountConfiguration(
+            id: "claude-local-default",
+            provider: .anthropic,
+            connectorKind: .claudeLocalStatus,
+            displayName: "Claude"
+        )]
+    ))
 
-    try service.mirrorPrimarySnapshotToDevelopmentStores()
+    let accountDocument = service.loadConfiguredAccounts(now: savedAt).document
+    let connectors = AccountConnectorFactory.connectors(
+        from: accountDocument,
+        credentialStore: credentialStore,
+        requiresBookmarkedAuthFiles: false
+    )
+    let refreshResult = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: savedAt)
 
-    #expect(mirror.loadCurrent().snapshot?.savedAt == second)
-    #expect(mirror.loadHistory().map(\.savedAt) == [second, first])
+    #expect(try credentialStore.load(accountID: "claude-oauth-default") == credentials)
+    #expect(accountDocument.accounts.contains { $0.id == "claude-oauth-default" && $0.connectorKind == .claudeOAuthUsage })
+    #expect(refreshResult.reports.count == 1)
+    #expect(refreshResult.reports[0].accountName == "Claude")
+    #expect(refreshResult.reports[0].errorMessage != "Claude is not connected. Sign in to Claude from Settings.")
 }
 
-@Test func snapshotRefreshStoresSkipDevelopmentMirrorsInSandbox() throws {
-    let originalValue = getenv("APP_SANDBOX_CONTAINER_ID").map { String(cString: $0) }
-    setenv("APP_SANDBOX_CONTAINER_ID", "com.shinycomputers.contextpanel", 1)
-    defer {
-        if let originalValue {
-            setenv("APP_SANDBOX_CONTAINER_ID", originalValue, 1)
-        } else {
-            unsetenv("APP_SANDBOX_CONTAINER_ID")
-        }
-    }
+@Test func snapshotRefreshRunnerSkipsEmptyRefreshes() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary)
+    )
+    let runner = SnapshotRefreshRunner(service: service, lock: nil)
+    let savedAt = Date(timeIntervalSince1970: 300)
+    try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
+        updatedAt: savedAt,
+        accounts: [LocalProviderAccountConfiguration(
+            id: "disabled-openai",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "OpenAI",
+            isEnabled: false,
+            authPath: "/tmp/missing-auth.json"
+        )]
+    ))
 
-    let stores = SnapshotRefreshStores.appDefault(appGroupID: "group.invalid.contextpanel.tests")
+    let decision = try await runner.refresh(now: savedAt)
 
-    #expect(stores.developmentMirrors.isEmpty)
+    #expect(decision == .skippedNoReports)
+    #expect(primary.loadCurrent().snapshot == nil)
+    #expect(primary.loadHistory().isEmpty)
+}
+
+@Test func widgetSandboxLocalSnapshotDirectoryUsesProcessApplicationSupport() {
+    #expect(ContextPanelLocations.widgetSandboxLocalSnapshotDirectory().path.hasSuffix(
+        "Library/Application Support/Context Panel/Snapshots"
+    ))
 }
 
 @Test func snapshotRefreshRunnerSkipsFreshSnapshots() async throws {

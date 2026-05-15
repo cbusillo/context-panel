@@ -1,98 +1,71 @@
 import Foundation
 import Security
 
-public protocol ProviderCredentialStore: Sendable {
-    func data(for key: ProviderCredentialKey) throws -> Data?
-    func store(_ data: Data, for key: ProviderCredentialKey) throws
-    func remove(_ key: ProviderCredentialKey) throws
+public protocol ProviderCredentialLoading: Sendable {
+    func load(accountID: String) throws -> Data?
 }
 
-public struct ProviderCredentialKey: Hashable, Sendable {
-    public let provider: Provider
-    public let accountID: String
-    public let kind: String
-
-    public init(provider: Provider, accountID: String, kind: String) {
-        self.provider = provider
-        self.accountID = accountID
-        self.kind = kind
-    }
-
-    var service: String {
-        "com.shinycomputers.contextpanel.\(provider.rawValue).\(kind)"
-    }
-
-    var account: String {
-        accountID
-    }
+public protocol ProviderCredentialStoring: ProviderCredentialLoading {
+    func save(_ data: Data, accountID: String) throws
 }
 
-public enum ProviderCredentialStoreError: LocalizedError, Equatable, Sendable {
-    case keychainStatus(operation: String, status: OSStatus)
-
-    public var errorDescription: String? {
-        switch self {
-        case let .keychainStatus(operation, status):
-            "Keychain \(operation) failed with status \(status)"
-        }
+public struct ProviderCredentialStore: ProviderCredentialStoring {
+    public enum StoreError: Error, Sendable {
+        case unhandledStatus(OSStatus)
     }
-}
 
-public struct KeychainProviderCredentialStore: ProviderCredentialStore {
-    public static let defaultAccessGroup = "MM5YXC7T6E.com.shinycomputers.contextpanel.credentials"
+    public static let defaultService = "com.shinycomputers.contextpanel.provider-credentials"
+    public static let defaultAccessGroup = "MM5YXC7T6E.com.shinycomputers.contextpanel.provider-credentials"
 
+    private let service: String
     private let accessGroup: String?
 
-    public init(accessGroup: String? = defaultAccessGroup) {
+    public init(service: String = Self.defaultService, accessGroup: String? = Self.defaultAccessGroup) {
+        self.service = service
         self.accessGroup = accessGroup
     }
 
-    public func data(for key: ProviderCredentialKey) throws -> Data? {
-        var query = baseQuery(for: key)
+    public func load(accountID: String) throws -> Data? {
+        var query = baseQuery(accountID: accountID)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
 
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
         if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess else {
-            throw ProviderCredentialStoreError.keychainStatus(operation: "read", status: status)
-        }
+        guard status == errSecSuccess else { throw StoreError.unhandledStatus(status) }
         return item as? Data
     }
 
-    public func store(_ data: Data, for key: ProviderCredentialKey) throws {
-        var query = baseQuery(for: key)
+    public func save(_ data: Data, accountID: String) throws {
+        let query = baseQuery(accountID: accountID)
         let attributes: [String: Any] = [
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
         ]
-
         let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
         if updateStatus == errSecSuccess { return }
-        guard updateStatus == errSecItemNotFound else {
-            throw ProviderCredentialStoreError.keychainStatus(operation: "update", status: updateStatus)
-        }
+        guard updateStatus == errSecItemNotFound else { throw StoreError.unhandledStatus(updateStatus) }
 
-        query.merge(attributes) { _, new in new }
-        let addStatus = SecItemAdd(query as CFDictionary, nil)
-        guard addStatus == errSecSuccess else {
-            throw ProviderCredentialStoreError.keychainStatus(operation: "store", status: addStatus)
-        }
+        var addQuery = query
+        attributes.forEach { addQuery[$0.key] = $0.value }
+        let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
+        guard addStatus == errSecSuccess else { throw StoreError.unhandledStatus(addStatus) }
     }
 
-    public func remove(_ key: ProviderCredentialKey) throws {
-        let status = SecItemDelete(baseQuery(for: key) as CFDictionary)
+    public func delete(accountID: String) throws {
+        let status = SecItemDelete(baseQuery(accountID: accountID) as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw ProviderCredentialStoreError.keychainStatus(operation: "delete", status: status)
+            throw StoreError.unhandledStatus(status)
         }
     }
 
-    private func baseQuery(for key: ProviderCredentialKey) -> [String: Any] {
+    private func baseQuery(accountID: String) -> [String: Any] {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: key.service,
-            kSecAttrAccount as String: key.account,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: accountID,
+            kSecUseDataProtectionKeychain as String: true,
         ]
         if let accessGroup {
             query[kSecAttrAccessGroup as String] = accessGroup
@@ -101,23 +74,27 @@ public struct KeychainProviderCredentialStore: ProviderCredentialStore {
     }
 }
 
-public final class InMemoryProviderCredentialStore: ProviderCredentialStore, @unchecked Sendable {
-    private var values: [ProviderCredentialKey: Data]
-    private let lock = NSLock()
+public final class InMemoryProviderCredentialStore: ProviderCredentialStoring, @unchecked Sendable {
+    private var storage: [String: Data]
 
-    public init(values: [ProviderCredentialKey: Data] = [:]) {
-        self.values = values
+    public init(storage: [String: Data]) {
+        self.storage = storage
     }
 
-    public func data(for key: ProviderCredentialKey) throws -> Data? {
-        lock.withLock { values[key] }
+    public func load(accountID: String) throws -> Data? {
+        storage[accountID]
     }
 
-    public func store(_ data: Data, for key: ProviderCredentialKey) throws {
-        lock.withLock { values[key] = data }
+    public func save(_ data: Data, accountID: String) throws {
+        storage[accountID] = data
     }
+}
 
-    public func remove(_ key: ProviderCredentialKey) throws {
-        lock.withLock { _ = values.removeValue(forKey: key) }
+extension ProviderCredentialStore.StoreError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .unhandledStatus(let status):
+            return "Keychain operation failed with status \(status)."
+        }
     }
 }

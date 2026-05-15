@@ -359,6 +359,283 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(stateStore.load().record(for: candidate.key)?.errorMessage?.contains("sk-secret") == false)
 }
 
+@Test func resetPrimerExecutorSkipsCodePrimerUntilCheapAccountSelectableCommandExists() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let settingsStore = ResetPrimerSettingsStore(settingsURL: directory.appending(path: "reset-primer-settings.json"))
+    let stateStore = ResetPrimerRunStateStore(stateURL: directory.appending(path: "reset-primer-runs.json"))
+    let snapshotStore = JSONSnapshotStore(rootDirectory: directory.appending(path: "Snapshots", directoryHint: .isDirectory))
+    let accountStore = AccountConfigurationStore(configurationURL: directory.appending(path: "accounts.json"))
+    let command = directory.appending(path: "code")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: command)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: command.path)
+    let resetAt = now.addingTimeInterval(-10 * 60)
+    try settingsStore.save(ResetPrimerSettings(
+        isEnabled: true,
+        delayMinutesAfterReset: 0,
+        accountPreferences: [preference(accountID: "openai-a", provider: .openAI)]
+    ))
+    try accountStore.save(AccountConfigurationDocument(updatedAt: now, accounts: [
+        LocalProviderAccountConfiguration(
+            id: "openai-a",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "Code",
+            commandPath: command.path
+        ),
+    ]))
+    try snapshotStore.save(StoredUsageSnapshot(
+        savedAt: now,
+        snapshot: UsageSnapshot(
+            generatedAt: now,
+            limits: [limit(accountID: "openai-a", provider: .openAI, resetAt: resetAt)]
+        )
+    ))
+    let service = ResetPrimerPlanService(
+        settingsStore: settingsStore,
+        stateStore: stateStore,
+        snapshotStore: snapshotStore
+    )
+    let executor = ResetPrimerExecutor(
+        planService: service,
+        accountStore: accountStore,
+        processRunner: { url, arguments, timeout in
+            _ = url
+            _ = arguments
+            _ = timeout
+            Issue.record("Code primer should not run a process without a proven cheap account-selectable command")
+            return 0
+        }
+    )
+
+    let results = await executor.runDue(now: now)
+
+    #expect(results.map(\.status) == [.skipped])
+    #expect(results.first?.errorMessage == "Reset priming is not supported for this provider")
+    let candidate = try #require(results.first?.candidate)
+    #expect(stateStore.load().record(for: candidate.key)?.status == .skipped)
+    #expect(service.plan(now: now.addingTimeInterval(60)).isEmpty)
+}
+
+@Test func resetPrimerExecutorHandlesDuplicateConfiguredAccountIDs() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let settingsStore = ResetPrimerSettingsStore(settingsURL: directory.appending(path: "reset-primer-settings.json"))
+    let stateStore = ResetPrimerRunStateStore(stateURL: directory.appending(path: "reset-primer-runs.json"))
+    let snapshotStore = JSONSnapshotStore(rootDirectory: directory.appending(path: "Snapshots", directoryHint: .isDirectory))
+    let accountStore = AccountConfigurationStore(configurationURL: directory.appending(path: "accounts.json"))
+    let resetAt = now.addingTimeInterval(-10 * 60)
+    try settingsStore.save(ResetPrimerSettings(
+        isEnabled: true,
+        delayMinutesAfterReset: 0,
+        accountPreferences: [preference(accountID: "openai-a", provider: .openAI)]
+    ))
+    try accountStore.save(AccountConfigurationDocument(updatedAt: now, accounts: [
+        LocalProviderAccountConfiguration(
+            id: "openai-a",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "Code A"
+        ),
+        LocalProviderAccountConfiguration(
+            id: "openai-a",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "Code A Duplicate"
+        ),
+    ]))
+    try snapshotStore.save(StoredUsageSnapshot(
+        savedAt: now,
+        snapshot: UsageSnapshot(
+            generatedAt: now,
+            limits: [limit(accountID: "openai-a", provider: .openAI, resetAt: resetAt)]
+        )
+    ))
+    let service = ResetPrimerPlanService(
+        settingsStore: settingsStore,
+        stateStore: stateStore,
+        snapshotStore: snapshotStore
+    )
+    let executor = ResetPrimerExecutor(
+        planService: service,
+        accountStore: accountStore,
+        processRunner: { _, _, _ in
+            Issue.record("Code primer should not run a process without a proven cheap account-selectable command")
+            return 0
+        }
+    )
+
+    let results = await executor.runDue(now: now)
+
+    #expect(results.map(\.status) == [.skipped])
+    #expect(results.first?.errorMessage == "No primer command is configured" || results.first?.errorMessage == "Reset priming is not supported for this provider")
+}
+
+@Test func resetPrimerExecutorSurfacesRunStateSaveFailures() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let settingsStore = ResetPrimerSettingsStore(settingsURL: directory.appending(path: "reset-primer-settings.json"))
+    let blockedStateDirectory = directory.appending(path: "reset-primer-runs", directoryHint: .isDirectory)
+    let stateStore = ResetPrimerRunStateStore(stateURL: blockedStateDirectory.appending(path: "state.json"))
+    let snapshotStore = JSONSnapshotStore(rootDirectory: directory.appending(path: "Snapshots", directoryHint: .isDirectory))
+    let accountStore = AccountConfigurationStore(configurationURL: directory.appending(path: "accounts.json"))
+    let command = directory.appending(path: "primer")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try Data("not a directory".utf8).write(to: blockedStateDirectory)
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: command)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: command.path)
+    let resetAt = now.addingTimeInterval(-10 * 60)
+    try settingsStore.save(ResetPrimerSettings(
+        isEnabled: true,
+        delayMinutesAfterReset: 0,
+        accountPreferences: [preference(accountID: "openai-a", provider: .openAI)]
+    ))
+    try accountStore.save(AccountConfigurationDocument(updatedAt: now, accounts: [
+        LocalProviderAccountConfiguration(
+            id: "openai-a",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "Code",
+            commandPath: command.path
+        ),
+    ]))
+    try snapshotStore.save(StoredUsageSnapshot(
+        savedAt: now,
+        snapshot: UsageSnapshot(
+            generatedAt: now,
+            limits: [limit(accountID: "openai-a", provider: .openAI, resetAt: resetAt)]
+        )
+    ))
+    let service = ResetPrimerPlanService(
+        settingsStore: settingsStore,
+        stateStore: stateStore,
+        snapshotStore: snapshotStore
+    )
+    let executor = ResetPrimerExecutor(
+        planService: service,
+        accountStore: accountStore,
+        processRunner: { _, _, _ in
+            Issue.record("Primer command should not run when run state cannot be saved")
+            return 0
+        }
+    )
+
+    let results = await executor.runDue(now: now)
+
+    #expect(results.map(\.status) == [.failed])
+    #expect(results.first?.errorMessage?.contains("Reset primer state could not be saved") == true)
+}
+
+@Test func resetPrimerExecutorSkipsMissingCommandAndDoesNotRepeatSkippedRun() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let settingsStore = ResetPrimerSettingsStore(settingsURL: directory.appending(path: "reset-primer-settings.json"))
+    let stateStore = ResetPrimerRunStateStore(stateURL: directory.appending(path: "reset-primer-runs.json"))
+    let snapshotStore = JSONSnapshotStore(rootDirectory: directory.appending(path: "Snapshots", directoryHint: .isDirectory))
+    let accountStore = AccountConfigurationStore(configurationURL: directory.appending(path: "accounts.json"))
+    let resetAt = now.addingTimeInterval(-10 * 60)
+    try settingsStore.save(ResetPrimerSettings(
+        isEnabled: true,
+        delayMinutesAfterReset: 0,
+        accountPreferences: [preference(accountID: "openai-a", provider: .openAI)]
+    ))
+    try accountStore.save(AccountConfigurationDocument(updatedAt: now, accounts: [
+        LocalProviderAccountConfiguration(
+            id: "openai-a",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "Code",
+            commandPath: directory.appending(path: "missing-code").path
+        ),
+    ]))
+    try snapshotStore.save(StoredUsageSnapshot(
+        savedAt: now,
+        snapshot: UsageSnapshot(
+            generatedAt: now,
+            limits: [limit(accountID: "openai-a", provider: .openAI, resetAt: resetAt)]
+        )
+    ))
+    let service = ResetPrimerPlanService(
+        settingsStore: settingsStore,
+        stateStore: stateStore,
+        snapshotStore: snapshotStore
+    )
+    let executor = ResetPrimerExecutor(
+        planService: service,
+        accountStore: accountStore,
+        processRunner: { _, _, _ in
+            Issue.record("Missing command should not run a process")
+            return 0
+        }
+    )
+
+    let results = await executor.runDue(now: now)
+
+    #expect(results.map(\.status) == [.skipped])
+    let candidate = try #require(results.first?.candidate)
+    #expect(stateStore.load().record(for: candidate.key)?.status == .skipped)
+    #expect(service.plan(now: now.addingTimeInterval(60)).isEmpty)
+}
+
+@Test func resetPrimerExecutorSkipsUnsupportedProviderPrimer() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let settingsStore = ResetPrimerSettingsStore(settingsURL: directory.appending(path: "reset-primer-settings.json"))
+    let stateStore = ResetPrimerRunStateStore(stateURL: directory.appending(path: "reset-primer-runs.json"))
+    let snapshotStore = JSONSnapshotStore(rootDirectory: directory.appending(path: "Snapshots", directoryHint: .isDirectory))
+    let accountStore = AccountConfigurationStore(configurationURL: directory.appending(path: "accounts.json"))
+    let command = directory.appending(path: "claude")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: command)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: command.path)
+    let resetAt = now.addingTimeInterval(-10 * 60)
+    try settingsStore.save(ResetPrimerSettings(
+        isEnabled: true,
+        delayMinutesAfterReset: 0,
+        accountPreferences: [preference(accountID: "claude-a", provider: .anthropic)]
+    ))
+    try accountStore.save(AccountConfigurationDocument(updatedAt: now, accounts: [
+        LocalProviderAccountConfiguration(
+            id: "claude-a",
+            provider: .anthropic,
+            connectorKind: .claudeLocalStatus,
+            displayName: "Claude",
+            commandPath: command.path
+        ),
+    ]))
+    try snapshotStore.save(StoredUsageSnapshot(
+        savedAt: now,
+        snapshot: UsageSnapshot(
+            generatedAt: now,
+            limits: [limit(accountID: "claude-a", provider: .anthropic, resetAt: resetAt)]
+        )
+    ))
+    let service = ResetPrimerPlanService(
+        settingsStore: settingsStore,
+        stateStore: stateStore,
+        snapshotStore: snapshotStore
+    )
+    let executor = ResetPrimerExecutor(
+        planService: service,
+        accountStore: accountStore,
+        processRunner: { _, _, _ in
+            Issue.record("Unsupported primer provider should not run a process")
+            return 0
+        }
+    )
+
+    let results = await executor.runDue(now: now)
+
+    #expect(results.map(\.status) == [.skipped])
+    #expect(results.first?.errorMessage == "Reset priming is not supported for this provider")
+}
+
 private func preference(accountID: String, provider: Provider) -> ResetPrimerAccountPreference {
     ResetPrimerAccountPreference(
         accountID: accountID,

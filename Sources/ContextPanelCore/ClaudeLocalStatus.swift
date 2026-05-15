@@ -1,24 +1,5 @@
 import Foundation
 
-public struct ClaudeAuthStatus: Codable, Equatable, Sendable {
-    public let loggedIn: Bool
-    public let authMethod: String
-    public let apiProvider: String?
-    public let subscriptionType: String?
-
-    public init(loggedIn: Bool, authMethod: String, apiProvider: String?, subscriptionType: String?) {
-        self.loggedIn = loggedIn
-        self.authMethod = authMethod
-        self.apiProvider = apiProvider
-        self.subscriptionType = subscriptionType
-    }
-
-    public var subscriptionDisplayName: String {
-        guard let subscriptionType, !subscriptionType.isEmpty else { return "Claude" }
-        return "Claude \(subscriptionType.capitalized)"
-    }
-}
-
 public struct ClaudeStatsCacheSummary: Codable, Equatable, Sendable {
     public let version: Int?
     public let lastComputedDate: Date?
@@ -121,18 +102,6 @@ public struct ClaudeSubscriptionRateLimitSnapshot: Codable, Equatable, Sendable 
     }
 }
 
-public enum ClaudeAuthStatusParser {
-    public static func status(from data: Data) throws -> ClaudeAuthStatus {
-        let payload = try JSONDecoder().decode(ClaudeAuthStatusPayload.self, from: data)
-        return ClaudeAuthStatus(
-            loggedIn: payload.loggedIn,
-            authMethod: payload.authMethod,
-            apiProvider: payload.apiProvider,
-            subscriptionType: payload.subscriptionType
-        )
-    }
-}
-
 public enum ClaudeStatsCacheParser {
     public static func summary(from data: Data) throws -> ClaudeStatsCacheSummary {
         let payload = try JSONDecoder.contextPanelFlexibleDates.decode(ClaudeStatsCachePayload.self, from: data)
@@ -170,29 +139,35 @@ public enum ClaudeSubscriptionRateLimitCacheParser {
 
 public struct ClaudeAccountConfiguration: Equatable, Sendable {
     public let accountName: String
-    public let claudeBinary: String
-    public let statsPath: String
+    public let statsPath: String?
     public let rateLimitSnapshotPath: String
+    public let fallbackRateLimitSnapshotPaths: [String]
     public let rateLimitSnapshotMaximumAge: TimeInterval
     public let usageBlocksPath: String?
+    public let fallbackUsageBlocksPaths: [String]
 
     public init(
         accountName: String = "Claude",
-        claudeBinary: String = "claude",
         statsPath: String? = nil,
         rateLimitSnapshotPath: String? = nil,
+        fallbackRateLimitSnapshotPaths: [String]? = nil,
         rateLimitSnapshotMaximumAge: TimeInterval = 30 * 60,
-        usageBlocksPath: String? = nil
+        usageBlocksPath: String? = nil,
+        fallbackUsageBlocksPaths: [String]? = nil
     ) {
         self.accountName = accountName
-        self.claudeBinary = claudeBinary
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        self.statsPath = statsPath ?? "\(home)/.claude/stats-cache.json"
-        self.rateLimitSnapshotPath = rateLimitSnapshotPath
-            ?? ContextPanelLocations.claudeStatuslineCacheURL().path
+        self.statsPath = statsPath
+        let rateLimitPaths = ContextPanelLocations.claudeStatuslineCacheURLs().map(\.path)
+        let resolvedRateLimitPath = rateLimitSnapshotPath ?? rateLimitPaths.first ?? ContextPanelLocations.claudeStatuslineCacheURL().path
+        self.rateLimitSnapshotPath = resolvedRateLimitPath
+        self.fallbackRateLimitSnapshotPaths = fallbackRateLimitSnapshotPaths
+            ?? rateLimitPaths.filter { $0 != resolvedRateLimitPath }
         self.rateLimitSnapshotMaximumAge = rateLimitSnapshotMaximumAge
-        self.usageBlocksPath = usageBlocksPath
-            ?? ContextPanelLocations.claudeCCUsageBlocksCacheURL().path
+        let usageBlocksPaths = ContextPanelLocations.claudeCCUsageBlocksCacheURLs().map(\.path)
+        let resolvedUsageBlocksPath = usageBlocksPath ?? usageBlocksPaths.first ?? ContextPanelLocations.claudeCCUsageBlocksCacheURL().path
+        self.usageBlocksPath = resolvedUsageBlocksPath
+        self.fallbackUsageBlocksPaths = fallbackUsageBlocksPaths
+            ?? usageBlocksPaths.filter { $0 != resolvedUsageBlocksPath }
     }
 }
 
@@ -200,13 +175,11 @@ public struct ClaudeLocalStatusConnector: ProviderConnector {
     public let provider: Provider = .anthropic
 
     private let accounts: [ClaudeAccountConfiguration]
-    private let processClient: any ConnectorProcessClient
     private let fileLoader: @Sendable (String) throws -> Data
     private let fileExists: @Sendable (String) -> Bool
 
     public init(
         accounts: [ClaudeAccountConfiguration],
-        processClient: any ConnectorProcessClient = DefaultConnectorProcessClient(),
         fileLoader: @escaping @Sendable (String) throws -> Data = { path in
             try Data(contentsOf: URL(fileURLWithPath: NSString(string: path).expandingTildeInPath))
         },
@@ -215,7 +188,6 @@ public struct ClaudeLocalStatusConnector: ProviderConnector {
         }
     ) {
         self.accounts = accounts
-        self.processClient = processClient
         self.fileLoader = fileLoader
         self.fileExists = fileExists
     }
@@ -233,13 +205,21 @@ public struct ClaudeLocalStatusConnector: ProviderConnector {
         let localAccountID = ConnectorRedactor.localAccountID(provider: provider, path: account.rateLimitSnapshotPath)
 
         do {
-            let authStatus = try loadAuthStatus(claudeBinary: account.claudeBinary)
             let statsSummary = try loadStatsSummary(path: account.statsPath)
-            let rateLimitSnapshot = try loadRateLimitSnapshot(path: account.rateLimitSnapshotPath)
+            let rateLimitSnapshot = try loadRateLimitSnapshot(paths: [account.rateLimitSnapshotPath] + account.fallbackRateLimitSnapshotPaths)
                 ?? statsSummary?.rateLimitSnapshot
-            let usageBlocksSummary = try loadUsageBlocksSummary(path: account.usageBlocksPath)
+            let usageBlocksSummary = try loadUsageBlocksSummary(paths: [account.usageBlocksPath].compactMap { $0 } + account.fallbackUsageBlocksPaths)
+
+            // Infer login state from local evidence. A stale cache still proves
+            // a configured Claude statusline and should render as stale rather
+            // than collapsing the weekly window to unknown.
+            let hasSessions = (statsSummary?.totalSessions ?? 0) > 0
+            let hasRateLimitCache = rateLimitSnapshot?.windows.isEmpty == false
+            let hasUsageBlocks = usageBlocksSummary?.activeBlock != nil
+            let loggedIn = hasSessions || hasRateLimitCache || hasUsageBlocks
+
             let limits = claudeLocalStatusLimits(
-                authStatus: authStatus,
+                loggedIn: loggedIn,
                 statsSummary: statsSummary,
                 rateLimitSnapshot: rateLimitSnapshot,
                 rateLimitSnapshotMaximumAge: account.rateLimitSnapshotMaximumAge,
@@ -254,8 +234,7 @@ public struct ClaudeLocalStatusConnector: ProviderConnector {
                 accountName: account.accountName,
                 generatedAt: now,
                 limits: limits,
-                status: authStatus.loggedIn ? limits.map(\.status).contextPanelWorstStatus : .failure,
-                errorMessage: authStatus.loggedIn ? nil : "Claude CLI is not logged in"
+                status: loggedIn ? limits.map(\.status).contextPanelWorstStatus : .unknown
             )
         } catch {
             return ProviderConnectorReport(
@@ -270,32 +249,50 @@ public struct ClaudeLocalStatusConnector: ProviderConnector {
         }
     }
 
-    private func loadAuthStatus(claudeBinary: String) throws -> ClaudeAuthStatus {
-        let result = try processClient.run(executable: claudeBinary, arguments: ["auth", "status", "--json"])
-        guard result.exitCode == 0 else {
-            throw ConnectorError.processFailure(operation: "claude auth status", exitCode: result.exitCode)
-        }
-        return try ClaudeAuthStatusParser.status(from: result.stdout)
-    }
-
-    private func loadStatsSummary(path: String) throws -> ClaudeStatsCacheSummary? {
-        guard fileExists(path) else { return nil }
+    private func loadStatsSummary(path: String?) throws -> ClaudeStatsCacheSummary? {
+        guard let path, fileExists(path) else { return nil }
         return try ClaudeStatsCacheParser.summary(from: try fileLoader(path))
     }
 
-    private func loadRateLimitSnapshot(path: String) throws -> ClaudeSubscriptionRateLimitSnapshot? {
-        guard fileExists(path) else { return nil }
-        return try ClaudeSubscriptionRateLimitCacheParser.snapshot(from: try fileLoader(path))
+    private func loadRateLimitSnapshot(paths: [String]) throws -> ClaudeSubscriptionRateLimitSnapshot? {
+        var firstError: Error?
+        var snapshots: [ClaudeSubscriptionRateLimitSnapshot] = []
+
+        for path in paths {
+            guard fileExists(path) else { continue }
+            do {
+                snapshots.append(try ClaudeSubscriptionRateLimitCacheParser.snapshot(from: try fileLoader(path)))
+            } catch {
+                if firstError == nil { firstError = error }
+            }
+        }
+
+        if snapshots.isEmpty, let firstError {
+            throw firstError
+        }
+        return snapshots.sorted { $0.observedAt > $1.observedAt }.first
     }
 
-    private func loadUsageBlocksSummary(path: String?) throws -> ClaudeUsageBlocksSummary? {
-        guard let path, fileExists(path) else { return nil }
-        return try ClaudeUsageBlocksParser.summary(from: try fileLoader(path))
+    private func loadUsageBlocksSummary(paths: [String]) throws -> ClaudeUsageBlocksSummary? {
+        var firstError: Error?
+
+        for path in paths where fileExists(path) {
+            do {
+                return try ClaudeUsageBlocksParser.summary(from: try fileLoader(path))
+            } catch {
+                if firstError == nil { firstError = error }
+            }
+        }
+
+        if let firstError {
+            throw firstError
+        }
+        return nil
     }
 }
 
 public func claudeLocalStatusLimits(
-    authStatus: ClaudeAuthStatus,
+    loggedIn: Bool,
     statsSummary: ClaudeStatsCacheSummary?,
     rateLimitSnapshot: ClaudeSubscriptionRateLimitSnapshot? = nil,
     rateLimitSnapshotMaximumAge: TimeInterval = 30 * 60,
@@ -304,11 +301,11 @@ public func claudeLocalStatusLimits(
     accountName: String,
     observedAt: Date
 ) -> [UsageLimit] {
-    if authStatus.loggedIn, let rateLimitSnapshot, !rateLimitSnapshot.windows.isEmpty {
+    if loggedIn, let rateLimitSnapshot, !rateLimitSnapshot.windows.isEmpty {
         let isStale = observedAt.timeIntervalSince(rateLimitSnapshot.observedAt) > rateLimitSnapshotMaximumAge
         if isStale, let estimatedLimit = claudeUsageBlockEstimate(
             usageBlocksSummary: usageBlocksSummary,
-            authStatus: authStatus,
+            loggedIn: loggedIn,
             accountID: accountID,
             accountName: accountName,
             observedAt: observedAt
@@ -324,7 +321,7 @@ public func claudeLocalStatusLimits(
                 accountName: accountName,
                 label: "Claude \(window.label)",
                 windowLabel: window.label,
-                modelLabel: authStatus.subscriptionDisplayName,
+                modelLabel: "Claude",
                 unit: .percent,
                 used: Int(window.usedPercent.rounded()),
                 limit: 100,
@@ -332,14 +329,14 @@ public func claudeLocalStatusLimits(
                 lastUpdatedAt: rateLimitSnapshot.observedAt,
                 confidence: .observed,
                 statusOverride: isStale ? .stale : nil,
-                note: "\(sourceNote); subscription: \(authStatus.subscriptionType ?? "unknown")"
+                note: sourceNote
             )
         }
     }
 
     if let estimatedLimit = claudeUsageBlockEstimate(
         usageBlocksSummary: usageBlocksSummary,
-        authStatus: authStatus,
+        loggedIn: loggedIn,
         accountID: accountID,
         accountName: accountName,
         observedAt: observedAt
@@ -347,12 +344,7 @@ public func claudeLocalStatusLimits(
         return [estimatedLimit]
     }
 
-    var noteParts = [
-        "auth: \(authStatus.authMethod)",
-        "provider: \(authStatus.apiProvider ?? "unknown")",
-        "subscription: \(authStatus.subscriptionType ?? "unknown")",
-        "allowance: not exposed by Claude Code",
-    ]
+    var noteParts = ["allowance: not exposed by Claude Code"]
     if let statsSummary {
         noteParts.append("sessions: \(statsSummary.totalSessions.map(String.init) ?? "unknown")")
         noteParts.append("messages: \(statsSummary.totalMessages.map(String.init) ?? "unknown")")
@@ -364,7 +356,7 @@ public func claudeLocalStatusLimits(
         provider: .anthropic,
         accountID: accountID,
         accountName: accountName,
-        label: "\(authStatus.subscriptionDisplayName) status",
+        label: "Claude status",
         modelLabel: "Claude Code",
         unit: .unknown,
         used: nil,
@@ -372,20 +364,20 @@ public func claudeLocalStatusLimits(
         resetsAt: nil,
         lastUpdatedAt: statsSummary?.lastComputedDate ?? observedAt,
         confidence: .observed,
-        statusOverride: authStatus.loggedIn ? .unknown : .failure,
+        statusOverride: loggedIn ? .unknown : .unknown,
         note: noteParts.joined(separator: "; ")
     )]
 }
 
 private func claudeUsageBlockEstimate(
     usageBlocksSummary: ClaudeUsageBlocksSummary?,
-    authStatus: ClaudeAuthStatus,
+    loggedIn: Bool,
     accountID: String,
     accountName: String,
     observedAt: Date
 ) -> UsageLimit? {
     guard
-        authStatus.loggedIn,
+        loggedIn,
         let activeBlock = usageBlocksSummary?.activeBlock,
         activeBlock.isActive,
         let totalTokens = activeBlock.totalTokens,
@@ -415,7 +407,7 @@ private func claudeUsageBlockEstimate(
         accountName: accountName,
         label: "Claude 5-hour estimate",
         windowLabel: "5-hour estimated",
-        modelLabel: authStatus.subscriptionDisplayName,
+        modelLabel: "Claude",
         unit: .tokens,
         used: used,
         limit: limit,
@@ -475,13 +467,6 @@ private struct ClaudeStatuslineRateLimitWindow: Decodable {
             resetsAt: resetsAt.map { Date(timeIntervalSince1970: TimeInterval($0)) }
         )
     }
-}
-
-private struct ClaudeAuthStatusPayload: Decodable {
-    let loggedIn: Bool
-    let authMethod: String
-    let apiProvider: String?
-    let subscriptionType: String?
 }
 
 private struct ClaudeStatsCachePayload: Decodable {
