@@ -129,6 +129,7 @@ public struct GeminiOAuthClientMetadata: Equatable, Sendable {
 public enum GeminiOAuthClientMetadataDiscovery {
     public static func discover(
         environment: [String: String] = ProcessInfo.processInfo.environment,
+        commandPath: String? = nil,
         useBundledFallback: Bool = true,
         fileLoader: @escaping @Sendable (String) throws -> String = { path in
             try String(contentsOfFile: NSString(string: path).expandingTildeInPath, encoding: .utf8)
@@ -150,6 +151,9 @@ public enum GeminiOAuthClientMetadataDiscovery {
 
         for path in candidateBundlePaths(
             environment: environment,
+            commandPath: commandPath,
+            useBundledFallback: useBundledFallback,
+            fileExists: fileExists,
             directoryLister: directoryLister
         ) where fileExists(path) {
             guard
@@ -170,7 +174,7 @@ public enum GeminiOAuthClientMetadataDiscovery {
     }
 
     private static func stringLiteral(named variableName: String, in source: String) -> String? {
-        let pattern = #"var\s+\#(variableName)\s*=\s*\"([^\"]+)\""#
+        let pattern = #"(?:var|let|const)\s+\#(variableName)\s*=\s*['\"]([^'\"]+)['\"]"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
         let range = NSRange(source.startIndex..<source.endIndex, in: source)
         guard
@@ -183,21 +187,142 @@ public enum GeminiOAuthClientMetadataDiscovery {
 
     private static func candidateBundlePaths(
         environment: [String: String],
+        commandPath: String?,
+        useBundledFallback: Bool,
+        fileExists: @Sendable (String) -> Bool,
         directoryLister: @Sendable (String) -> [String]
     ) -> [String] {
         var paths: [String] = []
         if let path = environment["GEMINI_CLI_BUNDLE_PATH"], !path.isEmpty {
-            paths.append(path)
+            paths.append(contentsOf: bundleCandidates(
+                near: path,
+                fileExists: fileExists,
+                directoryLister: directoryLister
+            ))
         }
-        paths.append(contentsOf: bundleChunkPaths(
-            root: "/opt/homebrew/lib/node_modules/@google/gemini-cli/bundle",
+        if let commandPath, !commandPath.isEmpty {
+            paths.append(contentsOf: bundleCandidates(
+                near: commandPath,
+                fileExists: fileExists,
+                directoryLister: directoryLister
+            ))
+        }
+        paths.append(contentsOf: executableBundleCandidates(
+            executableName: "gemini",
+            environment: environment,
+            fileExists: fileExists,
             directoryLister: directoryLister
         ))
+        if useBundledFallback {
+            for root in commonGeminiBundleRoots() {
+                paths.append(contentsOf: bundleChunkPaths(root: root, directoryLister: directoryLister))
+            }
+        }
+        return orderedUnique(paths)
+    }
+
+    private static func bundleCandidates(
+        near path: String,
+        fileExists: @Sendable (String) -> Bool,
+        directoryLister: @Sendable (String) -> [String]
+    ) -> [String] {
+        let expanded = NSString(string: path).expandingTildeInPath
+        let resolved = resolvingSymbolicLinks(expanded)
+        if resolved != expanded {
+            return orderedUnique(
+                bundleCandidates(nearResolvedPath: expanded, fileExists: fileExists, directoryLister: directoryLister)
+                    + bundleCandidates(nearResolvedPath: resolved, fileExists: fileExists, directoryLister: directoryLister)
+            )
+        }
+        return bundleCandidates(nearResolvedPath: expanded, fileExists: fileExists, directoryLister: directoryLister)
+    }
+
+    private static func bundleCandidates(
+        nearResolvedPath expanded: String,
+        fileExists: @Sendable (String) -> Bool,
+        directoryLister: @Sendable (String) -> [String]
+    ) -> [String] {
+        if !expanded.hasSuffix(".js"), fileExists("\(expanded)/gemini.js") || !bundleChunkPaths(root: expanded, directoryLister: directoryLister).isEmpty {
+            return bundleChunkPaths(root: expanded, directoryLister: directoryLister)
+        }
+        let url = URL(fileURLWithPath: expanded)
+        var paths = [expanded]
         paths.append(contentsOf: bundleChunkPaths(
-            root: "/usr/local/lib/node_modules/@google/gemini-cli/bundle",
+            root: url.deletingLastPathComponent().path,
             directoryLister: directoryLister
         ))
+        if url.lastPathComponent == "gemini" || url.lastPathComponent == "gemini.js" {
+            let packageBundle = url
+                .deletingLastPathComponent()
+                .appendingPathComponent("../lib/node_modules/@google/gemini-cli/bundle")
+                .standardizedFileURL
+                .path
+            paths.append(contentsOf: bundleChunkPaths(root: packageBundle, directoryLister: directoryLister))
+        }
         return paths
+    }
+
+    private static func resolvingSymbolicLinks(_ path: String) -> String {
+        URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+    }
+
+    private static func executableBundleCandidates(
+        executableName: String,
+        environment: [String: String],
+        fileExists: @Sendable (String) -> Bool,
+        directoryLister: @Sendable (String) -> [String]
+    ) -> [String] {
+        let pathValue = environment["PATH"] ?? ""
+        let pathDirectories = pathValue.split(separator: ":").map(String.init)
+        return orderedUnique(pathDirectories + commonExecutableDirectories()).flatMap { directory -> [String] in
+            let executablePath = "\(directory)/\(executableName)"
+            guard fileExists(executablePath) else { return [] }
+            return bundleCandidates(
+                near: executablePath,
+                fileExists: fileExists,
+                directoryLister: directoryLister
+            )
+        }
+    }
+
+    private static func commonExecutableDirectories() -> [String] {
+        let home = ContextPanelLocations.realUserHomeDirectory().path
+        return [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "\(home)/.local/bin",
+            "\(home)/.npm-global/bin",
+            "\(home)/.bun/bin",
+            "\(home)/Library/pnpm",
+            "\(home)/.pnpm-global/bin",
+            "\(home)/.yarn/bin",
+            "\(home)/.config/yarn/global/node_modules/.bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+        ]
+    }
+
+    private static func commonGeminiBundleRoots() -> [String] {
+        let home = ContextPanelLocations.realUserHomeDirectory().path
+        return [
+            "/opt/homebrew/lib/node_modules/@google/gemini-cli/bundle",
+            "/usr/local/lib/node_modules/@google/gemini-cli/bundle",
+            "\(home)/.npm-global/lib/node_modules/@google/gemini-cli/bundle",
+            "\(home)/.local/lib/node_modules/@google/gemini-cli/bundle",
+            "\(home)/.config/yarn/global/node_modules/@google/gemini-cli/bundle",
+        ]
+    }
+
+    private static func orderedUnique(_ paths: [String]) -> [String] {
+        var seen = Set<String>()
+        var unique: [String] = []
+        unique.reserveCapacity(paths.count)
+        for path in paths where seen.insert(path).inserted {
+            unique.append(path)
+        }
+        return unique
     }
 
     private static func bundleChunkPaths(

@@ -261,6 +261,7 @@ public enum AccountConnectorFactory {
                 }
                 let discoveredMetadata = GeminiOAuthClientMetadataDiscovery.discover(
                     environment: environment,
+                    commandPath: account.commandPath,
                     useBundledFallback: useBundledGeminiMetadataFallback,
                     fileLoader: geminiMetadataFileLoader,
                     fileExists: geminiMetadataFileExists,
