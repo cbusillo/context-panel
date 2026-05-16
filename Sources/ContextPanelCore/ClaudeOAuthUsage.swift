@@ -155,7 +155,6 @@ public enum ClaudeOAuthFlow {
             "grant_type": "refresh_token",
             "refresh_token": refreshToken,
             "client_id": ClaudeOAuthMetadata.clientID,
-            "scope": ClaudeOAuthMetadata.scopes.joined(separator: " "),
         ])
     }
 }
@@ -325,6 +324,9 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
             body: try ClaudeOAuthFlow.refreshTokenRequestBody(refreshToken: refreshToken)
         ))
         guard (200..<300).contains(response.statusCode) else {
+            if response.statusCode == 400 || response.statusCode == 401 || response.statusCode == 403 {
+                throw ConnectorError.invalidAuth("Claude OAuth session has expired. Sign in again from Settings.")
+            }
             throw ConnectorError.httpFailure(operation: "Claude OAuth refresh", statusCode: response.statusCode)
         }
         let token = try JSONDecoder().decode(ClaudeOAuthTokenResponse.self, from: response.data)
