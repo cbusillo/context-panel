@@ -288,6 +288,34 @@ import Testing
     #expect(connectors[0].provider == .google)
 }
 
+@Test func accountConnectorFactoryUsesCachedGeminiMetadataInSandbox() {
+    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
+        LocalProviderAccountConfiguration(
+            id: "gemini",
+            provider: .google,
+            connectorKind: .geminiCodeAssist,
+            displayName: "Gemini",
+            authPath: "/tmp/gemini.json"
+        )
+    ])
+    let metadata = GeminiOAuthClientMetadata(clientID: "cached-client", clientSecret: "cached-secret")
+    let credentialStore = InMemoryProviderCredentialStore(storage: [
+        GeminiOAuthClientMetadata.credentialAccountID(for: "gemini"): try! JSONEncoder().encode(metadata),
+    ])
+
+    let connectors = AccountConnectorFactory.connectors(
+        from: document,
+        credentialStore: credentialStore,
+        requiresBookmarkedAuthFiles: true,
+        environment: [:],
+        useBundledGeminiMetadataFallback: false,
+        geminiMetadataFileExists: { _ in false }
+    )
+
+    #expect(connectors.count == 1)
+    #expect(connectors[0].provider == .google)
+}
+
 @Test func sandboxedAuthLoaderRequiresSecurityScopedBookmark() async {
     let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
         LocalProviderAccountConfiguration(

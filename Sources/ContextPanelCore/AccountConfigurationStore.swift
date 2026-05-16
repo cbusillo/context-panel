@@ -259,6 +259,7 @@ public enum AccountConnectorFactory {
                 case .missing, .partial:
                     configuredMetadataValue = nil
                 }
+                let cachedMetadataValue = geminiCachedMetadata(accountID: account.id, credentialStore: credentialStore)
                 let discoveredMetadata = GeminiOAuthClientMetadataDiscovery.discover(
                     environment: environment,
                     commandPath: account.commandPath,
@@ -267,7 +268,7 @@ public enum AccountConnectorFactory {
                     fileExists: geminiMetadataFileExists,
                     directoryLister: geminiMetadataDirectoryLister
                 )
-                guard let metadata = configuredMetadataValue ?? discoveredMetadata else {
+                guard let metadata = configuredMetadataValue ?? cachedMetadataValue ?? discoveredMetadata else {
                     let expanded = NSString(string: authPath).expandingTildeInPath
                     return FailingProviderConnector(
                         provider: .google,
@@ -340,6 +341,16 @@ public enum AccountConnectorFactory {
             }
             return try Data(contentsOf: URL(fileURLWithPath: expanded))
         }
+    }
+
+    private static func geminiCachedMetadata(
+        accountID: String,
+        credentialStore: (any ProviderCredentialLoading)?
+    ) -> GeminiOAuthClientMetadata? {
+        guard let credentialStore else { return nil }
+        let metadataAccountID = GeminiOAuthClientMetadata.credentialAccountID(for: accountID)
+        guard let data = try? credentialStore.load(accountID: metadataAccountID) else { return nil }
+        return try? JSONDecoder().decode(GeminiOAuthClientMetadata.self, from: data)
     }
 
     private static func geminiMetadata(

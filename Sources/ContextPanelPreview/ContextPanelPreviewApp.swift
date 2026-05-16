@@ -169,6 +169,16 @@ struct SettingsPane: View {
                                     .foregroundStyle(account.isEnabled ? CPTheme.statusColor(.healthy) : CPTheme.tertiaryText)
                             }
                         }
+                        if account.connectorKind == .geminiCodeAssist, account.isEnabled, !model.hasGeminiMetadata(for: account) {
+                            HStack(spacing: 8) {
+                                Text("Gemini CLI access needed")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(CPTheme.statusColor(.stale))
+                                Button("Select CLI Bundle") { model.authorizeGeminiMetadata(for: account) }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                            }
+                        }
                         Text(model.detailText(for: account))
                             .font(.system(size: 11))
                             .foregroundStyle(CPTheme.secondaryText)
@@ -401,6 +411,7 @@ final class SettingsPaneModel: ObservableObject {
     @Published private(set) var authorizedPaths: Set<String> = []
     @Published private(set) var missingAuthPaths: Set<String> = []
     @Published private(set) var legacyAuthPaths: Set<String> = []
+    @Published private(set) var geminiMetadataAccountIDs: Set<String> = []
     @Published var isClaudeOAuthCodeSheetPresented = false
     @Published private(set) var isCompletingClaudeOAuth = false
 
@@ -472,6 +483,9 @@ final class SettingsPaneModel: ObservableObject {
         })
         loadedLegacyPaths.subtract(recentlyVerifiedAuthPaths)
         legacyAuthPaths = loadedLegacyPaths
+        geminiMetadataAccountIDs = Set(accounts.compactMap { account in
+            account.connectorKind == .geminiCodeAssist && hasGeminiMetadata(for: account) ? account.id : nil
+        })
         widgetPreferences = widgetPreferenceStores.load()
         backgroundRefreshSettings = backgroundRefreshSettingsStore.load()
         var primerSettings = resetPrimerSettingsStore.load()
@@ -817,6 +831,55 @@ final class SettingsPaneModel: ObservableObject {
 
     private func hasImportedCredential(for account: LocalProviderAccountConfiguration) -> Bool {
         (try? credentialStore.load(accountID: account.id)) != nil
+    }
+
+    func hasGeminiMetadata(for account: LocalProviderAccountConfiguration) -> Bool {
+        guard account.connectorKind == .geminiCodeAssist else { return true }
+        if geminiMetadataAccountIDs.contains(account.id) { return true }
+        let metadataAccountID = GeminiOAuthClientMetadata.credentialAccountID(for: account.id)
+        return (try? credentialStore.load(accountID: metadataAccountID)) != nil
+    }
+
+    func authorizeGeminiMetadata(for account: LocalProviderAccountConfiguration) {
+        guard account.connectorKind == .geminiCodeAssist else { return }
+        let panel = NSOpenPanel()
+        panel.message = "Select the Gemini CLI bundle folder or a JavaScript file inside it."
+        panel.prompt = "Select Bundle"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = defaultGeminiBundleURL()
+        if #available(macOS 11.0, *) {
+            panel.allowedContentTypes = [.folder, .init(filenameExtension: "js")].compactMap { $0 }
+        } else {
+            panel.allowedFileTypes = ["js"]
+        }
+
+        panel.begin { [weak self] response in
+            guard let self, response == .OK, let url = panel.url else { return }
+            do {
+                let metadata = try GeminiOAuthClientMetadataDiscovery.discover(fromUserSelectedURL: url)
+                let data = try JSONEncoder().encode(metadata)
+                try credentialStore.save(
+                    data,
+                    accountID: GeminiOAuthClientMetadata.credentialAccountID(for: account.id)
+                )
+                geminiMetadataAccountIDs.insert(account.id)
+                errorMessage = nil
+                WidgetCenter.shared.reloadAllTimelines()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func defaultGeminiBundleURL() -> URL? {
+        let paths = [
+            "/opt/homebrew/lib/node_modules/@google/gemini-cli/bundle",
+            "/usr/local/lib/node_modules/@google/gemini-cli/bundle",
+        ]
+        return paths.first(where: { FileManager.default.fileExists(atPath: $0) })
+            .map(URL.init(fileURLWithPath:))
     }
 
     private static func exchangeClaudeOAuthCode(
