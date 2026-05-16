@@ -116,13 +116,28 @@ public struct GeminiAccountConfiguration: Equatable, Sendable {
     }
 }
 
-public struct GeminiOAuthClientMetadata: Equatable, Sendable {
+public struct GeminiOAuthClientMetadata: Codable, Equatable, Sendable {
     public let clientID: String
     public let clientSecret: String
 
     public init(clientID: String, clientSecret: String) {
         self.clientID = clientID
         self.clientSecret = clientSecret
+    }
+
+    public static func credentialAccountID(for accountID: String) -> String {
+        "\(accountID).gemini-oauth-client-metadata"
+    }
+}
+
+public enum GeminiOAuthClientMetadataDiscoveryError: LocalizedError, Equatable {
+    case notFound
+
+    public var errorDescription: String? {
+        switch self {
+        case .notFound:
+            return "Gemini OAuth client metadata was not found in the selected CLI bundle."
+        }
     }
 }
 
@@ -165,6 +180,26 @@ public enum GeminiOAuthClientMetadataDiscovery {
         return nil
     }
 
+    public static func discover(
+        fromUserSelectedURL url: URL,
+        fileLoader: @escaping @Sendable (String) throws -> String = { path in
+            try String(contentsOfFile: NSString(string: path).expandingTildeInPath, encoding: .utf8)
+        },
+        directoryLister: @escaping @Sendable (String) -> [String] = { path in
+            let expanded = NSString(string: path).expandingTildeInPath
+            return (try? FileManager.default.contentsOfDirectory(atPath: expanded).map { "\(expanded)/\($0)" }) ?? []
+        }
+    ) throws -> GeminiOAuthClientMetadata {
+        for path in userSelectedBundlePaths(url: url, directoryLister: directoryLister) {
+            guard
+                let source = try? fileLoader(path),
+                let metadata = parseClientMetadata(from: source)
+            else { continue }
+            return metadata
+        }
+        throw GeminiOAuthClientMetadataDiscoveryError.notFound
+    }
+
     static func parseClientMetadata(from source: String) -> GeminiOAuthClientMetadata? {
         guard
             let clientID = stringLiteral(named: "OAUTH_CLIENT_ID", in: source),
@@ -183,6 +218,18 @@ public enum GeminiOAuthClientMetadataDiscovery {
             let valueRange = Range(match.range(at: 1), in: source)
         else { return nil }
         return String(source[valueRange])
+    }
+
+    private static func userSelectedBundlePaths(
+        url: URL,
+        directoryLister: @Sendable (String) -> [String]
+    ) -> [String] {
+        let path = url.path
+        if url.hasDirectoryPath {
+            return bundleChunkPaths(root: path, directoryLister: directoryLister)
+        }
+        let directory = url.deletingLastPathComponent().path
+        return orderedUnique([path] + bundleChunkPaths(root: directory, directoryLister: directoryLister))
     }
 
     private static func candidateBundlePaths(

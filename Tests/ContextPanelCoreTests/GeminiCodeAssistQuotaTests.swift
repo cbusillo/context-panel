@@ -196,3 +196,32 @@ import Testing
 
     #expect(metadata == nil)
 }
+
+@Test func geminiOAuthClientMetadataDiscoveryParsesUserSelectedBundleDirectory() throws {
+    let source = #"""
+    var OAUTH_CLIENT_ID = "selected-client";
+    var OAUTH_CLIENT_SECRET = "selected-secret";
+    """#
+
+    let metadata = try GeminiOAuthClientMetadataDiscovery.discover(
+        fromUserSelectedURL: URL(fileURLWithPath: "/Users/test/gemini-cli/bundle", isDirectory: true),
+        fileLoader: { path in
+            path.hasSuffix("metadata.js") ? source : ""
+        },
+        directoryLister: { root in
+            root == "/Users/test/gemini-cli/bundle" ? ["\(root)/metadata.js"] : []
+        }
+    )
+
+    #expect(metadata == GeminiOAuthClientMetadata(clientID: "selected-client", clientSecret: "selected-secret"))
+}
+
+@Test func geminiOAuthClientMetadataDiscoveryReportsMissingUserSelectedMetadata() {
+    #expect(throws: GeminiOAuthClientMetadataDiscoveryError.notFound) {
+        try GeminiOAuthClientMetadataDiscovery.discover(
+            fromUserSelectedURL: URL(fileURLWithPath: "/Users/test/gemini-cli/bundle", isDirectory: true),
+            fileLoader: { _ in "" },
+            directoryLister: { _ in [] }
+        )
+    }
+}
