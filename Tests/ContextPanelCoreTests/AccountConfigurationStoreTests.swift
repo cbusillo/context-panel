@@ -254,6 +254,40 @@ import Testing
     #expect(connectors[0].provider == .google)
 }
 
+@Test func accountConnectorFactoryUsesGeminiCommandPathForMetadataDiscovery() {
+    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
+        LocalProviderAccountConfiguration(
+            id: "gemini",
+            provider: .google,
+            connectorKind: .geminiCodeAssist,
+            displayName: "Gemini",
+            authPath: "/tmp/gemini.json",
+            commandPath: "/Users/test/.local/bin/gemini"
+        )
+    ])
+
+    let source = #"""
+    var OAUTH_CLIENT_ID = "client-id.apps.googleusercontent.com";
+    var OAUTH_CLIENT_SECRET = "client-secret";
+    """#
+    let connectors = AccountConnectorFactory.connectors(
+        from: document,
+        environment: [:],
+        useBundledGeminiMetadataFallback: false,
+        geminiMetadataFileLoader: { _ in source },
+        geminiMetadataFileExists: { path in
+            path == "/Users/test/.local/bin/gemini"
+                || path == "/Users/test/.local/bin/chunk.js"
+        },
+        geminiMetadataDirectoryLister: { root in
+            root == "/Users/test/.local/bin" ? ["\(root)/chunk.js"] : []
+        }
+    )
+
+    #expect(connectors.count == 1)
+    #expect(connectors[0].provider == .google)
+}
+
 @Test func sandboxedAuthLoaderRequiresSecurityScopedBookmark() async {
     let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
         LocalProviderAccountConfiguration(

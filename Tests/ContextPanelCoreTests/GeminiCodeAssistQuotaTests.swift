@@ -49,8 +49,8 @@ import Testing
 
 @Test func geminiOAuthClientMetadataDiscoveryParsesInstalledCLIBundleShape() {
     let source = #"""
-    var OAUTH_CLIENT_ID = "client-id.apps.googleusercontent.com";
-    var OAUTH_CLIENT_SECRET = "client-secret";
+    const OAUTH_CLIENT_ID = 'client-id.apps.googleusercontent.com';
+    let OAUTH_CLIENT_SECRET = 'client-secret';
     """#
 
     let metadata = GeminiOAuthClientMetadataDiscovery.parseClientMetadata(from: source)
@@ -93,4 +93,106 @@ import Testing
     )
 
     #expect(metadata == GeminiOAuthClientMetadata(clientID: "bundle-client", clientSecret: "bundle-secret"))
+}
+
+@Test func geminiOAuthClientMetadataDiscoveryScansCommandPathBundleDirectory() {
+    let source = #"""
+    var OAUTH_CLIENT_ID = "command-client";
+    var OAUTH_CLIENT_SECRET = "command-secret";
+    """#
+
+    let metadata = GeminiOAuthClientMetadataDiscovery.discover(
+        environment: [:],
+        commandPath: "/Users/test/.local/share/npm/bin/gemini.js",
+        fileLoader: { path in
+            path.hasSuffix("oauth-chunk.js") ? source : ""
+        },
+        fileExists: { path in
+            path == "/Users/test/.local/share/npm/bin/gemini.js"
+                || path == "/Users/test/.local/share/npm/bin/oauth-chunk.js"
+        },
+        directoryLister: { root in
+            root == "/Users/test/.local/share/npm/bin"
+                ? ["\(root)/oauth-chunk.js"]
+                : []
+        }
+    )
+
+    #expect(metadata == GeminiOAuthClientMetadata(clientID: "command-client", clientSecret: "command-secret"))
+}
+
+@Test func geminiOAuthClientMetadataDiscoveryScansGeminiExecutableFromPATH() {
+    let source = #"""
+    var OAUTH_CLIENT_ID = "path-client";
+    var OAUTH_CLIENT_SECRET = "path-secret";
+    """#
+
+    let metadata = GeminiOAuthClientMetadataDiscovery.discover(
+        environment: ["PATH": "/Users/test/.npm-global/bin:/usr/bin"],
+        fileLoader: { path in
+            path.hasSuffix("chunk.js") ? source : ""
+        },
+        fileExists: { path in
+            path == "/Users/test/.npm-global/bin/gemini"
+                || path == "/Users/test/.npm-global/bin/chunk.js"
+        },
+        directoryLister: { root in
+            root == "/Users/test/.npm-global/bin"
+                ? ["\(root)/chunk.js"]
+                : []
+        }
+    )
+
+    #expect(metadata == GeminiOAuthClientMetadata(clientID: "path-client", clientSecret: "path-secret"))
+}
+
+@Test func geminiOAuthClientMetadataDiscoveryScansCommonUserLocalExecutableDirectory() {
+    let source = #"""
+    var OAUTH_CLIENT_ID = "user-local-client";
+    var OAUTH_CLIENT_SECRET = "user-local-secret";
+    """#
+    let home = ContextPanelLocations.realUserHomeDirectory().path
+    let executable = "\(home)/.local/bin/gemini"
+    let bundleRoot = "\(home)/.local/lib/node_modules/@google/gemini-cli/bundle"
+
+    let metadata = GeminiOAuthClientMetadataDiscovery.discover(
+        environment: [:],
+        fileLoader: { path in
+            path.hasSuffix("chunk.js") ? source : ""
+        },
+        fileExists: { path in
+            path == executable
+                || path == "\(bundleRoot)/chunk.js"
+        },
+        directoryLister: { root in
+            root == bundleRoot
+                ? ["\(root)/chunk.js"]
+                : []
+        }
+    )
+
+    #expect(metadata == GeminiOAuthClientMetadata(clientID: "user-local-client", clientSecret: "user-local-secret"))
+}
+
+@Test func geminiOAuthClientMetadataDiscoveryHonorsBundledFallbackFlag() {
+    let source = #"""
+    var OAUTH_CLIENT_ID = "bundled-client";
+    var OAUTH_CLIENT_SECRET = "bundled-secret";
+    """#
+
+    let metadata = GeminiOAuthClientMetadataDiscovery.discover(
+        environment: [:],
+        useBundledFallback: false,
+        fileLoader: { _ in source },
+        fileExists: { path in
+            path == "/opt/homebrew/lib/node_modules/@google/gemini-cli/bundle/chunk.js"
+        },
+        directoryLister: { root in
+            root == "/opt/homebrew/lib/node_modules/@google/gemini-cli/bundle"
+                ? ["\(root)/chunk.js"]
+                : []
+        }
+    )
+
+    #expect(metadata == nil)
 }
