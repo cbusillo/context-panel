@@ -94,9 +94,10 @@ bundle identifiers:
 The workflow calls `scripts/upload-testflight-macos-app.sh`, which generates the
 Xcode project, installs the supplied provisioning profiles, archives with manual
 `Apple Distribution` signing, and exports with `method = app-store-connect` and
-`installerSigningCertificate = 3rd Party Mac Developer Installer`. Pass
-`upload: false` when dispatching the workflow to export the `.pkg` without
-uploading it.
+`installerSigningCertificate = 3rd Party Mac Developer Installer`. Do not set
+`testFlightInternalTestingOnly`; internal-only builds are valid for TestFlight
+but cannot be selected for App Store submission. Pass `upload: false` when
+dispatching the workflow to export the `.pkg` without uploading it.
 
 The app and refresh-agent App Store entitlements must keep the sandbox enabled
 with App Group, outbound network, read-only user-selected file access, and

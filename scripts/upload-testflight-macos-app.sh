@@ -282,8 +282,6 @@ cat >"$export_options_path" <<PLIST
 	</dict>
 	<key>manageAppVersionAndBuildNumber</key>
 	<true/>
-	<key>testFlightInternalTestingOnly</key>
-	<true/>
 	<key>uploadSymbols</key>
 	<true/>
 </dict>
