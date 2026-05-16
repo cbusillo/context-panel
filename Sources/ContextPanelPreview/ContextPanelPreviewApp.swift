@@ -171,10 +171,10 @@ struct SettingsPane: View {
                         }
                         if account.connectorKind == .geminiCodeAssist, account.isEnabled, !model.hasGeminiMetadata(for: account) {
                             HStack(spacing: 8) {
-                                Text("Gemini CLI access needed")
+                                Text("Background refresh needs Gemini CLI access")
                                     .font(.system(size: 11, weight: .semibold))
                                     .foregroundStyle(CPTheme.statusColor(.stale))
-                                Button("Select CLI Bundle") { model.authorizeGeminiMetadata(for: account) }
+                                Button("Allow CLI Access") { model.authorizeGeminiMetadata(for: account) }
                                     .buttonStyle(.bordered)
                                     .controlSize(.small)
                             }
@@ -821,7 +821,7 @@ final class SettingsPaneModel: ObservableObject {
             }
             return "Select the OpenAI CLI auth JSON file"
         case .geminiCodeAssist:
-            return "Select oauth_creds.json from the Gemini CLI"
+            return "Select oauth_creds.json, then allow access to the Gemini CLI install for background refresh"
         case .claudeLocalStatus:
             return "Claude reads Context Panel's statusline cache; no auth file selection is needed"
         case .claudeOAuthUsage:
@@ -843,12 +843,15 @@ final class SettingsPaneModel: ObservableObject {
     func authorizeGeminiMetadata(for account: LocalProviderAccountConfiguration) {
         guard account.connectorKind == .geminiCodeAssist else { return }
         let panel = NSOpenPanel()
-        panel.message = "Select the Gemini CLI bundle folder or a JavaScript file inside it."
-        panel.prompt = "Select Bundle"
+        panel.message = "Allow access to Gemini CLI's bundle folder so Context Panel can refresh Gemini limits in the background. The folder is usually named bundle."
+        panel.prompt = "Allow Access"
         panel.canChooseFiles = true
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
-        panel.directoryURL = defaultGeminiBundleURL()
+        if let defaultGeminiBundleURL = defaultGeminiBundleURL() {
+            panel.directoryURL = defaultGeminiBundleURL.deletingLastPathComponent()
+            panel.nameFieldStringValue = defaultGeminiBundleURL.lastPathComponent
+        }
         if #available(macOS 11.0, *) {
             panel.allowedContentTypes = [.folder, .init(filenameExtension: "js")].compactMap { $0 }
         } else {
