@@ -216,7 +216,7 @@ public extension UsageLimit {
         case .openAI, .anthropic:
             return window == .daily ? nil : window
         case .google:
-            return window == .daily ? window : nil
+            return window
         }
     }
 
