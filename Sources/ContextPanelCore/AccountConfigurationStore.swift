@@ -223,7 +223,8 @@ public enum AccountConnectorFactory {
         geminiMetadataDirectoryLister: @escaping @Sendable (String) -> [String] = { path in
             let expanded = NSString(string: path).expandingTildeInPath
             return (try? FileManager.default.contentsOfDirectory(atPath: expanded).map { "\(expanded)/\($0)" }) ?? []
-        }
+        },
+        antigravityCredentialSource: AntigravityKeychainCredentialSource? = AntigravityKeychainCredentialSource()
     ) -> [any ProviderConnector] {
         return document.accounts.compactMap { account -> (any ProviderConnector)? in
             guard account.isEnabled else { return nil }
@@ -268,13 +269,17 @@ public enum AccountConnectorFactory {
                     fileExists: geminiMetadataFileExists,
                     directoryLister: geminiMetadataDirectoryLister
                 )
-                guard let metadata = configuredMetadataValue ?? cachedMetadataValue ?? discoveredMetadata else {
+                let metadata = configuredMetadataValue
+                    ?? cachedMetadataValue
+                    ?? discoveredMetadata
+                    ?? (antigravityCredentialSource?.hasCredentials() == true ? GeminiOAuthClientMetadata(clientID: "", clientSecret: "") : nil)
+                guard let metadata else {
                     let expanded = NSString(string: authPath).expandingTildeInPath
                     return FailingProviderConnector(
                         provider: .google,
                         accountID: ConnectorRedactor.localAccountID(provider: .google, path: expanded),
                         accountName: account.displayName,
-                        message: "Gemini OAuth client metadata could not be found. Reinstall Gemini CLI or configure Gemini OAuth client metadata."
+                        message: "Google OAuth client metadata could not be found. Reinstall Gemini CLI, sign into Antigravity, or configure Gemini OAuth client metadata."
                     )
                 }
                 return GeminiCodeAssistConnector(
@@ -286,7 +291,8 @@ public enum AccountConnectorFactory {
                     )],
                     fileLoader: authFileLoader,
                     credentialStore: credentialStore,
-                    credentialAccountID: account.id
+                    credentialAccountID: account.id,
+                    antigravityCredentialSource: antigravityCredentialSource
                 )
             case .claudeLocalStatus:
                 return ClaudeLocalStatusConnector(accounts: [ClaudeAccountConfiguration(

@@ -159,7 +159,8 @@ import Testing
         from: document,
         environment: [:],
         geminiMetadataFileLoader: { _ in "" },
-        geminiMetadataFileExists: { _ in false }
+        geminiMetadataFileExists: { _ in false },
+        antigravityCredentialSource: nil
     )
     let missingMetadataResult = await ProviderConnectorRuntime(connectors: withoutGeminiMetadata).refreshAll(now: Date(timeIntervalSince1970: 0))
     let withGeminiEnvironment = AccountConnectorFactory.connectors(from: document, environment: [
@@ -174,7 +175,7 @@ import Testing
     #expect(Set(withGeminiEnvironment.map(\.provider)) == [.openAI, .google])
 }
 
-@Test func accountConnectorFactoryReportsGeminiMetadataDiscoveryFailure() async {
+@Test func accountConnectorFactoryRequiresGeminiMetadataWhenAntigravityCredentialIsMissing() async {
     let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
         LocalProviderAccountConfiguration(
             id: "gemini",
@@ -192,7 +193,10 @@ import Testing
         environment: [:],
         useBundledGeminiMetadataFallback: false,
         geminiMetadataFileLoader: { _ in "" },
-        geminiMetadataFileExists: { _ in false }
+        geminiMetadataFileExists: { _ in false },
+        antigravityCredentialSource: AntigravityKeychainCredentialSource(
+            credentialLoader: InMemoryProviderCredentialStore(storage: [:])
+        )
     )
     let result = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: Date(timeIntervalSince1970: 0))
 
@@ -200,7 +204,39 @@ import Testing
     #expect(result.reports.count == 1)
     #expect(result.reports[0].provider == .google)
     #expect(result.reports[0].status == .failure)
-    #expect(result.reports[0].errorMessage?.contains("Gemini OAuth client metadata") == true)
+    #expect(result.reports[0].errorMessage?.contains("Google OAuth client metadata") == true)
+}
+
+@Test func accountConnectorFactoryAllowsMissingGeminiMetadataWhenAntigravityCredentialExists() async {
+    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
+        LocalProviderAccountConfiguration(
+            id: "gemini",
+            provider: .google,
+            connectorKind: .geminiCodeAssist,
+            displayName: "Gemini",
+            authPath: "/tmp/gemini.json",
+            oauthClientIDEnvironmentName: "GEMINI_ID",
+            oauthClientSecretEnvironmentName: "GEMINI_SECRET"
+        ),
+    ])
+    let antigravityPayload = #"{"auth_method":"consumer","token":{"access_token":"access-secret","expiry":"2099-05-22T17:00:00.000000000Z"}}"#
+    let storedAntigravityPayload = "go-keyring-base64:\(Data(antigravityPayload.utf8).base64EncodedString())"
+
+    let connectors = AccountConnectorFactory.connectors(
+        from: document,
+        environment: [:],
+        useBundledGeminiMetadataFallback: false,
+        geminiMetadataFileLoader: { _ in "" },
+        geminiMetadataFileExists: { _ in false },
+        antigravityCredentialSource: AntigravityKeychainCredentialSource(
+            credentialLoader: InMemoryProviderCredentialStore(storage: [
+                AntigravityKeychainCredentialSource.accountID: Data(storedAntigravityPayload.utf8),
+            ])
+        )
+    )
+
+    #expect(connectors.count == 1)
+    #expect(connectors[0].provider == .google)
 }
 
 @Test func accountConnectorFactoryFallsBackToGeminiDiscoveryForPartialMetadataEnvironment() async {

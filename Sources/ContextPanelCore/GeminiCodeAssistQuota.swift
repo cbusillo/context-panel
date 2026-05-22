@@ -170,15 +170,66 @@ public enum GeminiQuotaPayloadParser {
 public struct GeminiOAuthCredentials: Codable, Equatable, Sendable {
     public let accessToken: String?
     public let refreshToken: String?
+    public let expiresAt: Date?
 
-    public init(accessToken: String?, refreshToken: String?) {
+    public init(accessToken: String?, refreshToken: String?, expiresAt: Date? = nil) {
         self.accessToken = accessToken
         self.refreshToken = refreshToken
+        self.expiresAt = expiresAt
     }
 
     enum CodingKeys: String, CodingKey {
         case accessToken = "access_token"
         case refreshToken = "refresh_token"
+        case expiresAt = "expiry"
+    }
+}
+
+public struct AntigravityCredentialDecoder: Sendable {
+    private struct StoredCredential: Decodable {
+        let token: StoredToken
+    }
+
+    private struct StoredToken: Decodable {
+        let accessToken: String?
+        let refreshToken: String?
+        let expiresAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case accessToken = "access_token"
+            case refreshToken = "refresh_token"
+            case expiresAt = "expiry"
+        }
+    }
+
+    public init() {}
+
+    public func geminiOAuthCredentials(from data: Data) throws -> GeminiOAuthCredentials {
+        let payload = try decodedPayload(from: data)
+        let stored = try JSONDecoder.contextPanelISO8601.decode(StoredCredential.self, from: payload)
+        return GeminiOAuthCredentials(
+            accessToken: stored.token.accessToken,
+            refreshToken: stored.token.refreshToken,
+            expiresAt: stored.token.expiresAt
+        )
+    }
+
+    private func decodedPayload(from data: Data) throws -> Data {
+        let marker = Data("go-keyring-base64:".utf8)
+        if data.starts(with: marker) {
+            let encoded = data.dropFirst(marker.count)
+            guard let decoded = Data(base64Encoded: encoded) else {
+                throw ConnectorError.decodingFailure("Antigravity credential payload was not valid base64")
+            }
+            return decoded
+        }
+        return data
+    }
+}
+
+public enum GeminiOAuthCredentialDecoder {
+    public static func credentials(from data: Data) throws -> GeminiOAuthCredentials {
+        try JSONDecoder.contextPanelISO8601.decode(GeminiOAuthCredentials.self, from: data)
     }
 }
 
@@ -222,6 +273,37 @@ public struct GeminiAccountConfiguration: Equatable, Sendable {
         self.codeAssistEndpoint = codeAssistEndpoint
         self.clientID = clientID
         self.clientSecret = clientSecret
+    }
+}
+
+private extension GeminiAccountConfiguration {
+    var hasOAuthClientMetadata: Bool {
+        !clientID.isEmpty && !clientSecret.isEmpty
+    }
+}
+
+public struct AntigravityKeychainCredentialSource: Sendable {
+    public static let service = "gemini"
+    public static let accountID = "antigravity"
+
+    private let credentialLoader: any ProviderCredentialLoading
+    private let decoder: AntigravityCredentialDecoder
+
+    public init(
+        credentialLoader: any ProviderCredentialLoading = GenericPasswordCredentialLoader(service: Self.service),
+        decoder: AntigravityCredentialDecoder = AntigravityCredentialDecoder()
+    ) {
+        self.credentialLoader = credentialLoader
+        self.decoder = decoder
+    }
+
+    public func loadCredentials() throws -> GeminiOAuthCredentials? {
+        guard let data = try credentialLoader.load(accountID: Self.accountID) else { return nil }
+        return try decoder.geminiOAuthCredentials(from: data)
+    }
+
+    public func hasCredentials() -> Bool {
+        (try? loadCredentials()) != nil
     }
 }
 
@@ -499,6 +581,7 @@ public struct GeminiCodeAssistConnector: ProviderConnector {
     private let fileLoader: @Sendable (String) throws -> Data
     private let credentialStore: (any ProviderCredentialLoading)?
     private let credentialAccountID: String?
+    private let antigravityCredentialSource: AntigravityKeychainCredentialSource?
 
     public init(
         accounts: [GeminiAccountConfiguration],
@@ -507,13 +590,15 @@ public struct GeminiCodeAssistConnector: ProviderConnector {
             try Data(contentsOf: URL(fileURLWithPath: NSString(string: path).expandingTildeInPath))
         },
         credentialStore: (any ProviderCredentialLoading)? = nil,
-        credentialAccountID: String? = nil
+        credentialAccountID: String? = nil,
+        antigravityCredentialSource: AntigravityKeychainCredentialSource? = AntigravityKeychainCredentialSource()
     ) {
         self.accounts = accounts
         self.httpClient = httpClient
         self.fileLoader = fileLoader
         self.credentialStore = credentialStore
         self.credentialAccountID = credentialAccountID
+        self.antigravityCredentialSource = antigravityCredentialSource
     }
 
     public func refresh(now: Date) async -> ConnectorRefreshResult {
@@ -529,7 +614,7 @@ public struct GeminiCodeAssistConnector: ProviderConnector {
         let localAccountID = ConnectorRedactor.localAccountID(provider: provider, path: account.authPath)
 
         do {
-            let credentials = try JSONDecoder().decode(GeminiOAuthCredentials.self, from: try credentialData(for: account))
+            let credentials = try credentials(for: account)
             let accessToken = try await refreshedAccessToken(credentials: credentials, account: account)
             let loadResponse = try await loadCodeAssist(accessToken: accessToken, endpoint: account.codeAssistEndpoint)
             guard let project = loadResponse.cloudaicompanionProject, !project.isEmpty else {
@@ -577,7 +662,44 @@ public struct GeminiCodeAssistConnector: ProviderConnector {
         return try fileLoader(account.authPath)
     }
 
+    private func credentials(for account: GeminiAccountConfiguration) throws -> GeminiOAuthCredentials {
+        let localCredentialResult = Result { try credentialData(for: account) }
+        let localCredentials = localCredentialResult.successValue
+            .flatMap { try? GeminiOAuthCredentialDecoder.credentials(from: $0) }
+
+        if account.hasOAuthClientMetadata,
+           let localCredentials,
+           localCredentials.refreshToken?.isEmpty == false
+        {
+            return localCredentials
+        }
+        if let antigravityCredentialSource {
+            do {
+                if let credentials = try antigravityCredentialSource.loadCredentials(), credentials.hasUsableToken {
+                    return credentials
+                }
+            } catch {
+                throw ConnectorError.invalidAuth("Antigravity credential could not be read. Open Antigravity to refresh Google authentication, then refresh Context Panel again.")
+            }
+        }
+        if let localCredentials, localCredentials.refreshToken?.isEmpty == false {
+            return localCredentials
+        }
+        switch localCredentialResult {
+        case .success(let data):
+            return try GeminiOAuthCredentialDecoder.credentials(from: data)
+        case .failure(let error):
+            throw error
+        }
+    }
+
     private func refreshedAccessToken(credentials: GeminiOAuthCredentials, account: GeminiAccountConfiguration) async throws -> String {
+        if let accessToken = credentials.validAccessToken() {
+            return accessToken
+        }
+        guard !account.clientID.isEmpty, !account.clientSecret.isEmpty else {
+            throw ConnectorError.invalidAuth("Antigravity access token is expired. Open Antigravity to refresh Google authentication, then refresh Context Panel again.")
+        }
         guard let refreshToken = credentials.refreshToken, !refreshToken.isEmpty else {
             throw ConnectorError.invalidAuth("Gemini OAuth file does not contain a refresh token")
         }
@@ -843,6 +965,25 @@ private extension String {
     var nilIfBlank: String? {
         let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+private extension GeminiOAuthCredentials {
+    var hasUsableToken: Bool {
+        validAccessToken() != nil || refreshToken?.isEmpty == false
+    }
+
+    func validAccessToken(now: Date = Date()) -> String? {
+        guard let accessToken, !accessToken.isEmpty else { return nil }
+        guard let expiresAt else { return nil }
+        return expiresAt.timeIntervalSince(now) > 60 ? accessToken : nil
+    }
+}
+
+private extension Result {
+    var successValue: Success? {
+        guard case .success(let value) = self else { return nil }
+        return value
     }
 }
 

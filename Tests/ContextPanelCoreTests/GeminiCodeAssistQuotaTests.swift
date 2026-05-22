@@ -91,6 +91,41 @@ import Testing
     }
 }
 
+@Test func antigravityCredentialDecoderReadsGoKeyringPayload() throws {
+    let payload = #"{"auth_method":"consumer","token":{"access_token":"access-secret","refresh_token":"refresh-secret","token_type":"Bearer","expiry":"2099-05-22T17:00:00.000000000Z"}}"#
+    let stored = "go-keyring-base64:\(Data(payload.utf8).base64EncodedString())"
+
+    let credentials = try AntigravityCredentialDecoder().geminiOAuthCredentials(from: Data(stored.utf8))
+
+    #expect(credentials.accessToken == "access-secret")
+    #expect(credentials.refreshToken == "refresh-secret")
+    #expect(ContextPanelDateFormatting.string(from: try #require(credentials.expiresAt)) == "2099-05-22T17:00:00Z")
+}
+
+@Test func antigravityCredentialSourceLoadsGeminiCredentialsFromKeychainPayload() throws {
+    let payload = #"{"auth_method":"consumer","token":{"refresh_token":"refresh-secret"}}"#
+    let stored = "go-keyring-base64:\(Data(payload.utf8).base64EncodedString())"
+    let source = AntigravityKeychainCredentialSource(
+        credentialLoader: InMemoryProviderCredentialStore(storage: [
+            AntigravityKeychainCredentialSource.accountID: Data(stored.utf8),
+        ])
+    )
+
+    let credentials = try source.loadCredentials()
+
+    #expect(credentials?.refreshToken == "refresh-secret")
+}
+
+@Test func geminiOAuthCredentialDecoderAcceptsStringExpiryInLocalCredentials() throws {
+    let payload = #"{"access_token":"access-secret","refresh_token":"refresh-secret","expiry":"2099-05-22T17:00:00.000000000Z"}"#
+
+    let credentials = try GeminiOAuthCredentialDecoder.credentials(from: Data(payload.utf8))
+
+    #expect(credentials.accessToken == "access-secret")
+    #expect(credentials.refreshToken == "refresh-secret")
+    #expect(ContextPanelDateFormatting.string(from: try #require(credentials.expiresAt)) == "2099-05-22T17:00:00Z")
+}
+
 @Test func geminiConnectorSurfacesQuotaShapeDiagnostics() async throws {
     let credentials = #"{"refresh_token":"refresh-secret"}"#.data(using: .utf8)!
     let refresh = #"{"access_token":"access-secret"}"#.data(using: .utf8)!

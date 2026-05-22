@@ -59,9 +59,10 @@ MVP connectors:
 - `CodexRateLimitConnector`: reads Codex-style auth roots such as `~/.code` or
   `~/.codex`, calls the live Codex usage endpoint, and normalizes primary,
   secondary, and additional percent-window buckets.
-- `GeminiCodeAssistConnector`: reads Gemini CLI OAuth credentials, uses
-  explicitly supplied OAuth client inputs, resolves the active Code Assist
-  project internally, and normalizes model quota buckets as percent pressure.
+- `GeminiCodeAssistConnector`: reads Google coding-tool credentials from
+  Antigravity Keychain sign-in or Gemini CLI OAuth credentials, resolves the
+  active Code Assist project internally, and normalizes model quota buckets as
+  percent pressure.
 - `ClaudeLocalStatusConnector`: runs `claude auth status --json` and summarizes
   `~/.claude/stats-cache.json`; live personal subscription allowance remains
   unknown unless a clean provider signal appears.
@@ -113,9 +114,10 @@ intervals that cross resets.
 
 The MVP account configuration is also local JSON. It stores account labels,
 enabled/disabled state, connector kind, and local paths or command names needed
-to locate provider CLI auth. It does not store provider secrets. Gemini OAuth
-client inputs are referenced by environment variable names so the values can
-remain outside the repository and outside the account config file.
+to locate provider CLI auth. It does not store provider secrets. Google usage can
+use Antigravity's Keychain token when present; Gemini OAuth client inputs are
+referenced by environment variable names so the values can remain outside the
+repository and outside the account config file.
 
 Widget interactions should keep the widget simple. Tapping the widget should
 open the app to the relevant provider or account detail; mutation and setup stay
