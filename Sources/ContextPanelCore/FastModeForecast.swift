@@ -566,7 +566,7 @@ public struct FastModeCapacityPortfolioForecast: Codable, Equatable, Sendable {
         guard let bestForecast else { return "OpenAI account needed for fast-mode forecast" }
         let guardrail = forecasts.first { $0.window == .fiveHour }
         if bestForecast.window == .weekly, let guardrail, guardrail.recommendation == .saveFastMode || guardrail.recommendation == .limited {
-            return "\(bestForecast.runwayCopy) · 5h guardrail: \(guardrail.runwayCopy)"
+            return "\(bestForecast.burnRateCopy) · \(bestForecast.runwayCopy) · 5h guardrail: \(guardrail.runwayCopy)"
         }
         return "\(bestForecast.burnRateCopy) · \(bestForecast.runwayCopy)"
     }

@@ -77,6 +77,8 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
     public let provider: Provider
     public let window: MainLimitWindow
     public let limits: [UsageLimit]
+    public let generatedAt: Date
+    public let providerMainLimits: [UsageLimit]
 
     public var id: String {
         "\(provider.rawValue):\(window.rawValue)"
@@ -87,25 +89,25 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
     }
 
     public var capacityPool: CapacityPool {
-        CapacityPool(limits: numericLimits)
+        CapacityPool(limits: liveNumericLimits)
     }
 
     public var unit: UsageUnit? {
-        guard let firstUnit = numericLimits.first?.unit else { return nil }
-        guard numericLimits.allSatisfy({ $0.unit == firstUnit }) else { return nil }
+        guard let firstUnit = liveNumericLimits.first?.unit else { return nil }
+        guard liveNumericLimits.allSatisfy({ $0.unit == firstUnit }) else { return nil }
         return firstUnit
     }
 
     public var used: Int? {
         guard unit != nil else { return nil }
-        let numericLimits = limits.filter { $0.used != nil && $0.limit != nil }
+        let numericLimits = liveNumericLimits
         guard !numericLimits.isEmpty else { return nil }
         return numericLimits.reduce(0) { total, limit in total + (limit.used ?? 0) }
     }
 
     public var limit: Int? {
         guard unit != nil else { return nil }
-        let numericLimits = limits.filter { $0.used != nil && $0.limit != nil }
+        let numericLimits = liveNumericLimits
         guard !numericLimits.isEmpty else { return nil }
         return numericLimits.reduce(0) { total, limit in total + (limit.limit ?? 0) }
     }
@@ -149,7 +151,7 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
     }
 
     public var resetsAt: Date? {
-        nextReset(after: Date()) ?? firstKnownReset
+        nextReset(after: generatedAt) ?? firstKnownReset
     }
 
     public var firstKnownReset: Date? {
@@ -198,14 +200,43 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
         )
     }
 
-    public init(provider: Provider, window: MainLimitWindow, limits: [UsageLimit]) {
+    public init(
+        provider: Provider,
+        window: MainLimitWindow,
+        limits: [UsageLimit],
+        generatedAt: Date = Date(),
+        providerMainLimits: [UsageLimit]? = nil
+    ) {
         self.provider = provider
         self.window = window
         self.limits = limits
+        self.generatedAt = generatedAt
+        self.providerMainLimits = providerMainLimits ?? limits
     }
 
     private var numericLimits: [UsageLimit] {
         limits.filter { $0.used != nil && $0.limit != nil }
+    }
+
+    public var liveLimits: [UsageLimit] {
+        limits.filter { limit in
+            limit.isLiveCapacityBucket(at: generatedAt)
+                && !hasExhaustedLongerWindow(for: limit)
+        }
+    }
+
+    private var liveNumericLimits: [UsageLimit] {
+        liveLimits.filter { $0.used != nil && $0.limit != nil }
+    }
+
+    private func hasExhaustedLongerWindow(for limit: UsageLimit) -> Bool {
+        providerMainLimits.contains { candidate in
+            guard candidate.accountID == limit.accountID else { return false }
+            guard candidate.id != limit.id else { return false }
+            guard candidate.status == .limited else { return false }
+            guard let candidateWindow = candidate.mainLimitWindow else { return false }
+            return candidateWindow.capacityGateRank > window.capacityGateRank
+        }
     }
 }
 
@@ -227,7 +258,8 @@ public extension UsageLimit {
 
 public extension UsageSnapshot {
     var mainLimitSummaries: [MainLimitSummary] {
-        let grouped = Dictionary(grouping: limits) { limit in
+        let mainLimits = limits.filter { $0.mainLimitWindow != nil }
+        let grouped = Dictionary(grouping: mainLimits) { limit in
             limit.mainLimitWindow.map { "\(limit.provider.rawValue):\($0.rawValue)" } ?? ""
         }
 
@@ -238,7 +270,13 @@ public extension UsageSnapshot {
             else {
                 return nil
             }
-            return MainLimitSummary(provider: first.provider, window: window, limits: limits)
+            return MainLimitSummary(
+                provider: first.provider,
+                window: window,
+                limits: limits,
+                generatedAt: generatedAt,
+                providerMainLimits: mainLimits.filter { $0.provider == first.provider }
+            )
         }
         .sorted { lhs, rhs in
             if lhs.provider != rhs.provider {
@@ -259,6 +297,31 @@ public extension UsageSnapshot {
             }
             return lhs.window.sortRank < rhs.window.sortRank
         }
+    }
+}
+
+extension MainLimitWindow {
+    fileprivate var capacityGateRank: Int {
+        switch self {
+        case .fiveHour:
+            0
+        case .daily:
+            1
+        case .weekly:
+            2
+        }
+    }
+}
+
+public extension UsageLimit {
+    func isLiveCapacityBucket(at date: Date) -> Bool {
+        if status == .failure || status == .stale || status == .unknown {
+            return false
+        }
+        if let resetsAt, resetsAt <= date.addingTimeInterval(-60) {
+            return false
+        }
+        return true
     }
 }
 

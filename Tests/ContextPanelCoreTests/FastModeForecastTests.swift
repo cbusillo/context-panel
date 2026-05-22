@@ -650,6 +650,48 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(estimate.sampleCount == 8)
 }
 
+@Test func observedBurnRateIgnoresAccountsExhaustedByLongerWindow() throws {
+    let activeReset = now.addingTimeInterval(5 * 3_600)
+    let weeklyReset = now.addingTimeInterval(7 * 24 * 3_600)
+    let history = [
+        storedOpenAIFiveHourWithWeeklyGate(savedAt: now.addingTimeInterval(-2 * 3_600), activeUsed: 1, fullUsed: 10, activeWeeklyUsed: 20, fullWeeklyUsed: 100, activeReset: activeReset, weeklyReset: weeklyReset),
+        storedOpenAIFiveHourWithWeeklyGate(savedAt: now.addingTimeInterval(-1 * 3_600), activeUsed: 3, fullUsed: 30, activeWeeklyUsed: 21, fullWeeklyUsed: 100, activeReset: activeReset, weeklyReset: weeklyReset),
+        storedOpenAIFiveHourWithWeeklyGate(savedAt: now, activeUsed: 5, fullUsed: 60, activeWeeklyUsed: 22, fullWeeklyUsed: 100, activeReset: activeReset, weeklyReset: weeklyReset),
+    ]
+    let current = try #require(history.last?.snapshot)
+
+    let estimates = MainLimitBurnRateEstimator.observedBurnRates(current: current, history: history, now: now)
+    let estimate = try #require(estimates["openai:fiveHour"])
+
+    #expect(abs(estimate.unitsPerHour - 2) < 0.0001)
+    #expect(estimate.sampleCount == 3)
+}
+
+@Test func capacityPortfolioDetailKeepsBurnRateWhenFiveHourGuardrailConstrainWeekly() throws {
+    let weekly = FastModeCapacityForecast(
+        limitID: "openai:weekly",
+        accountName: "OpenAI Weekly pool",
+        providerLimits: [openAILimit(accountName: "Personal", used: 94, limit: 100, resetsInHours: 96, windowLabel: "Weekly")],
+        now: now,
+        standardBurnRate: BurnRate(mode: .standard, unitsPerHour: 2),
+        fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 3),
+        reserveUnits: 6
+    )
+    let fiveHour = FastModeCapacityForecast(
+        limitID: "openai:fiveHour",
+        accountName: "OpenAI 5-hour pool",
+        providerLimits: [openAILimit(accountName: "Personal", used: 98, limit: 100, resetsInHours: 4, windowLabel: "5-hour")],
+        now: now,
+        standardBurnRate: BurnRate(mode: .standard, unitsPerHour: 2),
+        fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 3),
+        reserveUnits: 6
+    )
+    let portfolio = FastModeCapacityPortfolioForecast(forecasts: [weekly, fiveHour])
+
+    #expect(portfolio.detailCopy.contains("2%/h observed"))
+    #expect(portfolio.detailCopy.contains("5h guardrail:"))
+}
+
 @Test func observedBurnRateAllowsConsistentlyUnknownResets() throws {
     let reset = now.addingTimeInterval(96 * 3_600)
     let history = [
@@ -663,6 +705,77 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     let estimate = try #require(estimates["openai:weekly"])
 
     #expect(abs(estimate.unitsPerHour - 1) < 0.0001)
+}
+
+private func storedOpenAIFiveHourWithWeeklyGate(
+    savedAt: Date,
+    activeUsed: Int,
+    fullUsed: Int,
+    activeWeeklyUsed: Int,
+    fullWeeklyUsed: Int,
+    activeReset: Date,
+    weeklyReset: Date
+) -> StoredUsageSnapshot {
+    StoredUsageSnapshot(
+        savedAt: savedAt,
+        snapshot: UsageSnapshot(
+            generatedAt: savedAt,
+            limits: [
+                UsageLimit(
+                    provider: .openAI,
+                    accountID: "openai-active",
+                    accountName: "Active",
+                    label: "OpenAI 5-hour",
+                    windowLabel: "5-hour",
+                    unit: .percent,
+                    used: activeUsed,
+                    limit: 100,
+                    resetsAt: activeReset,
+                    lastUpdatedAt: savedAt,
+                    confidence: .observed
+                ),
+                UsageLimit(
+                    provider: .openAI,
+                    accountID: "openai-full",
+                    accountName: "Full",
+                    label: "OpenAI 5-hour",
+                    windowLabel: "5-hour",
+                    unit: .percent,
+                    used: fullUsed,
+                    limit: 100,
+                    resetsAt: activeReset,
+                    lastUpdatedAt: savedAt,
+                    confidence: .observed
+                ),
+                UsageLimit(
+                    provider: .openAI,
+                    accountID: "openai-active",
+                    accountName: "Active",
+                    label: "OpenAI Weekly",
+                    windowLabel: "Weekly",
+                    unit: .percent,
+                    used: activeWeeklyUsed,
+                    limit: 100,
+                    resetsAt: weeklyReset,
+                    lastUpdatedAt: savedAt,
+                    confidence: .observed
+                ),
+                UsageLimit(
+                    provider: .openAI,
+                    accountID: "openai-full",
+                    accountName: "Full",
+                    label: "OpenAI Weekly",
+                    windowLabel: "Weekly",
+                    unit: .percent,
+                    used: fullWeeklyUsed,
+                    limit: 100,
+                    resetsAt: weeklyReset,
+                    lastUpdatedAt: savedAt,
+                    confidence: .observed
+                ),
+            ]
+        )
+    )
 }
 
 @Test func observedBurnRateSkipsIntervalsThatCrossResets() throws {
