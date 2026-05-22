@@ -609,7 +609,7 @@ public extension Sequence where Element == MainLimitSummary {
             return FastModeCapacityForecast(
                 limitID: summary.id,
                 accountName: "\(summary.provider.displayName) \(summary.window.displayName) pool",
-                providerLimits: summary.limits,
+                providerLimits: summary.liveLimits,
                 now: now,
                 standardBurnRate: standardRate.map { BurnRate(mode: .standard, unitsPerHour: $0) },
                 fastBurnRate: standardRate.map { BurnRate(mode: .fast, unitsPerHour: $0 * fastModeMultiplier) },

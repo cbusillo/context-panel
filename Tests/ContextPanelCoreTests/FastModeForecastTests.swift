@@ -692,6 +692,47 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(portfolio.detailCopy.contains("5h guardrail:"))
 }
 
+@Test func openAIFastModeForecastIgnoresFiveHourBucketsBlockedByWeeklyLimit() throws {
+    let activeReset = now.addingTimeInterval(5 * 3_600)
+    let weeklyReset = now.addingTimeInterval(7 * 24 * 3_600)
+    let current = storedOpenAIFiveHourWithWeeklyGate(
+        savedAt: now,
+        activeUsed: 100,
+        fullUsed: 10,
+        activeWeeklyUsed: 20,
+        fullWeeklyUsed: 100,
+        activeReset: activeReset,
+        weeklyReset: weeklyReset
+    ).snapshot
+
+    let portfolio = current.mainLimitSummaries.openAIFastModeCapacityForecast(
+        now: now,
+        observedBurnRates: [
+            "openai:fiveHour": ObservedBurnRate(
+                limitID: "openai:fiveHour",
+                unitsPerHour: 2,
+                observedDurationHours: 2,
+                sampleCount: 3
+            ),
+            "openai:weekly": ObservedBurnRate(
+                limitID: "openai:weekly",
+                unitsPerHour: 2,
+                observedDurationHours: 2,
+                sampleCount: 3
+            ),
+        ],
+        defaultStandardBurnRateUnitsPerHour: 2,
+        fastModeMultiplier: 1,
+        reserveUnits: 6,
+        minimumSafeHours: 1
+    )
+    let fiveHour = try #require(portfolio.forecasts.first { $0.window == .fiveHour })
+
+    #expect(fiveHour.remainingUnits == 0)
+    #expect(fiveHour.recommendation == .limited)
+    #expect(portfolio.detailCopy.contains("5h guardrail:"))
+}
+
 @Test func observedBurnRateAllowsConsistentlyUnknownResets() throws {
     let reset = now.addingTimeInterval(96 * 3_600)
     let history = [
