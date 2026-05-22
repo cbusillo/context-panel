@@ -39,7 +39,9 @@ window, such as OpenAI weekly, Anthropic 5-hour, or Google daily. Inside a
 summary, compatible account buckets are pooled for used, total, remaining, and
 status math so one exhausted interchangeable account does not become the whole
 provider headline. The original account rows remain available for detail views.
-Summaries also expose a `CapacityPool` for reset-aware runway calculations and
+Live capacity math excludes failed, stale, unknown, expired, or shorter-window
+buckets blocked by an exhausted longer window on the same account. Summaries
+also expose a `CapacityPool` for reset-aware runway calculations and
 sample-relative reset helpers for history analysis.
 
 `WidgetSnapshot` is the compact projection of a stored snapshot plus history.
@@ -107,8 +109,8 @@ and most-constrained row selection so the widget view stays read-only and small.
 OpenAI fast-mode guidance is built from the same `MainLimitSummary` values used
 elsewhere. Weekly capacity is treated as the primary pool and shorter windows,
 such as 5-hour limits, are guardrails rather than replacement headlines. Burn
-rates are estimated from snapshot history when enough samples exist and skip
-intervals that cross resets.
+rates are estimated from live snapshot-history buckets when enough samples exist
+and skip intervals that cross resets.
 
 ## Account Configuration
 

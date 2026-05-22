@@ -250,6 +250,121 @@ import Testing
     #expect(summary.status == .healthy)
 }
 
+@Test func mainLimitSummariesExcludeAccountsExhaustedByLongerOpenAIWindow() throws {
+    let generatedAt = Date(timeIntervalSinceReferenceDate: 900_000_000)
+    let snapshot = UsageSnapshot(
+        generatedAt: generatedAt,
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "full",
+                accountName: "Full weekly",
+                label: "Codex 5-hour",
+                windowLabel: "5-hour",
+                modelLabel: "Codex",
+                unit: .percent,
+                used: 60,
+                limit: 100,
+                resetsAt: generatedAt.addingTimeInterval(3 * 3_600),
+                confidence: .observed
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "full",
+                accountName: "Full weekly",
+                label: "Codex Weekly",
+                windowLabel: "Weekly",
+                modelLabel: "Codex",
+                unit: .percent,
+                used: 100,
+                limit: 100,
+                resetsAt: generatedAt.addingTimeInterval(4 * 24 * 3_600),
+                confidence: .observed
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "available",
+                accountName: "Available weekly",
+                label: "Codex 5-hour",
+                windowLabel: "5-hour",
+                modelLabel: "Codex",
+                unit: .percent,
+                used: 5,
+                limit: 100,
+                resetsAt: generatedAt.addingTimeInterval(2 * 3_600),
+                confidence: .observed
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "available",
+                accountName: "Available weekly",
+                label: "Codex Weekly",
+                windowLabel: "Weekly",
+                modelLabel: "Codex",
+                unit: .percent,
+                used: 22,
+                limit: 100,
+                resetsAt: generatedAt.addingTimeInterval(7 * 24 * 3_600),
+                confidence: .observed
+            ),
+        ]
+    )
+
+    let summaries = Dictionary(uniqueKeysWithValues: snapshot.mainLimitSummaries.map { ($0.id, $0) })
+    let fiveHour = try #require(summaries["openai:fiveHour"])
+    let weekly = try #require(summaries["openai:weekly"])
+
+    #expect(fiveHour.accountCount == 2)
+    #expect(fiveHour.liveLimits.map(\.accountName) == ["Available weekly"])
+    #expect(fiveHour.used == 5)
+    #expect(fiveHour.limit == 100)
+    #expect(fiveHour.remaining == 95)
+    #expect(fiveHour.usageRatio == 0.05)
+    #expect(weekly.liveLimits.map(\.accountName) == ["Full weekly", "Available weekly"])
+    #expect(weekly.used == 122)
+    #expect(weekly.limit == 200)
+}
+
+@Test func mainLimitSummariesExcludeExpiredBucketsFromLiveCapacity() throws {
+    let generatedAt = Date(timeIntervalSinceReferenceDate: 900_000_000)
+    let snapshot = UsageSnapshot(
+        generatedAt: generatedAt,
+        limits: [
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "claude",
+                accountName: "Claude",
+                label: "Claude 5-hour",
+                windowLabel: "5-hour",
+                unit: .percent,
+                used: 90,
+                limit: 100,
+                resetsAt: generatedAt.addingTimeInterval(-2 * 3_600),
+                confidence: .observed
+            ),
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "claude",
+                accountName: "Claude",
+                label: "Claude 5-hour fresh",
+                windowLabel: "5-hour",
+                unit: .percent,
+                used: 2,
+                limit: 100,
+                resetsAt: generatedAt.addingTimeInterval(2 * 3_600),
+                confidence: .observed
+            ),
+        ]
+    )
+
+    let summary = try #require(snapshot.mainLimitSummaries.first)
+
+    #expect(summary.liveLimits.map(\.label) == ["Claude 5-hour fresh"])
+    #expect(summary.used == 2)
+    #expect(summary.limit == 100)
+    #expect(summary.remaining == 98)
+}
+
 @Test func mainLimitSummaryExposesDeterministicPoolResetHelpers() throws {
     let reference = Date(timeIntervalSinceReferenceDate: 900_000_000)
     let soonerReset = reference.addingTimeInterval(2 * 3_600)

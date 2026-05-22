@@ -68,7 +68,7 @@ public enum MainLimitBurnRateEstimator {
                     return []
                 }
 
-                return summary.limits.compactMap { limit -> BurnSample? in
+                return summary.liveLimits.compactMap { limit -> BurnSample? in
                     guard let used = limit.used, let total = limit.limit else { return nil }
                     return BurnSample(
                         bucketID: limit.id,

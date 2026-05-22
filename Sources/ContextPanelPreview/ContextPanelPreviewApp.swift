@@ -1823,15 +1823,17 @@ struct MainLimitDetail: View {
         }
         if summary.provider == .openAI, limit.unit == .percent {
             let settings = model.fastModeForecastSettings
+            let standardBurnRate = model.observedBurnRates[summary.id]?.unitsPerHour
+                ?? settings.defaultStandardBurnRateUnitsPerHour
             return FastModeCapacityForecast(
                 limitID: summary.id,
                 accountName: limit.accountName,
                 providerLimits: summary.limits,
                 now: Date(),
-                standardBurnRate: settings.defaultStandardBurnRateUnitsPerHour.map {
+                standardBurnRate: standardBurnRate.map {
                     BurnRate(mode: .standard, unitsPerHour: $0)
                 },
-                fastBurnRate: settings.defaultStandardBurnRateUnitsPerHour.map {
+                fastBurnRate: standardBurnRate.map {
                     BurnRate(mode: .fast, unitsPerHour: $0 * settings.fastModeMultiplier)
                 },
                 reserveUnits: settings.reserveUnits,
@@ -2019,7 +2021,18 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     var fastModeForecast: FastModeCapacityPortfolioForecast {
-        currentSnapshot.fastModeForecast(settings: fastModeForecastSettings)
+        currentSnapshot.mainLimitSummaries.openAIFastModeCapacityForecast(
+            observedBurnRates: observedBurnRates,
+            settings: fastModeForecastSettings
+        )
+    }
+
+    var observedBurnRates: [String: ObservedBurnRate] {
+        MainLimitBurnRateEstimator.observedBurnRates(
+            current: currentSnapshot,
+            history: refreshService.loadHistory(),
+            now: Date()
+        )
     }
 
     var lastRefreshText: String {
