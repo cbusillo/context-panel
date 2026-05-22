@@ -39,12 +39,96 @@ import Testing
     #expect(limit.confidence == .observed)
 }
 
-@Test func geminiQuotaPayloadParserHandlesMissingBuckets() throws {
-    let json = #"{"notBuckets": true}"#
+@Test func geminiQuotaPayloadParserPreservesMultipleWindowsAndBucketLabels() throws {
+    let json = #"""
+    {
+      "quotaBuckets": [
+        {
+          "modelId": "gemini-3-pro",
+          "bucketLabel": "Gemini Apps compute 5-hour",
+          "remainingFraction": 0.6,
+          "resetTime": "2026-05-22T18:00:00Z"
+        },
+        {
+          "modelId": "gemini-3-pro",
+          "bucketLabel": "Gemini Apps compute weekly",
+          "remainingFraction": 0.2,
+          "resetTime": "2026-05-29T13:00:00Z"
+        },
+        {
+          "modelId": "gemini-3-flash",
+          "bucketLabel": "experimental-compute-pool",
+          "usagePercent": 12,
+          "resetTime": "2026-05-23T13:00:00Z"
+        }
+      ]
+    }
+    """#
 
     let buckets = try GeminiQuotaPayloadParser.buckets(from: Data(json.utf8))
+    let observedAt = ContextPanelDateFormatting.date(from: "2026-05-22T13:00:00Z")!
+    let limits = buckets.map {
+        $0.usageLimit(accountID: "local", accountName: "Gemini", observedAt: observedAt)
+    }
 
-    #expect(buckets.isEmpty)
+    #expect(limits.count == 3)
+    #expect(Set(limits.map(\.id)).count == 3)
+    #expect(limits.map(\.label) == [
+        "Gemini Apps compute 5-hour",
+        "Gemini Apps compute weekly",
+        "experimental-compute-pool",
+    ])
+    #expect(limits.map(\.windowLabel) == ["5-hour", "Weekly", "Daily"])
+    #expect(limits.map(\.modelLabel) == ["gemini-3-pro", "gemini-3-pro", "gemini-3-flash"])
+    #expect(limits.map(\.used) == [40, 80, 12])
+}
+
+@Test func geminiQuotaPayloadParserReportsMissingBuckets() throws {
+    let json = #"{"notBuckets": true}"#
+
+    #expect(throws: ConnectorError.self) {
+        try GeminiQuotaPayloadParser.buckets(from: Data(json.utf8))
+    }
+}
+
+@Test func geminiConnectorSurfacesQuotaShapeDiagnostics() async throws {
+    let credentials = #"{"refresh_token":"refresh-secret"}"#.data(using: .utf8)!
+    let refresh = #"{"access_token":"access-secret"}"#.data(using: .utf8)!
+    let load = #"{"cloudaicompanionProject":"project-secret"}"#.data(using: .utf8)!
+    let quota = #"{"buckets":[{"modelId":"gemini-3-pro"}]}"#.data(using: .utf8)!
+    let http = GeminiQuotaStubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: refresh),
+        ConnectorHTTPResponse(statusCode: 200, data: load),
+        ConnectorHTTPResponse(statusCode: 200, data: quota),
+    ])
+    let connector = GeminiCodeAssistConnector(
+        accounts: [GeminiAccountConfiguration(authPath: "/tmp/gemini.json", accountName: "Gemini", clientID: "client", clientSecret: "secret")],
+        httpClient: http,
+        fileLoader: { _ in credentials }
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].status == UsageStatus.failure)
+    #expect(result.reports[0].errorMessage?.contains("Gemini Code Assist quota payload shape changed") == true)
+    #expect(result.reports[0].errorMessage?.contains("raw body redacted") == true)
+    #expect(result.snapshot.limits.isEmpty)
+}
+
+private final class GeminiQuotaStubHTTPClient: ConnectorHTTPClient, @unchecked Sendable {
+    private var responses: [ConnectorHTTPResponse]
+
+    init(responses: [ConnectorHTTPResponse]) {
+        self.responses = responses
+    }
+
+    func data(for request: ConnectorHTTPRequest) async throws -> ConnectorHTTPResponse {
+        guard !responses.isEmpty else {
+            throw ConnectorError.nonHTTPResponse("missing stub response")
+        }
+        return responses.removeFirst()
+    }
 }
 
 @Test func geminiOAuthClientMetadataDiscoveryParsesInstalledCLIBundleShape() {

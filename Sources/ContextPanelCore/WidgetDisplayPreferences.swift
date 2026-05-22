@@ -30,9 +30,20 @@ public struct WidgetDisplayPreferences: Codable, Equatable, Sendable {
     public let schemaVersion: Int
     public var mainLimits: [WidgetMainLimitPreference]
 
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case mainLimits
+    }
+
     public init(mainLimits: [WidgetMainLimitPreference]) {
         schemaVersion = 1
         self.mainLimits = Self.normalized(mainLimits)
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        mainLimits = Self.normalized(try container.decode([WidgetMainLimitPreference].self, forKey: .mainLimits))
     }
 
     public static var defaultPreferences: WidgetDisplayPreferences {
@@ -108,8 +119,23 @@ public struct WidgetDisplayPreferences: Codable, Equatable, Sendable {
     }
 
     private static func normalized(_ preferences: [WidgetMainLimitPreference]) -> [WidgetMainLimitPreference] {
-        let merged = Dictionary(grouping: preferences + defaultMainLimits) { $0.id }
-            .compactMap { _, values in values.first }
+        var merged: [WidgetMainLimitPreference] = []
+        var seen = Set<String>()
+
+        for preference in preferences where seen.insert(preference.id).inserted {
+            merged.append(preference)
+        }
+
+        var nextSortOrder = (merged.map(\.sortOrder).max() ?? -1) + 1
+        for defaultPreference in defaultMainLimits where seen.insert(defaultPreference.id).inserted {
+            merged.append(WidgetMainLimitPreference(
+                provider: defaultPreference.provider,
+                window: defaultPreference.window,
+                isVisible: defaultPreference.isVisible,
+                sortOrder: nextSortOrder
+            ))
+            nextSortOrder += 1
+        }
 
         return renumbered(merged.sorted {
             if $0.sortOrder != $1.sortOrder {
@@ -135,8 +161,10 @@ public struct WidgetDisplayPreferences: Codable, Equatable, Sendable {
             WidgetMainLimitPreference(provider: .openAI, window: .weekly, isVisible: true, sortOrder: 0),
             WidgetMainLimitPreference(provider: .anthropic, window: .weekly, isVisible: true, sortOrder: 1),
             WidgetMainLimitPreference(provider: .anthropic, window: .fiveHour, isVisible: true, sortOrder: 2),
-            WidgetMainLimitPreference(provider: .google, window: .daily, isVisible: true, sortOrder: 3),
-            WidgetMainLimitPreference(provider: .openAI, window: .fiveHour, isVisible: false, sortOrder: 4),
+            WidgetMainLimitPreference(provider: .google, window: .weekly, isVisible: true, sortOrder: 3),
+            WidgetMainLimitPreference(provider: .google, window: .fiveHour, isVisible: true, sortOrder: 4),
+            WidgetMainLimitPreference(provider: .google, window: .daily, isVisible: true, sortOrder: 5),
+            WidgetMainLimitPreference(provider: .openAI, window: .fiveHour, isVisible: false, sortOrder: 6),
         ]
     }
 }
@@ -252,6 +280,12 @@ public extension MainLimitSummary {
         }
         if provider == .anthropic, window == .fiveHour {
             return 60
+        }
+        if provider == .google, window == .weekly {
+            return 58
+        }
+        if provider == .google, window == .fiveHour {
+            return 55
         }
         if provider == .google, window == .daily {
             return 50

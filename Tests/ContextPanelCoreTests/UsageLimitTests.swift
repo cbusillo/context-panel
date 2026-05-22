@@ -170,12 +170,40 @@ import Testing
                 used: 12,
                 limit: 100
             ),
+            UsageLimit(
+                provider: .google,
+                accountID: "gemini",
+                accountName: "Gemini",
+                label: "Gemini compute weekly",
+                windowLabel: "Weekly",
+                modelLabel: "Gemini Apps",
+                unit: .percent,
+                used: 42,
+                limit: 100
+            ),
+            UsageLimit(
+                provider: .google,
+                accountID: "gemini",
+                accountName: "Gemini",
+                label: "Gemini compute 5-hour",
+                windowLabel: "5-hour",
+                modelLabel: "Gemini Apps",
+                unit: .percent,
+                used: 9,
+                limit: 100
+            ),
         ]
     )
 
     let summaries = snapshot.mainLimitSummaries
 
-    #expect(summaries.map(\.id) == ["openai:fiveHour", "anthropic:weekly", "google:daily"])
+    #expect(summaries.map(\.id) == [
+        "openai:fiveHour",
+        "anthropic:weekly",
+        "google:fiveHour",
+        "google:weekly",
+        "google:daily",
+    ])
     #expect(summaries[0].accountCount == 2)
     #expect(summaries[0].primaryLimit?.accountName == "Work")
     #expect(summaries[0].used == 105)
@@ -321,7 +349,7 @@ import Testing
     )
 
     var preferences = WidgetDisplayPreferences.defaultPreferences
-    preferences.moveMainLimits(fromOffsets: IndexSet(integer: 3), toOffset: 0)
+    preferences.moveMainLimits(fromOffsets: IndexSet(integer: 5), toOffset: 0)
 
     #expect(preferences.visibleMainLimitSummaries(from: snapshot.mainLimitSummaries, maximumCount: 3).map(\.id) == [
         "google:daily",
@@ -386,17 +414,116 @@ import Testing
     var preferences = WidgetDisplayPreferences.defaultPreferences
     preferences.setMainLimit(provider: .openAI, window: .fiveHour, isVisible: true)
 
-    let lanes = preferences.visibleMainLimitLanes(from: snapshot.mainLimitSummaries, maximumCount: 5)
+    let lanes = preferences.visibleMainLimitLanes(from: snapshot.mainLimitSummaries, maximumCount: 7)
 
     #expect(lanes.map(\.id) == [
         "openai:weekly",
         "anthropic:weekly",
         "anthropic:fiveHour",
+        "google:weekly",
+        "google:fiveHour",
         "google:daily",
         "openai:fiveHour",
     ])
     #expect(lanes[1].summary == nil)
     #expect(lanes[2].summary?.id == "anthropic:fiveHour")
+    #expect(lanes[3].summary == nil)
+    #expect(lanes[4].summary == nil)
+    #expect(lanes[5].summary?.id == "google:daily")
+}
+
+@Test func widgetDisplayPreferencesShowsGeminiWeeklyAndFiveHourLanesByDefault() {
+    let snapshot = UsageSnapshot(
+        generatedAt: Date(),
+        limits: [
+            UsageLimit(
+                provider: .google,
+                accountID: "google",
+                accountName: "Google",
+                label: "Gemini compute weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 65,
+                limit: 100
+            ),
+            UsageLimit(
+                provider: .google,
+                accountID: "google",
+                accountName: "Google",
+                label: "Gemini compute 5-hour",
+                windowLabel: "5-hour",
+                unit: .percent,
+                used: 15,
+                limit: 100
+            ),
+        ]
+    )
+
+    let lanes = WidgetDisplayPreferences.defaultPreferences.visibleMainLimitLanes(
+        from: snapshot.mainLimitSummaries,
+        maximumCount: 6
+    )
+
+    #expect(snapshot.mainLimitSummaries.map(\.id) == ["google:fiveHour", "google:weekly"])
+    #expect(lanes.map(\.id) == [
+        "openai:weekly",
+        "anthropic:weekly",
+        "anthropic:fiveHour",
+        "google:weekly",
+        "google:fiveHour",
+        "google:daily",
+    ])
+    #expect(lanes[3].summary?.id == "google:weekly")
+    #expect(lanes[4].summary?.id == "google:fiveHour")
+}
+
+@Test func widgetDisplayPreferencesMigratesSavedDefaultsToIncludeGeminiWindows() {
+    let preferences = WidgetDisplayPreferences(mainLimits: [
+        WidgetMainLimitPreference(provider: .openAI, window: .weekly, isVisible: true, sortOrder: 0),
+        WidgetMainLimitPreference(provider: .openAI, window: .fiveHour, isVisible: true, sortOrder: 1),
+        WidgetMainLimitPreference(provider: .anthropic, window: .weekly, isVisible: true, sortOrder: 2),
+        WidgetMainLimitPreference(provider: .anthropic, window: .fiveHour, isVisible: true, sortOrder: 3),
+        WidgetMainLimitPreference(provider: .google, window: .daily, isVisible: true, sortOrder: 4),
+    ])
+
+    #expect(preferences.mainLimits.map(\.id) == [
+        "openai:weekly",
+        "openai:fiveHour",
+        "anthropic:weekly",
+        "anthropic:fiveHour",
+        "google:daily",
+        "google:weekly",
+        "google:fiveHour",
+    ])
+    #expect(preferences.preference(for: MainLimitSummary(provider: .google, window: .weekly, limits: []))?.isVisible == true)
+    #expect(preferences.preference(for: MainLimitSummary(provider: .google, window: .fiveHour, limits: []))?.isVisible == true)
+}
+
+@Test func widgetDisplayPreferencesStoreMigratesSavedDefaultsToIncludeGeminiWindows() throws {
+    let json = #"""
+    {
+      "schemaVersion" : 1,
+      "mainLimits" : [
+        { "provider" : "openai", "window" : "weekly", "isVisible" : true, "sortOrder" : 0 },
+        { "provider" : "openai", "window" : "fiveHour", "isVisible" : true, "sortOrder" : 1 },
+        { "provider" : "anthropic", "window" : "weekly", "isVisible" : true, "sortOrder" : 2 },
+        { "provider" : "anthropic", "window" : "fiveHour", "isVisible" : true, "sortOrder" : 3 },
+        { "provider" : "google", "window" : "daily", "isVisible" : true, "sortOrder" : 4 }
+      ]
+    }
+    """#.data(using: .utf8)!
+
+    let preferences = try JSONDecoder().decode(WidgetDisplayPreferences.self, from: json)
+
+    #expect(preferences.mainLimits.map(\.id) == [
+        "openai:weekly",
+        "openai:fiveHour",
+        "anthropic:weekly",
+        "anthropic:fiveHour",
+        "google:daily",
+        "google:weekly",
+        "google:fiveHour",
+    ])
 }
 
 @Test func widgetDisplayPreferencesStoreRoundTripsReorderedLimits() throws {
@@ -408,7 +535,7 @@ import Testing
         preferencesURL: directory.appending(path: "widget-display-preferences.json")
     )
     var preferences = WidgetDisplayPreferences.defaultPreferences
-    preferences.moveMainLimits(fromOffsets: IndexSet(integer: 3), toOffset: 0)
+    preferences.moveMainLimits(fromOffsets: IndexSet(integer: 5), toOffset: 0)
     preferences.setMainLimit(provider: .anthropic, window: .weekly, isVisible: false)
 
     try store.save(preferences)

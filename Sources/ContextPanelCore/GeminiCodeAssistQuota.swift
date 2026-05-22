@@ -3,13 +3,29 @@ import Foundation
 public struct GeminiQuotaBucket: Codable, Equatable, Identifiable, Sendable {
     public let id: String
     public let modelID: String
+    public let bucketLabel: String?
+    public let windowLabel: String?
     public let remainingFraction: Double?
     public let remainingAmount: Int?
     public let resetsAt: Date?
 
-    public init(modelID: String, remainingFraction: Double?, remainingAmount: Int?, resetsAt: Date?) {
-        self.id = modelID
+    public init(
+        id: String? = nil,
+        modelID: String,
+        bucketLabel: String? = nil,
+        windowLabel: String? = nil,
+        remainingFraction: Double?,
+        remainingAmount: Int?,
+        resetsAt: Date?
+    ) {
+        self.id = id ?? Self.identity(
+            modelID: modelID,
+            bucketLabel: bucketLabel,
+            windowLabel: windowLabel
+        )
         self.modelID = modelID
+        self.bucketLabel = bucketLabel?.nilIfBlank
+        self.windowLabel = windowLabel?.nilIfBlank
         self.remainingFraction = remainingFraction.map { max(0, min($0, 1)) }
         self.remainingAmount = remainingAmount
         self.resetsAt = resetsAt
@@ -20,12 +36,23 @@ public struct GeminiQuotaBucket: Codable, Equatable, Identifiable, Sendable {
     }
 
     public func usageLimit(accountID: String, accountName: String, observedAt: Date) -> UsageLimit {
-        UsageLimit(
+        let inferredWindowLabel = resetWindowLabel(observedAt: observedAt)
+        let label = bucketLabel?.nilIfBlank ?? modelID
+        var notes: [String] = []
+        if let bucketLabel, bucketLabel != label, bucketLabel != modelID {
+            notes.append("quota bucket: \(bucketLabel)")
+        }
+        if let remainingAmount {
+            notes.append("remaining amount: \(remainingAmount)")
+        }
+
+        return UsageLimit(
+            id: "google:\(accountID):\(limitIdentity(label: label, inferredWindowLabel: inferredWindowLabel))",
             provider: .google,
             accountID: accountID,
             accountName: accountName,
-            label: modelID,
-            windowLabel: resetWindowLabel,
+            label: label,
+            windowLabel: inferredWindowLabel,
             modelLabel: modelID,
             unit: .percent,
             used: usedPercent.map { Int($0.rounded()) },
@@ -33,13 +60,20 @@ public struct GeminiQuotaBucket: Codable, Equatable, Identifiable, Sendable {
             resetsAt: resetsAt,
             lastUpdatedAt: observedAt,
             confidence: .observed,
-            note: remainingAmount.map { "remaining amount: \($0)" }
+            statusOverride: usedPercent == nil ? .unknown : nil,
+            note: notes.isEmpty ? nil : notes.joined(separator: "; ")
         )
     }
 
-    private var resetWindowLabel: String? {
+    private func resetWindowLabel(observedAt: Date) -> String? {
+        if let normalized = Self.normalizedWindowLabel(from: windowLabel) {
+            return normalized
+        }
+        if let normalized = Self.normalizedWindowLabel(from: bucketLabel) {
+            return normalized
+        }
         guard let resetsAt else { return nil }
-        let seconds = Int(resetsAt.timeIntervalSince(Date()))
+        let seconds = Int(resetsAt.timeIntervalSince(observedAt))
         if seconds <= 0 { return nil }
         let hours = max(Int((Double(seconds) / 3_600).rounded()), 1)
         if hours <= 2 { return "Hourly" }
@@ -49,12 +83,87 @@ public struct GeminiQuotaBucket: Codable, Equatable, Identifiable, Sendable {
         if hours <= 180 { return "Weekly" }
         return nil
     }
+
+    private static func identity(
+        modelID: String,
+        bucketLabel: String?,
+        windowLabel: String?
+    ) -> String {
+        let parts = [
+            modelID,
+            bucketLabel?.nilIfBlank,
+            normalizedWindowLabel(from: windowLabel),
+        ].compactMap { $0?.nilIfBlank }
+        return parts.joined(separator: ":")
+    }
+
+    private func limitIdentity(label: String, inferredWindowLabel: String?) -> String {
+        [id.nilIfBlank, label.nilIfBlank, inferredWindowLabel?.nilIfBlank]
+            .compactMap { $0 }
+            .joined(separator: ":")
+    }
+
+    private static func normalizedWindowLabel(from value: String?) -> String? {
+        guard let value = value?.nilIfBlank else { return nil }
+        let searchable = value.lowercased().replacingOccurrences(of: "_", with: "-")
+        if searchable.contains("5-hour")
+            || searchable.contains("5 hour")
+            || searchable.contains("five-hour")
+            || searchable.contains("five hour")
+        {
+            return "5-hour"
+        }
+        if searchable.contains("weekly")
+            || searchable.contains("week")
+            || searchable.contains("7-day")
+            || searchable.contains("7 day")
+            || searchable.contains("seven-day")
+            || searchable.contains("seven day")
+        {
+            return "Weekly"
+        }
+        if searchable.contains("daily")
+            || searchable.contains("per-day")
+            || searchable.contains("per day")
+            || searchable.contains("1-day")
+            || searchable.contains("1 day")
+        {
+            return "Daily"
+        }
+        return nil
+    }
 }
 
 public enum GeminiQuotaPayloadParser {
     public static func buckets(from data: Data) throws -> [GeminiQuotaBucket] {
-        let payload = try JSONDecoder.contextPanelISO8601.decode(GeminiQuotaPayload.self, from: data)
-        return payload.buckets.map(\.normalizedBucket)
+        do {
+            let payload = try JSONDecoder.contextPanelISO8601.decode(GeminiQuotaPayload.self, from: data)
+            guard !payload.buckets.isEmpty else {
+                throw ConnectorError.decodingFailure("Gemini Code Assist quota payload did not include quota buckets; raw body redacted")
+            }
+            return payload.buckets.map(\.normalizedBucket)
+        } catch let error as ConnectorError {
+            throw error
+        } catch {
+            throw ConnectorError.decodingFailure(
+                "Gemini Code Assist quota payload shape changed (\(Self.diagnosticDescription(for: error))); raw body redacted"
+            )
+        }
+    }
+
+    private static func diagnosticDescription(for error: Error) -> String {
+        switch error {
+        case let DecodingError.dataCorrupted(context):
+            context.debugDescription
+        case let DecodingError.keyNotFound(key, _):
+            "missing key \(key.stringValue)"
+        case let DecodingError.typeMismatch(type, context):
+            "expected \(type) at \(context.codingPath.map(\.stringValue).joined(separator: "."))"
+        case let DecodingError.valueNotFound(type, context):
+            "missing \(type) at \(context.codingPath.map(\.stringValue).joined(separator: "."))"
+        default:
+            "unrecognized JSON"
+        }
     }
 }
 
@@ -534,35 +643,206 @@ private struct GeminiQuotaPayload: Decodable {
     let buckets: [GeminiQuotaBucketPayload]
 
     init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        buckets = try container.decodeIfPresent([GeminiQuotaBucketPayload].self, forKey: .buckets) ?? []
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case buckets
+        let container = try decoder.container(keyedBy: GeminiDynamicCodingKey.self)
+        for keyName in ["buckets", "quotaBuckets", "quota_buckets", "limits", "quotas"] {
+            let key = GeminiDynamicCodingKey(keyName)
+            if let decoded = try container.decodeIfPresent([GeminiQuotaBucketPayload].self, forKey: key) {
+                buckets = decoded
+                return
+            }
+        }
+        buckets = []
     }
 }
 
 private struct GeminiQuotaBucketPayload: Decodable {
+    let id: String?
     let modelID: String
+    let bucketLabel: String?
+    let windowLabel: String?
     let remainingFraction: Double?
     let remainingAmount: Int?
     let resetTime: Date?
 
-    enum CodingKeys: String, CodingKey {
-        case modelID = "modelId"
-        case remainingFraction
-        case remainingAmount
-        case resetTime
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: GeminiDynamicCodingKey.self)
+        id = container.firstString(for: ["id", "bucketId", "bucketID", "limitId", "quotaId"])
+        bucketLabel = container.firstString(for: [
+            "bucketLabel",
+            "quotaLabel",
+            "limitLabel",
+            "label",
+            "displayName",
+            "name",
+            "bucket",
+            "limitType",
+        ])
+        modelID = container.firstString(for: [
+            "modelId",
+            "modelID",
+            "model",
+            "modelName",
+            "modelLabel",
+        ]) ?? bucketLabel ?? "Gemini quota"
+        windowLabel = container.firstString(for: [
+            "windowLabel",
+            "resetWindow",
+            "resetWindowLabel",
+            "timeWindow",
+            "period",
+            "duration",
+        ])
+        remainingFraction = container.firstDouble(for: [
+            "remainingFraction",
+            "remaining_fraction",
+            "remainingRatio",
+            "remaining_ratio",
+        ]) ?? Self.remainingFraction(fromUsedValue: container.firstDouble(for: [
+            "usedFraction",
+            "used_fraction",
+            "usageFraction",
+            "usage_fraction",
+            "utilizationFraction",
+            "utilization_fraction",
+            "usedPercent",
+            "used_percent",
+            "usagePercent",
+            "usage_percent",
+            "utilization",
+        ]))
+        remainingAmount = container.firstInt(for: [
+            "remainingAmount",
+            "remaining_amount",
+            "remainingRequests",
+            "remaining_requests",
+            "remaining",
+        ])
+        resetTime = container.firstDate(for: [
+            "resetTime",
+            "reset_time",
+            "resetAt",
+            "reset_at",
+            "resetsAt",
+            "resets_at",
+        ])
+
+        if remainingFraction == nil, remainingAmount == nil, resetTime == nil, windowLabel == nil {
+            throw DecodingError.dataCorruptedError(
+                forKey: GeminiDynamicCodingKey("remainingFraction"),
+                in: container,
+                debugDescription: "bucket did not contain remaining, reset, or window fields"
+            )
+        }
+    }
+
+    private static func remainingFraction(fromUsedValue value: Double?) -> Double? {
+        guard var value else { return nil }
+        if value > 1 {
+            value /= 100
+        }
+        return 1 - value
     }
 
     var normalizedBucket: GeminiQuotaBucket {
         GeminiQuotaBucket(
+            id: id,
             modelID: modelID,
+            bucketLabel: bucketLabel,
+            windowLabel: windowLabel,
             remainingFraction: remainingFraction,
             remainingAmount: remainingAmount,
             resetsAt: resetTime
         )
+    }
+}
+
+private struct GeminiDynamicCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
+
+    init(_ stringValue: String) {
+        self.stringValue = stringValue
+        intValue = nil
+    }
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        intValue = nil
+    }
+
+    init?(intValue: Int) {
+        stringValue = String(intValue)
+        self.intValue = intValue
+    }
+}
+
+private extension KeyedDecodingContainer where Key == GeminiDynamicCodingKey {
+    func firstString(for names: [String]) -> String? {
+        for name in names {
+            let key = GeminiDynamicCodingKey(name)
+            if let value = try? decodeIfPresent(String.self, forKey: key), let value = value.nilIfBlank {
+                return value
+            }
+            if let value = try? decodeIfPresent(Int.self, forKey: key) {
+                return String(value)
+            }
+        }
+        return nil
+    }
+
+    func firstDouble(for names: [String]) -> Double? {
+        for name in names {
+            let key = GeminiDynamicCodingKey(name)
+            if let value = try? decodeIfPresent(Double.self, forKey: key) {
+                return value
+            }
+            if let value = try? decodeIfPresent(Int.self, forKey: key) {
+                return Double(value)
+            }
+            if let value = try? decodeIfPresent(String.self, forKey: key), let double = Double(value) {
+                return double
+            }
+        }
+        return nil
+    }
+
+    func firstInt(for names: [String]) -> Int? {
+        for name in names {
+            let key = GeminiDynamicCodingKey(name)
+            if let value = try? decodeIfPresent(Int.self, forKey: key) {
+                return value
+            }
+            if let value = try? decodeIfPresent(Double.self, forKey: key) {
+                return Int(value.rounded())
+            }
+            if let value = try? decodeIfPresent(String.self, forKey: key), let int = Int(value) {
+                return int
+            }
+        }
+        return nil
+    }
+
+    func firstDate(for names: [String]) -> Date? {
+        for name in names {
+            let key = GeminiDynamicCodingKey(name)
+            if let value = try? decodeIfPresent(String.self, forKey: key), let date = ContextPanelDateFormatting.date(from: value) {
+                return date
+            }
+            if let value = try? decodeIfPresent(Double.self, forKey: key) {
+                return Date(timeIntervalSince1970: value)
+            }
+            if let value = try? decodeIfPresent(Int.self, forKey: key) {
+                return Date(timeIntervalSince1970: TimeInterval(value))
+            }
+        }
+        return nil
+    }
+}
+
+private extension String {
+    var nilIfBlank: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 
