@@ -1828,7 +1828,7 @@ struct MainLimitDetail: View {
             return FastModeCapacityForecast(
                 limitID: summary.id,
                 accountName: limit.accountName,
-                providerLimits: summary.limits,
+                providerLimits: summary.liveLimits,
                 now: Date(),
                 standardBurnRate: standardBurnRate.map {
                     BurnRate(mode: .standard, unitsPerHour: $0)
