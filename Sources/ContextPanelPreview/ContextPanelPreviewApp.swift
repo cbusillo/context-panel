@@ -171,7 +171,7 @@ struct SettingsPane: View {
                         }
                         if account.connectorKind == .geminiCodeAssist, account.isEnabled, !model.hasGeminiMetadata(for: account) {
                             HStack(spacing: 8) {
-                                Text("Background refresh needs Gemini CLI access")
+                                Text("Background refresh can use Antigravity sign-in or Gemini CLI access")
                                     .font(.system(size: 11, weight: .semibold))
                                     .foregroundStyle(CPTheme.statusColor(.stale))
                                 Button("Allow CLI Access") { model.authorizeGeminiMetadata(for: account) }
@@ -821,7 +821,7 @@ final class SettingsPaneModel: ObservableObject {
             }
             return "Select the OpenAI CLI auth JSON file"
         case .geminiCodeAssist:
-            return "Select oauth_creds.json, then allow access to the Gemini CLI install for background refresh"
+            return "Sign into Antigravity, or select oauth_creds.json and allow Gemini CLI access"
         case .claudeLocalStatus:
             return "Claude reads Context Panel's statusline cache; no auth file selection is needed"
         case .claudeOAuthUsage:
@@ -843,7 +843,7 @@ final class SettingsPaneModel: ObservableObject {
     func authorizeGeminiMetadata(for account: LocalProviderAccountConfiguration) {
         guard account.connectorKind == .geminiCodeAssist else { return }
         let panel = NSOpenPanel()
-        panel.message = "Allow access to Gemini CLI's bundle folder so Context Panel can refresh Gemini limits in the background. The folder is usually named bundle."
+        panel.message = "Allow access to Gemini CLI's bundle folder if Antigravity sign-in is not available for background refresh. The folder is usually named bundle."
         panel.prompt = "Allow Access"
         panel.canChooseFiles = true
         panel.canChooseDirectories = true

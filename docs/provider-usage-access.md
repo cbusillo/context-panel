@@ -154,19 +154,27 @@ Preferred v1 connector scope:
   `CodexRateLimitProbe` executable exists to prove the direct call path against
   an existing Codex `auth.json` while printing only redacted summaries.
 
-### Gemini Code Assist Connector
+### Google Antigravity / Gemini Code Assist Connector
 
-The local Gemini CLI path gives Context Panel a second viable live connector.
-The CLI stores OAuth credentials under `~/.gemini/oauth_creds.json`, while the
-active account metadata lives separately under `~/.gemini/google_accounts.json`.
-The quota values are not persisted as a durable local cache; Gemini CLI keeps
-quota state in memory and refreshes it from the Code Assist backend.
+The local Google coding-tool path gives Context Panel a second viable live
+connector. Antigravity stores a Google access token in the macOS Keychain under
+the generic-password service `gemini` and account `antigravity`. Legacy Gemini
+CLI installs store OAuth credentials under `~/.gemini/oauth_creds.json`, while
+the active account metadata lives separately under `~/.gemini/google_accounts.json`.
+The quota values are not persisted as a durable local cache; Antigravity and
+Gemini CLI refresh them from the Code Assist backend.
 
 Preferred v1 connector scope:
 
-- Resolve `GEMINI_CLI_HOME`, then default to `~/.gemini`.
+- Prefer a valid Antigravity Keychain access token when Gemini CLI OAuth client
+  metadata is unavailable, so Antigravity-only installs can refresh without a
+  separate `oauth_creds.json` file.
+- Resolve `GEMINI_CLI_HOME`, then default to `~/.gemini`, for legacy Gemini CLI
+  auth and metadata fallback.
 - Read `oauth_creds.json` only to refresh an access token locally; never print,
-  store, or upload token values.
+  store, or upload token values. If Antigravity's Keychain token is expired and
+  no Gemini CLI OAuth client metadata is available, ask the user to open
+  Antigravity to refresh Google authentication.
 - Call the Gemini Code Assist load path to resolve the active project internally;
   never print or persist the raw project identifier.
 - Call the Gemini Code Assist quota path and normalize buckets by model ID,
@@ -183,10 +191,14 @@ Preferred v1 connector scope:
 - Mark confidence as observed because this is a product backend surface rather
   than a public quota API contract.
 
-The local `GeminiQuotaProbe` executable proves this path with redacted output.
-On 2026-05-06 it returned seven live model buckets for the local Gemini CLI
-account, including Gemini 2.5 and Gemini 3 preview models, with percent
-remaining and reset timestamps.
+The local `GeminiQuotaProbe` executable proves the legacy Gemini CLI path with
+redacted output. On 2026-05-06 it returned seven live model buckets for the
+local Gemini CLI account, including Gemini 2.5 and Gemini 3 preview models, with
+percent remaining and reset timestamps. On 2026-05-22 the installed Context
+Panel app was also validated against an Antigravity-only path by temporarily
+pointing the Google account at a missing `oauth_creds.json`; the app still
+refreshed Google limits through Antigravity's Keychain token, then the account
+configuration was restored.
 
 Current public Google docs have a split contract. Gemini Apps help announced
 usage-limit changes starting 2026-05-17 and describes compute-based limits that

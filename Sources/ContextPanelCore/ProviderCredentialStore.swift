@@ -74,6 +74,39 @@ public struct ProviderCredentialStore: ProviderCredentialStoring {
     }
 }
 
+public struct GenericPasswordCredentialLoader: ProviderCredentialLoading {
+    public enum LoadError: Error, Sendable {
+        case unhandledStatus(OSStatus)
+    }
+
+    private let service: String
+    private let useDataProtectionKeychain: Bool
+
+    public init(service: String, useDataProtectionKeychain: Bool = false) {
+        self.service = service
+        self.useDataProtectionKeychain = useDataProtectionKeychain
+    }
+
+    public func load(accountID: String) throws -> Data? {
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: accountID,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        if useDataProtectionKeychain {
+            query[kSecUseDataProtectionKeychain as String] = true
+        }
+
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess else { throw LoadError.unhandledStatus(status) }
+        return item as? Data
+    }
+}
+
 public final class InMemoryProviderCredentialStore: ProviderCredentialStoring, @unchecked Sendable {
     private var storage: [String: Data]
 
@@ -91,6 +124,15 @@ public final class InMemoryProviderCredentialStore: ProviderCredentialStoring, @
 }
 
 extension ProviderCredentialStore.StoreError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .unhandledStatus(let status):
+            return "Keychain operation failed with status \(status)."
+        }
+    }
+}
+
+extension GenericPasswordCredentialLoader.LoadError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .unhandledStatus(let status):

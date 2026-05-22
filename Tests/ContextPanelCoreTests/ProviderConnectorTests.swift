@@ -210,6 +210,87 @@ import Testing
     #expect(http.requests[2].body.flatMap { String(data: $0, encoding: .utf8) }?.contains("project-secret") == true)
 }
 
+@Test func geminiConnectorFallsBackToAntigravityKeychainCredentials() async throws {
+    let antigravityPayload = #"{"auth_method":"consumer","token":{"access_token":"antigravity-access","refresh_token":"antigravity-refresh","expiry":"2099-05-22T17:00:00.000000000Z"}}"#
+    let storedAntigravityPayload = "go-keyring-base64:\(Data(antigravityPayload.utf8).base64EncodedString())"
+    let load = #"{"cloudaicompanionProject":"project-secret"}"#.data(using: .utf8)!
+    let quota = #"{"buckets":[{"modelId":"gemini-3-flash-preview","remainingFraction":0.5}]}"#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: load),
+        ConnectorHTTPResponse(statusCode: 200, data: quota),
+    ])
+    let antigravitySource = AntigravityKeychainCredentialSource(
+        credentialLoader: InMemoryProviderCredentialStore(storage: [
+            AntigravityKeychainCredentialSource.accountID: Data(storedAntigravityPayload.utf8),
+        ])
+    )
+    let connector = GeminiCodeAssistConnector(
+        accounts: [GeminiAccountConfiguration(authPath: "/tmp/missing-gemini.json", accountName: "Google", clientID: "client", clientSecret: "secret")],
+        httpClient: http,
+        fileLoader: { _ in throw ConnectorError.invalidAuth("missing Gemini OAuth file") },
+        antigravityCredentialSource: antigravitySource
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].status == .healthy)
+    #expect(result.snapshot.limits.count == 1)
+    #expect(http.requests.count == 2)
+    #expect(http.requests.allSatisfy { $0.headers["Authorization"] == "Bearer antigravity-access" })
+}
+
+@Test func geminiConnectorPrefersAntigravityWhenGeminiMetadataIsUnavailable() async throws {
+    let localGeminiCredentials = #"{"refresh_token":"legacy-gemini-refresh"}"#.data(using: .utf8)!
+    let antigravityPayload = #"{"auth_method":"consumer","token":{"access_token":"antigravity-access","refresh_token":"antigravity-refresh","expiry":"2099-05-22T17:00:00.000000000Z"}}"#
+    let storedAntigravityPayload = "go-keyring-base64:\(Data(antigravityPayload.utf8).base64EncodedString())"
+    let load = #"{"cloudaicompanionProject":"project-secret"}"#.data(using: .utf8)!
+    let quota = #"{"buckets":[{"modelId":"gemini-3-flash-preview","remainingFraction":0.5}]}"#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: load),
+        ConnectorHTTPResponse(statusCode: 200, data: quota),
+    ])
+    let antigravitySource = AntigravityKeychainCredentialSource(
+        credentialLoader: InMemoryProviderCredentialStore(storage: [
+            AntigravityKeychainCredentialSource.accountID: Data(storedAntigravityPayload.utf8),
+        ])
+    )
+    let connector = GeminiCodeAssistConnector(
+        accounts: [GeminiAccountConfiguration(authPath: "/tmp/gemini.json", accountName: "Google", clientID: "", clientSecret: "")],
+        httpClient: http,
+        fileLoader: { _ in localGeminiCredentials },
+        antigravityCredentialSource: antigravitySource
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
+
+    #expect(result.reports[0].status == .healthy)
+    #expect(http.requests.count == 2)
+    #expect(http.requests.allSatisfy { $0.headers["Authorization"] == "Bearer antigravity-access" })
+}
+
+@Test func geminiConnectorReportsExpiredAntigravityTokenWithoutGeminiMetadata() async throws {
+    let antigravityPayload = #"{"auth_method":"consumer","token":{"access_token":"expired-access","refresh_token":"antigravity-refresh","expiry":"2000-05-22T17:00:00.000000000Z"}}"#
+    let storedAntigravityPayload = "go-keyring-base64:\(Data(antigravityPayload.utf8).base64EncodedString())"
+    let antigravitySource = AntigravityKeychainCredentialSource(
+        credentialLoader: InMemoryProviderCredentialStore(storage: [
+            AntigravityKeychainCredentialSource.accountID: Data(storedAntigravityPayload.utf8),
+        ])
+    )
+    let connector = GeminiCodeAssistConnector(
+        accounts: [GeminiAccountConfiguration(authPath: "/tmp/missing-gemini.json", accountName: "Google", clientID: "", clientSecret: "")],
+        httpClient: StubHTTPClient(responses: []),
+        fileLoader: { _ in throw ConnectorError.invalidAuth("missing Gemini OAuth file") },
+        antigravityCredentialSource: antigravitySource
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].status == .failure)
+    #expect(result.reports[0].errorMessage?.contains("Open Antigravity") == true)
+}
+
 @Test func claudeOAuthConnectorRefreshesUsageWindows() async throws {
     let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
     let usage = #"""

@@ -133,8 +133,10 @@ block output when available and shows a clearly marked estimated 5-hour token
 window; that estimate is useful for "am I likely to run out soon?" but is not
 Anthropic's official subscription percentage.
 
-For Gemini, use the OAuth client values from the locally installed Gemini CLI;
-they are intentionally not checked into this repository.
+For Google/Gemini, the app can use an Antigravity Keychain sign-in when
+available. The probe path still uses OAuth client values from the locally
+installed Gemini CLI; those values are intentionally not checked into this
+repository.
 
 The probes call the same `ContextPanelCore` connectors the app will use, so
 passing probe output is also a smoke test for the production connector runtime.
