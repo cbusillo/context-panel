@@ -131,7 +131,7 @@ public struct ProviderConnectorRuntime: Sendable {
             if let existingIndex = indexesByAccount[key] {
                 let existing = deduplicated[existingIndex]
                 if existing.limits.isEmpty, !report.limits.isEmpty {
-                    deduplicated[existingIndex] = report
+                    deduplicated[existingIndex] = report.replacingMissingConfiguredAccountID(with: existing.configuredAccountID)
                 }
             } else {
                 indexesByAccount[key] = deduplicated.count
@@ -140,6 +140,46 @@ public struct ProviderConnectorRuntime: Sendable {
         }
 
         return deduplicated
+    }
+}
+
+private extension ProviderConnectorReport {
+    func replacingMissingConfiguredAccountID(with fallback: String?) -> ProviderConnectorReport {
+        guard configuredAccountID == nil, let fallback else { return self }
+        return ProviderConnectorReport(
+            provider: provider,
+            accountID: accountID,
+            configuredAccountID: fallback,
+            accountName: accountName,
+            generatedAt: generatedAt,
+            limits: limits.map { $0.replacingMissingConfiguredAccountID(with: fallback) },
+            status: status,
+            errorMessage: errorMessage
+        )
+    }
+}
+
+private extension UsageLimit {
+    func replacingMissingConfiguredAccountID(with fallback: String) -> UsageLimit {
+        guard configuredAccountID == nil else { return self }
+        return UsageLimit(
+            id: id,
+            provider: provider,
+            accountID: accountID,
+            configuredAccountID: fallback,
+            accountName: accountName,
+            label: label,
+            windowLabel: windowLabel,
+            modelLabel: modelLabel,
+            unit: unit,
+            used: used,
+            limit: limit,
+            resetsAt: resetsAt,
+            lastUpdatedAt: lastUpdatedAt,
+            confidence: confidence,
+            statusOverride: statusOverride,
+            note: note
+        )
     }
 }
 

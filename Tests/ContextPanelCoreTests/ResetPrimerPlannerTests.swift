@@ -83,6 +83,62 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(plan.upcoming.map(\.resolvedAccountID) == ["openai-resolved-b"])
 }
 
+@Test func resetPrimerExecutorCanUseResolvedAccountWhenConfiguredAliasIsMissing() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let settingsStore = ResetPrimerSettingsStore(settingsURL: directory.appending(path: "reset-primer-settings.json"))
+    let stateStore = ResetPrimerRunStateStore(stateURL: directory.appending(path: "reset-primer-runs.json"))
+    let snapshotStore = JSONSnapshotStore(rootDirectory: directory.appending(path: "Snapshots", directoryHint: .isDirectory))
+    let accountStore = AccountConfigurationStore(configurationURL: directory.appending(path: "accounts.json"))
+    let resetAt = now.addingTimeInterval(-10 * 60)
+    try settingsStore.save(ResetPrimerSettings(
+        isEnabled: true,
+        delayMinutesAfterReset: 0,
+        accountPreferences: [preference(accountID: "configured-openai", provider: .openAI)]
+    ))
+    try accountStore.save(AccountConfigurationDocument(updatedAt: now, accounts: [
+        LocalProviderAccountConfiguration(
+            id: "resolved-openai",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "Resolved OpenAI"
+        ),
+    ]))
+    try snapshotStore.save(StoredUsageSnapshot(
+        savedAt: now,
+        snapshot: UsageSnapshot(
+            generatedAt: now,
+            limits: [limit(
+                accountID: "resolved-openai",
+                configuredAccountID: "configured-openai",
+                provider: .openAI,
+                resetAt: resetAt
+            )]
+        )
+    ))
+    let service = ResetPrimerPlanService(
+        settingsStore: settingsStore,
+        stateStore: stateStore,
+        snapshotStore: snapshotStore
+    )
+    let executor = ResetPrimerExecutor(
+        planService: service,
+        accountStore: accountStore,
+        processRunner: { _, _, _ in
+            Issue.record("Code primer should not run a process without a proven cheap account-selectable command")
+            return 0
+        }
+    )
+
+    let results = await executor.runDue(now: now)
+
+    #expect(results.map(\.status) == [.skipped])
+    #expect(results.first?.candidate.configuredAccountID == "configured-openai")
+    #expect(results.first?.candidate.resolvedAccountID == "resolved-openai")
+    #expect(results.first?.errorMessage == "Reset priming is not supported for this provider")
+}
+
 @Test func usageSnapshotRecommendsOpenAIWeeklyAccountWithEarliestFutureReset() throws {
     let laterReset = now.addingTimeInterval(3 * 3_600)
     let earlierReset = now.addingTimeInterval(90 * 60)

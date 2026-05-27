@@ -51,6 +51,12 @@ public struct ResetPrimerSettings: Codable, Equatable, Sendable {
         accountPreferences.first { $0.accountID == accountID && $0.provider == provider }
     }
 
+    public func preference(for accountIDs: [String], provider: Provider) -> ResetPrimerAccountPreference? {
+        accountPreferences.first { preference in
+            preference.provider == provider && accountIDs.contains(preference.accountID)
+        }
+    }
+
     public mutating func syncAccounts(_ accounts: [LocalProviderAccountConfiguration]) {
         let existingByID = Dictionary(
             uniqueKeysWithValues: Self.normalized(accountPreferences).map { ($0.id, $0) }
