@@ -91,6 +91,10 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     let stateStore = ResetPrimerRunStateStore(stateURL: directory.appending(path: "reset-primer-runs.json"))
     let snapshotStore = JSONSnapshotStore(rootDirectory: directory.appending(path: "Snapshots", directoryHint: .isDirectory))
     let accountStore = AccountConfigurationStore(configurationURL: directory.appending(path: "accounts.json"))
+    let command = directory.appending(path: "code")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: command)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: command.path)
     let resetAt = now.addingTimeInterval(-10 * 60)
     try settingsStore.save(ResetPrimerSettings(
         isEnabled: true,
@@ -102,7 +106,8 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
             id: "resolved-openai",
             provider: .openAI,
             connectorKind: .codexRateLimits,
-            displayName: "Resolved OpenAI"
+            displayName: "Resolved OpenAI",
+            commandPath: command.path
         ),
     ]))
     try snapshotStore.save(StoredUsageSnapshot(
