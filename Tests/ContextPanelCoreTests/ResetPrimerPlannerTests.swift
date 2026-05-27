@@ -48,6 +48,81 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(plan.upcoming.first?.scheduledAt == resetAt.addingTimeInterval(15 * 60))
 }
 
+@Test func resetPrimerPlannerMatchesResolvedLimitsToConfiguredAccountID() throws {
+    let resetAt = now.addingTimeInterval(-10 * 60)
+    let settings = ResetPrimerSettings(
+        isEnabled: true,
+        delayMinutesAfterReset: 0,
+        accountPreferences: [preference(accountID: "openai-code-default", provider: .openAI)]
+    )
+    let snapshot = UsageSnapshot(
+        generatedAt: now,
+        limits: [
+            limit(
+                accountID: "openai-resolved-a",
+                configuredAccountID: "openai-code-default",
+                accountName: "first@example.com · pro",
+                provider: .openAI,
+                resetAt: resetAt
+            ),
+            limit(
+                accountID: "openai-resolved-b",
+                configuredAccountID: "openai-code-default",
+                accountName: "second@example.com · pro",
+                provider: .openAI,
+                resetAt: resetAt.addingTimeInterval(30 * 60)
+            ),
+        ]
+    )
+
+    let plan = ResetPrimerPlanner.plan(settings: settings, snapshot: snapshot, now: now)
+
+    #expect(plan.due.map(\.configuredAccountID) == ["openai-code-default"])
+    #expect(plan.due.map(\.resolvedAccountID) == ["openai-resolved-a"])
+    #expect(plan.upcoming.map(\.configuredAccountID) == ["openai-code-default"])
+    #expect(plan.upcoming.map(\.resolvedAccountID) == ["openai-resolved-b"])
+}
+
+@Test func usageSnapshotRecommendsOpenAIWeeklyAccountWithEarliestFutureReset() throws {
+    let laterReset = now.addingTimeInterval(3 * 3_600)
+    let earlierReset = now.addingTimeInterval(90 * 60)
+    let snapshot = UsageSnapshot(
+        generatedAt: now,
+        limits: [
+            limit(
+                accountID: "openai-later",
+                configuredAccountID: "openai-code-default",
+                accountName: "later@example.com · pro",
+                provider: .openAI,
+                windowLabel: "Weekly",
+                resetAt: laterReset
+            ),
+            limit(
+                accountID: "openai-earlier",
+                configuredAccountID: "openai-code-default",
+                accountName: "earlier@example.com · pro",
+                provider: .openAI,
+                windowLabel: "Weekly",
+                resetAt: earlierReset
+            ),
+            limit(
+                accountID: "openai-past",
+                configuredAccountID: "openai-code-default",
+                accountName: "past@example.com · pro",
+                provider: .openAI,
+                windowLabel: "Weekly",
+                resetAt: now.addingTimeInterval(-10 * 60)
+            ),
+        ]
+    )
+
+    let recommendation = try #require(snapshot.nextAccountToUse(provider: .openAI, window: .weekly))
+
+    #expect(recommendation.accountID == "openai-earlier")
+    #expect(recommendation.configuredAccountID == "openai-code-default")
+    #expect(recommendation.resetsAt == earlierReset)
+}
+
 @Test func resetPrimerPlannerStaggersSameAccountIDsAcrossProviders() {
     let resetAt = now.addingTimeInterval(-10 * 60)
     let settings = ResetPrimerSettings(
@@ -648,6 +723,7 @@ private func preference(accountID: String, provider: Provider) -> ResetPrimerAcc
 private func limit(
     id: String? = nil,
     accountID: String,
+    configuredAccountID: String? = nil,
     accountName: String? = nil,
     provider: Provider,
     label: String = "Usage",
@@ -660,6 +736,7 @@ private func limit(
         id: id,
         provider: provider,
         accountID: accountID,
+        configuredAccountID: configuredAccountID,
         accountName: accountName ?? accountID.capitalized,
         label: label,
         windowLabel: windowLabel,

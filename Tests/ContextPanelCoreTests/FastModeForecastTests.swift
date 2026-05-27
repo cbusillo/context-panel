@@ -108,9 +108,9 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(forecast.recommendation == .saveFastMode)
     #expect(forecast.fastModeRunwayHours == 0)
     #expect(forecast.copy == "Use normal mode")
-    #expect(forecast.detailCopy == "6% left · 2%/h observed")
-    #expect(forecast.burnRateCopy == "2%/h observed")
-    #expect(forecast.runwayCopy == "out 1m")
+    #expect(forecast.detailCopy == "6% left · 2%/h active")
+    #expect(forecast.burnRateCopy == "2%/h active")
+    #expect(forecast.runwayCopy == "normal lasts ~1m")
 }
 
 @Test func capacityForecastUsesPooledRemainingAcrossAccounts() {
@@ -131,7 +131,7 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(forecast.totalUnits == 200)
     #expect(forecast.recommendation == .safeThroughReset)
     #expect(forecast.copy == "Use fast mode")
-    #expect(forecast.detailCopy == "55% left · 2%/h observed")
+    #expect(forecast.detailCopy == "55% left · 2%/h active")
 }
 
 @Test func capacityForecastDoesNotTreatOneLimitedAccountAsProviderLimited() {
@@ -151,9 +151,9 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(forecast.remainingUnits == 98)
     #expect(forecast.recommendation == .saveFastMode)
     #expect(forecast.copy == "Use normal mode")
-    #expect(forecast.detailCopy == "49% left · 2%/h observed")
-    #expect(forecast.burnRateCopy == "2%/h observed")
-    #expect(forecast.runwayCopy == "out 1d 22h")
+    #expect(forecast.detailCopy == "49% left · 2%/h active")
+    #expect(forecast.burnRateCopy == "2%/h active")
+    #expect(forecast.runwayCopy == "normal lasts ~1d 22h")
 }
 
 @Test func capacityForecastUsesStaggeredResetBucketsBeforeSavingFastMode() {
@@ -192,7 +192,7 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(forecast.remainingUnits == 5)
     #expect(forecast.recommendation == .safeForLimitedTime)
     #expect(forecast.fastModeRunwayHours == 2.5)
-    #expect(forecast.runwayCopy == "fast out 2.5h")
+    #expect(forecast.runwayCopy == "fast lasts ~2.5h")
 }
 
 @Test func capacityPortfolioKeepsWeeklyAheadOfShorterOpenAIWindow() {
@@ -246,7 +246,7 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(best.roleCopy == "weekly pool")
     #expect(portfolio.forecasts.map(\.roleCopy) == ["weekly pool", "5-hour guardrail"])
     #expect(portfolio.detailCopy.contains("weekly pool:") == false)
-    #expect(portfolio.detailCopy.contains("5h guardrail:"))
+    #expect(portfolio.detailCopy.contains("5h:"))
 }
 
 @Test func openAIFastModeForecastHelperUsesSharedSettings() throws {
@@ -475,8 +475,8 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
 
     #expect(forecast.recommendation == .needsCalibration)
     #expect(forecast.copy == "Measuring burn")
-    #expect(forecast.burnRateCopy == "measuring burn")
-    #expect(forecast.burnPaceCopy == "measuring burn")
+    #expect(forecast.burnRateCopy == "pace unknown")
+    #expect(forecast.burnPaceCopy == "pace unknown")
 }
 
 @Test func capacityForecastMeasuresBurnWhenPaceCannotBeComputedAtResetBoundary() {
@@ -493,7 +493,7 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     )
 
     #expect(forecast.burnPaceRatio == nil)
-    #expect(forecast.burnPaceCopy == "measuring burn")
+    #expect(forecast.burnPaceCopy == "pace unknown")
 }
 
 @Test func capacityPoolIgnoresUnknownBucketsForNumericRunway() {
@@ -688,8 +688,8 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     )
     let portfolio = FastModeCapacityPortfolioForecast(forecasts: [weekly, fiveHour])
 
-    #expect(portfolio.detailCopy.contains("2%/h observed"))
-    #expect(portfolio.detailCopy.contains("5h guardrail:"))
+    #expect(portfolio.detailCopy.contains("2%/h active"))
+    #expect(portfolio.detailCopy.contains("5h:"))
 }
 
 @Test func openAIFastModeForecastIgnoresFiveHourBucketsBlockedByWeeklyLimit() throws {
@@ -730,7 +730,7 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
 
     #expect(fiveHour.remainingUnits == 0)
     #expect(fiveHour.recommendation == .limited)
-    #expect(portfolio.detailCopy.contains("5h guardrail:"))
+    #expect(portfolio.detailCopy.contains("5h:"))
 }
 
 @Test func observedBurnRateAllowsConsistentlyUnknownResets() throws {

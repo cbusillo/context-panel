@@ -45,6 +45,12 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         usageSnapshot.mostConstrainedLimits
     }
 
+    public var nextOpenAIAccountToUse: AccountResetRecommendation? {
+        usageSnapshot.nextAccountToUse(provider: .openAI, window: .weekly)
+            ?? usageSnapshot.nextAccountToUse(provider: .openAI, window: .fiveHour)
+            ?? usageSnapshot.nextAccountToUse(provider: .openAI)
+    }
+
     public var aggregateCapacityRatio: Double {
         usageSnapshot.aggregateCapacityRatio
     }

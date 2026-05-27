@@ -29,6 +29,7 @@ public enum ConnectorError: LocalizedError, Equatable, Sendable {
 public struct ProviderConnectorReport: Equatable, Sendable {
     public let provider: Provider
     public let accountID: String
+    public let configuredAccountID: String?
     public let accountName: String
     public let generatedAt: Date
     public let limits: [UsageLimit]
@@ -38,6 +39,7 @@ public struct ProviderConnectorReport: Equatable, Sendable {
     public init(
         provider: Provider,
         accountID: String,
+        configuredAccountID: String? = nil,
         accountName: String,
         generatedAt: Date,
         limits: [UsageLimit],
@@ -46,6 +48,7 @@ public struct ProviderConnectorReport: Equatable, Sendable {
     ) {
         self.provider = provider
         self.accountID = accountID
+        self.configuredAccountID = configuredAccountID
         self.accountName = accountName
         self.generatedAt = generatedAt
         self.limits = limits

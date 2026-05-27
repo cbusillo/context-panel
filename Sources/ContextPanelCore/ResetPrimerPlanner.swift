@@ -100,6 +100,7 @@ public struct ResetPrimerRunState: Codable, Equatable, Sendable {
 
 public struct ResetPrimerCandidate: Equatable, Identifiable, Sendable {
     public let key: ResetPrimerRunKey
+    public let resolvedAccountID: String
     public let accountName: String
     public let windowLabel: String
     public let scheduledAt: Date
@@ -108,16 +109,19 @@ public struct ResetPrimerCandidate: Equatable, Identifiable, Sendable {
     public var id: String { key.stableID }
     public var provider: Provider { key.provider }
     public var accountID: String { key.accountID }
+    public var configuredAccountID: String { key.accountID }
     public var resetAt: Date { key.resetAt }
 
     public init(
         key: ResetPrimerRunKey,
+        resolvedAccountID: String? = nil,
         accountName: String,
         windowLabel: String,
         scheduledAt: Date,
         sourceLimitIDs: [String]
     ) {
         self.key = key
+        self.resolvedAccountID = resolvedAccountID ?? key.accountID
         self.accountName = accountName
         self.windowLabel = windowLabel
         self.scheduledAt = scheduledAt
@@ -165,8 +169,9 @@ public enum ResetPrimerPlanner {
 
         let enabledAccounts = Set(enabledPreferences.map(\.id))
         let candidates = groupedLimits(snapshot.limits.filter { limit in
-            guard enabledAccounts.contains(ResetPrimerAccountPreference.id(provider: limit.provider, accountID: limit.accountID)), limit.resetsAt != nil else { return false }
-            guard settings.preference(for: limit.accountID, provider: limit.provider) != nil else { return false }
+            let configuredAccountID = limit.configuredOrResolvedAccountID
+            guard enabledAccounts.contains(ResetPrimerAccountPreference.id(provider: limit.provider, accountID: configuredAccountID)), limit.resetsAt != nil else { return false }
+            guard settings.preference(for: configuredAccountID, provider: limit.provider) != nil else { return false }
             return limit.status != .failure && limit.status != .unknown && limit.status != .stale
         })
 
@@ -191,7 +196,7 @@ public enum ResetPrimerPlanner {
         let grouped = Dictionary(grouping: limits) { limit in
             ResetPrimerRunKey(
                 provider: limit.provider,
-                accountID: limit.accountID,
+                accountID: limit.configuredOrResolvedAccountID,
                 resetAt: limit.resetsAt ?? Date.distantFuture
             )
         }
@@ -200,6 +205,7 @@ public enum ResetPrimerPlanner {
             guard key.resetAt != Date.distantFuture, let first = limits.sortedByLimitID.first else { return nil }
             return UnscheduledResetPrimerCandidate(
                 key: key,
+                resolvedAccountID: first.accountID,
                 accountName: first.accountName,
                 windowLabel: normalizedWindowLabel(for: first),
                 sourceLimitIDs: limits.map(\.id)
@@ -227,6 +233,7 @@ public enum ResetPrimerPlanner {
                         .addingTimeInterval(TimeInterval(max(accountStaggerMinutes, 0) * 60 * staggerIndex))
                     return ResetPrimerCandidate(
                         key: candidate.key,
+                        resolvedAccountID: candidate.resolvedAccountID,
                         accountName: candidate.accountName,
                         windowLabel: candidate.windowLabel,
                         scheduledAt: scheduledAt,
@@ -408,7 +415,7 @@ public struct ResetPrimerExecutor: Sendable {
 
         var results: [ResetPrimerExecutionResult] = []
         for candidate in candidates {
-            let action = primerAction(candidate: candidate, account: accountsByID[candidate.accountID])
+            let action = primerAction(candidate: candidate, account: accountsByID[candidate.configuredAccountID])
             switch action {
             case let .skip(errorMessage):
                 let result = ResetPrimerExecutionResult(candidate: candidate, status: .skipped, errorMessage: errorMessage)
@@ -569,6 +576,7 @@ public struct ResetPrimerExecutor: Sendable {
 
 private struct UnscheduledResetPrimerCandidate: Equatable {
     let key: ResetPrimerRunKey
+    let resolvedAccountID: String
     let accountName: String
     let windowLabel: String
     let sourceLimitIDs: [String]

@@ -225,6 +225,31 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
         }
     }
 
+    public var nextAccountToUse: AccountResetRecommendation? {
+        liveLimits.compactMap { limit -> AccountResetRecommendation? in
+            guard let resetsAt = limit.resetsAt, resetsAt > generatedAt else { return nil }
+            return AccountResetRecommendation(
+                provider: limit.provider,
+                accountID: limit.accountID,
+                configuredAccountID: limit.configuredAccountID,
+                accountName: limit.accountName,
+                window: window,
+                resetsAt: resetsAt,
+                limit: limit
+            )
+        }
+        .sorted { lhs, rhs in
+            if lhs.resetsAt != rhs.resetsAt {
+                return lhs.resetsAt < rhs.resetsAt
+            }
+            if lhs.accountName != rhs.accountName {
+                return lhs.accountName.localizedCaseInsensitiveCompare(rhs.accountName) == .orderedAscending
+            }
+            return lhs.accountID < rhs.accountID
+        }
+        .first
+    }
+
     private var liveNumericLimits: [UsageLimit] {
         liveLimits.filter { $0.used != nil && $0.limit != nil }
     }
@@ -237,6 +262,20 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
             guard let candidateWindow = candidate.mainLimitWindow else { return false }
             return candidateWindow.capacityGateRank > window.capacityGateRank
         }
+    }
+}
+
+public struct AccountResetRecommendation: Equatable, Identifiable, Sendable {
+    public let provider: Provider
+    public let accountID: String
+    public let configuredAccountID: String?
+    public let accountName: String
+    public let window: MainLimitWindow
+    public let resetsAt: Date
+    public let limit: UsageLimit
+
+    public var id: String {
+        "\(provider.rawValue):\(configuredAccountID ?? accountID):\(window.rawValue):\(Int(resetsAt.timeIntervalSince1970))"
     }
 }
 
@@ -297,6 +336,27 @@ public extension UsageSnapshot {
             }
             return lhs.window.sortRank < rhs.window.sortRank
         }
+    }
+
+    func nextAccountToUse(provider: Provider, window: MainLimitWindow? = nil) -> AccountResetRecommendation? {
+        mainLimitSummaries
+            .filter { summary in
+                summary.provider == provider && (window == nil || summary.window == window)
+            }
+            .compactMap(\.nextAccountToUse)
+            .sorted { lhs, rhs in
+                if lhs.resetsAt != rhs.resetsAt {
+                    return lhs.resetsAt < rhs.resetsAt
+                }
+                if lhs.window != rhs.window {
+                    return lhs.window.sortRank < rhs.window.sortRank
+                }
+                if lhs.accountName != rhs.accountName {
+                    return lhs.accountName.localizedCaseInsensitiveCompare(rhs.accountName) == .orderedAscending
+                }
+                return lhs.accountID < rhs.accountID
+            }
+            .first
     }
 }
 

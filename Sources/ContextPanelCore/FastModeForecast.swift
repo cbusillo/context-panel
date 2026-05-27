@@ -301,7 +301,7 @@ public struct FastModeCapacityForecast: Codable, Equatable, Sendable {
         case .safeThroughReset:
             "Use fast mode"
         case .safeForLimitedTime:
-            "Use fast mode briefly"
+            "Fast mode limited"
         case .saveFastMode, .limited:
             "Use normal mode"
         case .needsCalibration:
@@ -313,7 +313,7 @@ public struct FastModeCapacityForecast: Codable, Equatable, Sendable {
         if let percent = remainingPercent {
             let remaining = "\(Int(percent.rounded()))% left"
             if let standardBurnRatePercentPerHour {
-                return "\(remaining) · \(Self.format(percentPerHour: standardBurnRatePercentPerHour))/h observed"
+                return "\(remaining) · \(Self.format(percentPerHour: standardBurnRatePercentPerHour))/h active"
             }
             return remaining
         }
@@ -322,19 +322,19 @@ public struct FastModeCapacityForecast: Codable, Equatable, Sendable {
             return "No capacity data"
         }
         if let standardBurnRateUnitsPerHour {
-            return "\(Int(remainingUnits.rounded())) left · \(Self.format(unitsPerHour: standardBurnRateUnitsPerHour))/h observed"
+            return "\(Int(remainingUnits.rounded())) left · \(Self.format(unitsPerHour: standardBurnRateUnitsPerHour))/h active"
         }
         return "\(Int(remainingUnits.rounded())) left"
     }
 
     public var burnRateCopy: String {
         if let standardBurnRatePercentPerHour {
-            return "\(Self.format(percentPerHour: standardBurnRatePercentPerHour))/h observed"
+            return "\(Self.format(percentPerHour: standardBurnRatePercentPerHour))/h active"
         }
         if let standardBurnRateUnitsPerHour {
-            return "\(Self.format(unitsPerHour: standardBurnRateUnitsPerHour))/h observed"
+            return "\(Self.format(unitsPerHour: standardBurnRateUnitsPerHour))/h active"
         }
-        return "measuring burn"
+        return "pace unknown"
     }
 
     public var runwayCopy: String {
@@ -346,15 +346,15 @@ public struct FastModeCapacityForecast: Codable, Equatable, Sendable {
             return "lasts past reset in \(Self.format(hours: hoursUntilReset))"
         case .safeForLimitedTime:
             if let fastModeRunwayHours {
-                return "fast out \(Self.format(hours: fastModeRunwayHours))"
+                return "fast lasts ~\(Self.format(hours: fastModeRunwayHours))"
             }
             return "fast runway unknown"
         case .saveFastMode, .limited:
             if let standardModeRunwayHours, standardModeRunwayHours < hoursUntilReset {
-                return "out \(Self.format(hours: standardModeRunwayHours))"
+                return "normal lasts ~\(Self.format(hours: standardModeRunwayHours))"
             }
             if let fastModeRunwayHours {
-                return "fast out \(Self.format(hours: fastModeRunwayHours))"
+                return "fast lasts ~\(Self.format(hours: fastModeRunwayHours))"
             }
             return "next reset in \(Self.format(hours: hoursUntilReset))"
         case .needsCalibration:
@@ -395,7 +395,7 @@ public struct FastModeCapacityForecast: Codable, Equatable, Sendable {
     }
 
     public var burnPaceCopy: String {
-        guard let burnPaceRatio else { return "measuring burn" }
+        guard let burnPaceRatio else { return "pace unknown" }
         if !burnPaceRatio.isFinite { return "over pace" }
         if burnPaceRatio <= 0.05 { return "idle" }
         if burnPaceRatio <= 0.9 { return "under pace" }
@@ -566,7 +566,7 @@ public struct FastModeCapacityPortfolioForecast: Codable, Equatable, Sendable {
         guard let bestForecast else { return "OpenAI account needed for fast-mode forecast" }
         let guardrail = forecasts.first { $0.window == .fiveHour }
         if bestForecast.window == .weekly, let guardrail, guardrail.recommendation == .saveFastMode || guardrail.recommendation == .limited {
-            return "\(bestForecast.burnRateCopy) · \(bestForecast.runwayCopy) · 5h guardrail: \(guardrail.runwayCopy)"
+            return "\(bestForecast.burnRateCopy) · \(bestForecast.runwayCopy) · 5h: \(guardrail.runwayCopy)"
         }
         return "\(bestForecast.burnRateCopy) · \(bestForecast.runwayCopy)"
     }

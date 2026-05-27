@@ -75,6 +75,7 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
     public let id: String
     public let provider: Provider
     public let accountID: String
+    public let configuredAccountID: String?
     public let accountName: String
     public let label: String
     public let windowLabel: String?
@@ -92,6 +93,7 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
         case id
         case provider
         case accountID
+        case configuredAccountID
         case accountName
         case label
         case windowLabel
@@ -110,6 +112,7 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
         id: String? = nil,
         provider: Provider,
         accountID: String,
+        configuredAccountID: String? = nil,
         accountName: String,
         label: String,
         windowLabel: String? = nil,
@@ -133,6 +136,7 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
         self.id = id ?? "\(provider.rawValue):\(accountID):\(label)"
         self.provider = provider
         self.accountID = accountID
+        self.configuredAccountID = configuredAccountID
         self.accountName = accountName
         self.label = label
         self.windowLabel = windowLabel
@@ -152,6 +156,7 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
         id = try container.decode(String.self, forKey: .id)
         provider = try container.decode(Provider.self, forKey: .provider)
         accountID = try container.decode(String.self, forKey: .accountID)
+        configuredAccountID = try container.decodeIfPresent(String.self, forKey: .configuredAccountID)
         accountName = try container.decode(String.self, forKey: .accountName)
         label = try container.decode(String.self, forKey: .label)
         windowLabel = try container.decodeIfPresent(String.self, forKey: .windowLabel)
@@ -183,6 +188,10 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
     public var remaining: Int? {
         guard let used, let limit else { return nil }
         return max(limit - used, 0)
+    }
+
+    public var configuredOrResolvedAccountID: String {
+        configuredAccountID ?? accountID
     }
 
     public var usageRatio: Double? {

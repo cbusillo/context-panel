@@ -1231,16 +1231,50 @@ struct OpenAIAccountLimitsSection: View {
         OpenAIAccountLimitSummary.accounts(from: summaries)
     }
 
+    private var recommendation: AccountResetRecommendation? {
+        UsageSnapshot(generatedAt: Date(), limits: summaries.flatMap(\.limits))
+            .nextAccountToUse(provider: .openAI, window: .weekly)
+    }
+
     var body: some View {
         if !accounts.isEmpty {
             DetailCard(title: "OpenAI Accounts") {
                 VStack(alignment: .leading, spacing: 10) {
+                    if let recommendation {
+                        OpenAIRecommendedAccountRow(recommendation: recommendation)
+                    }
                     ForEach(accounts) { account in
                         OpenAIAccountLimitRow(account: account)
                     }
                 }
             }
         }
+    }
+}
+
+private struct OpenAIRecommendedAccountRow: View {
+    let recommendation: AccountResetRecommendation
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            StatusMark(status: recommendation.limit.status, size: 8)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Use this account")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(CPTheme.secondaryText)
+                Text(recommendation.accountName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(CPTheme.primaryText)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 12)
+            Text(recommendation.resetsAt.widgetRelativeText)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundStyle(CPTheme.primaryText)
+        }
+        .padding(10)
+        .background(CPTheme.surface2)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 
@@ -2732,6 +2766,15 @@ extension Date {
 
     var shouldShowWidgetDateTime: Bool {
         abs(timeIntervalSince(Date())) >= 24 * 3_600
+    }
+
+    var widgetDateTimeWithRelativeText: String {
+        let relative = widgetRelativeText
+        let compactRelative = relative.hasPrefix("in ") ? String(relative.dropFirst(3)) : relative
+        if shouldShowWidgetDateTime {
+            return "\(widgetDateTimeText) (\(compactRelative))"
+        }
+        return compactRelative
     }
 
     var widgetDateTimeText: String {
