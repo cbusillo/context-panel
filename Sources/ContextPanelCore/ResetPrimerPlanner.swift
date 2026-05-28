@@ -72,7 +72,7 @@ public struct ResetPrimerRunRecord: Codable, Equatable, Identifiable, Sendable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         key = try container.decode(ResetPrimerRunKey.self, forKey: .key)
-        resolvedAccountIDs = try container.decodeIfPresent([String].self, forKey: .resolvedAccountIDs) ?? []
+        resolvedAccountIDs = try container.decodeIfPresent([String].self, forKey: .resolvedAccountIDs) ?? [key.accountID]
         accountName = try container.decode(String.self, forKey: .accountName)
         scheduledAt = try container.decode(Date.self, forKey: .scheduledAt)
         status = try container.decode(ResetPrimerRunStatus.self, forKey: .status)

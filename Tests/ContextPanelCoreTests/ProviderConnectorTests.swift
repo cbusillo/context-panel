@@ -247,6 +247,45 @@ import Testing
     #expect(result.reports[0].accountName == "info@example.com · pro")
 }
 
+@Test func providerRuntimeKeepsRicherAccountNameWhenSuccessfulReportArrivesFirst() async throws {
+    let generatedAt = Date(timeIntervalSince1970: 10)
+    let resolvedAccountID = ConnectorRedactor.localAccountID(provider: .openAI, stableID: "chatgpt:resolved")
+    let resolvedReport = StubConnector(provider: .openAI, report: ProviderConnectorReport(
+        provider: .openAI,
+        accountID: resolvedAccountID,
+        accountName: "info@example.com · pro",
+        generatedAt: generatedAt,
+        limits: [UsageLimit(
+            provider: .openAI,
+            accountID: resolvedAccountID,
+            accountName: "info@example.com · pro",
+            label: "Weekly",
+            windowLabel: "Weekly",
+            unit: .percent,
+            used: 25,
+            limit: 100,
+            resetsAt: generatedAt.addingTimeInterval(3_600)
+        )]
+    ))
+    let configuredFailure = StubConnector(provider: .openAI, report: ProviderConnectorReport(
+        provider: .openAI,
+        accountID: resolvedAccountID,
+        configuredAccountID: "configured-openai",
+        accountName: "OpenAI",
+        generatedAt: generatedAt,
+        limits: [],
+        status: .failure,
+        errorMessage: "failed after alias was known"
+    ))
+
+    let result = await ProviderConnectorRuntime(connectors: [resolvedReport, configuredFailure]).refreshAll(now: generatedAt)
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].configuredAccountID == "configured-openai")
+    #expect(result.reports[0].accountName == "info@example.com · pro")
+    #expect(result.snapshot.limits.map(\.configuredAccountID) == ["configured-openai"])
+}
+
 @Test func codexConnectorReadsAuthAccountsFile() async throws {
     let firstIDToken = jwtPayload(email: "first@example.com", name: "First Person", accountID: "account-a", planType: "pro")
     let secondIDToken = jwtPayload(email: "second@example.com", name: "Second Person", accountID: "account-b", planType: "pro")
