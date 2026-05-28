@@ -144,6 +144,41 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(results.first?.errorMessage == "Reset priming is not supported for this provider")
 }
 
+@Test func resetPrimerPlannerKeepsRunStateCompatibleWhenConfiguredAliasAppears() {
+    let resetAt = now.addingTimeInterval(-10 * 60)
+    let settings = ResetPrimerSettings(
+        isEnabled: true,
+        delayMinutesAfterReset: 0,
+        accountPreferences: [preference(accountID: "configured-openai", provider: .openAI)]
+    )
+    let snapshot = UsageSnapshot(
+        generatedAt: now,
+        limits: [limit(
+            accountID: "resolved-openai",
+            configuredAccountID: "configured-openai",
+            provider: .openAI,
+            resetAt: resetAt
+        )]
+    )
+    let state = ResetPrimerRunState(records: [
+        ResetPrimerRunRecord(
+            key: ResetPrimerRunKey(
+                provider: .openAI,
+                accountID: "resolved-openai",
+                resetAt: resetAt
+            ),
+            accountName: "Resolved OpenAI",
+            scheduledAt: resetAt,
+            status: .completed,
+            updatedAt: now
+        )
+    ])
+
+    let plan = ResetPrimerPlanner.plan(settings: settings, snapshot: snapshot, state: state, now: now)
+
+    #expect(plan.isEmpty)
+}
+
 @Test func usageSnapshotRecommendsOpenAIWeeklyAccountWithEarliestFutureReset() throws {
     let laterReset = now.addingTimeInterval(3 * 3_600)
     let earlierReset = now.addingTimeInterval(90 * 60)

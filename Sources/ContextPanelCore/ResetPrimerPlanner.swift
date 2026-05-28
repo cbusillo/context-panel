@@ -100,6 +100,7 @@ public struct ResetPrimerRunState: Codable, Equatable, Sendable {
 
 public struct ResetPrimerCandidate: Equatable, Identifiable, Sendable {
     public let key: ResetPrimerRunKey
+    public let configuredAccountID: String
     public let resolvedAccountID: String
     public let resolvedAccountIDs: [String]
     public let accountName: String
@@ -110,11 +111,11 @@ public struct ResetPrimerCandidate: Equatable, Identifiable, Sendable {
     public var id: String { key.stableID }
     public var provider: Provider { key.provider }
     public var accountID: String { key.accountID }
-    public var configuredAccountID: String { key.accountID }
     public var resetAt: Date { key.resetAt }
 
     public init(
         key: ResetPrimerRunKey,
+        configuredAccountID: String? = nil,
         resolvedAccountID: String? = nil,
         resolvedAccountIDs: [String] = [],
         accountName: String,
@@ -123,6 +124,7 @@ public struct ResetPrimerCandidate: Equatable, Identifiable, Sendable {
         sourceLimitIDs: [String]
     ) {
         self.key = key
+        self.configuredAccountID = configuredAccountID ?? key.accountID
         self.resolvedAccountID = resolvedAccountID ?? key.accountID
         let normalizedResolvedAccountIDs = resolvedAccountIDs + [self.resolvedAccountID]
         self.resolvedAccountIDs = Array(Set(normalizedResolvedAccountIDs)).sorted()
@@ -203,15 +205,17 @@ public enum ResetPrimerPlanner {
         let grouped = Dictionary(grouping: limits) { limit in
             ResetPrimerRunKey(
                 provider: limit.provider,
-                accountID: limit.configuredOrResolvedAccountID,
+                accountID: limit.accountID,
                 resetAt: limit.resetsAt ?? Date.distantFuture
             )
         }
 
         return grouped.compactMap { key, limits in
             guard key.resetAt != Date.distantFuture, let first = limits.sortedByLimitID.first else { return nil }
+            let configuredAccountID = limits.compactMap(\.configuredAccountID).sorted().first ?? first.accountID
             return UnscheduledResetPrimerCandidate(
                 key: key,
+                configuredAccountID: configuredAccountID,
                 resolvedAccountID: first.accountID,
                 resolvedAccountIDs: Array(Set(limits.map(\.accountID))).sorted(),
                 accountName: first.accountName,
@@ -241,6 +245,7 @@ public enum ResetPrimerPlanner {
                         .addingTimeInterval(TimeInterval(max(accountStaggerMinutes, 0) * 60 * staggerIndex))
                     return ResetPrimerCandidate(
                         key: candidate.key,
+                        configuredAccountID: candidate.configuredAccountID,
                         resolvedAccountID: candidate.resolvedAccountID,
                         resolvedAccountIDs: candidate.resolvedAccountIDs,
                         accountName: candidate.accountName,
@@ -585,6 +590,7 @@ public struct ResetPrimerExecutor: Sendable {
 
 private struct UnscheduledResetPrimerCandidate: Equatable {
     let key: ResetPrimerRunKey
+    let configuredAccountID: String
     let resolvedAccountID: String
     let resolvedAccountIDs: [String]
     let accountName: String
