@@ -693,7 +693,7 @@ private extension ResetPrimerRunKey {
     func matchesHistoricalIdentity(of record: ResetPrimerRunRecord) -> Bool {
         provider == record.key.provider
             && resetAt == record.key.resetAt
-            && (record.resolvedAccountIDs.contains(accountID) || record.resolvedAccountIDs.contains(record.key.accountID))
+            && record.resolvedAccountIDs.contains(accountID)
     }
 
     var stableID: String {
