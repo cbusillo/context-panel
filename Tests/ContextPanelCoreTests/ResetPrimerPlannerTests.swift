@@ -216,7 +216,7 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(plan.isEmpty)
 }
 
-@Test func resetPrimerPlannerKeepsOldResolvedRunStateWhenResolvedAccountChangesAgain() {
+@Test func resetPrimerPlannerDoesNotMatchLegacyRunStateByDisplayNameAlone() {
     let resetAt = now.addingTimeInterval(-10 * 60)
     let settings = ResetPrimerSettings(
         isEnabled: true,
@@ -226,9 +226,9 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     let snapshot = UsageSnapshot(
         generatedAt: now,
         limits: [limit(
-            accountID: "resolved-openai-v3",
+            accountID: "resolved-openai-current",
             configuredAccountID: "configured-openai",
-            accountName: "Info Account",
+            accountName: "Shared Account Name",
             provider: .openAI,
             resetAt: resetAt
         )]
@@ -237,10 +237,10 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
         ResetPrimerRunRecord(
             key: ResetPrimerRunKey(
                 provider: .openAI,
-                accountID: "resolved-openai-v1",
+                accountID: "different-resolved-openai",
                 resetAt: resetAt
             ),
-            accountName: "Info Account",
+            accountName: "Shared Account Name",
             scheduledAt: resetAt,
             status: .completed,
             updatedAt: now
@@ -249,7 +249,7 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
 
     let plan = ResetPrimerPlanner.plan(settings: settings, snapshot: snapshot, state: state, now: now)
 
-    #expect(plan.isEmpty)
+    #expect(plan.due.map(\.accountID) == ["configured-openai"])
 }
 
 @Test func usageSnapshotRecommendsOpenAIWeeklyAccountWithEarliestFutureReset() throws {

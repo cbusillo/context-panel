@@ -73,22 +73,13 @@ public struct ResetPrimerRunState: Codable, Equatable, Sendable {
     }
 
     public func record(for candidate: ResetPrimerCandidate) -> ResetPrimerRunRecord? {
-        record(for: candidate.key, legacyAccountIDs: candidate.legacyAccountIDs, legacyAccountName: candidate.accountName)
+        record(for: candidate.key, legacyAccountIDs: candidate.legacyAccountIDs)
     }
 
-    private func record(
-        for key: ResetPrimerRunKey,
-        legacyAccountIDs: [String],
-        legacyAccountName: String? = nil
-    ) -> ResetPrimerRunRecord? {
+    private func record(for key: ResetPrimerRunKey, legacyAccountIDs: [String]) -> ResetPrimerRunRecord? {
         records
             .filter { record in
-                record.key == key
-                    || record.matchesLegacyIdentity(
-                        of: key,
-                        legacyAccountIDs: legacyAccountIDs,
-                        legacyAccountName: legacyAccountName
-                    )
+                record.key == key || record.key.matchesLegacyIdentity(of: key, legacyAccountIDs: legacyAccountIDs)
             }
             .max { lhs, rhs in lhs.updatedAt < rhs.updatedAt }
     }
@@ -98,21 +89,12 @@ public struct ResetPrimerRunState: Codable, Equatable, Sendable {
     }
 
     public mutating func upsert(_ record: ResetPrimerRunRecord, for candidate: ResetPrimerCandidate) {
-        upsert(record, legacyAccountIDs: candidate.legacyAccountIDs, legacyAccountName: candidate.accountName)
+        upsert(record, legacyAccountIDs: candidate.legacyAccountIDs)
     }
 
-    private mutating func upsert(
-        _ record: ResetPrimerRunRecord,
-        legacyAccountIDs: [String],
-        legacyAccountName: String? = nil
-    ) {
+    private mutating func upsert(_ record: ResetPrimerRunRecord, legacyAccountIDs: [String]) {
         records.removeAll { existing in
-            existing.key == record.key
-                || existing.matchesLegacyIdentity(
-                    of: record.key,
-                    legacyAccountIDs: legacyAccountIDs,
-                    legacyAccountName: legacyAccountName
-                )
+            existing.key == record.key || existing.key.matchesLegacyIdentity(of: record.key, legacyAccountIDs: legacyAccountIDs)
         }
         records.append(record)
         records = Self.normalized(records)
@@ -663,22 +645,13 @@ private extension Array where Element == String {
     }
 }
 
-private extension ResetPrimerRunRecord {
-    func matchesLegacyIdentity(
-        of other: ResetPrimerRunKey,
-        legacyAccountIDs: [String],
-        legacyAccountName: String?
-    ) -> Bool {
-        guard key.provider == other.provider, key.resetAt == other.resetAt else { return false }
-        if legacyAccountIDs.contains(key.accountID) {
-            return true
-        }
-        guard let legacyAccountName else { return false }
-        return accountName == legacyAccountName
-    }
-}
-
 private extension ResetPrimerRunKey {
+    func matchesLegacyIdentity(of other: ResetPrimerRunKey, legacyAccountIDs: [String]) -> Bool {
+        provider == other.provider
+            && resetAt == other.resetAt
+            && legacyAccountIDs.contains(accountID)
+    }
+
     var stableID: String {
         let reset = ISO8601DateFormatter().string(from: resetAt)
         return "\(provider.rawValue):\(accountID):\(reset)"
