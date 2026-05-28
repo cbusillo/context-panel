@@ -363,7 +363,7 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(plan.isEmpty)
 }
 
-@Test func resetPrimerPlannerKeepsLegacyConfiguredRunStateWhenCurrentSnapshotLosesAlias() throws {
+@Test func resetPrimerPlannerDoesNotKeepLegacyConfiguredRunStateWhenCurrentSnapshotLosesAlias() throws {
     let resetAt = now.addingTimeInterval(-10 * 60)
     let settings = ResetPrimerSettings(
         isEnabled: true,
@@ -404,10 +404,10 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     let plan = ResetPrimerPlanner.plan(settings: settings, snapshot: snapshot, state: state, now: now)
 
     #expect(state.records.first?.resolvedAccountIDs == ["configured-openai"])
-    #expect(plan.isEmpty)
+    #expect(plan.due.map(\.accountID) == ["resolved-openai-v2"])
 }
 
-@Test func resetPrimerPlannerDoesNotMatchLegacyConfiguredRunStateForDifferentAccountName() throws {
+@Test func resetPrimerPlannerDoesNotMatchLegacyConfiguredRunStateByAccountName() throws {
     let resetAt = now.addingTimeInterval(-10 * 60)
     let settings = ResetPrimerSettings(
         isEnabled: true,
@@ -418,7 +418,7 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
         generatedAt: now,
         limits: [limit(
             accountID: "resolved-openai-b",
-            accountName: "OpenAI B",
+            accountName: "Shared Account Name",
             provider: .openAI,
             resetAt: resetAt
         )]
@@ -433,7 +433,7 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
             "accountID" : "configured-openai-a",
             "resetAt" : "\(ISO8601DateFormatter().string(from: resetAt))"
           },
-          "accountName" : "OpenAI A",
+          "accountName" : "Shared Account Name",
           "scheduledAt" : "\(ISO8601DateFormatter().string(from: resetAt))",
           "status" : "completed",
           "updatedAt" : "\(ISO8601DateFormatter().string(from: now))"
