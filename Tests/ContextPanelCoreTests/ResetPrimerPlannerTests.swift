@@ -363,6 +363,93 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(plan.isEmpty)
 }
 
+@Test func resetPrimerPlannerKeepsLegacyConfiguredRunStateWhenCurrentSnapshotLosesAlias() throws {
+    let resetAt = now.addingTimeInterval(-10 * 60)
+    let settings = ResetPrimerSettings(
+        isEnabled: true,
+        delayMinutesAfterReset: 0,
+        accountPreferences: [preference(accountID: "resolved-openai-v2", provider: .openAI)]
+    )
+    let snapshot = UsageSnapshot(
+        generatedAt: now,
+        limits: [limit(
+            accountID: "resolved-openai-v2",
+            accountName: "OpenAI Primary",
+            provider: .openAI,
+            resetAt: resetAt
+        )]
+    )
+    let legacyJSON = """
+    {
+      "schemaVersion" : 1,
+      "records" : [
+        {
+          "key" : {
+            "provider" : "openai",
+            "accountID" : "configured-openai",
+            "resetAt" : "\(ISO8601DateFormatter().string(from: resetAt))"
+          },
+          "accountName" : "OpenAI Primary",
+          "scheduledAt" : "\(ISO8601DateFormatter().string(from: resetAt))",
+          "status" : "completed",
+          "updatedAt" : "\(ISO8601DateFormatter().string(from: now))"
+        }
+      ]
+    }
+    """
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let state = try decoder.decode(ResetPrimerRunState.self, from: Data(legacyJSON.utf8))
+
+    let plan = ResetPrimerPlanner.plan(settings: settings, snapshot: snapshot, state: state, now: now)
+
+    #expect(state.records.first?.resolvedAccountIDs == ["configured-openai"])
+    #expect(plan.isEmpty)
+}
+
+@Test func resetPrimerPlannerDoesNotMatchLegacyConfiguredRunStateForDifferentAccountName() throws {
+    let resetAt = now.addingTimeInterval(-10 * 60)
+    let settings = ResetPrimerSettings(
+        isEnabled: true,
+        delayMinutesAfterReset: 0,
+        accountPreferences: [preference(accountID: "resolved-openai-b", provider: .openAI)]
+    )
+    let snapshot = UsageSnapshot(
+        generatedAt: now,
+        limits: [limit(
+            accountID: "resolved-openai-b",
+            accountName: "OpenAI B",
+            provider: .openAI,
+            resetAt: resetAt
+        )]
+    )
+    let legacyJSON = """
+    {
+      "schemaVersion" : 1,
+      "records" : [
+        {
+          "key" : {
+            "provider" : "openai",
+            "accountID" : "configured-openai-a",
+            "resetAt" : "\(ISO8601DateFormatter().string(from: resetAt))"
+          },
+          "accountName" : "OpenAI A",
+          "scheduledAt" : "\(ISO8601DateFormatter().string(from: resetAt))",
+          "status" : "completed",
+          "updatedAt" : "\(ISO8601DateFormatter().string(from: now))"
+        }
+      ]
+    }
+    """
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let state = try decoder.decode(ResetPrimerRunState.self, from: Data(legacyJSON.utf8))
+
+    let plan = ResetPrimerPlanner.plan(settings: settings, snapshot: snapshot, state: state, now: now)
+
+    #expect(plan.due.map(\.accountID) == ["resolved-openai-b"])
+}
+
 @Test func resetPrimerRunStateUpsertPreservesHistoricalResolvedAccountIDs() {
     let resetAt = now.addingTimeInterval(-10 * 60)
     let candidate = ResetPrimerCandidate(

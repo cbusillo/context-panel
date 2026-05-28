@@ -132,11 +132,18 @@ public struct ProviderConnectorRuntime: Sendable {
                 let existing = deduplicated[existingIndex]
                 let configuredAccountID = existing.configuredAccountID ?? report.configuredAccountID
                 if existing.limits.isEmpty, !report.limits.isEmpty {
-                    deduplicated[existingIndex] = report.replacingMissingConfiguredAccountID(with: configuredAccountID)
+                    deduplicated[existingIndex] = report.replacingMissingConfiguredAccountID(
+                        with: configuredAccountID,
+                        accountName: mergedAccountName(existing: existing, report: report, prefersReportOnTie: true)
+                    )
                 } else if existing.configuredAccountID == nil || existing.limits.contains(where: { $0.configuredAccountID == nil }) {
                     deduplicated[existingIndex] = existing.replacingMissingConfiguredAccountID(
                         with: configuredAccountID,
-                        accountName: mergedAccountName(existing: existing, report: report)
+                        accountName: mergedAccountName(
+                            existing: existing,
+                            report: report,
+                            prefersReportOnTie: existing.limits.isEmpty
+                        )
                     )
                 }
             } else {
@@ -148,15 +155,21 @@ public struct ProviderConnectorRuntime: Sendable {
         return deduplicated
     }
 
-    private static func mergedAccountName(existing: ProviderConnectorReport, report: ProviderConnectorReport) -> String? {
-        guard report.configuredAccountID != nil else { return nil }
+    private static func mergedAccountName(
+        existing: ProviderConnectorReport,
+        report: ProviderConnectorReport,
+        prefersReportOnTie: Bool = false
+    ) -> String? {
         guard existing.accountName.caseInsensitiveCompare(report.accountName) != .orderedSame else { return nil }
         let reportSpecificity = accountNameSpecificity(report.accountName)
         let existingSpecificity = accountNameSpecificity(existing.accountName)
-        guard reportSpecificity > existingSpecificity || (existing.limits.isEmpty && reportSpecificity == existingSpecificity) else {
-            return nil
+        if reportSpecificity > existingSpecificity || (prefersReportOnTie && reportSpecificity == existingSpecificity) {
+            return report.accountName
         }
-        return report.accountName
+        if existingSpecificity > reportSpecificity {
+            return existing.accountName
+        }
+        return nil
     }
 
     private static func accountNameSpecificity(_ accountName: String) -> Int {
@@ -173,10 +186,10 @@ private extension ProviderConnectorReport {
         return ProviderConnectorReport(
             provider: provider,
             accountID: accountID,
-            configuredAccountID: configuredAccountID ?? fallback,
+            configuredAccountID: fallback,
             accountName: replacementAccountName ?? accountName,
             generatedAt: generatedAt,
-            limits: limits.map { $0.replacingMissingConfiguredAccountID(with: fallback) },
+            limits: limits.map { $0.replacingMissingConfiguredAccountID(with: fallback, accountName: replacementAccountName) },
             status: status,
             errorMessage: errorMessage
         )
@@ -184,14 +197,14 @@ private extension ProviderConnectorReport {
 }
 
 private extension UsageLimit {
-    func replacingMissingConfiguredAccountID(with fallback: String) -> UsageLimit {
-        guard configuredAccountID == nil else { return self }
+    func replacingMissingConfiguredAccountID(with fallback: String, accountName replacementAccountName: String? = nil) -> UsageLimit {
+        guard configuredAccountID != fallback || replacementAccountName != nil else { return self }
         return UsageLimit(
             id: id,
             provider: provider,
             accountID: accountID,
             configuredAccountID: fallback,
-            accountName: accountName,
+            accountName: replacementAccountName ?? accountName,
             label: label,
             windowLabel: windowLabel,
             modelLabel: modelLabel,

@@ -97,15 +97,30 @@ public struct ResetPrimerRunState: Codable, Equatable, Sendable {
     }
 
     public func record(for candidate: ResetPrimerCandidate) -> ResetPrimerRunRecord? {
-        record(for: candidate.key, legacyAccountIDs: candidate.legacyAccountIDs)
+        record(
+            for: candidate.key,
+            legacyAccountIDs: candidate.legacyAccountIDs,
+            accountName: candidate.accountName,
+            allowsLegacyConfiguredKeyMatch: candidate.usesResolvedAccountKey
+        )
     }
 
-    private func record(for key: ResetPrimerRunKey, legacyAccountIDs: [String]) -> ResetPrimerRunRecord? {
+    private func record(
+        for key: ResetPrimerRunKey,
+        legacyAccountIDs: [String],
+        accountName: String? = nil,
+        allowsLegacyConfiguredKeyMatch: Bool = false
+    ) -> ResetPrimerRunRecord? {
         records
             .filter { record in
                 record.key == key
                     || record.key.matchesLegacyIdentity(of: key, legacyAccountIDs: legacyAccountIDs)
                     || key.matchesHistoricalIdentity(of: record)
+                    || record.matchesLegacyConfiguredIdentity(
+                        of: key,
+                        accountName: accountName,
+                        isAllowed: allowsLegacyConfiguredKeyMatch
+                    )
             }
             .max { lhs, rhs in lhs.updatedAt < rhs.updatedAt }
     }
@@ -671,6 +686,10 @@ private extension ResetPrimerCandidate {
     var legacyAccountIDs: [String] {
         Array(Set(resolvedAccountIDs).subtracting([configuredAccountID])).sorted()
     }
+
+    var usesResolvedAccountKey: Bool {
+        key.accountID == resolvedAccountID && configuredAccountID == resolvedAccountID
+    }
 }
 
 private extension Array where Element == String {
@@ -703,6 +722,19 @@ private extension ResetPrimerRunKey {
 
     var accountStaggerKey: String {
         "\(provider.rawValue):\(accountID)"
+    }
+}
+
+private extension ResetPrimerRunRecord {
+    func matchesLegacyConfiguredIdentity(
+        of other: ResetPrimerRunKey,
+        accountName otherAccountName: String?,
+        isAllowed: Bool
+    ) -> Bool {
+        guard isAllowed, let otherAccountName else { return false }
+        guard key.provider == other.provider, key.resetAt == other.resetAt, key.accountID != other.accountID else { return false }
+        guard resolvedAccountIDs == [key.accountID] else { return false }
+        return accountName.caseInsensitiveCompare(otherAccountName) == .orderedSame
     }
 }
 

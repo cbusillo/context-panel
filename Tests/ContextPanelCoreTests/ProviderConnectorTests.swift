@@ -186,6 +186,46 @@ import Testing
     #expect(result.snapshot.limits.map(\.configuredAccountID) == ["configured-openai"])
 }
 
+@Test func providerRuntimeKeepsRicherAccountNameWhenSuccessfulPlaceholderReplacesEmptyReport() async throws {
+    let generatedAt = Date(timeIntervalSince1970: 10)
+    let resolvedAccountID = ConnectorRedactor.localAccountID(provider: .openAI, stableID: "chatgpt:resolved")
+    let richEmptyReport = StubConnector(provider: .openAI, report: ProviderConnectorReport(
+        provider: .openAI,
+        accountID: resolvedAccountID,
+        configuredAccountID: "configured-openai",
+        accountName: "info@example.com · pro",
+        generatedAt: generatedAt,
+        limits: [],
+        status: .failure,
+        errorMessage: "failed before live usage arrived"
+    ))
+    let placeholderSuccess = StubConnector(provider: .openAI, report: ProviderConnectorReport(
+        provider: .openAI,
+        accountID: resolvedAccountID,
+        accountName: "OpenAI",
+        generatedAt: generatedAt,
+        limits: [UsageLimit(
+            provider: .openAI,
+            accountID: resolvedAccountID,
+            accountName: "OpenAI",
+            label: "Weekly",
+            windowLabel: "Weekly",
+            unit: .percent,
+            used: 25,
+            limit: 100,
+            resetsAt: generatedAt.addingTimeInterval(3_600)
+        )]
+    ))
+
+    let result = await ProviderConnectorRuntime(connectors: [richEmptyReport, placeholderSuccess]).refreshAll(now: generatedAt)
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].configuredAccountID == "configured-openai")
+    #expect(result.reports[0].accountName == "info@example.com · pro")
+    #expect(result.snapshot.limits.map(\.configuredAccountID) == ["configured-openai"])
+    #expect(result.snapshot.limits.map(\.accountName) == ["info@example.com · pro"])
+}
+
 @Test func providerRuntimeBackfillsConfiguredAccountIDWhenDuplicateReportsAreEmpty() async throws {
     let generatedAt = Date(timeIntervalSince1970: 10)
     let resolvedAccountID = ConnectorRedactor.localAccountID(provider: .openAI, stableID: "chatgpt:resolved")
@@ -284,6 +324,85 @@ import Testing
     #expect(result.reports[0].configuredAccountID == "configured-openai")
     #expect(result.reports[0].accountName == "info@example.com · pro")
     #expect(result.snapshot.limits.map(\.configuredAccountID) == ["configured-openai"])
+}
+
+@Test func providerRuntimePropagatesRicherMergedAccountNameToLimits() async throws {
+    let generatedAt = Date(timeIntervalSince1970: 10)
+    let resolvedAccountID = ConnectorRedactor.localAccountID(provider: .openAI, stableID: "chatgpt:resolved")
+    let placeholderSuccess = StubConnector(provider: .openAI, report: ProviderConnectorReport(
+        provider: .openAI,
+        accountID: resolvedAccountID,
+        accountName: "OpenAI",
+        generatedAt: generatedAt,
+        limits: [UsageLimit(
+            provider: .openAI,
+            accountID: resolvedAccountID,
+            accountName: "OpenAI",
+            label: "Weekly",
+            windowLabel: "Weekly",
+            unit: .percent,
+            used: 25,
+            limit: 100,
+            resetsAt: generatedAt.addingTimeInterval(3_600)
+        )]
+    ))
+    let richConfiguredFailure = StubConnector(provider: .openAI, report: ProviderConnectorReport(
+        provider: .openAI,
+        accountID: resolvedAccountID,
+        configuredAccountID: "configured-openai",
+        accountName: "info@example.com · pro",
+        generatedAt: generatedAt,
+        limits: [],
+        status: .failure,
+        errorMessage: "failed after rich alias was known"
+    ))
+
+    let result = await ProviderConnectorRuntime(connectors: [placeholderSuccess, richConfiguredFailure]).refreshAll(now: generatedAt)
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].configuredAccountID == "configured-openai")
+    #expect(result.reports[0].accountName == "info@example.com · pro")
+    #expect(result.snapshot.limits.map(\.configuredAccountID) == ["configured-openai"])
+    #expect(result.snapshot.limits.map(\.accountName) == ["info@example.com · pro"])
+}
+
+@Test func providerRuntimeUsesOneConfiguredAccountIDWhenDuplicateReportsDisagree() async throws {
+    let generatedAt = Date(timeIntervalSince1970: 10)
+    let resolvedAccountID = ConnectorRedactor.localAccountID(provider: .openAI, stableID: "chatgpt:resolved")
+    let firstAlias = StubConnector(provider: .openAI, report: ProviderConnectorReport(
+        provider: .openAI,
+        accountID: resolvedAccountID,
+        configuredAccountID: "configured-openai-a",
+        accountName: "OpenAI A",
+        generatedAt: generatedAt,
+        limits: [],
+        status: .failure,
+        errorMessage: "failed before live usage arrived"
+    ))
+    let secondAliasSuccess = StubConnector(provider: .openAI, report: ProviderConnectorReport(
+        provider: .openAI,
+        accountID: resolvedAccountID,
+        configuredAccountID: "configured-openai-b",
+        accountName: "OpenAI B",
+        generatedAt: generatedAt,
+        limits: [UsageLimit(
+            provider: .openAI,
+            accountID: resolvedAccountID,
+            accountName: "OpenAI B",
+            label: "Weekly",
+            windowLabel: "Weekly",
+            unit: .percent,
+            used: 25,
+            limit: 100,
+            resetsAt: generatedAt.addingTimeInterval(3_600)
+        )]
+    ))
+
+    let result = await ProviderConnectorRuntime(connectors: [firstAlias, secondAliasSuccess]).refreshAll(now: generatedAt)
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].configuredAccountID == "configured-openai-a")
+    #expect(result.snapshot.limits.map(\.configuredAccountID) == ["configured-openai-a"])
 }
 
 @Test func codexConnectorReadsAuthAccountsFile() async throws {
