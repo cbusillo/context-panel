@@ -146,6 +146,75 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(results.first?.errorMessage == "Reset priming is not supported for this provider")
 }
 
+@Test func resetPrimerExecutorPrefersCurrentResolvedAccountOverConfiguredAlias() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let settingsStore = ResetPrimerSettingsStore(settingsURL: directory.appending(path: "reset-primer-settings.json"))
+    let stateStore = ResetPrimerRunStateStore(stateURL: directory.appending(path: "reset-primer-runs.json"))
+    let snapshotStore = JSONSnapshotStore(rootDirectory: directory.appending(path: "Snapshots", directoryHint: .isDirectory))
+    let accountStore = AccountConfigurationStore(configurationURL: directory.appending(path: "accounts.json"))
+    let currentCommand = directory.appending(path: "current-code")
+    let legacyCommand = directory.appending(path: "legacy-code")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: currentCommand)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: currentCommand.path)
+    let resetAt = now.addingTimeInterval(-10 * 60)
+    try settingsStore.save(ResetPrimerSettings(
+        isEnabled: true,
+        delayMinutesAfterReset: 0,
+        accountPreferences: [preference(accountID: "configured-openai", provider: .openAI)]
+    ))
+    try accountStore.save(AccountConfigurationDocument(updatedAt: now, accounts: [
+        LocalProviderAccountConfiguration(
+            id: "configured-openai",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "Legacy OpenAI",
+            isEnabled: true,
+            commandPath: legacyCommand.path
+        ),
+        LocalProviderAccountConfiguration(
+            id: "resolved-openai-current",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "Current OpenAI",
+            isEnabled: true,
+            commandPath: currentCommand.path
+        ),
+    ]))
+    try snapshotStore.save(StoredUsageSnapshot(
+        savedAt: now,
+        snapshot: UsageSnapshot(
+            generatedAt: now,
+            limits: [limit(
+                accountID: "resolved-openai-current",
+                configuredAccountID: "configured-openai",
+                provider: .openAI,
+                resetAt: resetAt
+            )]
+        )
+    ))
+    let service = ResetPrimerPlanService(
+        settingsStore: settingsStore,
+        stateStore: stateStore,
+        snapshotStore: snapshotStore
+    )
+    let executor = ResetPrimerExecutor(
+        planService: service,
+        accountStore: accountStore,
+        processRunner: { commandURL, _, _ in
+            Issue.record("Primer command should not run until a provider supplies primer arguments: \(commandURL.path)")
+            return 0
+        }
+    )
+
+    let results = await executor.runDue(now: now)
+
+    #expect(results.map(\.status) == [.skipped])
+    #expect(results.first?.errorMessage == "Reset priming is not supported for this provider")
+}
+
 @Test func resetPrimerPlannerKeepsRunStateCompatibleWhenConfiguredAliasAppears() {
     let resetAt = now.addingTimeInterval(-10 * 60)
     let settings = ResetPrimerSettings(
