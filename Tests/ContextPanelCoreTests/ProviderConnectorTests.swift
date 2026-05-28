@@ -106,6 +106,7 @@ import Testing
 
     #expect(result.reports.count == 1)
     #expect(result.reports[0].configuredAccountID == "configured-openai")
+    #expect(result.reports[0].accountName == "Resolved OpenAI")
     #expect(result.snapshot.limits.map(\.configuredAccountID) == ["configured-openai"])
 }
 
@@ -212,6 +213,7 @@ import Testing
 
     #expect(result.reports.count == 1)
     #expect(result.reports[0].configuredAccountID == "configured-openai")
+    #expect(result.reports[0].accountName == "Configured OpenAI")
     #expect(result.reports[0].status == .failure)
 }
 

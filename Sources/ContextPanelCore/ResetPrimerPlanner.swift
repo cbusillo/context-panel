@@ -627,7 +627,7 @@ private extension ResetPrimerCandidate {
     }
 
     var preferredAccountIDs: [String] {
-        [configuredAccountID].appending(uniqueValuesFrom: resolvedAccountIDs)
+        [resolvedAccountID].appending(uniqueValuesFrom: [configuredAccountID]).appending(uniqueValuesFrom: resolvedAccountIDs)
     }
 
     var legacyAccountIDs: [String] {
