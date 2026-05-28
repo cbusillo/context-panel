@@ -25,6 +25,7 @@ public struct StoredUsageSnapshot: Codable, Equatable, Sendable {
 public struct StoredProviderReport: Codable, Equatable, Sendable {
     public let provider: Provider
     public let accountID: String
+    public let configuredAccountID: String?
     public let accountName: String
     public let generatedAt: Date
     public let status: UsageStatus
@@ -33,6 +34,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
     public init(
         provider: Provider,
         accountID: String,
+        configuredAccountID: String? = nil,
         accountName: String,
         generatedAt: Date,
         status: UsageStatus,
@@ -40,6 +42,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
     ) {
         self.provider = provider
         self.accountID = accountID
+        self.configuredAccountID = configuredAccountID
         self.accountName = accountName
         self.generatedAt = generatedAt
         self.status = status
@@ -50,6 +53,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         self.init(
             provider: report.provider,
             accountID: report.accountID,
+            configuredAccountID: report.configuredAccountID,
             accountName: report.accountName,
             generatedAt: report.generatedAt,
             status: report.status,

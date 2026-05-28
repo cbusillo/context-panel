@@ -731,10 +731,7 @@ extension WidgetSnapshot {
 
     var fastModeResetDetail: String {
         guard let resetAt = fastModeForecast?.nextResetAt else { return "next reset unknown" }
-        if resetAt.shouldShowWidgetDateTime {
-            return "next reset \(resetAt.widgetDateTimeText)"
-        }
-        return "next reset \(resetAt.widgetCompactResetText)"
+        return "reset \(resetAt.widgetDateTimeWithRelativeText)"
     }
 
     var widgetProblemText: String? {
@@ -917,6 +914,15 @@ extension Date {
         let compactRelative = relative.hasPrefix("in ") ? String(relative.dropFirst(3)) : relative
         if shouldShowWidgetDateTime {
             return "\(compactRelative) · \(widgetDateTimeText)"
+        }
+        return compactRelative
+    }
+
+    var widgetDateTimeWithRelativeText: String {
+        let relative = widgetRelativeText
+        let compactRelative = relative.hasPrefix("in ") ? String(relative.dropFirst(3)) : relative
+        if shouldShowWidgetDateTime {
+            return "\(widgetDateTimeText) (\(compactRelative))"
         }
         return compactRelative
     }

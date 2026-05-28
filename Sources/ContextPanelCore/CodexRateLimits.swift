@@ -206,15 +206,18 @@ public struct CodexTokenIdentity: Equatable, Sendable {
 }
 
 public struct CodexAccountConfiguration: Equatable, Sendable {
+    public let configuredAccountID: String?
     public let authPath: String
     public let accountName: String
     public let endpoint: URL
 
     public init(
+        configuredAccountID: String? = nil,
         authPath: String,
         accountName: String? = nil,
         endpoint: URL = URL(string: "https://chatgpt.com/backend-api/wham/usage")!
     ) {
+        self.configuredAccountID = configuredAccountID
         self.authPath = authPath
         self.accountName = accountName ?? ConnectorRedactor.redactedPath(authPath)
         self.endpoint = endpoint
@@ -266,6 +269,7 @@ public struct CodexRateLimitConnector: ProviderConnector {
             return [ProviderConnectorReport(
                 provider: provider,
                 accountID: localAccountID,
+                configuredAccountID: account.configuredAccountID,
                 accountName: account.accountName,
                 generatedAt: now,
                 limits: [],
@@ -281,7 +285,7 @@ public struct CodexRateLimitConnector: ProviderConnector {
         now: Date
     ) async throws -> ProviderConnectorReport {
         let auth = authRecord.tokens
-        let providerAccountID = auth.accountID ?? CodexAccountIDExtractor.accountID(fromIDToken: auth.idToken)
+        let providerAccountID = canonicalProviderAccountID(from: auth)
         let localAccountID = providerAccountID.map {
             ConnectorRedactor.localAccountID(provider: provider, stableID: "chatgpt:\($0)")
         } ?? authRecord.stableID.map {
@@ -295,6 +299,7 @@ public struct CodexRateLimitConnector: ProviderConnector {
                 codexUsageLimits(
                     from: snapshot,
                     accountID: localAccountID,
+                    configuredAccountID: account.configuredAccountID,
                     accountName: authRecord.accountName,
                     observedAt: now
                 )
@@ -302,6 +307,7 @@ public struct CodexRateLimitConnector: ProviderConnector {
             return ProviderConnectorReport(
                 provider: provider,
                 accountID: localAccountID,
+                configuredAccountID: account.configuredAccountID,
                 accountName: authRecord.accountName,
                 generatedAt: now,
                 limits: limits
@@ -310,6 +316,7 @@ public struct CodexRateLimitConnector: ProviderConnector {
             return ProviderConnectorReport(
                 provider: provider,
                 accountID: localAccountID,
+                configuredAccountID: account.configuredAccountID,
                 accountName: authRecord.accountName,
                 generatedAt: now,
                 limits: [],
@@ -325,7 +332,7 @@ public struct CodexRateLimitConnector: ProviderConnector {
             "User-Agent": "context-panel",
             "Accept": "application/json",
         ]
-        if let accountID = auth.accountID ?? CodexAccountIDExtractor.accountID(fromIDToken: auth.idToken) {
+        if let accountID = canonicalProviderAccountID(from: auth) {
             headers["ChatGPT-Account-Id"] = accountID
         }
 
@@ -337,9 +344,14 @@ public struct CodexRateLimitConnector: ProviderConnector {
     }
 }
 
+private func canonicalProviderAccountID(from auth: CodexAuthTokens) -> String? {
+    CodexAccountIDExtractor.accountID(fromIDToken: auth.idToken) ?? auth.accountID
+}
+
 public func codexUsageLimits(
     from snapshot: CodexRateLimitSnapshot,
     accountID: String,
+    configuredAccountID: String? = nil,
     accountName: String,
     observedAt: Date
 ) -> [UsageLimit] {
@@ -349,6 +361,7 @@ public func codexUsageLimits(
             snapshot: snapshot,
             window: primary,
             accountID: accountID,
+            configuredAccountID: configuredAccountID,
             accountName: accountName,
             observedAt: observedAt
         ))
@@ -358,6 +371,7 @@ public func codexUsageLimits(
             snapshot: snapshot,
             window: secondary,
             accountID: accountID,
+            configuredAccountID: configuredAccountID,
             accountName: accountName,
             observedAt: observedAt
         ))
@@ -526,6 +540,7 @@ private func codexUsageLimit(
     snapshot: CodexRateLimitSnapshot,
     window: CodexRateLimitWindow,
     accountID: String,
+    configuredAccountID: String?,
     accountName: String,
     observedAt: Date
 ) -> UsageLimit {
@@ -533,6 +548,7 @@ private func codexUsageLimit(
     return UsageLimit(
         provider: .openAI,
         accountID: accountID,
+        configuredAccountID: configuredAccountID,
         accountName: accountName,
         label: "\(snapshot.displayName) \(windowLabel)",
         windowLabel: windowLabel,

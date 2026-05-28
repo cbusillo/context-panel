@@ -18,6 +18,10 @@
     "test": {
       "default": "swift test"
     },
+    "inspection": {
+      "ide": "IntelliJ IDEA",
+      "scopePreference": "changed_files"
+    },
     "validate": {
       "default": "scripts/commit-gate.sh"
     },
@@ -30,12 +34,7 @@
       "release or signing changes"
     ]
   },
-  "importantWorkflows": [
-    "CI",
-    "CodeQL",
-    "Release",
-    "TestFlight"
-  ],
+  "importantWorkflows": ["CI", "CodeQL", "Release", "TestFlight"],
   "branchProtection": {
     "ruleset": {
       "name": "Protect main",
@@ -45,10 +44,7 @@
     "pullRequestsRequired": true,
     "requiredStatusChecks": {
       "strict": true,
-      "contexts": [
-        "swift",
-        "Analyze Swift"
-      ]
+      "contexts": ["swift", "Analyze Swift"]
     },
     "codeScanning": {
       "tool": "CodeQL",

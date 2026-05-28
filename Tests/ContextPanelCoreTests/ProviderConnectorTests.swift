@@ -71,6 +71,82 @@ import Testing
     #expect(result.snapshot.limits.map(\.accountName) == ["OpenAI A", "OpenAI A"])
 }
 
+@Test func providerRuntimePreservesConfiguredAccountIDWhenDeduplicatingFallbackReports() async throws {
+    let generatedAt = Date(timeIntervalSince1970: 10)
+    let resolvedAccountID = ConnectorRedactor.localAccountID(provider: .openAI, stableID: "chatgpt:resolved")
+    let failingFallback = StubConnector(provider: .openAI, report: ProviderConnectorReport(
+        provider: .openAI,
+        accountID: resolvedAccountID,
+        configuredAccountID: "configured-openai",
+        accountName: "Configured OpenAI",
+        generatedAt: generatedAt,
+        limits: [],
+        status: .failure,
+        errorMessage: "failed"
+    ))
+    let resolvedReport = StubConnector(provider: .openAI, report: ProviderConnectorReport(
+        provider: .openAI,
+        accountID: resolvedAccountID,
+        accountName: "Resolved OpenAI",
+        generatedAt: generatedAt,
+        limits: [UsageLimit(
+            provider: .openAI,
+            accountID: resolvedAccountID,
+            accountName: "Resolved OpenAI",
+            label: "Weekly",
+            windowLabel: "Weekly",
+            unit: .percent,
+            used: 25,
+            limit: 100,
+            resetsAt: generatedAt.addingTimeInterval(3_600)
+        )]
+    ))
+
+    let result = await ProviderConnectorRuntime(connectors: [failingFallback, resolvedReport]).refreshAll(now: generatedAt)
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].configuredAccountID == "configured-openai")
+    #expect(result.snapshot.limits.map(\.configuredAccountID) == ["configured-openai"])
+}
+
+@Test func providerRuntimeBackfillsConfiguredAccountIDWhenAliasReportArrivesSecond() async throws {
+    let generatedAt = Date(timeIntervalSince1970: 10)
+    let resolvedAccountID = ConnectorRedactor.localAccountID(provider: .openAI, stableID: "chatgpt:resolved")
+    let resolvedReport = StubConnector(provider: .openAI, report: ProviderConnectorReport(
+        provider: .openAI,
+        accountID: resolvedAccountID,
+        accountName: "Resolved OpenAI",
+        generatedAt: generatedAt,
+        limits: [UsageLimit(
+            provider: .openAI,
+            accountID: resolvedAccountID,
+            accountName: "Resolved OpenAI",
+            label: "Weekly",
+            windowLabel: "Weekly",
+            unit: .percent,
+            used: 25,
+            limit: 100,
+            resetsAt: generatedAt.addingTimeInterval(3_600)
+        )]
+    ))
+    let aliasReport = StubConnector(provider: .openAI, report: ProviderConnectorReport(
+        provider: .openAI,
+        accountID: resolvedAccountID,
+        configuredAccountID: "configured-openai",
+        accountName: "Configured OpenAI",
+        generatedAt: generatedAt,
+        limits: [],
+        status: .failure,
+        errorMessage: "failed"
+    ))
+
+    let result = await ProviderConnectorRuntime(connectors: [resolvedReport, aliasReport]).refreshAll(now: generatedAt)
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].configuredAccountID == "configured-openai")
+    #expect(result.snapshot.limits.map(\.configuredAccountID) == ["configured-openai"])
+}
+
 @Test func codexConnectorReadsAuthAccountsFile() async throws {
     let firstIDToken = jwtPayload(email: "first@example.com", name: "First Person", accountID: "account-a", planType: "pro")
     let secondIDToken = jwtPayload(email: "second@example.com", name: "Second Person", accountID: "account-b", planType: "pro")
@@ -132,14 +208,125 @@ import Testing
     #expect(result.reports.count == 2)
     #expect(result.snapshot.limits.count == 4)
     #expect(result.reports.map(\.accountName) == ["first@example.com · pro", "second@example.com · pro"])
+    #expect(result.reports.allSatisfy { $0.configuredAccountID == nil })
     #expect(result.snapshot.limits.map(\.accountName) == [
         "first@example.com · pro",
         "first@example.com · pro",
         "second@example.com · pro",
         "second@example.com · pro",
     ])
+    #expect(result.snapshot.limits.allSatisfy { $0.configuredAccountID == nil })
     #expect(http.requests.map { $0.headers["ChatGPT-Account-Id"] } == ["account-a", "account-b"])
     #expect(Set(result.reports.map(\.accountID)).count == 2)
+}
+
+@Test func codexConnectorCarriesConfiguredAccountIDForResolvedAuthAccounts() async throws {
+    let firstIDToken = jwtPayload(email: "first@example.com", name: "First Person", accountID: "account-a", planType: "pro")
+    let secondIDToken = jwtPayload(email: "second@example.com", name: "Second Person", accountID: "account-b", planType: "pro")
+    let authAccountsJSON = #"""
+    {
+      "version": 1,
+      "accounts": [
+        {
+          "id": "local-account-a",
+          "mode": "chatgpt",
+          "tokens": {
+            "access_token": "token-secret-a",
+            "account_id": "account-a",
+            "id_token": "__FIRST_ID_TOKEN__"
+          }
+        },
+        {
+          "id": "local-account-b",
+          "mode": "chatgpt",
+          "tokens": {
+            "access_token": "token-secret-b",
+            "account_id": "account-b",
+            "id_token": "__SECOND_ID_TOKEN__"
+          }
+        }
+      ]
+    }
+    """#
+    let authAccounts = authAccountsJSON
+        .replacingOccurrences(of: "__FIRST_ID_TOKEN__", with: firstIDToken)
+        .replacingOccurrences(of: "__SECOND_ID_TOKEN__", with: secondIDToken)
+        .data(using: .utf8)!
+    let usage = #"""
+    {
+      "plan_type": "pro",
+      "rate_limit": {
+        "primary_window": { "used_percent": 1, "limit_window_seconds": 18000, "reset_at": 1788393600 },
+        "secondary_window": { "used_percent": 2, "limit_window_seconds": 604800, "reset_at": 1788998400 }
+      }
+    }
+    """#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: usage),
+        ConnectorHTTPResponse(statusCode: 200, data: usage),
+    ])
+    let connector = CodexRateLimitConnector(
+        accounts: [CodexAccountConfiguration(
+            configuredAccountID: "openai-code-default",
+            authPath: "/tmp/auth_accounts.json",
+            accountName: "Code"
+        )],
+        httpClient: http,
+        fileLoader: { _ in authAccounts }
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+
+    #expect(result.reports.count == 2)
+    #expect(result.reports.allSatisfy { $0.configuredAccountID == "openai-code-default" })
+    #expect(result.snapshot.limits.allSatisfy { $0.configuredAccountID == "openai-code-default" })
+    #expect(Set(result.reports.map(\.accountID)).count == 2)
+}
+
+@Test func codexConnectorPrefersIDTokenAccountIDWhenAuthAccountIDIsStale() async throws {
+    let idToken = jwtPayload(
+        email: "info@example.com",
+        name: "Info Account",
+        accountID: "fresh-account",
+        planType: "pro"
+    )
+    let auth = #"""
+    {
+      "tokens": {
+        "access_token": "token-secret",
+        "account_id": "stale-account",
+        "id_token": "__ID_TOKEN__"
+      }
+    }
+    """#
+        .replacingOccurrences(of: "__ID_TOKEN__", with: idToken)
+        .data(using: .utf8)!
+    let usage = #"""
+    {
+      "plan_type": "pro",
+      "rate_limit": {
+        "primary_window": { "used_percent": 5, "limit_window_seconds": 18000, "reset_at": 1788393600 },
+        "secondary_window": { "used_percent": 10, "limit_window_seconds": 604800, "reset_at": 1788998400 }
+      }
+    }
+    """#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
+    let connector = CodexRateLimitConnector(
+        accounts: [CodexAccountConfiguration(
+            configuredAccountID: "openai-code-default",
+            authPath: "/tmp/auth.json",
+            accountName: "Code"
+        )],
+        httpClient: http,
+        fileLoader: { _ in auth }
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+
+    #expect(result.reports.count == 1)
+    #expect(http.requests.map { $0.headers["ChatGPT-Account-Id"] } == ["fresh-account"])
+    #expect(result.reports[0].accountID == ConnectorRedactor.localAccountID(provider: .openAI, stableID: "chatgpt:fresh-account"))
+    #expect(result.snapshot.limits.allSatisfy { $0.configuredAccountID == "openai-code-default" })
 }
 
 @Test func codexTokenIdentityExtractsEmailNamePlanAndAccountID() {

@@ -48,6 +48,214 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(plan.upcoming.first?.scheduledAt == resetAt.addingTimeInterval(15 * 60))
 }
 
+@Test func resetPrimerPlannerMatchesResolvedLimitsToConfiguredAccountID() throws {
+    let resetAt = now.addingTimeInterval(-10 * 60)
+    let settings = ResetPrimerSettings(
+        isEnabled: true,
+        delayMinutesAfterReset: 0,
+        accountPreferences: [preference(accountID: "openai-code-default", provider: .openAI)]
+    )
+    let snapshot = UsageSnapshot(
+        generatedAt: now,
+        limits: [
+            limit(
+                accountID: "openai-resolved-a",
+                configuredAccountID: "openai-code-default",
+                accountName: "first@example.com · pro",
+                provider: .openAI,
+                resetAt: resetAt
+            ),
+            limit(
+                accountID: "openai-resolved-b",
+                configuredAccountID: "openai-code-default",
+                accountName: "second@example.com · pro",
+                provider: .openAI,
+                resetAt: resetAt.addingTimeInterval(30 * 60)
+            ),
+        ]
+    )
+
+    let plan = ResetPrimerPlanner.plan(settings: settings, snapshot: snapshot, now: now)
+
+    #expect(plan.due.map(\.accountID) == ["openai-code-default"])
+    #expect(plan.due.map(\.configuredAccountID) == ["openai-code-default"])
+    #expect(plan.due.map(\.resolvedAccountID) == ["openai-resolved-a"])
+    #expect(plan.upcoming.map(\.accountID) == ["openai-code-default"])
+    #expect(plan.upcoming.map(\.configuredAccountID) == ["openai-code-default"])
+    #expect(plan.upcoming.map(\.resolvedAccountID) == ["openai-resolved-b"])
+}
+
+@Test func resetPrimerExecutorCanUseResolvedAccountWhenConfiguredAliasIsMissing() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let settingsStore = ResetPrimerSettingsStore(settingsURL: directory.appending(path: "reset-primer-settings.json"))
+    let stateStore = ResetPrimerRunStateStore(stateURL: directory.appending(path: "reset-primer-runs.json"))
+    let snapshotStore = JSONSnapshotStore(rootDirectory: directory.appending(path: "Snapshots", directoryHint: .isDirectory))
+    let accountStore = AccountConfigurationStore(configurationURL: directory.appending(path: "accounts.json"))
+    let command = directory.appending(path: "code")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: command)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: command.path)
+    let resetAt = now.addingTimeInterval(-10 * 60)
+    try settingsStore.save(ResetPrimerSettings(
+        isEnabled: true,
+        delayMinutesAfterReset: 0,
+        accountPreferences: [preference(accountID: "configured-openai", provider: .openAI)]
+    ))
+    try accountStore.save(AccountConfigurationDocument(updatedAt: now, accounts: [
+        LocalProviderAccountConfiguration(
+            id: "resolved-openai",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "Resolved OpenAI",
+            commandPath: command.path
+        ),
+    ]))
+    try snapshotStore.save(StoredUsageSnapshot(
+        savedAt: now,
+        snapshot: UsageSnapshot(
+            generatedAt: now,
+            limits: [limit(
+                accountID: "resolved-openai",
+                configuredAccountID: "configured-openai",
+                provider: .openAI,
+                resetAt: resetAt
+            )]
+        )
+    ))
+    let service = ResetPrimerPlanService(
+        settingsStore: settingsStore,
+        stateStore: stateStore,
+        snapshotStore: snapshotStore
+    )
+    let executor = ResetPrimerExecutor(
+        planService: service,
+        accountStore: accountStore,
+        processRunner: { _, _, _ in
+            Issue.record("Code primer should not run a process without a proven cheap account-selectable command")
+            return 0
+        }
+    )
+
+    let results = await executor.runDue(now: now)
+
+    #expect(results.map(\.status) == [.skipped])
+    #expect(results.first?.candidate.configuredAccountID == "configured-openai")
+    #expect(results.first?.candidate.resolvedAccountID == "resolved-openai")
+    #expect(results.first?.errorMessage == "Reset priming is not supported for this provider")
+}
+
+@Test func resetPrimerPlannerKeepsRunStateCompatibleWhenConfiguredAliasAppears() {
+    let resetAt = now.addingTimeInterval(-10 * 60)
+    let settings = ResetPrimerSettings(
+        isEnabled: true,
+        delayMinutesAfterReset: 0,
+        accountPreferences: [preference(accountID: "configured-openai", provider: .openAI)]
+    )
+    let snapshot = UsageSnapshot(
+        generatedAt: now,
+        limits: [limit(
+            accountID: "resolved-openai",
+            configuredAccountID: "configured-openai",
+            provider: .openAI,
+            resetAt: resetAt
+        )]
+    )
+    let state = ResetPrimerRunState(records: [
+        ResetPrimerRunRecord(
+            key: ResetPrimerRunKey(
+                provider: .openAI,
+                accountID: "resolved-openai",
+                resetAt: resetAt
+            ),
+            accountName: "Resolved OpenAI",
+            scheduledAt: resetAt,
+            status: .completed,
+            updatedAt: now
+        )
+    ])
+
+    let plan = ResetPrimerPlanner.plan(settings: settings, snapshot: snapshot, state: state, now: now)
+
+    #expect(plan.isEmpty)
+}
+
+@Test func resetPrimerPlannerKeepsLogicalRunStateWhenResolvedAccountChanges() {
+    let resetAt = now.addingTimeInterval(-10 * 60)
+    let settings = ResetPrimerSettings(
+        isEnabled: true,
+        delayMinutesAfterReset: 0,
+        accountPreferences: [preference(accountID: "configured-openai", provider: .openAI)]
+    )
+    let snapshot = UsageSnapshot(
+        generatedAt: now,
+        limits: [limit(
+            accountID: "resolved-openai-v2",
+            configuredAccountID: "configured-openai",
+            provider: .openAI,
+            resetAt: resetAt
+        )]
+    )
+    let state = ResetPrimerRunState(records: [
+        ResetPrimerRunRecord(
+            key: ResetPrimerRunKey(
+                provider: .openAI,
+                accountID: "configured-openai",
+                resetAt: resetAt
+            ),
+            accountName: "Configured OpenAI",
+            scheduledAt: resetAt,
+            status: .completed,
+            updatedAt: now
+        )
+    ])
+
+    let plan = ResetPrimerPlanner.plan(settings: settings, snapshot: snapshot, state: state, now: now)
+
+    #expect(plan.isEmpty)
+}
+
+@Test func usageSnapshotRecommendsOpenAIWeeklyAccountWithEarliestFutureReset() throws {
+    let laterReset = now.addingTimeInterval(3 * 3_600)
+    let earlierReset = now.addingTimeInterval(90 * 60)
+    let snapshot = UsageSnapshot(
+        generatedAt: now,
+        limits: [
+            limit(
+                accountID: "openai-later",
+                configuredAccountID: "openai-code-default",
+                accountName: "later@example.com · pro",
+                provider: .openAI,
+                windowLabel: "Weekly",
+                resetAt: laterReset
+            ),
+            limit(
+                accountID: "openai-earlier",
+                configuredAccountID: "openai-code-default",
+                accountName: "earlier@example.com · pro",
+                provider: .openAI,
+                windowLabel: "Weekly",
+                resetAt: earlierReset
+            ),
+            limit(
+                accountID: "openai-past",
+                configuredAccountID: "openai-code-default",
+                accountName: "past@example.com · pro",
+                provider: .openAI,
+                windowLabel: "Weekly",
+                resetAt: now.addingTimeInterval(-10 * 60)
+            ),
+        ]
+    )
+
+    let recommendation = try #require(snapshot.nextAccountToUse(provider: .openAI, window: .weekly))
+
+    #expect(recommendation.accountID == "openai-earlier")
+    #expect(recommendation.configuredAccountID == "openai-code-default")
+    #expect(recommendation.resetsAt == earlierReset)
+}
+
 @Test func resetPrimerPlannerStaggersSameAccountIDsAcrossProviders() {
     let resetAt = now.addingTimeInterval(-10 * 60)
     let settings = ResetPrimerSettings(
@@ -648,6 +856,7 @@ private func preference(accountID: String, provider: Provider) -> ResetPrimerAcc
 private func limit(
     id: String? = nil,
     accountID: String,
+    configuredAccountID: String? = nil,
     accountName: String? = nil,
     provider: Provider,
     label: String = "Usage",
@@ -660,6 +869,7 @@ private func limit(
         id: id,
         provider: provider,
         accountID: accountID,
+        configuredAccountID: configuredAccountID,
         accountName: accountName ?? accountID.capitalized,
         label: label,
         windowLabel: windowLabel,

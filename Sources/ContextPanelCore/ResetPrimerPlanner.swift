@@ -69,11 +69,33 @@ public struct ResetPrimerRunState: Codable, Equatable, Sendable {
     public static var empty: ResetPrimerRunState { ResetPrimerRunState() }
 
     public func record(for key: ResetPrimerRunKey) -> ResetPrimerRunRecord? {
-        records.first { $0.key == key }
+        record(for: key, legacyAccountIDs: [])
+    }
+
+    public func record(for candidate: ResetPrimerCandidate) -> ResetPrimerRunRecord? {
+        record(for: candidate.key, legacyAccountIDs: candidate.legacyAccountIDs)
+    }
+
+    private func record(for key: ResetPrimerRunKey, legacyAccountIDs: [String]) -> ResetPrimerRunRecord? {
+        records
+            .filter { record in
+                record.key == key || record.key.matchesLegacyIdentity(of: key, legacyAccountIDs: legacyAccountIDs)
+            }
+            .max { lhs, rhs in lhs.updatedAt < rhs.updatedAt }
     }
 
     public mutating func upsert(_ record: ResetPrimerRunRecord) {
-        records.removeAll { $0.key == record.key }
+        upsert(record, legacyAccountIDs: [])
+    }
+
+    public mutating func upsert(_ record: ResetPrimerRunRecord, for candidate: ResetPrimerCandidate) {
+        upsert(record, legacyAccountIDs: candidate.legacyAccountIDs)
+    }
+
+    private mutating func upsert(_ record: ResetPrimerRunRecord, legacyAccountIDs: [String]) {
+        records.removeAll { existing in
+            existing.key == record.key || existing.key.matchesLegacyIdentity(of: record.key, legacyAccountIDs: legacyAccountIDs)
+        }
         records.append(record)
         records = Self.normalized(records)
     }
@@ -100,6 +122,9 @@ public struct ResetPrimerRunState: Codable, Equatable, Sendable {
 
 public struct ResetPrimerCandidate: Equatable, Identifiable, Sendable {
     public let key: ResetPrimerRunKey
+    public let configuredAccountID: String
+    public let resolvedAccountID: String
+    public let resolvedAccountIDs: [String]
     public let accountName: String
     public let windowLabel: String
     public let scheduledAt: Date
@@ -112,12 +137,19 @@ public struct ResetPrimerCandidate: Equatable, Identifiable, Sendable {
 
     public init(
         key: ResetPrimerRunKey,
+        configuredAccountID: String? = nil,
+        resolvedAccountID: String? = nil,
+        resolvedAccountIDs: [String] = [],
         accountName: String,
         windowLabel: String,
         scheduledAt: Date,
         sourceLimitIDs: [String]
     ) {
         self.key = key
+        self.configuredAccountID = configuredAccountID ?? key.accountID
+        self.resolvedAccountID = resolvedAccountID ?? key.accountID
+        let normalizedResolvedAccountIDs = resolvedAccountIDs + [self.resolvedAccountID]
+        self.resolvedAccountIDs = Array(Set(normalizedResolvedAccountIDs)).sorted()
         self.accountName = accountName
         self.windowLabel = windowLabel
         self.scheduledAt = scheduledAt
@@ -165,8 +197,12 @@ public enum ResetPrimerPlanner {
 
         let enabledAccounts = Set(enabledPreferences.map(\.id))
         let candidates = groupedLimits(snapshot.limits.filter { limit in
-            guard enabledAccounts.contains(ResetPrimerAccountPreference.id(provider: limit.provider, accountID: limit.accountID)), limit.resetsAt != nil else { return false }
-            guard settings.preference(for: limit.accountID, provider: limit.provider) != nil else { return false }
+            guard limit.resetsAt != nil else { return false }
+            let candidateAccountIDs = [limit.configuredAccountID, limit.accountID].compactMap { $0 }
+            guard candidateAccountIDs.contains(where: { accountID in
+                enabledAccounts.contains(ResetPrimerAccountPreference.id(provider: limit.provider, accountID: accountID))
+            }) else { return false }
+            guard settings.preference(for: candidateAccountIDs, provider: limit.provider) != nil else { return false }
             return limit.status != .failure && limit.status != .unknown && limit.status != .stale
         })
 
@@ -176,7 +212,7 @@ public enum ResetPrimerPlanner {
             accountStaggerMinutes: settings.accountStaggerMinutes
         )
         .filter { candidate in
-            guard let record = state.record(for: candidate.key) else { return true }
+            guard let record = state.record(for: candidate) else { return true }
             return record.status == .failed
         }
         .sortedBySchedule
@@ -191,15 +227,19 @@ public enum ResetPrimerPlanner {
         let grouped = Dictionary(grouping: limits) { limit in
             ResetPrimerRunKey(
                 provider: limit.provider,
-                accountID: limit.accountID,
+                accountID: limit.configuredOrResolvedAccountID,
                 resetAt: limit.resetsAt ?? Date.distantFuture
             )
         }
 
         return grouped.compactMap { key, limits in
             guard key.resetAt != Date.distantFuture, let first = limits.sortedByLimitID.first else { return nil }
+            let configuredAccountID = limits.compactMap(\.configuredAccountID).sorted().first ?? first.accountID
             return UnscheduledResetPrimerCandidate(
                 key: key,
+                configuredAccountID: configuredAccountID,
+                resolvedAccountID: first.accountID,
+                resolvedAccountIDs: Array(Set(limits.map(\.accountID))).sorted(),
                 accountName: first.accountName,
                 windowLabel: normalizedWindowLabel(for: first),
                 sourceLimitIDs: limits.map(\.id)
@@ -227,6 +267,9 @@ public enum ResetPrimerPlanner {
                         .addingTimeInterval(TimeInterval(max(accountStaggerMinutes, 0) * 60 * staggerIndex))
                     return ResetPrimerCandidate(
                         key: candidate.key,
+                        configuredAccountID: candidate.configuredAccountID,
+                        resolvedAccountID: candidate.resolvedAccountID,
+                        resolvedAccountIDs: candidate.resolvedAccountIDs,
                         accountName: candidate.accountName,
                         windowLabel: candidate.windowLabel,
                         scheduledAt: scheduledAt,
@@ -354,7 +397,7 @@ public struct ResetPrimerPlanService: Sendable {
             status: status,
             updatedAt: now,
             errorMessage: errorMessage
-        ))
+        ), for: candidate)
         try stateStore.save(state)
     }
 }
@@ -408,7 +451,7 @@ public struct ResetPrimerExecutor: Sendable {
 
         var results: [ResetPrimerExecutionResult] = []
         for candidate in candidates {
-            let action = primerAction(candidate: candidate, account: accountsByID[candidate.accountID])
+            let action = primerAction(candidate: candidate, account: candidate.resolvedAccount(in: accountsByID))
             switch action {
             case let .skip(errorMessage):
                 let result = ResetPrimerExecutionResult(candidate: candidate, status: .skipped, errorMessage: errorMessage)
@@ -569,12 +612,46 @@ public struct ResetPrimerExecutor: Sendable {
 
 private struct UnscheduledResetPrimerCandidate: Equatable {
     let key: ResetPrimerRunKey
+    let configuredAccountID: String
+    let resolvedAccountID: String
+    let resolvedAccountIDs: [String]
     let accountName: String
     let windowLabel: String
     let sourceLimitIDs: [String]
 }
 
+private extension ResetPrimerCandidate {
+    func resolvedAccount(in accountsByID: [String: LocalProviderAccountConfiguration]) -> LocalProviderAccountConfiguration? {
+        preferredAccountIDs.compactMap { accountsByID[$0] }.first { $0.isEnabled }
+            ?? preferredAccountIDs.compactMap { accountsByID[$0] }.first
+    }
+
+    var preferredAccountIDs: [String] {
+        [configuredAccountID].appending(uniqueValuesFrom: resolvedAccountIDs)
+    }
+
+    var legacyAccountIDs: [String] {
+        Array(Set(resolvedAccountIDs).subtracting([configuredAccountID])).sorted()
+    }
+}
+
+private extension Array where Element == String {
+    func appending(uniqueValuesFrom values: [String]) -> [String] {
+        var result = self
+        for value in values where !result.contains(value) {
+            result.append(value)
+        }
+        return result
+    }
+}
+
 private extension ResetPrimerRunKey {
+    func matchesLegacyIdentity(of other: ResetPrimerRunKey, legacyAccountIDs: [String]) -> Bool {
+        provider == other.provider
+            && resetAt == other.resetAt
+            && legacyAccountIDs.contains(accountID)
+    }
+
     var stableID: String {
         let reset = ISO8601DateFormatter().string(from: resetAt)
         return "\(provider.rawValue):\(accountID):\(reset)"

@@ -29,6 +29,7 @@ public enum ConnectorError: LocalizedError, Equatable, Sendable {
 public struct ProviderConnectorReport: Equatable, Sendable {
     public let provider: Provider
     public let accountID: String
+    public let configuredAccountID: String?
     public let accountName: String
     public let generatedAt: Date
     public let limits: [UsageLimit]
@@ -38,6 +39,7 @@ public struct ProviderConnectorReport: Equatable, Sendable {
     public init(
         provider: Provider,
         accountID: String,
+        configuredAccountID: String? = nil,
         accountName: String,
         generatedAt: Date,
         limits: [UsageLimit],
@@ -46,6 +48,7 @@ public struct ProviderConnectorReport: Equatable, Sendable {
     ) {
         self.provider = provider
         self.accountID = accountID
+        self.configuredAccountID = configuredAccountID
         self.accountName = accountName
         self.generatedAt = generatedAt
         self.limits = limits
@@ -128,7 +131,9 @@ public struct ProviderConnectorRuntime: Sendable {
             if let existingIndex = indexesByAccount[key] {
                 let existing = deduplicated[existingIndex]
                 if existing.limits.isEmpty, !report.limits.isEmpty {
-                    deduplicated[existingIndex] = report
+                    deduplicated[existingIndex] = report.replacingMissingConfiguredAccountID(with: existing.configuredAccountID)
+                } else if existing.configuredAccountID == nil, let configuredAccountID = report.configuredAccountID {
+                    deduplicated[existingIndex] = existing.replacingMissingConfiguredAccountID(with: configuredAccountID)
                 }
             } else {
                 indexesByAccount[key] = deduplicated.count
@@ -137,6 +142,46 @@ public struct ProviderConnectorRuntime: Sendable {
         }
 
         return deduplicated
+    }
+}
+
+private extension ProviderConnectorReport {
+    func replacingMissingConfiguredAccountID(with fallback: String?) -> ProviderConnectorReport {
+        guard configuredAccountID == nil, let fallback else { return self }
+        return ProviderConnectorReport(
+            provider: provider,
+            accountID: accountID,
+            configuredAccountID: fallback,
+            accountName: accountName,
+            generatedAt: generatedAt,
+            limits: limits.map { $0.replacingMissingConfiguredAccountID(with: fallback) },
+            status: status,
+            errorMessage: errorMessage
+        )
+    }
+}
+
+private extension UsageLimit {
+    func replacingMissingConfiguredAccountID(with fallback: String) -> UsageLimit {
+        guard configuredAccountID == nil else { return self }
+        return UsageLimit(
+            id: id,
+            provider: provider,
+            accountID: accountID,
+            configuredAccountID: fallback,
+            accountName: accountName,
+            label: label,
+            windowLabel: windowLabel,
+            modelLabel: modelLabel,
+            unit: unit,
+            used: used,
+            limit: limit,
+            resetsAt: resetsAt,
+            lastUpdatedAt: lastUpdatedAt,
+            confidence: confidence,
+            statusOverride: statusOverride,
+            note: note
+        )
     }
 }
 

@@ -239,6 +239,7 @@ public enum AccountConnectorFactory {
                 )
                 return CodexRateLimitConnector(
                     accounts: [CodexAccountConfiguration(
+                        configuredAccountID: account.id,
                         authPath: authPath,
                         accountName: codexAccountName(for: authPath, fallback: account.displayName)
                     )],

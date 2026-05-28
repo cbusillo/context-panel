@@ -1,6 +1,6 @@
 # Design Direction
 
-Last updated: 2026-05-05.
+Last updated: 2026-05-27.
 
 ## Accepted Direction
 
@@ -86,8 +86,10 @@ Required states for design and implementation:
 - Tune dark-mode contrast in SwiftUI; do not blindly trust exported CSS values.
 - Verify large-widget row density with realistic data before committing to six to
   eight visible rows.
-- Prefer answer-first small widget copy, with the tightest account as supporting
-  text.
+- Prefer answer-first widget copy, with the tightest account as supporting
+  text. For fast-mode forecasts, use instrument-style language such as
+  `Fast mode limited`, `1.4%/h active`, `fast lasts ~2d`, and
+  `reset Sat 4:12 PM (2d 21h)` instead of advisory sentences.
 - Default provider ordering can be by constraint/tightness for the widget, while
   the app can support stable user/provider grouping.
 

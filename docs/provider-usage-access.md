@@ -78,12 +78,14 @@ percent-window connector backed by an honest local predictor:
    from local usage history.
 7. Recommend when to enable fast mode only when the forecast has enough margin.
 
-The widget should make confidence visible. Good copy examples:
+The widget should make confidence visible while staying glanceable. Prefer
+short instrument-style labels and numbers over advisory sentences. Good copy
+examples:
 
-- `Fast mode looks safe through reset.`
-- `Fast mode safe for about 2h, then switch back.`
-- `Save fast mode: projected to run out 18h before reset.`
-- `Needs calibration: open ChatGPT and set reset time.`
+- `Fast mode limited`
+- `1.4%/h active · fast lasts ~2d`
+- `reset Sat 4:12 PM (2d 21h)`
+- `pace unknown`
 
 ## Local Probe And Every Code Evidence
 
