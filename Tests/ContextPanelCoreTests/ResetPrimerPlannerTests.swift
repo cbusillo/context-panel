@@ -216,6 +216,42 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(plan.isEmpty)
 }
 
+@Test func resetPrimerPlannerKeepsOldResolvedRunStateWhenResolvedAccountChangesAgain() {
+    let resetAt = now.addingTimeInterval(-10 * 60)
+    let settings = ResetPrimerSettings(
+        isEnabled: true,
+        delayMinutesAfterReset: 0,
+        accountPreferences: [preference(accountID: "configured-openai", provider: .openAI)]
+    )
+    let snapshot = UsageSnapshot(
+        generatedAt: now,
+        limits: [limit(
+            accountID: "resolved-openai-v3",
+            configuredAccountID: "configured-openai",
+            accountName: "Info Account",
+            provider: .openAI,
+            resetAt: resetAt
+        )]
+    )
+    let state = ResetPrimerRunState(records: [
+        ResetPrimerRunRecord(
+            key: ResetPrimerRunKey(
+                provider: .openAI,
+                accountID: "resolved-openai-v1",
+                resetAt: resetAt
+            ),
+            accountName: "Info Account",
+            scheduledAt: resetAt,
+            status: .completed,
+            updatedAt: now
+        )
+    ])
+
+    let plan = ResetPrimerPlanner.plan(settings: settings, snapshot: snapshot, state: state, now: now)
+
+    #expect(plan.isEmpty)
+}
+
 @Test func usageSnapshotRecommendsOpenAIWeeklyAccountWithEarliestFutureReset() throws {
     let laterReset = now.addingTimeInterval(3 * 3_600)
     let earlierReset = now.addingTimeInterval(90 * 60)

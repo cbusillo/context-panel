@@ -130,9 +130,10 @@ public struct ProviderConnectorRuntime: Sendable {
             let key = ConnectorProviderAccountKey(provider: report.provider, accountID: report.accountID)
             if let existingIndex = indexesByAccount[key] {
                 let existing = deduplicated[existingIndex]
+                let configuredAccountID = existing.configuredAccountID ?? report.configuredAccountID
                 if existing.limits.isEmpty, !report.limits.isEmpty {
-                    deduplicated[existingIndex] = report.replacingMissingConfiguredAccountID(with: existing.configuredAccountID)
-                } else if existing.configuredAccountID == nil, let configuredAccountID = report.configuredAccountID {
+                    deduplicated[existingIndex] = report.replacingMissingConfiguredAccountID(with: configuredAccountID)
+                } else if existing.configuredAccountID == nil || existing.limits.contains(where: { $0.configuredAccountID == nil }) {
                     deduplicated[existingIndex] = existing.replacingMissingConfiguredAccountID(with: configuredAccountID)
                 }
             } else {
@@ -147,11 +148,11 @@ public struct ProviderConnectorRuntime: Sendable {
 
 private extension ProviderConnectorReport {
     func replacingMissingConfiguredAccountID(with fallback: String?) -> ProviderConnectorReport {
-        guard configuredAccountID == nil, let fallback else { return self }
+        guard let fallback else { return self }
         return ProviderConnectorReport(
             provider: provider,
             accountID: accountID,
-            configuredAccountID: fallback,
+            configuredAccountID: configuredAccountID ?? fallback,
             accountName: accountName,
             generatedAt: generatedAt,
             limits: limits.map { $0.replacingMissingConfiguredAccountID(with: fallback) },
