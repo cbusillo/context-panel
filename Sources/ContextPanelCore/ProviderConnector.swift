@@ -136,7 +136,7 @@ public struct ProviderConnectorRuntime: Sendable {
                 } else if existing.configuredAccountID == nil || existing.limits.contains(where: { $0.configuredAccountID == nil }) {
                     deduplicated[existingIndex] = existing.replacingMissingConfiguredAccountID(
                         with: configuredAccountID,
-                        accountName: report.configuredAccountID == nil ? nil : report.accountName
+                        accountName: replacementAccountName(existing: existing, report: report)
                     )
                 }
             } else {
@@ -146,6 +146,21 @@ public struct ProviderConnectorRuntime: Sendable {
         }
 
         return deduplicated
+    }
+
+    private static func replacementAccountName(existing: ProviderConnectorReport, report: ProviderConnectorReport) -> String? {
+        guard report.configuredAccountID != nil else { return nil }
+        guard existing.limits.isEmpty else { return nil }
+        guard existing.accountName.caseInsensitiveCompare(report.accountName) != .orderedSame else { return nil }
+        guard accountNameSpecificity(report.accountName) >= accountNameSpecificity(existing.accountName) else { return nil }
+        return report.accountName
+    }
+
+    private static func accountNameSpecificity(_ accountName: String) -> Int {
+        var score = accountName.isEmpty ? 0 : 1
+        if accountName.contains("@") { score += 2 }
+        if accountName.contains(" · ") { score += 1 }
+        return score
     }
 }
 

@@ -32,6 +32,7 @@ public struct ResetPrimerRunKey: Codable, Equatable, Hashable, Sendable {
 
 public struct ResetPrimerRunRecord: Codable, Equatable, Identifiable, Sendable {
     public let key: ResetPrimerRunKey
+    public var resolvedAccountIDs: [String]
     public var accountName: String
     public var scheduledAt: Date
     public var status: ResetPrimerRunStatus
@@ -42,6 +43,7 @@ public struct ResetPrimerRunRecord: Codable, Equatable, Identifiable, Sendable {
 
     public init(
         key: ResetPrimerRunKey,
+        resolvedAccountIDs: [String] = [],
         accountName: String,
         scheduledAt: Date,
         status: ResetPrimerRunStatus,
@@ -49,11 +51,33 @@ public struct ResetPrimerRunRecord: Codable, Equatable, Identifiable, Sendable {
         errorMessage: String? = nil
     ) {
         self.key = key
+        self.resolvedAccountIDs = Array(Set(resolvedAccountIDs)).sorted()
         self.accountName = accountName
         self.scheduledAt = scheduledAt
         self.status = status
         self.updatedAt = updatedAt
         self.errorMessage = errorMessage.map(ConnectorRedactor.redact)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case key
+        case resolvedAccountIDs
+        case accountName
+        case scheduledAt
+        case status
+        case updatedAt
+        case errorMessage
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        key = try container.decode(ResetPrimerRunKey.self, forKey: .key)
+        resolvedAccountIDs = try container.decodeIfPresent([String].self, forKey: .resolvedAccountIDs) ?? []
+        accountName = try container.decode(String.self, forKey: .accountName)
+        scheduledAt = try container.decode(Date.self, forKey: .scheduledAt)
+        status = try container.decode(ResetPrimerRunStatus.self, forKey: .status)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        errorMessage = try container.decodeIfPresent(String.self, forKey: .errorMessage)
     }
 }
 
@@ -79,7 +103,9 @@ public struct ResetPrimerRunState: Codable, Equatable, Sendable {
     private func record(for key: ResetPrimerRunKey, legacyAccountIDs: [String]) -> ResetPrimerRunRecord? {
         records
             .filter { record in
-                record.key == key || record.key.matchesLegacyIdentity(of: key, legacyAccountIDs: legacyAccountIDs)
+                record.key == key
+                    || record.key.matchesLegacyIdentity(of: key, legacyAccountIDs: legacyAccountIDs)
+                    || key.matchesHistoricalIdentity(of: record)
             }
             .max { lhs, rhs in lhs.updatedAt < rhs.updatedAt }
     }
@@ -93,10 +119,21 @@ public struct ResetPrimerRunState: Codable, Equatable, Sendable {
     }
 
     private mutating func upsert(_ record: ResetPrimerRunRecord, legacyAccountIDs: [String]) {
-        records.removeAll { existing in
-            existing.key == record.key || existing.key.matchesLegacyIdentity(of: record.key, legacyAccountIDs: legacyAccountIDs)
+        let matchingRecords = records.filter { existing in
+            existing.key == record.key
+                || existing.key.matchesLegacyIdentity(of: record.key, legacyAccountIDs: legacyAccountIDs)
+                || record.key.matchesHistoricalIdentity(of: existing)
         }
-        records.append(record)
+        var mergedRecord = record
+        mergedRecord.resolvedAccountIDs = Array(Set(
+            matchingRecords.flatMap(\.resolvedAccountIDs) + record.resolvedAccountIDs
+        )).sorted()
+        records.removeAll { existing in
+            existing.key == record.key
+                || existing.key.matchesLegacyIdentity(of: record.key, legacyAccountIDs: legacyAccountIDs)
+                || record.key.matchesHistoricalIdentity(of: existing)
+        }
+        records.append(mergedRecord)
         records = Self.normalized(records)
     }
 
@@ -392,6 +429,7 @@ public struct ResetPrimerPlanService: Sendable {
         var state = stateStore.load()
         state.upsert(ResetPrimerRunRecord(
             key: candidate.key,
+            resolvedAccountIDs: candidate.resolvedAccountIDs,
             accountName: candidate.accountName,
             scheduledAt: candidate.scheduledAt,
             status: status,
@@ -650,6 +688,12 @@ private extension ResetPrimerRunKey {
         provider == other.provider
             && resetAt == other.resetAt
             && legacyAccountIDs.contains(accountID)
+    }
+
+    func matchesHistoricalIdentity(of record: ResetPrimerRunRecord) -> Bool {
+        provider == record.key.provider
+            && resetAt == record.key.resetAt
+            && (record.resolvedAccountIDs.contains(accountID) || record.resolvedAccountIDs.contains(record.key.accountID))
     }
 
     var stableID: String {
