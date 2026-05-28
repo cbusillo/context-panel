@@ -185,6 +185,36 @@ import Testing
     #expect(result.snapshot.limits.map(\.configuredAccountID) == ["configured-openai"])
 }
 
+@Test func providerRuntimeBackfillsConfiguredAccountIDWhenDuplicateReportsAreEmpty() async throws {
+    let generatedAt = Date(timeIntervalSince1970: 10)
+    let resolvedAccountID = ConnectorRedactor.localAccountID(provider: .openAI, stableID: "chatgpt:resolved")
+    let unconfiguredFailure = StubConnector(provider: .openAI, report: ProviderConnectorReport(
+        provider: .openAI,
+        accountID: resolvedAccountID,
+        accountName: "Resolved OpenAI",
+        generatedAt: generatedAt,
+        limits: [],
+        status: .failure,
+        errorMessage: "failed before alias was known"
+    ))
+    let configuredFailure = StubConnector(provider: .openAI, report: ProviderConnectorReport(
+        provider: .openAI,
+        accountID: resolvedAccountID,
+        configuredAccountID: "configured-openai",
+        accountName: "Configured OpenAI",
+        generatedAt: generatedAt,
+        limits: [],
+        status: .failure,
+        errorMessage: "failed after alias was known"
+    ))
+
+    let result = await ProviderConnectorRuntime(connectors: [unconfiguredFailure, configuredFailure]).refreshAll(now: generatedAt)
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].configuredAccountID == "configured-openai")
+    #expect(result.reports[0].status == .failure)
+}
+
 @Test func codexConnectorReadsAuthAccountsFile() async throws {
     let firstIDToken = jwtPayload(email: "first@example.com", name: "First Person", accountID: "account-a", planType: "pro")
     let secondIDToken = jwtPayload(email: "second@example.com", name: "Second Person", accountID: "account-b", planType: "pro")
