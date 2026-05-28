@@ -216,6 +216,42 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(plan.isEmpty)
 }
 
+@Test func resetPrimerPlannerDoesNotMatchLegacyRunStateByDisplayNameAlone() {
+    let resetAt = now.addingTimeInterval(-10 * 60)
+    let settings = ResetPrimerSettings(
+        isEnabled: true,
+        delayMinutesAfterReset: 0,
+        accountPreferences: [preference(accountID: "configured-openai", provider: .openAI)]
+    )
+    let snapshot = UsageSnapshot(
+        generatedAt: now,
+        limits: [limit(
+            accountID: "resolved-openai-current",
+            configuredAccountID: "configured-openai",
+            accountName: "Shared Account Name",
+            provider: .openAI,
+            resetAt: resetAt
+        )]
+    )
+    let state = ResetPrimerRunState(records: [
+        ResetPrimerRunRecord(
+            key: ResetPrimerRunKey(
+                provider: .openAI,
+                accountID: "different-resolved-openai",
+                resetAt: resetAt
+            ),
+            accountName: "Shared Account Name",
+            scheduledAt: resetAt,
+            status: .completed,
+            updatedAt: now
+        )
+    ])
+
+    let plan = ResetPrimerPlanner.plan(settings: settings, snapshot: snapshot, state: state, now: now)
+
+    #expect(plan.due.map(\.accountID) == ["configured-openai"])
+}
+
 @Test func usageSnapshotRecommendsOpenAIWeeklyAccountWithEarliestFutureReset() throws {
     let laterReset = now.addingTimeInterval(3 * 3_600)
     let earlierReset = now.addingTimeInterval(90 * 60)
