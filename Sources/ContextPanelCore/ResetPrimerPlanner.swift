@@ -69,11 +69,33 @@ public struct ResetPrimerRunState: Codable, Equatable, Sendable {
     public static var empty: ResetPrimerRunState { ResetPrimerRunState() }
 
     public func record(for key: ResetPrimerRunKey) -> ResetPrimerRunRecord? {
-        records.first { $0.key == key }
+        record(for: key, legacyAccountIDs: [])
+    }
+
+    public func record(for candidate: ResetPrimerCandidate) -> ResetPrimerRunRecord? {
+        record(for: candidate.key, legacyAccountIDs: candidate.legacyAccountIDs)
+    }
+
+    private func record(for key: ResetPrimerRunKey, legacyAccountIDs: [String]) -> ResetPrimerRunRecord? {
+        records
+            .filter { record in
+                record.key == key || record.key.matchesLegacyIdentity(of: key, legacyAccountIDs: legacyAccountIDs)
+            }
+            .max { lhs, rhs in lhs.updatedAt < rhs.updatedAt }
     }
 
     public mutating func upsert(_ record: ResetPrimerRunRecord) {
-        records.removeAll { $0.key == record.key }
+        upsert(record, legacyAccountIDs: [])
+    }
+
+    public mutating func upsert(_ record: ResetPrimerRunRecord, for candidate: ResetPrimerCandidate) {
+        upsert(record, legacyAccountIDs: candidate.legacyAccountIDs)
+    }
+
+    private mutating func upsert(_ record: ResetPrimerRunRecord, legacyAccountIDs: [String]) {
+        records.removeAll { existing in
+            existing.key == record.key || existing.key.matchesLegacyIdentity(of: record.key, legacyAccountIDs: legacyAccountIDs)
+        }
         records.append(record)
         records = Self.normalized(records)
     }
@@ -190,7 +212,7 @@ public enum ResetPrimerPlanner {
             accountStaggerMinutes: settings.accountStaggerMinutes
         )
         .filter { candidate in
-            guard let record = state.record(for: candidate.key) else { return true }
+            guard let record = state.record(for: candidate) else { return true }
             return record.status == .failed
         }
         .sortedBySchedule
@@ -205,7 +227,7 @@ public enum ResetPrimerPlanner {
         let grouped = Dictionary(grouping: limits) { limit in
             ResetPrimerRunKey(
                 provider: limit.provider,
-                accountID: limit.accountID,
+                accountID: limit.configuredOrResolvedAccountID,
                 resetAt: limit.resetsAt ?? Date.distantFuture
             )
         }
@@ -375,7 +397,7 @@ public struct ResetPrimerPlanService: Sendable {
             status: status,
             updatedAt: now,
             errorMessage: errorMessage
-        ))
+        ), for: candidate)
         try stateStore.save(state)
     }
 }
@@ -607,6 +629,10 @@ private extension ResetPrimerCandidate {
     var preferredAccountIDs: [String] {
         [configuredAccountID].appending(uniqueValuesFrom: resolvedAccountIDs)
     }
+
+    var legacyAccountIDs: [String] {
+        Array(Set(resolvedAccountIDs).subtracting([configuredAccountID])).sorted()
+    }
 }
 
 private extension Array where Element == String {
@@ -620,6 +646,12 @@ private extension Array where Element == String {
 }
 
 private extension ResetPrimerRunKey {
+    func matchesLegacyIdentity(of other: ResetPrimerRunKey, legacyAccountIDs: [String]) -> Bool {
+        provider == other.provider
+            && resetAt == other.resetAt
+            && legacyAccountIDs.contains(accountID)
+    }
+
     var stableID: String {
         let reset = ISO8601DateFormatter().string(from: resetAt)
         return "\(provider.rawValue):\(accountID):\(reset)"

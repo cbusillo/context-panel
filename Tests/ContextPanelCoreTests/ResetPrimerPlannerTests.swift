@@ -77,8 +77,10 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
 
     let plan = ResetPrimerPlanner.plan(settings: settings, snapshot: snapshot, now: now)
 
+    #expect(plan.due.map(\.accountID) == ["openai-code-default"])
     #expect(plan.due.map(\.configuredAccountID) == ["openai-code-default"])
     #expect(plan.due.map(\.resolvedAccountID) == ["openai-resolved-a"])
+    #expect(plan.upcoming.map(\.accountID) == ["openai-code-default"])
     #expect(plan.upcoming.map(\.configuredAccountID) == ["openai-code-default"])
     #expect(plan.upcoming.map(\.resolvedAccountID) == ["openai-resolved-b"])
 }
@@ -168,6 +170,41 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
                 resetAt: resetAt
             ),
             accountName: "Resolved OpenAI",
+            scheduledAt: resetAt,
+            status: .completed,
+            updatedAt: now
+        )
+    ])
+
+    let plan = ResetPrimerPlanner.plan(settings: settings, snapshot: snapshot, state: state, now: now)
+
+    #expect(plan.isEmpty)
+}
+
+@Test func resetPrimerPlannerKeepsLogicalRunStateWhenResolvedAccountChanges() {
+    let resetAt = now.addingTimeInterval(-10 * 60)
+    let settings = ResetPrimerSettings(
+        isEnabled: true,
+        delayMinutesAfterReset: 0,
+        accountPreferences: [preference(accountID: "configured-openai", provider: .openAI)]
+    )
+    let snapshot = UsageSnapshot(
+        generatedAt: now,
+        limits: [limit(
+            accountID: "resolved-openai-v2",
+            configuredAccountID: "configured-openai",
+            provider: .openAI,
+            resetAt: resetAt
+        )]
+    )
+    let state = ResetPrimerRunState(records: [
+        ResetPrimerRunRecord(
+            key: ResetPrimerRunKey(
+                provider: .openAI,
+                accountID: "configured-openai",
+                resetAt: resetAt
+            ),
+            accountName: "Configured OpenAI",
             scheduledAt: resetAt,
             status: .completed,
             updatedAt: now
