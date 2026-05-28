@@ -132,6 +132,8 @@ public struct ProviderConnectorRuntime: Sendable {
                 let existing = deduplicated[existingIndex]
                 if existing.limits.isEmpty, !report.limits.isEmpty {
                     deduplicated[existingIndex] = report.replacingMissingConfiguredAccountID(with: existing.configuredAccountID)
+                } else if existing.configuredAccountID == nil, let configuredAccountID = report.configuredAccountID {
+                    deduplicated[existingIndex] = existing.replacingMissingConfiguredAccountID(with: configuredAccountID)
                 }
             } else {
                 indexesByAccount[key] = deduplicated.count

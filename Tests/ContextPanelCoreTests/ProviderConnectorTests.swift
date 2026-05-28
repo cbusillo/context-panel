@@ -109,6 +109,44 @@ import Testing
     #expect(result.snapshot.limits.map(\.configuredAccountID) == ["configured-openai"])
 }
 
+@Test func providerRuntimeBackfillsConfiguredAccountIDWhenAliasReportArrivesSecond() async throws {
+    let generatedAt = Date(timeIntervalSince1970: 10)
+    let resolvedAccountID = ConnectorRedactor.localAccountID(provider: .openAI, stableID: "chatgpt:resolved")
+    let resolvedReport = StubConnector(provider: .openAI, report: ProviderConnectorReport(
+        provider: .openAI,
+        accountID: resolvedAccountID,
+        accountName: "Resolved OpenAI",
+        generatedAt: generatedAt,
+        limits: [UsageLimit(
+            provider: .openAI,
+            accountID: resolvedAccountID,
+            accountName: "Resolved OpenAI",
+            label: "Weekly",
+            windowLabel: "Weekly",
+            unit: .percent,
+            used: 25,
+            limit: 100,
+            resetsAt: generatedAt.addingTimeInterval(3_600)
+        )]
+    ))
+    let aliasReport = StubConnector(provider: .openAI, report: ProviderConnectorReport(
+        provider: .openAI,
+        accountID: resolvedAccountID,
+        configuredAccountID: "configured-openai",
+        accountName: "Configured OpenAI",
+        generatedAt: generatedAt,
+        limits: [],
+        status: .failure,
+        errorMessage: "failed"
+    ))
+
+    let result = await ProviderConnectorRuntime(connectors: [resolvedReport, aliasReport]).refreshAll(now: generatedAt)
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].configuredAccountID == "configured-openai")
+    #expect(result.snapshot.limits.map(\.configuredAccountID) == ["configured-openai"])
+}
+
 @Test func codexConnectorReadsAuthAccountsFile() async throws {
     let firstIDToken = jwtPayload(email: "first@example.com", name: "First Person", accountID: "account-a", planType: "pro")
     let secondIDToken = jwtPayload(email: "second@example.com", name: "Second Person", accountID: "account-b", planType: "pro")
