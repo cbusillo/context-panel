@@ -285,6 +285,77 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(plan.isEmpty)
 }
 
+@Test func resetPrimerPlannerKeepsRunStateWhenCurrentSnapshotLosesConfiguredAlias() {
+    let resetAt = now.addingTimeInterval(-10 * 60)
+    let settings = ResetPrimerSettings(
+        isEnabled: true,
+        delayMinutesAfterReset: 0,
+        accountPreferences: [preference(accountID: "resolved-openai-v2", provider: .openAI)]
+    )
+    let snapshot = UsageSnapshot(
+        generatedAt: now,
+        limits: [limit(
+            accountID: "resolved-openai-v2",
+            provider: .openAI,
+            resetAt: resetAt
+        )]
+    )
+    let state = ResetPrimerRunState(records: [
+        ResetPrimerRunRecord(
+            key: ResetPrimerRunKey(
+                provider: .openAI,
+                accountID: "configured-openai",
+                resetAt: resetAt
+            ),
+            resolvedAccountIDs: ["resolved-openai-v1", "resolved-openai-v2"],
+            accountName: "Configured OpenAI",
+            scheduledAt: resetAt,
+            status: .completed,
+            updatedAt: now
+        )
+    ])
+
+    let plan = ResetPrimerPlanner.plan(settings: settings, snapshot: snapshot, state: state, now: now)
+
+    #expect(plan.isEmpty)
+}
+
+@Test func resetPrimerRunStateUpsertPreservesHistoricalResolvedAccountIDs() {
+    let resetAt = now.addingTimeInterval(-10 * 60)
+    let candidate = ResetPrimerCandidate(
+        key: ResetPrimerRunKey(provider: .openAI, accountID: "configured-openai", resetAt: resetAt),
+        configuredAccountID: "configured-openai",
+        resolvedAccountID: "resolved-openai-v2",
+        resolvedAccountIDs: ["resolved-openai-v2"],
+        accountName: "Configured OpenAI",
+        windowLabel: "Weekly",
+        scheduledAt: resetAt,
+        sourceLimitIDs: ["resolved-openai-v2:weekly"]
+    )
+    var state = ResetPrimerRunState(records: [
+        ResetPrimerRunRecord(
+            key: ResetPrimerRunKey(provider: .openAI, accountID: "configured-openai", resetAt: resetAt),
+            resolvedAccountIDs: ["resolved-openai-v1"],
+            accountName: "Configured OpenAI",
+            scheduledAt: resetAt,
+            status: .completed,
+            updatedAt: now
+        )
+    ])
+
+    state.upsert(ResetPrimerRunRecord(
+        key: candidate.key,
+        resolvedAccountIDs: candidate.resolvedAccountIDs,
+        accountName: candidate.accountName,
+        scheduledAt: candidate.scheduledAt,
+        status: .completed,
+        updatedAt: now.addingTimeInterval(60)
+    ), for: candidate)
+
+    #expect(state.records.count == 1)
+    #expect(state.records.first?.resolvedAccountIDs == ["resolved-openai-v1", "resolved-openai-v2"])
+}
+
 @Test func resetPrimerPlannerDoesNotMatchLegacyRunStateByDisplayNameAlone() {
     let resetAt = now.addingTimeInterval(-10 * 60)
     let settings = ResetPrimerSettings(
