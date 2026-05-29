@@ -140,7 +140,7 @@ public struct AccountConfigurationStore: Sendable {
                 id: "openai-code-default",
                 provider: .openAI,
                 connectorKind: .codexRateLimits,
-                displayName: "Code",
+                displayName: "Every Code",
                 authPath: "\(home)/.code/auth_accounts.json"
             ),
             LocalProviderAccountConfiguration(
@@ -379,7 +379,7 @@ public enum AccountConnectorFactory {
         let expanded = NSString(string: authPath).expandingTildeInPath
         let url = URL(fileURLWithPath: expanded)
         if url.deletingLastPathComponent().lastPathComponent == ".code" {
-            return "Code"
+            return "Every Code"
         }
         if url.deletingLastPathComponent().lastPathComponent == ".codex" {
             return "Codex"
