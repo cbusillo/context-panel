@@ -10,7 +10,7 @@ import Testing
 
     #expect(result.status == .unknown)
     #expect(result.document.accounts.count == 4)
-    #expect(result.document.accounts.contains { $0.id == "openai-code-default" && $0.displayName == "Code" && $0.isEnabled })
+    #expect(result.document.accounts.contains { $0.id == "openai-code-default" && $0.displayName == "Every Code" && $0.isEnabled })
     #expect(result.document.accounts.contains { $0.id == "openai-codex-default" && $0.displayName == "Codex" && !$0.isEnabled })
     #expect(result.document.accounts.contains { $0.connectorKind == .geminiCodeAssist && $0.isEnabled })
     #expect(result.document.accounts.contains { $0.connectorKind == .claudeOAuthUsage && $0.effectiveAuthPath == nil })

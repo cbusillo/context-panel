@@ -97,11 +97,11 @@ The package includes development probes for validating provider limit signals
 without printing secrets or raw provider responses:
 
 ```sh
-swift run CodexRateLimitProbe --auth ~/.codex/auth.json
+swift run CodexRateLimitProbe --auth ~/.code/auth_accounts.json
 GEMINI_OAUTH_CLIENT_ID=... GEMINI_OAUTH_CLIENT_SECRET=... \
   swift run GeminiQuotaProbe --auth ~/.gemini/oauth_creds.json
 swift run ClaudeLimitProbe
-swift run SnapshotStoreProbe --codex-auth ~/.codex/auth.json --include-claude
+swift run SnapshotStoreProbe --codex-auth ~/.code/auth_accounts.json --include-claude
 ```
 
 The Codex and Gemini probes can return live percent-window quota buckets for

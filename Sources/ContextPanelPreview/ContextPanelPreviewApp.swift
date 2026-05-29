@@ -814,7 +814,7 @@ final class SettingsPaneModel: ObservableObject {
         switch account.connectorKind {
         case .codexRateLimits:
             if account.displayName.localizedCaseInsensitiveContains("code") {
-                return "Select auth_accounts.json. All Code accounts are read from this file"
+                return "Select auth_accounts.json. Every Code accounts are read from this file"
             }
             if account.displayName.localizedCaseInsensitiveContains("codex") {
                 return "Select auth.json for Codex users"
