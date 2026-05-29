@@ -34,7 +34,13 @@
       "release or signing changes"
     ]
   },
-  "importantWorkflows": ["CI", "CodeQL", "Release", "TestFlight"],
+  "importantWorkflows": [
+    "CI",
+    "CodeQL",
+    "Release",
+    "TestFlight",
+    "Submit App Store Review"
+  ],
   "branchProtection": {
     "ruleset": {
       "name": "Protect main",
