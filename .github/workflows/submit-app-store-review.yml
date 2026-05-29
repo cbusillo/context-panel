@@ -1,0 +1,69 @@
+---
+name: Submit App Store Review
+
+"on":
+  workflow_dispatch:
+    inputs:
+      version:
+        description: App Store marketing version.
+        required: true
+        type: string
+      build_number:
+        description: Uploaded CFBundleVersion/build number.
+        required: true
+        type: string
+      whats_new:
+        description: Release notes for the App Store version.
+        required: true
+        type: string
+      copy_from_version:
+        description: Existing App Store version to copy metadata from.
+        required: false
+        type: string
+      dry_run:
+        description: Prepare the version and review item without submitting.
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: submit-app-store-review-${{ github.event.inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  submit:
+    name: Submit App Store Review
+    runs-on: macos-latest
+
+    env:
+      APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      APP_STORE_CONNECT_API_KEY_P8_BASE64: >-
+        ${{ secrets.APP_STORE_CONNECT_API_KEY_P8_BASE64 }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Python Dependencies
+        run: python3 -m pip install --user cryptography
+
+      - name: Submit Review
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(
+            --version "${{ inputs.version }}"
+            --build-number "${{ inputs.build_number }}"
+            --whats-new "${{ inputs.whats_new }}"
+          )
+          if [[ -n "${{ inputs.copy_from_version }}" ]]; then
+            args+=(--copy-from-version "${{ inputs.copy_from_version }}")
+          fi
+          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+          scripts/submit-app-store-review.py "${args[@]}"

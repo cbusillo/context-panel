@@ -99,6 +99,26 @@ Xcode project, installs the supplied provisioning profiles, archives with manual
 but cannot be selected for App Store submission. Pass `upload: false` when
 dispatching the workflow to export the `.pkg` without uploading it.
 
+After the uploaded build is processed, run the `Submit App Store Review` workflow
+with the App Store marketing version, uploaded build number, and App Store
+release notes. The workflow calls `scripts/submit-app-store-review.py`, which
+creates or reuses the Mac App Store version, attaches the validated build,
+copies localization and review-contact metadata from an existing version, updates
+`What's New`, and submits the review submission. Use `dry_run: true` to create
+or update the version and review-submission item without pressing the API submit
+step.
+
+For local operator use, the same script accepts an API key path or the existing
+App Store Connect environment variables:
+
+```sh
+scripts/submit-app-store-review.py \
+  --version 1.0.12 \
+  --build-number 202605290049 \
+  --copy-from-version 1.0.2 \
+  --whats-new "Improves multi-account provider identity handling."
+```
+
 The app and refresh-agent App Store entitlements must keep the sandbox enabled
 with App Group, outbound network, read-only user-selected file access, and
 app-scope bookmark permissions. The widget should keep only the sandbox and App
