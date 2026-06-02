@@ -31,6 +31,10 @@ LOCKED_VERSION_STATES = {
     "PENDING_DEVELOPER_RELEASE",
     "READY_FOR_SALE",
 }
+ACTIVE_REVIEW_SUBMISSION_STATES = {"READY_FOR_REVIEW", "WAITING_FOR_REVIEW", "IN_REVIEW"}
+BLOCKING_REVIEW_VERSION_STATES = {"WAITING_FOR_REVIEW", "IN_REVIEW", "PENDING_DEVELOPER_RELEASE"}
+CREATE_VERSION_MAX_ATTEMPTS = 6
+CREATE_VERSION_RETRY_SECONDS = 10
 
 
 class AppStoreConnectError(RuntimeError):
@@ -125,6 +129,11 @@ def relationship_id(resource: dict[str, Any], name: str) -> str | None:
     return None
 
 
+def version_state(resource: dict[str, Any]) -> str | None:
+    attributes = resource.get("attributes", {})
+    return attributes.get("appStoreState") or attributes.get("appVersionState")
+
+
 def expanded_key_path(args: argparse.Namespace) -> tuple[Path, Path | None]:
     if args.api_key:
         return Path(args.api_key).expanduser(), None
@@ -164,7 +173,7 @@ def latest_source_metadata(client: ASCClient, app_id: str, prefer_version: str |
             (
                 version
                 for version in versions
-                if version["attributes"].get("appStoreState") == "READY_FOR_SALE"
+                if version_state(version) == "READY_FOR_SALE"
             ),
             versions[0],
         )
@@ -172,6 +181,114 @@ def latest_source_metadata(client: ASCClient, app_id: str, prefer_version: str |
     localization = included.get(relationship_id(source, "appStoreVersionLocalizations") or "", {}).get("attributes", {})
     review_detail = included.get(relationship_id(source, "appStoreReviewDetail") or "", {}).get("attributes", {})
     return localization, review_detail
+
+
+def app_store_version(client: ASCClient, app_id: str, version_string: str) -> dict[str, Any] | None:
+    payload = client.request(
+        "GET",
+        f"/apps/{app_id}/appStoreVersions",
+        {
+            "filter[platform]": "MAC_OS",
+            "filter[versionString]": version_string,
+            "fields[appStoreVersions]": "versionString,appStoreState,appVersionState",
+            "limit": 1,
+        },
+    )
+    versions = payload.get("data") or []
+    return versions[0] if versions else None
+
+
+def app_store_version_id(client: ASCClient, app_id: str, version_string: str) -> str | None:
+    version = app_store_version(client, app_id, version_string)
+    return version["id"] if version else None
+
+
+def remove_active_review_version(client: ASCClient, app_id: str, version_string: str, dry_run: bool = False) -> None:
+    version = app_store_version(client, app_id, version_string)
+    if version is None:
+        print(f"No App Store version {version_string} found to remove from review")
+        return
+    version_id = version["id"]
+
+    submissions = client.request(
+        "GET",
+        "/reviewSubmissions",
+        {
+            "filter[app]": app_id,
+            "filter[platform]": "MAC_OS",
+            "include": "items,appStoreVersionForReview",
+            "fields[reviewSubmissions]": "platform,state,items,appStoreVersionForReview",
+            "fields[reviewSubmissionItems]": "state,appStoreVersion",
+            "limit": 20,
+        },
+    )
+    included = included_by_id(submissions)
+    for submission in submissions.get("data", []):
+        state = submission["attributes"].get("state")
+        if state not in ACTIVE_REVIEW_SUBMISSION_STATES:
+            continue
+        submission_version_id = relationship_id(submission, "appStoreVersionForReview")
+        if submission_version_id not in (None, version_id):
+            continue
+        item_ids = [item["id"] for item in submission.get("relationships", {}).get("items", {}).get("data", [])]
+        for item_id in item_ids:
+            item = included.get(item_id, {})
+            item_version_id = relationship_id(item, "appStoreVersion")
+            if item_version_id not in (None, version_id):
+                continue
+            if submission_version_id != version_id and item_version_id != version_id:
+                continue
+            if dry_run:
+                print(f"Dry run: would remove App Store version {version_string} from review submission: {item_id}")
+                return
+            client.request("DELETE", f"/reviewSubmissionItems/{item_id}", allowed=(204,))
+            print(f"Removed App Store version {version_string} from review submission: {item_id}")
+            return
+    state = version_state(version)
+    if state in BLOCKING_REVIEW_VERSION_STATES:
+        raise AppStoreConnectError(
+            f"App Store version {version_string} is {state}, but no active review submission item was found to remove"
+        )
+    print(f"No active review submission item found for App Store version {version_string}")
+
+
+def is_version_creation_state_conflict(error: AppStoreConnectError) -> bool:
+    if error.status != 409:
+        return False
+    text = json.dumps(error.payload or {}, sort_keys=True).lower()
+    return "current state" in text or "another version" in text or "new version" in text
+
+
+def create_app_store_version(client: ASCClient, app_id: str, args: argparse.Namespace) -> dict[str, Any]:
+    return client.request(
+        "POST",
+        "/appStoreVersions",
+        body={
+            "data": {
+                "type": "appStoreVersions",
+                "attributes": {
+                    "platform": "MAC_OS",
+                    "versionString": args.version,
+                    "releaseType": args.release_type,
+                    "copyright": args.copyright,
+                },
+                "relationships": {"app": {"data": {"type": "apps", "id": app_id}}},
+            }
+        },
+        allowed=(201,),
+    )["data"]
+
+
+def create_app_store_version_with_retry(client: ASCClient, app_id: str, args: argparse.Namespace) -> dict[str, Any]:
+    for attempt in range(CREATE_VERSION_MAX_ATTEMPTS):
+        try:
+            return create_app_store_version(client, app_id, args)
+        except AppStoreConnectError as error:
+            if attempt == CREATE_VERSION_MAX_ATTEMPTS - 1 or not is_version_creation_state_conflict(error):
+                raise
+            print("App Store Connect is still releasing the previous review state; retrying version creation")
+            time.sleep(CREATE_VERSION_RETRY_SECONDS)
+    raise AppStoreConnectError(f"failed to create App Store version {args.version}")
 
 
 def ensure_version(client: ASCClient, app_id: str, args: argparse.Namespace) -> dict[str, Any]:
@@ -190,34 +307,22 @@ def ensure_version(client: ASCClient, app_id: str, args: argparse.Namespace) -> 
         version = existing["data"][0]
         print(f"Using App Store version {args.version}: {version['id']}")
     else:
-        version = client.request(
-            "POST",
-            "/appStoreVersions",
-            body={
-                "data": {
-                    "type": "appStoreVersions",
-                    "attributes": {
-                        "platform": "MAC_OS",
-                        "versionString": args.version,
-                        "releaseType": args.release_type,
-                        "copyright": args.copyright,
-                    },
-                    "relationships": {"app": {"data": {"type": "apps", "id": app_id}}},
-                }
-            },
-            allowed=(201,),
-        )["data"]
+        version = create_app_store_version_with_retry(client, app_id, args)
         print(f"Created App Store version {args.version}: {version['id']}")
     attributes: dict[str, Any] = {
         "releaseType": args.release_type,
         "copyright": args.copyright,
         "usesIdfa": args.uses_idfa,
     }
-    client.request(
-        "PATCH",
-        f"/appStoreVersions/{version['id']}",
-        body={"data": {"type": "appStoreVersions", "id": version["id"], "attributes": attributes}},
-    )
+    state = version_state(version)
+    if state in LOCKED_VERSION_STATES:
+        print(f"Skipping attribute update because App Store version is {state}")
+    else:
+        client.request(
+            "PATCH",
+            f"/appStoreVersions/{version['id']}",
+            body={"data": {"type": "appStoreVersions", "id": version["id"], "attributes": attributes}},
+        )
     return version
 
 
@@ -236,7 +341,7 @@ def version_build_id(client: ASCClient, version_id: str) -> str | None:
 
 def attach_build(client: ASCClient, version: dict[str, Any], build: dict[str, Any], args: argparse.Namespace) -> None:
     version_id = version["id"]
-    state = version["attributes"].get("appStoreState")
+    state = version_state(version)
     attached_build_id = relationship_id(version, "build") or version_build_id(client, version_id)
     if attached_build_id == build["id"]:
         print(f"Build {args.build_number} is already attached")
@@ -255,7 +360,7 @@ def attach_build(client: ASCClient, version: dict[str, Any], build: dict[str, An
     print(f"Attached build {args.build_number} to App Store version {args.version}")
 
 
-def ensure_build(client: ASCClient, app_id: str, args: argparse.Namespace) -> dict[str, Any]:
+def ensure_build(client: ASCClient, app_id: str, args: argparse.Namespace, allow_updates: bool = True) -> dict[str, Any]:
     payload = client.request(
         "GET",
         "/builds",
@@ -273,17 +378,20 @@ def ensure_build(client: ASCClient, app_id: str, args: argparse.Namespace) -> di
     if attributes.get("processingState") != "VALID":
         raise AppStoreConnectError(f"build {args.build_number} is not valid: {attributes.get('processingState')}", payload=build)
     if args.non_exempt_encryption is not None and attributes.get("usesNonExemptEncryption") != args.non_exempt_encryption:
-        client.request(
-            "PATCH",
-            f"/builds/{build['id']}",
-            body={
-                "data": {
-                    "type": "builds",
-                    "id": build["id"],
-                    "attributes": {"usesNonExemptEncryption": args.non_exempt_encryption},
-                }
-            },
-        )
+        if allow_updates:
+            client.request(
+                "PATCH",
+                f"/builds/{build['id']}",
+                body={
+                    "data": {
+                        "type": "builds",
+                        "id": build["id"],
+                        "attributes": {"usesNonExemptEncryption": args.non_exempt_encryption},
+                    }
+                },
+            )
+        else:
+            print(f"Dry run: would update build {args.build_number} non-exempt encryption setting")
     print(f"Using valid build {args.build_number}: {build['id']}")
     return build
 
@@ -294,13 +402,13 @@ def ensure_metadata(client: ASCClient, version_id: str, source_localization: dic
         f"/appStoreVersions/{version_id}",
         {
             "include": "appStoreVersionLocalizations,appStoreReviewDetail",
-            "fields[appStoreVersions]": "appStoreState,appStoreVersionLocalizations,appStoreReviewDetail",
+            "fields[appStoreVersions]": "appStoreState,appVersionState,appStoreVersionLocalizations,appStoreReviewDetail",
             "fields[appStoreVersionLocalizations]": "locale,description,keywords,marketingUrl,promotionalText,supportUrl,whatsNew",
             "fields[appStoreReviewDetails]": "contactFirstName,contactLastName,contactPhone,contactEmail,demoAccountName,demoAccountRequired,notes",
         },
     )
     version = current["data"]
-    state = version["attributes"].get("appStoreState")
+    state = version_state(version)
     if state in LOCKED_VERSION_STATES:
         print(f"Skipping metadata update because App Store version is {state}")
         return
@@ -386,11 +494,10 @@ def ensure_review_submission(client: ASCClient, app_id: str, version_id: str, ar
             "limit": 20,
         },
     )
-    active_states = {"READY_FOR_REVIEW", "WAITING_FOR_REVIEW", "IN_REVIEW"}
     existing = None
     for submission in submissions.get("data", []):
         state = submission["attributes"].get("state")
-        if state in active_states and relationship_id(submission, "appStoreVersionForReview") == version_id:
+        if state in ACTIVE_REVIEW_SUBMISSION_STATES and relationship_id(submission, "appStoreVersionForReview") == version_id:
             existing = submission
             break
     if existing:
@@ -457,6 +564,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--build-number", required=True, help="CFBundleVersion uploaded to App Store Connect")
     parser.add_argument("--whats-new", required=True)
     parser.add_argument("--copy-from-version", help="Existing App Store version to copy localization and review details from")
+    parser.add_argument(
+        "--remove-active-review-version",
+        help="Existing App Store version to remove from active review before creating the target version",
+    )
     parser.add_argument("--api-key", default=os.environ.get("APP_STORE_CONNECT_API_KEY_PATH"))
     parser.add_argument("--api-key-id", default=os.environ.get("APP_STORE_CONNECT_KEY_ID"))
     parser.add_argument("--api-issuer-id", default=os.environ.get("APP_STORE_CONNECT_ISSUER_ID"))
@@ -489,8 +600,17 @@ def main() -> int:
         app_id = app["id"]
         print(f"Using app {app['attributes'].get('name')}: {app_id}")
         source_localization, source_review_detail = latest_source_metadata(client, app_id, args.copy_from_version)
+        build = ensure_build(client, app_id, args, allow_updates=not args.dry_run)
+        if args.remove_active_review_version:
+            # App Store Connect blocks creating a replacement version while another
+            # version is actively in review. Validate the source metadata and uploaded
+            # build first, then remove the old review item immediately before creating
+            # and submitting the replacement.
+            remove_active_review_version(client, app_id, args.remove_active_review_version, dry_run=args.dry_run)
+        if args.dry_run:
+            print("Dry run: metadata and build validated; no App Store Connect changes were made")
+            return 0
         version = ensure_version(client, app_id, args)
-        build = ensure_build(client, app_id, args)
         attach_build(client, version, build, args)
         ensure_metadata(client, version["id"], source_localization, source_review_detail, args)
         submission = ensure_review_submission(client, app_id, version["id"], args)
@@ -504,7 +624,7 @@ def main() -> int:
                 "fields[appStoreVersionLocalizations]": "locale,whatsNew,supportUrl",
             },
         )
-        state = final["data"]["attributes"].get("appStoreState")
+        state = version_state(final["data"])
         submission_state = submission["attributes"].get("state") if submission.get("attributes") else "unknown"
         print(f"App Store version {args.version} state: {state}")
         print(f"Review submission state: {submission_state}")

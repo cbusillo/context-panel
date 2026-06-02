@@ -20,8 +20,16 @@ name: Submit App Store Review
         description: Existing App Store version to copy metadata from.
         required: false
         type: string
+      remove_active_review_version:
+        description: >-
+          Existing App Store version to remove from active review first.
+        required: false
+        type: string
       dry_run:
-        description: Prepare the version and review item without submitting.
+        description: >-
+          Prepare the version and review item without submitting. With
+          remove_active_review_version, only validates metadata/build and the
+          removal target because the active review is not removed.
         required: true
         default: false
         type: boolean
@@ -30,7 +38,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: submit-app-store-review-${{ github.event.inputs.version }}
+  group: submit-app-store-review-${{ inputs.version }}
   cancel-in-progress: false
 
 jobs:
@@ -56,17 +64,31 @@ jobs:
 
       - name: Submit Review
         shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_BUILD_NUMBER: ${{ inputs.build_number }}
+          INPUT_WHATS_NEW: ${{ inputs.whats_new }}
+          INPUT_COPY_FROM_VERSION: ${{ inputs.copy_from_version }}
+          INPUT_REMOVE_ACTIVE_REVIEW_VERSION: >-
+            ${{ inputs.remove_active_review_version }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
           args=(
-            --version "${{ inputs.version }}"
-            --build-number "${{ inputs.build_number }}"
-            --whats-new "${{ inputs.whats_new }}"
+            --version "${INPUT_VERSION}"
+            --build-number "${INPUT_BUILD_NUMBER}"
+            --whats-new "${INPUT_WHATS_NEW}"
           )
-          if [[ -n "${{ inputs.copy_from_version }}" ]]; then
-            args+=(--copy-from-version "${{ inputs.copy_from_version }}")
+          if [[ -n "${INPUT_COPY_FROM_VERSION}" ]]; then
+            args+=(--copy-from-version "${INPUT_COPY_FROM_VERSION}")
           fi
-          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+          if [[ -n "${INPUT_REMOVE_ACTIVE_REVIEW_VERSION}" ]]; then
+            args+=(
+              --remove-active-review-version
+              "${INPUT_REMOVE_ACTIVE_REVIEW_VERSION}"
+            )
+          fi
+          if [[ "${INPUT_DRY_RUN}" == "true" ]]; then
             args+=(--dry-run)
           fi
           submit=(
