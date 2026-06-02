@@ -91,9 +91,9 @@ class SubmittedReviewItemClient(FakeASCClient):
                 status=409,
                 payload={"errors": [{"detail": "Item was already submitted"}]},
             )
-        if method == "GET" and path == "/appStoreVersionSubmissions":
+        if method == "GET" and path == "/appStoreVersions/version-1-0-13/relationships/appStoreVersionSubmission":
             self.requests.append((method, path, params, body, allowed))
-            return {"data": [{"id": "submitted-version-review-1"}]}
+            return {"data": {"type": "appStoreVersionSubmissions", "id": "submitted-version-review-1"}}
         if method == "DELETE" and path == "/appStoreVersionSubmissions/submitted-version-review-1":
             self.requests.append((method, path, params, body, allowed))
             self.canceled_paths.append(path)

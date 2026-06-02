@@ -264,19 +264,14 @@ def cancel_app_store_version_submission(
 ) -> None:
     payload = client.request(
         "GET",
-        "/appStoreVersionSubmissions",
-        {
-            "filter[appStoreVersion]": version_id,
-            "fields[appStoreVersionSubmissions]": "appStoreVersion",
-            "limit": 10,
-        },
+        f"/appStoreVersions/{version_id}/relationships/appStoreVersionSubmission",
     )
-    submissions = payload.get("data") or []
-    if not submissions:
+    submission = payload.get("data")
+    if not submission:
         raise AppStoreConnectError(
             f"App Store version {version_string} was already submitted, but no submitted version review was found to cancel"
         )
-    submission_id = submissions[0]["id"]
+    submission_id = submission["id"]
     if dry_run:
         print(f"Dry run: would cancel submitted App Store version {version_string} review: {submission_id}")
         return
