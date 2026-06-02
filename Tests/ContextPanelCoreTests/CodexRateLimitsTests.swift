@@ -94,3 +94,96 @@ import Testing
     #expect(snapshots[0].primary == nil)
     #expect(snapshots[0].secondary == nil)
 }
+
+@Test func codexUsagePayloadParserFiltersRetiredModelAdditionalLimitsWhenAvailabilityIsKnown() throws {
+    let json = codexUsagePayloadWithAdditionalLimits([
+        ("GPT-5.3-Codex-Spark", "codex_bengalfox", 1),
+        ("GPT-5.5 Thinking", "gpt-5-5-thinking", 2),
+        ("Workspace review", "workspace_review", 3),
+    ])
+    let availability = CodexModelAvailability(identifiers: ["gpt-5-5-thinking", "GPT-5.5 Thinking"])
+
+    let snapshots = try CodexUsagePayloadParser.snapshots(from: Data(json.utf8), modelAvailability: availability)
+
+    #expect(snapshots.map(\.displayName) == ["Codex", "GPT-5.5 Thinking", "Workspace review"])
+}
+
+@Test func codexUsagePayloadParserKeepsActiveModelAdditionalLimitsByMeteredFeature() throws {
+    let json = codexUsagePayloadWithAdditionalLimits([
+        ("Daily Thinking", "gpt-5-5-thinking", 2),
+        ("Daily Spark", "codex_bengalfox", 1),
+    ])
+    let availability = CodexModelAvailability(identifiers: ["gpt-5-5-thinking"])
+
+    let snapshots = try CodexUsagePayloadParser.snapshots(from: Data(json.utf8), modelAvailability: availability)
+
+    #expect(snapshots.map(\.displayName) == ["Codex", "Daily Thinking"])
+}
+
+@Test func codexUsagePayloadParserDropsRetiredModelAdditionalLimitsByMeteredFeature() throws {
+    let json = codexUsagePayloadWithAdditionalLimits([
+        ("Daily Spark", "codex_bengalfox", 1),
+    ])
+    let availability = CodexModelAvailability(identifiers: ["gpt-5-5-thinking"])
+
+    let snapshots = try CodexUsagePayloadParser.snapshots(from: Data(json.utf8), modelAvailability: availability)
+
+    #expect(snapshots.map(\.displayName) == ["Codex"])
+}
+
+@Test func codexUsagePayloadParserKeepsAdditionalLimitsWhenAvailabilityIsUnknown() throws {
+    let json = codexUsagePayloadWithAdditionalLimits([
+        ("GPT-5.3-Codex-Spark", "codex_bengalfox", 1),
+    ])
+
+    let snapshots = try CodexUsagePayloadParser.snapshots(from: Data(json.utf8), modelAvailability: nil)
+
+    #expect(snapshots.map(\.displayName) == ["Codex", "GPT-5.3-Codex-Spark"])
+}
+
+@Test func codexModelAvailabilityParserNormalizesModelSlugsAndTitles() throws {
+    let json = #"""
+    {
+      "models": [
+        { "slug": "gpt-5-5-thinking", "title": "GPT-5.5 Thinking" },
+        { "id": "o3-pro", "display_name": "o3-pro" }
+      ]
+    }
+    """#
+
+    let availability = try CodexModelAvailabilityParser.availability(from: Data(json.utf8))
+
+    #expect(availability.contains(limitName: "GPT-5.5-Thinking"))
+    #expect(availability.contains(limitName: "o3 pro"))
+    #expect(!availability.contains(limitName: "GPT-5.3-Codex-Spark"))
+}
+
+private func codexUsagePayloadWithAdditionalLimits(_ limits: [(name: String, feature: String, used: Int)]) -> String {
+    let additional = limits.map { limit in
+        """
+        {
+          "limit_name": "\(limit.name)",
+          "metered_feature": "\(limit.feature)",
+          "rate_limit": {
+            "primary_window": {
+              "used_percent": \(limit.used),
+              "limit_window_seconds": 18000,
+              "reset_at": 1788400000
+            }
+          }
+        }
+        """
+    }.joined(separator: ",")
+
+    return """
+    {
+      "plan_type": "pro",
+      "rate_limit": {
+        "primary_window": { "used_percent": 45, "limit_window_seconds": 18000, "reset_at": 1788393600 }
+      },
+      "additional_rate_limits": [
+        \(additional)
+      ]
+    }
+    """
+}

@@ -587,6 +587,80 @@ import Testing
     #expect(result.snapshot.limits.allSatisfy { $0.configuredAccountID == "openai-code-default" })
 }
 
+@Test func codexConnectorFiltersAdditionalModelLimitsAgainstChatGPTModels() async throws {
+    let auth = #"{"tokens":{"access_token":"token-secret","account_id":"account-a"}}"#.data(using: .utf8)!
+    let usage = codexUsageWithAdditionalLimits([
+        ("GPT-5.3-Codex-Spark", "codex_bengalfox", 1),
+        ("GPT-5.5 Thinking", "gpt-5-5-thinking", 2),
+    ])
+    let models = #"""
+    {
+      "models": [
+        { "slug": "gpt-5-5-thinking", "title": "GPT-5.5 Thinking" }
+      ]
+    }
+    """#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: usage),
+        ConnectorHTTPResponse(statusCode: 200, data: models),
+    ])
+    let connector = CodexRateLimitConnector(
+        accounts: [CodexAccountConfiguration(authPath: "/tmp/openai.json", accountName: "OpenAI")],
+        httpClient: http,
+        fileLoader: { _ in auth }
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+
+    #expect(http.requests.map { $0.url.path } == ["/backend-api/wham/usage", "/backend-api/models"])
+    #expect(result.snapshot.limits.map(\.label) == ["Codex 5-hour", "GPT-5.5 Thinking 5-hour"])
+}
+
+@Test func codexConnectorKeepsAdditionalModelLimitsWhenAvailabilityFetchFails() async throws {
+    let auth = #"{"tokens":{"access_token":"token-secret","account_id":"account-a"}}"#.data(using: .utf8)!
+    let usage = codexUsageWithAdditionalLimits([
+        ("GPT-5.3-Codex-Spark", "codex_bengalfox", 1),
+    ])
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: usage),
+        ConnectorHTTPResponse(statusCode: 500, data: Data()),
+    ])
+    let connector = CodexRateLimitConnector(
+        accounts: [CodexAccountConfiguration(authPath: "/tmp/openai.json", accountName: "OpenAI")],
+        httpClient: http,
+        fileLoader: { _ in auth }
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+
+    #expect(http.requests.map { $0.url.path } == ["/backend-api/wham/usage", "/backend-api/models"])
+    #expect(result.reports[0].status == .healthy)
+    #expect(result.snapshot.limits.map(\.label) == ["Codex 5-hour", "GPT-5.3-Codex-Spark 5-hour"])
+}
+
+@Test func codexConnectorSkipsModelAvailabilityFetchWithoutAdditionalLimits() async throws {
+    let auth = #"{"tokens":{"access_token":"token-secret","account_id":"account-a"}}"#.data(using: .utf8)!
+    let usage = #"""
+    {
+      "plan_type": "pro",
+      "rate_limit": {
+        "primary_window": { "used_percent": 5, "limit_window_seconds": 18000, "reset_at": 1788393600 }
+      }
+    }
+    """#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
+    let connector = CodexRateLimitConnector(
+        accounts: [CodexAccountConfiguration(authPath: "/tmp/openai.json", accountName: "OpenAI")],
+        httpClient: http,
+        fileLoader: { _ in auth }
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+
+    #expect(http.requests.map { $0.url.path } == ["/backend-api/wham/usage"])
+    #expect(result.snapshot.limits.map(\.label) == ["Codex 5-hour"])
+}
+
 @Test func codexTokenIdentityExtractsEmailNamePlanAndAccountID() {
     let token = jwtPayload(
         email: "person@example.com",
@@ -1134,6 +1208,36 @@ private final class StubHTTPClient: ConnectorHTTPClient, @unchecked Sendable {
         }
         return responses.removeFirst()
     }
+}
+
+private func codexUsageWithAdditionalLimits(_ limits: [(name: String, feature: String, used: Int)]) -> Data {
+    let additional = limits.map { limit in
+        """
+        {
+          "limit_name": "\(limit.name)",
+          "metered_feature": "\(limit.feature)",
+          "rate_limit": {
+            "primary_window": {
+              "used_percent": \(limit.used),
+              "limit_window_seconds": 18000,
+              "reset_at": 1788400000
+            }
+          }
+        }
+        """
+    }.joined(separator: ",")
+
+    return Data("""
+    {
+      "plan_type": "pro",
+      "rate_limit": {
+        "primary_window": { "used_percent": 45, "limit_window_seconds": 18000, "reset_at": 1788393600 }
+      },
+      "additional_rate_limits": [
+        \(additional)
+      ]
+    }
+    """.utf8)
 }
 
 private final class StubCredentialStore: ProviderCredentialStoring, @unchecked Sendable {

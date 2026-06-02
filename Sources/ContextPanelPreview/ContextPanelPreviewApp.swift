@@ -15,7 +15,8 @@ struct ContextPanelPreviewApp: App {
         Window("Context Panel", id: "main") {
             AppRoot(model: appDelegate.model)
                 .frame(minWidth: 1080, idealWidth: 1080, minHeight: 720, idealHeight: 720)
-                .onOpenURL { _ in
+                .onOpenURL { url in
+                    appDelegate.model.handleOpenURL(url)
                     NSApp.activate(ignoringOtherApps: true)
                     NSApp.windows.first?.makeKeyAndOrderFront(nil)
                 }
@@ -84,6 +85,7 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
 
 enum AppNavigationSelection: Hashable {
     case overview
+    case reconnect
     case provider(Provider)
     case mainLimit(MainLimitSummary.ID)
 }
@@ -105,6 +107,10 @@ struct AppRoot: View {
                 .frame(minWidth: 760)
         }
         .tint(CPTheme.accent)
+        .onReceive(model.$navigationRequest.compactMap { $0 }) { request in
+            selection = request
+            model.clearNavigationRequest()
+        }
     }
 }
 
@@ -1003,6 +1009,11 @@ struct AccountsSidebar: View {
             Section {
                 Label("Overview", systemImage: "gauge.with.dots.needle.67percent")
                     .tag(AppNavigationSelection.overview)
+                if model.shouldShowReconnectNavigation {
+                    Label(model.attentionNavigationTitle, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(CPTheme.statusColor(.failure))
+                        .tag(AppNavigationSelection.reconnect)
+                }
             }
             Section("Providers") {
                 ForEach(Provider.allCases) { provider in
@@ -1114,6 +1125,8 @@ struct MainContent: View {
         switch selection {
         case .overview:
             OverviewDashboard(model: model, snapshot: snapshot)
+        case .reconnect:
+            ReconnectDashboard(appModel: model, snapshot: snapshot)
         case .provider(let provider):
             ProviderDashboard(model: model, snapshot: snapshot, provider: provider)
         case .mainLimit(let id):
@@ -1153,6 +1166,198 @@ struct OverviewDashboard: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .background(CPTheme.background)
+    }
+}
+
+struct ReconnectDashboard: View {
+    @ObservedObject var appModel: ContextPanelAppModel
+    let snapshot: UsageSnapshot
+    @StateObject private var settingsModel = SettingsPaneModel()
+
+    private var accountsNeedingAction: [LocalProviderAccountConfiguration] {
+        settingsModel.accounts.filter { account in
+            account.isEnabled && (
+                settingsModel.needsAuthorization(account)
+                    || settingsModel.hasLegacyAuthorization(account)
+                    || account.connectorKind == .claudeOAuthUsage
+                    || (account.connectorKind == .geminiCodeAssist && !settingsModel.hasGeminiMetadata(for: account))
+                    || appModel.reportNeedsAttention(account)
+            )
+        }
+    }
+
+    var body: some View {
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .center, spacing: 18) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 34, weight: .semibold))
+                        .foregroundStyle(CPTheme.statusColor(.failure))
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text(appModel.attentionNavigationTitle)
+                            .font(.system(size: 28, weight: .semibold))
+                            .foregroundStyle(CPTheme.primaryText)
+                        Text(appModel.reconnectSummaryText)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(CPTheme.secondaryText)
+                            .lineLimit(2)
+                    }
+                    Spacer(minLength: 12)
+                    Button {
+                        Task { await appModel.refreshLocalConnectors() }
+                    } label: {
+                        Label(appModel.isRefreshing ? "Refreshing" : "Refresh now", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(appModel.isRefreshing)
+                }
+                .padding(22)
+                .background(CPTheme.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(CPTheme.stroke(cornerRadius: 12))
+
+                if !appModel.providerReportsNeedingAttention.isEmpty {
+                    DetailCard(title: "Refresh Status") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(appModel.diagnosticProviderReports) { report in
+                                DiagnosticReportRow(report: report)
+                            }
+                        }
+                    }
+                }
+
+                DetailCard(title: "Accounts") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        if accountsNeedingAction.isEmpty {
+                            Text("No account action is available. Try Refresh now; if the widget stays stale, reconnect the affected provider from Settings.")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(CPTheme.secondaryText)
+                        } else {
+                            ForEach(accountsNeedingAction) { account in
+                                ReconnectAccountRow(
+                                    account: account,
+                                    settingsModel: settingsModel,
+                                    refreshSummary: settingsModel.refreshSummary(for: account, storedSnapshot: appModel.storedSnapshot),
+                                    onRefresh: {
+                                        Task {
+                                            await appModel.refreshLocalConnectors()
+                                            settingsModel.load()
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .background(CPTheme.background)
+        .sheet(isPresented: $settingsModel.isClaudeOAuthCodeSheetPresented) {
+            ClaudeOAuthCodeSheet(model: settingsModel) {
+                Task {
+                    await appModel.refreshLocalConnectors()
+                    settingsModel.load()
+                }
+            }
+        }
+        .onAppear { settingsModel.load() }
+    }
+}
+
+private struct DiagnosticReportRow: View {
+    let report: DiagnosticProviderReport
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                StatusMark(status: report.status, size: 8)
+                Text(report.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(CPTheme.primaryText)
+                Spacer()
+                Text(report.summary)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(CPTheme.statusColor(report.status))
+            }
+            if let detail = report.detail {
+                Text(detail)
+                    .font(.system(size: 11))
+                    .foregroundStyle(CPTheme.tertiaryText)
+                    .lineLimit(3)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(10)
+        .background(CPTheme.surface2)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+private struct ReconnectAccountRow: View {
+    let account: LocalProviderAccountConfiguration
+    @ObservedObject var settingsModel: SettingsPaneModel
+    let refreshSummary: SettingsAccountRefreshSummary?
+    let onRefresh: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            ProviderBadge(provider: account.provider)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(account.displayName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(CPTheme.primaryText)
+                Text(statusText)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(CPTheme.secondaryText)
+                    .lineLimit(2)
+                if let refreshSummary {
+                    Text(refreshSummary.text)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(CPTheme.statusColor(refreshSummary.status))
+                        .lineLimit(2)
+                }
+            }
+            Spacer(minLength: 12)
+            actionButton
+        }
+        .padding(10)
+        .background(CPTheme.surface2)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var actionButton: some View {
+        if settingsModel.canAuthorizeAuthFile(for: account), settingsModel.needsAuthorization(account) || settingsModel.hasLegacyAuthorization(account) {
+            Button("Reconnect") {
+                settingsModel.authorizeAuthFile(for: account, onVerified: onRefresh)
+            }
+            .buttonStyle(.borderedProminent)
+        } else if account.connectorKind == .claudeOAuthUsage {
+            Button("Reconnect") {
+                settingsModel.authorizeClaudeOAuth(for: account)
+            }
+            .buttonStyle(.borderedProminent)
+        } else if account.connectorKind == .geminiCodeAssist, !settingsModel.hasGeminiMetadata(for: account) {
+            Button("Allow CLI Access") {
+                settingsModel.authorizeGeminiMetadata(for: account)
+            }
+            .buttonStyle(.bordered)
+        } else {
+            Button("Refresh") { onRefresh() }
+                .buttonStyle(.bordered)
+        }
+    }
+
+    private var statusText: String {
+        if settingsModel.needsAuthorization(account) { return "Account access is missing." }
+        if settingsModel.hasLegacyAuthorization(account) { return "File access needs to be refreshed." }
+        if account.connectorKind == .claudeOAuthUsage { return "Reconnect Claude if refresh keeps failing." }
+        if account.connectorKind == .geminiCodeAssist, !settingsModel.hasGeminiMetadata(for: account) {
+            return "Allow local Gemini CLI access or use Antigravity sign-in."
+        }
+        return settingsModel.detailText(for: account)
     }
 }
 
@@ -2043,6 +2248,7 @@ final class ContextPanelAppModel: ObservableObject {
     @Published private(set) var isRefreshing = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var lastRefreshAt: Date?
+    @Published private(set) var navigationRequest: AppNavigationSelection?
 
     private let refreshService: SnapshotRefreshService
     private let refreshRunner: SnapshotRefreshRunner
@@ -2076,13 +2282,58 @@ final class ContextPanelAppModel: ObservableObject {
     var primaryErrorStatusText: String {
         switch storeStatus {
         case .failure:
-            "Update failed; see Settings"
+            "Reconnect account"
         case .stale:
-            "Old data; see Settings"
+            hasProviderReconnectIssue ? "Reconnect account" : "Refresh needed"
         case .unknown:
             "Awaiting data; see Settings"
         default:
             "Needs attention; see Settings"
+        }
+    }
+
+    var shouldShowReconnectNavigation: Bool {
+        storeStatus == .failure || storeStatus == .stale || !providerReportsNeedingAttention.isEmpty
+    }
+
+    var attentionNavigationTitle: String {
+        if storeStatus == .failure || hasProviderReconnectIssue {
+            return "Reconnect account"
+        }
+        return "Refresh needed"
+    }
+
+    var reconnectSummaryText: String {
+        if storeStatus == .stale {
+            if hasProviderReconnectIssue {
+                return "The widget is showing old percentages. Reconnect the affected account, then refresh."
+            }
+            return "The widget is showing old percentages. Refresh Context Panel to update the snapshot."
+        }
+        if storeStatus == .failure {
+            return "The latest refresh failed. Reconnect the affected account, then refresh."
+        }
+        if !providerReportsNeedingAttention.isEmpty {
+            return "One or more provider refreshes need attention. Reconnect the affected account, then refresh."
+        }
+        return "Refresh is healthy right now."
+    }
+
+    var providerReportsNeedingAttention: [StoredProviderReport] {
+        storedSnapshot?.reports.filter { $0.status == .failure || $0.status == .stale } ?? []
+    }
+
+    var hasProviderReconnectIssue: Bool {
+        storedSnapshot?.reports.contains { $0.status == .failure } ?? false
+    }
+
+    func reportNeedsAttention(_ account: LocalProviderAccountConfiguration) -> Bool {
+        providerReportsNeedingAttention.contains { report in
+            guard report.provider == account.provider else { return false }
+            if let configuredAccountID = report.configuredAccountID {
+                return configuredAccountID == account.id
+            }
+            return true
         }
     }
 
@@ -2107,6 +2358,7 @@ final class ContextPanelAppModel: ObservableObject {
                     id: "\(report.provider.rawValue)-\(report.accountID)-\(report.status.rawValue)",
                     title: "\(report.provider.displayName) · \(report.accountName)",
                     summary: "\(report.status.previewStatusText) · \(relativeTime(report.generatedAt))",
+                    status: report.status,
                     detail: report.errorMessage
                 )
             } ?? []
@@ -2131,6 +2383,21 @@ final class ContextPanelAppModel: ObservableObject {
         }
         historyCount = refreshService.loadHistory().count
         WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    func handleOpenURL(_ url: URL) {
+        switch url.host?.lowercased() {
+        case "reconnect":
+            navigationRequest = .reconnect
+        case "overview":
+            navigationRequest = .overview
+        default:
+            navigationRequest = .overview
+        }
+    }
+
+    func clearNavigationRequest() {
+        navigationRequest = nil
     }
 
     func refreshLocalConnectors() async {
@@ -2171,6 +2438,7 @@ struct DiagnosticProviderReport: Identifiable, Equatable {
     let id: String
     let title: String
     let summary: String
+    let status: UsageStatus
     let detail: String?
 }
 
@@ -2389,9 +2657,9 @@ enum CPTheme {
             Color(red: 74 / 255, green: 122 / 255, blue: 91 / 255)
         case .close:
             Color(red: 138 / 255, green: 106 / 255, blue: 42 / 255)
-        case .limited, .failure:
+        case .limited, .failure, .stale:
             Color(red: 138 / 255, green: 74 / 255, blue: 74 / 255)
-        case .stale, .unknown, .loading:
+        case .unknown, .loading:
             Color(red: 106 / 255, green: 106 / 255, blue: 114 / 255)
         }
     }

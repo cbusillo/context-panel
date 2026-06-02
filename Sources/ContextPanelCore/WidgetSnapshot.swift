@@ -111,6 +111,10 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         )
     }
 
+    public var hasProviderReconnectIssue: Bool {
+        reports.contains { $0.status == .failure }
+    }
+
     private static func message(state: WidgetSnapshotState, stored: StoredUsageSnapshot) -> String {
         switch state {
         case .ready:
@@ -122,9 +126,11 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         case .setupNeeded:
             return "Set up Context Panel in the app."
         case .stale:
-            return "Last snapshot is stale."
+            return stored.reports.contains { $0.status == .failure }
+                ? "Reconnect account to update data."
+                : "Refresh Context Panel to update data."
         case .failure:
-            return "Refresh failed."
+            return "Reconnect account to update data."
         }
     }
 
