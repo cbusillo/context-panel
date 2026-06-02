@@ -63,6 +63,38 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
     }
 }
 
+public extension LocalProviderAccountConfiguration {
+    var providerReportAccountIDs: [String] {
+        switch connectorKind {
+        case .codexRateLimits, .geminiCodeAssist:
+            guard let authPath else { return [] }
+            return Self.localAccountIDs(provider: provider, path: authPath)
+        case .claudeLocalStatus:
+            guard let authPath = effectiveAuthPath else { return [] }
+            return Self.localAccountIDs(provider: provider, path: authPath)
+        case .claudeOAuthUsage:
+            return [ConnectorRedactor.localAccountID(provider: provider, stableID: id)]
+        }
+    }
+
+    func matchesProviderReport(_ report: StoredProviderReport) -> Bool {
+        guard report.provider == provider else { return false }
+        if let configuredAccountID = report.configuredAccountID {
+            return configuredAccountID == id
+        }
+        return report.accountID == id || providerReportAccountIDs.contains(report.accountID)
+    }
+
+    private static func localAccountIDs(provider: Provider, path: String) -> [String] {
+        var ids = [ConnectorRedactor.localAccountID(provider: provider, path: path)]
+        let expandedPath = NSString(string: path).expandingTildeInPath
+        if expandedPath != path {
+            ids.append(ConnectorRedactor.localAccountID(provider: provider, path: expandedPath))
+        }
+        return ids
+    }
+}
+
 public struct AccountConfigurationDocument: Codable, Equatable, Sendable {
     public let schemaVersion: Int
     public var updatedAt: Date

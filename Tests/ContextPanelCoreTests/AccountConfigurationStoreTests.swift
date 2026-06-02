@@ -16,6 +16,151 @@ import Testing
     #expect(result.document.accounts.contains { $0.connectorKind == .claudeOAuthUsage && $0.effectiveAuthPath == nil })
 }
 
+@Test func localProviderAccountConfigurationMatchesReportsByConfiguredAccountID() throws {
+    let account = LocalProviderAccountConfiguration(
+        id: "openai-code-default",
+        provider: .openAI,
+        connectorKind: .codexRateLimits,
+        displayName: "Every Code",
+        authPath: "/tmp/code-auth.json"
+    )
+    let report = StoredProviderReport(
+        provider: .openAI,
+        accountID: ConnectorRedactor.localAccountID(provider: .openAI, stableID: "chatgpt:user-a"),
+        configuredAccountID: "openai-code-default",
+        accountName: "Every Code",
+        generatedAt: Date(timeIntervalSince1970: 0),
+        status: .failure,
+        errorMessage: nil
+    )
+
+    #expect(account.matchesProviderReport(report))
+}
+
+@Test func localProviderAccountConfigurationMatchesLocalConnectorReportsByResolvedPath() throws {
+    let authPath = "/tmp/gemini-oauth.json"
+    let account = LocalProviderAccountConfiguration(
+        id: "gemini-default",
+        provider: .google,
+        connectorKind: .geminiCodeAssist,
+        displayName: "Gemini",
+        authPath: authPath
+    )
+    let report = StoredProviderReport(
+        provider: .google,
+        accountID: ConnectorRedactor.localAccountID(provider: .google, path: authPath),
+        accountName: "Gemini",
+        generatedAt: Date(timeIntervalSince1970: 0),
+        status: .stale,
+        errorMessage: nil
+    )
+
+    #expect(account.matchesProviderReport(report))
+}
+
+@Test func localProviderAccountConfigurationMatchesExpandedLocalConnectorPaths() throws {
+    let expandedPath = "\(ContextPanelLocations.realUserHomeDirectory().path)/.gemini/oauth_creds.json"
+    let account = LocalProviderAccountConfiguration(
+        id: "gemini-default",
+        provider: .google,
+        connectorKind: .geminiCodeAssist,
+        displayName: "Gemini",
+        authPath: "~/.gemini/oauth_creds.json"
+    )
+    let report = StoredProviderReport(
+        provider: .google,
+        accountID: ConnectorRedactor.localAccountID(provider: .google, path: expandedPath),
+        accountName: "Gemini",
+        generatedAt: Date(timeIntervalSince1970: 0),
+        status: .failure,
+        errorMessage: nil
+    )
+
+    #expect(account.matchesProviderReport(report))
+}
+
+@Test func localProviderAccountConfigurationDoesNotMatchProviderWideReportFromAnotherAccount() throws {
+    let account = LocalProviderAccountConfiguration(
+        id: "gemini-default",
+        provider: .google,
+        connectorKind: .geminiCodeAssist,
+        displayName: "Gemini",
+        authPath: "/tmp/gemini-a.json"
+    )
+    let report = StoredProviderReport(
+        provider: .google,
+        accountID: ConnectorRedactor.localAccountID(provider: .google, path: "/tmp/gemini-b.json"),
+        accountName: "Other Gemini",
+        generatedAt: Date(timeIntervalSince1970: 0),
+        status: .failure,
+        errorMessage: nil
+    )
+
+    #expect(!account.matchesProviderReport(report))
+}
+
+@Test func localProviderAccountConfigurationUsesConfiguredAccountIDAsAuthoritative() throws {
+    let account = LocalProviderAccountConfiguration(
+        id: "openai-code-default",
+        provider: .openAI,
+        connectorKind: .codexRateLimits,
+        displayName: "Every Code",
+        authPath: "/tmp/code-auth.json"
+    )
+    let report = StoredProviderReport(
+        provider: .openAI,
+        accountID: "openai-code-default",
+        configuredAccountID: "openai-codex-default",
+        accountName: "Codex",
+        generatedAt: Date(timeIntervalSince1970: 0),
+        status: .failure,
+        errorMessage: nil
+    )
+
+    #expect(!account.matchesProviderReport(report))
+}
+
+@Test func localProviderAccountConfigurationMatchesClaudeLocalStatusReportsByEffectivePath() throws {
+    let account = LocalProviderAccountConfiguration(
+        id: "claude-local-default",
+        provider: .anthropic,
+        connectorKind: .claudeLocalStatus,
+        displayName: "Claude"
+    )
+    let report = StoredProviderReport(
+        provider: .anthropic,
+        accountID: ConnectorRedactor.localAccountID(
+            provider: .anthropic,
+            path: ContextPanelLocations.claudeStatuslineCacheURL().path
+        ),
+        accountName: "Claude",
+        generatedAt: Date(timeIntervalSince1970: 0),
+        status: .stale,
+        errorMessage: nil
+    )
+
+    #expect(account.matchesProviderReport(report))
+}
+
+@Test func localProviderAccountConfigurationMatchesClaudeOAuthReportsByRedactedStableID() throws {
+    let account = LocalProviderAccountConfiguration(
+        id: "claude-oauth-default",
+        provider: .anthropic,
+        connectorKind: .claudeOAuthUsage,
+        displayName: "Claude"
+    )
+    let report = StoredProviderReport(
+        provider: .anthropic,
+        accountID: ConnectorRedactor.localAccountID(provider: .anthropic, stableID: "claude-oauth-default"),
+        accountName: "Claude",
+        generatedAt: Date(timeIntervalSince1970: 0),
+        status: .failure,
+        errorMessage: nil
+    )
+
+    #expect(account.matchesProviderReport(report))
+}
+
 @Test func accountConfigurationStorePreservesCustomAccountsWithoutAddingDefaults() throws {
     let url = try temporaryDirectory().appending(path: "accounts.json")
     let store = AccountConfigurationStore(configurationURL: url)
