@@ -175,6 +175,208 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
 
         self.assertEqual([request[0] for request in client.requests], ["GET"])
 
+    def test_reuses_removed_version_when_replacement_creation_is_blocked(self):
+        class ReplacementClient:
+            def __init__(self):
+                self.requests: list[tuple[Any, ...]] = []
+
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                self.requests.append((method, path, params, body, allowed))
+                if method == "GET" and path == "/apps/app-id/appStoreVersions":
+                    version_string = params.get("filter[versionString]") if params else None
+                    if version_string == "1.0.14":
+                        return {"data": []}
+                    if version_string == "1.0.13":
+                        return {
+                            "data": [
+                                {
+                                    "id": "version-1-0-13",
+                                    "attributes": {
+                                        "versionString": "1.0.13",
+                                        "appStoreState": "DEVELOPER_REJECTED",
+                                    },
+                                }
+                            ]
+                        }
+                if method == "POST" and path == "/appStoreVersions":
+                    raise submit_app_store_review.AppStoreConnectError(
+                        "App Store Connect request failed: POST /appStoreVersions",
+                        status=409,
+                        payload={"errors": [{"detail": "You cannot create a new version of the App in the current state."}]},
+                    )
+                if method == "PATCH" and path == "/appStoreVersions/version-1-0-13":
+                    return {
+                        "data": {
+                            "id": "version-1-0-13",
+                            "attributes": {"versionString": "1.0.14", "appStoreState": "PREPARE_FOR_SUBMISSION"},
+                        }
+                    }
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        client = ReplacementClient()
+        args = SimpleNamespace(
+            version="1.0.14",
+            remove_active_review_version="1.0.13",
+            release_type="AFTER_APPROVAL",
+            copyright="2026 Shiny Computers Leasing LLC",
+            uses_idfa=False,
+        )
+
+        version = None
+        try:
+            submit_app_store_review.create_app_store_version_with_retry(
+                client,
+                "app-id",
+                args,
+                attempts=1,
+                retry_seconds=0,
+            )
+        except submit_app_store_review.AppStoreConnectError as error:
+            self.assertTrue(submit_app_store_review.is_version_creation_state_conflict(error))
+            version = submit_app_store_review.reuse_removed_app_store_version(client, "app-id", "1.0.13", args)
+        if version is None:
+            self.fail("expected replacement version creation to be blocked")
+
+        self.assertEqual(version["id"], "version-1-0-13")
+        patch_body = next(request[3] for request in client.requests if request[0] == "PATCH")
+        self.assertEqual(patch_body["data"]["attributes"]["versionString"], "1.0.14")
+
+    def test_supersede_run_force_prepares_existing_replacement_version(self):
+        class ExistingReplacementClient:
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                if method == "GET" and path == "/apps/app-id/appStoreVersions":
+                    return {
+                        "data": [
+                            {
+                                "id": "version-1-0-14",
+                                "attributes": {"versionString": "1.0.14", "appStoreState": "PREPARE_FOR_SUBMISSION"},
+                            }
+                        ]
+                    }
+                if method == "PATCH" and path == "/appStoreVersions/version-1-0-14":
+                    return {"data": {"id": "version-1-0-14"}}
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        args = SimpleNamespace(
+            version="1.0.14",
+            remove_active_review_version="1.0.13",
+            release_type="AFTER_APPROVAL",
+            copyright="2026 Shiny Computers Leasing LLC",
+            uses_idfa=False,
+        )
+
+        version, force_prepare = submit_app_store_review.ensure_replacement_version(
+            ExistingReplacementClient(),
+            "app-id",
+            args,
+        )
+
+        self.assertEqual(version["id"], "version-1-0-14")
+        self.assertTrue(force_prepare)
+
+    def test_force_prepare_review_submission_reuses_existing_submission(self):
+        class ReviewSubmissionClient:
+            def __init__(self, state="READY_FOR_REVIEW"):
+                self.requests: list[tuple[Any, ...]] = []
+                self.state = state
+
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                self.requests.append((method, path, params, body, allowed))
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {
+                        "data": [
+                            {
+                                "id": "old-submission",
+                                "attributes": {"state": self.state},
+                                "relationships": {
+                                    "items": {"data": [{"type": "reviewSubmissionItems", "id": "old-item"}]}
+                                },
+                            }
+                        ],
+                        "included": [
+                            {
+                                "id": "old-item",
+                                "type": "reviewSubmissionItems",
+                                "relationships": {
+                                    "appStoreVersion": {
+                                        "data": {"type": "appStoreVersions", "id": "version-1-0-13"}
+                                    }
+                                },
+                            }
+                        ],
+                    }
+                if method == "POST" and path == "/reviewSubmissions":
+                    return {"data": {"id": "new-submission", "attributes": {"state": "READY_FOR_REVIEW"}}}
+                if method == "POST" and path == "/reviewSubmissionItems":
+                    return {"data": {"id": "new-item"}}
+                if method == "PATCH" and path == "/reviewSubmissions/old-submission":
+                    return {"data": {"id": "old-submission", "attributes": {"state": "WAITING_FOR_REVIEW"}}}
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        client = ReviewSubmissionClient()
+        args = SimpleNamespace(dry_run=False)
+
+        submission = submit_app_store_review.ensure_review_submission(
+            client,
+            "app-id",
+            "version-1-0-13",
+            args,
+            force_prepare=True,
+        )
+
+        self.assertEqual(submission["id"], "old-submission")
+        post_paths = [request[1] for request in client.requests if request[0] == "POST"]
+        self.assertEqual(post_paths, ["/reviewSubmissionItems"])
+        patch_paths = [request[1] for request in client.requests if request[0] == "PATCH"]
+        self.assertEqual(patch_paths, ["/reviewSubmissions/old-submission"])
+
+    def test_force_prepare_review_submission_returns_submitted_existing_submission(self):
+        class ReviewSubmissionClient:
+            def __init__(self):
+                self.requests: list[tuple[Any, ...]] = []
+
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                self.requests.append((method, path, params, body, allowed))
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {
+                        "data": [
+                            {
+                                "id": "old-submission",
+                                "attributes": {"state": "WAITING_FOR_REVIEW"},
+                                "relationships": {
+                                    "items": {"data": [{"type": "reviewSubmissionItems", "id": "old-item"}]}
+                                },
+                            }
+                        ],
+                        "included": [
+                            {
+                                "id": "old-item",
+                                "type": "reviewSubmissionItems",
+                                "relationships": {
+                                    "appStoreVersion": {
+                                        "data": {"type": "appStoreVersions", "id": "version-1-0-13"}
+                                    }
+                                },
+                            }
+                        ],
+                    }
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        client = ReviewSubmissionClient()
+        args = SimpleNamespace(dry_run=False)
+
+        submission = submit_app_store_review.ensure_review_submission(
+            client,
+            "app-id",
+            "version-1-0-13",
+            args,
+            force_prepare=True,
+        )
+
+        self.assertEqual(submission["id"], "old-submission")
+        mutation_methods = [request[0] for request in client.requests if request[0] in {"POST", "PATCH"}]
+        self.assertEqual(mutation_methods, [])
+
     def test_dry_run_main_returns_before_version_or_submission_mutations(self):
         class MainClient:
             def __init__(self):
@@ -252,6 +454,99 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
 
         mutation_methods = [request[0] for request in client.requests if request[0] != "GET"]
         self.assertEqual(mutation_methods, [])
+
+    def test_ensure_review_submission_reuses_empty_ready_submission(self):
+        class EmptyReviewSubmissionClient:
+            def __init__(self):
+                self.requests: list[tuple[Any, ...]] = []
+
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                self.requests.append((method, path, params, body, allowed))
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {
+                        "data": [
+                            {
+                                "id": "empty-submission",
+                                "attributes": {"state": "READY_FOR_REVIEW"},
+                                "relationships": {"items": {"data": []}},
+                            }
+                        ]
+                    }
+                if method == "POST" and path == "/reviewSubmissionItems":
+                    return {"data": {"id": "item-1"}}
+                if method == "PATCH" and path == "/reviewSubmissions/empty-submission":
+                    return {"data": {"id": "empty-submission", "attributes": {"state": "WAITING_FOR_REVIEW"}}}
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        client = EmptyReviewSubmissionClient()
+        args = SimpleNamespace(dry_run=False)
+
+        submission = submit_app_store_review.ensure_review_submission(
+            client,
+            "app-id",
+            "version-1-0-14",
+            args,
+            force_prepare=False,
+        )
+
+        self.assertEqual(submission["id"], "empty-submission")
+        post_paths = [request[1] for request in client.requests if request[0] == "POST"]
+        self.assertEqual(post_paths, ["/reviewSubmissionItems"])
+        patch_paths = [request[1] for request in client.requests if request[0] == "PATCH"]
+        self.assertEqual(patch_paths, ["/reviewSubmissions/empty-submission"])
+
+    def test_ensure_review_submission_submits_ready_submission_when_force_prepare_is_false(self):
+        class ReadyReviewSubmissionClient:
+            def __init__(self):
+                self.requests: list[tuple[Any, ...]] = []
+
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                self.requests.append((method, path, params, body, allowed))
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {
+                        "data": [
+                            {
+                                "id": "ready-submission",
+                                "attributes": {"state": "READY_FOR_REVIEW"},
+                                "relationships": {
+                                    "items": {"data": [{"type": "reviewSubmissionItems", "id": "item-1"}]}
+                                },
+                            }
+                        ],
+                        "included": [
+                            {
+                                "id": "item-1",
+                                "type": "reviewSubmissionItems",
+                                "relationships": {
+                                    "appStoreVersion": {
+                                        "data": {"type": "appStoreVersions", "id": "version-1-0-14"}
+                                    }
+                                },
+                            }
+                        ],
+                    }
+                if method == "POST" and path == "/reviewSubmissionItems":
+                    raise submit_app_store_review.AppStoreConnectError(
+                        "already exists", status=409, payload={}
+                    )
+                if method == "PATCH" and path == "/reviewSubmissions/ready-submission":
+                    return {"data": {"id": "ready-submission", "attributes": {"state": "WAITING_FOR_REVIEW"}}}
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        client = ReadyReviewSubmissionClient()
+        args = SimpleNamespace(dry_run=False)
+
+        submission = submit_app_store_review.ensure_review_submission(
+            client,
+            "app-id",
+            "version-1-0-14",
+            args,
+            force_prepare=False,
+        )
+
+        self.assertEqual(submission["id"], "ready-submission")
+        patch_paths = [request[1] for request in client.requests if request[0] == "PATCH"]
+        self.assertEqual(patch_paths, ["/reviewSubmissions/ready-submission"])
 
 
 if __name__ == "__main__":
