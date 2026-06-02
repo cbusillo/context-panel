@@ -313,15 +313,21 @@ def create_app_store_version(client: ASCClient, app_id: str, args: argparse.Name
     )["data"]
 
 
-def create_app_store_version_with_retry(client: ASCClient, app_id: str, args: argparse.Namespace) -> dict[str, Any]:
-    for attempt in range(CREATE_VERSION_MAX_ATTEMPTS):
+def create_app_store_version_with_retry(
+    client: ASCClient,
+    app_id: str,
+    args: argparse.Namespace,
+    attempts: int = CREATE_VERSION_MAX_ATTEMPTS,
+    retry_seconds: int = CREATE_VERSION_RETRY_SECONDS,
+) -> dict[str, Any]:
+    for attempt in range(attempts):
         try:
             return create_app_store_version(client, app_id, args)
         except AppStoreConnectError as error:
-            if attempt == CREATE_VERSION_MAX_ATTEMPTS - 1 or not is_version_creation_state_conflict(error):
+            if attempt == attempts - 1 or not is_version_creation_state_conflict(error):
                 raise
             print("App Store Connect is still releasing the previous review state; retrying version creation")
-            time.sleep(CREATE_VERSION_RETRY_SECONDS)
+            time.sleep(retry_seconds)
     raise AppStoreConnectError(f"failed to create App Store version {args.version}")
 
 
@@ -358,6 +364,53 @@ def ensure_version(client: ASCClient, app_id: str, args: argparse.Namespace) -> 
             body={"data": {"type": "appStoreVersions", "id": version["id"], "attributes": attributes}},
         )
     return version
+
+
+def reuse_removed_app_store_version(
+    client: ASCClient, app_id: str, source_version_string: str, args: argparse.Namespace
+) -> dict[str, Any]:
+    version = app_store_version(client, app_id, source_version_string)
+    if version is None:
+        raise AppStoreConnectError(f"App Store version {source_version_string} is not available to reuse")
+    state = version_state(version)
+    if state in LOCKED_VERSION_STATES:
+        raise AppStoreConnectError(
+            f"App Store version {source_version_string} is still {state}; cannot reuse it as {args.version}",
+            payload=version,
+        )
+    updated = client.request(
+        "PATCH",
+        f"/appStoreVersions/{version['id']}",
+        body={
+            "data": {
+                "type": "appStoreVersions",
+                "id": version["id"],
+                "attributes": {
+                    "versionString": args.version,
+                    "releaseType": args.release_type,
+                    "copyright": args.copyright,
+                    "usesIdfa": args.uses_idfa,
+                },
+            }
+        },
+    )["data"]
+    print(f"Reused App Store version {source_version_string} as {args.version}: {updated['id']}")
+    return updated
+
+
+def ensure_replacement_version(client: ASCClient, app_id: str, args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
+    try:
+        version = ensure_version(client, app_id, args)
+        return version, bool(args.remove_active_review_version)
+    except AppStoreConnectError as error:
+        source_version = args.remove_active_review_version
+        if not source_version or not is_version_creation_state_conflict(error):
+            raise
+        print(
+            f"App Store Connect still blocks creating {args.version}; "
+            f"reusing removed version {source_version} instead"
+        )
+        return reuse_removed_app_store_version(client, app_id, source_version, args), True
 
 
 def version_build_id(client: ASCClient, version_id: str) -> str | None:
@@ -515,7 +568,13 @@ def ensure_metadata(client: ASCClient, version_id: str, source_localization: dic
         print(f"Updated review detail: {review_detail_id}")
 
 
-def ensure_review_submission(client: ASCClient, app_id: str, version_id: str, args: argparse.Namespace) -> dict[str, Any]:
+def ensure_review_submission(
+    client: ASCClient,
+    app_id: str,
+    version_id: str,
+    args: argparse.Namespace,
+    force_prepare: bool = False,
+) -> dict[str, Any]:
     submissions = client.request(
         "GET",
         "/reviewSubmissions",
@@ -529,21 +588,32 @@ def ensure_review_submission(client: ASCClient, app_id: str, version_id: str, ar
         },
     )
     existing = None
+    included = included_by_id(submissions)
     for submission in submissions.get("data", []):
         state = submission["attributes"].get("state")
-        if state in ACTIVE_REVIEW_SUBMISSION_STATES and relationship_id(submission, "appStoreVersionForReview") == version_id:
+        if state not in ACTIVE_REVIEW_SUBMISSION_STATES:
+            continue
+        submission_version_id = relationship_id(submission, "appStoreVersionForReview")
+        item_ids = [item["id"] for item in submission.get("relationships", {}).get("items", {}).get("data", [])]
+        item_version_ids = {relationship_id(included.get(item_id, {}), "appStoreVersion") for item_id in item_ids}
+        if submission_version_id == version_id or version_id in item_version_ids or state == "READY_FOR_REVIEW":
             existing = submission
             break
     if existing:
-        print(f"Using existing review submission: {existing['id']} ({existing['attributes'].get('state')})")
-        return existing
-    submission = client.request(
-        "POST",
-        "/reviewSubmissions",
-        body={"data": {"type": "reviewSubmissions", "relationships": {"app": {"data": {"type": "apps", "id": app_id}}}}},
-        allowed=(201,),
-    )["data"]
-    print(f"Created review submission: {submission['id']}")
+        state = existing["attributes"].get("state")
+        if state in {"WAITING_FOR_REVIEW", "IN_REVIEW"}:
+            print(f"Review submission is already submitted: {existing['id']} ({state})")
+            return existing
+        print(f"Using existing review submission: {existing['id']} ({state})")
+        submission = existing
+    else:
+        submission = client.request(
+            "POST",
+            "/reviewSubmissions",
+            body={"data": {"type": "reviewSubmissions", "relationships": {"app": {"data": {"type": "apps", "id": app_id}}}}},
+            allowed=(201,),
+        )["data"]
+        print(f"Created review submission: {submission['id']}")
     try:
         item = client.request(
             "POST",
@@ -566,6 +636,10 @@ def ensure_review_submission(client: ASCClient, app_id: str, version_id: str, ar
         print("Review submission item already exists")
     if args.dry_run:
         print("Dry run: review submission was prepared but not submitted")
+        return submission
+    state = submission["attributes"].get("state") if submission.get("attributes") else None
+    if state in {"WAITING_FOR_REVIEW", "IN_REVIEW"}:
+        print(f"Review submission is already submitted: {submission['id']} ({state})")
         return submission
     submitted = client.request(
         "PATCH",
@@ -644,10 +718,16 @@ def main() -> int:
         if args.dry_run:
             print("Dry run: metadata and build validated; no App Store Connect changes were made")
             return 0
-        version = ensure_version(client, app_id, args)
+        version, reused_removed_version = ensure_replacement_version(client, app_id, args)
         attach_build(client, version, build, args)
         ensure_metadata(client, version["id"], source_localization, source_review_detail, args)
-        submission = ensure_review_submission(client, app_id, version["id"], args)
+        submission = ensure_review_submission(
+            client,
+            app_id,
+            version["id"],
+            args,
+            force_prepare=reused_removed_version,
+        )
         final = client.request(
             "GET",
             f"/appStoreVersions/{version['id']}",
