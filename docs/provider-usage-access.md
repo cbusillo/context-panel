@@ -146,6 +146,11 @@ Preferred v1 connector scope:
   `GET https://chatgpt.com/backend-api/wham/usage` for ChatGPT-backed auth.
 - Support provider window buckets, reset times, plan type, credits,
   reached-limit classification, and additional `limit_id` buckets.
+- For ChatGPT-backed auth, filter model-specific additional buckets against
+  `GET https://chatgpt.com/backend-api/models` so retired or unavailable models
+  do not appear as usable limits. Treat that availability lookup as a display
+  filter only: if it fails or returns no usable model identifiers, keep the
+  usage endpoint's additional buckets rather than hiding possible active limits.
 - Keep auth handling isolated and redacted; never log tokens, cookies,
   authorization headers, account IDs, emails, or raw response bodies.
 - Expose a diagnostic probe that reports only sanitized structure, percentages,

@@ -580,7 +580,9 @@ enum CPWTheme {
             Color(red: 138 / 255, green: 106 / 255, blue: 42 / 255)
         case .limited, .failure:
             Color(red: 138 / 255, green: 74 / 255, blue: 74 / 255)
-        case .stale, .unknown, .loading:
+        case .stale:
+            Color(red: 138 / 255, green: 74 / 255, blue: 74 / 255)
+        case .unknown, .loading:
             Color(red: 106 / 255, green: 106 / 255, blue: 114 / 255)
         }
     }
@@ -737,16 +739,29 @@ extension WidgetSnapshot {
     var widgetProblemText: String? {
         switch state {
         case .failure:
-            return "Update failed"
+            return "Reconnect account"
         case .stale:
-            return "Old data"
+            return hasProviderReconnectIssue ? "Reconnect account" : "Refresh needed"
         case .setupNeeded:
             return limits.isEmpty ? nil : "Setup needed"
         case .ready:
-            if status == .failure { return "Update failed" }
-            if status == .stale { return "Old data" }
+            if status == .failure { return "Reconnect account" }
+            if status == .stale { return hasProviderReconnectIssue ? "Reconnect account" : "Refresh needed" }
             if status == .unknown { return "Awaiting data" }
             return nil
+        }
+    }
+
+    var widgetDeepLinkURL: URL {
+        switch state {
+        case .failure:
+            ContextPanelWidgetURL.reconnect
+        case .stale:
+            hasProviderReconnectIssue ? ContextPanelWidgetURL.reconnect : ContextPanelWidgetURL.overview
+        case .ready:
+            status == .failure || (status == .stale && hasProviderReconnectIssue) ? ContextPanelWidgetURL.reconnect : ContextPanelWidgetURL.overview
+        case .setupNeeded:
+            ContextPanelWidgetURL.overview
         }
     }
 

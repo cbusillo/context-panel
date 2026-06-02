@@ -115,7 +115,7 @@ struct ContextPanelWidgetView: View {
 
     var body: some View {
         content
-            .widgetURL(ContextPanelWidgetURL.overview)
+            .widgetURL(entry.snapshot.widgetDeepLinkURL)
     }
 
     @ViewBuilder
@@ -137,6 +137,7 @@ struct ContextPanelWidgetView: View {
 
 enum ContextPanelWidgetURL {
     static let overview = URL(string: "contextpanel://overview")!
+    static let reconnect = URL(string: "contextpanel://reconnect")!
 }
 
 @main

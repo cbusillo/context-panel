@@ -29,7 +29,39 @@ import Testing
 
     #expect(widget.state == .stale)
     #expect(widget.limits.count == 1)
-    #expect(widget.message == "Last snapshot is stale.")
+    #expect(widget.message == "Refresh Context Panel to update data.")
+    #expect(widget.hasProviderReconnectIssue == false)
+}
+
+@Test func widgetSnapshotUsesReconnectMessageForStaleProviderFailures() {
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let stored = StoredUsageSnapshot(
+        savedAt: savedAt,
+        snapshot: UsageSnapshot(
+            generatedAt: savedAt,
+            limits: [UsageLimit(provider: .openAI, label: "Codex", used: 20, limit: 100)]
+        ),
+        reports: [
+            StoredProviderReport(
+                provider: .openAI,
+                accountID: "openai-account",
+                configuredAccountID: "openai-code-default",
+                accountName: "OpenAI",
+                generatedAt: savedAt,
+                status: .failure,
+                errorMessage: "Auth expired"
+            ),
+        ]
+    )
+
+    let widget = WidgetSnapshot.fromStore(
+        SnapshotStoreLoadResult(snapshot: stored, status: .stale),
+        now: Date(timeIntervalSince1970: 1_000)
+    )
+
+    #expect(widget.state == .stale)
+    #expect(widget.message == "Reconnect account to update data.")
+    #expect(widget.hasProviderReconnectIssue == true)
 }
 
 @Test func widgetSnapshotBuildsProviderSummaries() {

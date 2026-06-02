@@ -65,6 +65,37 @@ public struct CodexRateLimitSnapshot: Codable, Equatable, Identifiable, Sendable
     }
 }
 
+public struct CodexModelAvailability: Equatable, Sendable {
+    private let normalizedIdentifiers: Set<String>
+
+    public init(identifiers: some Sequence<String>) {
+        normalizedIdentifiers = Set(identifiers.map(Self.normalize).filter { !$0.isEmpty })
+    }
+
+    public var isEmpty: Bool {
+        normalizedIdentifiers.isEmpty
+    }
+
+    public func contains(identifier: String) -> Bool {
+        normalizedIdentifiers.contains(Self.normalize(identifier))
+    }
+
+    public func contains(limitName: String) -> Bool {
+        contains(identifier: limitName)
+    }
+
+    fileprivate static func isModelSpecificLimitName(_ value: String) -> Bool {
+        let normalized = normalize(value)
+        return normalized.contains("gpt")
+            || normalized.contains("codex")
+            || normalized.range(of: #"^o[0-9]"#, options: .regularExpression) != nil
+    }
+
+    private static func normalize(_ value: String) -> String {
+        value.lowercased().filter { $0.isLetter || $0.isNumber }
+    }
+}
+
 public struct CodexAuthTokens: Codable, Equatable, Sendable {
     public let accessToken: String
     public let accountID: String?
@@ -210,17 +241,25 @@ public struct CodexAccountConfiguration: Equatable, Sendable {
     public let authPath: String
     public let accountName: String
     public let endpoint: URL
+    public let modelAvailabilityEndpoint: URL?
 
     public init(
         configuredAccountID: String? = nil,
         authPath: String,
         accountName: String? = nil,
-        endpoint: URL = URL(string: "https://chatgpt.com/backend-api/wham/usage")!
+        endpoint: URL = URL(string: "https://chatgpt.com/backend-api/wham/usage")!,
+        modelAvailabilityEndpoint: URL? = nil
     ) {
         self.configuredAccountID = configuredAccountID
         self.authPath = authPath
         self.accountName = accountName ?? ConnectorRedactor.redactedPath(authPath)
         self.endpoint = endpoint
+        self.modelAvailabilityEndpoint = modelAvailabilityEndpoint ?? Self.defaultModelAvailabilityEndpoint(for: endpoint)
+    }
+
+    private static func defaultModelAvailabilityEndpoint(for endpoint: URL) -> URL? {
+        guard endpoint.host == "chatgpt.com" else { return nil }
+        return URL(string: "https://chatgpt.com/backend-api/models")
     }
 }
 
@@ -294,7 +333,8 @@ public struct CodexRateLimitConnector: ProviderConnector {
 
         do {
             let data = try await fetchUsage(endpoint: account.endpoint, auth: auth)
-            let snapshots = try CodexUsagePayloadParser.snapshots(from: data)
+            let availability = await modelAvailability(for: account, auth: auth, usageData: data)
+            let snapshots = try CodexUsagePayloadParser.snapshots(from: data, modelAvailability: availability)
             let limits = snapshots.flatMap { snapshot in
                 codexUsageLimits(
                     from: snapshot,
@@ -326,7 +366,39 @@ public struct CodexRateLimitConnector: ProviderConnector {
         }
     }
 
+    private func modelAvailability(
+        for account: CodexAccountConfiguration,
+        auth: CodexAuthTokens,
+        usageData: Data
+    ) async -> CodexModelAvailability? {
+        guard CodexUsagePayloadParser.hasAdditionalRateLimits(in: usageData), let endpoint = account.modelAvailabilityEndpoint else {
+            return nil
+        }
+        do {
+            let availability = try await fetchModelAvailability(endpoint: endpoint, auth: auth)
+            return availability.isEmpty ? nil : availability
+        } catch {
+            return nil
+        }
+    }
+
     private func fetchUsage(endpoint: URL, auth: CodexAuthTokens) async throws -> Data {
+        let response = try await httpClient.data(for: ConnectorHTTPRequest(url: endpoint, method: "GET", headers: authorizedHeaders(auth: auth)))
+        guard (200..<300).contains(response.statusCode) else {
+            throw ConnectorError.httpFailure(operation: "Codex usage endpoint", statusCode: response.statusCode)
+        }
+        return response.data
+    }
+
+    private func fetchModelAvailability(endpoint: URL, auth: CodexAuthTokens) async throws -> CodexModelAvailability {
+        let response = try await httpClient.data(for: ConnectorHTTPRequest(url: endpoint, method: "GET", headers: authorizedHeaders(auth: auth)))
+        guard (200..<300).contains(response.statusCode) else {
+            throw ConnectorError.httpFailure(operation: "ChatGPT models endpoint", statusCode: response.statusCode)
+        }
+        return try CodexModelAvailabilityParser.availability(from: response.data)
+    }
+
+    private func authorizedHeaders(auth: CodexAuthTokens) -> [String: String] {
         var headers = [
             "Authorization": "Bearer \(auth.accessToken)",
             "User-Agent": "context-panel",
@@ -335,12 +407,7 @@ public struct CodexRateLimitConnector: ProviderConnector {
         if let accountID = canonicalProviderAccountID(from: auth) {
             headers["ChatGPT-Account-Id"] = accountID
         }
-
-        let response = try await httpClient.data(for: ConnectorHTTPRequest(url: endpoint, method: "GET", headers: headers))
-        guard (200..<300).contains(response.statusCode) else {
-            throw ConnectorError.httpFailure(operation: "Codex usage endpoint", statusCode: response.statusCode)
-        }
-        return response.data
+        return headers
     }
 }
 
@@ -381,11 +448,20 @@ public func codexUsageLimits(
 
 public enum CodexUsagePayloadParser {
     public static func snapshots(from data: Data) throws -> [CodexRateLimitSnapshot] {
-        let payload = try JSONDecoder().decode(CodexUsagePayload.self, from: data)
-        return snapshots(from: payload)
+        try snapshots(from: data, modelAvailability: nil)
     }
 
-    private static func snapshots(from payload: CodexUsagePayload) -> [CodexRateLimitSnapshot] {
+    public static func snapshots(from data: Data, modelAvailability: CodexModelAvailability?) throws -> [CodexRateLimitSnapshot] {
+        let payload = try JSONDecoder().decode(CodexUsagePayload.self, from: data)
+        return snapshots(from: payload, modelAvailability: modelAvailability)
+    }
+
+    public static func hasAdditionalRateLimits(in data: Data) -> Bool {
+        guard let payload = try? JSONDecoder().decode(CodexUsagePayload.self, from: data) else { return false }
+        return !payload.additionalRateLimits.isEmpty
+    }
+
+    private static func snapshots(from payload: CodexUsagePayload, modelAvailability: CodexModelAvailability?) -> [CodexRateLimitSnapshot] {
         var snapshots = [
             CodexRateLimitSnapshot(
                 id: "codex",
@@ -398,7 +474,16 @@ public enum CodexUsagePayloadParser {
             )
         ]
 
-        snapshots.append(contentsOf: payload.additionalRateLimits.map { additional in
+        let additionalRateLimits = payload.additionalRateLimits.filter { additional in
+            guard let modelAvailability else { return true }
+            guard CodexModelAvailability.isModelSpecificLimitName(additional.limitName)
+                || CodexModelAvailability.isModelSpecificLimitName(additional.meteredFeature)
+            else { return true }
+            return modelAvailability.contains(identifier: additional.limitName)
+                || modelAvailability.contains(identifier: additional.meteredFeature)
+        }
+
+        snapshots.append(contentsOf: additionalRateLimits.map { additional in
             CodexRateLimitSnapshot(
                 id: additional.meteredFeature,
                 limitName: additional.limitName,
@@ -411,6 +496,13 @@ public enum CodexUsagePayloadParser {
         })
 
         return snapshots
+    }
+}
+
+public enum CodexModelAvailabilityParser {
+    public static func availability(from data: Data) throws -> CodexModelAvailability {
+        let payload = try JSONDecoder().decode(CodexModelsPayload.self, from: data)
+        return CodexModelAvailability(identifiers: payload.models.flatMap(\.identifiers))
     }
 }
 
@@ -533,6 +625,42 @@ private struct CodexReachedType: Decodable {
 
     var normalizedKind: CodexRateLimitReachedType {
         kind
+    }
+}
+
+private struct CodexModelsPayload: Decodable {
+    let models: [CodexAvailableModelDetails]
+
+    enum CodingKeys: String, CodingKey {
+        case models
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        models = try container.decodeIfPresent([CodexAvailableModelDetails].self, forKey: .models) ?? []
+    }
+}
+
+private struct CodexAvailableModelDetails: Decodable {
+    let slug: String?
+    let id: String?
+    let title: String?
+    let name: String?
+    let displayName: String?
+
+    enum CodingKeys: String, CodingKey {
+        case slug
+        case id
+        case title
+        case name
+        case displayName = "display_name"
+    }
+
+    var identifiers: [String] {
+        [slug, id, title, name, displayName].compactMap { value in
+            guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+            return value
+        }
     }
 }
 
