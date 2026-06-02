@@ -241,9 +241,16 @@ def remove_active_review_version(client: ASCClient, app_id: str, version_string:
             if dry_run:
                 print(f"Dry run: would remove App Store version {version_string} from review submission: {item_id}")
                 return
-            client.request("DELETE", f"/reviewSubmissionItems/{item_id}", allowed=(204,))
-            print(f"Removed App Store version {version_string} from review submission: {item_id}")
-            return
+            try:
+                client.request("DELETE", f"/reviewSubmissionItems/{item_id}", allowed=(204,))
+                print(f"Removed App Store version {version_string} from review submission: {item_id}")
+                return
+            except AppStoreConnectError as error:
+                if not is_submitted_review_item_conflict(error):
+                    raise
+                print(f"Review item {item_id} was already submitted; canceling submitted version review instead")
+                cancel_app_store_version_submission(client, version_id, version_string, dry_run=False)
+                return
     state = version_state(version)
     if state in BLOCKING_REVIEW_VERSION_STATES:
         raise AppStoreConnectError(
@@ -252,11 +259,43 @@ def remove_active_review_version(client: ASCClient, app_id: str, version_string:
     print(f"No active review submission item found for App Store version {version_string}")
 
 
+def cancel_app_store_version_submission(
+    client: ASCClient, version_id: str, version_string: str, dry_run: bool = False
+) -> None:
+    payload = client.request(
+        "GET",
+        "/appStoreVersionSubmissions",
+        {
+            "filter[appStoreVersion]": version_id,
+            "fields[appStoreVersionSubmissions]": "appStoreVersion",
+            "limit": 10,
+        },
+    )
+    submissions = payload.get("data") or []
+    if not submissions:
+        raise AppStoreConnectError(
+            f"App Store version {version_string} was already submitted, but no submitted version review was found to cancel"
+        )
+    submission_id = submissions[0]["id"]
+    if dry_run:
+        print(f"Dry run: would cancel submitted App Store version {version_string} review: {submission_id}")
+        return
+    client.request("DELETE", f"/appStoreVersionSubmissions/{submission_id}", allowed=(204,))
+    print(f"Canceled submitted App Store version {version_string} review: {submission_id}")
+
+
 def is_version_creation_state_conflict(error: AppStoreConnectError) -> bool:
     if error.status != 409:
         return False
     text = json.dumps(error.payload or {}, sort_keys=True).lower()
     return "current state" in text or "another version" in text or "new version" in text
+
+
+def is_submitted_review_item_conflict(error: AppStoreConnectError) -> bool:
+    if error.status != 409:
+        return False
+    text = json.dumps(error.payload or {}, sort_keys=True).lower()
+    return "item was already submitted" in text
 
 
 def create_app_store_version(client: ASCClient, app_id: str, args: argparse.Namespace) -> dict[str, Any]:
