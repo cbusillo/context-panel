@@ -663,16 +663,7 @@ final class SettingsPaneModel: ObservableObject {
         guard let storedSnapshot else {
             return SettingsAccountRefreshSummary(text: "No refresh yet", status: .unknown)
         }
-        let reports = storedSnapshot.reports.filter { report in
-            switch account.connectorKind {
-            case .codexRateLimits:
-                report.provider == .openAI
-            case .geminiCodeAssist:
-                report.provider == .google
-            case .claudeLocalStatus, .claudeOAuthUsage:
-                report.provider == .anthropic
-            }
-        }
+        let reports = storedSnapshot.reports.filter { account.matchesProviderReport($0) }
         guard !reports.isEmpty else {
             return SettingsAccountRefreshSummary(text: "No refresh report yet", status: .unknown)
         }
@@ -2328,13 +2319,7 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     func reportNeedsAttention(_ account: LocalProviderAccountConfiguration) -> Bool {
-        providerReportsNeedingAttention.contains { report in
-            guard report.provider == account.provider else { return false }
-            if let configuredAccountID = report.configuredAccountID {
-                return configuredAccountID == account.id
-            }
-            return true
-        }
+        providerReportsNeedingAttention.contains { account.matchesProviderReport($0) }
     }
 
     var lastSuccessfulProviderRefreshText: String? {
