@@ -65,6 +65,8 @@ public enum PromptCacheTelemetryMirrorService {
             )
         }
 
+        removed += try removeLegacyFlatMirrors(in: destination, fileManager: fileManager)
+
         return PromptCacheTelemetryMirrorResult(copied: copied, removed: removed)
     }
 
@@ -106,6 +108,24 @@ public enum PromptCacheTelemetryMirrorService {
         }
         if (try? fileManager.contentsOfDirectory(atPath: sourceMirrorDirectory.path).isEmpty) == true {
             try? fileManager.removeItem(at: sourceMirrorDirectory)
+        }
+        return removed
+    }
+
+    private static func removeLegacyFlatMirrors(in destination: URL, fileManager: FileManager) throws -> Int {
+        guard fileManager.fileExists(atPath: destination.path) else { return 0 }
+        let urls = try fileManager.contentsOfDirectory(
+            at: destination,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        )
+
+        var removed = 0
+        for url in urls where url.pathExtension == "json" {
+            let resourceValues = try? url.resourceValues(forKeys: [.isRegularFileKey])
+            guard resourceValues?.isRegularFile == true else { continue }
+            try fileManager.removeItem(at: url)
+            removed += 1
         }
         return removed
     }
