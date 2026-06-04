@@ -90,6 +90,10 @@ Required states for design and implementation:
   text. For fast-mode forecasts, use instrument-style language such as
   `Fast mode limited`, `1.4%/h active`, `fast lasts ~2d`, and
   `reset Sat 4:12 PM (2d 21h)` instead of advisory sentences.
+- Prompt-cache telemetry should stay lightweight in the widget: pair the most
+  recent cache percentage with the token-weighted rolling average, using status
+  color only for the current-vs-average comparison rather than adding another
+  capacity bar.
 - Default provider ordering can be by constraint/tightness for the widget, while
   the app can support stable user/provider grouping.
 

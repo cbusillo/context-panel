@@ -133,7 +133,10 @@ struct ContextPanelMediumWidget: View {
                     displayPreferences: displayPreferences,
                     maximumCount: 3
                 )
-                CPWSectionHeader(title: "Main Limits")
+                CPWSectionHeader(
+                    title: "Main Limits",
+                    accessory: CPWPromptCacheInlineStat(summary: snapshot.promptCacheSummary)
+                )
                 ForEach(lanes) { lane in
                     CPWMainLimitRow(lane: lane)
                 }
@@ -178,7 +181,6 @@ struct ContextPanelLargeWidget: View {
             }
 
             CPWProviderSummaryGrid(snapshot: snapshot, compact: true)
-
             Divider()
 
             VStack(alignment: .leading, spacing: 6) {
@@ -186,7 +188,10 @@ struct ContextPanelLargeWidget: View {
                     displayPreferences: displayPreferences,
                     maximumCount: 5
                 )
-                CPWSectionHeader(title: "Main Limits")
+                CPWSectionHeader(
+                    title: "Main Limits",
+                    accessory: CPWPromptCacheInlineStat(summary: snapshot.promptCacheSummary)
+                )
                 ForEach(lanes) { lane in
                     CPWMainLimitRow(lane: lane)
                 }
@@ -197,6 +202,70 @@ struct ContextPanelLargeWidget: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+struct CPWPromptCacheInlineStat: View {
+    let summary: PromptCacheSummary
+
+    private var currentRate: Double? {
+        summary.latestHitRate
+    }
+
+    private var averageRate: Double? {
+        summary.tokenWeightedHitRate
+    }
+
+    var body: some View {
+        if summary.isAvailable {
+            HStack(alignment: .center, spacing: 0) {
+                HStack(spacing: 4) {
+                    CPWStatusMark(status: summary.comparisonStatus, size: 5)
+                    Text("Cache")
+                        .font(.system(size: 8, weight: .semibold))
+                        .tracking(0.45)
+                        .textCase(.uppercase)
+                    Text(currentRate.map(Self.percentText) ?? "--")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                }
+                .foregroundStyle(CPWTheme.statusColor(summary.comparisonStatus))
+                .padding(.leading, 6)
+                .padding(.trailing, 5)
+
+                Rectangle()
+                    .fill(CPWTheme.line.opacity(0.85))
+                    .frame(width: 1, height: 11)
+
+                HStack(spacing: 3) {
+                    Text("avg")
+                        .font(.system(size: 8, weight: .semibold))
+                        .tracking(0.45)
+                        .textCase(.uppercase)
+                    Text(averageRate.map(Self.percentText) ?? "--")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                }
+                .foregroundStyle(CPWTheme.tertiaryText)
+                .padding(.leading, 5)
+                .padding(.trailing, 6)
+            }
+            .lineLimit(1)
+            .padding(.vertical, 2)
+            .background(CPWTheme.line.opacity(0.45))
+            .clipShape(Capsule(style: .continuous))
+            .fixedSize(horizontal: true, vertical: false)
+            .accessibilityLabel(accessibilityLabel)
+        }
+    }
+
+    private var accessibilityLabel: String {
+        if summary.hasPossibleCacheBreak {
+            return "Prompt cache: possible cache break. Current rate \(currentRate.map(Self.percentText) ?? "unknown"), rolling average \(averageRate.map(Self.percentText) ?? "unknown")."
+        }
+        return "Prompt cache current \(currentRate.map(Self.percentText) ?? "unknown"), rolling average \(averageRate.map(Self.percentText) ?? "unknown")"
+    }
+
+    private static func percentText(_ value: Double) -> String {
+        "\(Int((value * 100).rounded()))%"
     }
 }
 
@@ -491,6 +560,7 @@ struct CPWStatusMark: View {
 struct CPWSectionHeader: View {
     let title: String
     var trailing: String? = nil
+    var accessory: CPWPromptCacheInlineStat? = nil
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
@@ -500,6 +570,9 @@ struct CPWSectionHeader: View {
                 .textCase(.uppercase)
                 .foregroundStyle(CPWTheme.tertiaryText)
             Spacer()
+            if let accessory {
+                accessory
+            }
             if let trailing {
                 Text(trailing)
                     .font(.system(size: 10, weight: .medium))

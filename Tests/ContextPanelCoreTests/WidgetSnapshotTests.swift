@@ -74,7 +74,10 @@ import Testing
         ]
     ))
 
-    let widget = WidgetSnapshot.fromStore(SnapshotStoreLoadResult(snapshot: stored, status: .healthy))
+    let widget = WidgetSnapshot.fromStore(
+        SnapshotStoreLoadResult(snapshot: stored, status: .healthy),
+        now: savedAt.addingTimeInterval(60)
+    )
     let summaries = Dictionary(uniqueKeysWithValues: widget.providerSummaries.map { ($0.provider, $0) })
 
     #expect(widget.state == .ready)
@@ -83,6 +86,34 @@ import Testing
     #expect(summaries[.openAI]?.tightestLimit?.label == "Codex")
     #expect(summaries[.google]?.status == .healthy)
     #expect(summaries[.anthropic]?.limitCount == 0)
+}
+
+@Test func widgetSnapshotCarriesPromptCacheTelemetry() {
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let stored = StoredUsageSnapshot(
+        savedAt: savedAt,
+        snapshot: UsageSnapshot(generatedAt: savedAt, limits: [
+            UsageLimit(provider: .openAI, label: "Codex", used: 20, limit: 100),
+        ]),
+        promptCacheObservations: [
+            PromptCacheObservation(
+                provider: .openAI,
+                accountID: "every-code",
+                accountName: "Every Code",
+                observedAt: savedAt,
+                windowLabel: "Last hour",
+                tokens: PromptCacheTokenSet(inputTokens: 1_000, cachedInputTokens: 900)
+            ),
+        ]
+    )
+
+    let widget = WidgetSnapshot.fromStore(
+        SnapshotStoreLoadResult(snapshot: stored, status: .healthy),
+        now: savedAt.addingTimeInterval(60)
+    )
+
+    #expect(widget.promptCacheObservations.count == 1)
+    #expect(widget.promptCacheSummary.tokenWeightedHitRate == 0.9)
 }
 
 @Test func providerSummariesUseTheTightestWindowInsteadOfAverageCapacity() {

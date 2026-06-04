@@ -111,6 +111,9 @@ struct AppRoot: View {
             selection = request
             model.clearNavigationRequest()
         }
+        .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
+            model.loadSnapshot(reloadWidgetTimelines: false)
+        }
     }
 }
 
@@ -1143,6 +1146,7 @@ struct OverviewDashboard: View {
             VStack(alignment: .leading, spacing: 18) {
                 HeaderCard(model: model, snapshot: snapshot)
                 SetupStatusStrip(model: model)
+                PromptCacheOverviewCard(summary: model.promptCacheSummary)
                 SectionHeader(title: "Main Limits", trailing: "\(snapshot.mainLimitSummaries.count) windows")
                 VStack(spacing: 10) {
                     ForEach(constrainedSummaries) { summary in
@@ -1254,6 +1258,106 @@ struct ReconnectDashboard: View {
             }
         }
         .onAppear { settingsModel.load() }
+    }
+}
+
+struct PromptCacheOverviewCard: View {
+    let summary: PromptCacheSummary
+
+    private var currentRate: Double? {
+        summary.latestHitRate
+    }
+
+    private var averageRate: Double? {
+        summary.tokenWeightedHitRate
+    }
+
+    var body: some View {
+        if summary.isAvailable {
+            HStack(alignment: .center, spacing: 18) {
+                CapacityDial(
+                    value: currentRate ?? 0,
+                    status: summary.comparisonStatus,
+                    label: currentRate.map(Self.percentText) ?? "--",
+                    sublabel: "now",
+                    size: 86,
+                    thickness: 6
+                )
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        StatusMark(status: summary.comparisonStatus, size: 8)
+                        Text("Prompt Cache")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(CPTheme.primaryText)
+                        if summary.hasPossibleCacheBreak {
+                            TagLabel("Break?")
+                        }
+                    }
+                    Text(summary.hasPossibleCacheBreak ? "Cached input dropped sharply on the latest window." : "Latest hit rate compared with the token-weighted recent average.")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(summary.hasPossibleCacheBreak ? CPTheme.statusColor(.close) : CPTheme.secondaryText)
+                        .lineLimit(2)
+                    HStack(spacing: 14) {
+                        PromptCacheMetric(label: "Average", value: averageRate.map(Self.percentText) ?? "--")
+                        PromptCacheMetric(label: "Input", value: Self.compactNumber(summary.totalInputTokens))
+                        PromptCacheMetric(label: "Cached", value: Self.compactNumber(summary.totalCachedInputTokens))
+                        PromptCacheMetric(label: "Uncached", value: summary.totalUncachedInputTokens.map(Self.compactNumber) ?? "--")
+                        if let latest = summary.latest {
+                            PromptCacheMetric(label: latest.windowLabel, value: relativeAge(latest.observedAt))
+                        }
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(14)
+            .background(CPTheme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(CPTheme.stroke(cornerRadius: 8))
+        }
+    }
+
+    private func relativeAge(_ date: Date) -> String {
+        let seconds = max(Int(Date().timeIntervalSince(date)), 0)
+        if seconds < 60 { return "now" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(minutes)m" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours)h" }
+        return "\(hours / 24)d"
+    }
+
+    private static func percentText(_ value: Double) -> String {
+        "\(Int((value * 100).rounded()))%"
+    }
+
+    private static func compactNumber(_ value: Int) -> String {
+        switch value {
+        case 1_000_000...:
+            return String(format: "%.1fM", Double(value) / 1_000_000)
+        case 1_000...:
+            return String(format: "%.1fK", Double(value) / 1_000)
+        default:
+            return "\(value)"
+        }
+    }
+}
+
+struct PromptCacheMetric: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value)
+                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .foregroundStyle(CPTheme.primaryText)
+                .lineLimit(1)
+            Text(label)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(CPTheme.tertiaryText)
+                .textCase(.uppercase)
+                .lineLimit(1)
+        }
     }
 }
 
@@ -2266,6 +2370,10 @@ final class ContextPanelAppModel: ObservableObject {
         )
     }
 
+    var promptCacheSummary: PromptCacheSummary {
+        PromptCacheSummary(observations: storedSnapshot?.promptCacheObservations ?? [], now: Date())
+    }
+
     var lastRefreshText: String {
         lastRefreshAt.map(relativeTime) ?? "not yet"
     }
@@ -2354,12 +2462,16 @@ final class ContextPanelAppModel: ObservableObject {
         refreshRunner = SnapshotRefreshRunner(service: refreshService)
     }
 
-    func loadSnapshot() {
+    func loadSnapshot(reloadWidgetTimelines: Bool = true) {
         fastModeForecastSettings = forecastSettingsStore.load()
         let accounts = refreshService.loadConfiguredAccounts().document.accounts
         configuredAccounts = accounts
-        let result = refreshService.loadCurrent(policy: SnapshotStoreStalenessPolicy(maximumAge: 15 * 60), now: Date())
+        let result = refreshService.loadCurrent(
+            policy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.appMaximumAge),
+            now: Date()
+        )
         storedSnapshot = result.snapshot
+        lastRefreshAt = result.snapshot?.snapshot.generatedAt
         storeStatus = result.status
         if result.status == .failure || result.errorMessage != nil {
             errorMessage = result.errorMessage
@@ -2367,7 +2479,9 @@ final class ContextPanelAppModel: ObservableObject {
             errorMessage = nil
         }
         historyCount = refreshService.loadHistory().count
-        WidgetCenter.shared.reloadAllTimelines()
+        if reloadWidgetTimelines {
+            WidgetCenter.shared.reloadAllTimelines()
+        }
     }
 
     func handleOpenURL(_ url: URL) {
@@ -2391,10 +2505,7 @@ final class ContextPanelAppModel: ObservableObject {
         defer { isRefreshing = false }
 
         do {
-            let decision = try await refreshRunner.refresh()
-            if case let .refreshed(outcome) = decision {
-                lastRefreshAt = outcome.savedAt
-            }
+            _ = try await refreshRunner.refresh()
             loadSnapshot()
         } catch {
             storeStatus = .failure

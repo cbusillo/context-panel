@@ -5,20 +5,48 @@ public struct StoredUsageSnapshot: Codable, Equatable, Sendable {
     public let savedAt: Date
     public let snapshot: UsageSnapshot
     public let reports: [StoredProviderReport]
+    public let promptCacheObservations: [PromptCacheObservation]
 
-    public init(savedAt: Date, snapshot: UsageSnapshot, reports: [StoredProviderReport] = []) {
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case savedAt
+        case snapshot
+        case reports
+        case promptCacheObservations
+    }
+
+    public init(
+        savedAt: Date,
+        snapshot: UsageSnapshot,
+        reports: [StoredProviderReport] = [],
+        promptCacheObservations: [PromptCacheObservation] = []
+    ) {
         self.schemaVersion = 1
         self.savedAt = savedAt
         self.snapshot = snapshot
         self.reports = reports
+        self.promptCacheObservations = promptCacheObservations
     }
 
     public init(savedAt: Date, refreshResult: ConnectorRefreshResult) {
         self.init(
             savedAt: savedAt,
             snapshot: refreshResult.snapshot,
-            reports: refreshResult.reports.map(StoredProviderReport.init(report:))
+            reports: refreshResult.reports.map(StoredProviderReport.init(report:)),
+            promptCacheObservations: refreshResult.promptCacheObservations
         )
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        savedAt = try container.decode(Date.self, forKey: .savedAt)
+        snapshot = try container.decode(UsageSnapshot.self, forKey: .snapshot)
+        reports = try container.decodeIfPresent([StoredProviderReport].self, forKey: .reports) ?? []
+        promptCacheObservations = try container.decodeIfPresent(
+            [PromptCacheObservation].self,
+            forKey: .promptCacheObservations
+        ) ?? []
     }
 }
 
@@ -112,7 +140,7 @@ public struct SnapshotStoreStalenessPolicy: Equatable, Sendable {
 
     public func status(for storedSnapshot: StoredUsageSnapshot?, now: Date) -> UsageStatus {
         guard let storedSnapshot else { return .unknown }
-        if now.timeIntervalSince(storedSnapshot.savedAt) > maximumAge {
+        if now.timeIntervalSince(storedSnapshot.snapshot.generatedAt) > maximumAge {
             return .stale
         }
         return storedSnapshot.snapshot.aggregateStatus
@@ -195,12 +223,25 @@ public struct JSONSnapshotStore: Sendable {
         } ?? []
 
         let mergedSnapshot = UsageSnapshot(
-            generatedAt: refreshResult.generatedAt,
+            generatedAt: refreshResult.reports.isEmpty
+                ? (current?.snapshot.generatedAt ?? refreshResult.generatedAt)
+                : refreshResult.generatedAt,
             limits: (preservedLimits + preservedFailureLimits + refreshResult.snapshot.limits).deduplicatedByID()
         )
         let mergedReports = preservedReports + refreshResult.reports.map(StoredProviderReport.init(report:))
+        let preservedPromptCacheObservations = current?.promptCacheObservations.filter { observation in
+            savedAt.timeIntervalSince(observation.observedAt) <= PromptCacheSummary.defaultMaximumAge
+                && !refreshResult.promptCacheObservations.contains { refreshed in refreshed.id == observation.id }
+        } ?? []
 
-        try save(StoredUsageSnapshot(savedAt: savedAt, snapshot: mergedSnapshot, reports: mergedReports))
+        try save(StoredUsageSnapshot(
+            savedAt: savedAt,
+            snapshot: mergedSnapshot,
+            reports: mergedReports,
+            promptCacheObservations: (refreshResult.promptCacheObservations + preservedPromptCacheObservations)
+                .filter { savedAt.timeIntervalSince($0.observedAt) <= PromptCacheSummary.defaultMaximumAge }
+                .deduplicatedPromptCacheObservations()
+        ))
     }
 
     public func loadCurrent() -> SnapshotStoreLoadResult {
@@ -289,6 +330,17 @@ public struct JSONSnapshotStore: Sendable {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return decoder
+    }
+}
+
+private extension Array where Element == PromptCacheObservation {
+    func deduplicatedPromptCacheObservations() -> [PromptCacheObservation] {
+        var seen = Set<String>()
+        return sorted { lhs, rhs in
+            lhs.observedAt > rhs.observedAt
+        }.filter { observation in
+            seen.insert(observation.id).inserted
+        }
     }
 }
 

@@ -78,7 +78,7 @@ public struct SnapshotRefreshRunner: Sendable {
 
     public init(
         service: SnapshotRefreshService,
-        stalenessPolicy: SnapshotStoreStalenessPolicy = SnapshotStoreStalenessPolicy(maximumAge: 5 * 60),
+        stalenessPolicy: SnapshotStoreStalenessPolicy = SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.refreshNeededAge),
         lock: SnapshotRefreshLock? = .appDefault()
     ) {
         self.service = service
@@ -93,6 +93,27 @@ public struct SnapshotRefreshRunner: Sendable {
     public func refreshIfNeeded(now: Date = Date()) async throws -> SnapshotRefreshRunDecision {
         service.importConfiguredAuthFiles(now: now)
         let current = service.loadCurrent(policy: stalenessPolicy, now: now)
+        let promptCacheObservations = service.promptCacheObservations(now: now)
+        if shouldSavePromptCacheOnly(
+            current: current.snapshot,
+            currentStatus: current.status,
+            promptCacheObservations: promptCacheObservations,
+            now: now
+        ) {
+            return try await saveMerged(
+                refreshResult: ConnectorRefreshResult(
+                    generatedAt: now,
+                    reports: [],
+                    promptCacheObservations: promptCacheObservations
+                ),
+                savedAt: now,
+                retryFor: .zero,
+                preservesUnreportedAccounts: true
+            )
+        }
+        if isFreshPromptCacheOnly(current: current.snapshot, promptCacheObservations: promptCacheObservations, now: now) {
+            return .skippedFresh
+        }
         guard current.snapshot == nil || current.status == .unknown || current.status == .stale || current.status == .failure else {
             return .skippedFresh
         }
@@ -104,12 +125,12 @@ public struct SnapshotRefreshRunner: Sendable {
             guard let outcome = try await lock.withLock(now: now, {
                 try await service.refresh(now: now)
             }) else { return .skippedAlreadyRunning }
-            guard !outcome.refreshResult.reports.isEmpty else { return .skippedNoReports }
+            guard outcome.refreshResult.hasSnapshotPayload else { return .skippedNoReports }
             return .refreshed(outcome)
         }
 
         let outcome = try await service.refresh(now: now)
-        guard !outcome.refreshResult.reports.isEmpty else { return .skippedNoReports }
+        guard outcome.refreshResult.hasSnapshotPayload else { return .skippedNoReports }
         return .refreshed(outcome)
     }
 
@@ -147,7 +168,7 @@ public struct SnapshotRefreshRunner: Sendable {
         savedAt: Date,
         preservesUnreportedAccounts: Bool
     ) async throws -> SnapshotRefreshRunDecision {
-        guard !refreshResult.reports.isEmpty else { return .skippedNoReports }
+        guard refreshResult.hasSnapshotPayload else { return .skippedNoReports }
         if let lock {
             guard let outcome = try await lock.withLock(now: savedAt, {
                 try service.saveMerged(
@@ -165,6 +186,46 @@ public struct SnapshotRefreshRunner: Sendable {
             preservesUnreportedAccounts: preservesUnreportedAccounts
         ))
     }
+
+    private func shouldSavePromptCacheOnly(
+        current: StoredUsageSnapshot?,
+        currentStatus: UsageStatus,
+        promptCacheObservations: [PromptCacheObservation],
+        now: Date
+    ) -> Bool {
+        guard !promptCacheObservations.isEmpty else { return false }
+        guard let current else { return false }
+        guard current.snapshot.limits.isEmpty && current.reports.isEmpty || currentStatus != .stale && currentStatus != .failure && currentStatus != .unknown else {
+            return false
+        }
+        let currentObservations = PromptCacheTelemetryReader.filteredRecentObservations(
+            current.promptCacheObservations,
+            now: now
+        )
+        return sortedPromptCacheObservations(currentObservations) != sortedPromptCacheObservations(promptCacheObservations)
+    }
+
+    private func isFreshPromptCacheOnly(
+        current: StoredUsageSnapshot?,
+        promptCacheObservations: [PromptCacheObservation],
+        now: Date
+    ) -> Bool {
+        guard let current, current.snapshot.limits.isEmpty, current.reports.isEmpty else { return false }
+        guard now.timeIntervalSince(current.savedAt) <= stalenessPolicy.maximumAge else { return false }
+        return !promptCacheObservations.isEmpty && !shouldSavePromptCacheOnly(
+            current: current,
+            currentStatus: .healthy,
+            promptCacheObservations: promptCacheObservations,
+            now: now
+        )
+    }
+
+    private func sortedPromptCacheObservations(_ observations: [PromptCacheObservation]) -> [PromptCacheObservation] {
+        observations.sorted { lhs, rhs in
+            if lhs.id != rhs.id { return lhs.id < rhs.id }
+            return lhs.observedAt < rhs.observedAt
+        }
+    }
 }
 
 public struct SnapshotRefreshService: Sendable {
@@ -172,17 +233,22 @@ public struct SnapshotRefreshService: Sendable {
     private let stores: SnapshotRefreshStores
     private let bookmarkStore: SecureFileBookmarkStore?
     private let credentialStore: (any ProviderCredentialStoring)?
+    private let promptCacheTelemetryReader: @Sendable (Date) -> [PromptCacheObservation]
 
     public init(
         accountStore: AccountConfigurationStore,
         stores: SnapshotRefreshStores,
         bookmarkStore: SecureFileBookmarkStore? = nil,
-        credentialStore: (any ProviderCredentialStoring)? = nil
+        credentialStore: (any ProviderCredentialStoring)? = nil,
+        promptCacheTelemetryReader: @escaping @Sendable (Date) -> [PromptCacheObservation] = { now in
+            PromptCacheTelemetryReader.everyCodeUsageObservations(now: now)
+        }
     ) {
         self.accountStore = accountStore
         self.stores = stores
         self.bookmarkStore = bookmarkStore
         self.credentialStore = credentialStore
+        self.promptCacheTelemetryReader = promptCacheTelemetryReader
     }
 
     public static func appDefault() -> SnapshotRefreshService {
@@ -205,6 +271,10 @@ public struct SnapshotRefreshService: Sendable {
 
     public func loadCurrent(policy: SnapshotStoreStalenessPolicy, now: Date = Date()) -> SnapshotStoreLoadResult {
         stores.primary.loadCurrent(policy: policy, now: now)
+    }
+
+    public func promptCacheObservations(now: Date = Date()) -> [PromptCacheObservation] {
+        promptCacheTelemetryReader(now)
     }
 
     public func importConfiguredAuthFiles(now: Date = Date()) {
@@ -235,8 +305,13 @@ public struct SnapshotRefreshService: Sendable {
             credentialStore: credentialStore,
             requiresBookmarkedAuthFiles: ContextPanelLocations.isRunningInAppSandbox
         )
-        let refreshResult = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: now)
-        guard !refreshResult.reports.isEmpty else {
+        let connectorResult = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: now)
+        let refreshResult = ConnectorRefreshResult(
+            generatedAt: connectorResult.generatedAt,
+            reports: connectorResult.reports,
+            promptCacheObservations: connectorResult.promptCacheObservations + promptCacheTelemetryReader(now)
+        )
+        guard refreshResult.hasSnapshotPayload else {
             return SnapshotRefreshOutcome(savedAt: now, refreshResult: refreshResult)
         }
         return try saveMerged(refreshResult: refreshResult, savedAt: now)
@@ -268,6 +343,12 @@ public struct SnapshotRefreshService: Sendable {
         if migratedDocument.accounts != accounts {
             try? accountStore.save(migratedDocument)
         }
+    }
+}
+
+private extension ConnectorRefreshResult {
+    var hasSnapshotPayload: Bool {
+        !reports.isEmpty || !promptCacheObservations.isEmpty
     }
 }
 
