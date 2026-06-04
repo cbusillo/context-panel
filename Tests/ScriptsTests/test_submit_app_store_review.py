@@ -329,6 +329,11 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         self.assertEqual(post_paths, ["/reviewSubmissionItems"])
         patch_paths = [request[1] for request in client.requests if request[0] == "PATCH"]
         self.assertEqual(patch_paths, ["/reviewSubmissions/old-submission"])
+        patch_body = next(request[3] for request in client.requests if request[0] == "PATCH")
+        self.assertEqual(
+            patch_body["data"]["relationships"]["appStoreVersionForReview"]["data"],
+            {"type": "appStoreVersions", "id": "version-1-0-13"},
+        )
 
     def test_force_prepare_review_submission_returns_submitted_existing_submission(self):
         class ReviewSubmissionClient:
@@ -494,6 +499,11 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         self.assertEqual(post_paths, ["/reviewSubmissionItems"])
         patch_paths = [request[1] for request in client.requests if request[0] == "PATCH"]
         self.assertEqual(patch_paths, ["/reviewSubmissions/empty-submission"])
+        patch_body = next(request[3] for request in client.requests if request[0] == "PATCH")
+        self.assertEqual(
+            patch_body["data"]["relationships"]["appStoreVersionForReview"]["data"],
+            {"type": "appStoreVersions", "id": "version-1-0-14"},
+        )
 
     def test_ensure_review_submission_submits_ready_submission_when_force_prepare_is_false(self):
         class ReadyReviewSubmissionClient:
@@ -547,6 +557,11 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         self.assertEqual(submission["id"], "ready-submission")
         patch_paths = [request[1] for request in client.requests if request[0] == "PATCH"]
         self.assertEqual(patch_paths, ["/reviewSubmissions/ready-submission"])
+        patch_body = next(request[3] for request in client.requests if request[0] == "PATCH")
+        self.assertEqual(
+            patch_body["data"]["relationships"]["appStoreVersionForReview"]["data"],
+            {"type": "appStoreVersions", "id": "version-1-0-14"},
+        )
 
 
 if __name__ == "__main__":

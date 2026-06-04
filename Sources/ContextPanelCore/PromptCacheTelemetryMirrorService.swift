@@ -20,6 +20,7 @@ public enum PromptCacheTelemetryMirrorService {
         var copied = 0
         var removed = 0
         var seenSources = Set<String>()
+        var expectedSourceMirrorDirectories = Set<String>()
 
         for source in sourceDirectories {
             let sourcePath = ContextPanelLocations.normalizedPath(source.path)
@@ -29,6 +30,7 @@ public enum PromptCacheTelemetryMirrorService {
                 path: ConnectorRedactor.localAccountID(provider: .openAI, path: sourcePath),
                 directoryHint: .isDirectory
             )
+            expectedSourceMirrorDirectories.insert(ContextPanelLocations.normalizedPath(sourceMirrorDirectory.path))
             var expectedTargets = Set<String>()
             let urls = usageJSONFileURLs(in: source, fileManager: fileManager)
 
@@ -65,6 +67,11 @@ public enum PromptCacheTelemetryMirrorService {
             )
         }
 
+        removed += try removeOrphanedSourceMirrors(
+            in: destination,
+            preserving: expectedSourceMirrorDirectories,
+            fileManager: fileManager
+        )
         removed += try removeLegacyFlatMirrors(in: destination, fileManager: fileManager)
 
         return PromptCacheTelemetryMirrorResult(copied: copied, removed: removed)
@@ -108,6 +115,29 @@ public enum PromptCacheTelemetryMirrorService {
         }
         if (try? fileManager.contentsOfDirectory(atPath: sourceMirrorDirectory.path).isEmpty) == true {
             try? fileManager.removeItem(at: sourceMirrorDirectory)
+        }
+        return removed
+    }
+
+    private static func removeOrphanedSourceMirrors(
+        in destination: URL,
+        preserving expectedSourceMirrorDirectories: Set<String>,
+        fileManager: FileManager
+    ) throws -> Int {
+        guard fileManager.fileExists(atPath: destination.path) else { return 0 }
+        let urls = try fileManager.contentsOfDirectory(
+            at: destination,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        )
+
+        var removed = 0
+        for url in urls {
+            let resourceValues = try? url.resourceValues(forKeys: [.isDirectoryKey])
+            guard resourceValues?.isDirectory == true else { continue }
+            guard !expectedSourceMirrorDirectories.contains(ContextPanelLocations.normalizedPath(url.path)) else { continue }
+            try fileManager.removeItem(at: url)
+            removed += 1
         }
         return removed
     }
