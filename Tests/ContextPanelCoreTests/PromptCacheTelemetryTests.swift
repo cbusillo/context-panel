@@ -330,6 +330,34 @@ import Testing
     #expect(firstTarget != secondTarget)
 }
 
+@Test func everyCodeUsageDirectoriesUsesFallbackRootOrder() throws {
+    let root = try promptCacheTemporaryDirectory()
+    let codeHome = root.appending(path: "code-home", directoryHint: .isDirectory)
+    let codexHome = root.appending(path: "codex-home", directoryHint: .isDirectory)
+    let codeUsage = codeHome.appending(path: "usage", directoryHint: .isDirectory)
+    let codexUsage = codexHome.appending(path: "usage", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: codexUsage, withIntermediateDirectories: true)
+
+    var selected = ContextPanelLocations.everyCodeUsageDirectories(
+        environment: [
+            "CODE_HOME": codeHome.path,
+            "CODEX_HOME": codexHome.path,
+        ],
+        fileManager: .default
+    )
+    #expect(selected == [codexUsage])
+
+    try FileManager.default.createDirectory(at: codeUsage, withIntermediateDirectories: true)
+    selected = ContextPanelLocations.everyCodeUsageDirectories(
+        environment: [
+            "CODE_HOME": codeHome.path,
+            "CODEX_HOME": codexHome.path,
+        ],
+        fileManager: .default
+    )
+    #expect(selected == [codeUsage])
+}
+
 @Test func promptCacheMirrorServiceRemovesDeletedSourceFiles() throws {
     let root = try promptCacheTemporaryDirectory()
     let source = root.appending(path: "usage", directoryHint: .isDirectory)
@@ -405,6 +433,48 @@ import Testing
     #expect(result.removed == 1)
     #expect(FileManager.default.fileExists(atPath: nestedTarget.path))
     #expect(!FileManager.default.fileExists(atPath: legacyFlatMirror.path))
+}
+
+@Test func promptCacheMirrorServiceRemovesOrphanedSourceDirectories() throws {
+    let root = try promptCacheTemporaryDirectory()
+    let activeSource = root.appending(path: "active", directoryHint: .isDirectory)
+    let orphanedSource = root.appending(path: "orphaned", directoryHint: .isDirectory)
+    let destination = root.appending(path: "mirror", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: activeSource, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: orphanedSource, withIntermediateDirectories: true)
+    let activeFile = activeSource.appending(path: "usage.json")
+    let orphanedFile = orphanedSource.appending(path: "usage.json")
+    try promptCachePayload(
+        lastUpdated: "2026-06-04T17:47:50.196967Z",
+        cachedInputTokens: 90
+    ).write(to: activeFile, atomically: true, encoding: .utf8)
+    try promptCachePayload(
+        lastUpdated: "2026-06-04T17:47:50.196967Z",
+        cachedInputTokens: 80
+    ).write(to: orphanedFile, atomically: true, encoding: .utf8)
+
+    let first = try PromptCacheTelemetryMirrorService.mirror(
+        sourceDirectories: [activeSource, orphanedSource],
+        destination: destination
+    )
+    let second = try PromptCacheTelemetryMirrorService.mirror(
+        sourceDirectories: [activeSource],
+        destination: destination
+    )
+
+    let activeTarget = ContextPanelLocations.promptCacheMirrorTargetURL(
+        destination: destination,
+        sourceDirectory: activeSource,
+        fileURL: activeFile
+    )
+    let orphanedDirectoryID = ConnectorRedactor.localAccountID(provider: .openAI, path: orphanedSource.path)
+    let orphanedDirectory = destination.appending(path: orphanedDirectoryID, directoryHint: .isDirectory)
+    #expect(first.copied == 2)
+    #expect(first.removed == 0)
+    #expect(second.copied == 1)
+    #expect(second.removed == 1)
+    #expect(FileManager.default.fileExists(atPath: activeTarget.path))
+    #expect(!FileManager.default.fileExists(atPath: orphanedDirectory.path))
 }
 
 private func promptCacheTemporaryDirectory() throws -> URL {

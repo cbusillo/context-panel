@@ -133,27 +133,39 @@ public enum ContextPanelLocations {
     }
 
     public static func everyCodeUsageDirectories() -> [URL] {
-        var directories: [URL] = []
-        let environment = ProcessInfo.processInfo.environment
+        everyCodeUsageDirectories(
+            environment: ProcessInfo.processInfo.environment,
+            fileManager: .default
+        )
+    }
+
+    static func everyCodeUsageDirectories(
+        environment: [String: String],
+        fileManager: FileManager
+    ) -> [URL] {
+        var candidates: [URL] = []
         if let codeHome = environment["CODE_HOME"], !codeHome.isEmpty {
-            directories.append(URL(fileURLWithPath: codeHome, isDirectory: true)
+            candidates.append(URL(fileURLWithPath: codeHome, isDirectory: true)
                 .appending(path: "usage", directoryHint: .isDirectory))
         }
         if let codexHome = environment["CODEX_HOME"], !codexHome.isEmpty {
-            directories.append(URL(fileURLWithPath: codexHome, isDirectory: true)
+            candidates.append(URL(fileURLWithPath: codexHome, isDirectory: true)
                 .appending(path: "usage", directoryHint: .isDirectory))
         }
 
         let defaultUsageDirectory = realUserHomeDirectory()
             .appending(path: ".code", directoryHint: .isDirectory)
             .appending(path: "usage", directoryHint: .isDirectory)
-        directories.append(defaultUsageDirectory)
+        candidates.append(defaultUsageDirectory)
 
-        return directories.reduce(into: []) { result, url in
-            if !result.contains(url) {
+        let directories = candidates.reduce(into: [URL]()) { result, url in
+            if !result.contains(where: { normalizedPath($0.path) == normalizedPath(url.path) }) {
                 result.append(url)
             }
         }
+        return directories.first(where: { fileManager.fileExists(atPath: $0.path) })
+            .map { [$0] }
+            ?? Array(directories.prefix(1))
     }
 
     public static func promptCacheTelemetryDirectory(appGroupID: String? = nil) -> URL {
