@@ -222,8 +222,11 @@ public struct JSONSnapshotStore: Sendable {
             }
         } ?? []
 
+        let isPromptCacheOnlySnapshot = refreshResult.reports.isEmpty
+            && (current?.snapshot.limits.isEmpty ?? true)
+            && (current?.reports.isEmpty ?? true)
         let mergedSnapshot = UsageSnapshot(
-            generatedAt: refreshResult.reports.isEmpty
+            generatedAt: refreshResult.reports.isEmpty && !isPromptCacheOnlySnapshot
                 ? (current?.snapshot.generatedAt ?? refreshResult.generatedAt)
                 : refreshResult.generatedAt,
             limits: (preservedLimits + preservedFailureLimits + refreshResult.snapshot.limits).deduplicatedByID()

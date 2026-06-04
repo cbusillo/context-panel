@@ -425,6 +425,50 @@ import Testing
     #expect(status.status == .stale)
 }
 
+@Test func jsonSnapshotStoreAdvancesFreshnessForPromptCacheOnlySnapshots() throws {
+    let root = try temporaryDirectory()
+    let store = JSONSnapshotStore(rootDirectory: root)
+    let first = Date(timeIntervalSince1970: 100)
+    let second = Date(timeIntervalSince1970: 200)
+    let firstObservation = PromptCacheObservation(
+        provider: .openAI,
+        accountID: "openai-cache",
+        accountName: "Every Code · Pro",
+        observedAt: first,
+        windowLabel: "Last hour",
+        tokens: PromptCacheTokenSet(inputTokens: 100, cachedInputTokens: 80)
+    )
+    try store.save(StoredUsageSnapshot(
+        savedAt: first,
+        snapshot: UsageSnapshot(generatedAt: first, limits: []),
+        promptCacheObservations: [firstObservation]
+    ))
+
+    try store.saveMerged(
+        refreshResult: ConnectorRefreshResult(
+            generatedAt: second,
+            reports: [],
+            promptCacheObservations: [PromptCacheObservation(
+                provider: .openAI,
+                accountID: "openai-cache",
+                accountName: "Every Code · Pro",
+                observedAt: second,
+                windowLabel: "Last hour",
+                tokens: PromptCacheTokenSet(inputTokens: 100, cachedInputTokens: 90)
+            )]
+        ),
+        savedAt: second
+    )
+
+    let current = try #require(store.loadCurrent().snapshot)
+    #expect(current.snapshot.generatedAt == second)
+    let status = store.loadCurrent(
+        policy: SnapshotStoreStalenessPolicy(maximumAge: 60),
+        now: second
+    )
+    #expect(status.status == .unknown)
+}
+
 @Test func jsonSnapshotStoreRejectsUnsupportedSchema() throws {
     let root = try temporaryDirectory()
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

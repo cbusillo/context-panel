@@ -374,6 +374,39 @@ import Testing
     #expect(!FileManager.default.fileExists(atPath: deletedTarget.path))
 }
 
+@Test func promptCacheMirrorServiceRemovesLegacyFlatMirrorFiles() throws {
+    let root = try promptCacheTemporaryDirectory()
+    let source = root.appending(path: "usage", directoryHint: .isDirectory)
+    let destination = root.appending(path: "mirror", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+    let sourceFile = source.appending(path: "usage.json")
+    let legacyFlatMirror = destination.appending(path: "usage.json")
+    try promptCachePayload(
+        lastUpdated: "2026-06-04T17:47:50.196967Z",
+        cachedInputTokens: 90
+    ).write(to: sourceFile, atomically: true, encoding: .utf8)
+    try promptCachePayload(
+        lastUpdated: "2026-06-04T17:47:50.196967Z",
+        cachedInputTokens: 80
+    ).write(to: legacyFlatMirror, atomically: true, encoding: .utf8)
+
+    let result = try PromptCacheTelemetryMirrorService.mirror(
+        sourceDirectories: [source],
+        destination: destination
+    )
+
+    let nestedTarget = ContextPanelLocations.promptCacheMirrorTargetURL(
+        destination: destination,
+        sourceDirectory: source,
+        fileURL: sourceFile
+    )
+    #expect(result.copied == 1)
+    #expect(result.removed == 1)
+    #expect(FileManager.default.fileExists(atPath: nestedTarget.path))
+    #expect(!FileManager.default.fileExists(atPath: legacyFlatMirror.path))
+}
+
 private func promptCacheTemporaryDirectory() throws -> URL {
     let url = FileManager.default.temporaryDirectory
         .appending(path: "context-panel-prompt-cache-tests")
