@@ -45,6 +45,14 @@ let package = Package(
             targets: ["SnapshotStoreProbe"]
         ),
         .executable(
+            name: "PromptCacheTelemetryMirror",
+            targets: ["PromptCacheTelemetryMirror"]
+        ),
+        .executable(
+            name: "PromptCacheTelemetryProbe",
+            targets: ["PromptCacheTelemetryProbe"]
+        ),
+        .executable(
             name: "ContextPanelWidget",
             targets: ["ContextPanelWidget"]
         )
@@ -81,6 +89,14 @@ let package = Package(
         ),
         .executableTarget(
             name: "SnapshotStoreProbe",
+            dependencies: ["ContextPanelCore"]
+        ),
+        .executableTarget(
+            name: "PromptCacheTelemetryMirror",
+            dependencies: ["ContextPanelCore"]
+        ),
+        .executableTarget(
+            name: "PromptCacheTelemetryProbe",
             dependencies: ["ContextPanelCore"]
         ),
         .executableTarget(

@@ -12,6 +12,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     public let generatedAt: Date
     public let limits: [UsageLimit]
     public let reports: [StoredProviderReport]
+    public let promptCacheObservations: [PromptCacheObservation]
     public let observedBurnRates: [String: ObservedBurnRate]
     public let fastModeForecastSettings: FastModeForecastSettings
     public let status: UsageStatus
@@ -22,6 +23,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         generatedAt: Date,
         limits: [UsageLimit],
         reports: [StoredProviderReport] = [],
+        promptCacheObservations: [PromptCacheObservation] = [],
         observedBurnRates: [String: ObservedBurnRate] = [:],
         fastModeForecastSettings: FastModeForecastSettings = .defaultSettings,
         status: UsageStatus,
@@ -31,6 +33,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         self.generatedAt = generatedAt
         self.limits = limits
         self.reports = reports
+        self.promptCacheObservations = promptCacheObservations
         self.observedBurnRates = observedBurnRates
         self.fastModeForecastSettings = fastModeForecastSettings
         self.status = status
@@ -100,6 +103,10 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             generatedAt: stored.snapshot.generatedAt,
             limits: stored.snapshot.limits,
             reports: stored.reports,
+            promptCacheObservations: PromptCacheTelemetryReader.filteredRecentObservations(
+                stored.promptCacheObservations,
+                now: now
+            ),
             observedBurnRates: MainLimitBurnRateEstimator.observedBurnRates(
                 current: stored.snapshot,
                 history: history,
@@ -113,6 +120,10 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
 
     public var hasProviderReconnectIssue: Bool {
         reports.contains { $0.status == .failure }
+    }
+
+    public var promptCacheSummary: PromptCacheSummary {
+        PromptCacheSummary(observations: promptCacheObservations)
     }
 
     private static func message(state: WidgetSnapshotState, stored: StoredUsageSnapshot) -> String {

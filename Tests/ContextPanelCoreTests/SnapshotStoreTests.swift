@@ -388,6 +388,43 @@ import Testing
     #expect(stale.status == .stale)
 }
 
+@Test func jsonSnapshotStoreKeepsProviderFreshnessWhenOnlyPromptCacheChanges() throws {
+    let root = try temporaryDirectory()
+    let store = JSONSnapshotStore(rootDirectory: root)
+    let providerGeneratedAt = Date(timeIntervalSince1970: 100)
+    let promptCacheObservedAt = Date(timeIntervalSince1970: 200)
+    try store.save(StoredUsageSnapshot(savedAt: providerGeneratedAt, snapshot: UsageSnapshot(
+        generatedAt: providerGeneratedAt,
+        limits: [usageLimit(provider: .openAI, accountID: "openai", used: 20, savedAt: providerGeneratedAt)]
+    )))
+
+    try store.saveMerged(
+        refreshResult: ConnectorRefreshResult(
+            generatedAt: promptCacheObservedAt,
+            reports: [],
+            promptCacheObservations: [PromptCacheObservation(
+                provider: .openAI,
+                accountID: "openai-cache",
+                accountName: "Every Code · Pro",
+                observedAt: promptCacheObservedAt,
+                windowLabel: "Last hour",
+                tokens: PromptCacheTokenSet(inputTokens: 100, cachedInputTokens: 90)
+            )]
+        ),
+        savedAt: promptCacheObservedAt
+    )
+
+    let current = try #require(store.loadCurrent().snapshot)
+    #expect(current.savedAt == promptCacheObservedAt)
+    #expect(current.snapshot.generatedAt == providerGeneratedAt)
+    #expect(current.promptCacheObservations.count == 1)
+    let status = store.loadCurrent(
+        policy: SnapshotStoreStalenessPolicy(maximumAge: 60),
+        now: promptCacheObservedAt
+    )
+    #expect(status.status == .stale)
+}
+
 @Test func jsonSnapshotStoreRejectsUnsupportedSchema() throws {
     let root = try temporaryDirectory()
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -430,7 +467,8 @@ import Testing
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
     let service = SnapshotRefreshService(
         accountStore: AccountConfigurationStore(configurationURL: accountURL),
-        stores: SnapshotRefreshStores(primary: primary)
+        stores: SnapshotRefreshStores(primary: primary),
+        promptCacheTelemetryReader: { _ in [] }
     )
     let savedAt = Date(timeIntervalSince1970: 300)
     try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
@@ -494,7 +532,8 @@ import Testing
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
     let service = SnapshotRefreshService(
         accountStore: AccountConfigurationStore(configurationURL: accountURL),
-        stores: SnapshotRefreshStores(primary: primary)
+        stores: SnapshotRefreshStores(primary: primary),
+        promptCacheTelemetryReader: { _ in [] }
     )
     let runner = SnapshotRefreshRunner(service: service, lock: nil)
     let savedAt = Date(timeIntervalSince1970: 300)
@@ -517,6 +556,156 @@ import Testing
     #expect(primary.loadHistory().isEmpty)
 }
 
+@Test func snapshotRefreshRunnerSavesPromptCacheOnlyRefreshes() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary),
+        promptCacheTelemetryReader: { _ in [PromptCacheObservation(
+            provider: .openAI,
+            accountID: "openai-test-cache",
+            accountName: "Every Code · Pro",
+            observedAt: Date(timeIntervalSince1970: 250),
+            windowLabel: "Last hour",
+            tokens: PromptCacheTokenSet(inputTokens: 100, cachedInputTokens: 80)
+        )] }
+    )
+    let runner = SnapshotRefreshRunner(service: service, lock: nil)
+    let savedAt = Date(timeIntervalSince1970: 300)
+    try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
+        updatedAt: savedAt,
+        accounts: [LocalProviderAccountConfiguration(
+            id: "disabled-openai",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "OpenAI",
+            isEnabled: false,
+            authPath: "/tmp/missing-auth.json"
+        )]
+    ))
+
+    let decision = try await runner.refresh(now: savedAt)
+
+    if case let .refreshed(outcome) = decision {
+        #expect(outcome.refreshResult.reports.isEmpty)
+        #expect(outcome.refreshResult.promptCacheObservations.count == 1)
+    } else {
+        Issue.record("expected refreshed decision")
+    }
+    #expect(primary.loadCurrent().snapshot?.promptCacheObservations.count == 1)
+    #expect(primary.loadHistory().count == 1)
+}
+
+@Test func snapshotRefreshRunnerUpdatesPromptCacheWhenProviderSnapshotIsFresh() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let providerGeneratedAt = Date(timeIntervalSince1970: 1_000)
+    let promptCacheObservedAt = Date(timeIntervalSince1970: 1_020)
+    try primary.save(StoredUsageSnapshot(savedAt: providerGeneratedAt, snapshot: UsageSnapshot(
+        generatedAt: providerGeneratedAt,
+        limits: [usageLimit(provider: .openAI, accountID: "openai", used: 10, savedAt: providerGeneratedAt)]
+    )))
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary),
+        promptCacheTelemetryReader: { _ in [PromptCacheObservation(
+            provider: .openAI,
+            accountID: "openai-cache",
+            accountName: "Every Code · Pro",
+            observedAt: promptCacheObservedAt,
+            windowLabel: "Last hour",
+            tokens: PromptCacheTokenSet(inputTokens: 100, cachedInputTokens: 88)
+        )] }
+    )
+    let runner = SnapshotRefreshRunner(
+        service: service,
+        stalenessPolicy: SnapshotStoreStalenessPolicy(maximumAge: 60),
+        lock: nil
+    )
+
+    let decision = try await runner.refreshIfNeeded(now: promptCacheObservedAt)
+
+    if case .refreshed = decision {
+        let current = try #require(primary.loadCurrent().snapshot)
+        #expect(current.savedAt == promptCacheObservedAt)
+        #expect(current.snapshot.generatedAt == providerGeneratedAt)
+        #expect(current.promptCacheObservations.count == 1)
+    } else {
+        Issue.record("expected prompt-cache-only refresh while provider snapshot remained fresh")
+    }
+}
+
+@Test func snapshotRefreshRunnerSkipsFreshPromptCacheOnlySnapshotWhenTelemetryIsUnchanged() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let savedAt = Date(timeIntervalSince1970: 1_000)
+    let observation = PromptCacheObservation(
+        provider: .openAI,
+        accountID: "openai-cache",
+        accountName: "Every Code · Pro",
+        observedAt: savedAt,
+        windowLabel: "Last hour",
+        tokens: PromptCacheTokenSet(inputTokens: 100, cachedInputTokens: 88)
+    )
+    try primary.save(StoredUsageSnapshot(
+        savedAt: savedAt,
+        snapshot: UsageSnapshot(generatedAt: savedAt, limits: []),
+        promptCacheObservations: [observation]
+    ))
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary),
+        promptCacheTelemetryReader: { _ in [observation] }
+    )
+    let runner = SnapshotRefreshRunner(
+        service: service,
+        stalenessPolicy: SnapshotStoreStalenessPolicy(maximumAge: 60),
+        lock: nil
+    )
+
+    let decision = try await runner.refreshIfNeeded(now: savedAt.addingTimeInterval(30))
+
+    #expect(decision == .skippedFresh)
+    #expect(primary.loadHistory().count == 1)
+}
+
+@Test func jsonSnapshotStorePrunesOldPromptCacheObservationsWhenMerging() throws {
+    let store = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let old = PromptCacheObservation(
+        provider: .openAI,
+        accountID: "old",
+        accountName: "Every Code · Pro",
+        observedAt: Date(timeIntervalSince1970: -100),
+        windowLabel: "Last hour",
+        tokens: PromptCacheTokenSet(inputTokens: 100, cachedInputTokens: 50)
+    )
+    let fresh = PromptCacheObservation(
+        provider: .openAI,
+        accountID: "fresh",
+        accountName: "Every Code · Pro",
+        observedAt: Date(timeIntervalSince1970: 21_500),
+        windowLabel: "Last hour",
+        tokens: PromptCacheTokenSet(inputTokens: 100, cachedInputTokens: 90)
+    )
+    try store.save(StoredUsageSnapshot(
+        savedAt: Date(timeIntervalSince1970: -100),
+        snapshot: UsageSnapshot(generatedAt: Date(timeIntervalSince1970: -100), limits: []),
+        promptCacheObservations: [old]
+    ))
+
+    try store.saveMerged(
+        refreshResult: ConnectorRefreshResult(
+            generatedAt: Date(timeIntervalSince1970: 21_600),
+            reports: [],
+            promptCacheObservations: [fresh]
+        ),
+        savedAt: Date(timeIntervalSince1970: 21_600)
+    )
+
+    #expect(store.loadCurrent().snapshot?.promptCacheObservations.map(\.id) == [fresh.id])
+}
+
 @Test func widgetSandboxLocalSnapshotDirectoryUsesProcessApplicationSupport() {
     #expect(ContextPanelLocations.widgetSandboxLocalSnapshotDirectory().path.hasSuffix(
         "Library/Application Support/Context Panel/Snapshots"
@@ -528,7 +717,8 @@ import Testing
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
     let service = SnapshotRefreshService(
         accountStore: AccountConfigurationStore(configurationURL: accountURL),
-        stores: SnapshotRefreshStores(primary: primary)
+        stores: SnapshotRefreshStores(primary: primary),
+        promptCacheTelemetryReader: { _ in [] }
     )
     let savedAt = Date(timeIntervalSince1970: 500)
     try primary.save(StoredUsageSnapshot(savedAt: savedAt, snapshot: UsageSnapshot(

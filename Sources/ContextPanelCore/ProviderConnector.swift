@@ -60,10 +60,16 @@ public struct ProviderConnectorReport: Equatable, Sendable {
 public struct ConnectorRefreshResult: Equatable, Sendable {
     public let generatedAt: Date
     public let reports: [ProviderConnectorReport]
+    public let promptCacheObservations: [PromptCacheObservation]
 
-    public init(generatedAt: Date, reports: [ProviderConnectorReport]) {
+    public init(
+        generatedAt: Date,
+        reports: [ProviderConnectorReport],
+        promptCacheObservations: [PromptCacheObservation] = []
+    ) {
         self.generatedAt = generatedAt
         self.reports = reports
+        self.promptCacheObservations = promptCacheObservations
     }
 
     public var snapshot: UsageSnapshot {
@@ -114,11 +120,17 @@ public struct ProviderConnectorRuntime: Sendable {
 
     public func refreshAll(now: Date = Date()) async -> ConnectorRefreshResult {
         var reports: [ProviderConnectorReport] = []
+        var promptCacheObservations: [PromptCacheObservation] = []
         for connector in connectors {
             let result = await connector.refresh(now: now)
             reports.append(contentsOf: result.reports)
+            promptCacheObservations.append(contentsOf: result.promptCacheObservations)
         }
-        return ConnectorRefreshResult(generatedAt: now, reports: Self.deduplicatedReports(reports))
+        return ConnectorRefreshResult(
+            generatedAt: now,
+            reports: Self.deduplicatedReports(reports),
+            promptCacheObservations: Self.deduplicatedPromptCacheObservations(promptCacheObservations)
+        )
     }
 
     private static func deduplicatedReports(_ reports: [ProviderConnectorReport]) -> [ProviderConnectorReport] {
@@ -153,6 +165,15 @@ public struct ProviderConnectorRuntime: Sendable {
         }
 
         return deduplicated
+    }
+
+    private static func deduplicatedPromptCacheObservations(
+        _ observations: [PromptCacheObservation]
+    ) -> [PromptCacheObservation] {
+        var seen = Set<String>()
+        return observations.filter { observation in
+            seen.insert(observation.id).inserted
+        }
     }
 
     private static func mergedAccountName(

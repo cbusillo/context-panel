@@ -54,17 +54,17 @@ struct ContextPanelTimelineProvider: TimelineProvider {
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<ContextPanelWidgetEntry>) -> Void) {
         let now = Date()
-        let nextRefresh = Calendar.current.date(byAdding: .minute, value: 10, to: now) ?? now.addingTimeInterval(600)
+        let nextRefresh = now.addingTimeInterval(SnapshotFreshness.widgetTimelineInterval)
         completion(Timeline(entries: [entry(date: now)], policy: .after(nextRefresh)))
     }
 
     private func entry(date: Date) -> ContextPanelWidgetEntry {
         let displayPreferences = loadDisplayPreferences()
         let forecastSettings = loadForecastSettings()
-        let result = store.loadCurrent(policy: SnapshotStoreStalenessPolicy(maximumAge: 20 * 60), now: date)
+        let result = store.loadCurrent(policy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge), now: date)
         if result.snapshot == nil || result.status == .failure {
             let fallback = containerFallbackStore.loadCurrent(
-                policy: SnapshotStoreStalenessPolicy(maximumAge: 20 * 60),
+                policy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge),
                 now: date
             )
             if fallback.snapshot != nil {

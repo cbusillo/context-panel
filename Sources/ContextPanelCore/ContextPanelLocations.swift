@@ -125,6 +125,67 @@ public enum ContextPanelLocations {
         return applicationSupportDirectory().appending(path: "background-refresh-settings.json")
     }
 
+    public static func everyCodeUsageDirectory() -> URL {
+        let defaultUsageDirectory = realUserHomeDirectory()
+            .appending(path: ".code", directoryHint: .isDirectory)
+            .appending(path: "usage", directoryHint: .isDirectory)
+        return everyCodeUsageDirectories().first ?? defaultUsageDirectory
+    }
+
+    public static func everyCodeUsageDirectories() -> [URL] {
+        var directories: [URL] = []
+        let environment = ProcessInfo.processInfo.environment
+        if let codeHome = environment["CODE_HOME"], !codeHome.isEmpty {
+            directories.append(URL(fileURLWithPath: codeHome, isDirectory: true)
+                .appending(path: "usage", directoryHint: .isDirectory))
+        }
+        if let codexHome = environment["CODEX_HOME"], !codexHome.isEmpty {
+            directories.append(URL(fileURLWithPath: codexHome, isDirectory: true)
+                .appending(path: "usage", directoryHint: .isDirectory))
+        }
+
+        let defaultUsageDirectory = realUserHomeDirectory()
+            .appending(path: ".code", directoryHint: .isDirectory)
+            .appending(path: "usage", directoryHint: .isDirectory)
+        directories.append(defaultUsageDirectory)
+
+        return directories.reduce(into: []) { result, url in
+            if !result.contains(url) {
+                result.append(url)
+            }
+        }
+    }
+
+    public static func promptCacheTelemetryDirectory(appGroupID: String? = nil) -> URL {
+        if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
+            return containerURL
+                .appending(path: "Context Panel", directoryHint: .isDirectory)
+                .appending(path: "PromptCache", directoryHint: .isDirectory)
+        }
+
+        return applicationSupportDirectory()
+            .appending(path: "PromptCache", directoryHint: .isDirectory)
+    }
+
+    public static func promptCacheMirrorTargetURL(
+        destination: URL,
+        sourceDirectory: URL,
+        fileURL: URL
+    ) -> URL {
+        let sourceID = ConnectorRedactor.localAccountID(provider: .openAI, path: normalizedPath(sourceDirectory.path))
+        return destination
+            .appending(path: sourceID, directoryHint: .isDirectory)
+            .appending(path: fileURL.lastPathComponent)
+    }
+
+    public static func normalizedPath(_ path: String) -> String {
+        var normalized = URL(fileURLWithPath: path).standardizedFileURL.path
+        if normalized.hasPrefix("/private/var/") {
+            normalized = "/var/" + normalized.dropFirst("/private/var/".count)
+        }
+        return normalized
+    }
+
     public static func resetPrimerRunStateURL(appGroupID: String? = nil) -> URL {
         if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
             return containerURL
