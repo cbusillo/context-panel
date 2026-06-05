@@ -33,6 +33,13 @@ name: Submit App Store Review
         required: true
         default: false
         type: boolean
+      cancel_review_only:
+        description: >-
+          Cancel/remove the active review for remove_active_review_version and
+          exit without creating or submitting a replacement version.
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -72,6 +79,7 @@ jobs:
           INPUT_REMOVE_ACTIVE_REVIEW_VERSION: >-
             ${{ inputs.remove_active_review_version }}
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_CANCEL_REVIEW_ONLY: ${{ inputs.cancel_review_only }}
         run: |
           set -euo pipefail
           args=(
@@ -90,6 +98,9 @@ jobs:
           fi
           if [[ "${INPUT_DRY_RUN}" == "true" ]]; then
             args+=(--dry-run)
+          fi
+          if [[ "${INPUT_CANCEL_REVIEW_ONLY}" == "true" ]]; then
+            args+=(--cancel-review-only)
           fi
           submit=(
             .build/submit-review-venv/bin/python
