@@ -535,6 +535,27 @@ import Testing
     #expect(primary.loadHistory().isEmpty)
 }
 
+@Test func snapshotRefreshServiceMirrorsPromptCacheTelemetryBeforeReadingIt() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let callOrder = SnapshotRefreshCallOrderRecorder()
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary),
+        promptCacheTelemetryMirror: {
+            callOrder.record("mirror")
+        },
+        promptCacheTelemetryReader: { _ in
+            callOrder.record("read")
+            return []
+        }
+    )
+
+    _ = service.promptCacheObservations(now: Date(timeIntervalSince1970: 300))
+
+    #expect(callOrder.values == ["mirror", "read"])
+}
+
 @Test func snapshotRefreshServiceMigratesClaudeCredentialsBeforeRefreshingMigratedAccount() async throws {
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
@@ -896,4 +917,19 @@ private func temporaryDirectory() throws -> URL {
         .appending(path: UUID().uuidString, directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     return url
+}
+
+private final class SnapshotRefreshCallOrderRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValues: [String] = []
+
+    var values: [String] {
+        lock.withLock { storedValues }
+    }
+
+    func record(_ value: String) {
+        lock.withLock {
+            storedValues.append(value)
+        }
+    }
 }

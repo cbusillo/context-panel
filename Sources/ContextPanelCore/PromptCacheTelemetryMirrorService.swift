@@ -31,8 +31,9 @@ public enum PromptCacheTelemetryMirrorService {
                 directoryHint: .isDirectory
             )
             expectedSourceMirrorDirectories.insert(ContextPanelLocations.normalizedPath(sourceMirrorDirectory.path))
+            guard let urls = usageJSONFileURLs(in: source, fileManager: fileManager) else { continue }
+
             var expectedTargets = Set<String>()
-            let urls = usageJSONFileURLs(in: source, fileManager: fileManager)
 
             for url in urls {
                 let target = ContextPanelLocations.promptCacheMirrorTargetURL(
@@ -77,14 +78,14 @@ public enum PromptCacheTelemetryMirrorService {
         return PromptCacheTelemetryMirrorResult(copied: copied, removed: removed)
     }
 
-    private static func usageJSONFileURLs(in source: URL, fileManager: FileManager) -> [URL] {
+    private static func usageJSONFileURLs(in source: URL, fileManager: FileManager) -> [URL]? {
         guard fileManager.fileExists(atPath: source.path),
               let urls = try? fileManager.contentsOfDirectory(
                 at: source,
                 includingPropertiesForKeys: [.isRegularFileKey],
                 options: [.skipsHiddenFiles]
               )
-        else { return [] }
+        else { return nil }
 
         return urls.filter { url in
             guard url.pathExtension == "json" else { return false }
