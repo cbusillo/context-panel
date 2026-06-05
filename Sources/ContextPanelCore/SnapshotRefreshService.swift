@@ -233,6 +233,7 @@ public struct SnapshotRefreshService: Sendable {
     private let stores: SnapshotRefreshStores
     private let bookmarkStore: SecureFileBookmarkStore?
     private let credentialStore: (any ProviderCredentialStoring)?
+    private let promptCacheTelemetryMirror: @Sendable () -> Void
     private let promptCacheTelemetryReader: @Sendable (Date) -> [PromptCacheObservation]
 
     public init(
@@ -240,6 +241,9 @@ public struct SnapshotRefreshService: Sendable {
         stores: SnapshotRefreshStores,
         bookmarkStore: SecureFileBookmarkStore? = nil,
         credentialStore: (any ProviderCredentialStoring)? = nil,
+        promptCacheTelemetryMirror: @escaping @Sendable () -> Void = {
+            _ = try? PromptCacheTelemetryMirrorService.mirror()
+        },
         promptCacheTelemetryReader: @escaping @Sendable (Date) -> [PromptCacheObservation] = { now in
             PromptCacheTelemetryReader.everyCodeUsageObservations(now: now)
         }
@@ -248,6 +252,7 @@ public struct SnapshotRefreshService: Sendable {
         self.stores = stores
         self.bookmarkStore = bookmarkStore
         self.credentialStore = credentialStore
+        self.promptCacheTelemetryMirror = promptCacheTelemetryMirror
         self.promptCacheTelemetryReader = promptCacheTelemetryReader
     }
 
@@ -274,7 +279,8 @@ public struct SnapshotRefreshService: Sendable {
     }
 
     public func promptCacheObservations(now: Date = Date()) -> [PromptCacheObservation] {
-        promptCacheTelemetryReader(now)
+        promptCacheTelemetryMirror()
+        return promptCacheTelemetryReader(now)
     }
 
     public func importConfiguredAuthFiles(now: Date = Date()) {
