@@ -64,6 +64,102 @@ import Testing
     #expect(widget.hasProviderReconnectIssue == true)
 }
 
+@Test func widgetSnapshotDoesNotUseReconnectMessageWhenFailureHasWorkingConfiguredSibling() {
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let stored = StoredUsageSnapshot(
+        savedAt: savedAt,
+        snapshot: UsageSnapshot(
+            generatedAt: savedAt,
+            limits: [UsageLimit(
+                provider: .openAI,
+                accountID: "openai-working-account",
+                configuredAccountID: "openai-code-default",
+                accountName: "Working OpenAI",
+                label: "Codex",
+                used: 20,
+                limit: 100
+            )]
+        ),
+        reports: [
+            StoredProviderReport(
+                provider: .openAI,
+                accountID: "openai-expired-account",
+                configuredAccountID: "openai-code-default",
+                accountName: "Expired OpenAI",
+                generatedAt: savedAt,
+                status: .failure,
+                errorMessage: "Auth expired"
+            ),
+            StoredProviderReport(
+                provider: .openAI,
+                accountID: "openai-working-account",
+                configuredAccountID: "openai-code-default",
+                accountName: "Working OpenAI",
+                generatedAt: savedAt,
+                status: .healthy,
+                errorMessage: nil
+            ),
+        ]
+    )
+
+    let widget = WidgetSnapshot.fromStore(
+        SnapshotStoreLoadResult(snapshot: stored, status: .stale),
+        now: Date(timeIntervalSince1970: 1_000)
+    )
+
+    #expect(widget.state == .stale)
+    #expect(widget.message == "Refresh Context Panel to update data.")
+    #expect(widget.hasProviderReconnectIssue == false)
+}
+
+@Test func widgetSnapshotUsesReconnectMessageWhenFailureHasOnlyDifferentConfiguredSibling() {
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let stored = StoredUsageSnapshot(
+        savedAt: savedAt,
+        snapshot: UsageSnapshot(
+            generatedAt: savedAt,
+            limits: [UsageLimit(
+                provider: .openAI,
+                accountID: "openai-working-account",
+                configuredAccountID: "openai-other-default",
+                accountName: "Working OpenAI",
+                label: "Codex",
+                used: 20,
+                limit: 100
+            )]
+        ),
+        reports: [
+            StoredProviderReport(
+                provider: .openAI,
+                accountID: "openai-expired-account",
+                configuredAccountID: "openai-code-default",
+                accountName: "Expired OpenAI",
+                generatedAt: savedAt,
+                status: .failure,
+                errorMessage: "Auth expired"
+            ),
+            StoredProviderReport(
+                provider: .openAI,
+                accountID: "openai-working-account",
+                configuredAccountID: "openai-other-default",
+                accountName: "Working OpenAI",
+                generatedAt: savedAt,
+                status: .healthy,
+                errorMessage: nil
+            ),
+        ]
+    )
+
+    let widget = WidgetSnapshot.fromStore(
+        SnapshotStoreLoadResult(snapshot: stored, status: .stale),
+        now: Date(timeIntervalSince1970: 1_000)
+    )
+
+    #expect(widget.state == .stale)
+    #expect(widget.message == "Reconnect account to update data.")
+    #expect(widget.hasProviderReconnectIssue == true)
+}
+
 @Test func widgetSnapshotBuildsProviderSummaries() {
     let savedAt = Date(timeIntervalSince1970: 100)
     let stored = StoredUsageSnapshot(savedAt: savedAt, snapshot: UsageSnapshot(
