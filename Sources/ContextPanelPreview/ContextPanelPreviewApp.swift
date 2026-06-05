@@ -2471,7 +2471,7 @@ final class ContextPanelAppModel: ObservableObject {
             now: Date()
         )
         storedSnapshot = result.snapshot
-        lastRefreshAt = result.snapshot?.snapshot.generatedAt
+        lastRefreshAt = result.snapshot?.savedAt
         storeStatus = result.status
         if result.status == .failure || result.errorMessage != nil {
             errorMessage = result.errorMessage
