@@ -676,6 +676,11 @@ def parse_args() -> argparse.Namespace:
         "--remove-active-review-version",
         help="Existing App Store version to remove from active review before creating the target version",
     )
+    parser.add_argument(
+        "--cancel-review-only",
+        action="store_true",
+        help="Cancel/remove the active review for --remove-active-review-version and exit without creating a replacement",
+    )
     parser.add_argument("--api-key", default=os.environ.get("APP_STORE_CONNECT_API_KEY_PATH"))
     parser.add_argument("--api-key-id", default=os.environ.get("APP_STORE_CONNECT_KEY_ID"))
     parser.add_argument("--api-issuer-id", default=os.environ.get("APP_STORE_CONNECT_ISSUER_ID"))
@@ -707,6 +712,15 @@ def main() -> int:
         app = required_first(app_payload, f"app {args.bundle_id}")
         app_id = app["id"]
         print(f"Using app {app['attributes'].get('name')}: {app_id}")
+        if args.cancel_review_only:
+            if not args.remove_active_review_version:
+                raise AppStoreConnectError("--cancel-review-only requires --remove-active-review-version")
+            remove_active_review_version(client, app_id, args.remove_active_review_version, dry_run=args.dry_run)
+            if args.dry_run:
+                print("Dry run: review cancellation was validated; no App Store Connect changes were made")
+            else:
+                print(f"Canceled active review for App Store version {args.remove_active_review_version}")
+            return 0
         source_localization, source_review_detail = latest_source_metadata(client, app_id, args.copy_from_version)
         build = ensure_build(client, app_id, args, allow_updates=not args.dry_run)
         if args.remove_active_review_version:
