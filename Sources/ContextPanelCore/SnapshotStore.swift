@@ -90,6 +90,44 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
     }
 }
 
+public extension Collection where Element == StoredProviderReport {
+    var reconnectBlockingFailures: [StoredProviderReport] {
+        let workingGroups = Set(
+            filter(\.coversReconnectFailure).map(\.reconnectGroupKey)
+        )
+        return filter { report in
+            report.status == .failure && !workingGroups.contains(report.reconnectGroupKey)
+        }
+    }
+
+    var hasReconnectBlockingFailure: Bool {
+        !reconnectBlockingFailures.isEmpty
+    }
+}
+
+private extension StoredProviderReport {
+    var reconnectGroupKey: ProviderReportReconnectGroupKey {
+        ProviderReportReconnectGroupKey(
+            provider: provider,
+            accountID: configuredAccountID ?? accountID
+        )
+    }
+
+    var coversReconnectFailure: Bool {
+        switch status {
+        case .healthy, .close, .limited:
+            true
+        case .failure, .loading, .stale, .unknown:
+            false
+        }
+    }
+}
+
+private struct ProviderReportReconnectGroupKey: Hashable {
+    let provider: Provider
+    let accountID: String
+}
+
 public enum SnapshotStoreError: LocalizedError, Equatable, Sendable {
     case unsupportedSchema(version: Int)
     case corruptStore(String)

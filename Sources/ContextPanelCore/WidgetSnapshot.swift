@@ -119,7 +119,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     }
 
     public var hasProviderReconnectIssue: Bool {
-        reports.contains { $0.status == .failure }
+        reports.hasReconnectBlockingFailure
     }
 
     public var promptCacheSummary: PromptCacheSummary {
@@ -137,7 +137,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         case .setupNeeded:
             return "Set up Context Panel in the app."
         case .stale:
-            return stored.reports.contains { $0.status == .failure }
+            return stored.reports.hasReconnectBlockingFailure
                 ? "Reconnect account to update data."
                 : "Refresh Context Panel to update data."
         case .failure:

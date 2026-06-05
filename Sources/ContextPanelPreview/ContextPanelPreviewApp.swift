@@ -12,7 +12,7 @@ struct ContextPanelPreviewApp: App {
     @NSApplicationDelegateAdaptor(ContextPanelAppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        Window("Context Panel", id: "main") {
+        WindowGroup("Context Panel", id: "main") {
             AppRoot(model: appDelegate.model)
                 .frame(minWidth: 1080, idealWidth: 1080, minHeight: 720, idealHeight: 720)
                 .onOpenURL { url in
@@ -672,7 +672,7 @@ final class SettingsPaneModel: ObservableObject {
         }
 
         let refreshSubject = refreshSubjectText(for: account)
-        if reports.contains(where: { $0.status == .failure }) {
+        if reports.hasReconnectBlockingFailure {
             return SettingsAccountRefreshSummary(text: "Last \(refreshSubject) failed; see Diagnostics", status: .failure)
         }
         if reports.contains(where: { $0.status == .stale }) {
@@ -682,12 +682,15 @@ final class SettingsPaneModel: ObservableObject {
             return SettingsAccountRefreshSummary(text: "Last \(refreshSubject) unknown", status: .unknown)
         }
 
-        let count = reports.count
+        let successfulReports = reports.filter { report in
+            report.status != .failure && report.status != .stale && report.status != .unknown
+        }
+        let count = successfulReports.count
         let accountText: String
         if account.connectorKind == .codexRateLimits, count > 1 {
             accountText = "\(count) OpenAI accounts"
         } else {
-            accountText = reports.first?.accountName ?? account.displayName
+            accountText = successfulReports.first?.accountName ?? account.displayName
         }
         return SettingsAccountRefreshSummary(text: "Last \(refreshSubject) healthy: \(accountText)", status: .healthy)
     }
@@ -2419,11 +2422,12 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     var providerReportsNeedingAttention: [StoredProviderReport] {
-        storedSnapshot?.reports.filter { $0.status == .failure || $0.status == .stale } ?? []
+        guard let reports = storedSnapshot?.reports else { return [] }
+        return reports.reconnectBlockingFailures + reports.filter { $0.status == .stale }
     }
 
     var hasProviderReconnectIssue: Bool {
-        storedSnapshot?.reports.contains { $0.status == .failure } ?? false
+        storedSnapshot?.reports.hasReconnectBlockingFailure ?? false
     }
 
     func reportNeedsAttention(_ account: LocalProviderAccountConfiguration) -> Bool {
