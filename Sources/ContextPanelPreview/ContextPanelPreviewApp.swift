@@ -17,11 +17,12 @@ struct ContextPanelPreviewApp: App {
                 .frame(minWidth: 1080, idealWidth: 1080, minHeight: 720, idealHeight: 720)
                 .onOpenURL { url in
                     appDelegate.model.handleOpenURL(url)
-                    NSApp.activate(ignoringOtherApps: true)
-                    NSApp.windows.first?.makeKeyAndOrderFront(nil)
+                    appDelegate.presentMainWindowWhenAvailable()
                 }
+                .handlesExternalEvents(preferring: ["overview", "reconnect"], allowing: ["*"])
         }
         .defaultSize(width: 1080, height: 720)
+        .handlesExternalEvents(matching: ["overview", "reconnect"])
 
         Settings {
             SettingsPane(appModel: appDelegate.model)
@@ -79,6 +80,41 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
             }
         } catch {
             model.setError("Background refresh could not be updated: \(error.localizedDescription)")
+        }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if let window = Self.mainWindow(), flag {
+            presentMainWindow(window)
+            return false
+        }
+        return true
+    }
+
+    func presentMainWindowWhenAvailable(retriesRemaining: Int = 40) {
+        if let window = Self.mainWindow() {
+            presentMainWindow(window)
+            return
+        }
+
+        guard retriesRemaining > 0 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            self?.presentMainWindowWhenAvailable(retriesRemaining: retriesRemaining - 1)
+        }
+    }
+
+    private func presentMainWindow(_ window: NSWindow) {
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    static func mainWindow() -> NSWindow? {
+        NSApp.windows.first { window in
+            window.title == "Context Panel" && window.isVisible && !window.isMiniaturized
+        } ?? NSApp.windows.first { window in
+            window.title == "Context Panel" && !window.isMiniaturized
+        } ?? NSApp.windows.first { window in
+            window.title == "Context Panel"
         }
     }
 }
