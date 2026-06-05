@@ -29,6 +29,88 @@ import Testing
     #expect(store.loadHistory().count == 1)
 }
 
+@Test func storedSnapshotsDowngradeSuccessfulReportsWithoutMatchingLimits() throws {
+    let root = try temporaryDirectory()
+    let store = JSONSnapshotStore(rootDirectory: root)
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let stored = StoredUsageSnapshot(
+        savedAt: savedAt,
+        snapshot: UsageSnapshot(generatedAt: savedAt, limits: []),
+        reports: [StoredProviderReport(
+            provider: .google,
+            accountID: "gemini-local",
+            accountName: "Gemini",
+            generatedAt: savedAt,
+            status: .healthy,
+            errorMessage: nil
+        )]
+    )
+
+    try store.save(stored)
+
+    let loadedReport = try #require(store.loadCurrent().snapshot?.reports.first)
+    #expect(loadedReport.status == .unknown)
+}
+
+@Test func storedSnapshotsKeepSuccessfulReportsWithMatchingLimits() throws {
+    let root = try temporaryDirectory()
+    let store = JSONSnapshotStore(rootDirectory: root)
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let stored = StoredUsageSnapshot(
+        savedAt: savedAt,
+        snapshot: UsageSnapshot(
+            generatedAt: savedAt,
+            limits: [usageLimit(provider: .google, accountID: "gemini-local", used: 25, savedAt: savedAt)]
+        ),
+        reports: [StoredProviderReport(
+            provider: .google,
+            accountID: "gemini-local",
+            accountName: "Gemini",
+            generatedAt: savedAt,
+            status: .healthy,
+            errorMessage: nil
+        )]
+    )
+
+    try store.save(stored)
+
+    let loadedReport = try #require(store.loadCurrent().snapshot?.reports.first)
+    #expect(loadedReport.status == .healthy)
+}
+
+@Test func storedSnapshotsKeepLimitedConfiguredReportsWithMatchingLimits() throws {
+    let root = try temporaryDirectory()
+    let store = JSONSnapshotStore(rootDirectory: root)
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let stored = StoredUsageSnapshot(
+        savedAt: savedAt,
+        snapshot: UsageSnapshot(
+            generatedAt: savedAt,
+            limits: [usageLimit(
+                provider: .google,
+                accountID: "antigravity-account",
+                configuredAccountID: "gemini-code-assist-default",
+                used: 100,
+                savedAt: savedAt
+            )]
+        ),
+        reports: [StoredProviderReport(
+            provider: .google,
+            accountID: "antigravity-account",
+            configuredAccountID: "gemini-code-assist-default",
+            accountName: "Antigravity",
+            generatedAt: savedAt,
+            status: .limited,
+            errorMessage: nil
+        )]
+    )
+
+    try store.save(stored)
+
+    let loadedReport = try #require(store.loadCurrent().snapshot?.reports.first)
+    #expect(loadedReport.status == .limited)
+}
+
 @Test func jsonSnapshotStoreFiltersHistoryByProviderAccountAndLimit() throws {
     let root = try temporaryDirectory()
     let store = JSONSnapshotStore(rootDirectory: root)
@@ -154,6 +236,49 @@ import Testing
     let report = try #require(current.reports.first { $0.provider == .google && $0.accountID == accountID })
     #expect(report.status == .failure)
     #expect(report.errorMessage?.contains("permission") == true)
+}
+
+@Test func jsonSnapshotStoreDropsPreviousLimitsWhenForegroundRequiredReportHasNoData() throws {
+    let root = try temporaryDirectory()
+    let store = JSONSnapshotStore(rootDirectory: root)
+    let first = Date(timeIntervalSince1970: 100)
+    let second = Date(timeIntervalSince1970: 200)
+    let accountID = "gemini-a"
+
+    try store.save(StoredUsageSnapshot(
+        savedAt: first,
+        refreshResult: ConnectorRefreshResult(generatedAt: first, reports: [
+            ProviderConnectorReport(
+                provider: .google,
+                accountID: accountID,
+                accountName: "Gemini A",
+                generatedAt: first,
+                limits: [usageLimit(provider: .google, accountID: accountID, used: 0, savedAt: first)]
+            )
+        ])
+    ))
+
+    try store.saveMerged(
+        refreshResult: ConnectorRefreshResult(generatedAt: second, reports: [
+            ProviderConnectorReport(
+                provider: .google,
+                accountID: accountID,
+                accountName: "Gemini A",
+                generatedAt: second,
+                limits: [],
+                status: .unknown,
+                errorMessage: "foreground refresh required"
+            )
+        ]),
+        savedAt: second,
+        preservesUnreportedAccounts: false
+    )
+
+    let current = try #require(store.loadCurrent().snapshot)
+    #expect(current.snapshot.limits.filter { $0.provider == .google && $0.accountID == accountID }.isEmpty)
+    let report = try #require(current.reports.first { $0.provider == .google && $0.accountID == accountID })
+    #expect(report.status == .unknown)
+    #expect(report.errorMessage?.contains("foreground refresh") == true)
 }
 
 @Test func jsonSnapshotStorePreservesMultiAccountLimitsWhenConnectorFileRefreshFails() throws {
@@ -556,6 +681,39 @@ import Testing
     #expect(callOrder.values == ["mirror", "read"])
 }
 
+@Test func snapshotRefreshServiceMirrorsPromptCacheTelemetryDuringFullRefresh() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let callOrder = SnapshotRefreshCallOrderRecorder()
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary),
+        promptCacheTelemetryMirror: {
+            callOrder.record("mirror")
+        },
+        promptCacheTelemetryReader: { _ in
+            callOrder.record("read")
+            return []
+        }
+    )
+    let savedAt = Date(timeIntervalSince1970: 300)
+    try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
+        updatedAt: savedAt,
+        accounts: [LocalProviderAccountConfiguration(
+            id: "disabled-openai",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "OpenAI",
+            isEnabled: false,
+            authPath: "/tmp/missing-auth.json"
+        )]
+    ))
+
+    _ = try await service.refresh(now: savedAt)
+
+    #expect(callOrder.values == ["mirror", "read"])
+}
+
 @Test func snapshotRefreshServiceMigratesClaudeCredentialsBeforeRefreshingMigratedAccount() async throws {
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
@@ -863,6 +1021,40 @@ import Testing
     #expect(primary.loadCurrent().snapshot?.snapshot.limits.first?.accountID == "claude-local")
 }
 
+@Test func snapshotRefreshRunnerClearsOrphanedRefreshLock() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let lockURL = try temporaryDirectory().appending(path: "refresh.lock")
+    try FileManager.default.createDirectory(at: lockURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data(#"{"processID":999999}"#.utf8).write(to: lockURL)
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary)
+    )
+    let runner = SnapshotRefreshRunner(
+        service: service,
+        lock: SnapshotRefreshLock(lockURL: lockURL, staleAfter: 60)
+    )
+    let savedAt = Date(timeIntervalSince1970: 900)
+    let report = ProviderConnectorReport(
+        provider: .anthropic,
+        accountID: "claude-local",
+        accountName: "Claude",
+        generatedAt: savedAt,
+        limits: [usageLimit(provider: .anthropic, accountID: "claude-local", used: 20, savedAt: savedAt)],
+        status: .healthy
+    )
+
+    let decision = try await runner.saveMerged(
+        refreshResult: ConnectorRefreshResult(generatedAt: savedAt, reports: [report]),
+        savedAt: savedAt
+    )
+
+    #expect(decision != .skippedAlreadyRunning)
+    #expect(primary.loadCurrent().snapshot?.savedAt == savedAt)
+    #expect(!FileManager.default.fileExists(atPath: lockURL.path))
+}
+
 @Test func snapshotRefreshRunnerSerializesManualSavesWithRefreshLock() async throws {
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
@@ -896,10 +1088,17 @@ import Testing
     #expect(primary.loadCurrent().snapshot == nil)
 }
 
-private func usageLimit(provider: Provider, accountID: String, used: Int, savedAt: Date) -> UsageLimit {
+private func usageLimit(
+    provider: Provider,
+    accountID: String,
+    configuredAccountID: String? = nil,
+    used: Int,
+    savedAt: Date
+) -> UsageLimit {
     UsageLimit(
         provider: provider,
         accountID: accountID,
+        configuredAccountID: configuredAccountID,
         accountName: accountID,
         label: "usage",
         unit: .percent,

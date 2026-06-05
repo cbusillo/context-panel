@@ -256,7 +256,8 @@ public enum AccountConnectorFactory {
             let expanded = NSString(string: path).expandingTildeInPath
             return (try? FileManager.default.contentsOfDirectory(atPath: expanded).map { "\(expanded)/\($0)" }) ?? []
         },
-        antigravityCredentialSource: AntigravityKeychainCredentialSource? = AntigravityKeychainCredentialSource()
+        antigravityCredentialSource: AntigravityKeychainCredentialSource? = AntigravityKeychainCredentialSource(),
+        allowsLegacyGeminiOAuth: Bool = true
     ) -> [any ProviderConnector] {
         return document.accounts.compactMap { account -> (any ProviderConnector)? in
             guard account.isEnabled else { return nil }
@@ -279,6 +280,16 @@ public enum AccountConnectorFactory {
                 )
             case .geminiCodeAssist:
                 guard let authPath = account.authPath else { return nil }
+                if antigravityCredentialSource == nil && !allowsLegacyGeminiOAuth {
+                    let expanded = NSString(string: authPath).expandingTildeInPath
+                    return FailingProviderConnector(
+                        provider: .google,
+                        accountID: ConnectorRedactor.localAccountID(provider: .google, path: expanded),
+                        accountName: account.displayName,
+                        message: "Google Antigravity credentials require foreground refresh. Open Context Panel to refresh Google limits.",
+                        status: .unknown
+                    )
+                }
                 let authFileLoader = makeAuthFileLoader(
                     accountID: account.id,
                     bookmarkStore: bookmarkStore,
@@ -305,7 +316,7 @@ public enum AccountConnectorFactory {
                 let metadata = configuredMetadataValue
                     ?? cachedMetadataValue
                     ?? discoveredMetadata
-                    ?? (antigravityCredentialSource?.hasCredentials() == true ? GeminiOAuthClientMetadata(clientID: "", clientSecret: "") : nil)
+                    ?? antigravityMetadataFallback(source: antigravityCredentialSource)
                 guard let metadata else {
                     let expanded = NSString(string: authPath).expandingTildeInPath
                     return FailingProviderConnector(
@@ -392,6 +403,13 @@ public enum AccountConnectorFactory {
         return try? JSONDecoder().decode(GeminiOAuthClientMetadata.self, from: data)
     }
 
+    private static func antigravityMetadataFallback(
+        source: AntigravityKeychainCredentialSource?
+    ) -> GeminiOAuthClientMetadata? {
+        guard source?.credentialAvailability().canAttemptAntigravityRefresh == true else { return nil }
+        return GeminiOAuthClientMetadata(clientID: "", clientSecret: "")
+    }
+
     private static func geminiMetadata(
         account: LocalProviderAccountConfiguration,
         environment: [String: String]
@@ -417,6 +435,17 @@ public enum AccountConnectorFactory {
             return "Codex"
         }
         return fallback
+    }
+}
+
+private extension AntigravityCredentialAvailability {
+    var canAttemptAntigravityRefresh: Bool {
+        switch self {
+        case .available, .unreadable:
+            true
+        case .unavailable:
+            false
+        }
     }
 }
 

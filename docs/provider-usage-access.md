@@ -173,22 +173,30 @@ Gemini CLI refresh them from the Code Assist backend.
 
 Preferred v1 connector scope:
 
-- Prefer a valid Antigravity Keychain access token when Gemini CLI OAuth client
-  metadata is unavailable, so Antigravity-only installs can refresh without a
-  separate `oauth_creds.json` file.
+- Prefer a valid Antigravity Keychain access token when Antigravity is signed in,
+  even if legacy Gemini CLI OAuth credentials still exist. This keeps migrated
+  `agy` users on Antigravity's live quota surface instead of silently falling
+  back to stale Gemini CLI quota semantics. Antigravity-only installs can also
+  refresh without a separate `oauth_creds.json` file.
 - Resolve `GEMINI_CLI_HOME`, then default to `~/.gemini`, for legacy Gemini CLI
   auth and metadata fallback.
-- Read `oauth_creds.json` only to refresh an access token locally; never print,
-  store, or upload token values. If Antigravity's Keychain token is expired and
-  no Gemini CLI OAuth client metadata is available, ask the user to open
-  Antigravity to refresh Google authentication.
+- Read `oauth_creds.json` only to refresh a legacy Gemini CLI access token
+  locally; never print, store, or upload token values. If Antigravity's Keychain
+  access token is expired, ask the user to open Antigravity to refresh Google
+  authentication instead of refreshing that token through Gemini CLI metadata.
 - Call the Gemini Code Assist load path to resolve the active project internally;
-  never print or persist the raw project identifier.
-- Call the Gemini Code Assist quota path and normalize buckets by model ID,
-  remaining fraction, optional remaining amount, observed bucket label, observed
-  window label, and reset time.
+  never print or persist the raw project identifier. When the connector is using
+  Antigravity's Keychain token instead of local Gemini CLI OAuth credentials,
+  use Antigravity's daily Code Assist backend host for the load and quota calls.
+- Call the matching Code Assist quota path and normalize buckets by model ID,
+  remaining fraction, optional remaining amount and total amount, explicit
+  exhausted/limited flags, observed bucket label, observed window label, and
+  reset time.
 - Represent each bucket as percent pressure: `used = round((1 - remaining) *
-100)`, `limit = 100`, `unit = percent`.
+100)`, `limit = 100`, `unit = percent`. If a bucket reports remaining and total
+amounts, derive percent pressure from those amounts. If the backend explicitly
+reports an exhausted/limited bucket, preserve that as `used = 100`, `limit =
+100`, and `status = limited` even when another remaining field looks healthy.
 - Infer display windows from explicit labels first, then reset timing relative
   to the observation timestamp. Do not assume Gemini buckets are daily-only;
   show observed 5-hour, daily, weekly, or unfamiliar labels when present.

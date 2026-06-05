@@ -24,7 +24,7 @@ public struct StoredUsageSnapshot: Codable, Equatable, Sendable {
         self.schemaVersion = 1
         self.savedAt = savedAt
         self.snapshot = snapshot
-        self.reports = reports
+        self.reports = Self.normalizedReports(reports, limits: snapshot.limits)
         self.promptCacheObservations = promptCacheObservations
     }
 
@@ -42,11 +42,30 @@ public struct StoredUsageSnapshot: Codable, Equatable, Sendable {
         schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
         savedAt = try container.decode(Date.self, forKey: .savedAt)
         snapshot = try container.decode(UsageSnapshot.self, forKey: .snapshot)
-        reports = try container.decodeIfPresent([StoredProviderReport].self, forKey: .reports) ?? []
+        let decodedReports = try container.decodeIfPresent([StoredProviderReport].self, forKey: .reports) ?? []
+        reports = Self.normalizedReports(decodedReports, limits: snapshot.limits)
         promptCacheObservations = try container.decodeIfPresent(
             [PromptCacheObservation].self,
             forKey: .promptCacheObservations
         ) ?? []
+    }
+
+    private static func normalizedReports(
+        _ reports: [StoredProviderReport],
+        limits: [UsageLimit]
+    ) -> [StoredProviderReport] {
+        reports.map { report in
+            guard report.status.coversProviderFreshness else { return report }
+            let hasMatchingLimit = limits.contains { limit in
+                guard limit.provider == report.provider else { return false }
+                if let configuredAccountID = report.configuredAccountID {
+                    return limit.configuredAccountID == configuredAccountID || limit.accountID == report.accountID
+                }
+                return limit.accountID == report.accountID
+            }
+            guard !hasMatchingLimit else { return report }
+            return report.withStatus(.unknown)
+        }
     }
 }
 
@@ -87,6 +106,29 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
             status: report.status,
             errorMessage: report.errorMessage
         )
+    }
+
+    func withStatus(_ replacementStatus: UsageStatus) -> StoredProviderReport {
+        StoredProviderReport(
+            provider: provider,
+            accountID: accountID,
+            configuredAccountID: configuredAccountID,
+            accountName: accountName,
+            generatedAt: generatedAt,
+            status: replacementStatus,
+            errorMessage: errorMessage
+        )
+    }
+}
+
+private extension UsageStatus {
+    var coversProviderFreshness: Bool {
+        switch self {
+        case .healthy, .close, .limited:
+            true
+        case .failure, .loading, .stale, .unknown:
+            false
+        }
     }
 }
 
@@ -237,8 +279,15 @@ public struct JSONSnapshotStore: Sendable {
             } ?? []
         } else {
             preservedLimits = current?.snapshot.limits.filter { limit in
-                reportedAccounts.contains(ProviderAccountKey(provider: limit.provider, accountID: limit.accountID))
-                    && !replacementAccounts.contains(ProviderAccountKey(provider: limit.provider, accountID: limit.accountID))
+                let key = ProviderAccountKey(provider: limit.provider, accountID: limit.accountID)
+                return reportedAccounts.contains(key)
+                    && !replacementAccounts.contains(key)
+                    && refreshResult.reports.contains { report in
+                        report.status == .failure
+                            && report.limits.isEmpty
+                            && report.provider == limit.provider
+                            && report.accountID == limit.accountID
+                    }
             } ?? []
             preservedReports = []
         }

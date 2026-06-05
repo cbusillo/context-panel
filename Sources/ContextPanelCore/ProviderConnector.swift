@@ -7,10 +7,15 @@ public enum ConnectorError: LocalizedError, Equatable, Sendable {
     case nonHTTPResponse(String)
     case processFailure(operation: String, exitCode: Int32)
     case decodingFailure(String)
+    case foregroundRefreshRequired(String)
 
     public var errorDescription: String? {
         switch self {
-        case let .missingAuth(message), let .invalidAuth(message), let .nonHTTPResponse(message), let .decodingFailure(message):
+        case let .missingAuth(message),
+             let .invalidAuth(message),
+             let .nonHTTPResponse(message),
+             let .decodingFailure(message),
+             let .foregroundRefreshRequired(message):
             return message
         case let .httpFailure(operation, statusCode):
             if statusCode == 401 || statusCode == 403 {
@@ -88,12 +93,14 @@ public struct FailingProviderConnector: ProviderConnector {
     private let accountID: String
     private let accountName: String
     private let message: String
+    private let status: UsageStatus
 
-    public init(provider: Provider, accountID: String, accountName: String, message: String) {
+    public init(provider: Provider, accountID: String, accountName: String, message: String, status: UsageStatus = .failure) {
         self.provider = provider
         self.accountID = accountID
         self.accountName = accountName
         self.message = message
+        self.status = status
     }
 
     public func refresh(now: Date) async -> ConnectorRefreshResult {
@@ -104,7 +111,7 @@ public struct FailingProviderConnector: ProviderConnector {
                 accountName: accountName,
                 generatedAt: now,
                 limits: [],
-                status: .failure,
+                status: status,
                 errorMessage: message
             ),
         ])
