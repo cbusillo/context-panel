@@ -83,6 +83,123 @@ import Testing
     #expect(limits.map(\.used) == [40, 80, 12])
 }
 
+@Test func geminiQuotaPayloadParserMarksExhaustedAmountBucketsAsLimited() throws {
+    let json = #"""
+    {
+      "quotaBuckets": [
+        {
+          "modelId": "Gemini 3.5 Flash (Medium)",
+          "bucketLabel": "Antigravity daily agent execution",
+          "remainingAmount": 0,
+          "totalAmount": 100,
+          "resetWindow": "daily",
+          "resetTime": "2026-06-06T12:10:00Z"
+        }
+      ]
+    }
+    """#
+
+    let bucket = try #require(GeminiQuotaPayloadParser.buckets(from: Data(json.utf8)).first)
+    let limit = bucket.usageLimit(
+        accountID: "local",
+        accountName: "Antigravity",
+        observedAt: ContextPanelDateFormatting.date(from: "2026-06-05T14:00:00Z")!
+    )
+
+    #expect(bucket.remainingAmount == 0)
+    #expect(bucket.totalAmount == 100)
+    #expect(bucket.usedPercent == 100)
+    #expect(limit.used == 100)
+    #expect(limit.limit == 100)
+    #expect(limit.status == .limited)
+    #expect(limit.windowLabel == "Daily")
+    #expect(limit.note?.contains("remaining amount: 0") == true)
+}
+
+@Test func geminiQuotaPayloadParserLetsAmountTotalsOverrideHealthyFraction() throws {
+    let json = #"""
+    {
+      "quotaBuckets": [
+        {
+          "modelId": "Gemini 3.5 Flash (Medium)",
+          "bucketLabel": "Antigravity daily agent execution",
+          "remainingFraction": 1,
+          "remainingAmount": 0,
+          "totalAmount": 100,
+          "resetWindow": "daily"
+        }
+      ]
+    }
+    """#
+
+    let bucket = try #require(GeminiQuotaPayloadParser.buckets(from: Data(json.utf8)).first)
+    let limit = bucket.usageLimit(
+        accountID: "local",
+        accountName: "Antigravity",
+        observedAt: ContextPanelDateFormatting.date(from: "2026-06-05T14:00:00Z")!
+    )
+
+    #expect(bucket.usedPercent == 100)
+    #expect(limit.used == 100)
+    #expect(limit.status == .limited)
+}
+
+@Test func geminiQuotaPayloadParserLetsExplicitExhaustionOverrideHealthyFraction() throws {
+    let json = #"""
+    {
+      "limits": [
+        {
+          "model": "Gemini 3.5 Flash (Medium)",
+          "label": "Antigravity agent execution",
+          "remainingFraction": 1,
+          "exhausted": true,
+          "period": "daily"
+        }
+      ]
+    }
+    """#
+
+    let bucket = try #require(GeminiQuotaPayloadParser.buckets(from: Data(json.utf8)).first)
+    let limit = bucket.usageLimit(
+        accountID: "local",
+        accountName: "Antigravity",
+        observedAt: ContextPanelDateFormatting.date(from: "2026-06-05T14:00:00Z")!
+    )
+
+    #expect(bucket.isExhausted)
+    #expect(bucket.usedPercent == 100)
+    #expect(limit.used == 100)
+    #expect(limit.status == .limited)
+    #expect(limit.note?.contains("Antigravity reported quota exhausted") == true)
+}
+
+@Test func geminiQuotaPayloadParserDoesNotInventPercentFromBareRemainingAmount() throws {
+    let json = #"""
+    {
+      "buckets": [
+        {
+          "modelId": "gemini-3-pro",
+          "remainingAmount": 12,
+          "resetWindow": "daily"
+        }
+      ]
+    }
+    """#
+
+    let bucket = try #require(GeminiQuotaPayloadParser.buckets(from: Data(json.utf8)).first)
+    let limit = bucket.usageLimit(
+        accountID: "local",
+        accountName: "Gemini",
+        observedAt: ContextPanelDateFormatting.date(from: "2026-06-05T14:00:00Z")!
+    )
+
+    #expect(bucket.remainingAmount == 12)
+    #expect(bucket.usedPercent == nil)
+    #expect(limit.used == nil)
+    #expect(limit.limit == nil)
+    #expect(limit.status == .unknown)
+}
+
 @Test func geminiQuotaPayloadParserReportsMissingBuckets() throws {
     let json = #"{"notBuckets": true}"#
 
@@ -100,6 +217,16 @@ import Testing
     #expect(credentials.accessToken == "access-secret")
     #expect(credentials.refreshToken == "refresh-secret")
     #expect(ContextPanelDateFormatting.string(from: try #require(credentials.expiresAt)) == "2099-05-22T17:00:00Z")
+}
+
+@Test func antigravityCredentialDecoderReadsGoKeyringPayloadWithTrailingWhitespace() throws {
+    let payload = #"{"auth_method":"consumer","token":{"access_token":"access-secret","refresh_token":"refresh-secret","token_type":"Bearer","expiry":"2099-05-22T17:00:00.000000000Z"}}"#
+    let stored = "go-keyring-base64:\(Data(payload.utf8).base64EncodedString())\n"
+
+    let credentials = try AntigravityCredentialDecoder().geminiOAuthCredentials(from: Data(stored.utf8))
+
+    #expect(credentials.accessToken == "access-secret")
+    #expect(credentials.refreshToken == "refresh-secret")
 }
 
 @Test func antigravityCredentialSourceLoadsGeminiCredentialsFromKeychainPayload() throws {
@@ -139,7 +266,8 @@ import Testing
     let connector = GeminiCodeAssistConnector(
         accounts: [GeminiAccountConfiguration(authPath: "/tmp/gemini.json", accountName: "Gemini", clientID: "client", clientSecret: "secret")],
         httpClient: http,
-        fileLoader: { _ in credentials }
+        fileLoader: { _ in credentials },
+        antigravityCredentialSource: nil
     )
 
     let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))

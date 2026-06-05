@@ -35,10 +35,16 @@ public enum SnapshotRefreshRunDecision: Equatable, Sendable {
 public struct SnapshotRefreshLock: Sendable {
     public let lockURL: URL
     public let staleAfter: TimeInterval
+    public let legacyLockGracePeriod: TimeInterval
 
-    public init(lockURL: URL, staleAfter: TimeInterval = 10 * 60) {
+    public init(
+        lockURL: URL,
+        staleAfter: TimeInterval = 10 * 60,
+        legacyLockGracePeriod: TimeInterval = 60
+    ) {
         self.lockURL = lockURL
         self.staleAfter = staleAfter
+        self.legacyLockGracePeriod = legacyLockGracePeriod
     }
 
     public static func appDefault() -> SnapshotRefreshLock {
@@ -53,9 +59,7 @@ public struct SnapshotRefreshLock: Sendable {
         try fileManager.createDirectory(at: lockURL.deletingLastPathComponent(), withIntermediateDirectories: true)
 
         if fileManager.fileExists(atPath: lockURL.path) {
-            if let attributes = try? fileManager.attributesOfItem(atPath: lockURL.path),
-               let modifiedAt = attributes[.modificationDate] as? Date,
-               now.timeIntervalSince(modifiedAt) <= staleAfter {
+            if shouldPreserveExistingLock(fileManager: fileManager, now: now) {
                 return nil
             }
             try? fileManager.removeItem(at: lockURL)
@@ -65,9 +69,71 @@ public struct SnapshotRefreshLock: Sendable {
         guard descriptor >= 0 else {
             return nil
         }
-        close(descriptor)
+        do {
+            try writeLockMetadata(to: descriptor)
+            close(descriptor)
+        } catch {
+            close(descriptor)
+            try? fileManager.removeItem(at: lockURL)
+            throw error
+        }
         defer { try? fileManager.removeItem(at: lockURL) }
         return try await operation()
+    }
+
+    private func shouldPreserveExistingLock(fileManager: FileManager, now: Date) -> Bool {
+        guard let attributes = try? fileManager.attributesOfItem(atPath: lockURL.path),
+              let modifiedAt = attributes[.modificationDate] as? Date
+        else { return false }
+        let age = max(now.timeIntervalSince(modifiedAt), 0)
+        guard age <= staleAfter else { return false }
+
+        guard let data = try? Data(contentsOf: lockURL), !data.isEmpty else {
+            return age <= legacyLockGracePeriod
+        }
+        guard let metadata = try? SnapshotRefreshLockMetadata.makeDecoder().decode(
+            SnapshotRefreshLockMetadata.self,
+            from: data
+        ) else {
+            return age <= legacyLockGracePeriod
+        }
+        return Self.processIsRunning(metadata.processID)
+    }
+
+    private func writeLockMetadata(to descriptor: Int32) throws {
+        let metadata = SnapshotRefreshLockMetadata(processID: getpid())
+        let data = try SnapshotRefreshLockMetadata.makeEncoder().encode(metadata)
+        try data.withUnsafeBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress else { return }
+            var written = 0
+            while written < rawBuffer.count {
+                let result = Darwin.write(descriptor, baseAddress.advanced(by: written), rawBuffer.count - written)
+                guard result > 0 else {
+                    throw POSIXError(.EIO)
+                }
+                written += result
+            }
+        }
+    }
+
+    private static func processIsRunning(_ processID: Int32) -> Bool {
+        guard processID > 0 else { return false }
+        if kill(processID, 0) == 0 { return true }
+        return errno == EPERM
+    }
+}
+
+private struct SnapshotRefreshLockMetadata: Codable {
+    let processID: Int32
+
+    static func makeEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return encoder
+    }
+
+    static func makeDecoder() -> JSONDecoder {
+        JSONDecoder()
     }
 }
 
@@ -86,8 +152,14 @@ public struct SnapshotRefreshRunner: Sendable {
         self.lock = lock
     }
 
-    public static func appDefault() -> SnapshotRefreshRunner {
-        SnapshotRefreshRunner(service: .appDefault())
+    public static func appDefault(
+        antigravityCredentialSource: AntigravityKeychainCredentialSource? = AntigravityKeychainCredentialSource(),
+        allowsLegacyGeminiOAuth: Bool = true
+    ) -> SnapshotRefreshRunner {
+        SnapshotRefreshRunner(service: .appDefault(
+            antigravityCredentialSource: antigravityCredentialSource,
+            allowsLegacyGeminiOAuth: allowsLegacyGeminiOAuth
+        ))
     }
 
     public func refreshIfNeeded(now: Date = Date()) async throws -> SnapshotRefreshRunDecision {
@@ -235,12 +307,16 @@ public struct SnapshotRefreshService: Sendable {
     private let credentialStore: (any ProviderCredentialStoring)?
     private let promptCacheTelemetryMirror: @Sendable () -> Void
     private let promptCacheTelemetryReader: @Sendable (Date) -> [PromptCacheObservation]
+    private let antigravityCredentialSource: AntigravityKeychainCredentialSource?
+    private let allowsLegacyGeminiOAuth: Bool
 
     public init(
         accountStore: AccountConfigurationStore,
         stores: SnapshotRefreshStores,
         bookmarkStore: SecureFileBookmarkStore? = nil,
         credentialStore: (any ProviderCredentialStoring)? = nil,
+        antigravityCredentialSource: AntigravityKeychainCredentialSource? = AntigravityKeychainCredentialSource(),
+        allowsLegacyGeminiOAuth: Bool = true,
         promptCacheTelemetryMirror: @escaping @Sendable () -> Void = {
             _ = try? PromptCacheTelemetryMirrorService.mirror()
         },
@@ -252,11 +328,16 @@ public struct SnapshotRefreshService: Sendable {
         self.stores = stores
         self.bookmarkStore = bookmarkStore
         self.credentialStore = credentialStore
+        self.antigravityCredentialSource = antigravityCredentialSource
+        self.allowsLegacyGeminiOAuth = allowsLegacyGeminiOAuth
         self.promptCacheTelemetryMirror = promptCacheTelemetryMirror
         self.promptCacheTelemetryReader = promptCacheTelemetryReader
     }
 
-    public static func appDefault() -> SnapshotRefreshService {
+    public static func appDefault(
+        antigravityCredentialSource: AntigravityKeychainCredentialSource? = AntigravityKeychainCredentialSource(),
+        allowsLegacyGeminiOAuth: Bool = true
+    ) -> SnapshotRefreshService {
         SnapshotRefreshService(
             accountStore: AccountConfigurationStore(
                 configurationURL: ContextPanelLocations.accountConfigurationURL(),
@@ -264,7 +345,9 @@ public struct SnapshotRefreshService: Sendable {
             ),
             stores: .appDefault(),
             bookmarkStore: SecureFileBookmarkStore(storeURL: ContextPanelLocations.bookmarkStoreURL()),
-            credentialStore: ProviderCredentialStore()
+            credentialStore: ProviderCredentialStore(),
+            antigravityCredentialSource: antigravityCredentialSource,
+            allowsLegacyGeminiOAuth: allowsLegacyGeminiOAuth
         )
     }
 
@@ -309,13 +392,15 @@ public struct SnapshotRefreshService: Sendable {
             from: accountDocument,
             bookmarkStore: bookmarkStore,
             credentialStore: credentialStore,
-            requiresBookmarkedAuthFiles: ContextPanelLocations.isRunningInAppSandbox
+            requiresBookmarkedAuthFiles: ContextPanelLocations.isRunningInAppSandbox,
+            antigravityCredentialSource: antigravityCredentialSource,
+            allowsLegacyGeminiOAuth: allowsLegacyGeminiOAuth
         )
         let connectorResult = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: now)
         let refreshResult = ConnectorRefreshResult(
             generatedAt: connectorResult.generatedAt,
             reports: connectorResult.reports,
-            promptCacheObservations: connectorResult.promptCacheObservations + promptCacheTelemetryReader(now)
+            promptCacheObservations: connectorResult.promptCacheObservations + promptCacheObservations(now: now)
         )
         guard refreshResult.hasSnapshotPayload else {
             return SnapshotRefreshOutcome(savedAt: now, refreshResult: refreshResult)

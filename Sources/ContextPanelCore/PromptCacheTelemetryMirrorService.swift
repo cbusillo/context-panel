@@ -20,7 +20,7 @@ public enum PromptCacheTelemetryMirrorService {
         var copied = 0
         var removed = 0
         var seenSources = Set<String>()
-        var expectedSourceMirrorDirectories = Set<String>()
+        var readableSourceMirrorDirectories = Set<String>()
 
         for source in sourceDirectories {
             let sourcePath = ContextPanelLocations.normalizedPath(source.path)
@@ -30,8 +30,8 @@ public enum PromptCacheTelemetryMirrorService {
                 path: ConnectorRedactor.localAccountID(provider: .openAI, path: sourcePath),
                 directoryHint: .isDirectory
             )
-            expectedSourceMirrorDirectories.insert(ContextPanelLocations.normalizedPath(sourceMirrorDirectory.path))
             guard let urls = usageJSONFileURLs(in: source, fileManager: fileManager) else { continue }
+            readableSourceMirrorDirectories.insert(ContextPanelLocations.normalizedPath(sourceMirrorDirectory.path))
 
             var expectedTargets = Set<String>()
 
@@ -68,12 +68,14 @@ public enum PromptCacheTelemetryMirrorService {
             )
         }
 
-        removed += try removeOrphanedSourceMirrors(
-            in: destination,
-            preserving: expectedSourceMirrorDirectories,
-            fileManager: fileManager
-        )
-        removed += try removeLegacyFlatMirrors(in: destination, fileManager: fileManager)
+        if !readableSourceMirrorDirectories.isEmpty {
+            removed += try removeOrphanedSourceMirrors(
+                in: destination,
+                preserving: readableSourceMirrorDirectories,
+                fileManager: fileManager
+            )
+            removed += try removeLegacyFlatMirrors(in: destination, fileManager: fileManager)
+        }
 
         return PromptCacheTelemetryMirrorResult(copied: copied, removed: removed)
     }

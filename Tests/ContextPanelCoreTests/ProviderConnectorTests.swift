@@ -715,7 +715,8 @@ import Testing
     let connector = GeminiCodeAssistConnector(
         accounts: [GeminiAccountConfiguration(authPath: "/tmp/gemini.json", accountName: "Gemini", clientID: "client", clientSecret: "secret")],
         httpClient: http,
-        fileLoader: { _ in credentials }
+        fileLoader: { _ in credentials },
+        antigravityCredentialSource: nil
     )
 
     let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
@@ -757,6 +758,158 @@ import Testing
     #expect(result.snapshot.limits.count == 1)
     #expect(http.requests.count == 2)
     #expect(http.requests.allSatisfy { $0.headers["Authorization"] == "Bearer antigravity-access" })
+    #expect(http.requests.allSatisfy { $0.url.host == "daily-cloudcode-pa.googleapis.com" })
+}
+
+@Test func geminiConnectorPrefersAntigravityWhenLegacyGeminiCredentialsStillExist() async throws {
+    let localGeminiCredentials = #"{"refresh_token":"legacy-gemini-refresh"}"#.data(using: .utf8)!
+    let antigravityPayload = #"{"auth_method":"consumer","token":{"access_token":"antigravity-access","refresh_token":"antigravity-refresh","expiry":"2099-05-22T17:00:00.000000000Z"}}"#
+    let storedAntigravityPayload = "go-keyring-base64:\(Data(antigravityPayload.utf8).base64EncodedString())"
+    let load = #"{"cloudaicompanionProject":"project-secret"}"#.data(using: .utf8)!
+    let quota = #"{"buckets":[{"modelId":"gemini-3-flash-preview","remainingFraction":0.5}]}"#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: load),
+        ConnectorHTTPResponse(statusCode: 200, data: quota),
+    ])
+    let antigravitySource = AntigravityKeychainCredentialSource(
+        credentialLoader: InMemoryProviderCredentialStore(storage: [
+            AntigravityKeychainCredentialSource.accountID: Data(storedAntigravityPayload.utf8),
+        ])
+    )
+    let connector = GeminiCodeAssistConnector(
+        accounts: [GeminiAccountConfiguration(authPath: "/tmp/gemini.json", accountName: "Google", clientID: "client", clientSecret: "secret")],
+        httpClient: http,
+        fileLoader: { _ in localGeminiCredentials },
+        antigravityCredentialSource: antigravitySource
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
+
+    #expect(result.reports[0].status == .healthy)
+    #expect(http.requests.count == 2)
+    #expect(http.requests.allSatisfy { $0.headers["Authorization"] == "Bearer antigravity-access" })
+    #expect(http.requests.allSatisfy { $0.url.host == "daily-cloudcode-pa.googleapis.com" })
+}
+
+@Test func geminiConnectorAcceptsAntigravityAccessTokenWithoutExpiry() async throws {
+    let localGeminiCredentials = #"{"refresh_token":"legacy-gemini-refresh"}"#.data(using: .utf8)!
+    let antigravityPayload = #"{"auth_method":"consumer","token":{"access_token":"antigravity-access","refresh_token":"antigravity-refresh"}}"#
+    let storedAntigravityPayload = "go-keyring-base64:\(Data(antigravityPayload.utf8).base64EncodedString())"
+    let load = #"{"cloudaicompanionProject":"project-secret"}"#.data(using: .utf8)!
+    let quota = #"{"buckets":[{"modelId":"gemini-3-flash-preview","remainingFraction":0.5}]}"#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: load),
+        ConnectorHTTPResponse(statusCode: 200, data: quota),
+    ])
+    let antigravitySource = AntigravityKeychainCredentialSource(
+        credentialLoader: InMemoryProviderCredentialStore(storage: [
+            AntigravityKeychainCredentialSource.accountID: Data(storedAntigravityPayload.utf8),
+        ])
+    )
+    let connector = GeminiCodeAssistConnector(
+        accounts: [GeminiAccountConfiguration(authPath: "/tmp/gemini.json", accountName: "Google", clientID: "client", clientSecret: "secret")],
+        httpClient: http,
+        fileLoader: { _ in localGeminiCredentials },
+        antigravityCredentialSource: antigravitySource
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
+
+    #expect(result.reports[0].status == .healthy)
+    #expect(http.requests.count == 2)
+    #expect(http.requests.allSatisfy { $0.headers["Authorization"] == "Bearer antigravity-access" })
+    #expect(http.requests.allSatisfy { $0.url.host == "daily-cloudcode-pa.googleapis.com" })
+}
+
+@Test func geminiConnectorReportsExpiredAntigravityTokenBeforeLegacyGeminiFallback() async throws {
+    let localGeminiCredentials = #"{"refresh_token":"legacy-gemini-refresh"}"#.data(using: .utf8)!
+    let antigravityPayload = #"{"auth_method":"consumer","token":{"access_token":"expired-access","refresh_token":"antigravity-refresh","expiry":"2000-05-22T17:00:00.000000000Z"}}"#
+    let storedAntigravityPayload = "go-keyring-base64:\(Data(antigravityPayload.utf8).base64EncodedString())"
+    let antigravitySource = AntigravityKeychainCredentialSource(
+        credentialLoader: InMemoryProviderCredentialStore(storage: [
+            AntigravityKeychainCredentialSource.accountID: Data(storedAntigravityPayload.utf8),
+        ])
+    )
+    let http = StubHTTPClient(responses: [])
+    let connector = GeminiCodeAssistConnector(
+        accounts: [GeminiAccountConfiguration(authPath: "/tmp/gemini.json", accountName: "Google", clientID: "client", clientSecret: "secret")],
+        httpClient: http,
+        fileLoader: { _ in localGeminiCredentials },
+        antigravityCredentialSource: antigravitySource
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].status == .unknown)
+    #expect(result.reports[0].errorMessage?.contains("Open Antigravity") == true)
+    #expect(http.requests.isEmpty)
+}
+
+@Test func geminiConnectorReportsUnreadableAntigravityCredentialBeforeLegacyGeminiFallback() async throws {
+    let localGeminiCredentials = #"{"refresh_token":"legacy-gemini-refresh"}"#.data(using: .utf8)!
+    let antigravitySource = AntigravityKeychainCredentialSource(
+        credentialLoader: ThrowingCredentialLoader(error: ConnectorError.invalidAuth("keychain denied"))
+    )
+    let http = StubHTTPClient(responses: [])
+    let connector = GeminiCodeAssistConnector(
+        accounts: [GeminiAccountConfiguration(authPath: "/tmp/gemini.json", accountName: "Google", clientID: "client", clientSecret: "secret")],
+        httpClient: http,
+        fileLoader: { _ in localGeminiCredentials },
+        antigravityCredentialSource: antigravitySource
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].status == .unknown)
+    #expect(result.reports[0].limits.isEmpty)
+    #expect(result.reports[0].errorMessage?.contains("Open Antigravity") == true)
+    #expect(http.requests.isEmpty)
+}
+
+@Test func geminiConnectorSurfacesExhaustedAntigravityQuotaAsLimited() async throws {
+    let antigravityPayload = #"{"auth_method":"consumer","token":{"access_token":"antigravity-access","refresh_token":"antigravity-refresh","expiry":"2099-05-22T17:00:00.000000000Z"}}"#
+    let storedAntigravityPayload = "go-keyring-base64:\(Data(antigravityPayload.utf8).base64EncodedString())"
+    let load = #"{"cloudaicompanionProject":"project-secret"}"#.data(using: .utf8)!
+    let quota = #"""
+    {
+      "quotaBuckets": [
+        {
+          "modelId": "Gemini 3.5 Flash (Medium)",
+          "bucketLabel": "Antigravity daily agent execution",
+          "remainingAmount": 0,
+          "totalAmount": 100,
+          "resetWindow": "daily"
+        }
+      ]
+    }
+    """#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: load),
+        ConnectorHTTPResponse(statusCode: 200, data: quota),
+    ])
+    let antigravitySource = AntigravityKeychainCredentialSource(
+        credentialLoader: InMemoryProviderCredentialStore(storage: [
+            AntigravityKeychainCredentialSource.accountID: Data(storedAntigravityPayload.utf8),
+        ])
+    )
+    let connector = GeminiCodeAssistConnector(
+        accounts: [GeminiAccountConfiguration(authPath: "/tmp/missing-gemini.json", accountName: "Google", clientID: "client", clientSecret: "secret")],
+        httpClient: http,
+        fileLoader: { _ in throw ConnectorError.invalidAuth("missing Gemini OAuth file") },
+        antigravityCredentialSource: antigravitySource
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
+
+    let limit = try #require(result.snapshot.limits.first)
+    #expect(result.reports[0].status == .limited)
+    #expect(limit.label == "Antigravity daily agent execution")
+    #expect(limit.used == 100)
+    #expect(limit.limit == 100)
+    #expect(limit.status == .limited)
+    #expect(http.requests.allSatisfy { $0.url.host == "daily-cloudcode-pa.googleapis.com" })
 }
 
 @Test func geminiConnectorPrefersAntigravityWhenGeminiMetadataIsUnavailable() async throws {
@@ -786,6 +939,7 @@ import Testing
     #expect(result.reports[0].status == .healthy)
     #expect(http.requests.count == 2)
     #expect(http.requests.allSatisfy { $0.headers["Authorization"] == "Bearer antigravity-access" })
+    #expect(http.requests.allSatisfy { $0.url.host == "daily-cloudcode-pa.googleapis.com" })
 }
 
 @Test func geminiConnectorReportsExpiredAntigravityTokenWithoutGeminiMetadata() async throws {
@@ -806,7 +960,7 @@ import Testing
     let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
 
     #expect(result.reports.count == 1)
-    #expect(result.reports[0].status == .failure)
+    #expect(result.reports[0].status == .unknown)
     #expect(result.reports[0].errorMessage?.contains("Open Antigravity") == true)
 }
 
@@ -1257,6 +1411,14 @@ private final class StubCredentialStore: ProviderCredentialStoring, @unchecked S
         storage[accountID] = data
         savedAccountID = accountID
         savedData = data
+    }
+}
+
+private struct ThrowingCredentialLoader: ProviderCredentialLoading {
+    let error: any Error
+
+    func load(accountID: String) throws -> Data? {
+        throw error
     }
 }
 

@@ -384,6 +384,72 @@ import Testing
     #expect(connectors[0].provider == .google)
 }
 
+@Test func accountConnectorFactoryAllowsMissingGeminiMetadataWhenAntigravityCredentialIsUnreadable() async {
+    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
+        LocalProviderAccountConfiguration(
+            id: "gemini",
+            provider: .google,
+            connectorKind: .geminiCodeAssist,
+            displayName: "Gemini",
+            authPath: "/tmp/missing-gemini.json",
+            oauthClientIDEnvironmentName: "GEMINI_ID",
+            oauthClientSecretEnvironmentName: "GEMINI_SECRET"
+        ),
+    ])
+
+    let connectors = AccountConnectorFactory.connectors(
+        from: document,
+        environment: [:],
+        useBundledGeminiMetadataFallback: false,
+        geminiMetadataFileLoader: { _ in "" },
+        geminiMetadataFileExists: { _ in false },
+        geminiMetadataDirectoryLister: { _ in [] },
+        antigravityCredentialSource: AntigravityKeychainCredentialSource(
+            credentialLoader: ThrowingProviderCredentialStore()
+        )
+    )
+    let result = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: Date(timeIntervalSince1970: 0))
+
+    #expect(connectors.count == 1)
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].provider == .google)
+    #expect(result.reports[0].status == .unknown)
+    #expect(result.reports[0].limits.isEmpty)
+    #expect(result.reports[0].errorMessage?.contains("Open Antigravity") == true)
+    #expect(result.reports[0].errorMessage?.contains("OAuth client metadata") != true)
+}
+
+@Test func accountConnectorFactoryDisablesLegacyGeminiFallbackForForegroundOnlyAntigravityRefresh() async {
+    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
+        LocalProviderAccountConfiguration(
+            id: "gemini",
+            provider: .google,
+            connectorKind: .geminiCodeAssist,
+            displayName: "Google",
+            authPath: "/tmp/gemini.json"
+        ),
+    ])
+
+    let connectors = AccountConnectorFactory.connectors(
+        from: document,
+        environment: [
+            "GEMINI_OAUTH_CLIENT_ID": "legacy-client",
+            "GEMINI_OAUTH_CLIENT_SECRET": "legacy-secret",
+        ],
+        geminiMetadataFileExists: { _ in false },
+        antigravityCredentialSource: nil,
+        allowsLegacyGeminiOAuth: false
+    )
+    let result = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: Date(timeIntervalSince1970: 0))
+
+    #expect(connectors.count == 1)
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].provider == .google)
+    #expect(result.reports[0].status == .unknown)
+    #expect(result.reports[0].limits.isEmpty)
+    #expect(result.reports[0].errorMessage?.contains("foreground refresh") == true)
+}
+
 @Test func accountConnectorFactoryFallsBackToGeminiDiscoveryForPartialMetadataEnvironment() async {
     let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
         LocalProviderAccountConfiguration(
@@ -402,7 +468,9 @@ import Testing
         environment: ["GEMINI_ID": "client"],
         useBundledGeminiMetadataFallback: false,
         geminiMetadataFileLoader: { _ in #"var OAUTH_CLIENT_ID = "discovered"; var OAUTH_CLIENT_SECRET = "secret";"# },
-        geminiMetadataFileExists: { _ in true }
+        geminiMetadataFileExists: { _ in true },
+        geminiMetadataDirectoryLister: { _ in [] },
+        antigravityCredentialSource: nil
     )
 
     #expect(connectors.count == 1)
@@ -428,7 +496,9 @@ import Testing
         from: document,
         environment: ["GEMINI_CLI_BUNDLE_PATH": "/tmp/gemini-bundle.js"],
         geminiMetadataFileLoader: { _ in source },
-        geminiMetadataFileExists: { _ in true }
+        geminiMetadataFileExists: { _ in true },
+        geminiMetadataDirectoryLister: { _ in [] },
+        antigravityCredentialSource: nil
     )
 
     #expect(connectors.count == 1)
@@ -462,7 +532,8 @@ import Testing
         },
         geminiMetadataDirectoryLister: { root in
             root == "/Users/test/.local/bin" ? ["\(root)/chunk.js"] : []
-        }
+        },
+        antigravityCredentialSource: nil
     )
 
     #expect(connectors.count == 1)
@@ -490,7 +561,9 @@ import Testing
         requiresBookmarkedAuthFiles: true,
         environment: [:],
         useBundledGeminiMetadataFallback: false,
-        geminiMetadataFileExists: { _ in false }
+        geminiMetadataFileExists: { _ in false },
+        geminiMetadataDirectoryLister: { _ in [] },
+        antigravityCredentialSource: nil
     )
 
     #expect(connectors.count == 1)

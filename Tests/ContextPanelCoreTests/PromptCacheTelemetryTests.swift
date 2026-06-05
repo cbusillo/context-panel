@@ -510,6 +510,49 @@ import Testing
     #expect(FileManager.default.fileExists(atPath: mirroredTarget.path))
 }
 
+@Test func promptCacheMirrorServiceRemovesMissingSourceMirrorsWhenAnotherSourceIsReadable() throws {
+    let root = try promptCacheTemporaryDirectory()
+    let activeSource = root.appending(path: "active", directoryHint: .isDirectory)
+    let missingSource = root.appending(path: "missing", directoryHint: .isDirectory)
+    let destination = root.appending(path: "mirror", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: activeSource, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: missingSource, withIntermediateDirectories: true)
+    let activeFile = activeSource.appending(path: "usage.json")
+    let missingFile = missingSource.appending(path: "usage.json")
+    try promptCachePayload(
+        lastUpdated: "2026-06-04T17:47:50.196967Z",
+        cachedInputTokens: 90
+    ).write(to: activeFile, atomically: true, encoding: .utf8)
+    try promptCachePayload(
+        lastUpdated: "2026-06-04T17:47:50.196967Z",
+        cachedInputTokens: 80
+    ).write(to: missingFile, atomically: true, encoding: .utf8)
+
+    let first = try PromptCacheTelemetryMirrorService.mirror(
+        sourceDirectories: [activeSource, missingSource],
+        destination: destination
+    )
+    try FileManager.default.removeItem(at: missingSource)
+    let second = try PromptCacheTelemetryMirrorService.mirror(
+        sourceDirectories: [activeSource, missingSource],
+        destination: destination
+    )
+
+    let activeTarget = ContextPanelLocations.promptCacheMirrorTargetURL(
+        destination: destination,
+        sourceDirectory: activeSource,
+        fileURL: activeFile
+    )
+    let missingDirectoryID = ConnectorRedactor.localAccountID(provider: .openAI, path: missingSource.path)
+    let missingDirectory = destination.appending(path: missingDirectoryID, directoryHint: .isDirectory)
+    #expect(first.copied == 2)
+    #expect(first.removed == 0)
+    #expect(second.copied == 1)
+    #expect(second.removed == 1)
+    #expect(FileManager.default.fileExists(atPath: activeTarget.path))
+    #expect(!FileManager.default.fileExists(atPath: missingDirectory.path))
+}
+
 private func promptCacheTemporaryDirectory() throws -> URL {
     let url = FileManager.default.temporaryDirectory
         .appending(path: "context-panel-prompt-cache-tests")
