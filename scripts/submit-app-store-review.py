@@ -649,11 +649,6 @@ def ensure_review_submission(
                 "type": "reviewSubmissions",
                 "id": submission["id"],
                 "attributes": {"submitted": True},
-                "relationships": {
-                    "appStoreVersionForReview": {
-                        "data": {"type": "appStoreVersions", "id": version_id}
-                    }
-                },
             }
         },
     )["data"]
