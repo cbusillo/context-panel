@@ -413,7 +413,7 @@ import Testing
     #expect(connectors.count == 1)
     #expect(result.reports.count == 1)
     #expect(result.reports[0].provider == .google)
-    #expect(result.reports[0].status == .unknown)
+    #expect(result.reports[0].status == .failure)
     #expect(result.reports[0].limits.isEmpty)
     #expect(result.reports[0].errorMessage?.contains("Open Antigravity") == true)
     #expect(result.reports[0].errorMessage?.contains("OAuth client metadata") != true)
@@ -445,7 +445,7 @@ import Testing
     #expect(connectors.count == 1)
     #expect(result.reports.count == 1)
     #expect(result.reports[0].provider == .google)
-    #expect(result.reports[0].status == .unknown)
+    #expect(result.reports[0].status == .failure)
     #expect(result.reports[0].limits.isEmpty)
     #expect(result.reports[0].errorMessage?.contains("foreground refresh") == true)
 }

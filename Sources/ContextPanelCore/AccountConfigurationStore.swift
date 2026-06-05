@@ -286,8 +286,7 @@ public enum AccountConnectorFactory {
                         provider: .google,
                         accountID: ConnectorRedactor.localAccountID(provider: .google, path: expanded),
                         accountName: account.displayName,
-                        message: "Google Antigravity credentials require foreground refresh. Open Context Panel to refresh Google limits.",
-                        status: .unknown
+                        message: "Google Antigravity credentials require foreground refresh. Open Context Panel to refresh Google limits."
                     )
                 }
                 let authFileLoader = makeAuthFileLoader(

@@ -841,7 +841,7 @@ import Testing
     let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
 
     #expect(result.reports.count == 1)
-    #expect(result.reports[0].status == .unknown)
+    #expect(result.reports[0].status == .failure)
     #expect(result.reports[0].errorMessage?.contains("Open Antigravity") == true)
     #expect(http.requests.isEmpty)
 }
@@ -862,7 +862,7 @@ import Testing
     let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
 
     #expect(result.reports.count == 1)
-    #expect(result.reports[0].status == .unknown)
+    #expect(result.reports[0].status == .failure)
     #expect(result.reports[0].limits.isEmpty)
     #expect(result.reports[0].errorMessage?.contains("Open Antigravity") == true)
     #expect(http.requests.isEmpty)
@@ -960,7 +960,7 @@ import Testing
     let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
 
     #expect(result.reports.count == 1)
-    #expect(result.reports[0].status == .unknown)
+    #expect(result.reports[0].status == .failure)
     #expect(result.reports[0].errorMessage?.contains("Open Antigravity") == true)
 }
 

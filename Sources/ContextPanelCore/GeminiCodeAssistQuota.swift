@@ -729,18 +729,13 @@ public struct GeminiCodeAssistConnector: ProviderConnector {
                 limits: limits
             )
         } catch {
-            let status: UsageStatus = if case ConnectorError.foregroundRefreshRequired = error {
-                .unknown
-            } else {
-                .failure
-            }
             return ProviderConnectorReport(
                 provider: provider,
                 accountID: localAccountID,
                 accountName: account.accountName,
                 generatedAt: now,
                 limits: [],
-                status: status,
+                status: .failure,
                 errorMessage: error.localizedDescription
             )
         }
