@@ -273,6 +273,7 @@ public struct JSONSnapshotStore: Sendable {
                 .map { ProviderAccountKey(provider: $0.provider, accountID: $0.accountID) }
         )
         let current = loadCurrent().snapshot
+        let legacyGoogleDefaultAccountIDs = Self.legacyGoogleDefaultAccountIDs(in: current)
         let preservedLimits: [UsageLimit]
         let preservedReports: [StoredProviderReport]
         if preservesUnreportedAccounts {
@@ -280,11 +281,33 @@ public struct JSONSnapshotStore: Sendable {
                 let key = ProviderAccountKey(provider: limit.provider, accountID: limit.accountID)
                 return !authoritativeEmptyAccounts.contains(key)
                     && !replacementAccounts.contains(key)
+                    && !refreshResult.reports.contains { report in
+                        report.provider == .google
+                            && report.configuredAccountID == "google-antigravity-default"
+                            && report.accountID != limit.accountID
+                            && limit.provider == .google
+                            && Self.isLegacyGoogleDefault(
+                                accountID: limit.accountID,
+                                configuredAccountID: limit.configuredAccountID,
+                                legacyAccountIDs: legacyGoogleDefaultAccountIDs
+                            )
+                    }
             } ?? []
             preservedReports = current?.reports.filter { report in
                 let key = ProviderAccountKey(provider: report.provider, accountID: report.accountID)
                 return !authoritativeEmptyAccounts.contains(key)
                     && !reportedAccounts.contains(key)
+                    && !refreshResult.reports.contains { refreshed in
+                        refreshed.provider == .google
+                            && refreshed.configuredAccountID == "google-antigravity-default"
+                            && refreshed.accountID != report.accountID
+                            && report.provider == .google
+                            && Self.isLegacyGoogleDefault(
+                                accountID: report.accountID,
+                                configuredAccountID: report.configuredAccountID,
+                                legacyAccountIDs: legacyGoogleDefaultAccountIDs
+                            )
+                    }
             } ?? []
         } else {
             preservedLimits = current?.snapshot.limits.filter { limit in
@@ -314,6 +337,16 @@ public struct JSONSnapshotStore: Sendable {
                 if currentAccountKeys.contains(reportKey) {
                     return report.accountID == limit.accountID
                 }
+                if report.provider == .google,
+                   report.configuredAccountID == "google-antigravity-default",
+                   report.accountID != limit.accountID,
+                   Self.isLegacyGoogleDefault(
+                       accountID: limit.accountID,
+                       configuredAccountID: limit.configuredAccountID,
+                       legacyAccountIDs: legacyGoogleDefaultAccountIDs
+                   ) {
+                    return false
+                }
                 return !successfulProviders.contains(report.provider)
             }
         } ?? []
@@ -341,6 +374,46 @@ public struct JSONSnapshotStore: Sendable {
                 .filter { savedAt.timeIntervalSince($0.observedAt) <= PromptCacheSummary.defaultMaximumAge }
                 .deduplicatedPromptCacheObservations()
         ))
+    }
+
+    private static func legacyGoogleDefaultAccountIDs(in snapshot: StoredUsageSnapshot?) -> Set<String> {
+        Set(
+            (snapshot?.snapshot.limits.compactMap { limit -> String? in
+                guard isLegacyGoogleDefault(limit) else { return nil }
+                return limit.accountID
+            } ?? [])
+                + (snapshot?.reports.compactMap { report -> String? in
+                    guard isLegacyGoogleDefault(report) else { return nil }
+                    return report.accountID
+                } ?? [])
+        )
+    }
+
+    private static func isLegacyGoogleDefault(
+        accountID: String,
+        configuredAccountID: String?,
+        legacyAccountIDs: Set<String>
+    ) -> Bool {
+        isLegacyGoogleDefault(configuredAccountID: configuredAccountID)
+            || (configuredAccountID == nil && legacyAccountIDs.contains(accountID))
+    }
+
+    private static func isLegacyGoogleDefault(configuredAccountID: String?) -> Bool {
+        configuredAccountID == "gemini-code-assist-default"
+    }
+
+    private static func isLegacyGoogleDefault(_ limit: UsageLimit) -> Bool {
+        guard limit.provider == .google else { return false }
+        if isLegacyGoogleDefault(configuredAccountID: limit.configuredAccountID) { return true }
+        guard limit.configuredAccountID == nil, limit.accountName == "Gemini" else { return false }
+        let modelText = [limit.label, limit.modelLabel].compactMap { $0 }.joined(separator: " ").lowercased()
+        return modelText.contains("gemini")
+    }
+
+    private static func isLegacyGoogleDefault(_ report: StoredProviderReport) -> Bool {
+        guard report.provider == .google else { return false }
+        if isLegacyGoogleDefault(configuredAccountID: report.configuredAccountID) { return true }
+        return report.configuredAccountID == nil && report.accountName == "Gemini"
     }
 
     public func loadCurrent() -> SnapshotStoreLoadResult {

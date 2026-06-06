@@ -223,6 +223,8 @@ xcodebuild \
 	-configuration "$configuration" \
 	-derivedDataPath "$derived_data_path" \
 	-destination 'platform=macOS' \
+	CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID="${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID:-}" \
+	CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET="${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET:-}" \
 	CODE_SIGNING_ALLOWED=NO \
 	build
 

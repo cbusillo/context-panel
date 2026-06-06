@@ -28,6 +28,24 @@ public struct GoogleAntigravityOAuthCredentials: Codable, Equatable, Sendable {
         case scopes
         case projectID
     }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        accessToken = try container.decodeIfPresent(String.self, forKey: .accessToken)
+        refreshToken = try container.decodeIfPresent(String.self, forKey: .refreshToken)
+        expiresAt = try container.decodeIfPresent(Date.self, forKey: .expiresAt)
+        scopes = try container.decodeIfPresent([String].self, forKey: .scopes) ?? GoogleAntigravityOAuthMetadata.scopes
+        projectID = try container.decodeIfPresent(String.self, forKey: .projectID)
+
+        let hasAccessToken = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        let hasRefreshToken = refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        guard hasAccessToken || hasRefreshToken else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "Google Antigravity credentials do not contain an access or refresh token."
+            ))
+        }
+    }
 }
 
 public struct GoogleAntigravityOAuthTokenResponse: Decodable, Equatable, Sendable {
@@ -74,7 +92,7 @@ public struct GoogleAntigravityAccountConfiguration: Equatable, Sendable {
         accountName: String = "Antigravity",
         tokenEndpoint: URL = GoogleAntigravityOAuthMetadata.tokenEndpoint,
         codeAssistBaseURL: URL = GoogleAntigravityOAuthMetadata.codeAssistBaseURL,
-        clientID: String = GoogleAntigravityOAuthMetadata.clientID,
+        clientID: String = GoogleAntigravityOAuthMetadata.clientID ?? "",
         clientSecret: String? = GoogleAntigravityOAuthMetadata.clientSecret,
         projectID: String? = nil,
         userAgent: String = GoogleAntigravityOAuthMetadata.userAgent
@@ -109,9 +127,12 @@ public enum GoogleAntigravityOAuthFlow {
         codeChallenge: String,
         state: String,
         redirectURI: String = manualRedirectURI,
-        clientID: String = GoogleAntigravityOAuthMetadata.clientID,
+        clientID: String? = GoogleAntigravityOAuthMetadata.clientID,
         scopes: [String] = GoogleAntigravityOAuthMetadata.scopes
     ) throws -> URL {
+        guard let clientID, !clientID.isEmpty else {
+            throw ConnectorError.invalidAuth("Google Antigravity OAuth client ID is not configured.")
+        }
         var components = URLComponents(url: GoogleAntigravityOAuthMetadata.authorizationEndpoint, resolvingAgainstBaseURL: false)!
         components.queryItems = [
             URLQueryItem(name: "client_id", value: clientID),
@@ -134,9 +155,12 @@ public enum GoogleAntigravityOAuthFlow {
         code: GoogleAntigravityAuthorizationCode,
         codeVerifier: String,
         redirectURI: String = manualRedirectURI,
-        clientID: String = GoogleAntigravityOAuthMetadata.clientID,
+        clientID: String? = GoogleAntigravityOAuthMetadata.clientID,
         clientSecret: String? = GoogleAntigravityOAuthMetadata.clientSecret
-    ) -> Data {
+    ) throws -> Data {
+        guard let clientID, !clientID.isEmpty else {
+            throw ConnectorError.invalidAuth("Google Antigravity OAuth client ID is not configured.")
+        }
         var values = [
             "grant_type": "authorization_code",
             "code": code.code,
@@ -152,9 +176,12 @@ public enum GoogleAntigravityOAuthFlow {
 
     public static func refreshTokenRequestBody(
         refreshToken: String,
-        clientID: String = GoogleAntigravityOAuthMetadata.clientID,
+        clientID: String? = GoogleAntigravityOAuthMetadata.clientID,
         clientSecret: String? = GoogleAntigravityOAuthMetadata.clientSecret
-    ) -> Data {
+    ) throws -> Data {
+        guard let clientID, !clientID.isEmpty else {
+            throw ConnectorError.invalidAuth("Google Antigravity OAuth client ID is not configured.")
+        }
         var values = [
             "grant_type": "refresh_token",
             "refresh_token": refreshToken,
@@ -205,6 +232,11 @@ public enum GoogleAntigravityQuotaParser {
 
 public struct GoogleAntigravityQuotaConnector: ProviderConnector {
     public let provider: Provider = .google
+
+    private enum RequestMetadata {
+        static let apiClient = "gl-mac/1.0.0 antigravity-context-panel/1.0.0"
+        static let clientMetadata = #"{"ideType":"ANTIGRAVITY","platform":"MACOS","pluginType":"GEMINI"}"#
+    }
 
     private let accounts: [GoogleAntigravityAccountConfiguration]
     private let httpClient: any ConnectorHTTPClient
@@ -300,6 +332,9 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
         localAccountID: String
     ) async throws -> ProviderConnectorReport {
         let projectID = try await projectID(accessToken: accessToken, account: account, credentials: credentials)
+        if credentials.projectID != projectID {
+            try? saveCredentials(credentials.withProjectID(projectID), accountID: account.accountID)
+        }
         let response = try await httpClient.data(for: ConnectorHTTPRequest(
             url: codeAssistURL(path: "v1internal:fetchAvailableModels", baseURL: account.codeAssistBaseURL),
             method: "POST",
@@ -356,7 +391,11 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
         guard let data = try credentialStore.load(accountID: accountID) else {
             throw ConnectorError.missingAuth("Google Antigravity is not connected. Sign in to Google from Settings.")
         }
-        return try JSONDecoder.contextPanelISO8601.decode(GoogleAntigravityOAuthCredentials.self, from: data)
+        do {
+            return try JSONDecoder.contextPanelISO8601.decode(GoogleAntigravityOAuthCredentials.self, from: data)
+        } catch is DecodingError {
+            throw ConnectorError.invalidAuth("Google Antigravity credentials are in an unexpected format. Sign in again from Settings.")
+        }
     }
 
     private func saveCredentials(_ credentials: GoogleAntigravityOAuthCredentials, accountID: String) throws {
@@ -391,7 +430,7 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
                 "Content-Type": "application/x-www-form-urlencoded",
                 "Accept": "application/json",
             ],
-            body: GoogleAntigravityOAuthFlow.refreshTokenRequestBody(
+            body: try GoogleAntigravityOAuthFlow.refreshTokenRequestBody(
                 refreshToken: refreshToken,
                 clientID: account.clientID,
                 clientSecret: account.clientSecret
@@ -420,8 +459,10 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
             "Authorization": "Bearer \(accessToken)",
             "Accept": "application/json",
             "Content-Type": "application/json",
+            "X-Goog-Api-Client": RequestMetadata.apiClient,
+            "X-Goog-QuotaUser": account.accountID,
             "User-Agent": account.userAgent,
-            "Client-Metadata": #"{"ideType":"ANTIGRAVITY","platform":"MACOS","pluginType":"GEMINI"}"#,
+            "Client-Metadata": RequestMetadata.clientMetadata,
         ]
     }
 
@@ -451,14 +492,26 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
     }
 }
 
+private extension GoogleAntigravityOAuthCredentials {
+    func withProjectID(_ projectID: String) -> GoogleAntigravityOAuthCredentials {
+        GoogleAntigravityOAuthCredentials(
+            accessToken: accessToken,
+            refreshToken: refreshToken,
+            expiresAt: expiresAt,
+            scopes: scopes,
+            projectID: projectID
+        )
+    }
+}
+
 public enum GoogleAntigravityOAuthMetadata {
     public static let authorizationEndpoint = URL(string: "https://accounts.google.com/o/oauth2/v2/auth")!
     public static let tokenEndpoint = URL(string: "https://oauth2.googleapis.com/token")!
     public static let codeAssistBaseURL = URL(string: "https://cloudcode-pa.googleapis.com")!
     public static let userAgent = "antigravity/macos/context-panel"
 
-    public static let clientID = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
-    public static let clientSecret: String? = nil
+    public static var clientID: String? { configuredValue(named: "CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID") }
+    public static var clientSecret: String? { configuredValue(named: "CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET") }
     public static let scopes = [
         "https://www.googleapis.com/auth/cloud-platform",
         "https://www.googleapis.com/auth/userinfo.email",
@@ -466,6 +519,14 @@ public enum GoogleAntigravityOAuthMetadata {
         "https://www.googleapis.com/auth/cclog",
         "https://www.googleapis.com/auth/experimentsandconfigs",
     ]
+
+    private static func configuredValue(named key: String) -> String? {
+        let environmentValue = ProcessInfo.processInfo.environment[key]
+        let bundleValue = Bundle.main.object(forInfoDictionaryKey: key) as? String
+        return [environmentValue, bundleValue]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty && !$0.hasPrefix("$(") }
+    }
 }
 
 private struct GoogleOAuthErrorPayload: Decodable {
@@ -523,8 +584,8 @@ private struct GoogleAntigravityAvailableModelsPayload: Decodable {
                 accountID: accountID,
                 configuredAccountID: configuredAccountID,
                 accountName: accountName,
-                label: "\(group.displayName) availability",
-                windowLabel: "Availability",
+                label: "\(group.displayName) capacity",
+                windowLabel: group.windowLabel,
                 modelLabel: group.displayName,
                 unit: .percent,
                 used: Int(((1 - quota.remainingFraction) * 100).rounded()),
@@ -539,8 +600,9 @@ private struct GoogleAntigravityAvailableModelsPayload: Decodable {
 
     private func groupedQuotas() -> [GoogleAntigravityModelGroup: GoogleAntigravityQuotaAggregate] {
         models.reduce(into: [:]) { groups, entry in
-            guard let group = GoogleAntigravityModelGroup(modelName: entry.key) else { return }
-            guard let quotaInfo = entry.value.quotaInfo, let remainingFraction = quotaInfo.remainingFraction else { return }
+            guard let group = GoogleAntigravityModelGroup(modelName: entry.key, displayName: entry.value.displayName) else { return }
+            guard let quotaInfo = entry.value.quotaInfo else { return }
+            let remainingFraction = quotaInfo.remainingFraction ?? 0
             let clamped = max(0, min(remainingFraction, 1))
             groups[group, default: GoogleAntigravityQuotaAggregate(remainingFraction: clamped, resetTime: quotaInfo.resetTime)]
                 .merge(remainingFraction: clamped, resetTime: quotaInfo.resetTime)
@@ -549,12 +611,33 @@ private struct GoogleAntigravityAvailableModelsPayload: Decodable {
 }
 
 private struct GoogleAntigravityModelInfo: Decodable {
+    let displayName: String?
     let quotaInfo: GoogleAntigravityQuotaInfo?
 }
 
 private struct GoogleAntigravityQuotaInfo: Decodable {
     let remainingFraction: Double?
     let resetTime: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case remainingFraction
+        case resetTime
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let doubleValue = try? container.decodeIfPresent(Double.self, forKey: .remainingFraction) {
+            remainingFraction = doubleValue
+        } else if
+            let stringValue = try? container.decodeIfPresent(String.self, forKey: .remainingFraction),
+            let doubleValue = Double(stringValue)
+        {
+            remainingFraction = doubleValue
+        } else {
+            remainingFraction = nil
+        }
+        resetTime = try container.decodeIfPresent(Date.self, forKey: .resetTime)
+    }
 }
 
 private struct GoogleAntigravityQuotaAggregate: Equatable {
@@ -581,8 +664,8 @@ private enum GoogleAntigravityModelGroup: Hashable {
     case gptOSS
     case other(String)
 
-    init?(modelName: String) {
-        let lower = modelName.lowercased()
+    init?(modelName: String, displayName: String? = nil) {
+        let lower = [modelName, displayName].compactMap { $0 }.joined(separator: " ").lowercased()
         if lower.contains("claude") {
             self = .claude
         } else if lower.contains("gpt-oss") || lower.contains("gptoss") {
@@ -624,6 +707,10 @@ private enum GoogleAntigravityModelGroup: Hashable {
         case .gptOSS: 4
         case .other: 5
         }
+    }
+
+    var windowLabel: String {
+        "Model capacity"
     }
 
     private static func displayName(for modelName: String) -> String {

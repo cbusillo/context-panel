@@ -4,6 +4,7 @@ public enum MainLimitWindow: String, CaseIterable, Codable, Equatable, Identifia
     case fiveHour
     case weekly
     case daily
+    case availability
 
     public var id: String { rawValue }
 
@@ -15,6 +16,8 @@ public enum MainLimitWindow: String, CaseIterable, Codable, Equatable, Identifia
             "Weekly"
         case .daily:
             "Daily"
+        case .availability:
+            "Model capacity"
         }
     }
 
@@ -26,6 +29,8 @@ public enum MainLimitWindow: String, CaseIterable, Codable, Equatable, Identifia
             "1w"
         case .daily:
             "1d"
+        case .availability:
+            "Cap"
         }
     }
 
@@ -37,6 +42,8 @@ public enum MainLimitWindow: String, CaseIterable, Codable, Equatable, Identifia
             1
         case .daily:
             2
+        case .availability:
+            3
         }
     }
 
@@ -51,6 +58,9 @@ public enum MainLimitWindow: String, CaseIterable, Codable, Equatable, Identifia
 
         if searchable.contains("spark") {
             return nil
+        }
+        if limit.windowLabel?.isModelCapacityWindowLabel == true {
+            return .availability
         }
         if searchable.contains("5-hour")
             || searchable.contains("5 hour")
@@ -82,6 +92,31 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
 
     public var id: String {
         "\(provider.rawValue):\(window.rawValue)"
+    }
+
+    public var displayWindowName: String {
+        window == .availability ? MainLimitWindow.weekly.displayName : window.displayName
+    }
+
+    public var compactDisplayWindowName: String {
+        window == .availability ? MainLimitWindow.weekly.shortName : window.shortName
+    }
+
+    public func displayWindowName(now: Date) -> String {
+        displayWindowName
+    }
+
+    public func compactDisplayWindowName(now: Date) -> String {
+        compactDisplayWindowName
+    }
+
+    public var resetCountdownText: String? {
+        resetCountdownText(now: Date())
+    }
+
+    public func resetCountdownText(now: Date) -> String? {
+        guard let resetsAt, resetsAt >= now.addingTimeInterval(-60) else { return nil }
+        return Self.compactResetDistance(until: resetsAt, now: now)
     }
 
     public var primaryLimit: UsageLimit? {
@@ -214,6 +249,19 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
         self.providerMainLimits = providerMainLimits ?? limits
     }
 
+    private static func compactResetDistance(until date: Date, now: Date) -> String {
+        let seconds = max(Int(date.timeIntervalSince(now)), 0)
+        if seconds < 60 { return "now" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(minutes)m" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours)h" }
+        let days = hours / 24
+        let remainingHours = hours % 24
+        if remainingHours == 0 { return "\(days)d" }
+        return "\(days)d \(remainingHours)h"
+    }
+
     private var numericLimits: [UsageLimit] {
         limits.filter { $0.used != nil && $0.limit != nil }
     }
@@ -284,14 +332,29 @@ public extension UsageLimit {
         guard let window = MainLimitWindow.infer(from: self) else { return nil }
         switch provider {
         case .openAI, .anthropic:
-            return window == .daily ? nil : window
+            return window == .daily || window == .availability ? nil : window
         case .google:
+            if window == .availability, !isGoogleAntigravityGeminiAvailability {
+                return nil
+            }
             return window
         }
     }
 
     var isMainLimit: Bool {
         mainLimitWindow != nil
+    }
+
+    private var isGoogleAntigravityGeminiAvailability: Bool {
+        guard provider == .google else { return false }
+        guard note?.localizedCaseInsensitiveContains("source: Google Antigravity model availability") == true else {
+            return false
+        }
+        let modelText = [label, modelLabel]
+            .compactMap { $0 }
+            .joined(separator: " ")
+            .lowercased()
+        return modelText.contains("gemini")
     }
 }
 
@@ -360,12 +423,21 @@ public extension UsageSnapshot {
     }
 }
 
+private extension String {
+    var isModelCapacityWindowLabel: Bool {
+        localizedCaseInsensitiveCompare("Model capacity") == .orderedSame
+            || localizedCaseInsensitiveCompare("Availability") == .orderedSame
+    }
+}
+
 extension MainLimitWindow {
     fileprivate var capacityGateRank: Int {
         switch self {
         case .fiveHour:
             0
         case .daily:
+            1
+        case .availability:
             1
         case .weekly:
             2

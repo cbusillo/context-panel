@@ -418,6 +418,8 @@ build_checkout_app() {
 		-scheme ContextPanel \
 		-configuration Debug \
 		-derivedDataPath "$derived_data_path" \
+		CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID="${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID:-}" \
+		CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET="${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET:-}" \
 		build
 	fingerprint="$("${repo_root}/scripts/context-panel-build-fingerprint.sh" 2>/dev/null || true)"
 	expected_fingerprint="$fingerprint"

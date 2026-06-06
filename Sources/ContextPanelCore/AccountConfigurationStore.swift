@@ -199,17 +199,27 @@ public struct AccountConfigurationStore: Sendable {
         var document = document
         var changed = false
         document.accounts = document.accounts.map { account in
-            guard account.id == "claude-local-default", account.connectorKind == .claudeLocalStatus else {
-                return account
+            if account.id == "claude-local-default", account.connectorKind == .claudeLocalStatus {
+                changed = true
+                return LocalProviderAccountConfiguration(
+                    id: "claude-oauth-default",
+                    provider: .anthropic,
+                    connectorKind: .claudeOAuthUsage,
+                    displayName: account.displayName.isEmpty ? "Claude" : account.displayName,
+                    isEnabled: account.isEnabled
+                )
             }
-            changed = true
-            return LocalProviderAccountConfiguration(
-                id: "claude-oauth-default",
-                provider: .anthropic,
-                connectorKind: .claudeOAuthUsage,
-                displayName: account.displayName.isEmpty ? "Claude" : account.displayName,
-                isEnabled: account.isEnabled
-            )
+            if account.id == GoogleAccountMigration.oldAccountID, account.connectorKind == .geminiCodeAssist {
+                changed = true
+                return LocalProviderAccountConfiguration(
+                    id: GoogleAccountMigration.newAccountID,
+                    provider: .google,
+                    connectorKind: .geminiCodeAssist,
+                    displayName: GoogleAccountMigration.migratedDisplayName(from: account.displayName),
+                    isEnabled: account.isEnabled
+                )
+            }
+            return account
         }
         if changed {
             document.updatedAt = now

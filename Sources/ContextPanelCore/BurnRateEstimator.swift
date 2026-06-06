@@ -188,7 +188,7 @@ public enum MainLimitBurnRateEstimator {
         now: Date,
         minimumObservation: TimeInterval
     ) -> BucketBurnEstimate? {
-        let windowDuration = summary.window.duration
+        guard let windowDuration = summary.window.fixedDuration else { return nil }
         let candidates = summary.limits.compactMap { limit -> BucketBurnEstimate? in
             guard
                 let used = limit.used,
@@ -231,7 +231,7 @@ public enum MainLimitBurnRateEstimator {
 }
 
 private extension MainLimitWindow {
-    var duration: TimeInterval {
+    var fixedDuration: TimeInterval? {
         switch self {
         case .fiveHour:
             5 * 3_600
@@ -239,6 +239,8 @@ private extension MainLimitWindow {
             7 * 24 * 3_600
         case .daily:
             24 * 3_600
+        case .availability:
+            nil
         }
     }
 }

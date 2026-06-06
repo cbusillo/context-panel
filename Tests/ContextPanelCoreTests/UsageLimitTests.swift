@@ -212,6 +212,79 @@ import Testing
     #expect(summaries[0].usageRatio == 0.525)
 }
 
+@Test func googleAntigravityMainSummariesUseOnlyGeminiAvailability() throws {
+    let reset = Date(timeIntervalSince1970: 1_800_324_000)
+    let snapshot = UsageSnapshot(
+        generatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+        limits: [
+            UsageLimit(
+                provider: .google,
+                accountID: "google-antigravity",
+                configuredAccountID: "google-antigravity-default",
+                accountName: "Antigravity",
+                label: "Gemini Pro capacity",
+                windowLabel: "Model capacity",
+                modelLabel: "Gemini Pro",
+                unit: .percent,
+                used: 40,
+                limit: 100,
+                resetsAt: reset,
+                note: "source: Google Antigravity model availability"
+            ),
+            UsageLimit(
+                provider: .google,
+                accountID: "google-antigravity",
+                configuredAccountID: "renamed-antigravity-account",
+                accountName: "Work Google",
+                label: "Gemini Flash capacity",
+                windowLabel: "Model capacity",
+                modelLabel: nil,
+                unit: .percent,
+                used: 55,
+                limit: 100,
+                note: "source: Google Antigravity model availability"
+            ),
+            UsageLimit(
+                provider: .google,
+                accountID: "google-antigravity",
+                configuredAccountID: "google-antigravity-default",
+                accountName: "Antigravity",
+                label: "Claude capacity",
+                windowLabel: "Model capacity",
+                modelLabel: "Claude",
+                unit: .percent,
+                used: 70,
+                limit: 100,
+                note: "source: Google Antigravity model availability"
+            ),
+            UsageLimit(
+                provider: .google,
+                accountID: "google-antigravity",
+                configuredAccountID: "google-antigravity-default",
+                accountName: "Antigravity",
+                label: "GPT-OSS capacity",
+                windowLabel: "Model capacity",
+                modelLabel: "GPT-OSS",
+                unit: .percent,
+                used: 20,
+                limit: 100,
+                note: "source: Google Antigravity model availability"
+            ),
+        ]
+    )
+
+    #expect(snapshot.limits.count == 4)
+    #expect(snapshot.mainLimitSummaries.map(\.id) == ["google:availability"])
+    let summary = try #require(snapshot.mainLimitSummaries.first)
+    #expect(summary.window.displayName == "Model capacity")
+    #expect(summary.displayWindowName(now: Date(timeIntervalSince1970: 1_800_000_000)) == "Weekly")
+    #expect(summary.compactDisplayWindowName(now: Date(timeIntervalSince1970: 1_800_000_000)) == "1w")
+    #expect(summary.resetCountdownText(now: Date(timeIntervalSince1970: 1_800_000_000)) == "3d 18h")
+    #expect(summary.firstKnownReset == reset)
+    #expect(summary.limits.map(\.label) == ["Gemini Pro capacity", "Gemini Flash capacity"])
+    #expect(snapshot.limits.filter { !$0.isMainLimit }.map(\.modelLabel) == ["Claude", "GPT-OSS"])
+}
+
 @Test func mainLimitSummariesPoolInterchangeableProviderAccounts() throws {
     let snapshot = UsageSnapshot(
         generatedAt: Date(),
@@ -464,7 +537,7 @@ import Testing
     )
 
     var preferences = WidgetDisplayPreferences.defaultPreferences
-    preferences.moveMainLimits(fromOffsets: IndexSet(integer: 5), toOffset: 0)
+    preferences.moveMainLimits(fromOffsets: IndexSet(integer: 6), toOffset: 0)
 
     #expect(preferences.visibleMainLimitSummaries(from: snapshot.mainLimitSummaries, maximumCount: 3).map(\.id) == [
         "google:daily",
@@ -529,22 +602,26 @@ import Testing
     var preferences = WidgetDisplayPreferences.defaultPreferences
     preferences.setMainLimit(provider: .openAI, window: .fiveHour, isVisible: true)
 
-    let lanes = preferences.visibleMainLimitLanes(from: snapshot.mainLimitSummaries, maximumCount: 7)
+    let lanes = preferences.visibleMainLimitLanes(from: snapshot.mainLimitSummaries, maximumCount: 8)
 
     #expect(lanes.map(\.id) == [
         "openai:weekly",
-        "anthropic:weekly",
         "anthropic:fiveHour",
-        "google:weekly",
-        "google:fiveHour",
         "google:daily",
         "openai:fiveHour",
+        "anthropic:weekly",
+        "google:availability",
+        "google:weekly",
+        "google:fiveHour",
     ])
-    #expect(lanes[1].summary == nil)
-    #expect(lanes[2].summary?.id == "anthropic:fiveHour")
-    #expect(lanes[3].summary == nil)
+    #expect(lanes[0].summary?.id == "openai:weekly")
+    #expect(lanes[1].summary?.id == "anthropic:fiveHour")
+    #expect(lanes[2].summary?.id == "google:daily")
+    #expect(lanes[3].summary?.id == "openai:fiveHour")
     #expect(lanes[4].summary == nil)
-    #expect(lanes[5].summary?.id == "google:daily")
+    #expect(lanes[5].summary == nil)
+    #expect(lanes[6].summary == nil)
+    #expect(lanes[7].summary == nil)
 }
 
 @Test func widgetDisplayPreferencesShowsGeminiWeeklyAndFiveHourLanesByDefault() {
@@ -581,15 +658,31 @@ import Testing
 
     #expect(snapshot.mainLimitSummaries.map(\.id) == ["google:fiveHour", "google:weekly"])
     #expect(lanes.map(\.id) == [
+        "google:weekly",
+        "google:fiveHour",
         "openai:weekly",
         "anthropic:weekly",
         "anthropic:fiveHour",
+        "google:availability",
+    ])
+    #expect(lanes[0].summary?.id == "google:weekly")
+    #expect(lanes[1].summary?.id == "google:fiveHour")
+    #expect(lanes[2].summary == nil)
+    #expect(lanes[3].summary == nil)
+    #expect(lanes[4].summary == nil)
+    #expect(lanes[5].summary == nil)
+
+    let largeWidgetLanes = WidgetDisplayPreferences.defaultPreferences.visibleMainLimitLanes(
+        from: snapshot.mainLimitSummaries,
+        maximumCount: 5
+    )
+    #expect(largeWidgetLanes.map(\.id) == [
         "google:weekly",
         "google:fiveHour",
-        "google:daily",
+        "openai:weekly",
+        "anthropic:weekly",
+        "anthropic:fiveHour",
     ])
-    #expect(lanes[3].summary?.id == "google:weekly")
-    #expect(lanes[4].summary?.id == "google:fiveHour")
 }
 
 @Test func widgetDisplayPreferencesMigratesSavedDefaultsToIncludeGeminiWindows() {
@@ -607,6 +700,7 @@ import Testing
         "anthropic:weekly",
         "anthropic:fiveHour",
         "google:daily",
+        "google:availability",
         "google:weekly",
         "google:fiveHour",
     ])
@@ -636,6 +730,7 @@ import Testing
         "anthropic:weekly",
         "anthropic:fiveHour",
         "google:daily",
+        "google:availability",
         "google:weekly",
         "google:fiveHour",
     ])
@@ -650,7 +745,7 @@ import Testing
         preferencesURL: directory.appending(path: "widget-display-preferences.json")
     )
     var preferences = WidgetDisplayPreferences.defaultPreferences
-    preferences.moveMainLimits(fromOffsets: IndexSet(integer: 5), toOffset: 0)
+    preferences.moveMainLimits(fromOffsets: IndexSet(integer: 6), toOffset: 0)
     preferences.setMainLimit(provider: .anthropic, window: .weekly, isVisible: false)
 
     try store.save(preferences)

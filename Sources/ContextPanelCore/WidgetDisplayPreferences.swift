@@ -86,7 +86,10 @@ public struct WidgetDisplayPreferences: Codable, Equatable, Sendable {
             }
         }
 
-        return Array(visiblePreferences.prefix(maximumCount)).map { preference in
+        let summaryBackedPreferences = visiblePreferences.filter { summaryByID[$0.id] != nil }
+        let placeholderPreferences = visiblePreferences.filter { summaryByID[$0.id] == nil }
+
+        return Array((summaryBackedPreferences + placeholderPreferences).prefix(maximumCount)).map { preference in
             WidgetMainLimitLane(preference: preference, summary: summaryByID[preference.id])
         }
     }
@@ -161,10 +164,11 @@ public struct WidgetDisplayPreferences: Codable, Equatable, Sendable {
             WidgetMainLimitPreference(provider: .openAI, window: .weekly, isVisible: true, sortOrder: 0),
             WidgetMainLimitPreference(provider: .anthropic, window: .weekly, isVisible: true, sortOrder: 1),
             WidgetMainLimitPreference(provider: .anthropic, window: .fiveHour, isVisible: true, sortOrder: 2),
-            WidgetMainLimitPreference(provider: .google, window: .weekly, isVisible: true, sortOrder: 3),
-            WidgetMainLimitPreference(provider: .google, window: .fiveHour, isVisible: true, sortOrder: 4),
-            WidgetMainLimitPreference(provider: .google, window: .daily, isVisible: true, sortOrder: 5),
-            WidgetMainLimitPreference(provider: .openAI, window: .fiveHour, isVisible: false, sortOrder: 6),
+            WidgetMainLimitPreference(provider: .google, window: .availability, isVisible: true, sortOrder: 3),
+            WidgetMainLimitPreference(provider: .google, window: .weekly, isVisible: true, sortOrder: 4),
+            WidgetMainLimitPreference(provider: .google, window: .fiveHour, isVisible: true, sortOrder: 5),
+            WidgetMainLimitPreference(provider: .google, window: .daily, isVisible: true, sortOrder: 6),
+            WidgetMainLimitPreference(provider: .openAI, window: .fiveHour, isVisible: false, sortOrder: 7),
         ]
     }
 }
@@ -283,6 +287,9 @@ public extension MainLimitSummary {
         }
         if provider == .google, window == .weekly {
             return 58
+        }
+        if provider == .google, window == .availability {
+            return 57
         }
         if provider == .google, window == .fiveHour {
             return 55
