@@ -256,7 +256,7 @@ public enum AccountConnectorFactory {
             let expanded = NSString(string: path).expandingTildeInPath
             return (try? FileManager.default.contentsOfDirectory(atPath: expanded).map { "\(expanded)/\($0)" }) ?? []
         },
-        antigravityCredentialSource: AntigravityKeychainCredentialSource? = AntigravityKeychainCredentialSource(),
+        antigravityCredentialSource: AntigravityKeychainCredentialSource? = nil,
         allowsLegacyGeminiOAuth: Bool = true
     ) -> [any ProviderConnector] {
         return document.accounts.compactMap { account -> (any ProviderConnector)? in

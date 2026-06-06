@@ -153,7 +153,7 @@ public struct SnapshotRefreshRunner: Sendable {
     }
 
     public static func appDefault(
-        antigravityCredentialSource: AntigravityKeychainCredentialSource? = AntigravityKeychainCredentialSource(),
+        antigravityCredentialSource: AntigravityKeychainCredentialSource? = nil,
         allowsLegacyGeminiOAuth: Bool = true
     ) -> SnapshotRefreshRunner {
         SnapshotRefreshRunner(service: .appDefault(
@@ -315,7 +315,7 @@ public struct SnapshotRefreshService: Sendable {
         stores: SnapshotRefreshStores,
         bookmarkStore: SecureFileBookmarkStore? = nil,
         credentialStore: (any ProviderCredentialStoring)? = nil,
-        antigravityCredentialSource: AntigravityKeychainCredentialSource? = AntigravityKeychainCredentialSource(),
+        antigravityCredentialSource: AntigravityKeychainCredentialSource? = nil,
         allowsLegacyGeminiOAuth: Bool = true,
         promptCacheTelemetryMirror: @escaping @Sendable () -> Void = {
             _ = try? PromptCacheTelemetryMirrorService.mirror()
@@ -335,7 +335,7 @@ public struct SnapshotRefreshService: Sendable {
     }
 
     public static func appDefault(
-        antigravityCredentialSource: AntigravityKeychainCredentialSource? = AntigravityKeychainCredentialSource(),
+        antigravityCredentialSource: AntigravityKeychainCredentialSource? = nil,
         allowsLegacyGeminiOAuth: Bool = true
     ) -> SnapshotRefreshService {
         SnapshotRefreshService(

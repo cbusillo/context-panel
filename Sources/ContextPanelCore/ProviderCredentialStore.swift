@@ -5,11 +5,15 @@ public protocol ProviderCredentialLoading: Sendable {
     func load(accountID: String) throws -> Data?
 }
 
+public protocol ProviderCredentialAvailabilityChecking: Sendable {
+    func contains(accountID: String) throws -> Bool
+}
+
 public protocol ProviderCredentialStoring: ProviderCredentialLoading {
     func save(_ data: Data, accountID: String) throws
 }
 
-public struct ProviderCredentialStore: ProviderCredentialStoring {
+public struct ProviderCredentialStore: ProviderCredentialStoring, ProviderCredentialAvailabilityChecking {
     public enum StoreError: Error, Sendable {
         case unhandledStatus(OSStatus)
     }
@@ -35,6 +39,16 @@ public struct ProviderCredentialStore: ProviderCredentialStoring {
         if status == errSecItemNotFound { return nil }
         guard status == errSecSuccess else { throw StoreError.unhandledStatus(status) }
         return item as? Data
+    }
+
+    public func contains(accountID: String) throws -> Bool {
+        var query = baseQuery(accountID: accountID)
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+
+        let status = SecItemCopyMatching(query as CFDictionary, nil)
+        if status == errSecItemNotFound { return false }
+        guard status == errSecSuccess else { throw StoreError.unhandledStatus(status) }
+        return true
     }
 
     public func save(_ data: Data, accountID: String) throws {
@@ -74,7 +88,7 @@ public struct ProviderCredentialStore: ProviderCredentialStoring {
     }
 }
 
-public struct GenericPasswordCredentialLoader: ProviderCredentialLoading {
+public struct GenericPasswordCredentialLoader: ProviderCredentialLoading, ProviderCredentialAvailabilityChecking {
     public enum LoadError: Error, Sendable {
         case unhandledStatus(OSStatus)
     }
@@ -105,9 +119,26 @@ public struct GenericPasswordCredentialLoader: ProviderCredentialLoading {
         guard status == errSecSuccess else { throw LoadError.unhandledStatus(status) }
         return item as? Data
     }
+
+    public func contains(accountID: String) throws -> Bool {
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: accountID,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        if useDataProtectionKeychain {
+            query[kSecUseDataProtectionKeychain as String] = true
+        }
+
+        let status = SecItemCopyMatching(query as CFDictionary, nil)
+        if status == errSecItemNotFound { return false }
+        guard status == errSecSuccess else { throw LoadError.unhandledStatus(status) }
+        return true
+    }
 }
 
-public final class InMemoryProviderCredentialStore: ProviderCredentialStoring, @unchecked Sendable {
+public final class InMemoryProviderCredentialStore: ProviderCredentialStoring, ProviderCredentialAvailabilityChecking, @unchecked Sendable {
     private var storage: [String: Data]
 
     public init(storage: [String: Data]) {
@@ -116,6 +147,10 @@ public final class InMemoryProviderCredentialStore: ProviderCredentialStoring, @
 
     public func load(accountID: String) throws -> Data? {
         storage[accountID]
+    }
+
+    public func contains(accountID: String) throws -> Bool {
+        storage[accountID] != nil
     }
 
     public func save(_ data: Data, accountID: String) throws {

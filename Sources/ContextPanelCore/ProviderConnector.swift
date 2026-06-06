@@ -282,12 +282,17 @@ public protocol ConnectorHTTPClient: Sendable {
 }
 
 public struct URLSessionConnectorHTTPClient: ConnectorHTTPClient {
-    public init() {}
+    private let timeoutInterval: TimeInterval
+
+    public init(timeoutInterval: TimeInterval = 20) {
+        self.timeoutInterval = timeoutInterval
+    }
 
     public func data(for request: ConnectorHTTPRequest) async throws -> ConnectorHTTPResponse {
         var urlRequest = URLRequest(url: request.url)
         urlRequest.httpMethod = request.method
         urlRequest.httpBody = request.body
+        urlRequest.timeoutInterval = timeoutInterval
         for (key, value) in request.headers {
             urlRequest.setValue(value, forHTTPHeaderField: key)
         }

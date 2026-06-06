@@ -243,6 +243,14 @@ import Testing
     #expect(credentials?.refreshToken == "refresh-secret")
 }
 
+@Test func antigravityCredentialAvailabilityDoesNotReadSecretPayload() throws {
+    let source = AntigravityKeychainCredentialSource(
+        credentialLoader: AvailabilityOnlyCredentialLoader(isAvailable: true)
+    )
+
+    #expect(source.credentialAvailability() == .available)
+}
+
 @Test func geminiOAuthCredentialDecoderAcceptsStringExpiryInLocalCredentials() throws {
     let payload = #"{"access_token":"access-secret","refresh_token":"refresh-secret","expiry":"2099-05-22T17:00:00.000000000Z"}"#
 
@@ -291,6 +299,18 @@ private final class GeminiQuotaStubHTTPClient: ConnectorHTTPClient, @unchecked S
             throw ConnectorError.nonHTTPResponse("missing stub response")
         }
         return responses.removeFirst()
+    }
+}
+
+private struct AvailabilityOnlyCredentialLoader: ProviderCredentialLoading, ProviderCredentialAvailabilityChecking {
+    let isAvailable: Bool
+
+    func load(accountID: String) throws -> Data? {
+        throw ConnectorError.invalidAuth("secret payload should not be read for availability")
+    }
+
+    func contains(accountID: String) throws -> Bool {
+        isAvailable
     }
 }
 

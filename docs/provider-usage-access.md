@@ -173,25 +173,36 @@ Gemini CLI refresh them from the Code Assist backend.
 
 Preferred v1 connector scope:
 
-- Prefer a valid Antigravity Keychain access token when Antigravity is signed in,
-  even if legacy Gemini CLI OAuth credentials still exist. This keeps migrated
-  `agy` users on Antigravity's live quota surface instead of silently falling
-  back to stale Gemini CLI quota semantics. Antigravity-only installs can also
-  refresh without a separate `oauth_creds.json` file.
+- Prefer legacy Gemini CLI OAuth until Context Panel has a bounded, signed-app
+  safe way to read Antigravity's Keychain secret. Antigravity stores its token in
+  another app's generic-password item, and local validation found that reading
+  the secret payload with native `SecItemCopyMatching` can hang even when a
+  metadata-only lookup returns quickly. Production app and background defaults
+  must therefore avoid reading that secret by default.
+- Keep Antigravity-only quota support behind explicit foreground/probe injection
+  until the credential read path is proven from `/Applications/Context Panel.app`
+  without pinwheeling. An unreadable or expired Antigravity Keychain token must
+  not break an otherwise viable legacy Gemini account.
 - Resolve `GEMINI_CLI_HOME`, then default to `~/.gemini`, for legacy Gemini CLI
   auth and metadata fallback.
 - Read `oauth_creds.json` only to refresh a legacy Gemini CLI access token
   locally; never print, store, or upload token values. If Antigravity's Keychain
   access token is expired, ask the user to open Antigravity to refresh Google
   authentication instead of refreshing that token through Gemini CLI metadata.
+- When the connector uses Antigravity's Keychain token, first call the
+  Antigravity quota status surface on the daily Code Assist backend host. It
+  exposes bucket-style quota status fields such as model, quota type, remaining
+  fraction, and reset time; these are closer to the `agy` visible quota state
+  than the older legacy Code Assist quota buckets.
+- If the Antigravity quota status path is unavailable, temporarily rate-limited,
+  server-failing, empty, or not yet exposing recognizable bucket fields, fall
+  back to the legacy Gemini Code Assist load and quota path rather than marking
+  the provider failed.
 - Call the Gemini Code Assist load path to resolve the active project internally;
-  never print or persist the raw project identifier. When the connector is using
-  Antigravity's Keychain token instead of local Gemini CLI OAuth credentials,
-  use Antigravity's daily Code Assist backend host for the load and quota calls.
-- Call the matching Code Assist quota path and normalize buckets by model ID,
-  remaining fraction, optional remaining amount and total amount, explicit
-  exhausted/limited flags, observed bucket label, observed window label, and
-  reset time.
+  never print or persist the raw project identifier.
+- Normalize quota buckets by model ID, remaining fraction, optional remaining
+  amount and total amount, explicit exhausted/limited flags, observed bucket
+  label, observed window label, and reset time.
 - Represent each bucket as percent pressure: `used = round((1 - remaining) *
 100)`, `limit = 100`, `unit = percent`. If a bucket reports remaining and total
 amounts, derive percent pressure from those amounts. If the backend explicitly
@@ -213,7 +224,10 @@ percent remaining and reset timestamps. On 2026-05-22 the installed Context
 Panel app was also validated against an Antigravity-only path by temporarily
 pointing the Google account at a missing `oauth_creds.json`; the app still
 refreshed Google limits through Antigravity's Keychain token, then the account
-configuration was restored.
+configuration was restored. On 2026-06-05 local `agy` evidence showed a newer
+Antigravity quota status surface with remaining fraction and reset time fields,
+but the Antigravity secret Keychain read also proved unsafe enough to keep that
+path out of production defaults until a bounded credential reader is validated.
 
 Current public Google docs have a split contract. Gemini Apps help announced
 usage-limit changes starting 2026-05-17 and describes compute-based limits that
