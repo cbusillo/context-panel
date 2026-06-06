@@ -1177,6 +1177,60 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(results.first?.errorMessage == "Reset priming is not supported for this provider")
 }
 
+@Test func resetPrimerExecutorSkipsRetiredGoogleCommandPath() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let settingsStore = ResetPrimerSettingsStore(settingsURL: directory.appending(path: "reset-primer-settings.json"))
+    let stateStore = ResetPrimerRunStateStore(stateURL: directory.appending(path: "reset-primer-runs.json"))
+    let snapshotStore = JSONSnapshotStore(rootDirectory: directory.appending(path: "Snapshots", directoryHint: .isDirectory))
+    let accountStore = AccountConfigurationStore(configurationURL: directory.appending(path: "accounts.json"))
+    let command = directory.appending(path: "gemini")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: command)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: command.path)
+    let resetAt = now.addingTimeInterval(-10 * 60)
+    try settingsStore.save(ResetPrimerSettings(
+        isEnabled: true,
+        delayMinutesAfterReset: 0,
+        accountPreferences: [preference(accountID: "google-antigravity-default", provider: .google)]
+    ))
+    try accountStore.save(AccountConfigurationDocument(updatedAt: now, accounts: [
+        LocalProviderAccountConfiguration(
+            id: "google-antigravity-default",
+            provider: .google,
+            connectorKind: .geminiCodeAssist,
+            displayName: "Antigravity",
+            commandPath: command.path
+        ),
+    ]))
+    try snapshotStore.save(StoredUsageSnapshot(
+        savedAt: now,
+        snapshot: UsageSnapshot(
+            generatedAt: now,
+            limits: [limit(accountID: "google-antigravity-default", provider: .google, resetAt: resetAt)]
+        )
+    ))
+    let service = ResetPrimerPlanService(
+        settingsStore: settingsStore,
+        stateStore: stateStore,
+        snapshotStore: snapshotStore
+    )
+    let executor = ResetPrimerExecutor(
+        planService: service,
+        accountStore: accountStore,
+        processRunner: { _, _, _ in
+            Issue.record("Retired Google command path should not run")
+            return 0
+        }
+    )
+
+    let results = await executor.runDue(now: now)
+
+    #expect(results.map(\.status) == [.skipped])
+    #expect(results.first?.errorMessage == "Reset priming is not supported for this provider")
+}
+
 private func preference(accountID: String, provider: Provider) -> ResetPrimerAccountPreference {
     ResetPrimerAccountPreference(
         accountID: accountID,

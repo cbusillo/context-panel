@@ -37,19 +37,17 @@ import Testing
     #expect(account.matchesProviderReport(report))
 }
 
-@Test func localProviderAccountConfigurationMatchesLocalConnectorReportsByResolvedPath() throws {
-    let authPath = "/tmp/gemini-oauth.json"
+@Test func localProviderAccountConfigurationMatchesGoogleReportsByStableID() throws {
     let account = LocalProviderAccountConfiguration(
-        id: "gemini-default",
+        id: "google-antigravity-default",
         provider: .google,
         connectorKind: .geminiCodeAssist,
-        displayName: "Gemini",
-        authPath: authPath
+        displayName: "Antigravity"
     )
     let report = StoredProviderReport(
         provider: .google,
-        accountID: ConnectorRedactor.localAccountID(provider: .google, path: authPath),
-        accountName: "Gemini",
+        accountID: ConnectorRedactor.localAccountID(provider: .google, stableID: "google-antigravity-default"),
+        accountName: "Antigravity",
         generatedAt: Date(timeIntervalSince1970: 0),
         status: .stale,
         errorMessage: nil
@@ -58,39 +56,17 @@ import Testing
     #expect(account.matchesProviderReport(report))
 }
 
-@Test func localProviderAccountConfigurationMatchesExpandedLocalConnectorPaths() throws {
-    let expandedPath = "\(ContextPanelLocations.realUserHomeDirectory().path)/.gemini/oauth_creds.json"
-    let account = LocalProviderAccountConfiguration(
-        id: "gemini-default",
-        provider: .google,
-        connectorKind: .geminiCodeAssist,
-        displayName: "Gemini",
-        authPath: "~/.gemini/oauth_creds.json"
-    )
-    let report = StoredProviderReport(
-        provider: .google,
-        accountID: ConnectorRedactor.localAccountID(provider: .google, path: expandedPath),
-        accountName: "Gemini",
-        generatedAt: Date(timeIntervalSince1970: 0),
-        status: .failure,
-        errorMessage: nil
-    )
-
-    #expect(account.matchesProviderReport(report))
-}
-
 @Test func localProviderAccountConfigurationDoesNotMatchProviderWideReportFromAnotherAccount() throws {
     let account = LocalProviderAccountConfiguration(
-        id: "gemini-default",
+        id: "google-antigravity-default",
         provider: .google,
         connectorKind: .geminiCodeAssist,
-        displayName: "Gemini",
-        authPath: "/tmp/gemini-a.json"
+        displayName: "Antigravity"
     )
     let report = StoredProviderReport(
         provider: .google,
         accountID: ConnectorRedactor.localAccountID(provider: .google, path: "/tmp/gemini-b.json"),
-        accountName: "Other Gemini",
+        accountName: "Other Google",
         generatedAt: Date(timeIntervalSince1970: 0),
         status: .failure,
         errorMessage: nil
@@ -273,7 +249,7 @@ import Testing
     #expect(!result.document.accounts.contains { $0.id == "openai-code-default" })
 }
 
-@Test func accountConnectorFactorySkipsDisabledAndRequiresGeminiMetadata() async {
+@Test func accountConnectorFactorySkipsDisabledAndReportsGoogleUnavailable() async {
     let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
         LocalProviderAccountConfiguration(
             id: "codex",
@@ -283,13 +259,10 @@ import Testing
             authPath: "/tmp/codex.json"
         ),
         LocalProviderAccountConfiguration(
-            id: "gemini",
+            id: "google",
             provider: .google,
             connectorKind: .geminiCodeAssist,
-            displayName: "Gemini",
-            authPath: "/tmp/gemini.json",
-            oauthClientIDEnvironmentName: "GEMINI_ID",
-            oauthClientSecretEnvironmentName: "GEMINI_SECRET"
+            displayName: "Antigravity"
         ),
         LocalProviderAccountConfiguration(
             id: "claude-disabled",
@@ -300,274 +273,16 @@ import Testing
         ),
     ])
 
-    let withoutGeminiMetadata = AccountConnectorFactory.connectors(
-        from: document,
-        environment: [:],
-        geminiMetadataFileLoader: { _ in "" },
-        geminiMetadataFileExists: { _ in false },
-        antigravityCredentialSource: nil
-    )
-    let missingMetadataResult = await ProviderConnectorRuntime(connectors: withoutGeminiMetadata).refreshAll(now: Date(timeIntervalSince1970: 0))
-    let withGeminiEnvironment = AccountConnectorFactory.connectors(from: document, environment: [
-        "GEMINI_ID": "client",
-        "GEMINI_SECRET": "secret",
-    ])
-
-    #expect(withoutGeminiMetadata.count == 2)
-    #expect(Set(withoutGeminiMetadata.map(\.provider)) == [.openAI, .google])
-    #expect(missingMetadataResult.reports.contains { $0.provider == .google && $0.status == .failure })
-    #expect(withGeminiEnvironment.count == 2)
-    #expect(Set(withGeminiEnvironment.map(\.provider)) == [.openAI, .google])
-}
-
-@Test func accountConnectorFactoryRequiresGeminiMetadataWhenAntigravityCredentialIsMissing() async {
-    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
-        LocalProviderAccountConfiguration(
-            id: "gemini",
-            provider: .google,
-            connectorKind: .geminiCodeAssist,
-            displayName: "Gemini",
-            authPath: "/tmp/gemini.json",
-            oauthClientIDEnvironmentName: "GEMINI_ID",
-            oauthClientSecretEnvironmentName: "GEMINI_SECRET"
-        ),
-    ])
-
-    let connectors = AccountConnectorFactory.connectors(
-        from: document,
-        environment: [:],
-        useBundledGeminiMetadataFallback: false,
-        geminiMetadataFileLoader: { _ in "" },
-        geminiMetadataFileExists: { _ in false },
-        antigravityCredentialSource: AntigravityKeychainCredentialSource(
-            credentialLoader: InMemoryProviderCredentialStore(storage: [:])
-        )
-    )
+    let connectors = AccountConnectorFactory.connectors(from: document)
     let result = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: Date(timeIntervalSince1970: 0))
 
-    #expect(connectors.count == 1)
-    #expect(result.reports.count == 1)
-    #expect(result.reports[0].provider == .google)
-    #expect(result.reports[0].status == .failure)
-    #expect(result.reports[0].errorMessage?.contains("Google OAuth client metadata") == true)
-}
-
-@Test func accountConnectorFactoryAllowsMissingGeminiMetadataWhenAntigravityCredentialExists() async {
-    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
-        LocalProviderAccountConfiguration(
-            id: "gemini",
-            provider: .google,
-            connectorKind: .geminiCodeAssist,
-            displayName: "Gemini",
-            authPath: "/tmp/gemini.json",
-            oauthClientIDEnvironmentName: "GEMINI_ID",
-            oauthClientSecretEnvironmentName: "GEMINI_SECRET"
-        ),
-    ])
-    let antigravityPayload = #"{"auth_method":"consumer","token":{"access_token":"access-secret","expiry":"2099-05-22T17:00:00.000000000Z"}}"#
-    let storedAntigravityPayload = "go-keyring-base64:\(Data(antigravityPayload.utf8).base64EncodedString())"
-
-    let connectors = AccountConnectorFactory.connectors(
-        from: document,
-        environment: [:],
-        useBundledGeminiMetadataFallback: false,
-        geminiMetadataFileLoader: { _ in "" },
-        geminiMetadataFileExists: { _ in false },
-        antigravityCredentialSource: AntigravityKeychainCredentialSource(
-            credentialLoader: InMemoryProviderCredentialStore(storage: [
-                AntigravityKeychainCredentialSource.accountID: Data(storedAntigravityPayload.utf8),
-            ])
-        )
-    )
-
-    #expect(connectors.count == 1)
-    #expect(connectors[0].provider == .google)
-}
-
-@Test func accountConnectorFactoryAllowsMissingGeminiMetadataWhenAntigravityCredentialIsUnreadable() async {
-    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
-        LocalProviderAccountConfiguration(
-            id: "gemini",
-            provider: .google,
-            connectorKind: .geminiCodeAssist,
-            displayName: "Gemini",
-            authPath: "/tmp/missing-gemini.json",
-            oauthClientIDEnvironmentName: "GEMINI_ID",
-            oauthClientSecretEnvironmentName: "GEMINI_SECRET"
-        ),
-    ])
-
-    let connectors = AccountConnectorFactory.connectors(
-        from: document,
-        environment: [:],
-        useBundledGeminiMetadataFallback: false,
-        geminiMetadataFileLoader: { _ in "" },
-        geminiMetadataFileExists: { _ in false },
-        geminiMetadataDirectoryLister: { _ in [] },
-        antigravityCredentialSource: AntigravityKeychainCredentialSource(
-            credentialLoader: ThrowingProviderCredentialStore()
-        )
-    )
-    let result = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: Date(timeIntervalSince1970: 0))
-
-    #expect(connectors.count == 1)
-    #expect(result.reports.count == 1)
-    #expect(result.reports[0].provider == .google)
-    #expect(result.reports[0].status == .failure)
-    #expect(result.reports[0].limits.isEmpty)
-    #expect(result.reports[0].errorMessage?.contains("Open Antigravity") == true)
-    #expect(result.reports[0].errorMessage?.contains("OAuth client metadata") != true)
-}
-
-@Test func accountConnectorFactoryDisablesLegacyGeminiFallbackForForegroundOnlyAntigravityRefresh() async {
-    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
-        LocalProviderAccountConfiguration(
-            id: "gemini",
-            provider: .google,
-            connectorKind: .geminiCodeAssist,
-            displayName: "Google",
-            authPath: "/tmp/gemini.json"
-        ),
-    ])
-
-    let connectors = AccountConnectorFactory.connectors(
-        from: document,
-        environment: [
-            "GEMINI_OAUTH_CLIENT_ID": "legacy-client",
-            "GEMINI_OAUTH_CLIENT_SECRET": "legacy-secret",
-        ],
-        geminiMetadataFileExists: { _ in false },
-        antigravityCredentialSource: nil,
-        allowsLegacyGeminiOAuth: false
-    )
-    let result = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: Date(timeIntervalSince1970: 0))
-
-    #expect(connectors.count == 1)
-    #expect(result.reports.count == 1)
-    #expect(result.reports[0].provider == .google)
-    #expect(result.reports[0].status == .failure)
-    #expect(result.reports[0].limits.isEmpty)
-    #expect(result.reports[0].errorMessage?.contains("foreground refresh") == true)
-}
-
-@Test func accountConnectorFactoryFallsBackToGeminiDiscoveryForPartialMetadataEnvironment() async {
-    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
-        LocalProviderAccountConfiguration(
-            id: "gemini",
-            provider: .google,
-            connectorKind: .geminiCodeAssist,
-            displayName: "Gemini",
-            authPath: "/tmp/gemini.json",
-            oauthClientIDEnvironmentName: "GEMINI_ID",
-            oauthClientSecretEnvironmentName: "GEMINI_SECRET"
-        ),
-    ])
-
-    let connectors = AccountConnectorFactory.connectors(
-        from: document,
-        environment: ["GEMINI_ID": "client"],
-        useBundledGeminiMetadataFallback: false,
-        geminiMetadataFileLoader: { _ in #"var OAUTH_CLIENT_ID = "discovered"; var OAUTH_CLIENT_SECRET = "secret";"# },
-        geminiMetadataFileExists: { _ in true },
-        geminiMetadataDirectoryLister: { _ in [] },
-        antigravityCredentialSource: nil
-    )
-
-    #expect(connectors.count == 1)
-    #expect(connectors[0].provider == .google)
-}
-
-@Test func accountConnectorFactoryCanDiscoverGeminiMetadataFromInstalledCLI() {
-    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
-        LocalProviderAccountConfiguration(
-            id: "gemini",
-            provider: .google,
-            connectorKind: .geminiCodeAssist,
-            displayName: "Gemini",
-            authPath: "/tmp/gemini.json"
-        )
-    ])
-
-    let source = #"""
-    var OAUTH_CLIENT_ID = "client-id.apps.googleusercontent.com";
-    var OAUTH_CLIENT_SECRET = "client-secret";
-    """#
-    let connectors = AccountConnectorFactory.connectors(
-        from: document,
-        environment: ["GEMINI_CLI_BUNDLE_PATH": "/tmp/gemini-bundle.js"],
-        geminiMetadataFileLoader: { _ in source },
-        geminiMetadataFileExists: { _ in true },
-        geminiMetadataDirectoryLister: { _ in [] },
-        antigravityCredentialSource: nil
-    )
-
-    #expect(connectors.count == 1)
-    #expect(connectors[0].provider == .google)
-}
-
-@Test func accountConnectorFactoryUsesGeminiCommandPathForMetadataDiscovery() {
-    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
-        LocalProviderAccountConfiguration(
-            id: "gemini",
-            provider: .google,
-            connectorKind: .geminiCodeAssist,
-            displayName: "Gemini",
-            authPath: "/tmp/gemini.json",
-            commandPath: "/Users/test/.local/bin/gemini"
-        )
-    ])
-
-    let source = #"""
-    var OAUTH_CLIENT_ID = "client-id.apps.googleusercontent.com";
-    var OAUTH_CLIENT_SECRET = "client-secret";
-    """#
-    let connectors = AccountConnectorFactory.connectors(
-        from: document,
-        environment: [:],
-        useBundledGeminiMetadataFallback: false,
-        geminiMetadataFileLoader: { _ in source },
-        geminiMetadataFileExists: { path in
-            path == "/Users/test/.local/bin/gemini"
-                || path == "/Users/test/.local/bin/chunk.js"
-        },
-        geminiMetadataDirectoryLister: { root in
-            root == "/Users/test/.local/bin" ? ["\(root)/chunk.js"] : []
-        },
-        antigravityCredentialSource: nil
-    )
-
-    #expect(connectors.count == 1)
-    #expect(connectors[0].provider == .google)
-}
-
-@Test func accountConnectorFactoryUsesCachedGeminiMetadataInSandbox() {
-    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
-        LocalProviderAccountConfiguration(
-            id: "gemini",
-            provider: .google,
-            connectorKind: .geminiCodeAssist,
-            displayName: "Gemini",
-            authPath: "/tmp/gemini.json"
-        )
-    ])
-    let metadata = GeminiOAuthClientMetadata(clientID: "cached-client", clientSecret: "cached-secret")
-    let credentialStore = InMemoryProviderCredentialStore(storage: [
-        GeminiOAuthClientMetadata.credentialAccountID(for: "gemini"): try! JSONEncoder().encode(metadata),
-    ])
-
-    let connectors = AccountConnectorFactory.connectors(
-        from: document,
-        credentialStore: credentialStore,
-        requiresBookmarkedAuthFiles: true,
-        environment: [:],
-        useBundledGeminiMetadataFallback: false,
-        geminiMetadataFileExists: { _ in false },
-        geminiMetadataDirectoryLister: { _ in [] },
-        antigravityCredentialSource: nil
-    )
-
-    #expect(connectors.count == 1)
-    #expect(connectors[0].provider == .google)
+    #expect(connectors.count == 2)
+    #expect(Set(connectors.map(\.provider)) == [.openAI, .google])
+    #expect(result.reports.contains { report in
+        report.provider == .google
+            && report.status == .unknown
+            && report.errorMessage?.contains("retired") == true
+    })
 }
 
 @Test func sandboxedAuthLoaderRequiresSecurityScopedBookmark() async {
@@ -684,15 +399,16 @@ import Testing
 
     let code = try #require(document.accounts.first { $0.id == "openai-code-default" })
     let codex = try #require(document.accounts.first { $0.id == "openai-codex-default" })
-    let gemini = try #require(document.accounts.first { $0.id == "gemini-code-assist-default" })
+    let google = try #require(document.accounts.first { $0.id == "google-antigravity-default" })
 
     #expect(code.authPath == "\(expectedHome)/.code/auth_accounts.json")
     #expect(codex.authPath == "\(expectedHome)/.codex/auth.json")
     #expect(codex.isEnabled == false)
-    #expect(gemini.authPath == "\(expectedHome)/.gemini/oauth_creds.json")
+    #expect(google.authPath == nil)
+    #expect(google.effectiveAuthPath == nil)
+    #expect(google.displayName == "Antigravity")
     #expect(code.authPath?.contains("/Library/Containers/") == false)
     #expect(codex.authPath?.contains("/Library/Containers/") == false)
-    #expect(gemini.authPath?.contains("/Library/Containers/") == false)
 }
 
 @Test func accountConfigurationStoreReportsCorruptFilesAsFailure() throws {

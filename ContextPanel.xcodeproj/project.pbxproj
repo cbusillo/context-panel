@@ -8,7 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		0BBD1DF433F345E62C6A26EF /* LimitProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */; };
-		10A2940E7E3FE6E253ECFEDE /* GeminiCodeAssistQuota.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AC2F76895EE0EFC7F463447 /* GeminiCodeAssistQuota.swift */; };
 		170EC1421ABCDAF9C4612460 /* ClaudeOAuthUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 895A979571D5E5C14830B41D /* ClaudeOAuthUsage.swift */; };
 		198493F605C07AB87B0BDFA9 /* CapacityPool.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8862B929FE544FCB2C3D06B /* CapacityPool.swift */; };
 		1DD89F5634070B75C09BDE99 /* ClaudeLocalStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2E426A482568BBE85357D7E /* ClaudeLocalStatus.swift */; };
@@ -113,7 +112,6 @@
 /* Begin PBXFileReference section */
 		07D959D621E594C0CFC2CEF5 /* ContextPanelWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ContextPanelWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		086B12021073A6F2A49850A1 /* ContextPanelRefreshAgent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ContextPanelRefreshAgent.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		0AC2F76895EE0EFC7F463447 /* GeminiCodeAssistQuota.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiCodeAssistQuota.swift; sourceTree = "<group>"; };
 		15DC14CB07B8BA4756DAB731 /* BackgroundRefreshSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundRefreshSettings.swift; sourceTree = "<group>"; };
 		186D607FE2EEFDFFE2E70446 /* AccountConfigurationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountConfigurationStore.swift; sourceTree = "<group>"; };
 		1C30C085B935F62134E5C8C5 /* ResetPrimerPlanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResetPrimerPlanner.swift; sourceTree = "<group>"; };
@@ -203,7 +201,6 @@
 				9FA8FE4CC9BE058D8F46FBA2 /* CodexRateLimits.swift */,
 				23E9C71457F4E1F101132FCF /* ContextPanelLocations.swift */,
 				7BD985B0213AB5987D3B3170 /* FastModeForecast.swift */,
-				0AC2F76895EE0EFC7F463447 /* GeminiCodeAssistQuota.swift */,
 				60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */,
 				3FC2DAEDD38483FC3A5D4880 /* MainLimitSummary.swift */,
 				FB0E4D0FF6DD744B87D215B9 /* OAuthPKCE.swift */,
@@ -460,7 +457,6 @@
 				47414B1A42BE473BF1644296 /* CodexRateLimits.swift in Sources */,
 				C1DF7B59257060AC0A6AF44D /* ContextPanelLocations.swift in Sources */,
 				9C74713AEFFAC6D85E7ACF3F /* FastModeForecast.swift in Sources */,
-				10A2940E7E3FE6E253ECFEDE /* GeminiCodeAssistQuota.swift in Sources */,
 				0BBD1DF433F345E62C6A26EF /* LimitProbe.swift in Sources */,
 				A9464088796B38105C01F7D3 /* MainLimitSummary.swift in Sources */,
 				4BA8FE73012AF7F7900B5D4E /* OAuthPKCE.swift in Sources */,

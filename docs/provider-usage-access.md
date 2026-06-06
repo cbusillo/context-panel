@@ -57,7 +57,7 @@ instead of pretending an estimate is exact.
 | OpenAI ChatGPT accounts                       | No stable public API found for general personal ChatGPT subscription pressure outside Codex. Current product surfaces no longer present a simple message counter; the useful automated signal found so far is percent-used pressure for Codex/Fast Mode.                                                                                                                                                                                                                                                                                                                                                                               | Weekly and short rolling reset windows matter. Codex/Fast Mode exposes live percent-used windows through the Codex backend usage endpoint.                                                                             | Multiple ChatGPT accounts are core. Each account needs its own reset window, plan, mode, percent/token pressure, and local observation history. | For Codex/Fast Mode, use the live Codex usage endpoint. For non-Codex ChatGPT surfaces, keep manual/assisted observations and forecast confidence until a clean provider signal exists.                                                                                                                                                                    | High for Codex percent windows; medium for visible reset clues; low for non-Codex automation                                                                                                                      |
 | Anthropic API organizations                   | Usage and Cost API can report message usage and costs by time bucket, model, workspace, API key, service tier, context window, geo, and beta fast-mode speed. API responses include rate-limit headers with remaining and reset values.                                                                                                                                                                                                                                                                                                                                                                                                | API rate limits use token bucket behavior; monthly spend limits exist by tier.                                                                                                                                         | Organization/workspace/API-key credentials. Multiple organizations and workspaces should be supported.                                          | Support official API usage/cost adapter. Capture fast-mode dimensions where available.                                                                                                                                                                                                                                                                     | High                                                                                                                                                                                                              |
 | Claude subscriptions and Claude Code seats    | Claude Code status-line JSON can include `rate_limits.five_hour` and `rate_limits.seven_day` for Claude.ai Pro and Max subscribers after a session receives an API response. Claude Code auth status exposes login method and subscription type; local stats cache exposes historical local usage only. Non-interactive `claude -p --output-format stream-json --verbose` can emit `rate_limit_info` with status, active window type, and reset time, but no used percentage was observed. `ccusage blocks --json --offline` can derive active 5-hour block token use and runway from local aggregate session data used by Every Code. | Status-line rate-limit windows include used percentage and reset epochs. Pro/Max/Team usage has session-based reset behavior. `ccusage` estimates token pressure and reset/runway rather than official server percent. | Multiple Claude accounts/seats are possible, but account connection should be conservative.                                                     | Support a local Claude status connector for account metadata, local activity freshness, optional status-line rate-limit cache, and an explicit Every Code-compatible `ccusage` estimate. Mark old status-line readings stale, and label `ccusage` rows as estimated. Do not read auth, Keychain, raw transcripts, prompts, or conversation JSONL directly. | High for fresh status-line subscription windows when configured; medium for non-interactive reset/status metadata; medium for `ccusage` estimated runway; medium for auth/subscription metadata and local history |
-| Google Gemini CLI / Code Assist               | Gemini CLI OAuth credentials can be refreshed locally, then the Code Assist backend returns live quota buckets with model IDs, remaining fractions, optional remaining amounts, and reset times.                                                                                                                                                                                                                                                                                                                                                                                                                                       | Quota buckets are percent-style remaining fractions per model with provider reset timestamps.                                                                                                                          | Google account plus Code Assist project is the natural boundary; multiple `GEMINI_CLI_HOME` roots can represent multiple logins.                | Support a Gemini Code Assist live quota connector using Gemini CLI auth. Store only normalized percent pressure, observed bucket labels, window labels, and reset times. Preserve unfamiliar labels and fail with diagnostics when quota payload shape changes.                                                                                              | High for Gemini CLI/Code Assist buckets observed locally; medium for exact future bucket taxonomy because this is a product backend surface                                                                         |
+| Google Antigravity                            | Antigravity appears to have quota status surfaces, but the locally available credential and transport are not yet proven safe for Context Panel. Retired Gemini CLI OAuth and legacy Code Assist quota paths have been removed.                                                                                                                                                                                                                                                                                                                                        | Unknown until a supported Antigravity quota source is validated.                                                                                                                                                         | Google account plus Antigravity sign-in is the likely boundary.                                                                                 | Keep Google visible as unavailable/unknown. Do not reintroduce Gemini CLI OAuth, legacy Code Assist REST fallback, or installed-app proof modes. Add Google limits only through a new supported Antigravity design that cannot trigger Keychain prompt storms.                                                                                               | Low until supported credential and quota transport are validated                                                                                                                                                    |
 | Google Gemini API / Google AI Studio projects | AI Studio and Cloud Billing show usage. Gemini API rate limits are project-scoped, not API-key-scoped. Service Usage API lists quota limits; Cloud Monitoring exposes quota usage metrics; Cloud Billing export to BigQuery provides detailed cost/usage data.                                                                                                                                                                                                                                                                                                                                                                         | Rate limits are RPM, input TPM, and RPD, with model/tier variation. RPD quotas reset at midnight Pacific time.                                                                                                         | Google project is the natural account boundary. Multiple Google accounts/projects should be supported.                                          | Support Google API projects after OAuth/service-account design. Use Service Usage for limits, Cloud Monitoring for quota usage, and optional Billing export for cost history.                                                                                                                                                                              | Medium-high, but setup is heavier                                                                                                                                                                                 |
 | Google consumer Gemini app subscriptions      | No stable public API for personal Gemini app subscription allowance was found in this pass.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Provider UI likely remains source of truth, and current public help describes 5-hour refreshes until a weekly limit is reached.                                                                                        | Multiple Google accounts may matter, but automation risk is high.                                                                               | Defer direct Gemini Apps automation for v1 unless a supported API emerges, but keep the shared Google/Gemini display model able to show 5-hour, daily, weekly, or unknown windows.                                                                                                                                                                          | Low for automation; high for the documented need to avoid daily-only Gemini copy                                                                                                                                   |
 
@@ -161,73 +161,24 @@ Preferred v1 connector scope:
   `CodexRateLimitProbe` executable exists to prove the direct call path against
   an existing Codex `auth.json` while printing only redacted summaries.
 
-### Google Antigravity / Gemini Code Assist Connector
+### Google Antigravity Connector
 
-The local Google coding-tool path gives Context Panel a second viable live
-connector. Antigravity stores a Google access token in the macOS Keychain under
-the generic-password service `gemini` and account `antigravity`. Legacy Gemini
-CLI installs store OAuth credentials under `~/.gemini/oauth_creds.json`, while
-the active account metadata lives separately under `~/.gemini/google_accounts.json`.
-The quota values are not persisted as a durable local cache; Antigravity and
-Gemini CLI refresh them from the Code Assist backend.
+Retired Gemini CLI OAuth and legacy Code Assist quota support has been removed.
+Context Panel no longer reads Gemini CLI OAuth files, discovers Gemini CLI OAuth
+metadata, calls legacy Code Assist quota endpoints, ships a Gemini quota probe,
+or offers an installed-app Antigravity proof mode. The Google account remains in
+the configuration model so the widget and settings can show Google as an explicit
+unknown/unavailable provider rather than silently dropping the product need.
 
-Preferred v1 connector scope:
-
-- Prefer legacy Gemini CLI OAuth until Context Panel has a bounded, signed-app
-  safe way to read Antigravity's Keychain secret. Antigravity stores its token in
-  another app's generic-password item, and local validation found that reading
-  the secret payload with native `SecItemCopyMatching` can hang even when a
-  metadata-only lookup returns quickly. Production app and background defaults
-  must therefore avoid reading that secret by default.
-- Keep Antigravity-only quota support behind explicit foreground/probe injection
-  until the credential read path is proven from `/Applications/Context Panel.app`
-  without pinwheeling. An unreadable or expired Antigravity Keychain token must
-  not break an otherwise viable legacy Gemini account.
-- Resolve `GEMINI_CLI_HOME`, then default to `~/.gemini`, for legacy Gemini CLI
-  auth and metadata fallback.
-- Read `oauth_creds.json` only to refresh a legacy Gemini CLI access token
-  locally; never print, store, or upload token values. If Antigravity's Keychain
-  access token is expired, ask the user to open Antigravity to refresh Google
-  authentication instead of refreshing that token through Gemini CLI metadata.
-- When the connector uses Antigravity's Keychain token, first call the
-  Antigravity quota status surface on the daily Code Assist backend host. It
-  exposes bucket-style quota status fields such as model, quota type, remaining
-  fraction, and reset time; these are closer to the `agy` visible quota state
-  than the older legacy Code Assist quota buckets.
-- If the Antigravity quota status path is unavailable, temporarily rate-limited,
-  server-failing, empty, or not yet exposing recognizable bucket fields, fall
-  back to the legacy Gemini Code Assist load and quota path rather than marking
-  the provider failed.
-- Call the Gemini Code Assist load path to resolve the active project internally;
-  never print or persist the raw project identifier.
-- Normalize quota buckets by model ID, remaining fraction, optional remaining
-  amount and total amount, explicit exhausted/limited flags, observed bucket
-  label, observed window label, and reset time.
-- Represent each bucket as percent pressure: `used = round((1 - remaining) *
-100)`, `limit = 100`, `unit = percent`. If a bucket reports remaining and total
-amounts, derive percent pressure from those amounts. If the backend explicitly
-reports an exhausted/limited bucket, preserve that as `used = 100`, `limit =
-100`, and `status = limited` even when another remaining field looks healthy.
-- Infer display windows from explicit labels first, then reset timing relative
-  to the observation timestamp. Do not assume Gemini buckets are daily-only;
-  show observed 5-hour, daily, weekly, or unfamiliar labels when present.
-- Preserve unfamiliar Gemini bucket labels instead of dropping or relabeling
-  them. If the quota payload stops exposing recognizable bucket fields, surface
-  a redacted diagnostic failure instead of a silent blank state.
-- Mark confidence as observed because this is a product backend surface rather
-  than a public quota API contract.
-
-The local `GeminiQuotaProbe` executable proves the legacy Gemini CLI path with
-redacted output. On 2026-05-06 it returned seven live model buckets for the
-local Gemini CLI account, including Gemini 2.5 and Gemini 3 preview models, with
-percent remaining and reset timestamps. On 2026-05-22 the installed Context
-Panel app was also validated against an Antigravity-only path by temporarily
-pointing the Google account at a missing `oauth_creds.json`; the app still
-refreshed Google limits through Antigravity's Keychain token, then the account
-configuration was restored. On 2026-06-05 local `agy` evidence showed a newer
-Antigravity quota status surface with remaining fraction and reset time fields,
-but the Antigravity secret Keychain read also proved unsafe enough to keep that
-path out of production defaults until a bounded credential reader is validated.
+The only acceptable future Google limits path is a supported Antigravity quota
+design that is proven from `/Applications/Context Panel.app` without repeated
+Keychain prompts, raw secret logging, or unbounded credential reads. Diagnostic
+proof on 2026-06-06 showed that the older REST guess for Antigravity quota status
+returned 404, while the AICode gRPC quota method was registered but rejected the
+locally available Antigravity token with `grpc-status=7` / insufficient scopes.
+That same proof path triggered repeated macOS Keychain prompts, so proof-mode and
+credential-reading code was removed from the app build. Do not reintroduce the
+retired Gemini CLI or legacy Code Assist paths as a fallback.
 
 Current public Google docs have a split contract. Gemini Apps help announced
 usage-limit changes starting 2026-05-17 and describes compute-based limits that

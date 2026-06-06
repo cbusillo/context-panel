@@ -43,13 +43,16 @@ import Testing
     #expect(entitlements["com.apple.security.files.bookmarks.document-scope"] == nil)
 }
 
-@Test func refreshAgentPreservesBackgroundGeminiLegacyOAuth() throws {
+@Test func refreshAgentDoesNotReferenceRetiredGoogleCredentialPaths() throws {
     let url = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         .appending(path: "Sources/ContextPanelRefreshAgent/ContextPanelRefreshAgent.swift")
     let source = try String(contentsOf: url, encoding: .utf8)
 
     #expect(source.contains("SnapshotRefreshRunner.appDefault"))
-    #expect(!source.contains("allowsLegacyGeminiOAuth: false"))
+    #expect(!source.contains("GeminiQuotaProbe"))
+    #expect(!source.contains("allowsLegacyGeminiOAuth"))
+    #expect(!source.contains("antigravityCredentialSource"))
+    #expect(!source.contains("oauth_creds.json"))
 }
 
 private func loadEntitlements(_ path: String) throws -> [String: Any] {

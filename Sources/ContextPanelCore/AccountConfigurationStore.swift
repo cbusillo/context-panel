@@ -18,8 +18,6 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
     public var statsPath: String?
     public var rateLimitSnapshotPath: String?
     public var usageBlocksPath: String?
-    public var oauthClientIDEnvironmentName: String?
-    public var oauthClientSecretEnvironmentName: String?
 
     public init(
         id: String,
@@ -31,9 +29,7 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
         commandPath: String? = nil,
         statsPath: String? = nil,
         rateLimitSnapshotPath: String? = nil,
-        usageBlocksPath: String? = nil,
-        oauthClientIDEnvironmentName: String? = nil,
-        oauthClientSecretEnvironmentName: String? = nil
+        usageBlocksPath: String? = nil
     ) {
         self.id = id
         self.provider = provider
@@ -45,8 +41,6 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
         self.statsPath = statsPath
         self.rateLimitSnapshotPath = rateLimitSnapshotPath
         self.usageBlocksPath = usageBlocksPath
-        self.oauthClientIDEnvironmentName = oauthClientIDEnvironmentName
-        self.oauthClientSecretEnvironmentName = oauthClientSecretEnvironmentName
     }
 
     public var effectiveAuthPath: String? {
@@ -54,7 +48,7 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
         case .codexRateLimits:
             return authPath
         case .geminiCodeAssist:
-            return authPath
+            return nil
         case .claudeLocalStatus:
             return rateLimitSnapshotPath ?? ContextPanelLocations.claudeStatuslineCacheURL().path
         case .claudeOAuthUsage:
@@ -66,9 +60,11 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
 public extension LocalProviderAccountConfiguration {
     var providerReportAccountIDs: [String] {
         switch connectorKind {
-        case .codexRateLimits, .geminiCodeAssist:
+        case .codexRateLimits:
             guard let authPath else { return [] }
             return Self.localAccountIDs(provider: provider, path: authPath)
+        case .geminiCodeAssist:
+            return [ConnectorRedactor.localAccountID(provider: provider, stableID: id)]
         case .claudeLocalStatus:
             guard let authPath = effectiveAuthPath else { return [] }
             return Self.localAccountIDs(provider: provider, path: authPath)
@@ -190,14 +186,11 @@ public struct AccountConfigurationStore: Sendable {
                 displayName: "Claude"
             ),
             LocalProviderAccountConfiguration(
-                id: "gemini-code-assist-default",
+                id: "google-antigravity-default",
                 provider: .google,
                 connectorKind: .geminiCodeAssist,
-                displayName: "Gemini",
-                isEnabled: true,
-                authPath: "\(home)/.gemini/oauth_creds.json",
-                oauthClientIDEnvironmentName: "GEMINI_OAUTH_CLIENT_ID",
-                oauthClientSecretEnvironmentName: "GEMINI_OAUTH_CLIENT_SECRET"
+                displayName: "Antigravity",
+                isEnabled: true
             ),
         ])
     }
@@ -243,21 +236,7 @@ public enum AccountConnectorFactory {
         from document: AccountConfigurationDocument,
         bookmarkStore: SecureFileBookmarkStore? = nil,
         credentialStore: (any ProviderCredentialStoring)? = nil,
-        requiresBookmarkedAuthFiles: Bool = ContextPanelLocations.isRunningInAppSandbox,
-        environment: [String: String] = ProcessInfo.processInfo.environment,
-        useBundledGeminiMetadataFallback: Bool = true,
-        geminiMetadataFileLoader: @escaping @Sendable (String) throws -> String = { path in
-            try String(contentsOfFile: NSString(string: path).expandingTildeInPath, encoding: .utf8)
-        },
-        geminiMetadataFileExists: @escaping @Sendable (String) -> Bool = { path in
-            FileManager.default.fileExists(atPath: NSString(string: path).expandingTildeInPath)
-        },
-        geminiMetadataDirectoryLister: @escaping @Sendable (String) -> [String] = { path in
-            let expanded = NSString(string: path).expandingTildeInPath
-            return (try? FileManager.default.contentsOfDirectory(atPath: expanded).map { "\(expanded)/\($0)" }) ?? []
-        },
-        antigravityCredentialSource: AntigravityKeychainCredentialSource? = nil,
-        allowsLegacyGeminiOAuth: Bool = true
+        requiresBookmarkedAuthFiles: Bool = ContextPanelLocations.isRunningInAppSandbox
     ) -> [any ProviderConnector] {
         return document.accounts.compactMap { account -> (any ProviderConnector)? in
             guard account.isEnabled else { return nil }
@@ -279,63 +258,12 @@ public enum AccountConnectorFactory {
                     fileLoader: authFileLoader
                 )
             case .geminiCodeAssist:
-                guard let authPath = account.authPath else { return nil }
-                if antigravityCredentialSource == nil && !allowsLegacyGeminiOAuth {
-                    let expanded = NSString(string: authPath).expandingTildeInPath
-                    return FailingProviderConnector(
-                        provider: .google,
-                        accountID: ConnectorRedactor.localAccountID(provider: .google, path: expanded),
-                        accountName: account.displayName,
-                        message: "Google Antigravity credentials require foreground refresh. Open Context Panel to refresh Google limits."
-                    )
-                }
-                let authFileLoader = makeAuthFileLoader(
-                    accountID: account.id,
-                    bookmarkStore: bookmarkStore,
-                    credentialStore: credentialStore,
-                    requiresBookmarkedAuthFiles: requiresBookmarkedAuthFiles
-                )
-                let configuredMetadata = geminiMetadata(account: account, environment: environment)
-                let configuredMetadataValue: GeminiOAuthClientMetadata?
-                switch configuredMetadata {
-                case .complete(let metadata):
-                    configuredMetadataValue = metadata
-                case .missing, .partial:
-                    configuredMetadataValue = nil
-                }
-                let cachedMetadataValue = geminiCachedMetadata(accountID: account.id, credentialStore: credentialStore)
-                let discoveredMetadata = GeminiOAuthClientMetadataDiscovery.discover(
-                    environment: environment,
-                    commandPath: account.commandPath,
-                    useBundledFallback: useBundledGeminiMetadataFallback,
-                    fileLoader: geminiMetadataFileLoader,
-                    fileExists: geminiMetadataFileExists,
-                    directoryLister: geminiMetadataDirectoryLister
-                )
-                let metadata = configuredMetadataValue
-                    ?? cachedMetadataValue
-                    ?? discoveredMetadata
-                    ?? antigravityMetadataFallback(source: antigravityCredentialSource)
-                guard let metadata else {
-                    let expanded = NSString(string: authPath).expandingTildeInPath
-                    return FailingProviderConnector(
-                        provider: .google,
-                        accountID: ConnectorRedactor.localAccountID(provider: .google, path: expanded),
-                        accountName: account.displayName,
-                        message: "Google OAuth client metadata could not be found. Reinstall Gemini CLI, sign into Antigravity, or configure Gemini OAuth client metadata."
-                    )
-                }
-                return GeminiCodeAssistConnector(
-                    accounts: [GeminiAccountConfiguration(
-                        authPath: authPath,
-                        accountName: account.displayName,
-                        clientID: metadata.clientID,
-                        clientSecret: metadata.clientSecret
-                    )],
-                    fileLoader: authFileLoader,
-                    credentialStore: credentialStore,
-                    credentialAccountID: account.id,
-                    antigravityCredentialSource: antigravityCredentialSource
+                return FailingProviderConnector(
+                    provider: .google,
+                    accountID: ConnectorRedactor.localAccountID(provider: .google, stableID: account.id),
+                    accountName: account.displayName,
+                    message: "Google Antigravity quota is not available yet. Legacy Gemini CLI and Code Assist quota paths have been retired.",
+                    status: .unknown
                 )
             case .claudeLocalStatus:
                 return ClaudeLocalStatusConnector(accounts: [ClaudeAccountConfiguration(
@@ -392,38 +320,6 @@ public enum AccountConnectorFactory {
         }
     }
 
-    private static func geminiCachedMetadata(
-        accountID: String,
-        credentialStore: (any ProviderCredentialLoading)?
-    ) -> GeminiOAuthClientMetadata? {
-        guard let credentialStore else { return nil }
-        let metadataAccountID = GeminiOAuthClientMetadata.credentialAccountID(for: accountID)
-        guard let data = try? credentialStore.load(accountID: metadataAccountID) else { return nil }
-        return try? JSONDecoder().decode(GeminiOAuthClientMetadata.self, from: data)
-    }
-
-    private static func antigravityMetadataFallback(
-        source: AntigravityKeychainCredentialSource?
-    ) -> GeminiOAuthClientMetadata? {
-        guard source?.credentialAvailability().canAttemptAntigravityRefresh == true else { return nil }
-        return GeminiOAuthClientMetadata(clientID: "", clientSecret: "")
-    }
-
-    private static func geminiMetadata(
-        account: LocalProviderAccountConfiguration,
-        environment: [String: String]
-    ) -> ConfiguredGeminiMetadata {
-        guard
-            let clientIDName = account.oauthClientIDEnvironmentName,
-            let clientSecretName = account.oauthClientSecretEnvironmentName
-        else { return .missing }
-        let clientID = environment[clientIDName]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let clientSecret = environment[clientSecretName]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if clientID.isEmpty && clientSecret.isEmpty { return .missing }
-        guard !clientID.isEmpty, !clientSecret.isEmpty else { return .partial }
-        return .complete(GeminiOAuthClientMetadata(clientID: clientID, clientSecret: clientSecret))
-    }
-
     private static func codexAccountName(for authPath: String, fallback: String) -> String {
         let expanded = NSString(string: authPath).expandingTildeInPath
         let url = URL(fileURLWithPath: expanded)
@@ -435,21 +331,4 @@ public enum AccountConnectorFactory {
         }
         return fallback
     }
-}
-
-private extension AntigravityCredentialAvailability {
-    var canAttemptAntigravityRefresh: Bool {
-        switch self {
-        case .available, .unreadable:
-            true
-        case .unavailable:
-            false
-        }
-    }
-}
-
-private enum ConfiguredGeminiMetadata: Equatable {
-    case missing
-    case partial
-    case complete(GeminiOAuthClientMetadata)
 }

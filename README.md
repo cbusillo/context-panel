@@ -98,16 +98,15 @@ without printing secrets or raw provider responses:
 
 ```sh
 swift run CodexRateLimitProbe --auth ~/.code/auth_accounts.json
-GEMINI_OAUTH_CLIENT_ID=... GEMINI_OAUTH_CLIENT_SECRET=... \
-  swift run GeminiQuotaProbe --auth ~/.gemini/oauth_creds.json
 swift run ClaudeLimitProbe
 swift run SnapshotStoreProbe --codex-auth ~/.code/auth_accounts.json --include-claude
 ```
 
-The Codex and Gemini probes can return live percent-window quota buckets for
-their respective CLI-backed accounts. The Claude probe intentionally reports
-local auth/subscription metadata and local stats-cache freshness until a Claude
-Code status-line cache has been populated.
+The Codex probe can return live percent-window quota buckets for CLI-backed
+OpenAI accounts. The retired Gemini CLI / legacy Code Assist probe has been
+removed. The Claude probe intentionally reports local auth/subscription metadata
+and local stats-cache freshness until a Claude Code status-line cache has been
+populated.
 
 To capture Claude subscription usage percentages, configure Claude Code's
 status line to call the helper in this repo. Claude Code sends the helper a JSON
@@ -133,10 +132,9 @@ block output when available and shows a clearly marked estimated 5-hour token
 window; that estimate is useful for "am I likely to run out soon?" but is not
 Anthropic's official subscription percentage.
 
-For Google/Gemini, the app can use an Antigravity Keychain sign-in when
-available. The probe path still uses OAuth client values from the locally
-installed Gemini CLI; those values are intentionally not checked into this
-repository.
+For Google/Gemini, retired Gemini CLI and legacy Code Assist quota paths have
+been removed. Google remains visible as an unavailable provider until a supported
+Antigravity limits source can be added without Keychain prompt storms.
 
 The probes call the same `ContextPanelCore` connectors the app will use, so
 passing probe output is also a smoke test for the production connector runtime.

@@ -5,7 +5,7 @@ import WidgetKit
 @main
 struct ContextPanelRefreshAgent {
     static func main() async {
-        let runner = SnapshotRefreshRunner.appDefault(antigravityCredentialSource: nil)
+        let runner = SnapshotRefreshRunner.appDefault()
         let settingsStore = BackgroundRefreshSettingsStore(
             settingsURL: ContextPanelLocations.backgroundRefreshSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
         )
