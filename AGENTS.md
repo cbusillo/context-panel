@@ -82,16 +82,22 @@ container/storage reset, or when cleaning up a mixed runtime:
 scripts/context-panel-runtime-baseline.sh reset --launch
 ```
 
-Do not claim readiness unless the receipt shows `baseline=OK`, the foreground
-app process, PluginKit widget registration, and `contextpanel://` URL handler all
-point to `/Applications/Context Panel.app`, the build fingerprint in that app
-matches the current source tree, and the storage/cache check reports no persisted
-account config, bookmarks, snapshots, widget timelines, reset-primer settings,
-reset-primer run state, or background-refresh settings
-when a fresh install was requested. Treat any mismatch as a blocker. Avoid
-repeatedly opening `contextpanel://` during ordinary validation; use that only
-for explicit widget click-through testing, because URL activation can change the
-visible app window state.
+Do not claim readiness unless the receipt shows `baseline=OK`, the running app
+process in `Active Processes`, PluginKit widget registration, the refresh agent,
+and the `contextpanel://` URL handler all point to
+`/Applications/Context Panel.app`, and the build fingerprint in that app matches
+the current source tree. A receipt that says `OK: no Context Panel processes are
+running` is acceptable only for passive cleanup checks; it is not enough before
+asking Chris to test app, widget, provider, sandbox, storage, or login-item
+behavior. If the app was closed, launch the canonical app with
+`open -a "/Applications/Context Panel.app"`, rerun the baseline check, and require
+the active process path to be the installed app before saying it is ready to test.
+When a fresh install was requested, also require the storage/cache check to
+report no persisted account config, bookmarks, snapshots, widget timelines,
+reset-primer settings, reset-primer run state, or background-refresh settings.
+Treat any mismatch as a blocker. Avoid repeatedly opening `contextpanel://`
+during ordinary validation; use that only for explicit widget click-through
+testing, because URL activation can change the visible app window state.
 
 The install gate is the normal "ready to test" path. The reset gate can make
 macOS refresh widget registrations and may still disturb placement; after a

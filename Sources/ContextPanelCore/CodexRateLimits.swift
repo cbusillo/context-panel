@@ -100,11 +100,13 @@ public struct CodexAuthTokens: Codable, Equatable, Sendable {
     public let accessToken: String
     public let accountID: String?
     public let idToken: String?
+    public let refreshToken: String?
 
-    public init(accessToken: String, accountID: String?, idToken: String?) {
+    public init(accessToken: String, accountID: String?, idToken: String?, refreshToken: String? = nil) {
         self.accessToken = accessToken
         self.accountID = accountID
         self.idToken = idToken
+        self.refreshToken = refreshToken
     }
 }
 
@@ -124,7 +126,8 @@ public enum CodexAuthFileParser {
         return CodexAuthTokens(
             accessToken: tokens.accessToken,
             accountID: tokens.accountID,
-            idToken: tokens.idToken
+            idToken: tokens.idToken,
+            refreshToken: tokens.refreshToken
         )
     }
 
@@ -146,7 +149,8 @@ public enum CodexAuthFileParser {
                     tokens: CodexAuthTokens(
                         accessToken: account.tokens.accessToken,
                         accountID: account.tokens.accountID,
-                        idToken: account.tokens.idToken
+                        idToken: account.tokens.idToken,
+                        refreshToken: account.tokens.refreshToken
                     ),
                     accountName: name,
                     stableID: account.id,
@@ -385,9 +389,19 @@ public struct CodexRateLimitConnector: ProviderConnector {
     private func fetchUsage(endpoint: URL, auth: CodexAuthTokens) async throws -> Data {
         let response = try await httpClient.data(for: ConnectorHTTPRequest(url: endpoint, method: "GET", headers: authorizedHeaders(auth: auth)))
         guard (200..<300).contains(response.statusCode) else {
+            if response.statusCode == 401 || response.statusCode == 403 {
+                throw codexUsageAuthorizationError(auth: auth)
+            }
             throw ConnectorError.httpFailure(operation: "Codex usage endpoint", statusCode: response.statusCode)
         }
         return response.data
+    }
+
+    private func codexUsageAuthorizationError(auth: CodexAuthTokens) -> ConnectorError {
+        if auth.refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return ConnectorError.foregroundRefreshRequired("Every Code auth for this ChatGPT account is no longer authorized for Codex usage. Sign in again from Every Code or Codex, then refresh Context Panel.")
+        }
+        return ConnectorError.invalidAuth("Every Code or Codex auth for this ChatGPT account cannot be refreshed. Sign in again, then refresh Context Panel.")
     }
 
     private func fetchModelAvailability(endpoint: URL, auth: CodexAuthTokens) async throws -> CodexModelAvailability {
@@ -550,11 +564,13 @@ private struct CodexAuthTokenPayload: Decodable {
     let accessToken: String
     let accountID: String?
     let idToken: String?
+    let refreshToken: String?
 
     enum CodingKeys: String, CodingKey {
         case accessToken = "access_token"
         case accountID = "account_id"
         case idToken = "id_token"
+        case refreshToken = "refresh_token"
     }
 }
 

@@ -199,17 +199,27 @@ public struct AccountConfigurationStore: Sendable {
         var document = document
         var changed = false
         document.accounts = document.accounts.map { account in
-            guard account.id == "claude-local-default", account.connectorKind == .claudeLocalStatus else {
-                return account
+            if account.id == "claude-local-default", account.connectorKind == .claudeLocalStatus {
+                changed = true
+                return LocalProviderAccountConfiguration(
+                    id: "claude-oauth-default",
+                    provider: .anthropic,
+                    connectorKind: .claudeOAuthUsage,
+                    displayName: account.displayName.isEmpty ? "Claude" : account.displayName,
+                    isEnabled: account.isEnabled
+                )
             }
-            changed = true
-            return LocalProviderAccountConfiguration(
-                id: "claude-oauth-default",
-                provider: .anthropic,
-                connectorKind: .claudeOAuthUsage,
-                displayName: account.displayName.isEmpty ? "Claude" : account.displayName,
-                isEnabled: account.isEnabled
-            )
+            if account.id == GoogleAccountMigration.oldAccountID, account.connectorKind == .geminiCodeAssist {
+                changed = true
+                return LocalProviderAccountConfiguration(
+                    id: GoogleAccountMigration.newAccountID,
+                    provider: .google,
+                    connectorKind: .geminiCodeAssist,
+                    displayName: GoogleAccountMigration.migratedDisplayName(from: account.displayName),
+                    isEnabled: account.isEnabled
+                )
+            }
+            return account
         }
         if changed {
             document.updatedAt = now
@@ -258,12 +268,13 @@ public enum AccountConnectorFactory {
                     fileLoader: authFileLoader
                 )
             case .geminiCodeAssist:
-                return FailingProviderConnector(
-                    provider: .google,
-                    accountID: ConnectorRedactor.localAccountID(provider: .google, stableID: account.id),
-                    accountName: account.displayName,
-                    message: "Google Antigravity quota is not available yet. Legacy Gemini CLI and Code Assist quota paths have been retired.",
-                    status: .unknown
+                let effectiveCredentialStore: any ProviderCredentialStoring = credentialStore ?? ProviderCredentialStore()
+                return GoogleAntigravityQuotaConnector(
+                    accounts: [GoogleAntigravityAccountConfiguration(
+                        accountID: account.id,
+                        accountName: account.displayName
+                    )],
+                    credentialStore: effectiveCredentialStore
                 )
             case .claudeLocalStatus:
                 return ClaudeLocalStatusConnector(accounts: [ClaudeAccountConfiguration(

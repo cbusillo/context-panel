@@ -291,6 +291,8 @@ public struct FastModeCapacityForecast: Codable, Equatable, Sendable {
             "5-hour guardrail"
         case .daily:
             "daily pool"
+        case .availability:
+            "model capacity pool"
         case nil:
             "capacity pool"
         }
@@ -630,6 +632,8 @@ private extension MainLimitSummary {
             1
         case .daily:
             2
+        case .availability:
+            3
         }
     }
 }

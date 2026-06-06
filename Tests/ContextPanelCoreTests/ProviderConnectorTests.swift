@@ -679,6 +679,25 @@ import Testing
 
 @Test func codexConnectorRedactsHTTPFailures() async {
     let auth = #"{"tokens":{"access_token":"token-secret"}}"#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 500, data: Data("secret body".utf8))])
+    let connector = CodexRateLimitConnector(
+        accounts: [CodexAccountConfiguration(authPath: "/tmp/openai.json", accountName: "OpenAI")],
+        httpClient: http,
+        fileLoader: { _ in auth }
+    )
+
+    let result = await connector.refresh(now: Date())
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].status == .failure)
+    #expect(result.reports[0].errorMessage?.contains("HTTP 500") == true)
+    #expect(result.reports[0].errorMessage?.contains("raw body redacted") == true)
+    #expect(result.reports[0].errorMessage?.contains("secret body") == false)
+    #expect(result.snapshot.limits.isEmpty)
+}
+
+@Test func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithoutRefreshToken() async {
+    let auth = #"{"tokens":{"access_token":"token-secret","account_id":"account-a"}}"#.data(using: .utf8)!
     let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 401, data: Data("secret body".utf8))])
     let connector = CodexRateLimitConnector(
         accounts: [CodexAccountConfiguration(authPath: "/tmp/openai.json", accountName: "OpenAI")],
@@ -690,29 +709,368 @@ import Testing
 
     #expect(result.reports.count == 1)
     #expect(result.reports[0].status == .failure)
-    #expect(result.reports[0].errorMessage?.contains("not authorized") == true)
-    #expect(result.reports[0].errorMessage?.contains("Reauthorize") == true)
+    #expect(result.reports[0].errorMessage?.contains("cannot be refreshed") == true)
+    #expect(result.reports[0].errorMessage?.contains("Sign in again") == true)
     #expect(result.reports[0].errorMessage?.contains("secret body") == false)
-    #expect(result.snapshot.limits.isEmpty)
+    #expect(http.requests.count == 1)
 }
 
-@Test func googleConnectorReportsUnavailableWhileAntigravityQuotaIsUnsupported() async throws {
-    let connector = FailingProviderConnector(
-        provider: .google,
-        accountID: ConnectorRedactor.localAccountID(provider: .google, stableID: "google-antigravity-default"),
+@Test func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithRefreshToken() async {
+    let auth = #"{"tokens":{"access_token":"token-secret","refresh_token":"refresh-secret","account_id":"account-a"}}"#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 401, data: Data("secret body".utf8))])
+    let connector = CodexRateLimitConnector(
+        accounts: [CodexAccountConfiguration(authPath: "/tmp/openai.json", accountName: "OpenAI")],
+        httpClient: http,
+        fileLoader: { _ in auth }
+    )
+
+    let result = await connector.refresh(now: Date())
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].status == .failure)
+    #expect(result.reports[0].errorMessage?.contains("Every Code auth") == true)
+    #expect(result.reports[0].errorMessage?.contains("Sign in again") == true)
+    #expect(result.reports[0].errorMessage?.contains("secret body") == false)
+    #expect(http.requests.count == 1)
+}
+
+@Test func googleAntigravityParserGroupsReportedModelQuota() throws {
+    let observedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let payload = #"""
+    {
+      "models": {
+        "gemini-3-pro-high": { "quotaInfo": { "remainingFraction": 0.42, "resetTime": "2026-06-07T12:00:00Z" } },
+        "gemini-3-pro-low": { "quotaInfo": { "remainingFraction": 0.51, "resetTime": "2026-06-07T13:00:00Z" } },
+        "gemini-3-flash": { "quotaInfo": { "remainingFraction": 0.9, "resetTime": "2026-06-07T14:00:00Z" } },
+        "claude-sonnet-4-6": { "quotaInfo": { "remainingFraction": 0.7, "resetTime": "2026-06-08T12:00:00Z" } },
+        "gpt-oss-120b": { "quotaInfo": { "remainingFraction": 0.6, "resetTime": "2026-06-08T12:30:00Z" } },
+        "veo-3-fast": { "quotaInfo": { "remainingFraction": 0.2, "resetTime": "2026-06-08T13:00:00Z" } },
+        "not-a-quota-model": {}
+      }
+    }
+    """#.data(using: .utf8)!
+
+    let limits = try GoogleAntigravityQuotaParser.usageLimits(
+        from: payload,
+        accountID: "google-account",
+        configuredAccountID: "google-antigravity-default",
         accountName: "Antigravity",
-        message: "Google Antigravity quota is not available yet. Legacy Gemini CLI and Code Assist quota paths have been retired.",
-        status: .unknown
+        observedAt: observedAt
+    )
+
+    #expect(limits.map(\.modelLabel) == ["Gemini Pro", "Gemini Flash", "Claude", "GPT-OSS", "Veo 3 Fast"])
+    #expect(limits.map(\.windowLabel) == [
+        "Model capacity",
+        "Model capacity",
+        "Model capacity",
+        "Model capacity",
+        "Model capacity",
+    ])
+    #expect(limits.map(\.used) == [58, 10, 30, 40, 80])
+    #expect(limits.allSatisfy { $0.provider == .google && $0.unit == .percent && $0.limit == 100 })
+    #expect(limits.allSatisfy { $0.configuredAccountID == "google-antigravity-default" })
+    #expect(limits[0].resetsAt == ISO8601DateFormatter().date(from: "2026-06-07T12:00:00Z"))
+    #expect(limits[0].confidence == .observed)
+}
+
+@Test func googleAntigravityParserAcceptsDisplayNamesAndSparseQuotaInfo() throws {
+    let observedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let payload = #"""
+    {
+      "models": {
+        "models/model-a": {
+          "displayName": "Gemini 3 Pro",
+          "quotaInfo": { "remainingFraction": "0.25", "resetTime": "2026-06-07T12:00:00Z" }
+        },
+        "models/model-b": {
+          "displayName": "Gemini 3 Flash",
+          "quotaInfo": { "resetTime": "2026-06-07T13:00:00Z" }
+        },
+        "models/model-c": {
+          "displayName": "Claude Sonnet",
+          "quotaInfo": { "remainingFraction": 0.5 }
+        }
+      }
+    }
+    """#.data(using: .utf8)!
+
+    let limits = try GoogleAntigravityQuotaParser.usageLimits(
+        from: payload,
+        accountID: "google-antigravity",
+        configuredAccountID: "google-antigravity-default",
+        accountName: "Antigravity",
+        observedAt: observedAt
+    )
+
+    #expect(limits.map(\.modelLabel) == ["Gemini Pro", "Gemini Flash", "Claude"])
+    #expect(limits.map(\.used) == [75, 100, 50])
+    #expect(limits[1].resetsAt == ISO8601DateFormatter().date(from: "2026-06-07T13:00:00Z"))
+}
+
+@Test func googleAntigravityConnectorDiscoversProjectAndFetchesModelQuota() async throws {
+    let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["https://www.googleapis.com/auth/cloud-platform"]}"#.data(using: .utf8)!
+    let project = #"{"cloudaicompanionProject":{"id":"project-a"}}"#.data(using: .utf8)!
+    let models = #"""
+    {
+      "models": {
+        "gemini-3-pro-high": { "quotaInfo": { "remainingFraction": 0.25, "resetTime": "2026-06-07T12:00:00Z" } },
+        "gemini-3-flash": { "quotaInfo": { "remainingFraction": 1.0, "resetTime": "2026-06-07T13:00:00Z" } }
+      }
+    }
+    """#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: project),
+        ConnectorHTTPResponse(statusCode: 200, data: models),
+    ])
+    let store = StubCredentialStore(storage: ["google-antigravity-default": credentials])
+    let connector = GoogleAntigravityQuotaConnector(
+        accounts: [googleAntigravityTestAccount()],
+        httpClient: http,
+        credentialStore: store
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].provider == .google)
+    #expect(result.reports[0].status == .healthy)
+    #expect(result.reports[0].configuredAccountID == "google-antigravity-default")
+    #expect(result.snapshot.limits.map(\.modelLabel) == ["Gemini Pro", "Gemini Flash"])
+    #expect(result.snapshot.limits.map(\.used) == [75, 0])
+    #expect(http.requests.map(\.url.path) == ["/v1internal:loadCodeAssist", "/v1internal:fetchAvailableModels"])
+    #expect(http.requests.map(\.url.absoluteString) == [
+        "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+        "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+    ])
+    #expect(http.requests[0].headers["Authorization"] == "Bearer access-secret")
+    #expect(http.requests[0].headers["X-Goog-Api-Client"] == "gl-mac/1.0.0 antigravity-context-panel/1.0.0")
+    #expect(http.requests[0].headers["X-Goog-QuotaUser"] == "google-antigravity-default")
+    #expect(http.requests[0].headers["Client-Metadata"] == #"{"ideType":"ANTIGRAVITY","platform":"MACOS","pluginType":"GEMINI"}"#)
+    #expect(http.requests[1].headers["X-Goog-Api-Client"] == "gl-mac/1.0.0 antigravity-context-panel/1.0.0")
+    #expect(http.requests[1].headers["X-Goog-QuotaUser"] == "google-antigravity-default")
+    #expect(http.requests[1].headers["Client-Metadata"] == #"{"ideType":"ANTIGRAVITY","platform":"MACOS","pluginType":"GEMINI"}"#)
+    #expect(http.requests[1].body.flatMap { String(data: $0, encoding: .utf8) }?.contains("project-a") == true)
+    #expect(store.savedAccountID == "google-antigravity-default")
+    #expect(store.savedData.flatMap {
+        try? JSONDecoder.contextPanelISO8601.decode(GoogleAntigravityOAuthCredentials.self, from: $0)
+    }?.projectID == "project-a")
+}
+
+@Test func googleAntigravityConnectorContinuesWhenProjectCacheWriteFails() async throws {
+    let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":[]}"#.data(using: .utf8)!
+    let project = #"{"cloudaicompanionProject":{"id":"project-a"}}"#.data(using: .utf8)!
+    let models = #"{"models":{"gemini-3-pro-high":{"quotaInfo":{"remainingFraction":0.5,"resetTime":"2026-06-07T12:00:00Z"}}}}"#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: project),
+        ConnectorHTTPResponse(statusCode: 200, data: models),
+    ])
+    let store = FailingCredentialStore(storage: ["google-antigravity-default": credentials])
+    let connector = GoogleAntigravityQuotaConnector(
+        accounts: [googleAntigravityTestAccount()],
+        httpClient: http,
+        credentialStore: store
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+
+    #expect(result.reports[0].status == .healthy)
+    #expect(http.requests.count == 2)
+    #expect(store.saveErrorCount == 1)
+}
+
+@Test func googleAntigravityConnectorAcceptsStoredCredentialsWithoutScopes() async throws {
+    let credentials = #"{"accessToken":"old-access","refreshToken":"refresh-secret","expiresAt":"2000-01-01T00:00:00Z","projectID":"project-a"}"#.data(using: .utf8)!
+    let token = #"{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600}"#.data(using: .utf8)!
+    let models = #"""
+    {
+      "models": {
+        "gemini-3-pro-high": { "quotaInfo": { "remainingFraction": 0.25, "resetTime": "2026-06-07T12:00:00Z" } }
+      }
+    }
+    """#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: token),
+        ConnectorHTTPResponse(statusCode: 200, data: models),
+    ])
+    let store = StubCredentialStore(storage: ["google-antigravity-default": credentials])
+    let connector = GoogleAntigravityQuotaConnector(
+        accounts: [googleAntigravityTestAccount()],
+        httpClient: http,
+        credentialStore: store
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].status == .healthy)
+    #expect(result.reports[0].errorMessage == nil)
+    #expect(result.snapshot.limits.map(\.modelLabel) == ["Gemini Pro"])
+    let savedCredentials = try #require(store.savedData.flatMap {
+        try? JSONDecoder.contextPanelISO8601.decode(GoogleAntigravityOAuthCredentials.self, from: $0)
+    })
+    #expect(savedCredentials.scopes == GoogleAntigravityOAuthMetadata.scopes)
+}
+
+@Test func googleAntigravityConnectorReportsUnexpectedCredentialFormatClearly() async throws {
+    let credentials = #"{"refreshToken":42}"#.data(using: .utf8)!
+    let connector = GoogleAntigravityQuotaConnector(
+        accounts: [googleAntigravityTestAccount()],
+        httpClient: StubHTTPClient(responses: []),
+        credentialStore: StubCredentialStore(storage: ["google-antigravity-default": credentials])
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].status == .failure)
+    #expect(result.reports[0].errorMessage?.contains("unexpected format") == true)
+    #expect(result.reports[0].errorMessage?.contains("missing") == false)
+}
+
+@Test func googleAntigravityConnectorRefreshesExpiredAccessToken() async throws {
+    let credentials = #"{"accessToken":"old-access","refreshToken":"refresh-secret","expiresAt":"2000-01-01T00:00:00Z","scopes":[]}"#.data(using: .utf8)!
+    let token = #"{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600,"scope":"https://www.googleapis.com/auth/cloud-platform"}"#.data(using: .utf8)!
+    let models = #"{"models":{"gemini-3-pro-high":{"quotaInfo":{"remainingFraction":0.5,"resetTime":"2026-06-07T12:00:00Z"}}}}"#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: token),
+        ConnectorHTTPResponse(statusCode: 200, data: models),
+    ])
+    let store = StubCredentialStore(storage: ["google-antigravity-default": credentials])
+    let connector = GoogleAntigravityQuotaConnector(
+        accounts: [googleAntigravityTestAccount(projectID: "configured-project")],
+        httpClient: http,
+        credentialStore: store
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+
+    #expect(result.reports[0].status == .healthy)
+    #expect(http.requests.map(\.url.host) == ["oauth2.googleapis.com", "cloudcode-pa.googleapis.com"])
+    #expect(http.requests[0].headers["Content-Type"] == "application/x-www-form-urlencoded")
+    #expect(http.requests[0].body.flatMap { String(data: $0, encoding: .utf8) }?.contains("refresh-secret") == true)
+    #expect(http.requests[1].headers["Authorization"] == "Bearer new-access")
+    #expect(store.savedAccountID == "google-antigravity-default")
+    #expect(store.savedData.flatMap { try? JSONDecoder.contextPanelISO8601.decode(GoogleAntigravityOAuthCredentials.self, from: $0) }?.refreshToken == "new-refresh")
+}
+
+@Test func googleAntigravityConnectorRefreshesWhenModelAvailabilityIsUnauthorized() async throws {
+    let credentials = #"{"accessToken":"old-access","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":[],"projectID":"project-a"}"#.data(using: .utf8)!
+    let token = #"{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600,"scope":"https://www.googleapis.com/auth/cloud-platform"}"#.data(using: .utf8)!
+    let models = #"{"models":{"gemini-3-pro-high":{"quotaInfo":{"remainingFraction":0.5,"resetTime":"2026-06-07T12:00:00Z"}}}}"#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 401, data: Data(#"{"error":"invalid_token"}"#.utf8)),
+        ConnectorHTTPResponse(statusCode: 200, data: token),
+        ConnectorHTTPResponse(statusCode: 200, data: models),
+    ])
+    let store = StubCredentialStore(storage: ["google-antigravity-default": credentials])
+    let connector = GoogleAntigravityQuotaConnector(
+        accounts: [googleAntigravityTestAccount()],
+        httpClient: http,
+        credentialStore: store
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+
+    #expect(result.reports[0].status == .healthy)
+    #expect(http.requests.map(\.url.host) == ["cloudcode-pa.googleapis.com", "oauth2.googleapis.com", "cloudcode-pa.googleapis.com"])
+    #expect(http.requests[2].headers["Authorization"] == "Bearer new-access")
+    #expect(store.savedAccountID == "google-antigravity-default")
+}
+
+@Test func googleAntigravityConnectorReportsMissingCredentialsWithoutPromptingExternalStores() async throws {
+    let connector = GoogleAntigravityQuotaConnector(
+        accounts: [googleAntigravityTestAccount()],
+        httpClient: StubHTTPClient(responses: []),
+        credentialStore: StubCredentialStore(storage: [:])
     )
 
     let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
 
     #expect(result.reports.count == 1)
     #expect(result.reports[0].provider == .google)
-    #expect(result.reports[0].status == .unknown)
-    #expect(result.reports[0].limits.isEmpty)
-    #expect(result.reports[0].errorMessage?.contains("Legacy Gemini CLI") == true)
+    #expect(result.reports[0].status == .failure)
+    #expect(result.reports[0].errorMessage == "Google Antigravity is not connected. Sign in to Google from Settings.")
 }
+
+@Test func googleAntigravityOAuthFlowBuildsAuthorizeURL() throws {
+    let url = try GoogleAntigravityOAuthFlow.authorizationURL(
+        codeChallenge: "challenge-value",
+        state: "state-value",
+        clientID: "google-client-id"
+    )
+    let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
+    let queryItems = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).compactMap { item in
+        item.value.map { (item.name, $0) }
+    })
+
+    #expect(components.scheme == "https")
+    #expect(components.host == "accounts.google.com")
+    #expect(components.path == "/o/oauth2/v2/auth")
+    #expect(queryItems["client_id"] == "google-client-id")
+    #expect(queryItems["response_type"] == "code")
+    #expect(queryItems["redirect_uri"] == GoogleAntigravityOAuthFlow.manualRedirectURI)
+    #expect(queryItems["code_challenge"] == "challenge-value")
+    #expect(queryItems["code_challenge_method"] == "S256")
+    #expect(queryItems["state"] == "state-value")
+    #expect(queryItems["access_type"] == "offline")
+    #expect(queryItems["prompt"] == "consent")
+    #expect(queryItems["scope"]?.contains("https://www.googleapis.com/auth/cloud-platform") == true)
+}
+
+@Test func googleAntigravityOAuthFlowNormalizesCallbackURLsAndBuildsTokenBodies() throws {
+    let callback = GoogleAntigravityOAuthFlow.normalizedAuthorizationCode(
+        from: "http://localhost:51121/oauth-callback?code=callback-code&state=callback-state"
+    )
+    #expect(callback.code == "callback-code")
+    #expect(callback.state == "callback-state")
+
+    let codeBody = String(data: try GoogleAntigravityOAuthFlow.authorizationCodeTokenRequestBody(
+        code: GoogleAntigravityAuthorizationCode(code: "code-secret", state: "state-secret"),
+        codeVerifier: "verifier-secret",
+        clientID: "google-client-id",
+        clientSecret: "google-client-secret"
+    ), encoding: .utf8)
+    #expect(codeBody?.contains("grant_type=authorization_code") == true)
+    #expect(codeBody?.contains("code=code-secret") == true)
+    #expect(codeBody?.contains("code_verifier=verifier-secret") == true)
+    #expect(codeBody?.contains("client_secret=") == true)
+
+    let refreshBody = String(data: try GoogleAntigravityOAuthFlow.refreshTokenRequestBody(
+        refreshToken: "refresh-secret",
+        clientID: "google-client-id",
+        clientSecret: "google-client-secret"
+    ), encoding: .utf8)
+    #expect(refreshBody?.contains("grant_type=refresh_token") == true)
+    #expect(refreshBody?.contains("refresh_token=refresh-secret") == true)
+    #expect(refreshBody?.contains("client_id=") == true)
+    #expect(refreshBody?.contains("client_secret=") == true)
+
+    let confidentialClientBody = String(data: try GoogleAntigravityOAuthFlow.authorizationCodeTokenRequestBody(
+        code: GoogleAntigravityAuthorizationCode(code: "code-secret", state: "state-secret"),
+        codeVerifier: "verifier-secret",
+        clientID: "google-client-id",
+        clientSecret: "configured-secret"
+    ), encoding: .utf8)
+    #expect(confidentialClientBody?.contains("client_secret=configured-secret") == true)
+}
+
+@Test func googleAntigravityOAuthFlowFailsWhenClientIDIsMissing() throws {
+    #expect(throws: ConnectorError.self) {
+        _ = try GoogleAntigravityOAuthFlow.authorizationURL(
+            codeChallenge: "challenge-value",
+            state: "state-value",
+            clientID: nil
+        )
+    }
+
+    #expect(throws: ConnectorError.self) {
+        _ = try GoogleAntigravityOAuthFlow.refreshTokenRequestBody(
+            refreshToken: "refresh-secret",
+            clientID: ""
+        )
+    }
+}
+
 @Test func claudeOAuthConnectorRefreshesUsageWindows() async throws {
     let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
     let usage = #"""
@@ -1143,6 +1501,16 @@ private func codexUsageWithAdditionalLimits(_ limits: [(name: String, feature: S
     """.utf8)
 }
 
+private func googleAntigravityTestAccount(projectID: String? = nil) -> GoogleAntigravityAccountConfiguration {
+    GoogleAntigravityAccountConfiguration(
+        accountID: "google-antigravity-default",
+        accountName: "Antigravity",
+        clientID: "google-client-id",
+        clientSecret: "google-client-secret",
+        projectID: projectID
+    )
+}
+
 private final class StubCredentialStore: ProviderCredentialStoring, @unchecked Sendable {
     private var storage: [String: Data]
     private(set) var savedAccountID: String?
@@ -1160,6 +1528,24 @@ private final class StubCredentialStore: ProviderCredentialStoring, @unchecked S
         storage[accountID] = data
         savedAccountID = accountID
         savedData = data
+    }
+}
+
+private final class FailingCredentialStore: ProviderCredentialStoring, @unchecked Sendable {
+    private let storage: [String: Data]
+    private(set) var saveErrorCount = 0
+
+    init(storage: [String: Data]) {
+        self.storage = storage
+    }
+
+    func load(accountID: String) throws -> Data? {
+        storage[accountID]
+    }
+
+    func save(_ data: Data, accountID: String) throws {
+        saveErrorCount += 1
+        throw NSError(domain: "FailingCredentialStore", code: 1)
     }
 }
 

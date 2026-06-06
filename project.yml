@@ -49,6 +49,8 @@ targets:
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: false
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
+        CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID: ""
+        CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET: ""
         INFOPLIST_KEY_LSApplicationCategoryType: >-
           public.app-category.productivity
         INFOPLIST_KEY_NSQuitAlwaysKeepsWindows: false

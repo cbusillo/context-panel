@@ -187,6 +187,59 @@ import Testing
     #expect(result.document.accounts.contains { $0.id == "claude-custom-local" && $0.connectorKind == .claudeLocalStatus })
 }
 
+@Test func accountConfigurationStoreMigratesRetiredGeminiDefaultToAntigravity() throws {
+    let store = AccountConfigurationStore(configurationURL: try temporaryDirectory().appending(path: "accounts.json"))
+    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 10), accounts: [
+        LocalProviderAccountConfiguration(
+            id: "gemini-code-assist-default",
+            provider: .google,
+            connectorKind: .geminiCodeAssist,
+            displayName: "Gemini",
+            authPath: "/Users/example/.gemini/oauth_creds.json",
+            commandPath: "/opt/homebrew/bin/gemini"
+        ),
+        LocalProviderAccountConfiguration(
+            id: "google-custom",
+            provider: .google,
+            connectorKind: .geminiCodeAssist,
+            displayName: "Other Google",
+            isEnabled: false
+        ),
+    ])
+
+    try store.save(document)
+    let result = store.load(now: Date(timeIntervalSince1970: 20))
+
+    let migrated = try #require(result.document.accounts.first { $0.id == "google-antigravity-default" })
+    #expect(result.status == .healthy)
+    #expect(result.document.updatedAt == Date(timeIntervalSince1970: 20))
+    #expect(migrated.provider == .google)
+    #expect(migrated.connectorKind == .geminiCodeAssist)
+    #expect(migrated.displayName == "Antigravity")
+    #expect(migrated.authPath == nil)
+    #expect(migrated.commandPath == nil)
+    #expect(!result.document.accounts.contains { $0.id == "gemini-code-assist-default" })
+    #expect(result.document.accounts.contains { $0.id == "google-custom" && !$0.isEnabled })
+}
+
+@Test func accountConfigurationStorePreservesCustomNameWhenMigratingRetiredGeminiDefault() throws {
+    let store = AccountConfigurationStore(configurationURL: try temporaryDirectory().appending(path: "accounts.json"))
+    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 10), accounts: [
+        LocalProviderAccountConfiguration(
+            id: "gemini-code-assist-default",
+            provider: .google,
+            connectorKind: .geminiCodeAssist,
+            displayName: "Work Google"
+        ),
+    ])
+
+    try store.save(document)
+    let result = store.load(now: Date(timeIntervalSince1970: 20))
+
+    let migrated = try #require(result.document.accounts.first { $0.id == "google-antigravity-default" })
+    #expect(migrated.displayName == "Work Google")
+}
+
 @Test func accountConfigurationStoreLoadsFallbackWhenPrimaryIsMissing() throws {
     let primaryURL = try temporaryDirectory().appending(path: "group/accounts.json")
     let fallbackURL = try temporaryDirectory().appending(path: "accounts.json")
@@ -249,7 +302,7 @@ import Testing
     #expect(!result.document.accounts.contains { $0.id == "openai-code-default" })
 }
 
-@Test func accountConnectorFactorySkipsDisabledAndReportsGoogleUnavailable() async {
+@Test func accountConnectorFactorySkipsDisabledAndCreatesGoogleAntigravityConnector() async {
     let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
         LocalProviderAccountConfiguration(
             id: "codex",
@@ -273,15 +326,19 @@ import Testing
         ),
     ])
 
-    let connectors = AccountConnectorFactory.connectors(from: document)
+    let connectors = AccountConnectorFactory.connectors(
+        from: document,
+        credentialStore: InMemoryProviderCredentialStore(storage: [:])
+    )
     let result = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: Date(timeIntervalSince1970: 0))
 
     #expect(connectors.count == 2)
     #expect(Set(connectors.map(\.provider)) == [.openAI, .google])
+    #expect(connectors.contains { $0 is GoogleAntigravityQuotaConnector })
     #expect(result.reports.contains { report in
         report.provider == .google
-            && report.status == .unknown
-            && report.errorMessage?.contains("retired") == true
+            && report.status == .failure
+            && report.errorMessage == "Google Antigravity is not connected. Sign in to Google from Settings."
     })
 }
 

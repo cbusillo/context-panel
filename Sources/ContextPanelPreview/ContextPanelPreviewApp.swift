@@ -1,5 +1,6 @@
 import ContextPanelCore
 import AppKit
+import Network
 import os
 import ServiceManagement
 import SwiftUI
@@ -207,6 +208,10 @@ struct SettingsPane: View {
                                     Button("Connect") { model.authorizeClaudeOAuth(for: account) }
                                         .buttonStyle(.borderedProminent)
                                         .controlSize(.small)
+                                } else if account.connectorKind == .geminiCodeAssist {
+                                    Button("Connect") { model.authorizeGoogleAntigravityOAuth(for: account) }
+                                        .buttonStyle(.borderedProminent)
+                                        .controlSize(.small)
                                 }
                             } else {
                                 Text(account.isEnabled ? "Enabled" : "Disabled")
@@ -366,6 +371,14 @@ struct SettingsPane: View {
                 }
             }
         }
+        .sheet(isPresented: $model.isGoogleOAuthCodeSheetPresented) {
+            GoogleAntigravityOAuthCodeSheet(model: model) {
+                Task {
+                    await appModel.refreshLocalConnectors()
+                    model.load()
+                }
+            }
+        }
         .onAppear { model.load() }
     }
 
@@ -430,6 +443,64 @@ struct ClaudeOAuthCodeSheet: View {
     }
 }
 
+struct GoogleAntigravityOAuthCodeSheet: View {
+    @ObservedObject var model: SettingsPaneModel
+    let onConnected: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var code = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Connect Google")
+                .font(.system(size: 18, weight: .semibold))
+            Text(
+                model.isGoogleOAuthCallbackListening
+                    ? "Approve Google in the browser. Context Panel is listening for the local callback and will finish automatically."
+                    : "Approve Google in the browser. If the callback cannot return to Context Panel, paste the redirected URL or authorization code here."
+            )
+                .font(.system(size: 12))
+                .foregroundStyle(CPTheme.secondaryText)
+            if let url = model.pendingGoogleOAuthAuthorizationURL {
+                Link("Open Google authorization", destination: url)
+                    .font(.system(size: 12, weight: .medium))
+                Text(url.absoluteString)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(CPTheme.tertiaryText)
+                    .textSelection(.enabled)
+                    .lineLimit(4)
+            }
+            TextField("Fallback redirect URL or authorization code", text: $code)
+                .textFieldStyle(.roundedBorder)
+            if let errorMessage = model.errorMessage {
+                Text(errorMessage)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(CPTheme.statusColor(.failure))
+                    .textSelection(.enabled)
+            }
+            HStack {
+                Button("Cancel") {
+                    model.cancelGoogleAntigravityOAuth()
+                    dismiss()
+                }
+                Spacer()
+                Button(model.isCompletingGoogleOAuth ? "Connecting" : "Use Fallback") {
+                    model.completeGoogleAntigravityOAuth(code: code) {
+                        onConnected()
+                        dismiss()
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isCompletingGoogleOAuth)
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
+        .onDisappear {
+            model.cancelGoogleAntigravityOAuth()
+        }
+    }
+}
+
 struct SettingsAccountRefreshSummary: Equatable {
     let text: String
     let status: UsageStatus
@@ -448,14 +519,23 @@ final class SettingsPaneModel: ObservableObject {
     @Published private(set) var legacyAuthPaths: Set<String> = []
     @Published var isClaudeOAuthCodeSheetPresented = false
     @Published private(set) var isCompletingClaudeOAuth = false
+    @Published var isGoogleOAuthCodeSheetPresented = false
+    @Published private(set) var isCompletingGoogleOAuth = false
+    @Published private(set) var isGoogleOAuthCallbackListening = false
 
     private let bookmarkStore = SecureFileBookmarkStore(storeURL: ContextPanelLocations.bookmarkStoreURL())
     private let credentialStore = ProviderCredentialStore()
     private var recentlyVerifiedAuthPaths: Set<String> = []
     private var pendingClaudeOAuth: PendingClaudeOAuth?
+    private var pendingGoogleOAuth: PendingGoogleAntigravityOAuth?
+    private var googleOAuthCallbackServer: GoogleOAuthCallbackServer?
 
     var pendingClaudeOAuthAuthorizationURL: URL? {
         pendingClaudeOAuth?.authorizationURL
+    }
+
+    var pendingGoogleOAuthAuthorizationURL: URL? {
+        pendingGoogleOAuth?.authorizationURL
     }
 
     private let store = AccountConfigurationStore(
@@ -645,7 +725,7 @@ final class SettingsPaneModel: ObservableObject {
 
     func needsAuthorization(_ account: LocalProviderAccountConfiguration) -> Bool {
         guard account.isEnabled else { return false }
-        if account.connectorKind == .claudeOAuthUsage {
+        if account.connectorKind == .claudeOAuthUsage || account.connectorKind == .geminiCodeAssist {
             return !hasImportedCredential(for: account)
         }
         guard let authPath = account.effectiveAuthPath else { return false }
@@ -655,7 +735,7 @@ final class SettingsPaneModel: ObservableObject {
     }
 
     func hasSavedAuthorization(_ account: LocalProviderAccountConfiguration) -> Bool {
-        if account.connectorKind == .claudeOAuthUsage {
+        if account.connectorKind == .claudeOAuthUsage || account.connectorKind == .geminiCodeAssist {
             return hasImportedCredential(for: account)
         }
         guard let authPath = account.effectiveAuthPath else { return false }
@@ -677,7 +757,7 @@ final class SettingsPaneModel: ObservableObject {
     }
 
     func authorizationSavedText(for account: LocalProviderAccountConfiguration) -> String {
-        account.connectorKind == .claudeOAuthUsage ? "Connected" : "File saved"
+        account.connectorKind == .claudeOAuthUsage || account.connectorKind == .geminiCodeAssist ? "Connected" : "File saved"
     }
 
     func refreshSummary(for account: LocalProviderAccountConfiguration, storedSnapshot: StoredUsageSnapshot?) -> SettingsAccountRefreshSummary? {
@@ -751,6 +831,26 @@ final class SettingsPaneModel: ObservableObject {
         isCompletingClaudeOAuth = false
     }
 
+    func authorizeGoogleAntigravityOAuth(for account: LocalProviderAccountConfiguration) {
+        guard account.connectorKind == .geminiCodeAssist else { return }
+        do {
+            let flow = try PendingGoogleAntigravityOAuth(accountID: account.id)
+            pendingGoogleOAuth = flow
+            isGoogleOAuthCodeSheetPresented = true
+            startGoogleOAuthCallbackListener(for: flow)
+            contextPanelLogger.info("Google Antigravity OAuth connect clicked for accountID=\(account.id, privacy: .public)")
+        } catch {
+            contextPanelLogger.error("Google Antigravity OAuth connect failed: \(error.localizedDescription, privacy: .public)")
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func cancelGoogleAntigravityOAuth() {
+        stopGoogleOAuthCallbackListener()
+        pendingGoogleOAuth = nil
+        isCompletingGoogleOAuth = false
+    }
+
     func completeClaudeOAuth(code: String, onConnected: @escaping () -> Void) {
         guard let flow = pendingClaudeOAuth else { return }
         let authorizationCode = ClaudeOAuthFlow.normalizedAuthorizationCode(from: code)
@@ -781,6 +881,117 @@ final class SettingsPaneModel: ObservableObject {
                 }
             }
         }
+    }
+
+    func completeGoogleAntigravityOAuth(code: String, onConnected: @escaping () -> Void) {
+        guard let flow = pendingGoogleOAuth else { return }
+        let authorizationCode = GoogleAntigravityOAuthFlow.normalizedAuthorizationCode(from: code)
+        guard !authorizationCode.code.isEmpty else { return }
+        if let state = authorizationCode.state, state != flow.state {
+            errorMessage = "Google authorization state did not match this connection attempt. Start Google sign-in again."
+            return
+        }
+        completeGoogleAntigravityOAuth(authorizationCode: authorizationCode, flow: flow, onConnected: onConnected)
+    }
+
+    private func completeGoogleAntigravityOAuth(
+        authorizationCode: GoogleAntigravityAuthorizationCode,
+        flow: PendingGoogleAntigravityOAuth,
+        onConnected: @escaping () -> Void
+    ) {
+        guard !isCompletingGoogleOAuth else { return }
+        isCompletingGoogleOAuth = true
+        contextPanelLogger.info("Google Antigravity OAuth code exchange started")
+        Task { [weak self] in
+            do {
+                let credentials = try await Self.exchangeGoogleAntigravityOAuthCode(
+                    authorizationCode: authorizationCode,
+                    flow: flow
+                )
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.sortedKeys]
+                encoder.dateEncodingStrategy = .iso8601
+                try self?.credentialStore.save(try encoder.encode(credentials), accountID: flow.accountID)
+                await MainActor.run {
+                    contextPanelLogger.info("Google Antigravity OAuth code exchange succeeded")
+                    self?.stopGoogleOAuthCallbackListener()
+                    self?.pendingGoogleOAuth = nil
+                    self?.isCompletingGoogleOAuth = false
+                    self?.isGoogleOAuthCodeSheetPresented = false
+                    self?.errorMessage = nil
+                    self?.load()
+                    onConnected()
+                }
+            } catch {
+                await MainActor.run {
+                    contextPanelLogger.error("Google Antigravity OAuth code exchange failed: \(error.localizedDescription, privacy: .public)")
+                    self?.isCompletingGoogleOAuth = false
+                    self?.errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func startGoogleOAuthCallbackListener(for flow: PendingGoogleAntigravityOAuth) {
+        stopGoogleOAuthCallbackListener()
+        do {
+            let server = try GoogleOAuthCallbackServer(
+                redirectURI: flow.redirectURI,
+                expectedState: flow.state,
+                onReady: { [weak self] in
+                    Task { @MainActor [weak self] in
+                        guard let self, self.pendingGoogleOAuth?.state == flow.state else { return }
+                        self.isGoogleOAuthCallbackListening = true
+                        self.openGoogleAuthorizationURL(flow.authorizationURL)
+                    }
+                },
+                onFailure: { [weak self] message in
+                    Task { @MainActor [weak self] in
+                        guard let self, self.pendingGoogleOAuth?.state == flow.state else { return }
+                        self.isGoogleOAuthCallbackListening = false
+                        self.errorMessage = "Automatic Google callback could not start. Use the link in this sheet, then paste the redirected URL if Safari cannot return to Context Panel."
+                        contextPanelLogger.error("Google OAuth callback listener failed: \(message, privacy: .public)")
+                    }
+                }
+            ) { [weak self] authorizationCode in
+                Task { @MainActor [weak self] in
+                    guard let self, let activeFlow = self.pendingGoogleOAuth else { return }
+                    guard activeFlow.state == flow.state else { return }
+                    self.completeGoogleAntigravityOAuth(
+                        authorizationCode: authorizationCode,
+                        flow: activeFlow,
+                        onConnected: { Task { await self.refreshAfterGoogleOAuthCallback() } }
+                    )
+                }
+            }
+            googleOAuthCallbackServer = server
+            isGoogleOAuthCallbackListening = false
+            errorMessage = nil
+            server.start()
+        } catch {
+            isGoogleOAuthCallbackListening = false
+            errorMessage = "Automatic Google callback could not start. Use the link in this sheet, then paste the redirected URL if Safari cannot return to Context Panel."
+            contextPanelLogger.error("Google OAuth callback listener failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func openGoogleAuthorizationURL(_ url: URL) {
+        let opened = NSWorkspace.shared.open(url)
+        contextPanelLogger.info("Google Antigravity OAuth authorization URL open result=\(opened, privacy: .public)")
+        if !opened {
+            errorMessage = "Google authorization did not open automatically. Use the link in the Connect Google sheet."
+        }
+    }
+
+    private func stopGoogleOAuthCallbackListener() {
+        googleOAuthCallbackServer?.cancel()
+        googleOAuthCallbackServer = nil
+        isGoogleOAuthCallbackListening = false
+    }
+
+    private func refreshAfterGoogleOAuthCallback() async {
+        _ = try? await SnapshotRefreshRunner.appDefault().refresh()
+        load()
     }
 
     func authorizeAuthFile(for account: LocalProviderAccountConfiguration, onVerified: @escaping () -> Void = {}) {
@@ -831,8 +1042,19 @@ final class SettingsPaneModel: ObservableObject {
     }
 
     func detailText(for account: LocalProviderAccountConfiguration) -> String {
-        let path = account.effectiveAuthPath ?? account.connectorKind.rawValue
+        let path = account.effectiveAuthPath ?? detailSourceLabel(for: account)
         return "\(setupInstruction(for: account)) · \(ConnectorRedactor.redactedPath(path))"
+    }
+
+    private func detailSourceLabel(for account: LocalProviderAccountConfiguration) -> String {
+        switch account.connectorKind {
+        case .geminiCodeAssist:
+            return "Google OAuth"
+        case .claudeOAuthUsage:
+            return "Claude OAuth"
+        default:
+            return account.connectorKind.rawValue
+        }
     }
 
     private func setupInstruction(for account: LocalProviderAccountConfiguration) -> String {
@@ -846,7 +1068,7 @@ final class SettingsPaneModel: ObservableObject {
             }
             return "Select the OpenAI CLI auth JSON file"
         case .geminiCodeAssist:
-            return "Google quota is unavailable until a supported Antigravity quota source is added"
+            return "Connect Google to read Antigravity model capacity"
         case .claudeLocalStatus:
             return "Claude reads Context Panel's statusline cache; no auth file selection is needed"
         case .claudeOAuthUsage:
@@ -891,6 +1113,39 @@ final class SettingsPaneModel: ObservableObject {
             scopes: token.scopes
         )
     }
+
+    private static func exchangeGoogleAntigravityOAuthCode(
+        authorizationCode: GoogleAntigravityAuthorizationCode,
+        flow: PendingGoogleAntigravityOAuth
+    ) async throws -> GoogleAntigravityOAuthCredentials {
+        let body = try GoogleAntigravityOAuthFlow.authorizationCodeTokenRequestBody(
+            code: authorizationCode,
+            codeVerifier: flow.pkce.verifier,
+            redirectURI: flow.redirectURI
+        )
+        var request = URLRequest(url: GoogleAntigravityOAuthMetadata.tokenEndpoint)
+        request.httpMethod = "POST"
+        request.httpBody = body
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw ConnectorError.nonHTTPResponse("Google Antigravity OAuth token exchange returned a non-HTTP response")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            let rawBody = String(data: data, encoding: .utf8) ?? ""
+            let redactedBody = ConnectorRedactor.redact(rawBody)
+            throw ConnectorError.invalidAuth("Google Antigravity OAuth token exchange returned HTTP \(http.statusCode): \(redactedBody)")
+        }
+        let token = try JSONDecoder().decode(GoogleAntigravityOAuthTokenResponse.self, from: data)
+        return GoogleAntigravityOAuthCredentials(
+            accessToken: token.accessToken,
+            refreshToken: token.refreshToken,
+            expiresAt: token.expiresIn.map { Date().addingTimeInterval(TimeInterval($0)) },
+            scopes: token.scopes
+        )
+    }
 }
 
 private struct PendingClaudeOAuth {
@@ -906,6 +1161,124 @@ private struct PendingClaudeOAuth {
         state = try OAuthPKCE.makeChallenge(byteCount: 24).verifier
         redirectURI = ClaudeOAuthFlow.manualRedirectURI
         authorizationURL = try ClaudeOAuthFlow.authorizationURL(codeChallenge: pkce.challenge, state: state, redirectURI: redirectURI)
+    }
+}
+
+private struct PendingGoogleAntigravityOAuth {
+    let accountID: String
+    let pkce: OAuthPKCEChallenge
+    let state: String
+    let redirectURI: String
+    let authorizationURL: URL
+
+    init(accountID: String) throws {
+        self.accountID = accountID
+        pkce = try OAuthPKCE.makeChallenge()
+        state = try OAuthPKCE.makeChallenge(byteCount: 24).verifier
+        redirectURI = GoogleAntigravityOAuthFlow.manualRedirectURI
+        authorizationURL = try GoogleAntigravityOAuthFlow.authorizationURL(
+            codeChallenge: pkce.challenge,
+            state: state,
+            redirectURI: redirectURI
+        )
+    }
+}
+
+private final class GoogleOAuthCallbackServer: @unchecked Sendable {
+    private let listener: NWListener
+    private let expectedState: String
+    private let onReady: @Sendable () -> Void
+    private let onFailure: @Sendable (String) -> Void
+    private let onCode: @Sendable (GoogleAntigravityAuthorizationCode) -> Void
+
+    init(
+        redirectURI: String,
+        expectedState: String,
+        onReady: @escaping @Sendable () -> Void,
+        onFailure: @escaping @Sendable (String) -> Void,
+        onCode: @escaping @Sendable (GoogleAntigravityAuthorizationCode) -> Void
+    ) throws {
+        guard
+            let url = URL(string: redirectURI),
+            url.host == "localhost" || url.host == "127.0.0.1",
+            let port = url.port,
+            let nwPort = NWEndpoint.Port(rawValue: UInt16(port))
+        else {
+            throw ConnectorError.invalidAuth("Google OAuth callback URL is not a supported localhost URL.")
+        }
+
+        let parameters = NWParameters.tcp
+        listener = try NWListener(using: parameters, on: nwPort)
+        self.expectedState = expectedState
+        self.onReady = onReady
+        self.onFailure = onFailure
+        self.onCode = onCode
+    }
+
+    func start() {
+        listener.stateUpdateHandler = { [weak self] state in
+            guard let self else { return }
+            switch state {
+            case .ready:
+                self.onReady()
+            case .failed(let error), .waiting(let error):
+                self.onFailure(error.localizedDescription)
+            default:
+                break
+            }
+        }
+        listener.newConnectionHandler = { [weak self] connection in
+            self?.handle(connection)
+        }
+        listener.start(queue: .main)
+    }
+
+    func cancel() {
+        listener.cancel()
+    }
+
+    private func handle(_ connection: NWConnection) {
+        connection.start(queue: .main)
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { [weak self] data, _, _, _ in
+            guard let self else {
+                connection.cancel()
+                return
+            }
+            let request = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            let authorizationCode = Self.authorizationCode(from: request)
+            let isExpectedCallback = authorizationCode?.state == expectedState
+            let response = Self.httpResponse(success: isExpectedCallback)
+            connection.send(content: response, completion: .contentProcessed { _ in
+                connection.cancel()
+            })
+            if let authorizationCode, isExpectedCallback {
+                onCode(authorizationCode)
+            }
+        }
+    }
+
+    private static func authorizationCode(from request: String) -> GoogleAntigravityAuthorizationCode? {
+        guard let requestLine = request.split(separator: "\n", maxSplits: 1).first else { return nil }
+        let pieces = requestLine.split(separator: " ")
+        guard pieces.count >= 2, pieces[0] == "GET" else { return nil }
+        let path = String(pieces[1])
+        guard let url = URL(string: "http://localhost\(path)") else { return nil }
+        guard url.path == "/oauth-callback" else { return nil }
+        let authorizationCode = GoogleAntigravityOAuthFlow.normalizedAuthorizationCode(from: url.absoluteString)
+        return authorizationCode.code.isEmpty ? nil : authorizationCode
+    }
+
+    private static func httpResponse(success: Bool) -> Data {
+        let title = success ? "Context Panel received the Google callback" : "Context Panel could not read the Google callback"
+        let body = """
+        <!doctype html><html><head><meta charset="utf-8"><title>\(title)</title></head>
+        <body style="font: -apple-system-body; margin: 32px; color: #1d1d1f;">
+        <h1>\(title)</h1><p>You can close this browser tab and return to Context Panel.</p>
+        </body></html>
+        """
+        let status = success ? "200 OK" : "400 Bad Request"
+        let headers = "HTTP/1.1 \(status)\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n"
+        return Data((headers + body).utf8)
     }
 }
 
@@ -953,7 +1326,7 @@ struct WidgetMainLimitPreferenceRow: View {
             Toggle(isOn: $isVisible) {
                 HStack(spacing: 8) {
                     ProviderBadge(provider: preference.provider)
-                    Text(preference.window.displayName)
+                    Text(preference.window.settingsDisplayName)
                     Spacer()
                     Text(preference.isVisible ? "Shown" : "Hidden")
                         .font(.system(size: 11, weight: .medium))
@@ -1079,6 +1452,8 @@ private extension MainLimitWindow {
             1
         case .daily:
             2
+        case .availability:
+            3
         }
     }
 }
@@ -1147,7 +1522,6 @@ struct ReconnectDashboard: View {
             account.isEnabled && (
                 settingsModel.needsAuthorization(account)
                     || settingsModel.hasLegacyAuthorization(account)
-                    || account.connectorKind == .claudeOAuthUsage
                     || appModel.reportNeedsAttention(account)
             )
         }
@@ -1223,6 +1597,14 @@ struct ReconnectDashboard: View {
         .background(CPTheme.background)
         .sheet(isPresented: $settingsModel.isClaudeOAuthCodeSheetPresented) {
             ClaudeOAuthCodeSheet(model: settingsModel) {
+                Task {
+                    await appModel.refreshLocalConnectors()
+                    settingsModel.load()
+                }
+            }
+        }
+        .sheet(isPresented: $settingsModel.isGoogleOAuthCodeSheetPresented) {
+            GoogleAntigravityOAuthCodeSheet(model: settingsModel) {
                 Task {
                     await appModel.refreshLocalConnectors()
                     settingsModel.load()
@@ -1396,7 +1778,7 @@ private struct ReconnectAccountRow: View {
 
     @ViewBuilder
     private var actionButton: some View {
-        if settingsModel.canAuthorizeAuthFile(for: account), settingsModel.needsAuthorization(account) || settingsModel.hasLegacyAuthorization(account) {
+        if settingsModel.canAuthorizeAuthFile(for: account), shouldOfferAuthFileReconnect {
             Button("Reconnect") {
                 settingsModel.authorizeAuthFile(for: account, onVerified: onRefresh)
             }
@@ -1406,18 +1788,32 @@ private struct ReconnectAccountRow: View {
                 settingsModel.authorizeClaudeOAuth(for: account)
             }
             .buttonStyle(.borderedProminent)
+        } else if account.connectorKind == .geminiCodeAssist {
+            Button("Reconnect") {
+                settingsModel.authorizeGoogleAntigravityOAuth(for: account)
+            }
+            .buttonStyle(.borderedProminent)
         } else {
             Button("Refresh") { onRefresh() }
                 .buttonStyle(.bordered)
         }
     }
 
+    private var shouldOfferAuthFileReconnect: Bool {
+        settingsModel.needsAuthorization(account)
+            || settingsModel.hasLegacyAuthorization(account)
+            || (account.connectorKind == .codexRateLimits && refreshSummary?.status == .failure)
+    }
+
     private var statusText: String {
         if settingsModel.needsAuthorization(account) { return "Account access is missing." }
         if settingsModel.hasLegacyAuthorization(account) { return "File access needs to be refreshed." }
+        if account.connectorKind == .codexRateLimits, refreshSummary?.status == .failure {
+            return "Sign in again from Every Code or Codex, then reselect the auth file."
+        }
         if account.connectorKind == .claudeOAuthUsage { return "Reconnect Claude if refresh keeps failing." }
         if account.connectorKind == .geminiCodeAssist {
-            return "Google quota is unavailable until supported Antigravity limits are added."
+            return "Reconnect Google if Antigravity model availability refresh keeps failing."
         }
         return settingsModel.detailText(for: account)
     }
@@ -1472,7 +1868,7 @@ struct ProviderAccountLimitsSection: View {
                     ForEach(summaries.sortedForSidebar) { summary in
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(alignment: .firstTextBaseline) {
-                                Text(summary.window.displayName)
+                                Text(summary.previewWindowName)
                                     .font(.system(size: 12, weight: .semibold))
                                     .foregroundStyle(CPTheme.primaryText)
                                 Spacer()
@@ -1751,7 +2147,7 @@ struct ProviderHeaderCard: View {
     private var providerSummaryText: String {
         guard !summaries.isEmpty else { return "No main limits available yet." }
         return summaries
-            .map { "\($0.window.displayName.lowercased()) \($0.previewRemainingHeadline.lowercased())" }
+            .map { "\($0.previewWindowName.lowercased()) \($0.previewRemainingHeadline.lowercased())" }
             .joined(separator: " · ")
     }
 }
@@ -2029,11 +2425,11 @@ struct AdditionalLimitRow: View {
             ProviderBadge(provider: limit.provider, compact: true)
                 .frame(width: 18)
             VStack(alignment: .leading, spacing: 2) {
-                Text(limit.displayLabel)
+                Text(limit.additionalLimitTitle)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(CPTheme.primaryText)
                     .lineLimit(1)
-                Text(limit.contextLabel.isEmpty ? limit.accountName : limit.contextLabel)
+                Text(limit.additionalLimitSubtitle)
                     .font(.system(size: 11))
                     .foregroundStyle(CPTheme.secondaryText)
                     .lineLimit(1)
@@ -2065,7 +2461,7 @@ struct MainLimitDetail: View {
                 HStack(spacing: 10) {
                     ProviderBadge(provider: summary.provider)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(summary.window.displayName)
+                        Text(summary.previewWindowName)
                             .font(.system(size: 22, weight: .semibold))
                         Text("\(summary.provider.displayName) · \(summary.accountText)")
                             .font(.system(size: 13))
@@ -2097,7 +2493,7 @@ struct MainLimitDetail: View {
 
                 DetailCard(title: "Pooled limit") {
                     DetailRow(label: "Provider", value: summary.provider.displayName)
-                    DetailRow(label: "Window", value: summary.window.displayName)
+                    DetailRow(label: "Window", value: summary.previewWindowName)
                     DetailRow(label: "Accounts", value: "\(summary.accountCount)")
                     DetailRow(label: "Used", value: summary.detailUsedValue)
                     DetailRow(label: "Limit", value: summary.detailLimitValue)
@@ -2152,11 +2548,11 @@ struct MainLimitAccountRow: View {
         HStack(spacing: 12) {
             StatusMark(status: limit.status, size: 8)
             VStack(alignment: .leading, spacing: 3) {
-                Text(limit.accountName)
+                Text(limit.mainLimitAccountTitle)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(CPTheme.primaryText)
                     .lineLimit(1)
-                Text(limit.displayLabel)
+                Text(limit.mainLimitAccountSubtitle)
                     .font(.system(size: 11))
                     .foregroundStyle(CPTheme.secondaryText)
                     .lineLimit(1)
@@ -2767,7 +3163,7 @@ extension UsageSnapshot {
 
     var tightestSupportText: String {
         guard let tightestMainLimitSummary else { return "Add OpenAI, Anthropic, or Google." }
-        return "\(tightestMainLimitSummary.provider.shortName) · \(tightestMainLimitSummary.window.displayName) · \(tightestMainLimitSummary.accountText)"
+        return "\(tightestMainLimitSummary.provider.shortName) · \(tightestMainLimitSummary.previewWindowName) · \(tightestMainLimitSummary.accountText)"
     }
 
     var tightestCapacityRatio: Double {
@@ -2806,6 +3202,14 @@ extension UsageSnapshot {
 }
 
 extension MainLimitSummary {
+    var previewWindowName: String {
+        displayWindowName
+    }
+
+    var compactPreviewWindowName: String {
+        compactDisplayWindowName
+    }
+
     var previewRemainingHeadline: String {
         guard unit != nil, remaining != nil else {
             if status == .failure { return "Failed" }
@@ -2831,6 +3235,9 @@ extension MainLimitSummary {
         guard unit != nil, used != nil, limit != nil else {
             return status == .failure ? "refresh failed" : "unknown"
         }
+        if window == .availability {
+            return previewRemainingHeadline
+        }
         if usageRatio != nil {
             return "\(Int(((usageRatio ?? 0) * 100).rounded()))% used"
         }
@@ -2839,11 +3246,11 @@ extension MainLimitSummary {
     }
 
     var previewWindowLine: String {
-        "\(window.displayName) · \(accountText)"
+        "\(previewWindowName) · \(accountText)"
     }
 
     var compactPreviewWindowLine: String {
-        "\(window.shortName) · \(accountText)"
+        "\(compactPreviewWindowName) · \(accountText)"
     }
 
     var sidebarDetailText: String {
@@ -2891,6 +3298,24 @@ extension MainLimitSummary {
     }
 }
 
+private extension MainLimitWindow {
+    var settingsDisplayName: String {
+        switch self {
+        case .availability:
+            "Google reset window"
+        default:
+            displayName
+        }
+    }
+}
+
+private extension String {
+    var isModelCapacityDisplayLabel: Bool {
+        localizedCaseInsensitiveCompare("Model capacity") == .orderedSame
+            || localizedCaseInsensitiveCompare("Availability") == .orderedSame
+    }
+}
+
 extension UsageLimit {
     var planText: String? {
         guard let note else { return nil }
@@ -2930,6 +3355,9 @@ extension UsageLimit {
         if provider == .anthropic, unit == .unknown, status == .unknown {
             return "limit unknown"
         }
+        if isModelCapacityLimit {
+            return previewRemainingHeadline
+        }
         if unit == .percent, let used {
             return "\(used)% used"
         }
@@ -2944,6 +3372,9 @@ extension UsageLimit {
         if provider == .anthropic, unit == .unknown, status == .unknown {
             return "unknown"
         }
+        if isModelCapacityLimit {
+            return previewRemainingHeadline
+        }
         if unit == .percent, let used {
             return "\(used)%"
         }
@@ -2952,6 +3383,9 @@ extension UsageLimit {
     }
 
     var sidebarTitleText: String {
+        if mainLimitWindow == .availability {
+            return [modelLabel, "capacity"].compactMap { $0 }.joined(separator: " ")
+        }
         if let mainLimitWindow {
             let title = [mainLimitWindow.shortName, modelLabel ?? displayLabel]
                 .compactMap { value in
@@ -2977,6 +3411,50 @@ extension UsageLimit {
             return false
         }
         return true
+    }
+
+    var mainLimitAccountTitle: String {
+        if mainLimitWindow == .availability {
+            return modelLabel ?? displayLabel
+        }
+        return accountName
+    }
+
+    var mainLimitAccountSubtitle: String {
+        if mainLimitWindow == .availability {
+            return [windowLabel, accountName]
+                .compactMap { value in
+                    guard let value, !value.isEmpty else { return nil }
+                    return value
+                }
+                .deduplicated()
+                .joined(separator: " · ")
+        }
+        return displayLabel
+    }
+
+    var additionalLimitTitle: String {
+        if isModelCapacityLimit, let modelLabel, !modelLabel.isEmpty {
+            return modelLabel
+        }
+        return displayLabel
+    }
+
+    var additionalLimitSubtitle: String {
+        if isModelCapacityLimit {
+            return [windowLabel, accountName]
+                .compactMap { value in
+                    guard let value, !value.isEmpty else { return nil }
+                    return value
+                }
+                .deduplicated()
+                .joined(separator: " · ")
+        }
+        return contextLabel.isEmpty ? accountName : contextLabel
+    }
+
+    var isModelCapacityLimit: Bool {
+        windowLabel?.isModelCapacityDisplayLabel == true
     }
 
     var sidebarDetailText: String {
@@ -3031,6 +3509,7 @@ private extension MainLimitWindow {
         case .weekly: return 0
         case .fiveHour: return 1
         case .daily: return 2
+        case .availability: return 3
         }
     }
 }

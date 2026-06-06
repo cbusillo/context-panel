@@ -238,12 +238,12 @@ import Testing
     #expect(report.errorMessage?.contains("permission") == true)
 }
 
-@Test func jsonSnapshotStoreDropsPreviousGoogleLimitsWhenProviderIsUnavailable() throws {
+@Test func jsonSnapshotStoreDoesNotPreserveOldGoogleLimitsWhenNewAccountIDFails() throws {
     let root = try temporaryDirectory()
     let store = JSONSnapshotStore(rootDirectory: root)
     let first = Date(timeIntervalSince1970: 100)
     let second = Date(timeIntervalSince1970: 200)
-    let oldAccountID = "gemini-a"
+    let oldAccountID = "google-legacy-account"
     let newAccountID = ConnectorRedactor.localAccountID(
         provider: .google,
         stableID: "google-antigravity-default"
@@ -255,9 +255,16 @@ import Testing
             ProviderConnectorReport(
                 provider: .google,
                 accountID: oldAccountID,
-                accountName: "Gemini A",
+                configuredAccountID: "gemini-code-assist-default",
+                accountName: "Legacy Google",
                 generatedAt: first,
-                limits: [usageLimit(provider: .google, accountID: oldAccountID, used: 10, savedAt: first)]
+                limits: [usageLimit(
+                    provider: .google,
+                    accountID: oldAccountID,
+                    configuredAccountID: "gemini-code-assist-default",
+                    used: 10,
+                    savedAt: first
+                )]
             )
         ])
     ))
@@ -267,6 +274,155 @@ import Testing
             ProviderConnectorReport(
                 provider: .google,
                 accountID: newAccountID,
+                configuredAccountID: "google-antigravity-default",
+                accountName: "Antigravity",
+                generatedAt: second,
+                limits: [],
+                status: .failure,
+                errorMessage: "Google Antigravity credentials are in an unexpected format."
+            )
+        ]),
+        savedAt: second
+    )
+
+    let current = try #require(store.loadCurrent().snapshot)
+    #expect(current.snapshot.limits.filter { $0.provider == .google }.isEmpty)
+    #expect(!current.reports.contains { $0.accountID == oldAccountID })
+    #expect(current.reports.contains { $0.accountID == newAccountID && $0.status == .failure })
+}
+
+@Test func jsonSnapshotStorePreservesUnrelatedNilConfiguredGoogleLimitsWhenDefaultAccountFails() throws {
+    let root = try temporaryDirectory()
+    let store = JSONSnapshotStore(rootDirectory: root)
+    let first = Date(timeIntervalSince1970: 100)
+    let second = Date(timeIntervalSince1970: 200)
+    let otherAccountID = "google-other-account"
+    let newAccountID = ConnectorRedactor.localAccountID(
+        provider: .google,
+        stableID: "google-antigravity-default"
+    )
+
+    try store.save(StoredUsageSnapshot(
+        savedAt: first,
+        refreshResult: ConnectorRefreshResult(generatedAt: first, reports: [
+            ProviderConnectorReport(
+                provider: .google,
+                accountID: otherAccountID,
+                accountName: "Other Google",
+                generatedAt: first,
+                limits: [usageLimit(provider: .google, accountID: otherAccountID, used: 10, savedAt: first)]
+            )
+        ])
+    ))
+
+    try store.saveMerged(
+        refreshResult: ConnectorRefreshResult(generatedAt: second, reports: [
+            ProviderConnectorReport(
+                provider: .google,
+                accountID: newAccountID,
+                configuredAccountID: "google-antigravity-default",
+                accountName: "Antigravity",
+                generatedAt: second,
+                limits: [],
+                status: .failure,
+                errorMessage: "Google Antigravity credentials are in an unexpected format."
+            )
+        ]),
+        savedAt: second
+    )
+
+    let current = try #require(store.loadCurrent().snapshot)
+    #expect(current.snapshot.limits.contains { $0.provider == .google && $0.accountID == otherAccountID })
+    #expect(current.reports.contains { $0.provider == .google && $0.accountID == otherAccountID })
+    #expect(current.reports.contains { $0.accountID == newAccountID && $0.status == .failure })
+}
+
+@Test func jsonSnapshotStoreDropsRetiredNilConfiguredGeminiLimitsWhenDefaultAccountFails() throws {
+    let root = try temporaryDirectory()
+    let store = JSONSnapshotStore(rootDirectory: root)
+    let first = Date(timeIntervalSince1970: 100)
+    let second = Date(timeIntervalSince1970: 200)
+    let oldAccountID = "google-retired-gemini-account"
+    let newAccountID = ConnectorRedactor.localAccountID(
+        provider: .google,
+        stableID: "google-antigravity-default"
+    )
+
+    try store.save(StoredUsageSnapshot(
+        savedAt: first,
+        refreshResult: ConnectorRefreshResult(generatedAt: first, reports: [
+            ProviderConnectorReport(
+                provider: .google,
+                accountID: oldAccountID,
+                accountName: "Gemini",
+                generatedAt: first,
+                limits: [UsageLimit(
+                    provider: .google,
+                    accountID: oldAccountID,
+                    accountName: "Gemini",
+                    label: "gemini-2.5-pro",
+                    modelLabel: "gemini-2.5-pro",
+                    unit: .percent,
+                    used: 10,
+                    limit: 100,
+                    resetsAt: first.addingTimeInterval(3_600),
+                    lastUpdatedAt: first,
+                    confidence: .observed
+                )]
+            )
+        ])
+    ))
+
+    try store.saveMerged(
+        refreshResult: ConnectorRefreshResult(generatedAt: second, reports: [
+            ProviderConnectorReport(
+                provider: .google,
+                accountID: newAccountID,
+                configuredAccountID: "google-antigravity-default",
+                accountName: "Antigravity",
+                generatedAt: second,
+                limits: [],
+                status: .failure,
+                errorMessage: "Google Antigravity is not connected."
+            )
+        ]),
+        savedAt: second
+    )
+
+    let current = try #require(store.loadCurrent().snapshot)
+    #expect(current.snapshot.limits.filter { $0.provider == .google }.isEmpty)
+    #expect(!current.reports.contains { $0.accountID == oldAccountID })
+    #expect(current.reports.contains { $0.accountID == newAccountID && $0.status == .failure })
+}
+
+@Test func jsonSnapshotStoreDropsPreviousGoogleLimitsWhenAccountIsUnavailable() throws {
+    let root = try temporaryDirectory()
+    let store = JSONSnapshotStore(rootDirectory: root)
+    let first = Date(timeIntervalSince1970: 100)
+    let second = Date(timeIntervalSince1970: 200)
+    let accountID = ConnectorRedactor.localAccountID(
+        provider: .google,
+        stableID: "google-antigravity-default"
+    )
+
+    try store.save(StoredUsageSnapshot(
+        savedAt: first,
+        refreshResult: ConnectorRefreshResult(generatedAt: first, reports: [
+            ProviderConnectorReport(
+                provider: .google,
+                accountID: accountID,
+                accountName: "Gemini A",
+                generatedAt: first,
+                limits: [usageLimit(provider: .google, accountID: accountID, used: 10, savedAt: first)]
+            )
+        ])
+    ))
+
+    try store.saveMerged(
+        refreshResult: ConnectorRefreshResult(generatedAt: second, reports: [
+            ProviderConnectorReport(
+                provider: .google,
+                accountID: accountID,
                 accountName: "Antigravity",
                 generatedAt: second,
                 limits: [],
@@ -280,8 +436,57 @@ import Testing
     let current = try #require(store.loadCurrent().snapshot)
     #expect(current.snapshot.limits.filter { $0.provider == .google }.isEmpty)
     let report = try #require(current.reports.first { $0.provider == .google })
-    #expect(report.accountID == newAccountID)
+    #expect(report.accountID == accountID)
     #expect(report.status == .unknown)
+}
+
+@Test func jsonSnapshotStorePreservesOtherGoogleAccountsWhenOneAccountIsUnavailable() throws {
+    let root = try temporaryDirectory()
+    let store = JSONSnapshotStore(rootDirectory: root)
+    let first = Date(timeIntervalSince1970: 100)
+    let second = Date(timeIntervalSince1970: 200)
+    let unavailableAccountID = ConnectorRedactor.localAccountID(provider: .google, stableID: "google-a")
+    let healthyAccountID = ConnectorRedactor.localAccountID(provider: .google, stableID: "google-b")
+
+    try store.save(StoredUsageSnapshot(
+        savedAt: first,
+        refreshResult: ConnectorRefreshResult(generatedAt: first, reports: [
+            ProviderConnectorReport(
+                provider: .google,
+                accountID: unavailableAccountID,
+                accountName: "Google A",
+                generatedAt: first,
+                limits: [usageLimit(provider: .google, accountID: unavailableAccountID, used: 10, savedAt: first)]
+            ),
+            ProviderConnectorReport(
+                provider: .google,
+                accountID: healthyAccountID,
+                accountName: "Google B",
+                generatedAt: first,
+                limits: [usageLimit(provider: .google, accountID: healthyAccountID, used: 20, savedAt: first)]
+            ),
+        ])
+    ))
+
+    try store.saveMerged(
+        refreshResult: ConnectorRefreshResult(generatedAt: second, reports: [
+            ProviderConnectorReport(
+                provider: .google,
+                accountID: unavailableAccountID,
+                accountName: "Google A",
+                generatedAt: second,
+                limits: [],
+                status: .unknown,
+                errorMessage: "Google Antigravity did not report model quota availability."
+            ),
+        ]),
+        savedAt: second
+    )
+
+    let current = try #require(store.loadCurrent().snapshot)
+    #expect(current.snapshot.limits.map(\.accountID) == [healthyAccountID])
+    #expect(current.reports.contains { $0.accountID == unavailableAccountID && $0.status == .unknown })
+    #expect(current.reports.contains { $0.accountID == healthyAccountID && $0.status == .healthy })
 }
 
 @Test func jsonSnapshotStoreDropsPreviousLimitsWhenForegroundRequiredReportHasNoData() throws {
@@ -794,6 +999,66 @@ import Testing
     #expect(refreshResult.reports.count == 1)
     #expect(refreshResult.reports[0].accountName == "Claude")
     #expect(refreshResult.reports[0].errorMessage != "Claude is not connected. Sign in to Claude from Settings.")
+}
+
+@Test func snapshotRefreshServiceMigratesGoogleCredentialsBeforeRefreshingMigratedAccount() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let credentials = Data(#"{"accessToken":"old-google-access","refreshToken":"google-refresh","expiresAt":"2099-01-01T00:00:00Z","scopes":["https://www.googleapis.com/auth/cloud-platform"]}"#.utf8)
+    let credentialStore = InMemoryProviderCredentialStore(storage: ["gemini-code-assist-default": credentials])
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary),
+        credentialStore: credentialStore,
+        promptCacheTelemetryReader: { _ in [] }
+    )
+    let savedAt = Date(timeIntervalSince1970: 300)
+    try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
+        updatedAt: savedAt,
+        accounts: [LocalProviderAccountConfiguration(
+            id: "gemini-code-assist-default",
+            provider: .google,
+            connectorKind: .geminiCodeAssist,
+            displayName: "Gemini"
+        )]
+    ))
+
+    let accountDocument = service.loadConfiguredAccounts(now: savedAt).document
+
+    #expect(try credentialStore.load(accountID: "google-antigravity-default") == credentials)
+    #expect(accountDocument.accounts.contains { $0.id == "google-antigravity-default" && $0.connectorKind == .geminiCodeAssist })
+    #expect(accountDocument.accounts.contains { $0.displayName == "Antigravity" })
+    #expect(!accountDocument.accounts.contains { $0.id == "gemini-code-assist-default" })
+}
+
+@Test func snapshotRefreshServiceDoesNotOverwriteExistingMigratedGoogleCredentials() throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let oldCredentials = Data(#"{"accessToken":"old-google-access","refreshToken":"old-refresh","expiresAt":"2099-01-01T00:00:00Z","scopes":["https://www.googleapis.com/auth/cloud-platform"]}"#.utf8)
+    let newCredentials = Data(#"{"accessToken":"new-google-access","refreshToken":"new-refresh","expiresAt":"2099-01-01T00:00:00Z","scopes":["https://www.googleapis.com/auth/cloud-platform"]}"#.utf8)
+    let credentialStore = InMemoryProviderCredentialStore(storage: [
+        "gemini-code-assist-default": oldCredentials,
+        "google-antigravity-default": newCredentials,
+    ])
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: JSONSnapshotStore(rootDirectory: try temporaryDirectory())),
+        credentialStore: credentialStore,
+        promptCacheTelemetryReader: { _ in [] }
+    )
+    let savedAt = Date(timeIntervalSince1970: 300)
+    try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
+        updatedAt: savedAt,
+        accounts: [LocalProviderAccountConfiguration(
+            id: "gemini-code-assist-default",
+            provider: .google,
+            connectorKind: .geminiCodeAssist,
+            displayName: "Gemini"
+        )]
+    ))
+
+    _ = service.loadConfiguredAccounts(now: savedAt)
+
+    #expect(try credentialStore.load(accountID: "google-antigravity-default") == newCredentials)
 }
 
 @Test func snapshotRefreshRunnerSkipsEmptyRefreshes() async throws {

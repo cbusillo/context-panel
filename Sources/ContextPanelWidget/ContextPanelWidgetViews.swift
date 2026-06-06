@@ -337,7 +337,7 @@ struct CPWMainLimitRow: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 CPWProviderBadge(provider: provider, compact: true)
-                Text(summary?.widgetWindowLine ?? fallbackWindow.displayName)
+                Text(summary?.widgetWindowLine ?? fallbackWindow.placeholderWidgetLine(provider: fallbackProvider))
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(CPWTheme.primaryText)
                     .lineLimit(1)
@@ -668,6 +668,17 @@ enum CPWTheme {
     }
 }
 
+private extension MainLimitWindow {
+    func placeholderWidgetLine(provider: Provider) -> String {
+        switch self {
+        case .availability where provider == .google:
+            "Google reset window"
+        default:
+            displayName
+        }
+    }
+}
+
 extension UsageLimit {
     var widgetRemainingHeadline: String {
         guard let remaining else {
@@ -681,6 +692,9 @@ extension UsageLimit {
     var widgetUsageText: String {
         if provider == .anthropic, unit == .unknown, status == .unknown {
             return "limit unknown"
+        }
+        if isModelCapacityLimit {
+            return widgetRemainingHeadline
         }
         if unit == .percent, let used {
             return "\(used)% used"
@@ -761,7 +775,7 @@ extension WidgetSnapshot {
 
     var tightestSubheadline: String {
         guard let summary = tightestMainLimitSummary else { return message }
-        return "\(summary.provider.shortName) \(summary.window.displayName)"
+        return "\(summary.provider.shortName) \(summary.widgetWindowName)"
     }
 
     var tightestUsageRatio: Double {
@@ -844,7 +858,7 @@ extension WidgetSnapshot {
         guard let tightest = summaries.sorted(by: { ($0.usageRatio ?? 0) > ($1.usageRatio ?? 0) }).first else {
             return "setup needed"
         }
-        return "\(tightest.window.shortName) \(tightest.widgetRemainingHeadline.lowercased())"
+        return "\(tightest.widgetCompactWindowName) \(tightest.widgetRemainingHeadline.lowercased())"
     }
 
     private static func format(hours: Double) -> String {
@@ -877,6 +891,9 @@ extension MainLimitSummary {
         guard unit != nil, used != nil, limit != nil else {
             return status == .failure ? "refresh failed" : "unknown"
         }
+        if window == .availability {
+            return widgetRemainingHeadline
+        }
         if usageRatio != nil {
             return "\(Int(((usageRatio ?? 0) * 100).rounded()))% used"
         }
@@ -886,12 +903,20 @@ extension MainLimitSummary {
 
     var widgetWindowLine: String {
         let accounts = accountCount == 1 ? "1 account" : "\(accountCount) accounts"
-        return "\(window.displayName) · \(accounts)"
+        return "\(widgetWindowName) · \(accounts)"
     }
 
     var widgetSmallWindowLine: String {
         let accounts = accountCount == 1 ? "1 acct" : "\(accountCount) accts"
-        return "\(provider.shortName) \(window.displayName) · \(accounts)"
+        return "\(provider.shortName) \(widgetWindowName) · \(accounts)"
+    }
+
+    var widgetWindowName: String {
+        displayWindowName
+    }
+
+    var widgetCompactWindowName: String {
+        compactDisplayWindowName
     }
 
     var widgetResetText: String {
@@ -909,6 +934,14 @@ extension MainLimitSummary {
             return "\(widgetResetText) · \(confidence.widgetLabel)"
         }
         return widgetResetText
+    }
+}
+
+private extension UsageLimit {
+    var isModelCapacityLimit: Bool {
+        guard let windowLabel else { return false }
+        return windowLabel.localizedCaseInsensitiveCompare("Model capacity") == .orderedSame
+            || windowLabel.localizedCaseInsensitiveCompare("Availability") == .orderedSame
     }
 }
 

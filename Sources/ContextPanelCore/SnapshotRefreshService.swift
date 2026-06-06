@@ -336,6 +336,7 @@ public struct SnapshotRefreshService: Sendable {
     public func loadConfiguredAccounts(now: Date = Date()) -> AccountConfigurationLoadResult {
         let result = accountStore.load(now: now)
         migrateClaudeStateIfNeeded(accounts: result.document.accounts, now: now)
+        migrateGoogleStateIfNeeded()
         return result
     }
 
@@ -369,6 +370,7 @@ public struct SnapshotRefreshService: Sendable {
         importConfiguredAuthFiles(now: now)
         let accountResult = accountStore.load(now: now)
         migrateClaudeStateIfNeeded(accounts: accountResult.document.accounts, now: now)
+        migrateGoogleStateIfNeeded()
         let accountDocument = accountResult.document
         let connectors = AccountConnectorFactory.connectors(
             from: accountDocument,
@@ -414,6 +416,11 @@ public struct SnapshotRefreshService: Sendable {
         if migratedDocument.accounts != accounts {
             try? accountStore.save(migratedDocument)
         }
+    }
+
+    private func migrateGoogleStateIfNeeded() {
+        guard let credentialStore else { return }
+        GoogleAccountMigration.migrateCredentials(credentialStore)
     }
 }
 
