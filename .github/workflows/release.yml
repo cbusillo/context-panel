@@ -5,6 +5,22 @@ name: Release
   push:
     tags:
       - "v*"
+  workflow_call:
+    inputs:
+      version:
+        description: Release version without the leading v.
+        required: false
+        type: string
+      create_github_release:
+        description: Create or update a GitHub Release.
+        required: false
+        default: true
+        type: boolean
+      notarize:
+        description: Notarize when Apple signing secrets are configured.
+        required: false
+        default: true
+        type: boolean
   workflow_dispatch:
     inputs:
       version:
@@ -19,14 +35,14 @@ name: Release
       notarize:
         description: Notarize when Apple signing secrets are configured.
         required: true
-        default: false
+        default: true
         type: boolean
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.version || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -84,6 +100,25 @@ jobs:
           echo "version=${version}" >>"${GITHUB_OUTPUT}"
           echo "tag=${tag}" >>"${GITHUB_OUTPUT}"
 
+      - name: Validate Release Configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          publish_requested="${{ inputs.create_github_release }}"
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            publish_requested="true"
+          fi
+          if [[ "${publish_requested}" == "true" ]]; then
+            if [[ -z "${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID:-}" ]]; then
+              echo "CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID is required" >&2
+              exit 1
+            fi
+            if [[ -z "${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET:-}" ]]; then
+              echo "CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET is required" >&2
+              exit 1
+            fi
+          fi
+
       - name: Import Apple Signing Assets
         id: signing
         shell: bash
@@ -107,7 +142,15 @@ jobs:
               -P "${MACOS_CERTIFICATE_PASSWORD:-}" \
               -A \
               -k "${keychain_path}"
-            security list-keychains -d user -s "${keychain_path}" $(security list-keychains -d user | tr -d '"')
+            existing_keychains=()
+            while IFS= read -r keychain; do
+              keychain="$({ printf '%s\n' "${keychain}" | tr -d '"'; } \
+                | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+              if [[ -n "${keychain}" ]]; then
+                existing_keychains+=("${keychain}")
+              fi
+            done < <(security list-keychains -d user)
+            security list-keychains -d user -s "${keychain_path}" "${existing_keychains[@]}"
             security set-key-partition-list -S apple-tool:,apple: -s -k "${keychain_password}" "${keychain_path}"
             security find-identity -v -p codesigning "${keychain_path}"
             identity="auto"
@@ -126,10 +169,12 @@ jobs:
             echo "${MACOS_REFRESH_AGENT_PROVISIONING_PROFILE_BASE64}" | base64 -D >"${refresh_agent_profile}"
           fi
 
-          echo "identity=${identity}" >>"${GITHUB_OUTPUT}"
-          echo "app_profile=${app_profile}" >>"${GITHUB_OUTPUT}"
-          echo "widget_profile=${widget_profile}" >>"${GITHUB_OUTPUT}"
-          echo "refresh_agent_profile=${refresh_agent_profile}" >>"${GITHUB_OUTPUT}"
+          {
+            echo "identity=${identity}"
+            echo "app_profile=${app_profile}"
+            echo "widget_profile=${widget_profile}"
+            echo "refresh_agent_profile=${refresh_agent_profile}"
+          } >>"${GITHUB_OUTPUT}"
 
       - name: Build Release Artifact
         id: package
@@ -150,7 +195,23 @@ jobs:
           if [[ -n "${{ steps.signing.outputs.refresh_agent_profile }}" ]]; then
             args+=(--refresh-agent-provisioning-profile "${{ steps.signing.outputs.refresh_agent_profile }}")
           fi
-          if [[ "${{ inputs.notarize || false }}" == "true" ]]; then
+          notarize_requested="${{ inputs.notarize }}"
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            notarize_requested="true"
+          fi
+          if [[ "${notarize_requested}" == "true" ]]; then
+            has_notary_credentials="false"
+            if [[ -n "${APPLE_NOTARY_KEYCHAIN_PROFILE:-}" ]]; then
+              has_notary_credentials="true"
+            elif [[ -n "${APP_STORE_CONNECT_API_KEY_P8_BASE64:-}" && -n "${APP_STORE_CONNECT_KEY_ID:-}" && -n "${APP_STORE_CONNECT_ISSUER_ID:-}" ]]; then
+              has_notary_credentials="true"
+            elif [[ -n "${APPLE_ID:-}" && -n "${APPLE_TEAM_ID:-}" && -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" ]]; then
+              has_notary_credentials="true"
+            fi
+            if [[ "${has_notary_credentials}" != "true" ]]; then
+              echo "notarization was requested but no complete notarization credential set is configured" >&2
+              exit 1
+            fi
             args+=(--notarize)
             if [[ -n "${APPLE_NOTARY_KEYCHAIN_PROFILE:-}" ]]; then
               args+=(--notary-keychain-profile "${APPLE_NOTARY_KEYCHAIN_PROFILE}")
@@ -174,6 +235,17 @@ jobs:
           zip_path="dist/ContextPanel-${{ steps.version.outputs.version }}-macOS.zip"
           echo "zip_path=${zip_path}" >>"${GITHUB_OUTPUT}"
           echo "metadata_path=dist/release-metadata.json" >>"${GITHUB_OUTPUT}"
+          {
+            echo "### GitHub Release Artifact"
+            echo
+            echo "- Version: ${{ steps.version.outputs.version }}"
+            echo "- Tag: ${{ steps.version.outputs.tag }}"
+            echo "- Commit: ${GITHUB_SHA}"
+            echo "- Zip: ${zip_path}"
+            echo "- Metadata: dist/release-metadata.json"
+            echo "- Create GitHub Release: ${{ inputs.create_github_release }}"
+            echo "- Notarization requested: ${notarize_requested}"
+          } >>"${GITHUB_STEP_SUMMARY}"
 
       - name: Upload Workflow Artifact
         uses: actions/upload-artifact@v7

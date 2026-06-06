@@ -1,7 +1,26 @@
 ---
-name: TestFlight
+name: App Store Connect Upload
 
 "on":
+  workflow_call:
+    inputs:
+      version:
+        description: App Store marketing version, for example 1.0.18.
+        required: true
+        type: string
+      build_number:
+        description: Build number. Defaults to UTC timestamp.
+        required: false
+        type: string
+      upload:
+        description: Upload to App Store Connect. Disable to only export a pkg.
+        required: false
+        default: true
+        type: boolean
+    outputs:
+      build_number:
+        description: Resolved CFBundleVersion build number.
+        value: ${{ jobs.upload.outputs.build_number }}
   workflow_dispatch:
     inputs:
       version:
@@ -22,13 +41,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: testflight-${{ github.ref }}
+  group: app-store-connect-upload-${{ inputs.version || github.ref }}
   cancel-in-progress: false
 
 jobs:
   upload:
     name: Upload Mac App
     runs-on: macos-latest
+    outputs:
+      build_number: ${{ steps.build.outputs.build_number }}
 
     env:
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -73,6 +94,19 @@ jobs:
           fi
           echo "build_number=${build_number}" >>"${GITHUB_OUTPUT}"
 
+      - name: Validate Release Configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID:-}" ]]; then
+            echo "CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID is required" >&2
+            exit 1
+          fi
+          if [[ -z "${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET:-}" ]]; then
+            echo "CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET is required" >&2
+            exit 1
+          fi
+
       - name: Import Signing Assets
         shell: bash
         run: |
@@ -102,7 +136,15 @@ jobs:
           import_p12 "${MACOS_APP_STORE_DISTRIBUTION_CERTIFICATE_P12:-}" "app-store-distribution.p12" "${MACOS_APP_STORE_CERTIFICATE_PASSWORD:-${MACOS_CERTIFICATE_PASSWORD:-}}"
           import_p12 "${MACOS_APP_STORE_INSTALLER_CERTIFICATE_P12:-}" "app-store-installer.p12" "${MACOS_APP_STORE_CERTIFICATE_PASSWORD:-${MACOS_CERTIFICATE_PASSWORD:-}}"
 
-          security list-keychains -d user -s "${keychain_path}" $(security list-keychains -d user | tr -d '"')
+          existing_keychains=()
+          while IFS= read -r keychain; do
+            keychain="$({ printf '%s\n' "${keychain}" | tr -d '"'; } \
+              | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            if [[ -n "${keychain}" ]]; then
+              existing_keychains+=("${keychain}")
+            fi
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "${keychain_path}" "${existing_keychains[@]}"
           security set-key-partition-list -S apple-tool:,apple: -s -k "${keychain_password}" "${keychain_path}"
           security find-identity -v "${keychain_path}"
 
@@ -131,12 +173,22 @@ jobs:
             args+=(--export-only)
           fi
           scripts/upload-testflight-macos-app.sh "${args[@]}"
+          {
+            echo "### App Store Connect Upload"
+            echo
+            echo "- Version: ${{ inputs.version }}"
+            echo "- Build number: ${{ steps.build.outputs.build_number }}"
+            echo "- Commit: ${GITHUB_SHA}"
+            echo "- Mode: ${{ inputs.upload == true && 'upload' || 'export-only' }}"
+            echo "- TestFlight beta distribution: not requested by this workflow"
+            echo "- Result: succeeded"
+          } >>"${GITHUB_STEP_SUMMARY}"
 
       - name: Upload Export Logs
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: testflight-export-${{ steps.build.outputs.build_number }}
+          name: app-store-connect-${{ inputs.version }}-${{ steps.build.outputs.build_number }}
           path: |
             .build/testflight/UploadOptions.plist
             .build/testflight/upload

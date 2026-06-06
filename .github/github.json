@@ -37,8 +37,9 @@
   "importantWorkflows": [
     "CI",
     "CodeQL",
+    "Ship",
     "Release",
-    "TestFlight",
+    "App Store Connect Upload",
     "Submit App Store Review"
   ],
   "branchProtection": {

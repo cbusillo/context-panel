@@ -2,6 +2,38 @@
 name: Submit App Store Review
 
 "on":
+  workflow_call:
+    inputs:
+      version:
+        description: App Store marketing version.
+        required: true
+        type: string
+      build_number:
+        description: Uploaded CFBundleVersion/build number.
+        required: true
+        type: string
+      whats_new:
+        description: Release notes for the App Store version.
+        required: true
+        type: string
+      copy_from_version:
+        description: Existing App Store version to copy metadata from.
+        required: false
+        type: string
+      remove_active_review_version:
+        description: Existing App Store version to remove from active review first.
+        required: false
+        type: string
+      dry_run:
+        description: Prepare the version and review item without submitting.
+        required: false
+        default: false
+        type: boolean
+      cancel_review_only:
+        description: Cancel review without creating or submitting a replacement.
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
     inputs:
       version:
@@ -107,3 +139,13 @@ jobs:
             scripts/submit-app-store-review.py
           )
           "${submit[@]}" "${args[@]}"
+          {
+            echo "### App Store Review Submission"
+            echo
+            echo "- Version: ${INPUT_VERSION}"
+            echo "- Build number: ${INPUT_BUILD_NUMBER}"
+            echo "- Commit: ${GITHUB_SHA}"
+            echo "- Dry run: ${INPUT_DRY_RUN}"
+            echo "- Cancel review only: ${INPUT_CANCEL_REVIEW_ONLY}"
+            echo "- Result: succeeded"
+          } >>"${GITHUB_STEP_SUMMARY}"
