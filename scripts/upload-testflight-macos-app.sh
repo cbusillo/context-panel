@@ -201,9 +201,22 @@ install_profile() {
 	cp "$profile" "$directory/$uuid.provisionprofile"
 }
 
+validate_marketing_version() {
+	if [[ -z "$marketing_version" ]]; then
+		echo "App Store marketing version is required; pass --version, for example --version 1.0.18" >&2
+		exit 1
+	fi
+	if [[ "$marketing_version" == "1.0" ]]; then
+		echo "App Store marketing version 1.0 is closed; pass the next App Store version, for example --version 1.0.18" >&2
+		exit 1
+	fi
+}
+
 require_command xcodegen
 require_command xcodebuild
 require_command security
+
+validate_marketing_version
 
 if [[ ! -f "$app_profile" ]]; then
 	echo "app provisioning profile not found: $app_profile" >&2
