@@ -5,9 +5,8 @@ name: TestFlight
   workflow_dispatch:
     inputs:
       version:
-        description: Marketing version.
+        description: App Store marketing version, for example 1.0.18.
         required: true
-        default: "1.0"
         type: string
       build_number:
         description: Build number. Defaults to UTC timestamp.
