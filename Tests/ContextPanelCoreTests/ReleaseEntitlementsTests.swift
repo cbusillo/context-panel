@@ -43,6 +43,15 @@ import Testing
     #expect(entitlements["com.apple.security.files.bookmarks.document-scope"] == nil)
 }
 
+@Test func refreshAgentPreservesBackgroundGeminiLegacyOAuth() throws {
+    let url = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        .appending(path: "Sources/ContextPanelRefreshAgent/ContextPanelRefreshAgent.swift")
+    let source = try String(contentsOf: url, encoding: .utf8)
+
+    #expect(source.contains("SnapshotRefreshRunner.appDefault"))
+    #expect(!source.contains("allowsLegacyGeminiOAuth: false"))
+}
+
 private func loadEntitlements(_ path: String) throws -> [String: Any] {
     let url = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appending(path: path)
     let data = try Data(contentsOf: url)
