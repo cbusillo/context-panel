@@ -238,13 +238,12 @@ import Testing
     #expect(report.errorMessage?.contains("permission") == true)
 }
 
-@Test func jsonSnapshotStoreDropsPreviousGoogleLimitsWhenProviderIsUnavailable() throws {
+@Test func jsonSnapshotStoreDropsPreviousGoogleLimitsWhenAccountIsUnavailable() throws {
     let root = try temporaryDirectory()
     let store = JSONSnapshotStore(rootDirectory: root)
     let first = Date(timeIntervalSince1970: 100)
     let second = Date(timeIntervalSince1970: 200)
-    let oldAccountID = "gemini-a"
-    let newAccountID = ConnectorRedactor.localAccountID(
+    let accountID = ConnectorRedactor.localAccountID(
         provider: .google,
         stableID: "google-antigravity-default"
     )
@@ -254,10 +253,10 @@ import Testing
         refreshResult: ConnectorRefreshResult(generatedAt: first, reports: [
             ProviderConnectorReport(
                 provider: .google,
-                accountID: oldAccountID,
+                accountID: accountID,
                 accountName: "Gemini A",
                 generatedAt: first,
-                limits: [usageLimit(provider: .google, accountID: oldAccountID, used: 10, savedAt: first)]
+                limits: [usageLimit(provider: .google, accountID: accountID, used: 10, savedAt: first)]
             )
         ])
     ))
@@ -266,7 +265,7 @@ import Testing
         refreshResult: ConnectorRefreshResult(generatedAt: second, reports: [
             ProviderConnectorReport(
                 provider: .google,
-                accountID: newAccountID,
+                accountID: accountID,
                 accountName: "Antigravity",
                 generatedAt: second,
                 limits: [],
@@ -280,8 +279,57 @@ import Testing
     let current = try #require(store.loadCurrent().snapshot)
     #expect(current.snapshot.limits.filter { $0.provider == .google }.isEmpty)
     let report = try #require(current.reports.first { $0.provider == .google })
-    #expect(report.accountID == newAccountID)
+    #expect(report.accountID == accountID)
     #expect(report.status == .unknown)
+}
+
+@Test func jsonSnapshotStorePreservesOtherGoogleAccountsWhenOneAccountIsUnavailable() throws {
+    let root = try temporaryDirectory()
+    let store = JSONSnapshotStore(rootDirectory: root)
+    let first = Date(timeIntervalSince1970: 100)
+    let second = Date(timeIntervalSince1970: 200)
+    let unavailableAccountID = ConnectorRedactor.localAccountID(provider: .google, stableID: "google-a")
+    let healthyAccountID = ConnectorRedactor.localAccountID(provider: .google, stableID: "google-b")
+
+    try store.save(StoredUsageSnapshot(
+        savedAt: first,
+        refreshResult: ConnectorRefreshResult(generatedAt: first, reports: [
+            ProviderConnectorReport(
+                provider: .google,
+                accountID: unavailableAccountID,
+                accountName: "Google A",
+                generatedAt: first,
+                limits: [usageLimit(provider: .google, accountID: unavailableAccountID, used: 10, savedAt: first)]
+            ),
+            ProviderConnectorReport(
+                provider: .google,
+                accountID: healthyAccountID,
+                accountName: "Google B",
+                generatedAt: first,
+                limits: [usageLimit(provider: .google, accountID: healthyAccountID, used: 20, savedAt: first)]
+            ),
+        ])
+    ))
+
+    try store.saveMerged(
+        refreshResult: ConnectorRefreshResult(generatedAt: second, reports: [
+            ProviderConnectorReport(
+                provider: .google,
+                accountID: unavailableAccountID,
+                accountName: "Google A",
+                generatedAt: second,
+                limits: [],
+                status: .unknown,
+                errorMessage: "Google Antigravity did not report model quota availability."
+            ),
+        ]),
+        savedAt: second
+    )
+
+    let current = try #require(store.loadCurrent().snapshot)
+    #expect(current.snapshot.limits.map(\.accountID) == [healthyAccountID])
+    #expect(current.reports.contains { $0.accountID == unavailableAccountID && $0.status == .unknown })
+    #expect(current.reports.contains { $0.accountID == healthyAccountID && $0.status == .healthy })
 }
 
 @Test func jsonSnapshotStoreDropsPreviousLimitsWhenForegroundRequiredReportHasNoData() throws {

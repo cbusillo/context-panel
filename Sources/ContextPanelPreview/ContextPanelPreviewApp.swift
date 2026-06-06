@@ -207,6 +207,10 @@ struct SettingsPane: View {
                                     Button("Connect") { model.authorizeClaudeOAuth(for: account) }
                                         .buttonStyle(.borderedProminent)
                                         .controlSize(.small)
+                                } else if account.connectorKind == .geminiCodeAssist {
+                                    Button("Connect") { model.authorizeGoogleAntigravityOAuth(for: account) }
+                                        .buttonStyle(.borderedProminent)
+                                        .controlSize(.small)
                                 }
                             } else {
                                 Text(account.isEnabled ? "Enabled" : "Disabled")
@@ -366,6 +370,14 @@ struct SettingsPane: View {
                 }
             }
         }
+        .sheet(isPresented: $model.isGoogleOAuthCodeSheetPresented) {
+            GoogleAntigravityOAuthCodeSheet(model: model) {
+                Task {
+                    await appModel.refreshLocalConnectors()
+                    model.load()
+                }
+            }
+        }
         .onAppear { model.load() }
     }
 
@@ -430,6 +442,57 @@ struct ClaudeOAuthCodeSheet: View {
     }
 }
 
+struct GoogleAntigravityOAuthCodeSheet: View {
+    @ObservedObject var model: SettingsPaneModel
+    let onConnected: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var code = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Connect Google")
+                .font(.system(size: 18, weight: .semibold))
+            Text("After approving Google, the browser may stop at localhost. Paste that redirected URL or authorization code here.")
+                .font(.system(size: 12))
+                .foregroundStyle(CPTheme.secondaryText)
+            if let url = model.pendingGoogleOAuthAuthorizationURL {
+                Link("Open Google authorization", destination: url)
+                    .font(.system(size: 12, weight: .medium))
+                Text(url.absoluteString)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(CPTheme.tertiaryText)
+                    .textSelection(.enabled)
+                    .lineLimit(4)
+            }
+            TextField("Redirect URL or authorization code", text: $code)
+                .textFieldStyle(.roundedBorder)
+            if let errorMessage = model.errorMessage {
+                Text(errorMessage)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(CPTheme.statusColor(.failure))
+                    .textSelection(.enabled)
+            }
+            HStack {
+                Button("Cancel") {
+                    model.cancelGoogleAntigravityOAuth()
+                    dismiss()
+                }
+                Spacer()
+                Button(model.isCompletingGoogleOAuth ? "Connecting" : "Connect") {
+                    model.completeGoogleAntigravityOAuth(code: code) {
+                        onConnected()
+                        dismiss()
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isCompletingGoogleOAuth)
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
+    }
+}
+
 struct SettingsAccountRefreshSummary: Equatable {
     let text: String
     let status: UsageStatus
@@ -448,14 +511,21 @@ final class SettingsPaneModel: ObservableObject {
     @Published private(set) var legacyAuthPaths: Set<String> = []
     @Published var isClaudeOAuthCodeSheetPresented = false
     @Published private(set) var isCompletingClaudeOAuth = false
+    @Published var isGoogleOAuthCodeSheetPresented = false
+    @Published private(set) var isCompletingGoogleOAuth = false
 
     private let bookmarkStore = SecureFileBookmarkStore(storeURL: ContextPanelLocations.bookmarkStoreURL())
     private let credentialStore = ProviderCredentialStore()
     private var recentlyVerifiedAuthPaths: Set<String> = []
     private var pendingClaudeOAuth: PendingClaudeOAuth?
+    private var pendingGoogleOAuth: PendingGoogleAntigravityOAuth?
 
     var pendingClaudeOAuthAuthorizationURL: URL? {
         pendingClaudeOAuth?.authorizationURL
+    }
+
+    var pendingGoogleOAuthAuthorizationURL: URL? {
+        pendingGoogleOAuth?.authorizationURL
     }
 
     private let store = AccountConfigurationStore(
@@ -645,7 +715,7 @@ final class SettingsPaneModel: ObservableObject {
 
     func needsAuthorization(_ account: LocalProviderAccountConfiguration) -> Bool {
         guard account.isEnabled else { return false }
-        if account.connectorKind == .claudeOAuthUsage {
+        if account.connectorKind == .claudeOAuthUsage || account.connectorKind == .geminiCodeAssist {
             return !hasImportedCredential(for: account)
         }
         guard let authPath = account.effectiveAuthPath else { return false }
@@ -655,7 +725,7 @@ final class SettingsPaneModel: ObservableObject {
     }
 
     func hasSavedAuthorization(_ account: LocalProviderAccountConfiguration) -> Bool {
-        if account.connectorKind == .claudeOAuthUsage {
+        if account.connectorKind == .claudeOAuthUsage || account.connectorKind == .geminiCodeAssist {
             return hasImportedCredential(for: account)
         }
         guard let authPath = account.effectiveAuthPath else { return false }
@@ -677,7 +747,7 @@ final class SettingsPaneModel: ObservableObject {
     }
 
     func authorizationSavedText(for account: LocalProviderAccountConfiguration) -> String {
-        account.connectorKind == .claudeOAuthUsage ? "Connected" : "File saved"
+        account.connectorKind == .claudeOAuthUsage || account.connectorKind == .geminiCodeAssist ? "Connected" : "File saved"
     }
 
     func refreshSummary(for account: LocalProviderAccountConfiguration, storedSnapshot: StoredUsageSnapshot?) -> SettingsAccountRefreshSummary? {
@@ -751,6 +821,29 @@ final class SettingsPaneModel: ObservableObject {
         isCompletingClaudeOAuth = false
     }
 
+    func authorizeGoogleAntigravityOAuth(for account: LocalProviderAccountConfiguration) {
+        guard account.connectorKind == .geminiCodeAssist else { return }
+        do {
+            let flow = try PendingGoogleAntigravityOAuth(accountID: account.id)
+            pendingGoogleOAuth = flow
+            isGoogleOAuthCodeSheetPresented = true
+            contextPanelLogger.info("Google Antigravity OAuth connect clicked for accountID=\(account.id, privacy: .public)")
+            let opened = NSWorkspace.shared.open(flow.authorizationURL)
+            contextPanelLogger.info("Google Antigravity OAuth authorization URL open result=\(opened, privacy: .public)")
+            if !opened {
+                errorMessage = "Google authorization did not open automatically. Use the link in the Connect Google sheet."
+            }
+        } catch {
+            contextPanelLogger.error("Google Antigravity OAuth connect failed: \(error.localizedDescription, privacy: .public)")
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func cancelGoogleAntigravityOAuth() {
+        pendingGoogleOAuth = nil
+        isCompletingGoogleOAuth = false
+    }
+
     func completeClaudeOAuth(code: String, onConnected: @escaping () -> Void) {
         guard let flow = pendingClaudeOAuth else { return }
         let authorizationCode = ClaudeOAuthFlow.normalizedAuthorizationCode(from: code)
@@ -777,6 +870,45 @@ final class SettingsPaneModel: ObservableObject {
                 await MainActor.run {
                     contextPanelLogger.error("Claude OAuth code exchange failed: \(error.localizedDescription, privacy: .public)")
                     self?.isCompletingClaudeOAuth = false
+                    self?.errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    func completeGoogleAntigravityOAuth(code: String, onConnected: @escaping () -> Void) {
+        guard let flow = pendingGoogleOAuth else { return }
+        let authorizationCode = GoogleAntigravityOAuthFlow.normalizedAuthorizationCode(from: code)
+        guard !authorizationCode.code.isEmpty else { return }
+        if let state = authorizationCode.state, state != flow.state {
+            errorMessage = "Google authorization state did not match this connection attempt. Start Google sign-in again."
+            return
+        }
+        isCompletingGoogleOAuth = true
+        contextPanelLogger.info("Google Antigravity OAuth code exchange started")
+        Task { [weak self] in
+            do {
+                let credentials = try await Self.exchangeGoogleAntigravityOAuthCode(
+                    authorizationCode: authorizationCode,
+                    flow: flow
+                )
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.sortedKeys]
+                encoder.dateEncodingStrategy = .iso8601
+                try self?.credentialStore.save(try encoder.encode(credentials), accountID: flow.accountID)
+                await MainActor.run {
+                    contextPanelLogger.info("Google Antigravity OAuth code exchange succeeded")
+                    self?.pendingGoogleOAuth = nil
+                    self?.isCompletingGoogleOAuth = false
+                    self?.isGoogleOAuthCodeSheetPresented = false
+                    self?.errorMessage = nil
+                    self?.load()
+                    onConnected()
+                }
+            } catch {
+                await MainActor.run {
+                    contextPanelLogger.error("Google Antigravity OAuth code exchange failed: \(error.localizedDescription, privacy: .public)")
+                    self?.isCompletingGoogleOAuth = false
                     self?.errorMessage = error.localizedDescription
                 }
             }
@@ -831,8 +963,19 @@ final class SettingsPaneModel: ObservableObject {
     }
 
     func detailText(for account: LocalProviderAccountConfiguration) -> String {
-        let path = account.effectiveAuthPath ?? account.connectorKind.rawValue
+        let path = account.effectiveAuthPath ?? detailSourceLabel(for: account)
         return "\(setupInstruction(for: account)) · \(ConnectorRedactor.redactedPath(path))"
+    }
+
+    private func detailSourceLabel(for account: LocalProviderAccountConfiguration) -> String {
+        switch account.connectorKind {
+        case .geminiCodeAssist:
+            return "Google OAuth"
+        case .claudeOAuthUsage:
+            return "Claude OAuth"
+        default:
+            return account.connectorKind.rawValue
+        }
     }
 
     private func setupInstruction(for account: LocalProviderAccountConfiguration) -> String {
@@ -846,7 +989,7 @@ final class SettingsPaneModel: ObservableObject {
             }
             return "Select the OpenAI CLI auth JSON file"
         case .geminiCodeAssist:
-            return "Google quota is unavailable until a supported Antigravity quota source is added"
+            return "Connect Google to read Antigravity reported model availability"
         case .claudeLocalStatus:
             return "Claude reads Context Panel's statusline cache; no auth file selection is needed"
         case .claudeOAuthUsage:
@@ -891,6 +1034,39 @@ final class SettingsPaneModel: ObservableObject {
             scopes: token.scopes
         )
     }
+
+    private static func exchangeGoogleAntigravityOAuthCode(
+        authorizationCode: GoogleAntigravityAuthorizationCode,
+        flow: PendingGoogleAntigravityOAuth
+    ) async throws -> GoogleAntigravityOAuthCredentials {
+        let body = GoogleAntigravityOAuthFlow.authorizationCodeTokenRequestBody(
+            code: authorizationCode,
+            codeVerifier: flow.pkce.verifier,
+            redirectURI: flow.redirectURI
+        )
+        var request = URLRequest(url: GoogleAntigravityOAuthMetadata.tokenEndpoint)
+        request.httpMethod = "POST"
+        request.httpBody = body
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw ConnectorError.nonHTTPResponse("Google Antigravity OAuth token exchange returned a non-HTTP response")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            let rawBody = String(data: data, encoding: .utf8) ?? ""
+            let redactedBody = ConnectorRedactor.redact(rawBody)
+            throw ConnectorError.invalidAuth("Google Antigravity OAuth token exchange returned HTTP \(http.statusCode): \(redactedBody)")
+        }
+        let token = try JSONDecoder().decode(GoogleAntigravityOAuthTokenResponse.self, from: data)
+        return GoogleAntigravityOAuthCredentials(
+            accessToken: token.accessToken,
+            refreshToken: token.refreshToken,
+            expiresAt: token.expiresIn.map { Date().addingTimeInterval(TimeInterval($0)) },
+            scopes: token.scopes
+        )
+    }
 }
 
 private struct PendingClaudeOAuth {
@@ -906,6 +1082,26 @@ private struct PendingClaudeOAuth {
         state = try OAuthPKCE.makeChallenge(byteCount: 24).verifier
         redirectURI = ClaudeOAuthFlow.manualRedirectURI
         authorizationURL = try ClaudeOAuthFlow.authorizationURL(codeChallenge: pkce.challenge, state: state, redirectURI: redirectURI)
+    }
+}
+
+private struct PendingGoogleAntigravityOAuth {
+    let accountID: String
+    let pkce: OAuthPKCEChallenge
+    let state: String
+    let redirectURI: String
+    let authorizationURL: URL
+
+    init(accountID: String) throws {
+        self.accountID = accountID
+        pkce = try OAuthPKCE.makeChallenge()
+        state = try OAuthPKCE.makeChallenge(byteCount: 24).verifier
+        redirectURI = GoogleAntigravityOAuthFlow.manualRedirectURI
+        authorizationURL = try GoogleAntigravityOAuthFlow.authorizationURL(
+            codeChallenge: pkce.challenge,
+            state: state,
+            redirectURI: redirectURI
+        )
     }
 }
 
@@ -1406,6 +1602,11 @@ private struct ReconnectAccountRow: View {
                 settingsModel.authorizeClaudeOAuth(for: account)
             }
             .buttonStyle(.borderedProminent)
+        } else if account.connectorKind == .geminiCodeAssist {
+            Button("Reconnect") {
+                settingsModel.authorizeGoogleAntigravityOAuth(for: account)
+            }
+            .buttonStyle(.borderedProminent)
         } else {
             Button("Refresh") { onRefresh() }
                 .buttonStyle(.bordered)
@@ -1417,7 +1618,7 @@ private struct ReconnectAccountRow: View {
         if settingsModel.hasLegacyAuthorization(account) { return "File access needs to be refreshed." }
         if account.connectorKind == .claudeOAuthUsage { return "Reconnect Claude if refresh keeps failing." }
         if account.connectorKind == .geminiCodeAssist {
-            return "Google quota is unavailable until supported Antigravity limits are added."
+            return "Reconnect Google if Antigravity model availability refresh keeps failing."
         }
         return settingsModel.detailText(for: account)
     }

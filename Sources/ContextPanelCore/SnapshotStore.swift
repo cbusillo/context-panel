@@ -267,22 +267,24 @@ public struct JSONSnapshotStore: Sendable {
                 .filter { !$0.limits.isEmpty }
                 .map { ProviderAccountKey(provider: $0.provider, accountID: $0.accountID) }
         )
-        let authoritativeEmptyProviders = Set(
+        let authoritativeEmptyAccounts = Set(
             refreshResult.reports
                 .filter { $0.limits.isEmpty && $0.status != .failure }
-                .map(\.provider)
+                .map { ProviderAccountKey(provider: $0.provider, accountID: $0.accountID) }
         )
         let current = loadCurrent().snapshot
         let preservedLimits: [UsageLimit]
         let preservedReports: [StoredProviderReport]
         if preservesUnreportedAccounts {
             preservedLimits = current?.snapshot.limits.filter { limit in
-                !authoritativeEmptyProviders.contains(limit.provider)
-                    && !replacementAccounts.contains(ProviderAccountKey(provider: limit.provider, accountID: limit.accountID))
+                let key = ProviderAccountKey(provider: limit.provider, accountID: limit.accountID)
+                return !authoritativeEmptyAccounts.contains(key)
+                    && !replacementAccounts.contains(key)
             } ?? []
             preservedReports = current?.reports.filter { report in
-                !authoritativeEmptyProviders.contains(report.provider)
-                    && !reportedAccounts.contains(ProviderAccountKey(provider: report.provider, accountID: report.accountID))
+                let key = ProviderAccountKey(provider: report.provider, accountID: report.accountID)
+                return !authoritativeEmptyAccounts.contains(key)
+                    && !reportedAccounts.contains(key)
             } ?? []
         } else {
             preservedLimits = current?.snapshot.limits.filter { limit in

@@ -249,7 +249,7 @@ import Testing
     #expect(!result.document.accounts.contains { $0.id == "openai-code-default" })
 }
 
-@Test func accountConnectorFactorySkipsDisabledAndReportsGoogleUnavailable() async {
+@Test func accountConnectorFactorySkipsDisabledAndCreatesGoogleAntigravityConnector() async {
     let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
         LocalProviderAccountConfiguration(
             id: "codex",
@@ -273,15 +273,19 @@ import Testing
         ),
     ])
 
-    let connectors = AccountConnectorFactory.connectors(from: document)
+    let connectors = AccountConnectorFactory.connectors(
+        from: document,
+        credentialStore: InMemoryProviderCredentialStore(storage: [:])
+    )
     let result = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: Date(timeIntervalSince1970: 0))
 
     #expect(connectors.count == 2)
     #expect(Set(connectors.map(\.provider)) == [.openAI, .google])
+    #expect(connectors.contains { $0 is GoogleAntigravityQuotaConnector })
     #expect(result.reports.contains { report in
         report.provider == .google
-            && report.status == .unknown
-            && report.errorMessage?.contains("retired") == true
+            && report.status == .failure
+            && report.errorMessage == "Google Antigravity is not connected. Sign in to Google from Settings."
     })
 }
 

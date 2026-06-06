@@ -61,10 +61,12 @@ MVP connectors:
 - `CodexRateLimitConnector`: reads Codex-style auth roots such as `~/.code` or
   `~/.codex`, calls the live Codex usage endpoint, and normalizes primary,
   secondary, and additional percent-window buckets.
-- Google provider: retired Gemini CLI / legacy Code Assist quota paths are
-  removed. The app emits an explicit unknown/unavailable Google report until a
-  supported Antigravity quota source can be implemented without Keychain prompt
-  storms.
+- Google provider: retired Gemini CLI credential files and local metadata
+  discovery are removed. The Antigravity adapter follows the Claude-style
+  Context Panel credential model: store Context Panel-owned Google OAuth tokens,
+  refresh them through Google's OAuth endpoint, discover the active Antigravity
+  project, call Cloud Code model availability, and normalize `quotaInfo` into
+  reported availability percentages.
 - `ClaudeLocalStatusConnector`: runs `claude auth status --json` and summarizes
   `~/.claude/stats-cache.json`; live personal subscription allowance remains
   unknown unless a clean provider signal appears.

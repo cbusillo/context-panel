@@ -132,9 +132,12 @@ block output when available and shows a clearly marked estimated 5-hour token
 window; that estimate is useful for "am I likely to run out soon?" but is not
 Anthropic's official subscription percentage.
 
-For Google/Gemini, retired Gemini CLI and legacy Code Assist quota paths have
-been removed. Google remains visible as an unavailable provider until a supported
-Antigravity limits source can be added without Keychain prompt storms.
+For Google/Gemini, retired Gemini CLI and legacy Code Assist credential paths
+have been removed. Context Panel now uses its own Google OAuth credentials for
+the Antigravity model-availability adapter instead of reading Antigravity's
+Keychain item or Gemini CLI files. The Google surface reports model availability
+percentages when Antigravity returns `quotaInfo`; treat those as reported
+availability rather than a public billing or quota contract.
 
 The probes call the same `ContextPanelCore` connectors the app will use, so
 passing probe output is also a smoke test for the production connector runtime.
