@@ -337,10 +337,7 @@ private extension GeminiAccountConfiguration {
         case .localOAuth:
             return codeAssistEndpoint
         case .antigravity:
-            if codeAssistEndpoint == Self.geminiCodeAssistEndpoint {
-                return Self.antigravityCodeAssistEndpoint
-            }
-            return codeAssistEndpoint
+            return Self.antigravityCodeAssistEndpoint
         }
     }
 }
@@ -382,8 +379,11 @@ public struct AntigravityKeychainCredentialSource: Sendable {
     }
 
     public func credentialAvailability() -> AntigravityCredentialAvailability {
+        guard let availabilityChecker = credentialLoader as? any ProviderCredentialAvailabilityChecking else {
+            return .unreadable
+        }
         do {
-            return try loadCredentials() == nil ? .unavailable : .available
+            return try availabilityChecker.contains(accountID: Self.accountID) ? .available : .unavailable
         } catch {
             return .unreadable
         }
@@ -678,7 +678,7 @@ public struct GeminiCodeAssistConnector: ProviderConnector {
         },
         credentialStore: (any ProviderCredentialLoading)? = nil,
         credentialAccountID: String? = nil,
-        antigravityCredentialSource: AntigravityKeychainCredentialSource? = AntigravityKeychainCredentialSource()
+        antigravityCredentialSource: AntigravityKeychainCredentialSource? = nil
     ) {
         self.accounts = accounts
         self.httpClient = httpClient
@@ -708,6 +708,20 @@ public struct GeminiCodeAssistConnector: ProviderConnector {
                 account: account,
                 source: resolvedCredentials.source
             )
+            if resolvedCredentials.source == .antigravity,
+               let buckets = try await antigravityQuotaStatusBuckets(accessToken: accessToken, endpoint: endpoint)
+            {
+                let limits = buckets.map {
+                    $0.usageLimit(accountID: localAccountID, accountName: account.accountName, observedAt: now)
+                }
+                return ProviderConnectorReport(
+                    provider: provider,
+                    accountID: localAccountID,
+                    accountName: account.accountName,
+                    generatedAt: now,
+                    limits: limits
+                )
+            }
             let loadResponse = try await loadCodeAssist(accessToken: accessToken, endpoint: endpoint)
             guard let project = loadResponse.cloudaicompanionProject, !project.isEmpty else {
                 throw ConnectorError.decodingFailure("Code Assist did not return an active project; raw body redacted")
@@ -758,6 +772,14 @@ public struct GeminiCodeAssistConnector: ProviderConnector {
         let localCredentialResult = Result { try credentialData(for: account) }
         let localCredentials = localCredentialResult.successValue
             .flatMap { try? GeminiOAuthCredentialDecoder.credentials(from: $0) }
+
+        if account.hasOAuthClientMetadata,
+           let localCredentials,
+           localCredentials.refreshToken?.isEmpty == false
+        {
+            return GeminiResolvedCredentials(credentials: localCredentials, source: .localOAuth)
+        }
+
         let antigravityCredentialResult = antigravityCredentialSource.map { source in
             Result { try source.loadCredentials() }
         }
@@ -775,12 +797,6 @@ public struct GeminiCodeAssistConnector: ProviderConnector {
             throw ConnectorError.foregroundRefreshRequired("Antigravity credential could not be read. Open Antigravity to refresh Google authentication, then refresh Context Panel again.")
         }
 
-        if account.hasOAuthClientMetadata,
-           let localCredentials,
-           localCredentials.refreshToken?.isEmpty == false
-        {
-            return GeminiResolvedCredentials(credentials: localCredentials, source: .localOAuth)
-        }
         if let localCredentials, localCredentials.refreshToken?.isEmpty == false {
             return GeminiResolvedCredentials(credentials: localCredentials, source: .localOAuth)
         }
@@ -868,6 +884,32 @@ public struct GeminiCodeAssistConnector: ProviderConnector {
         }
         return response.data
     }
+
+    private func antigravityQuotaStatusBuckets(accessToken: String, endpoint: URL) async throws -> [GeminiQuotaBucket]? {
+        let response = try await httpClient.data(for: ConnectorHTTPRequest(
+            url: antigravityQuotaStatusEndpoint(from: endpoint),
+            method: "POST",
+            headers: jsonHeaders(accessToken: accessToken),
+            body: Data("{}".utf8)
+        ))
+        guard (200..<300).contains(response.statusCode) else {
+            if [404, 405, 429, 500, 502, 503, 504].contains(response.statusCode) {
+                return nil
+            }
+            throw ConnectorError.httpFailure(operation: "Antigravity quota status", statusCode: response.statusCode)
+        }
+        do {
+            return try GeminiQuotaPayloadParser.buckets(from: response.data)
+        } catch {
+            return nil
+        }
+    }
+
+    private func antigravityQuotaStatusEndpoint(from endpoint: URL) -> URL {
+        var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
+        components?.path = "/v1main:fetchQuotaStatus"
+        return components?.url ?? URL(string: "https://daily-cloudcode-pa.googleapis.com/v1main:fetchQuotaStatus")!
+    }
 }
 
 private struct GeminiQuotaPayload: Decodable {
@@ -875,10 +917,14 @@ private struct GeminiQuotaPayload: Decodable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: GeminiDynamicCodingKey.self)
-        for keyName in ["buckets", "quotaBuckets", "quota_buckets", "limits", "quotas"] {
+        for keyName in ["buckets", "bucketInfo", "bucket_info", "bucketInfos", "bucket_infos", "quotaBuckets", "quota_buckets", "limits", "quotas"] {
             let key = GeminiDynamicCodingKey(keyName)
             if let decoded = try container.decodeIfPresent([GeminiQuotaBucketPayload].self, forKey: key) {
                 buckets = decoded
+                return
+            }
+            if let decoded = try container.decodeIfPresent(GeminiQuotaBucketPayload.self, forKey: key) {
+                buckets = [decoded]
                 return
             }
         }
@@ -900,7 +946,7 @@ private struct GeminiQuotaBucketPayload: Decodable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: GeminiDynamicCodingKey.self)
         id = container.firstString(for: ["id", "bucketId", "bucketID", "limitId", "quotaId"])
-        bucketLabel = container.firstString(for: [
+        let explicitBucketLabel = container.firstString(for: [
             "bucketLabel",
             "quotaLabel",
             "limitLabel",
@@ -910,6 +956,11 @@ private struct GeminiQuotaBucketPayload: Decodable {
             "bucket",
             "limitType",
         ])
+        let quotaType = container.firstString(for: [
+            "quotaType",
+            "quota_type",
+        ])
+        bucketLabel = explicitBucketLabel ?? Self.displayLabel(forQuotaType: quotaType)
         modelID = container.firstString(for: [
             "modelId",
             "modelID",
@@ -996,6 +1047,21 @@ private struct GeminiQuotaBucketPayload: Decodable {
             value /= 100
         }
         return 1 - value
+    }
+
+    private static func displayLabel(forQuotaType quotaType: String?) -> String? {
+        guard let quotaType = quotaType?.nilIfBlank else { return nil }
+        let normalized = quotaType
+            .replacingOccurrences(of: "QUOTA_TYPE_", with: "")
+            .replacingOccurrences(of: "-", with: "_")
+            .lowercased()
+        if normalized.contains("credit") {
+            return "Antigravity AI credits"
+        }
+        if normalized.contains("agent") || normalized.contains("execution") {
+            return "Antigravity agent execution"
+        }
+        return "Antigravity quota"
     }
 
     var normalizedBucket: GeminiQuotaBucket {
