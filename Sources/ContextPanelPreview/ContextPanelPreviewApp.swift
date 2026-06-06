@@ -214,16 +214,6 @@ struct SettingsPane: View {
                                     .foregroundStyle(account.isEnabled ? CPTheme.statusColor(.healthy) : CPTheme.tertiaryText)
                             }
                         }
-                        if account.connectorKind == .geminiCodeAssist, account.isEnabled, !model.hasGeminiMetadata(for: account) {
-                            HStack(spacing: 8) {
-                                Text("Background refresh can use Antigravity sign-in or Gemini CLI access")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundStyle(CPTheme.statusColor(.stale))
-                                Button("Allow CLI Access") { model.authorizeGeminiMetadata(for: account) }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
-                            }
-                        }
                         Text(model.detailText(for: account))
                             .font(.system(size: 11))
                             .foregroundStyle(CPTheme.secondaryText)
@@ -456,7 +446,6 @@ final class SettingsPaneModel: ObservableObject {
     @Published private(set) var authorizedPaths: Set<String> = []
     @Published private(set) var missingAuthPaths: Set<String> = []
     @Published private(set) var legacyAuthPaths: Set<String> = []
-    @Published private(set) var geminiMetadataAccountIDs: Set<String> = []
     @Published var isClaudeOAuthCodeSheetPresented = false
     @Published private(set) var isCompletingClaudeOAuth = false
 
@@ -528,9 +517,6 @@ final class SettingsPaneModel: ObservableObject {
         })
         loadedLegacyPaths.subtract(recentlyVerifiedAuthPaths)
         legacyAuthPaths = loadedLegacyPaths
-        geminiMetadataAccountIDs = Set(accounts.compactMap { account in
-            account.connectorKind == .geminiCodeAssist && hasGeminiMetadata(for: account) ? account.id : nil
-        })
         widgetPreferences = widgetPreferenceStores.load()
         backgroundRefreshSettings = backgroundRefreshSettingsStore.load()
         var primerSettings = resetPrimerSettingsStore.load()
@@ -736,7 +722,7 @@ final class SettingsPaneModel: ObservableObject {
         case .codexRateLimits:
             "OpenAI refresh"
         case .geminiCodeAssist:
-            "Gemini refresh"
+            "Google refresh"
         case .claudeLocalStatus, .claudeOAuthUsage:
             "Claude refresh"
         }
@@ -860,7 +846,7 @@ final class SettingsPaneModel: ObservableObject {
             }
             return "Select the OpenAI CLI auth JSON file"
         case .geminiCodeAssist:
-            return "Sign into Antigravity, or select oauth_creds.json and allow Gemini CLI access"
+            return "Google quota is unavailable until a supported Antigravity quota source is added"
         case .claudeLocalStatus:
             return "Claude reads Context Panel's statusline cache; no auth file selection is needed"
         case .claudeOAuthUsage:
@@ -870,58 +856,6 @@ final class SettingsPaneModel: ObservableObject {
 
     private func hasImportedCredential(for account: LocalProviderAccountConfiguration) -> Bool {
         (try? credentialStore.load(accountID: account.id)) != nil
-    }
-
-    func hasGeminiMetadata(for account: LocalProviderAccountConfiguration) -> Bool {
-        guard account.connectorKind == .geminiCodeAssist else { return true }
-        if geminiMetadataAccountIDs.contains(account.id) { return true }
-        let metadataAccountID = GeminiOAuthClientMetadata.credentialAccountID(for: account.id)
-        return (try? credentialStore.load(accountID: metadataAccountID)) != nil
-    }
-
-    func authorizeGeminiMetadata(for account: LocalProviderAccountConfiguration) {
-        guard account.connectorKind == .geminiCodeAssist else { return }
-        let panel = NSOpenPanel()
-        panel.message = "Allow access to Gemini CLI's bundle folder if Antigravity sign-in is not available for background refresh. The folder is usually named bundle."
-        panel.prompt = "Allow Access"
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        if let defaultGeminiBundleURL = defaultGeminiBundleURL() {
-            panel.directoryURL = defaultGeminiBundleURL.deletingLastPathComponent()
-            panel.nameFieldStringValue = defaultGeminiBundleURL.lastPathComponent
-        }
-        if #available(macOS 11.0, *) {
-            panel.allowedContentTypes = [.folder, .init(filenameExtension: "js")].compactMap { $0 }
-        } else {
-            panel.allowedFileTypes = ["js"]
-        }
-
-        panel.begin { [weak self] response in
-            guard let self, response == .OK, let url = panel.url else { return }
-            do {
-                let metadata = try GeminiOAuthClientMetadataDiscovery.discover(fromUserSelectedURL: url)
-                let data = try JSONEncoder().encode(metadata)
-                try credentialStore.save(
-                    data,
-                    accountID: GeminiOAuthClientMetadata.credentialAccountID(for: account.id)
-                )
-                geminiMetadataAccountIDs.insert(account.id)
-                errorMessage = nil
-                WidgetCenter.shared.reloadAllTimelines()
-            } catch {
-                errorMessage = error.localizedDescription
-            }
-        }
-    }
-
-    private func defaultGeminiBundleURL() -> URL? {
-        let paths = [
-            "/opt/homebrew/lib/node_modules/@google/gemini-cli/bundle",
-            "/usr/local/lib/node_modules/@google/gemini-cli/bundle",
-        ]
-        return paths.first(where: { FileManager.default.fileExists(atPath: $0) })
-            .map(URL.init(fileURLWithPath:))
     }
 
     private static func exchangeClaudeOAuthCode(
@@ -978,9 +912,9 @@ private struct PendingClaudeOAuth {
 private extension AccountConnectorKind {
     var requiresSecurityScopedAuthFile: Bool {
         switch self {
-        case .codexRateLimits, .geminiCodeAssist:
+        case .codexRateLimits:
             return true
-        case .claudeLocalStatus, .claudeOAuthUsage:
+        case .geminiCodeAssist, .claudeLocalStatus, .claudeOAuthUsage:
             return false
         }
     }
@@ -1214,7 +1148,6 @@ struct ReconnectDashboard: View {
                 settingsModel.needsAuthorization(account)
                     || settingsModel.hasLegacyAuthorization(account)
                     || account.connectorKind == .claudeOAuthUsage
-                    || (account.connectorKind == .geminiCodeAssist && !settingsModel.hasGeminiMetadata(for: account))
                     || appModel.reportNeedsAttention(account)
             )
         }
@@ -1473,11 +1406,6 @@ private struct ReconnectAccountRow: View {
                 settingsModel.authorizeClaudeOAuth(for: account)
             }
             .buttonStyle(.borderedProminent)
-        } else if account.connectorKind == .geminiCodeAssist, !settingsModel.hasGeminiMetadata(for: account) {
-            Button("Allow CLI Access") {
-                settingsModel.authorizeGeminiMetadata(for: account)
-            }
-            .buttonStyle(.bordered)
         } else {
             Button("Refresh") { onRefresh() }
                 .buttonStyle(.bordered)
@@ -1488,8 +1416,8 @@ private struct ReconnectAccountRow: View {
         if settingsModel.needsAuthorization(account) { return "Account access is missing." }
         if settingsModel.hasLegacyAuthorization(account) { return "File access needs to be refreshed." }
         if account.connectorKind == .claudeOAuthUsage { return "Reconnect Claude if refresh keeps failing." }
-        if account.connectorKind == .geminiCodeAssist, !settingsModel.hasGeminiMetadata(for: account) {
-            return "Allow local Gemini CLI access or use Antigravity sign-in."
+        if account.connectorKind == .geminiCodeAssist {
+            return "Google quota is unavailable until supported Antigravity limits are added."
         }
         return settingsModel.detailText(for: account)
     }

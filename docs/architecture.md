@@ -61,10 +61,10 @@ MVP connectors:
 - `CodexRateLimitConnector`: reads Codex-style auth roots such as `~/.code` or
   `~/.codex`, calls the live Codex usage endpoint, and normalizes primary,
   secondary, and additional percent-window buckets.
-- `GeminiCodeAssistConnector`: reads Google coding-tool credentials from
-  Antigravity Keychain sign-in or Gemini CLI OAuth credentials, resolves the
-  active Code Assist project internally, and normalizes model quota buckets as
-  percent pressure.
+- Google provider: retired Gemini CLI / legacy Code Assist quota paths are
+  removed. The app emits an explicit unknown/unavailable Google report until a
+  supported Antigravity quota source can be implemented without Keychain prompt
+  storms.
 - `ClaudeLocalStatusConnector`: runs `claude auth status --json` and summarizes
   `~/.claude/stats-cache.json`; live personal subscription allowance remains
   unknown unless a clean provider signal appears.

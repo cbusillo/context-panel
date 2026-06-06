@@ -238,6 +238,52 @@ import Testing
     #expect(report.errorMessage?.contains("permission") == true)
 }
 
+@Test func jsonSnapshotStoreDropsPreviousGoogleLimitsWhenProviderIsUnavailable() throws {
+    let root = try temporaryDirectory()
+    let store = JSONSnapshotStore(rootDirectory: root)
+    let first = Date(timeIntervalSince1970: 100)
+    let second = Date(timeIntervalSince1970: 200)
+    let oldAccountID = "gemini-a"
+    let newAccountID = ConnectorRedactor.localAccountID(
+        provider: .google,
+        stableID: "google-antigravity-default"
+    )
+
+    try store.save(StoredUsageSnapshot(
+        savedAt: first,
+        refreshResult: ConnectorRefreshResult(generatedAt: first, reports: [
+            ProviderConnectorReport(
+                provider: .google,
+                accountID: oldAccountID,
+                accountName: "Gemini A",
+                generatedAt: first,
+                limits: [usageLimit(provider: .google, accountID: oldAccountID, used: 10, savedAt: first)]
+            )
+        ])
+    ))
+
+    try store.saveMerged(
+        refreshResult: ConnectorRefreshResult(generatedAt: second, reports: [
+            ProviderConnectorReport(
+                provider: .google,
+                accountID: newAccountID,
+                accountName: "Antigravity",
+                generatedAt: second,
+                limits: [],
+                status: .unknown,
+                errorMessage: "Google Antigravity quota is not available yet. Legacy Gemini CLI and Code Assist quota paths have been retired."
+            )
+        ]),
+        savedAt: second
+    )
+
+    let current = try #require(store.loadCurrent().snapshot)
+    #expect(current.snapshot.limits.filter { $0.provider == .google }.isEmpty)
+    let report = try #require(current.reports.first { $0.provider == .google })
+    #expect(report.accountID == newAccountID)
+    #expect(report.status == .unknown)
+}
+
 @Test func jsonSnapshotStoreDropsPreviousLimitsWhenForegroundRequiredReportHasNoData() throws {
     let root = try temporaryDirectory()
     let store = JSONSnapshotStore(rootDirectory: root)

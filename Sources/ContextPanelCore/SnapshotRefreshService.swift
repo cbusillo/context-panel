@@ -152,14 +152,8 @@ public struct SnapshotRefreshRunner: Sendable {
         self.lock = lock
     }
 
-    public static func appDefault(
-        antigravityCredentialSource: AntigravityKeychainCredentialSource? = nil,
-        allowsLegacyGeminiOAuth: Bool = true
-    ) -> SnapshotRefreshRunner {
-        SnapshotRefreshRunner(service: .appDefault(
-            antigravityCredentialSource: antigravityCredentialSource,
-            allowsLegacyGeminiOAuth: allowsLegacyGeminiOAuth
-        ))
+    public static func appDefault() -> SnapshotRefreshRunner {
+        SnapshotRefreshRunner(service: .appDefault())
     }
 
     public func refreshIfNeeded(now: Date = Date()) async throws -> SnapshotRefreshRunDecision {
@@ -307,16 +301,11 @@ public struct SnapshotRefreshService: Sendable {
     private let credentialStore: (any ProviderCredentialStoring)?
     private let promptCacheTelemetryMirror: @Sendable () -> Void
     private let promptCacheTelemetryReader: @Sendable (Date) -> [PromptCacheObservation]
-    private let antigravityCredentialSource: AntigravityKeychainCredentialSource?
-    private let allowsLegacyGeminiOAuth: Bool
-
     public init(
         accountStore: AccountConfigurationStore,
         stores: SnapshotRefreshStores,
         bookmarkStore: SecureFileBookmarkStore? = nil,
         credentialStore: (any ProviderCredentialStoring)? = nil,
-        antigravityCredentialSource: AntigravityKeychainCredentialSource? = nil,
-        allowsLegacyGeminiOAuth: Bool = true,
         promptCacheTelemetryMirror: @escaping @Sendable () -> Void = {
             _ = try? PromptCacheTelemetryMirrorService.mirror()
         },
@@ -328,16 +317,11 @@ public struct SnapshotRefreshService: Sendable {
         self.stores = stores
         self.bookmarkStore = bookmarkStore
         self.credentialStore = credentialStore
-        self.antigravityCredentialSource = antigravityCredentialSource
-        self.allowsLegacyGeminiOAuth = allowsLegacyGeminiOAuth
         self.promptCacheTelemetryMirror = promptCacheTelemetryMirror
         self.promptCacheTelemetryReader = promptCacheTelemetryReader
     }
 
-    public static func appDefault(
-        antigravityCredentialSource: AntigravityKeychainCredentialSource? = nil,
-        allowsLegacyGeminiOAuth: Bool = true
-    ) -> SnapshotRefreshService {
+    public static func appDefault() -> SnapshotRefreshService {
         SnapshotRefreshService(
             accountStore: AccountConfigurationStore(
                 configurationURL: ContextPanelLocations.accountConfigurationURL(),
@@ -345,9 +329,7 @@ public struct SnapshotRefreshService: Sendable {
             ),
             stores: .appDefault(),
             bookmarkStore: SecureFileBookmarkStore(storeURL: ContextPanelLocations.bookmarkStoreURL()),
-            credentialStore: ProviderCredentialStore(),
-            antigravityCredentialSource: antigravityCredentialSource,
-            allowsLegacyGeminiOAuth: allowsLegacyGeminiOAuth
+            credentialStore: ProviderCredentialStore()
         )
     }
 
@@ -392,9 +374,7 @@ public struct SnapshotRefreshService: Sendable {
             from: accountDocument,
             bookmarkStore: bookmarkStore,
             credentialStore: credentialStore,
-            requiresBookmarkedAuthFiles: ContextPanelLocations.isRunningInAppSandbox,
-            antigravityCredentialSource: antigravityCredentialSource,
-            allowsLegacyGeminiOAuth: allowsLegacyGeminiOAuth
+            requiresBookmarkedAuthFiles: ContextPanelLocations.isRunningInAppSandbox
         )
         let connectorResult = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: now)
         let refreshResult = ConnectorRefreshResult(
@@ -446,9 +426,9 @@ private extension ConnectorRefreshResult {
 private extension AccountConnectorKind {
     var importsAuthFileCredential: Bool {
         switch self {
-        case .codexRateLimits, .geminiCodeAssist:
+        case .codexRateLimits:
             true
-        case .claudeLocalStatus, .claudeOAuthUsage:
+        case .geminiCodeAssist, .claudeLocalStatus, .claudeOAuthUsage:
             false
         }
     }
