@@ -1,0 +1,217 @@
+---
+name: Ship
+
+"on":
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Marketing/release version, for example 1.0.18.
+        required: true
+        type: string
+      build_number:
+        description: App Store build number. Defaults to UTC timestamp.
+        required: false
+        type: string
+      github_release:
+        description: Build and publish a GitHub Release artifact.
+        required: true
+        default: true
+        type: boolean
+      notarize_github_release:
+        description: Notarize the GitHub Release artifact.
+        required: true
+        default: true
+        type: boolean
+      app_store_channel:
+        description: App Store Connect action.
+        required: true
+        default: upload
+        type: choice
+        options:
+          - upload
+          - export-only
+          - skip
+      submit_app_review:
+        description: Submit the uploaded App Store build for review.
+        required: true
+        default: false
+        type: boolean
+      whats_new:
+        description: Required only when submit_app_review is true.
+        required: false
+        type: string
+      copy_from_version:
+        description: Existing App Store version to copy metadata from.
+        required: false
+        type: string
+      remove_active_review_version:
+        description: Active App Store version to cancel before submission.
+        required: false
+        type: string
+      dry_run_review:
+        description: Prepare review metadata without submitting.
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ship-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate Release Intent
+    runs-on: ubuntu-latest
+    outputs:
+      build_number: ${{ steps.intent.outputs.build_number }}
+    steps:
+      - name: Validate Inputs
+        id: intent
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${{ inputs.version }}" ]]; then
+            echo "version is required" >&2
+            exit 1
+          fi
+          if [[ "${{ inputs.version }}" == "1.0" ]]; then
+            echo "version 1.0 is closed for App Store submissions" >&2
+            exit 1
+          fi
+          github_release_selected="${{ inputs.github_release }}"
+          app_store_channel="${{ inputs.app_store_channel }}"
+          submit_review_selected="${{ inputs.submit_app_review }}"
+          if [[ "${github_release_selected}" != "true" ]]; then
+            if [[ "${app_store_channel}" == "skip" ]]; then
+              echo "select at least one release channel" >&2
+              exit 1
+            fi
+          fi
+          if [[ "${submit_review_selected}" == "true" ]]; then
+            if [[ "${app_store_channel}" != "upload" ]]; then
+              echo "submit_app_review requires app_store_channel=upload" >&2
+              exit 1
+            fi
+            if [[ -z "${{ inputs.whats_new }}" ]]; then
+              echo "whats_new is required when submit_app_review is true" >&2
+              exit 1
+            fi
+          fi
+          build_number="${{ inputs.build_number }}"
+          if [[ -z "${build_number}" ]]; then
+            build_number="$(date -u +%Y%m%d%H%M)"
+          fi
+          echo "build_number=${build_number}" >>"${GITHUB_OUTPUT}"
+          {
+            echo "### Release Intent"
+            echo
+            echo "- Version: ${{ inputs.version }}"
+            echo "- Build number: ${build_number}"
+            echo "- Commit: ${GITHUB_SHA}"
+            echo "- GitHub Release: ${{ inputs.github_release }}"
+            echo "- GitHub notarization: ${{ inputs.notarize_github_release }}"
+            echo "- App Store channel: ${{ inputs.app_store_channel }}"
+            echo "- Submit App Review: ${{ inputs.submit_app_review }}"
+            echo "- Dry-run review: ${{ inputs.dry_run_review }}"
+          } >>"${GITHUB_STEP_SUMMARY}"
+
+  github-release:
+    name: GitHub Release Channel
+    needs: validate
+    if: ${{ inputs.github_release }}
+    uses: ./.github/workflows/release.yml
+    with:
+      version: ${{ inputs.version }}
+      create_github_release: true
+      notarize: ${{ inputs.notarize_github_release }}
+    secrets: inherit
+
+  app-store-upload:
+    name: App Store Connect Upload Channel
+    needs: validate
+    if: ${{ inputs.app_store_channel != 'skip' }}
+    uses: ./.github/workflows/testflight.yml
+    with:
+      version: ${{ inputs.version }}
+      build_number: ${{ needs.validate.outputs.build_number }}
+      upload: ${{ inputs.app_store_channel == 'upload' }}
+    secrets: inherit
+
+  app-store-review:
+    name: App Store Review Submission
+    needs:
+      - validate
+      - app-store-upload
+    if: ${{ inputs.submit_app_review }}
+    uses: ./.github/workflows/submit-app-store-review.yml
+    with:
+      version: ${{ inputs.version }}
+      build_number: ${{ needs.app-store-upload.outputs.build_number }}
+      whats_new: ${{ inputs.whats_new }}
+      copy_from_version: ${{ inputs.copy_from_version }}
+      remove_active_review_version: ${{ inputs.remove_active_review_version }}
+      dry_run: ${{ inputs.dry_run_review }}
+      cancel_review_only: false
+    secrets: inherit
+
+  summary:
+    name: Release Summary
+    needs:
+      - validate
+      - github-release
+      - app-store-upload
+      - app-store-review
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summarize Channels
+        shell: bash
+        run: |
+          set -euo pipefail
+          validate_result="${{ needs.validate.result }}"
+          github_release_result="${{ needs.github-release.result }}"
+          app_store_upload_result="${{ needs.app-store-upload.result }}"
+          app_store_review_result="${{ needs.app-store-review.result }}"
+          github_release_selected="${{ inputs.github_release }}"
+          app_store_channel="${{ inputs.app_store_channel }}"
+          app_store_review_selected="${{ inputs.submit_app_review }}"
+          {
+            echo "### Ship Summary"
+            echo
+            echo "- Version: ${{ inputs.version }}"
+            echo "- Build number: ${{ needs.validate.outputs.build_number }}"
+            echo "- Commit: ${GITHUB_SHA}"
+            echo "- Validation: ${validate_result}"
+            echo "- GitHub Release: ${github_release_result}"
+            echo "- App Store upload: ${app_store_upload_result}"
+            echo "- App Store review: ${app_store_review_result}"
+            echo
+            echo "Lower-level workflows remain available for recovery paths."
+          } >>"${GITHUB_STEP_SUMMARY}"
+
+          failed="false"
+          if [[ "${validate_result}" != "success" ]]; then
+            failed="true"
+          fi
+          if [[ "${github_release_selected}" == "true" ]]; then
+            if [[ "${github_release_result}" != "success" ]]; then
+              failed="true"
+            fi
+          fi
+          if [[ "${app_store_channel}" != "skip" ]]; then
+            if [[ "${app_store_upload_result}" != "success" ]]; then
+              failed="true"
+            fi
+          fi
+          if [[ "${app_store_review_selected}" == "true" ]]; then
+            if [[ "${app_store_review_result}" != "success" ]]; then
+              failed="true"
+            fi
+          fi
+          if [[ "${failed}" == "true" ]]; then
+            echo "one or more selected release channels failed" >&2
+            exit 1
+          fi
