@@ -212,7 +212,7 @@ import Testing
     #expect(summaries[0].usageRatio == 0.525)
 }
 
-@Test func googleAntigravityMainSummariesUseOnlyGeminiAvailability() throws {
+@Test func googleAntigravityMainSummariesInferWeeklyGeminiAvailabilityFromResetHorizon() throws {
     let reset = Date(timeIntervalSince1970: 1_800_324_000)
     let snapshot = UsageSnapshot(
         generatedAt: Date(timeIntervalSince1970: 1_800_000_000),
@@ -229,6 +229,7 @@ import Testing
                 used: 40,
                 limit: 100,
                 resetsAt: reset,
+                lastUpdatedAt: Date(timeIntervalSince1970: 1_800_000_000),
                 note: "source: Google Antigravity model availability"
             ),
             UsageLimit(
@@ -242,6 +243,8 @@ import Testing
                 unit: .percent,
                 used: 55,
                 limit: 100,
+                resetsAt: reset.addingTimeInterval(60 * 60),
+                lastUpdatedAt: Date(timeIntervalSince1970: 1_800_000_000),
                 note: "source: Google Antigravity model availability"
             ),
             UsageLimit(
@@ -274,15 +277,132 @@ import Testing
     )
 
     #expect(snapshot.limits.count == 4)
-    #expect(snapshot.mainLimitSummaries.map(\.id) == ["google:availability"])
+    #expect(snapshot.mainLimitSummaries.map(\.id) == ["google:weekly"])
     let summary = try #require(snapshot.mainLimitSummaries.first)
-    #expect(summary.window.displayName == "Model capacity")
-    #expect(summary.displayWindowName(now: Date(timeIntervalSince1970: 1_800_000_000)) == "Model capacity")
-    #expect(summary.compactDisplayWindowName(now: Date(timeIntervalSince1970: 1_800_000_000)) == "Cap")
+    #expect(summary.window.displayName == "Weekly")
+    #expect(summary.displayWindowName(now: Date(timeIntervalSince1970: 1_800_000_000)) == "Weekly")
+    #expect(summary.compactDisplayWindowName(now: Date(timeIntervalSince1970: 1_800_000_000)) == "1w")
     #expect(summary.resetCountdownText(now: Date(timeIntervalSince1970: 1_800_000_000)) == "3d 18h")
     #expect(summary.firstKnownReset == reset)
     #expect(summary.limits.map(\.label) == ["Gemini Pro capacity", "Gemini Flash capacity"])
     #expect(snapshot.limits.filter { !$0.isMainLimit }.map(\.modelLabel) == ["Claude", "GPT-OSS"])
+}
+
+@Test func googleAntigravityMainSummariesInferFiveHourGeminiAvailabilityFromResetHorizon() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let reset = now.addingTimeInterval(4 * 3_600)
+    let snapshot = UsageSnapshot(
+        generatedAt: now,
+        limits: [
+            UsageLimit(
+                provider: .google,
+                accountID: "google-antigravity",
+                accountName: "Antigravity",
+                label: "Gemini Pro capacity",
+                windowLabel: "Model capacity",
+                modelLabel: "Gemini Pro",
+                unit: .percent,
+                used: 92,
+                limit: 100,
+                resetsAt: reset,
+                lastUpdatedAt: now,
+                note: "source: Google Antigravity model availability"
+            ),
+            UsageLimit(
+                provider: .google,
+                accountID: "google-antigravity",
+                accountName: "Antigravity",
+                label: "Gemini Flash capacity",
+                windowLabel: "Model capacity",
+                modelLabel: "Gemini Flash",
+                unit: .percent,
+                used: 40,
+                limit: 100,
+                resetsAt: reset.addingTimeInterval(20 * 60),
+                lastUpdatedAt: now,
+                note: "source: Google Antigravity model availability"
+            ),
+            UsageLimit(
+                provider: .google,
+                accountID: "google-antigravity",
+                accountName: "Antigravity",
+                label: "Claude capacity",
+                windowLabel: "Model capacity",
+                modelLabel: "Claude",
+                unit: .percent,
+                used: 10,
+                limit: 100,
+                resetsAt: reset,
+                lastUpdatedAt: now,
+                note: "source: Google Antigravity model availability"
+            ),
+        ]
+    )
+
+    #expect(snapshot.mainLimitSummaries.map(\.id) == ["google:fiveHour"])
+    let summary = try #require(snapshot.mainLimitSummaries.first)
+    #expect(summary.displayWindowName(now: now) == "5-hour")
+    #expect(summary.compactDisplayWindowName(now: now) == "5h")
+    #expect(summary.resetCountdownText(now: now) == "4h")
+    #expect(summary.limits.map(\.modelLabel) == ["Gemini Pro", "Gemini Flash"])
+    #expect(snapshot.limits.filter { !$0.isMainLimit }.map(\.modelLabel) == ["Claude"])
+}
+
+@Test func googleAntigravityMainSummariesInferAvailabilityWhenResetHorizonMissing() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let snapshot = UsageSnapshot(
+        generatedAt: now,
+        limits: [
+            UsageLimit(
+                provider: .google,
+                accountID: "google-antigravity",
+                accountName: "Antigravity",
+                label: "Gemini Pro capacity",
+                windowLabel: "Model capacity",
+                modelLabel: "Gemini Pro",
+                unit: .percent,
+                used: 50,
+                limit: 100,
+                lastUpdatedAt: now,
+                note: "source: Google Antigravity model availability"
+            ),
+        ]
+    )
+
+    #expect(snapshot.mainLimitSummaries.map(\.id) == ["google:availability"])
+    let summary = try #require(snapshot.mainLimitSummaries.first)
+    #expect(summary.displayWindowName(now: now) == "Model capacity")
+    #expect(summary.compactDisplayWindowName(now: now) == "Cap")
+}
+
+@Test func googleAntigravityMainSummariesUseFiveHourAtEightHourResetBoundary() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let snapshot = UsageSnapshot(
+        generatedAt: now,
+        limits: [googleAntigravityGeminiCapacity(resetsAt: now.addingTimeInterval(8 * 3_600), observedAt: now)],
+    )
+
+    #expect(snapshot.mainLimitSummaries.map(\.id) == ["google:fiveHour"])
+}
+
+@Test func googleAntigravityMainSummariesUseWeeklyAboveEightHourResetBoundary() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let snapshot = UsageSnapshot(
+        generatedAt: now,
+        limits: [googleAntigravityGeminiCapacity(resetsAt: now.addingTimeInterval(8 * 3_600 + 1), observedAt: now)],
+    )
+
+    #expect(snapshot.mainLimitSummaries.map(\.id) == ["google:weekly"])
+}
+
+@Test func googleAntigravityMainSummariesKeepAvailabilityWhenObservedAtIsMissing() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let snapshot = UsageSnapshot(
+        generatedAt: now,
+        limits: [googleAntigravityGeminiCapacity(resetsAt: now.addingTimeInterval(4 * 3_600), observedAt: nil)],
+    )
+
+    #expect(snapshot.mainLimitSummaries.map(\.id) == ["google:availability"])
 }
 
 @Test func mainLimitSummariesPoolInterchangeableProviderAccounts() throws {
@@ -782,4 +902,21 @@ import Testing
 
     #expect(reachableStore.loadIfAvailable() == preferences)
     #expect(storeSet.load() == preferences)
+}
+
+private func googleAntigravityGeminiCapacity(resetsAt: Date?, observedAt: Date?) -> UsageLimit {
+    UsageLimit(
+        provider: .google,
+        accountID: "google-antigravity",
+        accountName: "Antigravity",
+        label: "Gemini Pro capacity",
+        windowLabel: "Model capacity",
+        modelLabel: "Gemini Pro",
+        unit: .percent,
+        used: 50,
+        limit: 100,
+        resetsAt: resetsAt,
+        lastUpdatedAt: observedAt,
+        note: "source: Google Antigravity model availability"
+    )
 }
