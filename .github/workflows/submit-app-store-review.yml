@@ -157,7 +157,9 @@ jobs:
             echo "### App Store Review Submission"
             echo
             echo "- Version: ${INPUT_VERSION}"
-            echo "- Build number: ${INPUT_BUILD_NUMBER}"
+            if [[ -n "${INPUT_BUILD_NUMBER}" ]]; then
+              echo "- Build number: ${INPUT_BUILD_NUMBER}"
+            fi
             echo "- Commit: ${GITHUB_SHA}"
             echo "- Dry run: ${INPUT_DRY_RUN}"
             echo "- Cancel review only: ${INPUT_CANCEL_REVIEW_ONLY}"

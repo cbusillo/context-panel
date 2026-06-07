@@ -1,6 +1,7 @@
 import importlib.util
 import io
 import unittest
+from unittest.mock import patch
 from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
@@ -213,6 +214,79 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
 
         self.assertEqual([request[0] for request in client.requests], ["GET"])
 
+    @patch.object(submit_app_store_review.time, "sleep", return_value=None)
+    def test_ensure_build_polls_until_uploaded_build_is_valid(self, _sleep):
+        class PollingBuildClient:
+            def __init__(self):
+                self.requests: list[tuple[Any, ...]] = []
+
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                self.requests.append((method, path, params, body, allowed))
+                if method == "GET" and path == "/builds":
+                    call_count = len([request for request in self.requests if request[1] == "/builds"])
+                    if call_count == 1:
+                        return {"data": []}
+                    if call_count == 2:
+                        return {
+                            "data": [
+                                {
+                                    "id": "build-1",
+                                    "attributes": {
+                                        "processingState": "PROCESSING",
+                                        "usesNonExemptEncryption": False,
+                                    },
+                                }
+                            ]
+                        }
+                    return {
+                        "data": [
+                            {
+                                "id": "build-1",
+                                "attributes": {
+                                    "processingState": "VALID",
+                                    "usesNonExemptEncryption": False,
+                                },
+                            }
+                        ]
+                    }
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        client = PollingBuildClient()
+        args = SimpleNamespace(build_number="202606071340", non_exempt_encryption=False)
+
+        build = submit_app_store_review.ensure_build(
+            client,
+            "app-id",
+            args,
+            wait_timeout_seconds=60,
+            poll_seconds=1,
+        )
+
+        self.assertEqual(build["id"], "build-1")
+        self.assertEqual(len([request for request in client.requests if request[1] == "/builds"]), 3)
+
+    @patch.object(submit_app_store_review.time, "sleep", return_value=None)
+    @patch.object(submit_app_store_review.time, "monotonic", side_effect=[0, 0, 10])
+    def test_ensure_build_times_out_when_uploaded_build_is_missing(self, _monotonic, _sleep):
+        class MissingBuildClient:
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                if method == "GET" and path == "/builds":
+                    return {"data": []}
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        args = SimpleNamespace(build_number="202606071340", non_exempt_encryption=False)
+
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+            submit_app_store_review.ensure_build(
+                MissingBuildClient(),
+                "app-id",
+                args,
+                wait_timeout_seconds=1,
+                poll_seconds=1,
+            )
+
+        self.assertIn("missing build 202606071340", str(context.exception))
+
     def test_reuses_removed_version_when_replacement_creation_is_blocked(self):
         class ReplacementClient:
             def __init__(self):
@@ -352,6 +426,35 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
 
         with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
             submit_app_store_review.dry_run_version_path(BlockingReviewClient(), "app-id", args)
+
+        self.assertIn("another App Store version is already in review", str(context.exception))
+
+    def test_dry_run_version_path_rejects_ready_for_review_submission(self):
+        class ReadyForReviewClient:
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                if method == "GET" and path == "/apps/app-id/appStoreVersions":
+                    return {"data": []}
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {
+                        "data": [
+                            {
+                                "id": "submission-1",
+                                "attributes": {"state": "READY_FOR_REVIEW"},
+                                "relationships": {
+                                    "appStoreVersionForReview": {
+                                        "data": {"type": "appStoreVersions", "id": "version-1-0-13"}
+                                    },
+                                    "items": {"data": []},
+                                },
+                            }
+                        ]
+                    }
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        args = SimpleNamespace(version="1.0.14", remove_active_review_version=None)
+
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+            submit_app_store_review.dry_run_version_path(ReadyForReviewClient(), "app-id", args)
 
         self.assertIn("another App Store version is already in review", str(context.exception))
 
@@ -570,6 +673,49 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         self.assertIn("1.0.13 is PENDING_DEVELOPER_RELEASE", str(context.exception))
         self.assertIn("release or reject that version", str(context.exception))
 
+    def test_dry_run_version_path_rejects_blocking_version_on_second_page(self):
+        class PagedBlockingVersionClient:
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                if method == "GET" and path == "/apps/app-id/appStoreVersions":
+                    version_string = params.get("filter[versionString]") if params else None
+                    offset = params.get("offset") if params else None
+                    if version_string == "1.0.14":
+                        return {"data": []}
+                    if offset:
+                        return {
+                            "data": [
+                                {
+                                    "id": "version-1-0-13",
+                                    "attributes": {
+                                        "versionString": "1.0.13",
+                                        "appStoreState": "PREPARE_FOR_SUBMISSION",
+                                    },
+                                }
+                            ]
+                        }
+                    return {
+                        "data": [
+                            {
+                                "id": "version-1-0-12",
+                                "attributes": {
+                                    "versionString": "1.0.12",
+                                    "appStoreState": "READY_FOR_SALE",
+                                },
+                            }
+                        ],
+                        "links": {"next": "https://api.appstoreconnect.apple.com/v1/apps/app-id/appStoreVersions?offset=1"},
+                    }
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {"data": []}
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        args = SimpleNamespace(version="1.0.14", remove_active_review_version=None)
+
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+            submit_app_store_review.dry_run_version_path(PagedBlockingVersionClient(), "app-id", args)
+
+        self.assertIn("1.0.13 is PREPARE_FOR_SUBMISSION", str(context.exception))
+
     def test_dry_run_version_path_rejects_locked_target_version(self):
         class LockedTargetClient:
             def request(self, method, path, params=None, body=None, allowed=(200,)):
@@ -656,7 +802,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         self.assertEqual(version["id"], "version-1-0-14")
         self.assertTrue(force_prepare)
 
-    def test_force_prepare_review_submission_reuses_existing_submission(self):
+    def test_ensure_review_submission_reuses_existing_matching_ready_submission(self):
         class ReviewSubmissionClient:
             def __init__(self, state="READY_FOR_REVIEW"):
                 self.requests: list[tuple[Any, ...]] = []
@@ -703,7 +849,6 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             "app-id",
             "version-1-0-13",
             args,
-            force_prepare=True,
         )
 
         self.assertEqual(submission["id"], "old-submission")
@@ -715,7 +860,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         self.assertEqual(patch_body["data"]["attributes"], {"submitted": True})
         self.assertNotIn("relationships", patch_body["data"])
 
-    def test_force_prepare_review_submission_returns_submitted_existing_submission(self):
+    def test_ensure_review_submission_returns_submitted_existing_submission(self):
         class ReviewSubmissionClient:
             def __init__(self):
                 self.requests: list[tuple[Any, ...]] = []
@@ -755,7 +900,6 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             "app-id",
             "version-1-0-13",
             args,
-            force_prepare=True,
         )
 
         self.assertEqual(submission["id"], "old-submission")
@@ -871,7 +1015,6 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             "app-id",
             "version-1-0-14",
             args,
-            force_prepare=False,
         )
 
         self.assertEqual(submission["id"], "empty-submission")
@@ -883,7 +1026,59 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         self.assertEqual(patch_body["data"]["attributes"], {"submitted": True})
         self.assertNotIn("relationships", patch_body["data"])
 
-    def test_ensure_review_submission_submits_ready_submission_when_force_prepare_is_false(self):
+    def test_ensure_review_submission_ignores_ready_submission_for_other_version(self):
+        class StaleReadyReviewSubmissionClient:
+            def __init__(self):
+                self.requests: list[tuple[Any, ...]] = []
+
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                self.requests.append((method, path, params, body, allowed))
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {
+                        "data": [
+                            {
+                                "id": "stale-submission",
+                                "attributes": {"state": "READY_FOR_REVIEW"},
+                                "relationships": {
+                                    "items": {"data": [{"type": "reviewSubmissionItems", "id": "stale-item"}]}
+                                },
+                            }
+                        ],
+                        "included": [
+                            {
+                                "id": "stale-item",
+                                "type": "reviewSubmissionItems",
+                                "relationships": {
+                                    "appStoreVersion": {
+                                        "data": {"type": "appStoreVersions", "id": "version-1-0-13"}
+                                    }
+                                },
+                            }
+                        ],
+                    }
+                if method == "POST" and path == "/reviewSubmissions":
+                    return {"data": {"id": "new-submission", "attributes": {"state": "READY_FOR_REVIEW"}}}
+                if method == "POST" and path == "/reviewSubmissionItems":
+                    return {"data": {"id": "new-item"}}
+                if method == "PATCH" and path == "/reviewSubmissions/new-submission":
+                    return {"data": {"id": "new-submission", "attributes": {"state": "WAITING_FOR_REVIEW"}}}
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        client = StaleReadyReviewSubmissionClient()
+        args = SimpleNamespace(dry_run=False)
+
+        submission = submit_app_store_review.ensure_review_submission(
+            client,
+            "app-id",
+            "version-1-0-14",
+            args,
+        )
+
+        self.assertEqual(submission["id"], "new-submission")
+        post_paths = [request[1] for request in client.requests if request[0] == "POST"]
+        self.assertEqual(post_paths, ["/reviewSubmissions", "/reviewSubmissionItems"])
+
+    def test_ensure_review_submission_submits_matching_ready_submission(self):
         class ReadyReviewSubmissionClient:
             def __init__(self):
                 self.requests: list[tuple[Any, ...]] = []
@@ -929,7 +1124,6 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             "app-id",
             "version-1-0-14",
             args,
-            force_prepare=False,
         )
 
         self.assertEqual(submission["id"], "ready-submission")

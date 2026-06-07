@@ -11,6 +11,10 @@ name: Release
         description: Release version without the leading v.
         required: false
         type: string
+      build_number:
+        description: CFBundleVersion/build number for the packaged app.
+        required: false
+        type: string
       create_github_release:
         description: Create or update a GitHub Release.
         required: false
@@ -25,6 +29,10 @@ name: Release
     inputs:
       version:
         description: Release version without the leading v. Defaults to the current date build.
+        required: false
+        type: string
+      build_number:
+        description: CFBundleVersion/build number for the packaged app.
         required: false
         type: string
       create_github_release:
@@ -101,6 +109,17 @@ jobs:
           fi
           echo "version=${version}" >>"${GITHUB_OUTPUT}"
           echo "tag=${tag}" >>"${GITHUB_OUTPUT}"
+
+      - name: Resolve Build Number
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_number="${{ inputs.build_number }}"
+          if [[ -z "${build_number}" ]]; then
+            build_number="$(date -u +%Y%m%d%H%M)"
+          fi
+          echo "build_number=${build_number}" >>"${GITHUB_OUTPUT}"
 
       - name: Validate Release Configuration
         shell: bash
@@ -185,6 +204,7 @@ jobs:
           set -euo pipefail
           args=(
             --version "${{ steps.version.outputs.version }}"
+            --build-number "${{ steps.build.outputs.build_number }}"
             --output dist
             --identity "${{ steps.signing.outputs.identity }}"
           )
@@ -241,6 +261,7 @@ jobs:
             echo "### GitHub Release Artifact"
             echo
             echo "- Version: ${{ steps.version.outputs.version }}"
+            echo "- Build number: ${{ steps.build.outputs.build_number }}"
             echo "- Tag: ${{ steps.version.outputs.tag }}"
             echo "- Commit: ${GITHUB_SHA}"
             echo "- Zip: ${zip_path}"
