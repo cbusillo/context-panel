@@ -2759,6 +2759,9 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     var attentionNavigationTitle: String {
+        if let report = primaryProviderReportNeedingAttention, report.status == .failure {
+            return "Reconnect \(report.provider.displayName)"
+        }
         if storeStatus == .failure || hasProviderReconnectIssue {
             return "Reconnect account"
         }
@@ -2766,6 +2769,16 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     var reconnectSummaryText: String {
+        if let report = primaryProviderReportNeedingAttention {
+            let target = "\(report.provider.displayName) · \(report.accountName)"
+            if let errorMessage = report.errorMessage, !errorMessage.isEmpty {
+                return "\(target) needs attention: \(errorMessage)"
+            }
+            if report.status == .failure {
+                return "\(target) needs attention. Reconnect this account, then refresh."
+            }
+            return "\(target) needs attention. Refresh now, then check the provider status if it persists."
+        }
         if storeStatus == .stale {
             if hasProviderReconnectIssue {
                 return "The widget is showing old percentages. Reconnect the affected account, then refresh."
@@ -2784,6 +2797,14 @@ final class ContextPanelAppModel: ObservableObject {
     var providerReportsNeedingAttention: [StoredProviderReport] {
         guard let reports = storedSnapshot?.reports else { return [] }
         return reports.reconnectBlockingFailures + reports.filter(\.needsNonFailureRefreshAttention)
+    }
+
+    private var primaryProviderReportNeedingAttention: StoredProviderReport? {
+        providerReportsNeedingAttention.sorted { lhs, rhs in
+            if lhs.status != rhs.status { return lhs.status.attentionSortRank > rhs.status.attentionSortRank }
+            if lhs.provider != rhs.provider { return lhs.provider.displayName < rhs.provider.displayName }
+            return lhs.accountName < rhs.accountName
+        }.first
     }
 
     var hasProviderReconnectIssue: Bool {
@@ -3417,6 +3438,15 @@ extension UsageLimit {
         if mainLimitWindow == .availability {
             return modelLabel ?? displayLabel
         }
+        if hasDistinctModelLabel {
+            return [modelLabel, mainLimitWindow?.displayName]
+                .compactMap { value in
+                    guard let value, !value.isEmpty else { return nil }
+                    return value
+                }
+                .deduplicated()
+                .joined(separator: " · ")
+        }
         return accountName
     }
 
@@ -3430,7 +3460,25 @@ extension UsageLimit {
                 .deduplicated()
                 .joined(separator: " · ")
         }
+        if hasDistinctModelLabel {
+            return [accountName, displayLabel]
+                .compactMap { value in
+                    guard !value.isEmpty else { return nil }
+                    return value
+                }
+                .deduplicated()
+                .joined(separator: " · ")
+        }
         return displayLabel
+    }
+
+    private var hasDistinctModelLabel: Bool {
+        guard let modelLabel, !modelLabel.isEmpty else { return false }
+        let normalizedModel = modelLabel.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalizedAccount = accountName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard normalizedModel != normalizedAccount else { return false }
+        let normalizedDisplay = displayLabel.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalizedModel != normalizedDisplay
     }
 
     var additionalLimitTitle: String {

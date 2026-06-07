@@ -74,6 +74,105 @@ import Testing
     #expect(abs(snapshot.aggregateCapacityRatio - 0.05) < 0.0001)
 }
 
+@Test func aggregateStatusUsesPooledMainWindowCapacity() {
+    let snapshot = UsageSnapshot(
+        generatedAt: Date(),
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "limited",
+                accountName: "Limited OpenAI",
+                label: "Codex Weekly",
+                windowLabel: "Weekly",
+                modelLabel: "Codex",
+                unit: .percent,
+                used: 100,
+                limit: 100
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "usable",
+                accountName: "Usable OpenAI",
+                label: "Codex Weekly",
+                windowLabel: "Weekly",
+                modelLabel: "Codex",
+                unit: .percent,
+                used: 20,
+                limit: 100
+            ),
+        ]
+    )
+
+    #expect(snapshot.mostConstrainedLimits.first?.status == .limited)
+    #expect(snapshot.mainLimitSummaries.first?.status == .healthy)
+    #expect(snapshot.aggregateStatus == .healthy)
+}
+
+@Test func aggregateStatusRemainsLimitedWhenPooledMainWindowIsExhausted() {
+    let snapshot = UsageSnapshot(
+        generatedAt: Date(),
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "first",
+                accountName: "First OpenAI",
+                label: "Codex Weekly",
+                windowLabel: "Weekly",
+                modelLabel: "Codex",
+                unit: .percent,
+                used: 100,
+                limit: 100
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "second",
+                accountName: "Second OpenAI",
+                label: "Codex Weekly",
+                windowLabel: "Weekly",
+                modelLabel: "Codex",
+                unit: .percent,
+                used: 100,
+                limit: 100
+            ),
+        ]
+    )
+
+    #expect(snapshot.mainLimitSummaries.first?.status == .limited)
+    #expect(snapshot.aggregateStatus == .limited)
+}
+
+@Test func aggregateStatusStillIncludesNonMainLimitPressure() {
+    let snapshot = UsageSnapshot(
+        generatedAt: Date(),
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "usable",
+                accountName: "Usable OpenAI",
+                label: "Codex Weekly",
+                windowLabel: "Weekly",
+                modelLabel: "Codex",
+                unit: .percent,
+                used: 20,
+                limit: 100
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "usable",
+                accountName: "Usable OpenAI",
+                label: "Image generation",
+                unit: .requests,
+                used: 10,
+                limit: 10,
+                statusOverride: .limited
+            ),
+        ]
+    )
+
+    #expect(snapshot.mainLimitSummaries.first?.status == .healthy)
+    #expect(snapshot.aggregateStatus == .limited)
+}
+
 @Test func usageLimitSeparatesWindowAndModelLabels() {
     let limit = UsageLimit(
         provider: .openAI,

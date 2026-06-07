@@ -953,6 +953,50 @@ import Testing
     #expect(store.savedData.flatMap { try? JSONDecoder.contextPanelISO8601.decode(GoogleAntigravityOAuthCredentials.self, from: $0) }?.refreshToken == "new-refresh")
 }
 
+@Test func googleAntigravityConnectorReportsInvalidRequestRefreshDetails() async throws {
+    let credentials = #"{"accessToken":"old-access","refreshToken":"refresh-secret","expiresAt":"2000-01-01T00:00:00Z","scopes":[]}"#.data(using: .utf8)!
+    let error = #"{"error":"invalid_request","error_description":"Token was issued to a different client."}"#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 400, data: error),
+    ])
+    let store = StubCredentialStore(storage: ["google-antigravity-default": credentials])
+    let connector = GoogleAntigravityQuotaConnector(
+        accounts: [googleAntigravityTestAccount()],
+        httpClient: http,
+        credentialStore: store
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+
+    #expect(result.reports[0].status == .failure)
+    #expect(result.reports[0].errorMessage?.contains("invalid_request") == true)
+    #expect(result.reports[0].errorMessage?.contains("Token was issued to a different client.") == true)
+    #expect(result.reports[0].errorMessage?.contains("Sign in again from Settings") == true)
+    #expect(store.savedData == nil)
+}
+
+@Test func googleAntigravityConnectorReportsMissingClientSecretAsConfigurationError() async throws {
+    let credentials = #"{"accessToken":"old-access","refreshToken":"refresh-secret","expiresAt":"2000-01-01T00:00:00Z","scopes":[]}"#.data(using: .utf8)!
+    let error = #"{"error":"invalid_request","error_description":"client_secret is missing."}"#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 400, data: error),
+    ])
+    let store = StubCredentialStore(storage: ["google-antigravity-default": credentials])
+    let connector = GoogleAntigravityQuotaConnector(
+        accounts: [googleAntigravityTestAccount()],
+        httpClient: http,
+        credentialStore: store
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+
+    #expect(result.reports[0].status == .failure)
+    #expect(result.reports[0].errorMessage?.contains("client secret is not configured") == true)
+    #expect(result.reports[0].errorMessage?.contains("client_secret is missing.") == true)
+    #expect(result.reports[0].errorMessage?.contains("Sign in again") == false)
+    #expect(store.savedData == nil)
+}
+
 @Test func googleAntigravityConnectorRefreshesWhenModelAvailabilityIsUnauthorized() async throws {
     let credentials = #"{"accessToken":"old-access","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":[],"projectID":"project-a"}"#.data(using: .utf8)!
     let token = #"{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600,"scope":"https://www.googleapis.com/auth/cloud-platform"}"#.data(using: .utf8)!

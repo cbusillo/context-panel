@@ -478,7 +478,14 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
             return ConnectorError.invalidAuth("Google Antigravity OAuth session has expired. Sign in again from Settings.")
         }
         if let error = payload?.error, !error.isEmpty {
-            return ConnectorError.invalidAuth("Google Antigravity OAuth refresh failed with \(error). Check the OAuth client configuration and sign in again.")
+            let detail = nonEmpty(payload?.errorDescription).map { " \($0)" } ?? ""
+            if payload?.errorDescription?.localizedCaseInsensitiveContains("client_secret") == true {
+                return ConnectorError.invalidAuth("Google Antigravity OAuth client secret is not configured.\(detail)")
+            }
+            if error == "invalid_request" || error == "invalid_client" || error == "unauthorized_client" {
+                return ConnectorError.invalidAuth("Google Antigravity OAuth refresh failed with \(error).\(detail) Sign in again from Settings to refresh the OAuth client session.")
+            }
+            return ConnectorError.invalidAuth("Google Antigravity OAuth refresh failed with \(error).\(detail) Sign in again from Settings.")
         }
         if statusCode == 401 || statusCode == 403 {
             return ConnectorError.invalidAuth("Google Antigravity OAuth session is not authorized. Sign in again from Settings.")
@@ -537,6 +544,12 @@ public enum GoogleAntigravityOAuthMetadata {
 
 private struct GoogleOAuthErrorPayload: Decodable {
     let error: String?
+    let errorDescription: String?
+
+    enum CodingKeys: String, CodingKey {
+        case error
+        case errorDescription = "error_description"
+    }
 }
 
 private struct GoogleAntigravityLoadCodeAssistPayload: Decodable {

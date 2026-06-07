@@ -133,21 +133,30 @@ def paginated_get(
     limit: int = 50,
 ) -> dict[str, Any]:
     collected: dict[str, Any] = {"data": [], "included": []}
-    offset = 0
+    page_path = path
+    page_params = dict(params or {})
+    page_params["limit"] = limit
     while True:
-        page_params = dict(params or {})
-        page_params["limit"] = limit
-        if offset:
-            page_params["offset"] = offset
-        payload = client.request("GET", path, page_params)
+        payload = client.request("GET", page_path, page_params)
         data = payload.get("data") or []
         collected["data"].extend(data)
         collected["included"].extend(payload.get("included") or [])
-        if not payload.get("links", {}).get("next"):
+        next_url = payload.get("links", {}).get("next")
+        if not next_url:
             break
-        if not data:
+        next_parts = urllib.parse.urlparse(next_url)
+        next_query = urllib.parse.parse_qs(next_parts.query)
+        if not next_query:
             break
-        offset += len(data)
+        next_path = next_parts.path
+        if next_path.startswith("/v1/"):
+            page_path = next_path[3:]
+        elif next_path:
+            page_path = next_path
+        page_params = {
+            key: values if len(values) > 1 else values[0]
+            for key, values in next_query.items()
+        }
     return collected
 
 

@@ -61,11 +61,14 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     public var providerSummaries: [ProviderSummary] {
         Provider.allCases.map { provider in
             let providerLimits = limits.filter { $0.provider == provider }
+            let mainSummaries = usageSnapshot.mainLimitSummaries.filter { $0.provider == provider }
+            let nonMainStatuses = providerLimits.filter { !$0.isMainLimit }.map(\.status)
+            let statuses = mainSummaries.map(\.status) + nonMainStatuses
             let tightestLimit = UsageSnapshot(generatedAt: generatedAt, limits: providerLimits).mostConstrainedLimits.first
             return ProviderSummary(
                 provider: provider,
                 limitCount: providerLimits.count,
-                status: providerLimits.map(\.status).contextPanelWorstStatus,
+                status: statuses.contextPanelWorstStatus,
                 capacityRatio: capacityRatio(for: providerLimits),
                 tightestLimit: tightestLimit
             )
@@ -129,7 +132,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     private static func message(state: WidgetSnapshotState, stored: StoredUsageSnapshot) -> String {
         switch state {
         case .ready:
-            let limitedCount = stored.snapshot.limits.filter { $0.status == .limited }.count
+            let limitedCount = stored.snapshot.mainLimitSummaries.filter { $0.status == .limited }.count
+                + stored.snapshot.limits.filter { !$0.isMainLimit && $0.status == .limited }.count
             if limitedCount > 0 {
                 return "\(limitedCount) limit needs attention."
             }

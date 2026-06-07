@@ -229,6 +229,81 @@ import Testing
     #expect(openAI?.tightestLimit?.label == "Weekly")
 }
 
+@Test func providerSummariesUsePooledMainWindowStatus() {
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let stored = StoredUsageSnapshot(savedAt: savedAt, snapshot: UsageSnapshot(
+        generatedAt: savedAt,
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "limited",
+                accountName: "Limited OpenAI",
+                label: "Codex Weekly",
+                windowLabel: "Weekly",
+                modelLabel: "Codex",
+                unit: .percent,
+                used: 100,
+                limit: 100
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "usable",
+                accountName: "Usable OpenAI",
+                label: "Codex Weekly",
+                windowLabel: "Weekly",
+                modelLabel: "Codex",
+                unit: .percent,
+                used: 20,
+                limit: 100
+            ),
+        ]
+    ))
+
+    let widget = WidgetSnapshot.fromStore(SnapshotStoreLoadResult(snapshot: stored, status: stored.snapshot.aggregateStatus), now: savedAt)
+    let openAI = widget.providerSummaries.first { $0.provider == .openAI }
+
+    #expect(widget.status == .healthy)
+    #expect(openAI?.status == .healthy)
+    #expect(openAI?.tightestLimit?.status == .limited)
+}
+
+@Test func providerSummariesStillIncludeNonMainLimitPressure() {
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let stored = StoredUsageSnapshot(savedAt: savedAt, snapshot: UsageSnapshot(
+        generatedAt: savedAt,
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "usable",
+                accountName: "Usable OpenAI",
+                label: "Codex Weekly",
+                windowLabel: "Weekly",
+                modelLabel: "Codex",
+                unit: .percent,
+                used: 20,
+                limit: 100
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "usable",
+                accountName: "Usable OpenAI",
+                label: "Image generation",
+                unit: .requests,
+                used: 10,
+                limit: 10,
+                statusOverride: .limited
+            ),
+        ]
+    ))
+
+    let widget = WidgetSnapshot.fromStore(SnapshotStoreLoadResult(snapshot: stored, status: stored.snapshot.aggregateStatus), now: savedAt)
+    let openAI = widget.providerSummaries.first { $0.provider == .openAI }
+
+    #expect(widget.status == .limited)
+    #expect(openAI?.status == .limited)
+    #expect(widget.message == "1 limit needs attention.")
+}
+
 @Test func anthropicWidgetSnapshotPreservesConnectedUnknownStatusWithoutMainLimit() {
     let now = Date(timeIntervalSince1970: 1000)
     let limits = [

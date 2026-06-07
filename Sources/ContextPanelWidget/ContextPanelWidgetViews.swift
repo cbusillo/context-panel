@@ -369,7 +369,8 @@ struct CPWProviderSummaryGrid: View {
             ForEach(Provider.allCases) { provider in
                 let providerLimits = snapshot.limits.filter { $0.provider == provider }
                 let summaries = snapshot.mainLimitSummaries.filter { $0.provider == provider }
-                let status = providerLimits.isEmpty ? .unknown : providerLimits.map(\.status).contextPanelWorstStatus
+                let nonMainStatuses = providerLimits.filter { !$0.isMainLimit }.map(\.status)
+                let status = (summaries.map(\.status) + nonMainStatuses).contextPanelWorstStatus
                 let displayStatus = provider == .anthropic && !providerLimits.isEmpty && summaries.isEmpty && status == .unknown
                     ? UsageStatus.healthy
                     : status

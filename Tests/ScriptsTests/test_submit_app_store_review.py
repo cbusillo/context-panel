@@ -104,6 +104,38 @@ class SubmittedReviewItemClient(FakeASCClient):
         return super().request(method, path, params, body, allowed)
 
 
+class PaginationTests(unittest.TestCase):
+    def test_paginated_get_follows_next_link_query_parameters(self):
+        class CursorClient:
+            def __init__(self):
+                self.requests: list[tuple[Any, ...]] = []
+
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                self.requests.append((method, path, params, body, allowed))
+                if params and params.get("cursor") == "next-page":
+                    return {
+                        "data": [{"id": "second"}],
+                        "included": [{"id": "included-second"}],
+                    }
+                return {
+                    "data": [{"id": "first"}],
+                    "included": [{"id": "included-first"}],
+                    "links": {
+                        "next": "https://api.appstoreconnect.apple.com/v1/other-things?cursor=next-page&limit=50"
+                    },
+                }
+
+        client = CursorClient()
+
+        payload = submit_app_store_review.paginated_get(client, "/things", {"filter[app]": "app-id"})
+
+        self.assertEqual([item["id"] for item in payload["data"]], ["first", "second"])
+        self.assertEqual([item["id"] for item in payload["included"]], ["included-first", "included-second"])
+        self.assertEqual(client.requests[1][1], "/other-things")
+        self.assertEqual(client.requests[0][2], {"filter[app]": "app-id", "limit": 50})
+        self.assertEqual(client.requests[1][2], {"cursor": "next-page", "limit": "50"})
+
+
 class RemoveActiveReviewVersionTests(unittest.TestCase):
     def test_validate_args_allows_cancel_only_without_build_metadata(self):
         args = SimpleNamespace(
