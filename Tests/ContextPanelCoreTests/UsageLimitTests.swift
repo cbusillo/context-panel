@@ -904,6 +904,73 @@ import Testing
     ])
 }
 
+@Test func googleAntigravityExpiredFiveHourCapacityCarriesForwardAfterReset() {
+    let lastUpdatedAt = Date(timeIntervalSince1970: 1_000)
+    let observedReset = lastUpdatedAt.addingTimeInterval(5 * 3_600)
+    let generatedAt = observedReset.addingTimeInterval(3_600)
+    let snapshot = UsageSnapshot(
+        generatedAt: generatedAt,
+        limits: [
+            UsageLimit(
+                provider: .google,
+                accountID: "google-antigravity-default",
+                accountName: "Antigravity",
+                label: "Gemini Pro capacity",
+                windowLabel: "Model capacity",
+                modelLabel: "Gemini Pro",
+                unit: .percent,
+                used: 40,
+                limit: 100,
+                resetsAt: observedReset,
+                lastUpdatedAt: lastUpdatedAt,
+                confidence: .observed,
+                note: "source: Google Antigravity model availability"
+            ),
+        ]
+    )
+
+    let summary = snapshot.mainLimitSummaries.first
+
+    #expect(summary?.id == "google:fiveHour")
+    #expect(summary?.used == 0)
+    #expect(summary?.limit == 100)
+    #expect(summary?.usageRatio == 0)
+    #expect(summary?.capacityRatio == 1)
+    #expect(summary?.status == .healthy)
+    #expect(summary?.confidence == .estimated)
+    #expect(summary?.resetsAt == observedReset.addingTimeInterval(5 * 3_600))
+}
+
+@Test func nonGoogleExpiredCapacityDoesNotCarryForwardAfterReset() {
+    let generatedAt = Date(timeIntervalSince1970: 20_000)
+    let snapshot = UsageSnapshot(
+        generatedAt: generatedAt,
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "openai",
+                accountName: "OpenAI",
+                label: "Codex 5-hour",
+                windowLabel: "5-hour",
+                unit: .percent,
+                used: 40,
+                limit: 100,
+                resetsAt: generatedAt.addingTimeInterval(-3_600),
+                lastUpdatedAt: generatedAt.addingTimeInterval(-6 * 3_600),
+                confidence: .official
+            ),
+        ]
+    )
+
+    let summary = snapshot.mainLimitSummaries.first
+
+    #expect(summary?.id == "openai:fiveHour")
+    #expect(summary?.used == nil)
+    #expect(summary?.limit == nil)
+    #expect(summary?.usageRatio == nil)
+    #expect(summary?.confidence == .official)
+}
+
 @Test func widgetDisplayPreferencesMigratesSavedDefaultsToIncludeGeminiWindows() {
     let preferences = WidgetDisplayPreferences(mainLimits: [
         WidgetMainLimitPreference(provider: .openAI, window: .weekly, isVisible: true, sortOrder: 0),

@@ -202,7 +202,8 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
     }
 
     public var confidence: UsageConfidence {
-        let confidences = limits.map(\.confidence)
+        let sourceLimits = liveLimits.isEmpty ? limits : liveLimits
+        let confidences = sourceLimits.map(\.confidence)
         if confidences.contains(.unknown) { return .unknown }
         if confidences.contains(.estimated) { return .estimated }
         if confidences.contains(.manual) { return .manual }
@@ -267,9 +268,13 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
     }
 
     public var liveLimits: [UsageLimit] {
-        limits.filter { limit in
-            limit.isLiveCapacityBucket(at: generatedAt)
-                && !hasExhaustedLongerWindow(for: limit)
+        limits.compactMap { limit in
+            let liveLimit = limit.isLiveCapacityBucket(at: generatedAt)
+                ? limit
+                : limit.googleAntigravityResetCarriedForward(at: generatedAt)
+            guard let liveLimit else { return nil }
+            guard !hasExhaustedLongerWindow(for: liveLimit) else { return nil }
+            return liveLimit
         }
     }
 
@@ -369,6 +374,53 @@ public extension UsageLimit {
             return .fiveHour
         }
         return .weekly
+    }
+
+    private var googleAntigravityInferredWindowDuration: TimeInterval? {
+        switch googleAntigravityInferredWindow {
+        case .fiveHour:
+            5 * 3_600
+        case .weekly:
+            7 * 24 * 3_600
+        case .daily, .availability, nil:
+            nil
+        }
+    }
+
+    func googleAntigravityResetCarriedForward(at date: Date) -> UsageLimit? {
+        guard provider == .google else { return nil }
+        guard isGoogleAntigravityGeminiAvailability else { return nil }
+        guard status != .failure && status != .stale && status != .unknown else { return nil }
+        guard let resetsAt, resetsAt <= date.addingTimeInterval(-60) else { return nil }
+        guard let limit, let duration = googleAntigravityInferredWindowDuration else { return nil }
+
+        var projectedReset = resetsAt
+        while projectedReset <= date {
+            projectedReset = projectedReset.addingTimeInterval(duration)
+        }
+
+        return UsageLimit(
+            id: id,
+            provider: provider,
+            accountID: accountID,
+            configuredAccountID: configuredAccountID,
+            accountName: accountName,
+            label: label,
+            windowLabel: windowLabel,
+            modelLabel: modelLabel,
+            unit: unit,
+            used: 0,
+            limit: limit,
+            resetsAt: projectedReset,
+            lastUpdatedAt: lastUpdatedAt,
+            confidence: .estimated,
+            note: [note, "projected after observed Google Antigravity reset"]
+                .compactMap { value in
+                    guard let value, !value.isEmpty else { return nil }
+                    return value
+                }
+                .joined(separator: "; ")
+        )
     }
 }
 
