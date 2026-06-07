@@ -1578,6 +1578,7 @@ struct ReconnectDashboard: View {
                                 ReconnectAccountRow(
                                     account: account,
                                     settingsModel: settingsModel,
+                                    attentionReport: appModel.providerReportNeedingAttention(for: account),
                                     refreshSummary: settingsModel.refreshSummary(for: account, storedSnapshot: appModel.storedSnapshot),
                                     onRefresh: {
                                         Task {
@@ -1747,6 +1748,7 @@ private struct DiagnosticReportRow: View {
 private struct ReconnectAccountRow: View {
     let account: LocalProviderAccountConfiguration
     @ObservedObject var settingsModel: SettingsPaneModel
+    let attentionReport: StoredProviderReport?
     let refreshSummary: SettingsAccountRefreshSummary?
     let onRefresh: () -> Void
 
@@ -1778,7 +1780,10 @@ private struct ReconnectAccountRow: View {
 
     @ViewBuilder
     private var actionButton: some View {
-        if settingsModel.canAuthorizeAuthFile(for: account), shouldOfferAuthFileReconnect {
+        if attentionReport?.hasProviderConfigurationFailure == true {
+            Button("Refresh") { onRefresh() }
+                .buttonStyle(.bordered)
+        } else if settingsModel.canAuthorizeAuthFile(for: account), shouldOfferAuthFileReconnect {
             Button("Reconnect") {
                 settingsModel.authorizeAuthFile(for: account, onVerified: onRefresh)
             }
@@ -1813,6 +1818,9 @@ private struct ReconnectAccountRow: View {
         }
         if account.connectorKind == .claudeOAuthUsage { return "Reconnect Claude if refresh keeps failing." }
         if account.connectorKind == .geminiCodeAssist {
+            if attentionReport?.hasProviderConfigurationFailure == true {
+                return "Google setup is missing from this build. Check provider configuration, then refresh."
+            }
             return "Reconnect Google if Antigravity model availability refresh keeps failing."
         }
         return settingsModel.detailText(for: account)
@@ -1876,7 +1884,7 @@ struct ProviderAccountLimitsSection: View {
                                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                                     .foregroundStyle(CPTheme.secondaryText)
                             }
-                            ForEach(summary.limits) { limit in
+                            ForEach(summary.previewLimits) { limit in
                                 MainLimitAccountRow(limit: limit)
                             }
                         }
@@ -2420,26 +2428,30 @@ struct AdditionalLimitsSection: View {
 struct AdditionalLimitRow: View {
     let limit: UsageLimit
 
+    private var displayLimit: UsageLimit {
+        limit.previewDisplayLimit
+    }
+
     var body: some View {
         HStack(spacing: 10) {
-            ProviderBadge(provider: limit.provider, compact: true)
+            ProviderBadge(provider: displayLimit.provider, compact: true)
                 .frame(width: 18)
             VStack(alignment: .leading, spacing: 2) {
-                Text(limit.additionalLimitTitle)
+                Text(displayLimit.additionalLimitTitle)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(CPTheme.primaryText)
                     .lineLimit(1)
-                Text(limit.additionalLimitSubtitle)
+                Text(displayLimit.additionalLimitSubtitle)
                     .font(.system(size: 11))
                     .foregroundStyle(CPTheme.secondaryText)
                     .lineLimit(1)
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
-                Text(limit.previewUsageText)
+                Text(displayLimit.previewUsageText)
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundStyle(CPTheme.secondaryText)
-                Text(limit.resetText)
+                Text(displayLimit.resetText)
                     .font(.system(size: 10))
                     .foregroundStyle(CPTheme.tertiaryText)
             }
@@ -2503,7 +2515,7 @@ struct MainLimitDetail: View {
                 }
 
                 DetailCard(title: "Accounts") {
-                    ForEach(summary.limits) { limit in
+                    ForEach(summary.previewLimits) { limit in
                         MainLimitAccountRow(limit: limit)
                     }
                 }
@@ -2760,6 +2772,9 @@ final class ContextPanelAppModel: ObservableObject {
 
     var attentionNavigationTitle: String {
         if let report = primaryProviderReportNeedingAttention, report.status == .failure {
+            if report.hasProviderConfigurationFailure {
+                return "Fix \(report.provider.displayName) setup"
+            }
             return "Reconnect \(report.provider.displayName)"
         }
         if storeStatus == .failure || hasProviderReconnectIssue {
@@ -2771,6 +2786,9 @@ final class ContextPanelAppModel: ObservableObject {
     var reconnectSummaryText: String {
         if let report = primaryProviderReportNeedingAttention {
             let target = "\(report.provider.displayName) · \(report.accountName)"
+            if report.hasProviderConfigurationFailure {
+                return "\(target) needs provider setup. Check the app configuration, then refresh."
+            }
             if let errorMessage = report.errorMessage, !errorMessage.isEmpty {
                 return "\(target) needs attention: \(errorMessage)"
             }
@@ -2812,7 +2830,11 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     func reportNeedsAttention(_ account: LocalProviderAccountConfiguration) -> Bool {
-        providerReportsNeedingAttention.contains { account.matchesProviderReport($0) }
+        providerReportNeedingAttention(for: account) != nil
+    }
+
+    func providerReportNeedingAttention(for account: LocalProviderAccountConfiguration) -> StoredProviderReport? {
+        providerReportsNeedingAttention.first { account.matchesProviderReport($0) }
     }
 
     var lastSuccessfulProviderRefreshText: String? {
@@ -3223,6 +3245,14 @@ extension UsageSnapshot {
 }
 
 extension MainLimitSummary {
+    var previewLimits: [UsageLimit] {
+        let displayLimitsByID = Dictionary(
+            liveLimits.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        return limits.map { displayLimitsByID[$0.id] ?? $0.previewDisplayLimit }
+    }
+
     var previewWindowName: String {
         displayWindowName
     }
@@ -3338,6 +3368,10 @@ private extension String {
 }
 
 extension UsageLimit {
+    var previewDisplayLimit: UsageLimit {
+        googleAntigravityResetCarriedForward(at: Date()) ?? self
+    }
+
     var planText: String? {
         guard let note else { return nil }
         let prefix = "plan:"
@@ -3599,6 +3633,15 @@ private extension StoredProviderReport {
 
     var needsNonFailureRefreshAttention: Bool {
         status == .stale || (status == .unknown && errorMessage != nil)
+    }
+
+    var hasProviderConfigurationFailure: Bool {
+        guard provider == .google else { return false }
+        guard let errorMessage else { return false }
+        return errorMessage.localizedCaseInsensitiveContains("client id is not configured")
+            || errorMessage.localizedCaseInsensitiveContains("client_id is missing")
+            || errorMessage.localizedCaseInsensitiveContains("client secret is not configured")
+            || errorMessage.localizedCaseInsensitiveContains("client_secret is missing")
     }
 }
 
