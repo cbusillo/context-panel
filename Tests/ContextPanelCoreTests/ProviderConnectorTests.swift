@@ -1104,6 +1104,67 @@ import Testing
     #expect(http.requests[0].headers["Authorization"] == "Bearer access-secret")
 }
 
+@Test func claudeOAuthConnectorAcceptsEpochResetTimes() async throws {
+    let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
+    let usage = #"""
+    {
+      "five_hour": { "utilization": 9.0, "resets_at": 1780793400 },
+      "seven_day": { "utilization": 12.0, "resets_at": "1780801200" }
+    }
+    """#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
+    let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
+    let connector = ClaudeOAuthUsageConnector(
+        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
+        httpClient: http,
+        credentialStore: store
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].status == .healthy)
+    #expect(result.snapshot.limits.map(\.resetsAt) == [
+        Date(timeIntervalSince1970: 1_780_793_400),
+        Date(timeIntervalSince1970: 1_780_801_200),
+    ])
+}
+
+@Test func claudeOAuthConnectorFillsMissingResetTimesFromStatuslineHints() async throws {
+    let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
+    let usage = #"""
+    {
+      "five_hour": { "utilization": 9.0 },
+      "seven_day": { "utilization": 12.0 },
+      "seven_day_sonnet": { "utilization": 14.0 }
+    }
+    """#.data(using: .utf8)!
+    let hints = ClaudeSubscriptionRateLimitSnapshot(observedAt: Date(timeIntervalSince1970: 1_780_788_587), windows: [
+        ClaudeSubscriptionRateLimitWindow(label: "5-hour", usedPercent: 69, resetsAt: Date(timeIntervalSince1970: 1_780_793_400)),
+        ClaudeSubscriptionRateLimitWindow(label: "Weekly", usedPercent: 56, resetsAt: Date(timeIntervalSince1970: 1_780_801_200)),
+    ])
+    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
+    let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
+    let connector = ClaudeOAuthUsageConnector(
+        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
+        httpClient: http,
+        credentialStore: store,
+        resetHintSnapshot: hints
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].status == .healthy)
+    #expect(result.snapshot.limits.map(\.used) == [9, 12, 14])
+    #expect(result.snapshot.limits.map(\.resetsAt) == [
+        Date(timeIntervalSince1970: 1_780_793_400),
+        Date(timeIntervalSince1970: 1_780_801_200),
+        Date(timeIntervalSince1970: 1_780_801_200),
+    ])
+    #expect(result.snapshot.limits.allSatisfy { $0.note?.contains("reset from Claude Code statusline") == true })
+}
+
 @Test func claudeOAuthFlowBuildsClaudeCodeAuthorizeURL() throws {
     let url = try ClaudeOAuthFlow.authorizationURL(codeChallenge: "challenge-value", state: "state-value")
     let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))

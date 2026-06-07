@@ -166,17 +166,20 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
     private let httpClient: any ConnectorHTTPClient
     private let credentialStore: any ProviderCredentialStoring
     private let expirationSkew: TimeInterval
+    private let resetHintSnapshot: ClaudeSubscriptionRateLimitSnapshot?
 
     public init(
         accounts: [ClaudeOAuthAccountConfiguration],
         httpClient: any ConnectorHTTPClient = URLSessionConnectorHTTPClient(),
         credentialStore: any ProviderCredentialStoring,
-        expirationSkew: TimeInterval = 5 * 60
+        expirationSkew: TimeInterval = 5 * 60,
+        resetHintSnapshot: ClaudeSubscriptionRateLimitSnapshot? = nil
     ) {
         self.accounts = accounts
         self.httpClient = httpClient
         self.credentialStore = credentialStore
         self.expirationSkew = expirationSkew
+        self.resetHintSnapshot = resetHintSnapshot
     }
 
     public func refresh(now: Date) async -> ConnectorRefreshResult {
@@ -246,12 +249,12 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
             guard (200..<300).contains(retryResponse.statusCode) else {
                 throw ConnectorError.httpFailure(operation: "Claude usage", statusCode: retryResponse.statusCode)
             }
-            let retryLimits = try ClaudeOAuthUsageParser.usageLimits(
+            let retryLimits = fillMissingResetTimes(try ClaudeOAuthUsageParser.usageLimits(
                 from: retryResponse.data,
                 accountID: localAccountID,
                 accountName: account.accountName,
                 observedAt: now
-            )
+            ))
             return ProviderConnectorReport(
                 provider: provider,
                 accountID: localAccountID,
@@ -265,12 +268,12 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
         guard (200..<300).contains(response.statusCode) else {
             throw ConnectorError.httpFailure(operation: "Claude usage", statusCode: response.statusCode)
         }
-        let limits = try ClaudeOAuthUsageParser.usageLimits(
+        let limits = fillMissingResetTimes(try ClaudeOAuthUsageParser.usageLimits(
             from: response.data,
             accountID: localAccountID,
             accountName: account.accountName,
             observedAt: now
-        )
+        ))
         return ProviderConnectorReport(
             provider: provider,
             accountID: localAccountID,
@@ -279,6 +282,50 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
             limits: limits,
             status: limits.isEmpty ? .unknown : nil
         )
+    }
+
+    private func fillMissingResetTimes(_ limits: [UsageLimit]) -> [UsageLimit] {
+        guard let resetHintSnapshot else { return limits }
+        let resetHints = Dictionary(uniqueKeysWithValues: resetHintSnapshot.windows.compactMap { window in
+            window.resetsAt.map { (Self.normalizedWindowLabel(window.label), $0) }
+        })
+        guard !resetHints.isEmpty else { return limits }
+
+        return limits.map { limit in
+            guard limit.resetsAt == nil else { return limit }
+            guard let reset = resetHints[Self.normalizedWindowLabel(limit.windowLabel ?? limit.label)] else {
+                return limit
+            }
+            return UsageLimit(
+                id: limit.id,
+                provider: limit.provider,
+                accountID: limit.accountID,
+                configuredAccountID: limit.configuredAccountID,
+                accountName: limit.accountName,
+                label: limit.label,
+                windowLabel: limit.windowLabel,
+                modelLabel: limit.modelLabel,
+                unit: limit.unit,
+                used: limit.used,
+                limit: limit.limit,
+                resetsAt: reset,
+                lastUpdatedAt: limit.lastUpdatedAt,
+                confidence: limit.confidence,
+                statusOverride: limit.statusOverride,
+                note: [limit.note, "reset from Claude Code statusline"].compactMap { $0 }.joined(separator: "; ")
+            )
+        }
+    }
+
+    private static func normalizedWindowLabel(_ value: String) -> String {
+        let lowercased = value.lowercased()
+        if lowercased.contains("5-hour") || lowercased.contains("5 hour") {
+            return "5-hour"
+        }
+        if lowercased.contains("weekly") || lowercased.contains("week") || lowercased.contains("7-day") || lowercased.contains("7 day") {
+            return "weekly"
+        }
+        return lowercased
     }
 
     private func loadCredentials(accountID: String) throws -> ClaudeOAuthCredentials {
