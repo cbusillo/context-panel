@@ -33,6 +33,14 @@ LOCKED_VERSION_STATES = {
 }
 ACTIVE_REVIEW_SUBMISSION_STATES = {"READY_FOR_REVIEW", "WAITING_FOR_REVIEW", "IN_REVIEW"}
 BLOCKING_REVIEW_VERSION_STATES = {"WAITING_FOR_REVIEW", "IN_REVIEW", "PENDING_DEVELOPER_RELEASE"}
+REMOVABLE_REVIEW_VERSION_STATES = {"WAITING_FOR_REVIEW", "IN_REVIEW"}
+VERSION_CREATION_BLOCKING_STATES = BLOCKING_REVIEW_VERSION_STATES | {
+    "PREPARE_FOR_SUBMISSION",
+    "DEVELOPER_REJECTED",
+    "REJECTED",
+    "METADATA_REJECTED",
+    "INVALID_BINARY",
+}
 CREATE_VERSION_MAX_ATTEMPTS = 6
 CREATE_VERSION_RETRY_SECONDS = 10
 
@@ -201,6 +209,72 @@ def app_store_version(client: ASCClient, app_id: str, version_string: str) -> di
 def app_store_version_id(client: ASCClient, app_id: str, version_string: str) -> str | None:
     version = app_store_version(client, app_id, version_string)
     return version["id"] if version else None
+
+
+def active_review_version_ids(client: ASCClient, app_id: str) -> set[str]:
+    submissions = client.request(
+        "GET",
+        "/reviewSubmissions",
+        {
+            "filter[app]": app_id,
+            "filter[platform]": "MAC_OS",
+            "include": "items,appStoreVersionForReview",
+            "fields[reviewSubmissions]": "platform,state,items,appStoreVersionForReview",
+            "fields[reviewSubmissionItems]": "state,appStoreVersion",
+            "limit": 20,
+        },
+    )
+    included = included_by_id(submissions)
+    version_ids: set[str] = set()
+    for submission in submissions.get("data", []):
+        state = submission["attributes"].get("state")
+        if state not in {"WAITING_FOR_REVIEW", "IN_REVIEW"}:
+            continue
+        submission_version_id = relationship_id(submission, "appStoreVersionForReview")
+        if submission_version_id:
+            version_ids.add(submission_version_id)
+        item_ids = [item["id"] for item in submission.get("relationships", {}).get("items", {}).get("data", [])]
+        for item_id in item_ids:
+            item_version_id = relationship_id(included.get(item_id, {}), "appStoreVersion")
+            if item_version_id:
+                version_ids.add(item_version_id)
+    return version_ids
+
+
+def version_creation_blocking_app_store_versions(client: ASCClient, app_id: str) -> list[dict[str, Any]]:
+    payload = client.request(
+        "GET",
+        f"/apps/{app_id}/appStoreVersions",
+        {
+            "filter[platform]": "MAC_OS",
+            "fields[appStoreVersions]": "versionString,appStoreState,appVersionState",
+            "limit": 50,
+        },
+    )
+    return [
+        version
+        for version in payload.get("data", [])
+        if version_state(version) in VERSION_CREATION_BLOCKING_STATES
+    ]
+
+
+def replacement_version_guidance(version: dict[str, Any]) -> str:
+    state = version_state(version)
+    version_string = version.get("attributes", {}).get("versionString") or version["id"]
+    if state == "PENDING_DEVELOPER_RELEASE":
+        return (
+            f"App Store version {version_string} is {state}; release or reject that version in "
+            "App Store Connect before submitting a replacement"
+        )
+    if state in {"WAITING_FOR_REVIEW", "IN_REVIEW"}:
+        return (
+            f"App Store version {version_string} is {state}; rerun with "
+            f"--remove-active-review-version {version_string} before submitting a replacement"
+        )
+    return (
+        f"App Store version {version_string} is {state}; rerun with "
+        f"--remove-active-review-version {version_string} to reuse it as the replacement version"
+    )
 
 
 def remove_active_review_version(client: ASCClient, app_id: str, version_string: str, dry_run: bool = False) -> None:
@@ -411,6 +485,68 @@ def ensure_replacement_version(client: ASCClient, app_id: str, args: argparse.Na
             f"reusing removed version {source_version} instead"
         )
         return reuse_removed_app_store_version(client, app_id, source_version, args), True
+
+
+def dry_run_version_path(
+    client: ASCClient,
+    app_id: str,
+    args: argparse.Namespace,
+    removable_review_version: str | None = None,
+) -> None:
+    existing = app_store_version(client, app_id, args.version)
+    target_version_id = existing["id"] if existing else None
+    removable_version_id = None
+    source = None
+    if args.remove_active_review_version:
+        source = app_store_version(client, app_id, args.remove_active_review_version)
+        removable_version_id = source["id"] if source else None
+
+    active_ids = active_review_version_ids(client, app_id)
+    allowed_active_ids = {version_id for version_id in (target_version_id, removable_version_id) if version_id}
+    blocking_ids = active_ids - allowed_active_ids
+    if blocking_ids:
+        raise AppStoreConnectError(
+            "another App Store version is already in review; rerun with "
+            "--remove-active-review-version for the active version before submitting a replacement"
+        )
+
+    blocking_versions = [
+        version
+        for version in version_creation_blocking_app_store_versions(client, app_id)
+        if version["id"] not in allowed_active_ids
+    ]
+    if blocking_versions:
+        raise AppStoreConnectError(replacement_version_guidance(blocking_versions[0]), payload=blocking_versions[0])
+
+    if existing is not None:
+        state = version_state(existing)
+        if state in LOCKED_VERSION_STATES:
+            raise AppStoreConnectError(
+                f"App Store version {args.version} is {state}; cannot attach build {args.build_number}",
+                payload=existing,
+            )
+        print(f"Dry run: would use App Store version {args.version}: {existing['id']} ({state})")
+        return
+
+    if not args.remove_active_review_version:
+        print(f"Dry run: would create App Store version {args.version}")
+        return
+
+    if source is None:
+        raise AppStoreConnectError(
+            f"App Store version {args.remove_active_review_version} is not available to reuse as {args.version}"
+        )
+    state = version_state(source)
+    removal_validated = removable_review_version == args.remove_active_review_version
+    if state in LOCKED_VERSION_STATES and not (removal_validated and state in REMOVABLE_REVIEW_VERSION_STATES):
+        raise AppStoreConnectError(
+            f"App Store version {args.remove_active_review_version} is still {state}; cannot reuse it as {args.version}",
+            payload=source,
+        )
+    print(
+        f"Dry run: target App Store version {args.version} does not exist; "
+        f"apply mode can reuse {args.remove_active_review_version} ({state}) as {args.version} if creation remains blocked"
+    )
 
 
 def version_build_id(client: ASCClient, version_id: str) -> str | None:
@@ -723,14 +859,18 @@ def main() -> int:
             return 0
         source_localization, source_review_detail = latest_source_metadata(client, app_id, args.copy_from_version)
         build = ensure_build(client, app_id, args, allow_updates=not args.dry_run)
+        removable_review_version = None
         if args.remove_active_review_version:
             # App Store Connect blocks creating a replacement version while another
             # version is actively in review. Validate the source metadata and uploaded
             # build first, then remove the old review item immediately before creating
             # and submitting the replacement.
             remove_active_review_version(client, app_id, args.remove_active_review_version, dry_run=args.dry_run)
+            if args.dry_run:
+                removable_review_version = args.remove_active_review_version
         if args.dry_run:
-            print("Dry run: metadata and build validated; no App Store Connect changes were made")
+            dry_run_version_path(client, app_id, args, removable_review_version=removable_review_version)
+            print("Dry run: metadata, build, and version path validated; no App Store Connect changes were made")
             return 0
         version, reused_removed_version = ensure_replacement_version(client, app_id, args)
         attach_build(client, version, build, args)

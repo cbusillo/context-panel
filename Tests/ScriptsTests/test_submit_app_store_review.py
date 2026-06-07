@@ -1,5 +1,7 @@
 import importlib.util
+import io
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -240,6 +242,350 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         self.assertEqual(version["id"], "version-1-0-13")
         patch_body = next(request[3] for request in client.requests if request[0] == "PATCH")
         self.assertEqual(patch_body["data"]["attributes"]["versionString"], "1.0.14")
+
+    def test_dry_run_version_path_reports_existing_target_version(self):
+        class VersionClient:
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                if method == "GET" and path == "/apps/app-id/appStoreVersions":
+                    version_string = params.get("filter[versionString]") if params else None
+                    if version_string is None:
+                        return {"data": []}
+                    return {
+                        "data": [
+                            {
+                                "id": "version-1-0-14",
+                                "attributes": {
+                                    "versionString": "1.0.14",
+                                    "appStoreState": "PREPARE_FOR_SUBMISSION",
+                                },
+                            }
+                        ]
+                    }
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {"data": []}
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        args = SimpleNamespace(version="1.0.14", remove_active_review_version=None)
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            submit_app_store_review.dry_run_version_path(VersionClient(), "app-id", args)
+
+        self.assertIn("would use App Store version 1.0.14", output.getvalue())
+
+    def test_dry_run_version_path_allows_missing_target_when_no_review_is_active(self):
+        class MissingVersionClient:
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                if method == "GET" and path == "/apps/app-id/appStoreVersions":
+                    return {"data": []}
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {"data": []}
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        args = SimpleNamespace(version="1.0.14", remove_active_review_version=None)
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            submit_app_store_review.dry_run_version_path(MissingVersionClient(), "app-id", args)
+
+        self.assertIn("would create App Store version 1.0.14", output.getvalue())
+
+    def test_dry_run_version_path_rejects_unrelated_active_review(self):
+        class BlockingReviewClient:
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                if method == "GET" and path == "/apps/app-id/appStoreVersions":
+                    return {"data": []}
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {
+                        "data": [
+                            {
+                                "id": "submission-1",
+                                "attributes": {"state": "WAITING_FOR_REVIEW"},
+                                "relationships": {
+                                    "appStoreVersionForReview": {
+                                        "data": {"type": "appStoreVersions", "id": "version-1-0-13"}
+                                    },
+                                    "items": {"data": []},
+                                },
+                            }
+                        ]
+                    }
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        args = SimpleNamespace(version="1.0.14", remove_active_review_version=None)
+
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+            submit_app_store_review.dry_run_version_path(BlockingReviewClient(), "app-id", args)
+
+        self.assertIn("another App Store version is already in review", str(context.exception))
+
+    def test_dry_run_version_path_validates_reusable_replacement_version(self):
+        class ReusableVersionClient:
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                if method == "GET" and path == "/apps/app-id/appStoreVersions":
+                    version_string = params.get("filter[versionString]") if params else None
+                    if version_string is None:
+                        return {"data": []}
+                    if version_string == "1.0.14":
+                        return {"data": []}
+                    if version_string == "1.0.13":
+                        return {
+                            "data": [
+                                {
+                                    "id": "version-1-0-13",
+                                    "attributes": {
+                                        "versionString": "1.0.13",
+                                        "appStoreState": "DEVELOPER_REJECTED",
+                                    },
+                                }
+                            ]
+                        }
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {"data": []}
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        args = SimpleNamespace(version="1.0.14", remove_active_review_version="1.0.13")
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            submit_app_store_review.dry_run_version_path(ReusableVersionClient(), "app-id", args)
+
+        self.assertIn("apply mode can reuse 1.0.13", output.getvalue())
+
+    def test_dry_run_version_path_rejects_locked_replacement_version(self):
+        class LockedVersionClient:
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                if method == "GET" and path == "/apps/app-id/appStoreVersions":
+                    version_string = params.get("filter[versionString]") if params else None
+                    if version_string is None:
+                        return {"data": []}
+                    if version_string == "1.0.14":
+                        return {"data": []}
+                    if version_string == "1.0.13":
+                        return {
+                            "data": [
+                                {
+                                    "id": "version-1-0-13",
+                                    "attributes": {
+                                        "versionString": "1.0.13",
+                                        "appStoreState": "WAITING_FOR_REVIEW",
+                                    },
+                                }
+                            ]
+                        }
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {"data": []}
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        args = SimpleNamespace(version="1.0.14", remove_active_review_version="1.0.13")
+
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+            submit_app_store_review.dry_run_version_path(LockedVersionClient(), "app-id", args)
+
+        self.assertIn("still WAITING_FOR_REVIEW", str(context.exception))
+
+    def test_dry_run_version_path_accepts_removable_active_replacement_version(self):
+        class RemovableActiveVersionClient:
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                if method == "GET" and path == "/apps/app-id/appStoreVersions":
+                    version_string = params.get("filter[versionString]") if params else None
+                    if version_string is None:
+                        return {"data": []}
+                    if version_string == "1.0.14":
+                        return {"data": []}
+                    if version_string == "1.0.13":
+                        return {
+                            "data": [
+                                {
+                                    "id": "version-1-0-13",
+                                    "attributes": {
+                                        "versionString": "1.0.13",
+                                        "appStoreState": "WAITING_FOR_REVIEW",
+                                    },
+                                }
+                            ]
+                        }
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {
+                        "data": [
+                            {
+                                "id": "submission-1",
+                                "attributes": {"state": "WAITING_FOR_REVIEW"},
+                                "relationships": {
+                                    "appStoreVersionForReview": {
+                                        "data": {"type": "appStoreVersions", "id": "version-1-0-13"}
+                                    },
+                                    "items": {"data": []},
+                                },
+                            }
+                        ]
+                    }
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        args = SimpleNamespace(version="1.0.14", remove_active_review_version="1.0.13")
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            submit_app_store_review.dry_run_version_path(
+                RemovableActiveVersionClient(),
+                "app-id",
+                args,
+                removable_review_version="1.0.13",
+            )
+
+        self.assertIn("apply mode can reuse 1.0.13", output.getvalue())
+
+    def test_dry_run_version_path_rejects_ready_for_sale_replacement_version(self):
+        class ReadyForSaleVersionClient:
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                if method == "GET" and path == "/apps/app-id/appStoreVersions":
+                    version_string = params.get("filter[versionString]") if params else None
+                    if version_string is None:
+                        return {"data": []}
+                    if version_string == "1.0.14":
+                        return {"data": []}
+                    if version_string == "1.0.13":
+                        return {
+                            "data": [
+                                {
+                                    "id": "version-1-0-13",
+                                    "attributes": {
+                                        "versionString": "1.0.13",
+                                        "appStoreState": "READY_FOR_SALE",
+                                    },
+                                }
+                            ]
+                        }
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {"data": []}
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        args = SimpleNamespace(version="1.0.14", remove_active_review_version="1.0.13")
+
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+            submit_app_store_review.dry_run_version_path(
+                ReadyForSaleVersionClient(),
+                "app-id",
+                args,
+                removable_review_version="1.0.13",
+            )
+
+        self.assertIn("still READY_FOR_SALE", str(context.exception))
+
+    def test_dry_run_version_path_rejects_unrelated_prepare_for_submission_version(self):
+        class PrepareForSubmissionClient:
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                if method == "GET" and path == "/apps/app-id/appStoreVersions":
+                    version_string = params.get("filter[versionString]") if params else None
+                    if version_string == "1.0.14":
+                        return {"data": []}
+                    if version_string is None:
+                        return {
+                            "data": [
+                                {
+                                    "id": "version-1-0-13",
+                                    "attributes": {
+                                        "versionString": "1.0.13",
+                                        "appStoreState": "PREPARE_FOR_SUBMISSION",
+                                    },
+                                }
+                            ]
+                        }
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {"data": []}
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        args = SimpleNamespace(version="1.0.14", remove_active_review_version=None)
+
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+            submit_app_store_review.dry_run_version_path(PrepareForSubmissionClient(), "app-id", args)
+
+        self.assertIn("1.0.13 is PREPARE_FOR_SUBMISSION", str(context.exception))
+        self.assertIn("--remove-active-review-version 1.0.13", str(context.exception))
+
+    def test_dry_run_version_path_rejects_unrelated_pending_release_version(self):
+        class PendingReleaseClient:
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                if method == "GET" and path == "/apps/app-id/appStoreVersions":
+                    version_string = params.get("filter[versionString]") if params else None
+                    if version_string == "1.0.14":
+                        return {"data": []}
+                    if version_string is None:
+                        return {
+                            "data": [
+                                {
+                                    "id": "version-1-0-13",
+                                    "attributes": {
+                                        "versionString": "1.0.13",
+                                        "appStoreState": "PENDING_DEVELOPER_RELEASE",
+                                    },
+                                }
+                            ]
+                        }
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {"data": []}
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        args = SimpleNamespace(version="1.0.14", remove_active_review_version=None)
+
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+            submit_app_store_review.dry_run_version_path(PendingReleaseClient(), "app-id", args)
+
+        self.assertIn("1.0.13 is PENDING_DEVELOPER_RELEASE", str(context.exception))
+        self.assertIn("release or reject that version", str(context.exception))
+
+    def test_dry_run_version_path_rejects_locked_target_version(self):
+        class LockedTargetClient:
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                if method == "GET" and path == "/apps/app-id/appStoreVersions":
+                    version_string = params.get("filter[versionString]") if params else None
+                    if version_string is None:
+                        return {
+                            "data": [
+                                {
+                                    "id": "version-1-0-14",
+                                    "attributes": {
+                                        "versionString": "1.0.14",
+                                        "appStoreState": "WAITING_FOR_REVIEW",
+                                    },
+                                }
+                            ]
+                        }
+                    if version_string == "1.0.14":
+                        return {
+                            "data": [
+                                {
+                                    "id": "version-1-0-14",
+                                    "attributes": {
+                                        "versionString": "1.0.14",
+                                        "appStoreState": "WAITING_FOR_REVIEW",
+                                    },
+                                }
+                            ]
+                        }
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {
+                        "data": [
+                            {
+                                "id": "submission-1",
+                                "attributes": {"state": "WAITING_FOR_REVIEW"},
+                                "relationships": {
+                                    "appStoreVersionForReview": {
+                                        "data": {"type": "appStoreVersions", "id": "version-1-0-14"}
+                                    },
+                                    "items": {"data": []},
+                                },
+                            }
+                        ]
+                    }
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        args = SimpleNamespace(version="1.0.14", build_number="202606062346", remove_active_review_version=None)
+
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+            submit_app_store_review.dry_run_version_path(LockedTargetClient(), "app-id", args)
+
+        self.assertIn("cannot attach build 202606062346", str(context.exception))
 
     def test_supersede_run_force_prepares_existing_replacement_version(self):
         class ExistingReplacementClient:
