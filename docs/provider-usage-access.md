@@ -180,6 +180,12 @@ adapter uses an internal Cloud Code Assist model-availability surface, UI copy
 and notes should describe the result as reported availability rather than a
 provider-guaranteed billing or exact quota contract.
 
+The Antigravity availability response reports reset timestamps but not an
+explicit quota-window duration. Context Panel infers the user-facing Gemini
+window label from that observed reset horizon: resets at or below 8 hours are
+shown as 5-hour/5h, longer observed resets are grouped with the weekly/1w lane,
+and missing reset/observation data remains generic model capacity.
+
 Current public Google docs have a split contract. Gemini Apps help announced
 usage-limit changes starting 2026-05-17 and describes compute-based limits that
 refresh every 5 hours until a weekly limit is reached. Gemini for Google Cloud

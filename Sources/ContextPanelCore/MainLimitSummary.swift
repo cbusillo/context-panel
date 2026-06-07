@@ -60,7 +60,7 @@ public enum MainLimitWindow: String, CaseIterable, Codable, Equatable, Identifia
             return nil
         }
         if limit.windowLabel?.isModelCapacityWindowLabel == true {
-            return .availability
+            return limit.googleAntigravityInferredWindow ?? .availability
         }
         if searchable.contains("5-hour")
             || searchable.contains("5 hour")
@@ -355,6 +355,20 @@ public extension UsageLimit {
             .joined(separator: " ")
             .lowercased()
         return modelText.contains("gemini")
+    }
+
+    /// Google Antigravity reports model capacity reset timestamps but not the quota window duration.
+    var googleAntigravityInferredWindow: MainLimitWindow? {
+        guard provider == .google else { return nil }
+        guard isGoogleAntigravityGeminiAvailability else { return nil }
+        guard let resetsAt, let lastUpdatedAt else { return nil }
+        let hoursUntilReset = resetsAt.timeIntervalSince(lastUpdatedAt) / 3_600
+        // Paid Gemini/Antigravity rolling capacity refreshes around every 5 hours;
+        // use 8 hours of headroom for clock drift, stale snapshots, and delayed refreshes.
+        if hoursUntilReset <= 8 {
+            return .fiveHour
+        }
+        return .weekly
     }
 }
 

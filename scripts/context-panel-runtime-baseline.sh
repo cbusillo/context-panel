@@ -6,6 +6,7 @@ mode="check"
 launch_after_reset=0
 open_url_after_reset=0
 reset_widget_placement=0
+include_btm_diagnostics=0
 
 usage() {
 	cat <<'USAGE'
@@ -22,6 +23,8 @@ reset  Build this checkout, clear Context Panel storage, quarantine conflicting 
 --open-url  With reset, open contextpanel://overview after launch to exercise widget click-through.
 --reset-widget-placement
             Also clear WidgetKit/Chrono placement caches. This may remove the widget from the UI.
+--btm-diagnostics
+            Include sfltool Background Task Management diagnostics. macOS may prompt for a password.
 USAGE
 }
 
@@ -42,6 +45,10 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--reset-widget-placement)
 		reset_widget_placement=1
+		shift
+		;;
+	--btm-diagnostics)
+		include_btm_diagnostics=1
 		shift
 		;;
 	-h | --help)
@@ -233,6 +240,9 @@ unregister_stale_launchservices_paths() {
 }
 
 btm_context_entries() {
+	if [[ "$include_btm_diagnostics" != "1" ]]; then
+		return 0
+	fi
 	if command -v gtimeout >/dev/null 2>&1; then
 		gtimeout 10s sfltool dumpbtm 2>/dev/null | grep -i -C 2 -E 'Context Panel|contextpanel|shinycomputers' || true
 	elif command -v timeout >/dev/null 2>&1; then
@@ -828,7 +838,11 @@ check_runtime() {
 			ok "BTM only has disabled stale Context Panel entries"
 		fi
 	else
-		ok "BTM has no Context Panel entries"
+		if [[ "$include_btm_diagnostics" == "1" ]]; then
+			ok "BTM has no Context Panel entries"
+		else
+			ok "BTM diagnostics skipped; pass --btm-diagnostics to run sfltool dumpbtm"
+		fi
 	fi
 
 	section "Storage And Widget Caches"
