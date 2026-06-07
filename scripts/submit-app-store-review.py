@@ -805,8 +805,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bundle-id", default=DEFAULT_BUNDLE_ID)
     parser.add_argument("--version", required=True, help="App Store marketing version, for example 1.0.12")
-    parser.add_argument("--build-number", required=True, help="CFBundleVersion uploaded to App Store Connect")
-    parser.add_argument("--whats-new", required=True)
+    parser.add_argument("--build-number", help="CFBundleVersion uploaded to App Store Connect")
+    parser.add_argument("--whats-new")
     parser.add_argument("--copy-from-version", help="Existing App Store version to copy localization and review details from")
     parser.add_argument(
         "--remove-active-review-version",
@@ -830,10 +830,22 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def validate_args(args: argparse.Namespace) -> None:
+    if args.cancel_review_only:
+        if not args.remove_active_review_version:
+            raise AppStoreConnectError("--cancel-review-only requires --remove-active-review-version")
+        return
+    if not args.build_number:
+        raise AppStoreConnectError("--build-number is required unless --cancel-review-only is used")
+    if not args.whats_new:
+        raise AppStoreConnectError("--whats-new is required unless --cancel-review-only is used")
+
+
 def main() -> int:
     args = parse_args()
     temporary_key_path: Path | None = None
     try:
+        validate_args(args)
         if not args.api_key_id or not args.api_issuer_id:
             raise AppStoreConnectError("APP_STORE_CONNECT_KEY_ID and APP_STORE_CONNECT_ISSUER_ID are required")
         key_path, temporary_key_path = expanded_key_path(args)
@@ -849,8 +861,6 @@ def main() -> int:
         app_id = app["id"]
         print(f"Using app {app['attributes'].get('name')}: {app_id}")
         if args.cancel_review_only:
-            if not args.remove_active_review_version:
-                raise AppStoreConnectError("--cancel-review-only requires --remove-active-review-version")
             remove_active_review_version(client, app_id, args.remove_active_review_version, dry_run=args.dry_run)
             if args.dry_run:
                 print("Dry run: review cancellation was validated; no App Store Connect changes were made")

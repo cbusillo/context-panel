@@ -104,6 +104,42 @@ class SubmittedReviewItemClient(FakeASCClient):
 
 
 class RemoveActiveReviewVersionTests(unittest.TestCase):
+    def test_validate_args_allows_cancel_only_without_build_metadata(self):
+        args = SimpleNamespace(
+            cancel_review_only=True,
+            remove_active_review_version="1.0.13",
+            build_number=None,
+            whats_new=None,
+        )
+
+        submit_app_store_review.validate_args(args)
+
+    def test_validate_args_requires_cancel_target_for_cancel_only(self):
+        args = SimpleNamespace(
+            cancel_review_only=True,
+            remove_active_review_version=None,
+            build_number=None,
+            whats_new=None,
+        )
+
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+            submit_app_store_review.validate_args(args)
+
+        self.assertIn("--remove-active-review-version", str(context.exception))
+
+    def test_validate_args_requires_submission_metadata_for_normal_review(self):
+        args = SimpleNamespace(
+            cancel_review_only=False,
+            remove_active_review_version=None,
+            build_number=None,
+            whats_new="Fixes",
+        )
+
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+            submit_app_store_review.validate_args(args)
+
+        self.assertIn("--build-number", str(context.exception))
+
     def test_deletes_matching_item(self):
         client = FakeASCClient()
 

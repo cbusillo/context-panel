@@ -156,8 +156,9 @@ step.
 Cancel-only recovery is available through `Submit App Store Review` by setting
 `cancel_review_only: true` and `remove_active_review_version` to the version
 whose active review should be withdrawn. That path exits after cancellation and
-cannot submit a replacement build as a side effect. Use `dry_run: true` first to
-verify the target review/version.
+cannot submit a replacement build as a side effect, so it does not require a
+build number or release notes. Use `dry_run: true` first to verify the target
+review/version.
 
 For local operator use, the same script accepts an API key path or the existing
 App Store Connect environment variables:
