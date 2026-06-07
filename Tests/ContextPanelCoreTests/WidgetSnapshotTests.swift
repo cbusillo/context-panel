@@ -228,3 +228,47 @@ import Testing
     #expect(abs((openAI?.capacityRatio ?? 0) - 0.05) < 0.0001)
     #expect(openAI?.tightestLimit?.label == "Weekly")
 }
+
+@Test func anthropicWidgetSnapshotPreservesConnectedUnknownStatusWithoutMainLimit() {
+    let now = Date(timeIntervalSince1970: 1000)
+    let limits = [
+        UsageLimit(
+            provider: .anthropic,
+            accountID: "claude-acct",
+            accountName: "Claude",
+            label: "Claude status",
+            modelLabel: "Claude Code",
+            unit: .unknown,
+            used: nil,
+            limit: nil,
+            resetsAt: nil,
+            lastUpdatedAt: now,
+            confidence: .observed,
+            statusOverride: .unknown
+        )
+    ]
+    let stored = StoredUsageSnapshot(savedAt: now, snapshot: UsageSnapshot(generatedAt: now, limits: limits))
+    let snapshot = WidgetSnapshot.fromStore(SnapshotStoreLoadResult(snapshot: stored, status: .healthy), now: now)
+    #expect(snapshot.limits.contains { $0.provider == .anthropic })
+    #expect(snapshot.usageSnapshot.mainLimitSummaries.filter { $0.provider == .anthropic }.isEmpty)
+
+    let healthyLimit = UsageLimit(
+        provider: .anthropic,
+        accountID: "claude-acct",
+        accountName: "Claude",
+        label: "Claude weekly",
+        windowLabel: "Weekly",
+        modelLabel: "Claude",
+        unit: .percent,
+        used: 25,
+        limit: 100,
+        resetsAt: nil,
+        lastUpdatedAt: now,
+        confidence: .observed
+    )
+    #expect(healthyLimit.status == .healthy)
+
+    let summary = MainLimitSummary(provider: .anthropic, window: .weekly, limits: [healthyLimit])
+    #expect(summary.resetsAt == nil)
+    #expect(summary.status == .healthy)
+}

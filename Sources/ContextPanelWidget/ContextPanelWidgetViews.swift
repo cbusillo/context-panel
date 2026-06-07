@@ -74,10 +74,12 @@ struct ContextPanelSmallWidget: View {
                     .foregroundStyle(CPWTheme.primaryText)
                     .minimumScaleFactor(0.85)
                     .lineLimit(2)
-                Text(tightest.widgetResetConfidenceText)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(CPWTheme.secondaryText)
-                    .lineLimit(2)
+                if let resetText = tightest.widgetResetConfidenceText {
+                    Text(resetText)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(CPWTheme.secondaryText)
+                        .lineLimit(2)
+                }
                 CPWCapacityBar(value: tightest.usageRatio ?? 0, status: tightest.status, height: 6)
             } else {
                 Text("Set up accounts")
@@ -348,7 +350,7 @@ struct CPWMainLimitRow: View {
             }
             HStack(spacing: 6) {
                 CPWCapacityBar(value: summary?.usageRatio ?? 0, status: status)
-                Text(summary?.widgetResetConfidenceText ?? "no reset data")
+                Text(summary?.widgetResetConfidenceText ?? "")
                     .font(.system(size: 9))
                     .foregroundStyle(CPWTheme.tertiaryText)
                     .lineLimit(1)
@@ -365,15 +367,21 @@ struct CPWProviderSummaryGrid: View {
     var body: some View {
         HStack(spacing: compact ? 10 : 12) {
             ForEach(Provider.allCases) { provider in
+                let providerLimits = snapshot.limits.filter { $0.provider == provider }
                 let summaries = snapshot.mainLimitSummaries.filter { $0.provider == provider }
-                let status = summaries.map(\.status).contextPanelWorstStatus
+                let status = providerLimits.isEmpty ? .unknown : providerLimits.map(\.status).contextPanelWorstStatus
+                let displayStatus = provider == .anthropic && !providerLimits.isEmpty && summaries.isEmpty && status == .unknown
+                    ? UsageStatus.healthy
+                    : status
+                let isConnected = !providerLimits.isEmpty
+
                 VStack(alignment: .leading, spacing: compact ? 3 : 5) {
                     HStack(spacing: 5) {
                         CPWProviderBadge(provider: provider, compact: true)
-                        if status.shouldShowWidgetIssue {
-                            Text(status.widgetLabel)
+                        if displayStatus.shouldShowWidgetIssue {
+                            Text(displayStatus.widgetLabel)
                                 .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(CPWTheme.statusColor(status))
+                                .foregroundStyle(CPWTheme.statusColor(displayStatus))
                                 .textCase(.uppercase)
                                 .lineLimit(1)
                                 .fixedSize(horizontal: true, vertical: false)
@@ -384,9 +392,9 @@ struct CPWProviderSummaryGrid: View {
                         .font(.system(size: compact ? 10 : 11, weight: .medium))
                         .foregroundStyle(CPWTheme.secondaryText)
                         .lineLimit(compact ? 1 : 2)
-                    CPWCapacityBar(value: summaries.map { $0.usageRatio ?? 0 }.max() ?? 0, status: status, height: 5)
+                    CPWCapacityBar(value: summaries.map { $0.usageRatio ?? 0 }.max() ?? 0, status: displayStatus, height: 5)
                 }
-                .opacity(summaries.isEmpty ? 0.45 : 1)
+                .opacity(isConnected ? 1 : 0.45)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -399,12 +407,12 @@ struct CPWProviderMiniStatus: View {
     var body: some View {
         HStack(spacing: 12) {
             ForEach(Provider.allCases) { provider in
-                let hasMainLimits = snapshot.mainLimitSummaries.contains { $0.provider == provider }
+                let isConnected = snapshot.limits.contains { $0.provider == provider }
                 Text(provider.shortName)
                     .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(hasMainLimits ? CPWTheme.providerColor(provider) : CPWTheme.tertiaryText)
+                    .foregroundStyle(isConnected ? CPWTheme.providerColor(provider) : CPWTheme.tertiaryText)
                     .lineLimit(1)
-                    .opacity(hasMainLimits ? 1 : 0.35)
+                    .opacity(isConnected ? 1 : 0.35)
             }
         }
     }
@@ -683,7 +691,7 @@ extension UsageLimit {
     var widgetRemainingHeadline: String {
         guard let remaining else {
             if status == .failure { return "Failed" }
-            return "Unknown"
+            return provider == .anthropic ? "Awaiting data" : "Unknown"
         }
         if unit == .percent { return "\(remaining)% left" }
         return "\(remaining) left"
@@ -691,7 +699,7 @@ extension UsageLimit {
 
     var widgetUsageText: String {
         if provider == .anthropic, unit == .unknown, status == .unknown {
-            return "limit unknown"
+            return "limit not reported"
         }
         if isModelCapacityLimit {
             return widgetRemainingHeadline
@@ -703,7 +711,7 @@ extension UsageLimit {
             return "\(used)/\(limit) used"
         }
         if status == .failure { return "refresh failed" }
-        return "unknown"
+        return provider == .anthropic ? "awaiting data" : "unknown"
     }
 
     var widgetWindowLine: String {
@@ -716,9 +724,10 @@ extension UsageLimit {
             .joined(separator: " · ")
     }
 
-    var widgetResetText: String {
+    var widgetResetText: String? {
         guard let resetsAt else {
-            return status == .failure ? "refresh failed" : "unknown reset"
+            if status == .failure { return "refresh failed" }
+            return provider == .anthropic ? nil : "unknown reset"
         }
         if resetsAt < Date().addingTimeInterval(-60) {
             return "reset passed"
@@ -726,11 +735,12 @@ extension UsageLimit {
         return resetsAt.widgetCompactResetText
     }
 
-    var widgetResetConfidenceText: String {
+    var widgetResetConfidenceText: String? {
+        guard let resetText = widgetResetText, !resetText.isEmpty else { return nil }
         if confidence.shouldShowWidgetResetQualifier {
-            return "\(widgetResetText) · \(confidence.widgetLabel)"
+            return "\(resetText) · \(confidence.widgetLabel)"
         }
-        return widgetResetText
+        return resetText
     }
 }
 
@@ -853,11 +863,12 @@ extension WidgetSnapshot {
     }
 
     func widgetProviderSummaryText(provider: Provider) -> String {
+        let providerLimits = limits.filter { $0.provider == provider }
         let summaries = mainLimitSummaries.filter { $0.provider == provider }
-        guard !summaries.isEmpty else { return "setup needed" }
-        guard let tightest = summaries.sorted(by: { ($0.usageRatio ?? 0) > ($1.usageRatio ?? 0) }).first else {
-            return "setup needed"
+        guard !summaries.isEmpty else {
+            return providerLimits.isEmpty ? "setup needed" : "connected"
         }
+        let tightest = summaries.sorted(by: { ($0.usageRatio ?? 0) > ($1.usageRatio ?? 0) }).first!
         return "\(tightest.widgetCompactWindowName) \(tightest.widgetRemainingHeadline.lowercased())"
     }
 
@@ -878,6 +889,7 @@ extension MainLimitSummary {
     var widgetRemainingHeadline: String {
         guard unit != nil, remaining != nil else {
             if status == .failure { return "Failed" }
+            if provider == .anthropic { return "Awaiting data" }
             return "Unknown"
         }
         if usageRatio != nil {
@@ -889,6 +901,9 @@ extension MainLimitSummary {
 
     var widgetUsageText: String {
         guard unit != nil, used != nil, limit != nil else {
+            if provider == .anthropic, status != .failure {
+                return "limit not reported"
+            }
             return status == .failure ? "refresh failed" : "unknown"
         }
         if window == .availability {
@@ -919,9 +934,18 @@ extension MainLimitSummary {
         compactDisplayWindowName
     }
 
-    var widgetResetText: String {
+    var widgetResetText: String? {
+        if provider == .anthropic, status != .failure, usageRatio == nil {
+            return nil
+        }
         guard let resetsAt else {
-            return status == .failure ? "refresh failed" : "unknown reset"
+            if status == .failure {
+                return "refresh failed"
+            }
+            if provider == .anthropic {
+                return nil
+            }
+            return "unknown reset"
         }
         if resetsAt < Date().addingTimeInterval(-60) {
             return "reset passed"
@@ -929,11 +953,14 @@ extension MainLimitSummary {
         return resetsAt.widgetCompactResetText
     }
 
-    var widgetResetConfidenceText: String {
-        if confidence.shouldShowWidgetResetQualifier {
-            return "\(widgetResetText) · \(confidence.widgetLabel)"
+    var widgetResetConfidenceText: String? {
+        guard let resetText = widgetResetText, !resetText.isEmpty else {
+            return nil
         }
-        return widgetResetText
+        if confidence.shouldShowWidgetResetQualifier {
+            return "\(resetText) · \(confidence.widgetLabel)"
+        }
+        return resetText
     }
 }
 

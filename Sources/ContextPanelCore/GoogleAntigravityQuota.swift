@@ -509,9 +509,15 @@ public enum GoogleAntigravityOAuthMetadata {
     public static let tokenEndpoint = URL(string: "https://oauth2.googleapis.com/token")!
     public static let codeAssistBaseURL = URL(string: "https://cloudcode-pa.googleapis.com")!
     public static let userAgent = "antigravity/macos/context-panel"
+    public static let defaultClientID = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
 
-    public static var clientID: String? { configuredValue(named: "CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID") }
-    public static var clientSecret: String? { configuredValue(named: "CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET") }
+    public static var clientID: String? {
+        configuredValue(named: "CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID")
+            ?? defaultClientID
+    }
+    public static var clientSecret: String? {
+        configuredValue(named: "CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET")
+    }
     public static let scopes = [
         "https://www.googleapis.com/auth/cloud-platform",
         "https://www.googleapis.com/auth/userinfo.email",

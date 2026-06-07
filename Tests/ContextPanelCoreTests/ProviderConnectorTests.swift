@@ -1071,6 +1071,11 @@ import Testing
     }
 }
 
+@Test func googleAntigravityOAuthMetadataUsesDefaultFallback() {
+    #expect(GoogleAntigravityOAuthMetadata.defaultClientID == "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com")
+    #expect(GoogleAntigravityOAuthMetadata.clientID != nil)
+}
+
 @Test func claudeOAuthConnectorRefreshesUsageWindows() async throws {
     let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
     let usage = #"""
