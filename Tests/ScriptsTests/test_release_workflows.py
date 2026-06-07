@@ -14,6 +14,14 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
         self.assertIn("build_number: ${{ needs.validate.outputs.build_number }}", workflow)
 
+    def test_ship_concurrency_does_not_block_reusable_release_workflow(self):
+        ship_workflow = self.read(".github/workflows/ship.yml")
+        release_workflow = self.read(".github/workflows/release.yml")
+
+        self.assertIn("group: ship-v${{ inputs.version }}", ship_workflow)
+        self.assertIn("format('release-v{0}', inputs.version)", release_workflow)
+        self.assertNotIn("group: release-v${{ inputs.version }}", ship_workflow)
+
     def test_release_package_stamps_bundle_version_and_build_number(self):
         workflow = self.read(".github/workflows/release.yml")
         package_script = self.read("scripts/package-native-macos-app.sh")

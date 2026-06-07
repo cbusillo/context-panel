@@ -58,7 +58,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-v${{ inputs.version }}
+  group: ship-v${{ inputs.version }}
   cancel-in-progress: false
 
 jobs:
