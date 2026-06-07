@@ -188,6 +188,13 @@ struct SettingsPane: View {
                                         Button("Change") { authorizeAuthFile(for: account) }
                                             .buttonStyle(.bordered)
                                             .controlSize(.small)
+                                    } else if model.shouldOfferOAuthReconnect(
+                                        for: account,
+                                        storedSnapshot: appModel.storedSnapshot
+                                    ) {
+                                        Button("Reconnect") { reconnectOAuth(for: account) }
+                                            .buttonStyle(.bordered)
+                                            .controlSize(.small)
                                     }
                                 }
                             } else if model.hasLegacyAuthorization(account) {
@@ -388,6 +395,17 @@ struct SettingsPane: View {
                 await appModel.refreshLocalConnectors()
                 model.load()
             }
+        }
+    }
+
+    private func reconnectOAuth(for account: LocalProviderAccountConfiguration) {
+        switch account.connectorKind {
+        case .claudeOAuthUsage:
+            model.authorizeClaudeOAuth(for: account)
+        case .geminiCodeAssist:
+            model.authorizeGoogleAntigravityOAuth(for: account)
+        case .codexRateLimits, .claudeLocalStatus:
+            break
         }
     }
 }
@@ -795,6 +813,20 @@ final class SettingsPaneModel: ObservableObject {
             accountText = successfulReports.first?.accountName ?? account.displayName
         }
         return SettingsAccountRefreshSummary(text: "Last \(refreshSubject) healthy: \(accountText)", status: .healthy)
+    }
+
+    func shouldOfferOAuthReconnect(
+        for account: LocalProviderAccountConfiguration,
+        storedSnapshot: StoredUsageSnapshot?
+    ) -> Bool {
+        guard account.connectorKind == .claudeOAuthUsage || account.connectorKind == .geminiCodeAssist else {
+            return false
+        }
+        guard let reports = storedSnapshot?.reports.filter({ account.matchesProviderReport($0) }), !reports.isEmpty else {
+            return false
+        }
+        guard reports.hasReconnectBlockingFailure else { return false }
+        return !reports.contains(where: { $0.hasProviderConfigurationFailure })
     }
 
     private func refreshSubjectText(for account: LocalProviderAccountConfiguration) -> String {
@@ -2574,7 +2606,7 @@ struct MainLimitAccountRow: View {
                 Text(usageText)
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundStyle(CPTheme.primaryText)
-                Text("\(limit.resetText) · \(limit.status.rawValue)")
+                Text(limit.previewResetConfidenceText)
                     .font(.system(size: 10))
                     .foregroundStyle(CPTheme.tertiaryText)
             }
@@ -3314,7 +3346,7 @@ extension MainLimitSummary {
 
     var resetText: String {
         if status == .failure { return "refresh failed" }
-        guard let resetsAt else { return "unknown reset" }
+        guard let resetsAt else { return "reset not reported" }
         if resetsAt < Date().addingTimeInterval(-60) { return "reset passed" }
         if resetsAt.shouldShowWidgetDateTime {
             return "resets \(resetsAt.widgetRelativeText) · \(resetsAt.widgetDateTimeText)"
@@ -3524,7 +3556,7 @@ extension UsageLimit {
 
     var additionalLimitSubtitle: String {
         if isModelCapacityLimit {
-            return [windowLabel, accountName]
+            return [accountName, windowLabel]
                 .compactMap { value in
                     guard let value, !value.isEmpty else { return nil }
                     return value
@@ -3561,7 +3593,7 @@ extension UsageLimit {
 
     var resetText: String {
         if status == .failure { return "refresh failed" }
-        guard let resetsAt else { return "unknown reset" }
+        guard let resetsAt else { return "reset not reported" }
         if resetsAt < Date().addingTimeInterval(-60) { return "reset passed" }
         if resetsAt.shouldShowWidgetDateTime {
             return "resets \(resetsAt.widgetRelativeText) · \(resetsAt.widgetDateTimeText)"

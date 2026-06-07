@@ -29,9 +29,46 @@ import Testing
     )
 
     #expect(widget.state == .stale)
+    #expect(widget.status == .stale)
     #expect(widget.limits.count == 1)
     #expect(widget.message == "Refresh Context Panel to update data.")
     #expect(widget.hasProviderReconnectIssue == false)
+}
+
+@Test func widgetSnapshotKeepsStaleStatusWhenCachedLimitIsLimited() {
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let stored = StoredUsageSnapshot(savedAt: savedAt, snapshot: UsageSnapshot(
+        generatedAt: savedAt,
+        limits: [UsageLimit(provider: .openAI, label: "Codex", used: 100, limit: 100)]
+    ))
+
+    let widget = WidgetSnapshot.fromStore(
+        SnapshotStoreLoadResult(snapshot: stored, status: .stale),
+        now: Date(timeIntervalSince1970: 1_000)
+    )
+
+    #expect(widget.state == .stale)
+    #expect(widget.status == .stale)
+    #expect(widget.limits.first?.status == .limited)
+    #expect(widget.message == "Refresh Context Panel to update data.")
+}
+
+@Test func widgetSnapshotKeepsFailureStatusWhenCachedLimitIsLimited() {
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let stored = StoredUsageSnapshot(savedAt: savedAt, snapshot: UsageSnapshot(
+        generatedAt: savedAt,
+        limits: [UsageLimit(provider: .openAI, label: "Codex", used: 100, limit: 100)]
+    ))
+
+    let widget = WidgetSnapshot.fromStore(
+        SnapshotStoreLoadResult(snapshot: stored, status: .failure),
+        now: Date(timeIntervalSince1970: 1_000)
+    )
+
+    #expect(widget.state == .failure)
+    #expect(widget.status == .failure)
+    #expect(widget.limits.first?.status == .limited)
+    #expect(widget.message == "Reconnect account to update data.")
 }
 
 @Test func widgetSnapshotUsesReconnectMessageForStaleProviderFailures() {
@@ -61,6 +98,7 @@ import Testing
     )
 
     #expect(widget.state == .stale)
+    #expect(widget.status == .stale)
     #expect(widget.message == "Reconnect account to update data.")
     #expect(widget.hasProviderReconnectIssue == true)
 }
@@ -109,6 +147,7 @@ import Testing
     )
 
     #expect(widget.state == .stale)
+    #expect(widget.status == .stale)
     #expect(widget.message == "Refresh Context Panel to update data.")
     #expect(widget.hasProviderReconnectIssue == false)
 }
@@ -343,6 +382,7 @@ import Testing
     let widget = WidgetSnapshot.fromStore(SnapshotStoreLoadResult(snapshot: stored, status: stored.snapshot.aggregateStatus), now: savedAt)
     let anthropic = widget.providerSummaries.first { $0.provider == .anthropic }
 
+    #expect(widget.status == .healthy)
     #expect(anthropic?.status == .healthy)
     #expect(widget.usageSnapshot.mainLimitSummaries.first { $0.provider == .anthropic }?.status == .healthy)
     #expect(widget.limits.first { $0.label == "Claude status" }?.status == .unknown)
@@ -399,6 +439,7 @@ import Testing
     ]
     let stored = StoredUsageSnapshot(savedAt: now, snapshot: UsageSnapshot(generatedAt: now, limits: limits))
     let snapshot = WidgetSnapshot.fromStore(SnapshotStoreLoadResult(snapshot: stored, status: .healthy), now: now)
+    #expect(snapshot.status == .healthy)
     #expect(snapshot.limits.contains { $0.provider == .anthropic })
     #expect(snapshot.usageSnapshot.mainLimitSummaries.filter { $0.provider == .anthropic }.isEmpty)
 

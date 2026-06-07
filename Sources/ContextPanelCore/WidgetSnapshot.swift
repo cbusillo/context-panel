@@ -103,6 +103,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             .ready
         }
 
+        let status = widgetStatus(for: stored.snapshot, fallback: result.status)
+
         return WidgetSnapshot(
             state: state,
             generatedAt: stored.snapshot.generatedAt,
@@ -118,7 +120,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
                 now: now
             ),
             fastModeForecastSettings: fastModeForecastSettings,
-            status: result.status,
+            status: status,
             message: message(state: state, stored: stored)
         )
     }
@@ -151,10 +153,44 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         }
     }
 
+    private static func widgetStatus(for snapshot: UsageSnapshot, fallback: UsageStatus) -> UsageStatus {
+        switch fallback {
+        case .failure, .stale:
+            return fallback
+        case .healthy, .close, .limited, .unknown, .loading:
+            break
+        }
+
+        let summaries = snapshot.mainLimitSummaries
+        let nonMainStatuses = snapshot.limits.compactMap { limit -> UsageStatus? in
+            guard !limit.isMainLimit else { return nil }
+            if limit.provider == .anthropic,
+               limit.isAnthropicStatuslinePlaceholder
+            {
+                return nil
+            }
+            return limit.status
+        }
+        let statuses = summaries.map(\.status) + nonMainStatuses
+        guard !statuses.isEmpty else { return fallback }
+        return statuses.contextPanelWorstStatus
+    }
+
     private func capacityRatio(for limits: [UsageLimit]) -> Double {
         let ratios = limits.compactMap(\.usageRatio)
         guard !ratios.isEmpty else { return 0 }
         return max(1 - (ratios.max() ?? 0), 0)
+    }
+}
+
+private extension UsageLimit {
+    var isAnthropicStatuslinePlaceholder: Bool {
+        provider == .anthropic
+            && label.localizedCaseInsensitiveContains("status")
+            && unit == .unknown
+            && used == nil
+            && limit == nil
+            && resetsAt == nil
     }
 }
 

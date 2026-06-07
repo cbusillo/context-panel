@@ -33,3 +33,8 @@ DerivedData/
 .idea/
 dist/
 .local/
+!.local/
+.local/*
+!.local/context-panel-runtime.env.example
+.local/context-panel-runtime.env
+.build/runtime-baseline-local-oauth.xcconfig
