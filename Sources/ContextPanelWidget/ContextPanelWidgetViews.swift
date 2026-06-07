@@ -370,7 +370,9 @@ struct CPWProviderSummaryGrid: View {
                 let providerLimits = snapshot.limits.filter { $0.provider == provider }
                 let summaries = snapshot.mainLimitSummaries.filter { $0.provider == provider }
                 let nonMainStatuses = providerLimits.filter { !$0.isMainLimit }.map(\.status)
-                let status = (summaries.map(\.status) + nonMainStatuses).contextPanelWorstStatus
+                let status = provider == .anthropic && !summaries.isEmpty
+                    ? summaries.map(\.status).contextPanelWorstStatus
+                    : (summaries.map(\.status) + nonMainStatuses).contextPanelWorstStatus
                 let displayStatus = provider == .anthropic && !providerLimits.isEmpty && summaries.isEmpty && status == .unknown
                     ? UsageStatus.healthy
                     : status
@@ -936,9 +938,6 @@ extension MainLimitSummary {
     }
 
     var widgetResetText: String? {
-        if provider == .anthropic, status != .failure, usageRatio == nil {
-            return nil
-        }
         guard let resetsAt else {
             if status == .failure {
                 return "refresh failed"

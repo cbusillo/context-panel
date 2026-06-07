@@ -63,7 +63,9 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             let providerLimits = limits.filter { $0.provider == provider }
             let mainSummaries = usageSnapshot.mainLimitSummaries.filter { $0.provider == provider }
             let nonMainStatuses = providerLimits.filter { !$0.isMainLimit }.map(\.status)
-            let statuses = mainSummaries.map(\.status) + nonMainStatuses
+            let statuses = provider == .anthropic && !mainSummaries.isEmpty
+                ? mainSummaries.map(\.status)
+                : mainSummaries.map(\.status) + nonMainStatuses
             let tightestLimit = UsageSnapshot(generatedAt: generatedAt, limits: providerLimits).mostConstrainedLimits.first
             return ProviderSummary(
                 provider: provider,

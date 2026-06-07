@@ -97,7 +97,7 @@ let package = Package(
         ),
         .testTarget(
             name: "ContextPanelCoreTests",
-            dependencies: ["ContextPanelCore"]
+            dependencies: ["ContextPanelCore", "ContextPanelWidget"]
         )
     ]
 )

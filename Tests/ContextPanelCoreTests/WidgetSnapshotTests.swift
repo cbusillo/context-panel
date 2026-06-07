@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import ContextPanelCore
+@testable import ContextPanelWidget
 
 @Test func widgetSnapshotUsesSetupNeededForMissingStore() {
     let widget = WidgetSnapshot.fromStore(
@@ -302,6 +303,80 @@ import Testing
     #expect(widget.status == .limited)
     #expect(openAI?.status == .limited)
     #expect(widget.message == "1 limit needs attention.")
+}
+
+@Test func anthropicProviderSummaryUsesMainSummaryWhenStatuslineOnlyLimitIsUnknown() {
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let stored = StoredUsageSnapshot(savedAt: savedAt, snapshot: UsageSnapshot(
+        generatedAt: savedAt,
+        limits: [
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "claude",
+                accountName: "Claude",
+                label: "Claude weekly",
+                windowLabel: "Weekly",
+                modelLabel: "Claude",
+                unit: .percent,
+                used: 12,
+                limit: 100,
+                resetsAt: savedAt.addingTimeInterval(6 * 3_600),
+                confidence: .observed
+            ),
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "claude-statusline",
+                accountName: "Claude Statusline",
+                label: "Claude status",
+                modelLabel: "Claude Code",
+                unit: .unknown,
+                used: nil,
+                limit: nil,
+                resetsAt: nil,
+                lastUpdatedAt: savedAt,
+                confidence: .observed,
+                statusOverride: .unknown
+            ),
+        ]
+    ))
+
+    let widget = WidgetSnapshot.fromStore(SnapshotStoreLoadResult(snapshot: stored, status: stored.snapshot.aggregateStatus), now: savedAt)
+    let anthropic = widget.providerSummaries.first { $0.provider == .anthropic }
+
+    #expect(anthropic?.status == .healthy)
+    #expect(widget.usageSnapshot.mainLimitSummaries.first { $0.provider == .anthropic }?.status == .healthy)
+    #expect(widget.limits.first { $0.label == "Claude status" }?.status == .unknown)
+}
+
+@Test func anthropicEstimatedSummaryKeepsResetTextWithoutUsageRatio() {
+    let now = Date(timeIntervalSince1970: 1_000)
+    let reset = now.addingTimeInterval(3_600)
+    let summary = MainLimitSummary(
+        provider: .anthropic,
+        window: .fiveHour,
+        limits: [
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "claude",
+                accountName: "Claude",
+                label: "Claude 5-hour estimate",
+                windowLabel: "5-hour estimated",
+                modelLabel: "Claude",
+                unit: .unknown,
+                used: nil,
+                limit: nil,
+                resetsAt: reset,
+                lastUpdatedAt: now,
+                confidence: .estimated,
+                statusOverride: .healthy
+            ),
+        ],
+        generatedAt: now
+    )
+
+    #expect(summary.usageRatio == nil)
+    #expect(summary.widgetResetText != nil)
+    #expect(summary.widgetResetConfidenceText?.contains("estimated") == true)
 }
 
 @Test func anthropicWidgetSnapshotPreservesConnectedUnknownStatusWithoutMainLimit() {
