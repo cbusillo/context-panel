@@ -293,8 +293,6 @@ cat >"$export_options_path" <<PLIST
 		<key>com.shinycomputers.contextpanel.refresh-agent</key>
 		<string>$refresh_agent_profile_uuid</string>
 	</dict>
-	<key>manageAppVersionAndBuildNumber</key>
-	<true/>
 	<key>uploadSymbols</key>
 	<true/>
 </dict>

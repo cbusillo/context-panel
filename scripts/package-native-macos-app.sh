@@ -7,6 +7,7 @@ output_dir="dist"
 derived_data_path=".build/xcode-derived-release"
 display_name="Context Panel"
 version="1.0.0"
+build_number=""
 signing_identity="auto"
 app_provisioning_profile=""
 widget_provisioning_profile=""
@@ -26,6 +27,7 @@ signs the bundle, optionally notarizes it, and writes a zip artifact.
 
 Options:
   --version VERSION                    Release version used in the zip name.
+  --build-number VALUE                 Override CURRENT_PROJECT_VERSION.
   --output DIR                         Output directory. Default: dist
   --derived-data-path DIR              Xcode derived data path.
   --configuration NAME                 Xcode configuration. Default: Release
@@ -53,6 +55,10 @@ while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--version)
 		version="${2:?--version requires a value}"
+		shift 2
+		;;
+	--build-number)
+		build_number="${2:?--build-number requires a value}"
 		shift 2
 		;;
 	--output)
@@ -217,16 +223,21 @@ fi
 
 xcodegen generate --spec project.yml
 
-xcodebuild \
-	-project ContextPanel.xcodeproj \
-	-scheme "$scheme" \
-	-configuration "$configuration" \
-	-derivedDataPath "$derived_data_path" \
-	-destination 'platform=macOS' \
-	CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID="${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID:-}" \
-	CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET="${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET:-}" \
-	CODE_SIGNING_ALLOWED=NO \
-	build
+xcodebuild_args=(
+	-project ContextPanel.xcodeproj
+	-scheme "$scheme"
+	-configuration "$configuration"
+	-derivedDataPath "$derived_data_path"
+	-destination 'platform=macOS'
+	CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID="${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID:-}"
+	CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET="${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET:-}"
+	MARKETING_VERSION="$version"
+	CODE_SIGNING_ALLOWED=NO
+)
+if [[ -n "$build_number" ]]; then
+	xcodebuild_args+=(CURRENT_PROJECT_VERSION="$build_number")
+fi
+xcodebuild "${xcodebuild_args[@]}" build
 
 if [[ ! -d "$built_app_path" ]]; then
 	echo "built app not found: $built_app_path" >&2
@@ -327,6 +338,7 @@ ditto -c -k --sequesterRsrc --keepParent "$app_path" "$zip_path"
 cat >"$metadata_path" <<JSON
 {
   "version": "$version",
+  "buildNumber": "$build_number",
   "configuration": "$configuration",
   "app": "$app_path",
   "zip": "$zip_path",

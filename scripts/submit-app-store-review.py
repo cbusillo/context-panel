@@ -43,6 +43,8 @@ VERSION_CREATION_BLOCKING_STATES = BLOCKING_REVIEW_VERSION_STATES | {
 }
 CREATE_VERSION_MAX_ATTEMPTS = 6
 CREATE_VERSION_RETRY_SECONDS = 10
+DEFAULT_BUILD_WAIT_TIMEOUT_SECONDS = 10 * 60
+DEFAULT_BUILD_POLL_SECONDS = 20
 
 
 class AppStoreConnectError(RuntimeError):
@@ -124,6 +126,31 @@ def required_first(payload: dict[str, Any], label: str) -> dict[str, Any]:
     return data[0]
 
 
+def paginated_get(
+    client: ASCClient,
+    path: str,
+    params: dict[str, Any] | None = None,
+    limit: int = 50,
+) -> dict[str, Any]:
+    collected: dict[str, Any] = {"data": [], "included": []}
+    offset = 0
+    while True:
+        page_params = dict(params or {})
+        page_params["limit"] = limit
+        if offset:
+            page_params["offset"] = offset
+        payload = client.request("GET", path, page_params)
+        data = payload.get("data") or []
+        collected["data"].extend(data)
+        collected["included"].extend(payload.get("included") or [])
+        if not payload.get("links", {}).get("next"):
+            break
+        if not data:
+            break
+        offset += len(data)
+    return collected
+
+
 def included_by_id(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {item["id"]: item for item in payload.get("included", [])}
 
@@ -158,8 +185,8 @@ def expanded_key_path(args: argparse.Namespace) -> tuple[Path, Path | None]:
 
 
 def latest_source_metadata(client: ASCClient, app_id: str, prefer_version: str | None) -> tuple[dict[str, Any], dict[str, Any]]:
-    payload = client.request(
-        "GET",
+    payload = paginated_get(
+        client,
         f"/apps/{app_id}/appStoreVersions",
         {
             "filter[platform]": "MAC_OS",
@@ -167,7 +194,6 @@ def latest_source_metadata(client: ASCClient, app_id: str, prefer_version: str |
             "fields[appStoreVersions]": "versionString,appStoreState,appVersionState,appStoreVersionLocalizations,appStoreReviewDetail",
             "fields[appStoreVersionLocalizations]": "locale,description,keywords,marketingUrl,promotionalText,supportUrl,whatsNew",
             "fields[appStoreReviewDetails]": "contactFirstName,contactLastName,contactPhone,contactEmail,demoAccountName,demoAccountRequired,notes",
-            "limit": 50,
         },
     )
     versions = payload.get("data", [])
@@ -212,8 +238,8 @@ def app_store_version_id(client: ASCClient, app_id: str, version_string: str) ->
 
 
 def active_review_version_ids(client: ASCClient, app_id: str) -> set[str]:
-    submissions = client.request(
-        "GET",
+    submissions = paginated_get(
+        client,
         "/reviewSubmissions",
         {
             "filter[app]": app_id,
@@ -221,14 +247,14 @@ def active_review_version_ids(client: ASCClient, app_id: str) -> set[str]:
             "include": "items,appStoreVersionForReview",
             "fields[reviewSubmissions]": "platform,state,items,appStoreVersionForReview",
             "fields[reviewSubmissionItems]": "state,appStoreVersion",
-            "limit": 20,
         },
+        limit=20,
     )
     included = included_by_id(submissions)
     version_ids: set[str] = set()
     for submission in submissions.get("data", []):
         state = submission["attributes"].get("state")
-        if state not in {"WAITING_FOR_REVIEW", "IN_REVIEW"}:
+        if state not in ACTIVE_REVIEW_SUBMISSION_STATES:
             continue
         submission_version_id = relationship_id(submission, "appStoreVersionForReview")
         if submission_version_id:
@@ -242,13 +268,12 @@ def active_review_version_ids(client: ASCClient, app_id: str) -> set[str]:
 
 
 def version_creation_blocking_app_store_versions(client: ASCClient, app_id: str) -> list[dict[str, Any]]:
-    payload = client.request(
-        "GET",
+    payload = paginated_get(
+        client,
         f"/apps/{app_id}/appStoreVersions",
         {
             "filter[platform]": "MAC_OS",
             "fields[appStoreVersions]": "versionString,appStoreState,appVersionState",
-            "limit": 50,
         },
     )
     return [
@@ -284,8 +309,8 @@ def remove_active_review_version(client: ASCClient, app_id: str, version_string:
         return
     version_id = version["id"]
 
-    submissions = client.request(
-        "GET",
+    submissions = paginated_get(
+        client,
         "/reviewSubmissions",
         {
             "filter[app]": app_id,
@@ -293,8 +318,8 @@ def remove_active_review_version(client: ASCClient, app_id: str, version_string:
             "include": "items,appStoreVersionForReview",
             "fields[reviewSubmissions]": "platform,state,items,appStoreVersionForReview",
             "fields[reviewSubmissionItems]": "state,appStoreVersion",
-            "limit": 20,
         },
+        limit=20,
     )
     included = included_by_id(submissions)
     for submission in submissions.get("data", []):
@@ -583,23 +608,58 @@ def attach_build(client: ASCClient, version: dict[str, Any], build: dict[str, An
     print(f"Attached build {args.build_number} to App Store version {args.version}")
 
 
-def ensure_build(client: ASCClient, app_id: str, args: argparse.Namespace, allow_updates: bool = True) -> dict[str, Any]:
-    payload = client.request(
-        "GET",
-        "/builds",
-        {
-            "filter[app]": app_id,
-            "filter[version]": args.build_number,
-            "include": "preReleaseVersion,appStoreVersion",
-            "fields[builds]": "version,processingState,uploadedDate,expired,usesNonExemptEncryption,appStoreVersion,preReleaseVersion",
-            "fields[preReleaseVersions]": "version,platform",
-            "limit": 1,
-        },
-    )
-    build = required_first(payload, f"build {args.build_number}")
+def ensure_build(
+    client: ASCClient,
+    app_id: str,
+    args: argparse.Namespace,
+    allow_updates: bool = True,
+    wait_timeout_seconds: int | None = None,
+    poll_seconds: int | None = None,
+) -> dict[str, Any]:
+    wait_timeout = DEFAULT_BUILD_WAIT_TIMEOUT_SECONDS if wait_timeout_seconds is None else wait_timeout_seconds
+    poll_interval = DEFAULT_BUILD_POLL_SECONDS if poll_seconds is None else poll_seconds
+    deadline = time.monotonic() + max(0, wait_timeout)
+    last_payload: dict[str, Any] | None = None
+    last_build: dict[str, Any] | None = None
+    while True:
+        payload = client.request(
+            "GET",
+            "/builds",
+            {
+                "filter[app]": app_id,
+                "filter[version]": args.build_number,
+                "include": "preReleaseVersion,appStoreVersion",
+                "fields[builds]": "version,processingState,uploadedDate,expired,usesNonExemptEncryption,appStoreVersion,preReleaseVersion",
+                "fields[preReleaseVersions]": "version,platform",
+                "limit": 1,
+            },
+        )
+        last_payload = payload
+        builds = payload.get("data") or []
+        if builds:
+            last_build = builds[0]
+            attributes = last_build["attributes"]
+            if attributes.get("processingState") == "VALID":
+                build = last_build
+                break
+            if time.monotonic() >= deadline:
+                raise AppStoreConnectError(
+                    f"build {args.build_number} is not valid: {attributes.get('processingState')}",
+                    payload=last_build,
+                )
+            print(
+                f"Build {args.build_number} is {attributes.get('processingState')}; "
+                f"waiting {poll_interval}s for App Store Connect processing"
+            )
+        else:
+            if time.monotonic() >= deadline:
+                raise AppStoreConnectError(f"missing build {args.build_number}", payload=last_payload)
+            print(
+                f"Build {args.build_number} is not visible yet; "
+                f"waiting {poll_interval}s for App Store Connect processing"
+            )
+        time.sleep(max(1, poll_interval))
     attributes = build["attributes"]
-    if attributes.get("processingState") != "VALID":
-        raise AppStoreConnectError(f"build {args.build_number} is not valid: {attributes.get('processingState')}", payload=build)
     if args.non_exempt_encryption is not None and attributes.get("usesNonExemptEncryption") != args.non_exempt_encryption:
         if allow_updates:
             client.request(
@@ -709,10 +769,9 @@ def ensure_review_submission(
     app_id: str,
     version_id: str,
     args: argparse.Namespace,
-    force_prepare: bool = False,
 ) -> dict[str, Any]:
-    submissions = client.request(
-        "GET",
+    submissions = paginated_get(
+        client,
         "/reviewSubmissions",
         {
             "filter[app]": app_id,
@@ -720,8 +779,8 @@ def ensure_review_submission(
             "include": "items,appStoreVersionForReview",
             "fields[reviewSubmissions]": "platform,state,submittedDate,items,appStoreVersionForReview",
             "fields[reviewSubmissionItems]": "state,appStoreVersion",
-            "limit": 20,
         },
+        limit=20,
     )
     existing = None
     included = included_by_id(submissions)
@@ -732,7 +791,8 @@ def ensure_review_submission(
         submission_version_id = relationship_id(submission, "appStoreVersionForReview")
         item_ids = [item["id"] for item in submission.get("relationships", {}).get("items", {}).get("data", [])]
         item_version_ids = {relationship_id(included.get(item_id, {}), "appStoreVersion") for item_id in item_ids}
-        if submission_version_id == version_id or version_id in item_version_ids or state == "READY_FOR_REVIEW":
+        empty_ready_submission = state == "READY_FOR_REVIEW" and submission_version_id is None and not item_ids
+        if submission_version_id == version_id or version_id in item_version_ids or empty_ready_submission:
             existing = submission
             break
     if existing:
@@ -890,7 +950,6 @@ def main() -> int:
             app_id,
             version["id"],
             args,
-            force_prepare=reused_removed_version,
         )
         final = client.request(
             "GET",

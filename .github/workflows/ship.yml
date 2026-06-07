@@ -58,7 +58,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: ship-${{ inputs.version }}
+  group: release-v${{ inputs.version }}
   cancel-in-progress: false
 
 jobs:
@@ -125,6 +125,7 @@ jobs:
     uses: ./.github/workflows/release.yml
     with:
       version: ${{ inputs.version }}
+      build_number: ${{ needs.validate.outputs.build_number }}
       create_github_release: true
       notarize: ${{ inputs.notarize_github_release }}
     secrets: inherit
