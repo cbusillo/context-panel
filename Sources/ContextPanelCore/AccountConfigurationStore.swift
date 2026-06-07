@@ -290,10 +290,21 @@ public enum AccountConnectorFactory {
                         accountID: account.id,
                         accountName: account.displayName
                     )],
-                    credentialStore: effectiveCredentialStore
+                    credentialStore: effectiveCredentialStore,
+                    resetHintSnapshot: claudeResetHintSnapshot()
                 )
             }
         }
+    }
+
+    private static func claudeResetHintSnapshot() -> ClaudeSubscriptionRateLimitSnapshot? {
+        for url in ContextPanelLocations.claudeStatuslineCacheURLs() {
+            guard let data = try? Data(contentsOf: url) else { continue }
+            if let snapshot = try? ClaudeSubscriptionRateLimitCacheParser.snapshot(from: data), !snapshot.windows.isEmpty {
+                return snapshot
+            }
+        }
+        return nil
     }
 
     private static func makeAuthFileLoader(

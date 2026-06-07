@@ -5,13 +5,19 @@ extension JSONDecoder {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
+            if let seconds = try? container.decode(Double.self) {
+                return Date(timeIntervalSince1970: seconds)
+            }
             let value = try container.decode(String.self)
             if let date = ContextPanelDateFormatting.date(from: value) {
                 return date
             }
+            if let seconds = Double(value) {
+                return Date(timeIntervalSince1970: seconds)
+            }
             throw DecodingError.dataCorruptedError(
                 in: container,
-                debugDescription: "Expected ISO 8601 date string"
+                debugDescription: "Expected ISO 8601 date string or Unix timestamp"
             )
         }
         return decoder

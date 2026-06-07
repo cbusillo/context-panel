@@ -10,18 +10,19 @@ name: Submit App Store Review
         type: string
       build_number:
         description: Uploaded CFBundleVersion/build number.
-        required: true
+        required: false
         type: string
       whats_new:
         description: Release notes for the App Store version.
-        required: true
+        required: false
         type: string
       copy_from_version:
         description: Existing App Store version to copy metadata from.
         required: false
         type: string
       remove_active_review_version:
-        description: Existing App Store version to remove from active review first.
+        description: >-
+          Existing App Store version to remove from active review first.
         required: false
         type: string
       dry_run:
@@ -42,11 +43,11 @@ name: Submit App Store Review
         type: string
       build_number:
         description: Uploaded CFBundleVersion/build number.
-        required: true
+        required: false
         type: string
       whats_new:
         description: Release notes for the App Store version.
-        required: true
+        required: false
         type: string
       copy_from_version:
         description: Existing App Store version to copy metadata from.
@@ -116,9 +117,22 @@ jobs:
           set -euo pipefail
           args=(
             --version "${INPUT_VERSION}"
-            --build-number "${INPUT_BUILD_NUMBER}"
-            --whats-new "${INPUT_WHATS_NEW}"
           )
+          if [[ "${INPUT_CANCEL_REVIEW_ONLY}" != "true" ]]; then
+            if [[ -z "${INPUT_BUILD_NUMBER}" ]]; then
+              echo "build_number is required unless cancel_review_only" \
+                "is true" >&2
+              exit 1
+            fi
+            if [[ -z "${INPUT_WHATS_NEW}" ]]; then
+              echo "whats_new is required unless cancel_review_only is true" >&2
+              exit 1
+            fi
+            args+=(
+              --build-number "${INPUT_BUILD_NUMBER}"
+              --whats-new "${INPUT_WHATS_NEW}"
+            )
+          fi
           if [[ -n "${INPUT_COPY_FROM_VERSION}" ]]; then
             args+=(--copy-from-version "${INPUT_COPY_FROM_VERSION}")
           fi

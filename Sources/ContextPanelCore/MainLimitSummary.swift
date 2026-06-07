@@ -95,11 +95,11 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
     }
 
     public var displayWindowName: String {
-        window == .availability ? MainLimitWindow.weekly.displayName : window.displayName
+        window.displayName
     }
 
     public var compactDisplayWindowName: String {
-        window == .availability ? MainLimitWindow.weekly.shortName : window.shortName
+        window.shortName
     }
 
     public func displayWindowName(now: Date) -> String {
