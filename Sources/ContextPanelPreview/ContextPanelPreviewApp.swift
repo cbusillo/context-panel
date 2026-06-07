@@ -188,6 +188,13 @@ struct SettingsPane: View {
                                         Button("Change") { authorizeAuthFile(for: account) }
                                             .buttonStyle(.bordered)
                                             .controlSize(.small)
+                                    } else if model.shouldOfferOAuthReconnect(
+                                        for: account,
+                                        storedSnapshot: appModel.storedSnapshot
+                                    ) {
+                                        Button("Reconnect") { reconnectOAuth(for: account) }
+                                            .buttonStyle(.bordered)
+                                            .controlSize(.small)
                                     }
                                 }
                             } else if model.hasLegacyAuthorization(account) {
@@ -388,6 +395,17 @@ struct SettingsPane: View {
                 await appModel.refreshLocalConnectors()
                 model.load()
             }
+        }
+    }
+
+    private func reconnectOAuth(for account: LocalProviderAccountConfiguration) {
+        switch account.connectorKind {
+        case .claudeOAuthUsage:
+            model.authorizeClaudeOAuth(for: account)
+        case .geminiCodeAssist:
+            model.authorizeGoogleAntigravityOAuth(for: account)
+        case .codexRateLimits, .claudeLocalStatus:
+            break
         }
     }
 }
@@ -795,6 +813,20 @@ final class SettingsPaneModel: ObservableObject {
             accountText = successfulReports.first?.accountName ?? account.displayName
         }
         return SettingsAccountRefreshSummary(text: "Last \(refreshSubject) healthy: \(accountText)", status: .healthy)
+    }
+
+    func shouldOfferOAuthReconnect(
+        for account: LocalProviderAccountConfiguration,
+        storedSnapshot: StoredUsageSnapshot?
+    ) -> Bool {
+        guard account.connectorKind == .claudeOAuthUsage || account.connectorKind == .geminiCodeAssist else {
+            return false
+        }
+        guard let reports = storedSnapshot?.reports.filter({ account.matchesProviderReport($0) }), !reports.isEmpty else {
+            return false
+        }
+        guard reports.hasReconnectBlockingFailure else { return false }
+        return !reports.contains(where: { $0.hasProviderConfigurationFailure })
     }
 
     private func refreshSubjectText(for account: LocalProviderAccountConfiguration) -> String {
@@ -1578,6 +1610,7 @@ struct ReconnectDashboard: View {
                                 ReconnectAccountRow(
                                     account: account,
                                     settingsModel: settingsModel,
+                                    attentionReport: appModel.providerReportNeedingAttention(for: account),
                                     refreshSummary: settingsModel.refreshSummary(for: account, storedSnapshot: appModel.storedSnapshot),
                                     onRefresh: {
                                         Task {
@@ -1747,6 +1780,7 @@ private struct DiagnosticReportRow: View {
 private struct ReconnectAccountRow: View {
     let account: LocalProviderAccountConfiguration
     @ObservedObject var settingsModel: SettingsPaneModel
+    let attentionReport: StoredProviderReport?
     let refreshSummary: SettingsAccountRefreshSummary?
     let onRefresh: () -> Void
 
@@ -1778,7 +1812,10 @@ private struct ReconnectAccountRow: View {
 
     @ViewBuilder
     private var actionButton: some View {
-        if settingsModel.canAuthorizeAuthFile(for: account), shouldOfferAuthFileReconnect {
+        if attentionReport?.hasProviderConfigurationFailure == true {
+            Button("Refresh") { onRefresh() }
+                .buttonStyle(.bordered)
+        } else if settingsModel.canAuthorizeAuthFile(for: account), shouldOfferAuthFileReconnect {
             Button("Reconnect") {
                 settingsModel.authorizeAuthFile(for: account, onVerified: onRefresh)
             }
@@ -1813,6 +1850,9 @@ private struct ReconnectAccountRow: View {
         }
         if account.connectorKind == .claudeOAuthUsage { return "Reconnect Claude if refresh keeps failing." }
         if account.connectorKind == .geminiCodeAssist {
+            if attentionReport?.hasProviderConfigurationFailure == true {
+                return "Google setup is missing from this build. Check provider configuration, then refresh."
+            }
             return "Reconnect Google if Antigravity model availability refresh keeps failing."
         }
         return settingsModel.detailText(for: account)
@@ -1876,7 +1916,7 @@ struct ProviderAccountLimitsSection: View {
                                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                                     .foregroundStyle(CPTheme.secondaryText)
                             }
-                            ForEach(summary.limits) { limit in
+                            ForEach(summary.previewLimits) { limit in
                                 MainLimitAccountRow(limit: limit)
                             }
                         }
@@ -2420,26 +2460,30 @@ struct AdditionalLimitsSection: View {
 struct AdditionalLimitRow: View {
     let limit: UsageLimit
 
+    private var displayLimit: UsageLimit {
+        limit.previewDisplayLimit
+    }
+
     var body: some View {
         HStack(spacing: 10) {
-            ProviderBadge(provider: limit.provider, compact: true)
+            ProviderBadge(provider: displayLimit.provider, compact: true)
                 .frame(width: 18)
             VStack(alignment: .leading, spacing: 2) {
-                Text(limit.additionalLimitTitle)
+                Text(displayLimit.additionalLimitTitle)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(CPTheme.primaryText)
                     .lineLimit(1)
-                Text(limit.additionalLimitSubtitle)
+                Text(displayLimit.additionalLimitSubtitle)
                     .font(.system(size: 11))
                     .foregroundStyle(CPTheme.secondaryText)
                     .lineLimit(1)
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
-                Text(limit.previewUsageText)
+                Text(displayLimit.previewUsageText)
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundStyle(CPTheme.secondaryText)
-                Text(limit.resetText)
+                Text(displayLimit.resetText)
                     .font(.system(size: 10))
                     .foregroundStyle(CPTheme.tertiaryText)
             }
@@ -2503,7 +2547,7 @@ struct MainLimitDetail: View {
                 }
 
                 DetailCard(title: "Accounts") {
-                    ForEach(summary.limits) { limit in
+                    ForEach(summary.previewLimits) { limit in
                         MainLimitAccountRow(limit: limit)
                     }
                 }
@@ -2562,7 +2606,7 @@ struct MainLimitAccountRow: View {
                 Text(usageText)
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundStyle(CPTheme.primaryText)
-                Text("\(limit.resetText) · \(limit.status.rawValue)")
+                Text(limit.previewResetConfidenceText)
                     .font(.system(size: 10))
                     .foregroundStyle(CPTheme.tertiaryText)
             }
@@ -2759,6 +2803,12 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     var attentionNavigationTitle: String {
+        if let report = primaryProviderReportNeedingAttention, report.status == .failure {
+            if report.hasProviderConfigurationFailure {
+                return "Fix \(report.provider.displayName) setup"
+            }
+            return "Reconnect \(report.provider.displayName)"
+        }
         if storeStatus == .failure || hasProviderReconnectIssue {
             return "Reconnect account"
         }
@@ -2766,6 +2816,19 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     var reconnectSummaryText: String {
+        if let report = primaryProviderReportNeedingAttention {
+            let target = "\(report.provider.displayName) · \(report.accountName)"
+            if report.hasProviderConfigurationFailure {
+                return "\(target) needs provider setup. Check the app configuration, then refresh."
+            }
+            if let errorMessage = report.errorMessage, !errorMessage.isEmpty {
+                return "\(target) needs attention: \(errorMessage)"
+            }
+            if report.status == .failure {
+                return "\(target) needs attention. Reconnect this account, then refresh."
+            }
+            return "\(target) needs attention. Refresh now, then check the provider status if it persists."
+        }
         if storeStatus == .stale {
             if hasProviderReconnectIssue {
                 return "The widget is showing old percentages. Reconnect the affected account, then refresh."
@@ -2786,12 +2849,24 @@ final class ContextPanelAppModel: ObservableObject {
         return reports.reconnectBlockingFailures + reports.filter(\.needsNonFailureRefreshAttention)
     }
 
+    private var primaryProviderReportNeedingAttention: StoredProviderReport? {
+        providerReportsNeedingAttention.sorted { lhs, rhs in
+            if lhs.status != rhs.status { return lhs.status.attentionSortRank > rhs.status.attentionSortRank }
+            if lhs.provider != rhs.provider { return lhs.provider.displayName < rhs.provider.displayName }
+            return lhs.accountName < rhs.accountName
+        }.first
+    }
+
     var hasProviderReconnectIssue: Bool {
         storedSnapshot?.reports.hasReconnectBlockingFailure ?? false
     }
 
     func reportNeedsAttention(_ account: LocalProviderAccountConfiguration) -> Bool {
-        providerReportsNeedingAttention.contains { account.matchesProviderReport($0) }
+        providerReportNeedingAttention(for: account) != nil
+    }
+
+    func providerReportNeedingAttention(for account: LocalProviderAccountConfiguration) -> StoredProviderReport? {
+        providerReportsNeedingAttention.first { account.matchesProviderReport($0) }
     }
 
     var lastSuccessfulProviderRefreshText: String? {
@@ -3202,6 +3277,14 @@ extension UsageSnapshot {
 }
 
 extension MainLimitSummary {
+    var previewLimits: [UsageLimit] {
+        let displayLimitsByID = Dictionary(
+            liveLimits.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        return limits.map { displayLimitsByID[$0.id] ?? $0.previewDisplayLimit }
+    }
+
     var previewWindowName: String {
         displayWindowName
     }
@@ -3263,7 +3346,7 @@ extension MainLimitSummary {
 
     var resetText: String {
         if status == .failure { return "refresh failed" }
-        guard let resetsAt else { return "unknown reset" }
+        guard let resetsAt else { return "reset not reported" }
         if resetsAt < Date().addingTimeInterval(-60) { return "reset passed" }
         if resetsAt.shouldShowWidgetDateTime {
             return "resets \(resetsAt.widgetRelativeText) · \(resetsAt.widgetDateTimeText)"
@@ -3317,6 +3400,10 @@ private extension String {
 }
 
 extension UsageLimit {
+    var previewDisplayLimit: UsageLimit {
+        googleAntigravityResetCarriedForward(at: Date()) ?? self
+    }
+
     var planText: String? {
         guard let note else { return nil }
         let prefix = "plan:"
@@ -3417,6 +3504,15 @@ extension UsageLimit {
         if mainLimitWindow == .availability {
             return modelLabel ?? displayLabel
         }
+        if hasDistinctModelLabel {
+            return [modelLabel, mainLimitWindow?.displayName]
+                .compactMap { value in
+                    guard let value, !value.isEmpty else { return nil }
+                    return value
+                }
+                .deduplicated()
+                .joined(separator: " · ")
+        }
         return accountName
     }
 
@@ -3430,7 +3526,25 @@ extension UsageLimit {
                 .deduplicated()
                 .joined(separator: " · ")
         }
+        if hasDistinctModelLabel {
+            return [accountName, displayLabel]
+                .compactMap { value in
+                    guard !value.isEmpty else { return nil }
+                    return value
+                }
+                .deduplicated()
+                .joined(separator: " · ")
+        }
         return displayLabel
+    }
+
+    private var hasDistinctModelLabel: Bool {
+        guard let modelLabel, !modelLabel.isEmpty else { return false }
+        let normalizedModel = modelLabel.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalizedAccount = accountName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard normalizedModel != normalizedAccount else { return false }
+        let normalizedDisplay = displayLabel.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalizedModel != normalizedDisplay
     }
 
     var additionalLimitTitle: String {
@@ -3442,7 +3556,7 @@ extension UsageLimit {
 
     var additionalLimitSubtitle: String {
         if isModelCapacityLimit {
-            return [windowLabel, accountName]
+            return [accountName, windowLabel]
                 .compactMap { value in
                     guard let value, !value.isEmpty else { return nil }
                     return value
@@ -3479,7 +3593,7 @@ extension UsageLimit {
 
     var resetText: String {
         if status == .failure { return "refresh failed" }
-        guard let resetsAt else { return "unknown reset" }
+        guard let resetsAt else { return "reset not reported" }
         if resetsAt < Date().addingTimeInterval(-60) { return "reset passed" }
         if resetsAt.shouldShowWidgetDateTime {
             return "resets \(resetsAt.widgetRelativeText) · \(resetsAt.widgetDateTimeText)"
@@ -3551,6 +3665,15 @@ private extension StoredProviderReport {
 
     var needsNonFailureRefreshAttention: Bool {
         status == .stale || (status == .unknown && errorMessage != nil)
+    }
+
+    var hasProviderConfigurationFailure: Bool {
+        guard provider == .google else { return false }
+        guard let errorMessage else { return false }
+        return errorMessage.localizedCaseInsensitiveContains("client id is not configured")
+            || errorMessage.localizedCaseInsensitiveContains("client_id is missing")
+            || errorMessage.localizedCaseInsensitiveContains("client secret is not configured")
+            || errorMessage.localizedCaseInsensitiveContains("client_secret is missing")
     }
 }
 

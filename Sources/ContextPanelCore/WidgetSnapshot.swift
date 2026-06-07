@@ -61,11 +61,16 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     public var providerSummaries: [ProviderSummary] {
         Provider.allCases.map { provider in
             let providerLimits = limits.filter { $0.provider == provider }
+            let mainSummaries = usageSnapshot.mainLimitSummaries.filter { $0.provider == provider }
+            let nonMainStatuses = providerLimits.filter { !$0.isMainLimit }.map(\.status)
+            let statuses = provider == .anthropic && !mainSummaries.isEmpty
+                ? mainSummaries.map(\.status)
+                : mainSummaries.map(\.status) + nonMainStatuses
             let tightestLimit = UsageSnapshot(generatedAt: generatedAt, limits: providerLimits).mostConstrainedLimits.first
             return ProviderSummary(
                 provider: provider,
                 limitCount: providerLimits.count,
-                status: providerLimits.map(\.status).contextPanelWorstStatus,
+                status: statuses.contextPanelWorstStatus,
                 capacityRatio: capacityRatio(for: providerLimits),
                 tightestLimit: tightestLimit
             )
@@ -98,6 +103,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             .ready
         }
 
+        let status = widgetStatus(for: stored.snapshot, fallback: result.status)
+
         return WidgetSnapshot(
             state: state,
             generatedAt: stored.snapshot.generatedAt,
@@ -113,7 +120,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
                 now: now
             ),
             fastModeForecastSettings: fastModeForecastSettings,
-            status: result.status,
+            status: status,
             message: message(state: state, stored: stored)
         )
     }
@@ -129,7 +136,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     private static func message(state: WidgetSnapshotState, stored: StoredUsageSnapshot) -> String {
         switch state {
         case .ready:
-            let limitedCount = stored.snapshot.limits.filter { $0.status == .limited }.count
+            let limitedCount = stored.snapshot.mainLimitSummaries.filter { $0.status == .limited }.count
+                + stored.snapshot.limits.filter { !$0.isMainLimit && $0.status == .limited }.count
             if limitedCount > 0 {
                 return "\(limitedCount) limit needs attention."
             }
@@ -145,10 +153,44 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         }
     }
 
+    private static func widgetStatus(for snapshot: UsageSnapshot, fallback: UsageStatus) -> UsageStatus {
+        switch fallback {
+        case .failure, .stale:
+            return fallback
+        case .healthy, .close, .limited, .unknown, .loading:
+            break
+        }
+
+        let summaries = snapshot.mainLimitSummaries
+        let nonMainStatuses = snapshot.limits.compactMap { limit -> UsageStatus? in
+            guard !limit.isMainLimit else { return nil }
+            if limit.provider == .anthropic,
+               limit.isAnthropicStatuslinePlaceholder
+            {
+                return nil
+            }
+            return limit.status
+        }
+        let statuses = summaries.map(\.status) + nonMainStatuses
+        guard !statuses.isEmpty else { return fallback }
+        return statuses.contextPanelWorstStatus
+    }
+
     private func capacityRatio(for limits: [UsageLimit]) -> Double {
         let ratios = limits.compactMap(\.usageRatio)
         guard !ratios.isEmpty else { return 0 }
         return max(1 - (ratios.max() ?? 0), 0)
+    }
+}
+
+private extension UsageLimit {
+    var isAnthropicStatuslinePlaceholder: Bool {
+        provider == .anthropic
+            && label.localizedCaseInsensitiveContains("status")
+            && unit == .unknown
+            && used == nil
+            && limit == nil
+            && resetsAt == nil
     }
 }
 

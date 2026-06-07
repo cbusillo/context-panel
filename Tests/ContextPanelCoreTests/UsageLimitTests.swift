@@ -74,6 +74,105 @@ import Testing
     #expect(abs(snapshot.aggregateCapacityRatio - 0.05) < 0.0001)
 }
 
+@Test func aggregateStatusUsesPooledMainWindowCapacity() {
+    let snapshot = UsageSnapshot(
+        generatedAt: Date(),
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "limited",
+                accountName: "Limited OpenAI",
+                label: "Codex Weekly",
+                windowLabel: "Weekly",
+                modelLabel: "Codex",
+                unit: .percent,
+                used: 100,
+                limit: 100
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "usable",
+                accountName: "Usable OpenAI",
+                label: "Codex Weekly",
+                windowLabel: "Weekly",
+                modelLabel: "Codex",
+                unit: .percent,
+                used: 20,
+                limit: 100
+            ),
+        ]
+    )
+
+    #expect(snapshot.mostConstrainedLimits.first?.status == .limited)
+    #expect(snapshot.mainLimitSummaries.first?.status == .healthy)
+    #expect(snapshot.aggregateStatus == .healthy)
+}
+
+@Test func aggregateStatusRemainsLimitedWhenPooledMainWindowIsExhausted() {
+    let snapshot = UsageSnapshot(
+        generatedAt: Date(),
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "first",
+                accountName: "First OpenAI",
+                label: "Codex Weekly",
+                windowLabel: "Weekly",
+                modelLabel: "Codex",
+                unit: .percent,
+                used: 100,
+                limit: 100
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "second",
+                accountName: "Second OpenAI",
+                label: "Codex Weekly",
+                windowLabel: "Weekly",
+                modelLabel: "Codex",
+                unit: .percent,
+                used: 100,
+                limit: 100
+            ),
+        ]
+    )
+
+    #expect(snapshot.mainLimitSummaries.first?.status == .limited)
+    #expect(snapshot.aggregateStatus == .limited)
+}
+
+@Test func aggregateStatusStillIncludesNonMainLimitPressure() {
+    let snapshot = UsageSnapshot(
+        generatedAt: Date(),
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "usable",
+                accountName: "Usable OpenAI",
+                label: "Codex Weekly",
+                windowLabel: "Weekly",
+                modelLabel: "Codex",
+                unit: .percent,
+                used: 20,
+                limit: 100
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "usable",
+                accountName: "Usable OpenAI",
+                label: "Image generation",
+                unit: .requests,
+                used: 10,
+                limit: 10,
+                statusOverride: .limited
+            ),
+        ]
+    )
+
+    #expect(snapshot.mainLimitSummaries.first?.status == .healthy)
+    #expect(snapshot.aggregateStatus == .limited)
+}
+
 @Test func usageLimitSeparatesWindowAndModelLabels() {
     let limit = UsageLimit(
         provider: .openAI,
@@ -803,6 +902,73 @@ import Testing
         "anthropic:weekly",
         "anthropic:fiveHour",
     ])
+}
+
+@Test func googleAntigravityExpiredFiveHourCapacityCarriesForwardAfterReset() {
+    let lastUpdatedAt = Date(timeIntervalSince1970: 1_000)
+    let observedReset = lastUpdatedAt.addingTimeInterval(5 * 3_600)
+    let generatedAt = observedReset.addingTimeInterval(3_600)
+    let snapshot = UsageSnapshot(
+        generatedAt: generatedAt,
+        limits: [
+            UsageLimit(
+                provider: .google,
+                accountID: "google-antigravity-default",
+                accountName: "Antigravity",
+                label: "Gemini Pro capacity",
+                windowLabel: "Model capacity",
+                modelLabel: "Gemini Pro",
+                unit: .percent,
+                used: 40,
+                limit: 100,
+                resetsAt: observedReset,
+                lastUpdatedAt: lastUpdatedAt,
+                confidence: .observed,
+                note: "source: Google Antigravity model availability"
+            ),
+        ]
+    )
+
+    let summary = snapshot.mainLimitSummaries.first
+
+    #expect(summary?.id == "google:fiveHour")
+    #expect(summary?.used == 0)
+    #expect(summary?.limit == 100)
+    #expect(summary?.usageRatio == 0)
+    #expect(summary?.capacityRatio == 1)
+    #expect(summary?.status == .healthy)
+    #expect(summary?.confidence == .estimated)
+    #expect(summary?.resetsAt == observedReset.addingTimeInterval(5 * 3_600))
+}
+
+@Test func nonGoogleExpiredCapacityDoesNotCarryForwardAfterReset() {
+    let generatedAt = Date(timeIntervalSince1970: 20_000)
+    let snapshot = UsageSnapshot(
+        generatedAt: generatedAt,
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "openai",
+                accountName: "OpenAI",
+                label: "Codex 5-hour",
+                windowLabel: "5-hour",
+                unit: .percent,
+                used: 40,
+                limit: 100,
+                resetsAt: generatedAt.addingTimeInterval(-3_600),
+                lastUpdatedAt: generatedAt.addingTimeInterval(-6 * 3_600),
+                confidence: .official
+            ),
+        ]
+    )
+
+    let summary = snapshot.mainLimitSummaries.first
+
+    #expect(summary?.id == "openai:fiveHour")
+    #expect(summary?.used == nil)
+    #expect(summary?.limit == nil)
+    #expect(summary?.usageRatio == nil)
+    #expect(summary?.confidence == .official)
 }
 
 @Test func widgetDisplayPreferencesMigratesSavedDefaultsToIncludeGeminiWindows() {

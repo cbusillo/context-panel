@@ -256,7 +256,9 @@ public struct UsageSnapshot: Codable, Equatable, Sendable {
     }
 
     public var aggregateStatus: UsageStatus {
-        mostConstrainedLimits.first?.status ?? .unknown
+        let statuses = mainLimitSummaries.map(\.status) + limits.filter { !$0.isMainLimit }.map(\.status)
+        if !statuses.isEmpty { return statuses.contextPanelWorstStatus }
+        return mostConstrainedLimits.first?.status ?? .unknown
     }
 }
 

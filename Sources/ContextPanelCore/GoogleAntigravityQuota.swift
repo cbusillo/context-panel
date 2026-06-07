@@ -478,7 +478,14 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
             return ConnectorError.invalidAuth("Google Antigravity OAuth session has expired. Sign in again from Settings.")
         }
         if let error = payload?.error, !error.isEmpty {
-            return ConnectorError.invalidAuth("Google Antigravity OAuth refresh failed with \(error). Check the OAuth client configuration and sign in again.")
+            let detail = nonEmpty(payload?.errorDescription).map { " \($0)" } ?? ""
+            if payload?.errorDescription?.localizedCaseInsensitiveContains("client_secret") == true {
+                return ConnectorError.invalidAuth("Google Antigravity OAuth client secret is not configured.\(detail)")
+            }
+            if error == "invalid_request" || error == "invalid_client" || error == "unauthorized_client" {
+                return ConnectorError.invalidAuth("Google Antigravity OAuth refresh failed with \(error).\(detail) Sign in again from Settings to refresh the OAuth client session.")
+            }
+            return ConnectorError.invalidAuth("Google Antigravity OAuth refresh failed with \(error).\(detail) Sign in again from Settings.")
         }
         if statusCode == 401 || statusCode == 403 {
             return ConnectorError.invalidAuth("Google Antigravity OAuth session is not authorized. Sign in again from Settings.")
@@ -509,9 +516,15 @@ public enum GoogleAntigravityOAuthMetadata {
     public static let tokenEndpoint = URL(string: "https://oauth2.googleapis.com/token")!
     public static let codeAssistBaseURL = URL(string: "https://cloudcode-pa.googleapis.com")!
     public static let userAgent = "antigravity/macos/context-panel"
+    public static let defaultClientID = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
 
-    public static var clientID: String? { configuredValue(named: "CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID") }
-    public static var clientSecret: String? { configuredValue(named: "CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET") }
+    public static var clientID: String? {
+        configuredValue(named: "CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID")
+            ?? defaultClientID
+    }
+    public static var clientSecret: String? {
+        configuredValue(named: "CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET")
+    }
     public static let scopes = [
         "https://www.googleapis.com/auth/cloud-platform",
         "https://www.googleapis.com/auth/userinfo.email",
@@ -531,6 +544,12 @@ public enum GoogleAntigravityOAuthMetadata {
 
 private struct GoogleOAuthErrorPayload: Decodable {
     let error: String?
+    let errorDescription: String?
+
+    enum CodingKeys: String, CodingKey {
+        case error
+        case errorDescription = "error_description"
+    }
 }
 
 private struct GoogleAntigravityLoadCodeAssistPayload: Decodable {
