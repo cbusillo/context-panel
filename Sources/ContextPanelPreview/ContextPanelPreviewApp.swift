@@ -933,14 +933,29 @@ final class SettingsPaneModel: ObservableObject {
                 let encoder = JSONEncoder()
                 encoder.outputFormatting = [.sortedKeys]
                 encoder.dateEncodingStrategy = .iso8601
-                try self?.credentialStore.save(try encoder.encode(credentials), accountID: flow.accountID)
+                let encodedCredentials = try encoder.encode(credentials)
                 await MainActor.run {
+                    guard let self else { return }
+                    guard self.pendingClaudeOAuth?.accountID == flow.accountID,
+                          self.pendingClaudeOAuth?.state == flow.state
+                    else {
+                        contextPanelLogger.info("Claude OAuth code exchange ignored because the flow is no longer active")
+                        return
+                    }
+                    do {
+                        try self.credentialStore.save(encodedCredentials, accountID: flow.accountID)
+                    } catch {
+                        contextPanelLogger.error("Claude OAuth credential save failed: \(error.localizedDescription, privacy: .public)")
+                        self.isCompletingClaudeOAuth = false
+                        self.errorMessage = error.localizedDescription
+                        return
+                    }
                     contextPanelLogger.info("Claude OAuth code exchange succeeded")
-                    self?.pendingClaudeOAuth = nil
-                    self?.isCompletingClaudeOAuth = false
-                    self?.isClaudeOAuthCodeSheetPresented = false
-                    self?.errorMessage = nil
-                    self?.authorizationRefreshCounter += 1
+                    self.pendingClaudeOAuth = nil
+                    self.isCompletingClaudeOAuth = false
+                    self.isClaudeOAuthCodeSheetPresented = false
+                    self.errorMessage = nil
+                    self.authorizationRefreshCounter += 1
                     onConnected()
                 }
             } catch {
@@ -981,15 +996,30 @@ final class SettingsPaneModel: ObservableObject {
                 let encoder = JSONEncoder()
                 encoder.outputFormatting = [.sortedKeys]
                 encoder.dateEncodingStrategy = .iso8601
-                try self?.credentialStore.save(try encoder.encode(credentials), accountID: flow.accountID)
+                let encodedCredentials = try encoder.encode(credentials)
                 await MainActor.run {
+                    guard let self else { return }
+                    guard self.pendingGoogleOAuth?.accountID == flow.accountID,
+                          self.pendingGoogleOAuth?.state == flow.state
+                    else {
+                        contextPanelLogger.info("Google Antigravity OAuth code exchange ignored because the flow is no longer active")
+                        return
+                    }
+                    do {
+                        try self.credentialStore.save(encodedCredentials, accountID: flow.accountID)
+                    } catch {
+                        contextPanelLogger.error("Google Antigravity OAuth credential save failed: \(error.localizedDescription, privacy: .public)")
+                        self.isCompletingGoogleOAuth = false
+                        self.errorMessage = error.localizedDescription
+                        return
+                    }
                     contextPanelLogger.info("Google Antigravity OAuth code exchange succeeded")
-                    self?.stopGoogleOAuthCallbackListener()
-                    self?.pendingGoogleOAuth = nil
-                    self?.isCompletingGoogleOAuth = false
-                    self?.isGoogleOAuthCodeSheetPresented = false
-                    self?.errorMessage = nil
-                    self?.authorizationRefreshCounter += 1
+                    self.stopGoogleOAuthCallbackListener()
+                    self.pendingGoogleOAuth = nil
+                    self.isCompletingGoogleOAuth = false
+                    self.isGoogleOAuthCodeSheetPresented = false
+                    self.errorMessage = nil
+                    self.authorizationRefreshCounter += 1
                     onConnected()
                 }
             } catch {
@@ -1014,9 +1044,12 @@ final class SettingsPaneModel: ObservableObject {
                         do {
                             var readyFlow = flow
                             try readyFlow.useLoopbackPort(port)
+                            guard let authorizationURL = readyFlow.authorizationURL else {
+                                throw ConnectorError.invalidAuth("Google authorization URL was not available after the callback listener started.")
+                            }
                             self.pendingGoogleOAuth = readyFlow
                             self.isGoogleOAuthCallbackListening = true
-                            self.openGoogleAuthorizationURL(readyFlow.authorizationURL)
+                            self.openGoogleAuthorizationURL(authorizationURL)
                         } catch {
                             self.stopGoogleOAuthCallbackListener()
                             self.isGoogleOAuthCallbackListening = false
@@ -1028,6 +1061,13 @@ final class SettingsPaneModel: ObservableObject {
                 onFailure: { [weak self] message in
                     Task { @MainActor [weak self] in
                         guard let self, self.pendingGoogleOAuth?.state == flow.state else { return }
+                        do {
+                            var fallbackFlow = flow
+                            try fallbackFlow.useManualFallback()
+                            self.pendingGoogleOAuth = fallbackFlow
+                        } catch {
+                            contextPanelLogger.error("Google OAuth callback listener could not prepare fallback authorization URL: \(error.localizedDescription, privacy: .public)")
+                        }
                         self.isGoogleOAuthCallbackListening = false
                         self.errorMessage = "Automatic Google callback could not start. Use the link in this sheet, then paste the redirected URL if Safari cannot return to Context Panel."
                         contextPanelLogger.error("Google OAuth callback listener failed: \(message, privacy: .public)")
@@ -1050,6 +1090,15 @@ final class SettingsPaneModel: ObservableObject {
             server.start()
         } catch {
             isGoogleOAuthCallbackListening = false
+            if pendingGoogleOAuth?.state == flow.state {
+                do {
+                    var fallbackFlow = flow
+                    try fallbackFlow.useManualFallback()
+                    pendingGoogleOAuth = fallbackFlow
+                } catch {
+                    contextPanelLogger.error("Google OAuth callback listener could not prepare fallback authorization URL: \(error.localizedDescription, privacy: .public)")
+                }
+            }
             errorMessage = "Automatic Google callback could not start. Use the link in this sheet, then paste the redirected URL if Safari cannot return to Context Panel."
             contextPanelLogger.error("Google OAuth callback listener failed: \(error.localizedDescription, privacy: .public)")
         }
@@ -1244,13 +1293,18 @@ private struct PendingGoogleAntigravityOAuth {
     let pkce: OAuthPKCEChallenge
     let state: String
     private(set) var redirectURI: String
-    private(set) var authorizationURL: URL
+    private(set) var authorizationURL: URL?
 
     init(accountID: String) throws {
         self.accountID = accountID
         pkce = try OAuthPKCE.makeChallenge()
         state = try OAuthPKCE.makeChallenge(byteCount: 24).verifier
         redirectURI = GoogleAntigravityOAuthFlow.manualRedirectURI
+        authorizationURL = nil
+    }
+
+    mutating func useLoopbackPort(_ port: UInt16) throws {
+        redirectURI = GoogleAntigravityOAuthFlow.loopbackRedirectURI(port: port)
         authorizationURL = try GoogleAntigravityOAuthFlow.authorizationURL(
             codeChallenge: pkce.challenge,
             state: state,
@@ -1258,8 +1312,8 @@ private struct PendingGoogleAntigravityOAuth {
         )
     }
 
-    mutating func useLoopbackPort(_ port: UInt16) throws {
-        redirectURI = GoogleAntigravityOAuthFlow.loopbackRedirectURI(port: port)
+    mutating func useManualFallback() throws {
+        redirectURI = GoogleAntigravityOAuthFlow.manualRedirectURI
         authorizationURL = try GoogleAntigravityOAuthFlow.authorizationURL(
             codeChallenge: pkce.challenge,
             state: state,
