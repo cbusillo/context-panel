@@ -1061,6 +1061,22 @@ import Testing
     #expect(queryItems["scope"]?.contains("https://www.googleapis.com/auth/cloud-platform") == true)
 }
 
+@Test func googleAntigravityOAuthFlowBuildsLoopbackRedirectURIForAvailablePort() throws {
+    #expect(GoogleAntigravityOAuthFlow.callbackPath == "/oauth-callback")
+    #expect(GoogleAntigravityOAuthFlow.manualRedirectURI == "http://127.0.0.1:51121/oauth-callback")
+    #expect(GoogleAntigravityOAuthFlow.loopbackRedirectURI(port: 49_152) == "http://127.0.0.1:49152/oauth-callback")
+
+    let url = try GoogleAntigravityOAuthFlow.authorizationURL(
+        codeChallenge: "challenge-value",
+        state: "state-value",
+        redirectURI: GoogleAntigravityOAuthFlow.loopbackRedirectURI(port: 49_152),
+        clientID: "google-client-id"
+    )
+    let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
+    let redirectURI = components.queryItems?.first(where: { $0.name == "redirect_uri" })?.value
+    #expect(redirectURI == "http://127.0.0.1:49152/oauth-callback")
+}
+
 @Test func googleAntigravityOAuthFlowNormalizesCallbackURLsAndBuildsTokenBodies() throws {
     let callback = GoogleAntigravityOAuthFlow.normalizedAuthorizationCode(
         from: "http://localhost:51121/oauth-callback?code=callback-code&state=callback-state"

@@ -201,6 +201,25 @@ assert_entitlement_enabled() {
 	rm -f "$plist"
 }
 
+assert_entitlement_absent() {
+	local bundle_path="$1"
+	local label="$2"
+	local entitlement="$3"
+	local plist
+	plist=$(mktemp)
+	if ! codesign -d --entitlements :- "$bundle_path" >"$plist" 2>/dev/null; then
+		rm -f "$plist"
+		echo "could not read signed entitlements for $label: $bundle_path" >&2
+		exit 1
+	fi
+	if /usr/libexec/PlistBuddy -c "Print :$entitlement" "$plist" >/dev/null 2>&1; then
+		rm -f "$plist"
+		echo "$label should not carry entitlement: $entitlement" >&2
+		exit 1
+	fi
+	rm -f "$plist"
+}
+
 require_command xcodegen
 require_command xcodebuild
 require_command codesign
@@ -285,9 +304,12 @@ assert_app_group_entitlement "$widget_path" "Context Panel widget"
 assert_app_group_entitlement "$refresh_agent_path" "Context Panel refresh agent"
 assert_entitlement_enabled "$app_path" "Context Panel app" "com.apple.security.app-sandbox"
 assert_entitlement_enabled "$app_path" "Context Panel app" "com.apple.security.network.client"
+assert_entitlement_enabled "$app_path" "Context Panel app" "com.apple.security.network.server"
 assert_entitlement_enabled "$app_path" "Context Panel app" "com.apple.security.files.bookmarks.app-scope"
+assert_entitlement_absent "$widget_path" "Context Panel widget" "com.apple.security.network.server"
 assert_entitlement_enabled "$refresh_agent_path" "Context Panel refresh agent" "com.apple.security.app-sandbox"
 assert_entitlement_enabled "$refresh_agent_path" "Context Panel refresh agent" "com.apple.security.network.client"
+assert_entitlement_absent "$refresh_agent_path" "Context Panel refresh agent" "com.apple.security.network.server"
 assert_entitlement_enabled "$refresh_agent_path" "Context Panel refresh agent" "com.apple.security.files.bookmarks.app-scope"
 
 if [[ "$notarize" == "true" ]]; then

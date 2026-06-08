@@ -109,7 +109,13 @@ public struct GoogleAntigravityAccountConfiguration: Equatable, Sendable {
 }
 
 public enum GoogleAntigravityOAuthFlow {
-    public static let manualRedirectURI = "http://localhost:51121/oauth-callback"
+    public static let callbackPath = "/oauth-callback"
+    public static let fallbackLoopbackPort: UInt16 = 51121
+    public static let manualRedirectURI = loopbackRedirectURI(port: fallbackLoopbackPort)
+
+    public static func loopbackRedirectURI(port: UInt16) -> String {
+        "http://127.0.0.1:\(port)\(callbackPath)"
+    }
 
     public static func normalizedAuthorizationCode(from value: String) -> GoogleAntigravityAuthorizationCode {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)

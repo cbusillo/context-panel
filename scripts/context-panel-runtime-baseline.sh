@@ -371,6 +371,32 @@ check_canonical_app_group() {
 	fi
 }
 
+signed_entitlement_enabled() {
+	local bundle="$1"
+	local entitlement="$2"
+	local plist value
+	plist="$(mktemp)"
+	if ! codesign -d --entitlements :- "$bundle" >"$plist" 2>/dev/null; then
+		rm -f "$plist"
+		return 2
+	fi
+	value="$(/usr/libexec/PlistBuddy -c "Print :$entitlement" "$plist" 2>/dev/null || true)"
+	rm -f "$plist"
+	[[ "$value" == "true" ]]
+}
+
+check_entitlement_enabled() {
+	local bundle="$1"
+	local label="$2"
+	local entitlement="$3"
+	local required_for="$4"
+	if signed_entitlement_enabled "$bundle" "$entitlement"; then
+		ok "$label has $entitlement for $required_for"
+	else
+		fail "$label is missing $entitlement required for $required_for"
+	fi
+}
+
 signed_team_identifier() {
 	local bundle="$1"
 	codesign -dv --verbose=4 "$bundle" 2>&1 |
@@ -797,6 +823,7 @@ check_runtime() {
 	check_canonical_app_group "$app_path" "app"
 	check_canonical_app_group "$widget_path" "widget"
 	check_canonical_app_group "$refresh_agent_path" "refresh agent"
+	check_entitlement_enabled "$app_path" "app" "com.apple.security.network.server" "local OAuth callback listener"
 	check_canonical_team_identifier "$app_path" "app"
 	check_canonical_team_identifier "$widget_path" "widget"
 	check_canonical_team_identifier "$refresh_agent_path" "refresh agent"
