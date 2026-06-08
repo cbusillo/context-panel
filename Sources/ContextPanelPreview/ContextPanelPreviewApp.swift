@@ -371,30 +371,20 @@ struct SettingsPane: View {
         .frame(width: 560)
         .frame(minHeight: 360)
         .sheet(isPresented: $model.isClaudeOAuthCodeSheetPresented) {
-            ClaudeOAuthCodeSheet(model: model) {
-                Task {
-                    await appModel.refreshLocalConnectors()
-                    model.load()
-                }
-            }
+            ClaudeOAuthCodeSheet(model: model) {}
         }
         .sheet(isPresented: $model.isGoogleOAuthCodeSheetPresented) {
-            GoogleAntigravityOAuthCodeSheet(model: model) {
-                Task {
-                    await appModel.refreshLocalConnectors()
-                    model.load()
-                }
-            }
+            GoogleAntigravityOAuthCodeSheet(model: model) {}
         }
         .onAppear { model.load() }
+        .onChange(of: model.authorizationRefreshCounter) { _, _ in
+            refreshAfterAuthorization()
+        }
     }
 
     private func authorizeAuthFile(for account: LocalProviderAccountConfiguration) {
         model.authorizeAuthFile(for: account) {
-            Task {
-                await appModel.refreshLocalConnectors()
-                model.load()
-            }
+            refreshAfterAuthorization()
         }
     }
 
@@ -412,6 +402,13 @@ struct SettingsPane: View {
     private func disconnectOAuth(for account: LocalProviderAccountConfiguration) {
         model.disconnectOAuth(for: account)
         Task { await appModel.refreshLocalConnectors() }
+    }
+
+    private func refreshAfterAuthorization() {
+        Task {
+            await appModel.refreshLocalConnectors()
+            model.load()
+        }
     }
 }
 
@@ -545,6 +542,7 @@ final class SettingsPaneModel: ObservableObject {
     @Published var isGoogleOAuthCodeSheetPresented = false
     @Published private(set) var isCompletingGoogleOAuth = false
     @Published private(set) var isGoogleOAuthCallbackListening = false
+    @Published private(set) var authorizationRefreshCounter = 0
 
     private let bookmarkStore = SecureFileBookmarkStore(storeURL: ContextPanelLocations.bookmarkStoreURL())
     private let credentialStore = ProviderCredentialStore()
@@ -942,7 +940,7 @@ final class SettingsPaneModel: ObservableObject {
                     self?.isCompletingClaudeOAuth = false
                     self?.isClaudeOAuthCodeSheetPresented = false
                     self?.errorMessage = nil
-                    self?.load()
+                    self?.authorizationRefreshCounter += 1
                     onConnected()
                 }
             } catch {
@@ -991,7 +989,7 @@ final class SettingsPaneModel: ObservableObject {
                     self?.isCompletingGoogleOAuth = false
                     self?.isGoogleOAuthCodeSheetPresented = false
                     self?.errorMessage = nil
-                    self?.load()
+                    self?.authorizationRefreshCounter += 1
                     onConnected()
                 }
             } catch {
@@ -1042,7 +1040,7 @@ final class SettingsPaneModel: ObservableObject {
                     self.completeGoogleAntigravityOAuth(
                         authorizationCode: authorizationCode,
                         flow: activeFlow,
-                        onConnected: { Task { await self.refreshAfterGoogleOAuthCallback() } }
+                        onConnected: {}
                     )
                 }
             }
@@ -1069,11 +1067,6 @@ final class SettingsPaneModel: ObservableObject {
         googleOAuthCallbackServer?.cancel()
         googleOAuthCallbackServer = nil
         isGoogleOAuthCallbackListening = false
-    }
-
-    private func refreshAfterGoogleOAuthCallback() async {
-        _ = try? await SnapshotRefreshRunner.appDefault().refresh()
-        load()
     }
 
     func authorizeAuthFile(for account: LocalProviderAccountConfiguration, onVerified: @escaping () -> Void = {}) {
