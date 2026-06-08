@@ -188,11 +188,11 @@ struct SettingsPane: View {
                                         Button("Change") { authorizeAuthFile(for: account) }
                                             .buttonStyle(.bordered)
                                             .controlSize(.small)
-                                    } else if model.shouldOfferOAuthReconnect(
-                                        for: account,
-                                        storedSnapshot: appModel.storedSnapshot
-                                    ) {
+                                    } else if model.canManageOAuth(for: account) {
                                         Button("Reconnect") { reconnectOAuth(for: account) }
+                                            .buttonStyle(.bordered)
+                                            .controlSize(.small)
+                                        Button("Disconnect", role: .destructive) { disconnectOAuth(for: account) }
                                             .buttonStyle(.bordered)
                                             .controlSize(.small)
                                     }
@@ -407,6 +407,11 @@ struct SettingsPane: View {
         case .codexRateLimits, .claudeLocalStatus:
             break
         }
+    }
+
+    private func disconnectOAuth(for account: LocalProviderAccountConfiguration) {
+        model.disconnectOAuth(for: account)
+        Task { await appModel.refreshLocalConnectors() }
     }
 }
 
@@ -774,8 +779,30 @@ final class SettingsPaneModel: ObservableObject {
         account.connectorKind.requiresSecurityScopedAuthFile
     }
 
+    func canManageOAuth(for account: LocalProviderAccountConfiguration) -> Bool {
+        account.connectorKind == .claudeOAuthUsage || account.connectorKind == .geminiCodeAssist
+    }
+
     func authorizationSavedText(for account: LocalProviderAccountConfiguration) -> String {
         account.connectorKind == .claudeOAuthUsage || account.connectorKind == .geminiCodeAssist ? "Connected" : "File saved"
+    }
+
+    func disconnectOAuth(for account: LocalProviderAccountConfiguration) {
+        guard canManageOAuth(for: account) else { return }
+        do {
+            if pendingClaudeOAuth?.accountID == account.id {
+                cancelClaudeOAuth()
+            }
+            if pendingGoogleOAuth?.accountID == account.id {
+                cancelGoogleAntigravityOAuth()
+            }
+            try credentialStore.delete(accountID: account.id)
+            errorMessage = nil
+            load()
+            WidgetCenter.shared.reloadAllTimelines()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     func refreshSummary(for account: LocalProviderAccountConfiguration, storedSnapshot: StoredUsageSnapshot?) -> SettingsAccountRefreshSummary? {
