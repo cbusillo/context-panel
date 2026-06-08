@@ -796,12 +796,25 @@ final class SettingsPaneModel: ObservableObject {
             if pendingGoogleOAuth?.accountID == account.id {
                 cancelGoogleAntigravityOAuth()
             }
-            try credentialStore.delete(accountID: account.id)
+            for accountID in oauthCredentialAccountIDs(for: account) {
+                try credentialStore.delete(accountID: accountID)
+            }
             errorMessage = nil
             load()
             WidgetCenter.shared.reloadAllTimelines()
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func oauthCredentialAccountIDs(for account: LocalProviderAccountConfiguration) -> [String] {
+        switch account.connectorKind {
+        case .claudeOAuthUsage:
+            return Array(Set([account.id, "claude-local-default", "claude-oauth-default"]))
+        case .geminiCodeAssist:
+            return Array(Set([account.id, "gemini-code-assist-default", "google-antigravity-default"]))
+        case .codexRateLimits, .claudeLocalStatus:
+            return [account.id]
         }
     }
 
