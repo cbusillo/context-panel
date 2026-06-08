@@ -970,11 +970,21 @@ final class SettingsPaneModel: ObservableObject {
             let server = try GoogleOAuthCallbackServer(
                 redirectURI: flow.redirectURI,
                 expectedState: flow.state,
-                onReady: { [weak self] in
+                onReady: { [weak self] port in
                     Task { @MainActor [weak self] in
                         guard let self, self.pendingGoogleOAuth?.state == flow.state else { return }
-                        self.isGoogleOAuthCallbackListening = true
-                        self.openGoogleAuthorizationURL(flow.authorizationURL)
+                        do {
+                            var readyFlow = flow
+                            try readyFlow.useLoopbackPort(port)
+                            self.pendingGoogleOAuth = readyFlow
+                            self.isGoogleOAuthCallbackListening = true
+                            self.openGoogleAuthorizationURL(readyFlow.authorizationURL)
+                        } catch {
+                            self.stopGoogleOAuthCallbackListener()
+                            self.isGoogleOAuthCallbackListening = false
+                            self.errorMessage = "Google authorization URL could not be created. Check the Google OAuth configuration and try again."
+                            contextPanelLogger.error("Google OAuth callback listener could not prepare authorization URL: \(error.localizedDescription, privacy: .public)")
+                        }
                     }
                 },
                 onFailure: { [weak self] message in
@@ -1200,8 +1210,8 @@ private struct PendingGoogleAntigravityOAuth {
     let accountID: String
     let pkce: OAuthPKCEChallenge
     let state: String
-    let redirectURI: String
-    let authorizationURL: URL
+    private(set) var redirectURI: String
+    private(set) var authorizationURL: URL
 
     init(accountID: String) throws {
         self.accountID = accountID
@@ -1214,33 +1224,41 @@ private struct PendingGoogleAntigravityOAuth {
             redirectURI: redirectURI
         )
     }
+
+    mutating func useLoopbackPort(_ port: UInt16) throws {
+        redirectURI = GoogleAntigravityOAuthFlow.loopbackRedirectURI(port: port)
+        authorizationURL = try GoogleAntigravityOAuthFlow.authorizationURL(
+            codeChallenge: pkce.challenge,
+            state: state,
+            redirectURI: redirectURI
+        )
+    }
 }
 
 private final class GoogleOAuthCallbackServer: @unchecked Sendable {
     private let listener: NWListener
     private let expectedState: String
-    private let onReady: @Sendable () -> Void
+    private let onReady: @Sendable (UInt16) -> Void
     private let onFailure: @Sendable (String) -> Void
     private let onCode: @Sendable (GoogleAntigravityAuthorizationCode) -> Void
 
     init(
         redirectURI: String,
         expectedState: String,
-        onReady: @escaping @Sendable () -> Void,
+        onReady: @escaping @Sendable (UInt16) -> Void,
         onFailure: @escaping @Sendable (String) -> Void,
         onCode: @escaping @Sendable (GoogleAntigravityAuthorizationCode) -> Void
     ) throws {
         guard
             let url = URL(string: redirectURI),
-            url.host == "localhost" || url.host == "127.0.0.1",
-            let port = url.port,
-            let nwPort = NWEndpoint.Port(rawValue: UInt16(port))
+            url.host == "localhost" || url.host == "127.0.0.1"
         else {
             throw ConnectorError.invalidAuth("Google OAuth callback URL is not a supported localhost URL.")
         }
 
         let parameters = NWParameters.tcp
-        listener = try NWListener(using: parameters, on: nwPort)
+        parameters.requiredInterfaceType = .loopback
+        listener = try NWListener(using: parameters, on: .any)
         self.expectedState = expectedState
         self.onReady = onReady
         self.onFailure = onFailure
@@ -1252,7 +1270,11 @@ private final class GoogleOAuthCallbackServer: @unchecked Sendable {
             guard let self else { return }
             switch state {
             case .ready:
-                self.onReady()
+                guard let port = self.listener.port?.rawValue else {
+                    self.onFailure("Google OAuth callback listener did not report its port.")
+                    return
+                }
+                self.onReady(port)
             case .failed(let error), .waiting(let error):
                 self.onFailure(error.localizedDescription)
             default:
@@ -1295,7 +1317,7 @@ private final class GoogleOAuthCallbackServer: @unchecked Sendable {
         guard pieces.count >= 2, pieces[0] == "GET" else { return nil }
         let path = String(pieces[1])
         guard let url = URL(string: "http://localhost\(path)") else { return nil }
-        guard url.path == "/oauth-callback" else { return nil }
+        guard url.path == GoogleAntigravityOAuthFlow.callbackPath else { return nil }
         let authorizationCode = GoogleAntigravityOAuthFlow.normalizedAuthorizationCode(from: url.absoluteString)
         return authorizationCode.code.isEmpty ? nil : authorizationCode
     }
