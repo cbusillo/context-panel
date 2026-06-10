@@ -17,27 +17,6 @@ public enum ContextPanelLocations {
         return base.appending(path: "Context Panel", directoryHint: .isDirectory)
     }
 
-    public static func claudeRateLimitDirectory() -> URL {
-        applicationSupportDirectory()
-            .appending(path: "ClaudeRateLimits", directoryHint: .isDirectory)
-    }
-
-    public static func claudeStatuslineCacheURL() -> URL {
-        claudeStatuslineCacheURLs().first ?? claudeRateLimitDirectory().appending(path: "statusline-cache.json")
-    }
-
-    public static func claudeStatuslineCacheURLs() -> [URL] {
-        claudeRateLimitStorageDirectories().map { $0.appending(path: "statusline-cache.json") }
-    }
-
-    public static func claudeCCUsageBlocksCacheURL() -> URL {
-        claudeCCUsageBlocksCacheURLs().first ?? claudeRateLimitDirectory().appending(path: "ccusage-blocks-cache.json")
-    }
-
-    public static func claudeCCUsageBlocksCacheURLs() -> [URL] {
-        claudeRateLimitStorageDirectories().map { $0.appending(path: "ccusage-blocks-cache.json") }
-    }
-
     public static func bookmarkStoreURL() -> URL {
         if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
             return containerURL
@@ -232,21 +211,6 @@ public enum ContextPanelLocations {
     private static func environmentFlag(_ name: String) -> Bool {
         guard let value = getenv(name) else { return false }
         return String(cString: value) == "1"
-    }
-
-    private static func claudeRateLimitStorageDirectories() -> [URL] {
-        var directories: [URL] = []
-        if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
-            directories.append(containerURL
-                .appending(path: "Context Panel", directoryHint: .isDirectory)
-                .appending(path: "ClaudeRateLimits", directoryHint: .isDirectory))
-        }
-        directories.append(claudeRateLimitDirectory())
-        return directories.reduce(into: []) { result, url in
-            if !result.contains(url) {
-                result.append(url)
-            }
-        }
     }
 
     private static func appGroupContainerURL(appGroupID: String?) -> URL? {

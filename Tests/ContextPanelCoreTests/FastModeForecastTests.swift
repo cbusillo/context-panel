@@ -318,7 +318,7 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
         LocalProviderAccountConfiguration(
             id: "claude-disabled",
             provider: .anthropic,
-            connectorKind: .claudeLocalStatus,
+            connectorKind: .claudeOAuthUsage,
             displayName: "Claude",
             isEnabled: false
         ),

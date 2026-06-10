@@ -215,7 +215,7 @@ struct SettingsPane: View {
                                     Button("Connect") { model.authorizeClaudeOAuth(for: account) }
                                         .buttonStyle(.borderedProminent)
                                         .controlSize(.small)
-                                } else if account.connectorKind == .geminiCodeAssist {
+                                } else if account.connectorKind == .googleAntigravityQuota {
                                     Button("Connect") { model.authorizeGoogleAntigravityOAuth(for: account) }
                                         .buttonStyle(.borderedProminent)
                                         .controlSize(.small)
@@ -392,9 +392,9 @@ struct SettingsPane: View {
         switch account.connectorKind {
         case .claudeOAuthUsage:
             model.authorizeClaudeOAuth(for: account)
-        case .geminiCodeAssist:
+        case .googleAntigravityQuota:
             model.authorizeGoogleAntigravityOAuth(for: account)
-        case .codexRateLimits, .claudeLocalStatus:
+        case .codexRateLimits:
             break
         }
     }
@@ -746,7 +746,7 @@ final class SettingsPaneModel: ObservableObject {
 
     func needsAuthorization(_ account: LocalProviderAccountConfiguration) -> Bool {
         guard account.isEnabled else { return false }
-        if account.connectorKind == .claudeOAuthUsage || account.connectorKind == .geminiCodeAssist {
+        if account.connectorKind == .claudeOAuthUsage || account.connectorKind == .googleAntigravityQuota {
             return !hasImportedCredential(for: account)
         }
         guard let authPath = account.effectiveAuthPath else { return false }
@@ -756,7 +756,7 @@ final class SettingsPaneModel: ObservableObject {
     }
 
     func hasSavedAuthorization(_ account: LocalProviderAccountConfiguration) -> Bool {
-        if account.connectorKind == .claudeOAuthUsage || account.connectorKind == .geminiCodeAssist {
+        if account.connectorKind == .claudeOAuthUsage || account.connectorKind == .googleAntigravityQuota {
             return hasImportedCredential(for: account)
         }
         guard let authPath = account.effectiveAuthPath else { return false }
@@ -778,11 +778,11 @@ final class SettingsPaneModel: ObservableObject {
     }
 
     func canManageOAuth(for account: LocalProviderAccountConfiguration) -> Bool {
-        account.connectorKind == .claudeOAuthUsage || account.connectorKind == .geminiCodeAssist
+        account.connectorKind == .claudeOAuthUsage || account.connectorKind == .googleAntigravityQuota
     }
 
     func authorizationSavedText(for account: LocalProviderAccountConfiguration) -> String {
-        account.connectorKind == .claudeOAuthUsage || account.connectorKind == .geminiCodeAssist ? "Connected" : "File saved"
+        account.connectorKind == .claudeOAuthUsage || account.connectorKind == .googleAntigravityQuota ? "Connected" : "File saved"
     }
 
     func disconnectOAuth(for account: LocalProviderAccountConfiguration) {
@@ -809,9 +809,9 @@ final class SettingsPaneModel: ObservableObject {
         switch account.connectorKind {
         case .claudeOAuthUsage:
             return Array(Set([account.id, "claude-local-default", "claude-oauth-default"]))
-        case .geminiCodeAssist:
+        case .googleAntigravityQuota:
             return Array(Set([account.id, "gemini-code-assist-default", "google-antigravity-default"]))
-        case .codexRateLimits, .claudeLocalStatus:
+        case .codexRateLimits:
             return [account.id]
         }
     }
@@ -857,7 +857,7 @@ final class SettingsPaneModel: ObservableObject {
         for account: LocalProviderAccountConfiguration,
         storedSnapshot: StoredUsageSnapshot?
     ) -> Bool {
-        guard account.connectorKind == .claudeOAuthUsage || account.connectorKind == .geminiCodeAssist else {
+        guard account.connectorKind == .claudeOAuthUsage || account.connectorKind == .googleAntigravityQuota else {
             return false
         }
         guard let reports = storedSnapshot?.reports.filter({ account.matchesProviderReport($0) }), !reports.isEmpty else {
@@ -871,9 +871,9 @@ final class SettingsPaneModel: ObservableObject {
         switch account.connectorKind {
         case .codexRateLimits:
             "OpenAI refresh"
-        case .geminiCodeAssist:
+        case .googleAntigravityQuota:
             "Google refresh"
-        case .claudeLocalStatus, .claudeOAuthUsage:
+        case .claudeOAuthUsage:
             "Claude refresh"
         }
     }
@@ -902,7 +902,7 @@ final class SettingsPaneModel: ObservableObject {
     }
 
     func authorizeGoogleAntigravityOAuth(for account: LocalProviderAccountConfiguration) {
-        guard account.connectorKind == .geminiCodeAssist else { return }
+        guard account.connectorKind == .googleAntigravityQuota else { return }
         do {
             let flow = try PendingGoogleAntigravityOAuth(accountID: account.id)
             pendingGoogleOAuth = flow
@@ -1172,7 +1172,7 @@ final class SettingsPaneModel: ObservableObject {
 
     private func detailSourceLabel(for account: LocalProviderAccountConfiguration) -> String {
         switch account.connectorKind {
-        case .geminiCodeAssist:
+        case .googleAntigravityQuota:
             return "Google OAuth"
         case .claudeOAuthUsage:
             return "Claude OAuth"
@@ -1191,10 +1191,8 @@ final class SettingsPaneModel: ObservableObject {
                 return "Select auth.json for Codex users"
             }
             return "Select the OpenAI CLI auth JSON file"
-        case .geminiCodeAssist:
+        case .googleAntigravityQuota:
             return "Connect Google to read Antigravity model capacity"
-        case .claudeLocalStatus:
-            return "Claude reads Context Panel's statusline cache; no auth file selection is needed"
         case .claudeOAuthUsage:
             return "Connect Claude with OAuth for automatic background refresh"
         }
@@ -1428,7 +1426,7 @@ private extension AccountConnectorKind {
         switch self {
         case .codexRateLimits:
             return true
-        case .geminiCodeAssist, .claudeLocalStatus, .claudeOAuthUsage:
+        case .googleAntigravityQuota, .claudeOAuthUsage:
             return false
         }
     }
@@ -1754,6 +1752,16 @@ struct ReconnectDashboard: View {
             }
         }
         .onAppear { settingsModel.load() }
+        .onChange(of: settingsModel.authorizationRefreshCounter) { _, _ in
+            refreshAfterAuthorization()
+        }
+    }
+
+    private func refreshAfterAuthorization() {
+        Task {
+            await appModel.refreshLocalConnectors()
+            settingsModel.load()
+        }
     }
 }
 
@@ -1934,7 +1942,7 @@ private struct ReconnectAccountRow: View {
                 settingsModel.authorizeClaudeOAuth(for: account)
             }
             .buttonStyle(.borderedProminent)
-        } else if account.connectorKind == .geminiCodeAssist {
+        } else if account.connectorKind == .googleAntigravityQuota {
             Button("Reconnect") {
                 settingsModel.authorizeGoogleAntigravityOAuth(for: account)
             }
@@ -1958,7 +1966,7 @@ private struct ReconnectAccountRow: View {
             return "Sign in again from Every Code or Codex, then reselect the auth file."
         }
         if account.connectorKind == .claudeOAuthUsage { return "Reconnect Claude if refresh keeps failing." }
-        if account.connectorKind == .geminiCodeAssist {
+        if account.connectorKind == .googleAntigravityQuota {
             if attentionReport?.hasProviderConfigurationFailure == true {
                 return "Google setup is missing from this build. Check provider configuration, then refresh."
             }
@@ -3603,9 +3611,6 @@ extension UsageLimit {
     }
 
     var isVisibleInSidebar: Bool {
-        if provider == .anthropic, unit == .unknown, displayLabel == "Claude status" {
-            return false
-        }
         return true
     }
 

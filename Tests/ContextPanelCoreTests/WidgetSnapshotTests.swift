@@ -344,7 +344,7 @@ import Testing
     #expect(widget.message == "1 limit needs attention.")
 }
 
-@Test func anthropicProviderSummaryUsesMainSummaryWhenStatuslineOnlyLimitIsUnknown() {
+@Test func anthropicProviderSummaryUsesMainSummaryWhenNonMainLimitIsUnknown() {
     let savedAt = Date(timeIntervalSince1970: 100)
     let stored = StoredUsageSnapshot(savedAt: savedAt, snapshot: UsageSnapshot(
         generatedAt: savedAt,
@@ -364,10 +364,10 @@ import Testing
             ),
             UsageLimit(
                 provider: .anthropic,
-                accountID: "claude-statusline",
-                accountName: "Claude Statusline",
-                label: "Claude status",
-                modelLabel: "Claude Code",
+                accountID: "claude-unknown",
+                accountName: "Claude Unknown",
+                label: "Claude auxiliary signal",
+                modelLabel: "Claude",
                 unit: .unknown,
                 used: nil,
                 limit: nil,
@@ -382,10 +382,10 @@ import Testing
     let widget = WidgetSnapshot.fromStore(SnapshotStoreLoadResult(snapshot: stored, status: stored.snapshot.aggregateStatus), now: savedAt)
     let anthropic = widget.providerSummaries.first { $0.provider == .anthropic }
 
-    #expect(widget.status == .healthy)
+    #expect(widget.status == .unknown)
     #expect(anthropic?.status == .healthy)
     #expect(widget.usageSnapshot.mainLimitSummaries.first { $0.provider == .anthropic }?.status == .healthy)
-    #expect(widget.limits.first { $0.label == "Claude status" }?.status == .unknown)
+    #expect(widget.limits.first { $0.label == "Claude auxiliary signal" }?.status == .unknown)
 }
 
 @Test func anthropicEstimatedSummaryKeepsResetTextWithoutUsageRatio() {
@@ -419,15 +419,15 @@ import Testing
     #expect(summary.widgetResetConfidenceText?.contains("estimated") == true)
 }
 
-@Test func anthropicWidgetSnapshotPreservesConnectedUnknownStatusWithoutMainLimit() {
+@Test func anthropicWidgetSnapshotSurfacesConnectedUnknownOAuthStatusWithoutMainLimit() {
     let now = Date(timeIntervalSince1970: 1000)
     let limits = [
         UsageLimit(
             provider: .anthropic,
             accountID: "claude-acct",
             accountName: "Claude",
-            label: "Claude status",
-            modelLabel: "Claude Code",
+            label: "Claude OAuth usage",
+            modelLabel: "Claude",
             unit: .unknown,
             used: nil,
             limit: nil,
@@ -439,7 +439,7 @@ import Testing
     ]
     let stored = StoredUsageSnapshot(savedAt: now, snapshot: UsageSnapshot(generatedAt: now, limits: limits))
     let snapshot = WidgetSnapshot.fromStore(SnapshotStoreLoadResult(snapshot: stored, status: .healthy), now: now)
-    #expect(snapshot.status == .healthy)
+    #expect(snapshot.status == .unknown)
     #expect(snapshot.limits.contains { $0.provider == .anthropic })
     #expect(snapshot.usageSnapshot.mainLimitSummaries.filter { $0.provider == .anthropic }.isEmpty)
 

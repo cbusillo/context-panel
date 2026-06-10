@@ -1195,7 +1195,7 @@ import Testing
     ])
 }
 
-@Test func claudeOAuthConnectorFillsMissingResetTimesFromStatuslineHints() async throws {
+@Test func claudeOAuthConnectorDoesNotFillMissingResetTimesFromStatuslineHints() async throws {
     let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
     let usage = #"""
     {
@@ -1204,17 +1204,12 @@ import Testing
       "seven_day_sonnet": { "utilization": 14.0 }
     }
     """#.data(using: .utf8)!
-    let hints = ClaudeSubscriptionRateLimitSnapshot(observedAt: Date(timeIntervalSince1970: 1_780_788_587), windows: [
-        ClaudeSubscriptionRateLimitWindow(label: "5-hour", usedPercent: 69, resetsAt: Date(timeIntervalSince1970: 1_780_793_400)),
-        ClaudeSubscriptionRateLimitWindow(label: "Weekly", usedPercent: 56, resetsAt: Date(timeIntervalSince1970: 1_780_801_200)),
-    ])
     let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
     let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
     let connector = ClaudeOAuthUsageConnector(
         accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
         httpClient: http,
-        credentialStore: store,
-        resetHintSnapshot: hints
+        credentialStore: store
     )
 
     let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
@@ -1222,12 +1217,8 @@ import Testing
     #expect(result.reports.count == 1)
     #expect(result.reports[0].status == .healthy)
     #expect(result.snapshot.limits.map(\.used) == [9, 12, 14])
-    #expect(result.snapshot.limits.map(\.resetsAt) == [
-        Date(timeIntervalSince1970: 1_780_793_400),
-        Date(timeIntervalSince1970: 1_780_801_200),
-        Date(timeIntervalSince1970: 1_780_801_200),
-    ])
-    #expect(result.snapshot.limits.allSatisfy { $0.note?.contains("reset from Claude Code statusline") == true })
+    #expect(result.snapshot.limits.allSatisfy { $0.resetsAt == nil })
+    #expect(result.snapshot.limits.allSatisfy { $0.note?.contains("statusline") != true })
 }
 
 @Test func claudeOAuthFlowBuildsClaudeCodeAuthorizeURL() throws {
@@ -1360,198 +1351,6 @@ import Testing
     #expect(result.reports[0].errorMessage == "Claude OAuth session has expired. Sign in again from Settings.")
     #expect(result.reports[0].errorMessage?.contains("400") == false)
     #expect(result.reports[0].errorMessage?.contains("request-secret") == false)
-}
-
-@Test func claudeConnectorReportsUnknownLiveAllowanceFromLocalStatus() async throws {
-    let stats = #"{"version":3,"lastComputedDate":"2026-04-26","dailyActivity":[],"modelUsage":{},"totalSessions":2,"totalMessages":3}"#.data(using: .utf8)!
-    let connector = ClaudeLocalStatusConnector(
-        accounts: [ClaudeAccountConfiguration(accountName: "Claude", statsPath: "/tmp/stats.json")],
-        fileLoader: { _ in stats },
-        fileExists: { path in path == "/tmp/stats.json" }
-    )
-
-    let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
-
-    #expect(result.reports.count == 1)
-    #expect(result.reports[0].status == .unknown)
-    #expect(result.snapshot.limits.count == 1)
-    #expect(result.snapshot.limits[0].provider == .anthropic)
-    #expect(result.snapshot.limits[0].status == .unknown)
-}
-
-@Test func claudeConnectorReportsHealthyWhenStatuslineLimitsExist() async throws {
-    let stats = #"{"version":3,"lastComputedDate":"2026-04-26","dailyActivity":[],"modelUsage":{},"totalSessions":2,"totalMessages":3}"#.data(using: .utf8)!
-    let cache = #"{"observed_at":1788379200,"rate_limits":{"five_hour":{"used_percentage":4,"resets_at":1788397200},"seven_day":{"used_percentage":0,"resets_at":1788984000}}}"#.data(using: .utf8)!
-    let connector = ClaudeLocalStatusConnector(
-        accounts: [ClaudeAccountConfiguration(
-            accountName: "Claude",
-            statsPath: "/tmp/stats.json",
-            rateLimitSnapshotPath: "/tmp/claude-statusline.json",
-            rateLimitSnapshotMaximumAge: 60
-        )],
-        fileLoader: { path in path == "/tmp/claude-statusline.json" ? cache : stats },
-        fileExists: { path in path == "/tmp/stats.json" || path == "/tmp/claude-statusline.json" }
-    )
-
-    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_788_379_230))
-
-    #expect(result.reports[0].status == .healthy)
-    #expect(result.snapshot.limits.count == 2)
-    #expect(result.snapshot.limits.map(\.windowLabel) == ["5-hour", "Weekly"])
-}
-
-@Test func claudeConnectorMarksOldStatuslineLimitsStale() async throws {
-    let cache = #"{"observed_at":1788379200,"rate_limits":{"five_hour":{"used_percentage":4,"resets_at":1788397200},"seven_day":{"used_percentage":0,"resets_at":1788984000}}}"#.data(using: .utf8)!
-    let connector = ClaudeLocalStatusConnector(
-        accounts: [ClaudeAccountConfiguration(
-            accountName: "Claude",
-            statsPath: nil,
-            rateLimitSnapshotPath: "/tmp/claude-statusline.json",
-            rateLimitSnapshotMaximumAge: 60
-        )],
-        fileLoader: { _ in cache },
-        fileExists: { path in path == "/tmp/claude-statusline.json" }
-    )
-
-    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_788_379_500))
-
-    #expect(result.reports[0].status == .stale)
-    #expect(result.snapshot.limits.map(\.status) == [.stale, .stale])
-    #expect(result.snapshot.limits.contains { $0.windowLabel == "Weekly" && $0.used == 0 })
-    #expect(result.snapshot.limits[0].note?.contains("stale Claude Code statusline") == true)
-}
-
-@Test func claudeConnectorChoosesNewestStatuslineCacheAcrossFallbackPaths() async throws {
-    let stale = #"{"observed_at":1788379200,"rate_limits":{"five_hour":{"used_percentage":40,"resets_at":1788397200}}}"#.data(using: .utf8)!
-    let fresh = #"{"observed_at":1788379800,"rate_limits":{"five_hour":{"used_percentage":5,"resets_at":1788397200},"seven_day":{"used_percentage":7,"resets_at":1788984000}}}"#.data(using: .utf8)!
-    let primaryPath = "/tmp/claude-primary-statusline.json"
-    let fallbackPath = "/tmp/claude-fallback-statusline.json"
-    let account = ClaudeAccountConfiguration(
-        accountName: "Claude",
-        statsPath: nil,
-        rateLimitSnapshotPath: primaryPath,
-        fallbackRateLimitSnapshotPaths: [fallbackPath],
-        rateLimitSnapshotMaximumAge: 60
-    )
-    let connector = ClaudeLocalStatusConnector(
-        accounts: [account],
-        fileLoader: { path in path == primaryPath ? stale : fresh },
-        fileExists: { path in path == primaryPath || path == fallbackPath }
-    )
-
-    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_788_379_830))
-
-    #expect(result.reports[0].status == .healthy)
-    #expect(result.snapshot.limits.map(\.used) == [5, 7])
-}
-
-@Test func claudeConnectorSkipsCorruptStatuslineCacheWhenFallbackIsValid() async throws {
-    let corrupt = #"{"observed_at":"not-a-date","rate_limits":{}}"#.data(using: .utf8)!
-    let fallback = #"{"observed_at":1788379800,"rate_limits":{"five_hour":{"used_percentage":5,"resets_at":1788397200},"seven_day":{"used_percentage":7,"resets_at":1788984000}}}"#.data(using: .utf8)!
-    let primaryPath = "/tmp/claude-corrupt-statusline.json"
-    let fallbackPath = "/tmp/claude-fallback-statusline.json"
-    let connector = ClaudeLocalStatusConnector(
-        accounts: [ClaudeAccountConfiguration(
-            accountName: "Claude",
-            statsPath: nil,
-            rateLimitSnapshotPath: primaryPath,
-            fallbackRateLimitSnapshotPaths: [fallbackPath],
-            rateLimitSnapshotMaximumAge: 60
-        )],
-        fileLoader: { path in path == primaryPath ? corrupt : fallback },
-        fileExists: { path in path == primaryPath || path == fallbackPath }
-    )
-
-    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_788_379_830))
-
-    #expect(result.reports[0].status == .healthy)
-    #expect(result.snapshot.limits.map(\.used) == [5, 7])
-}
-
-@Test func claudeConnectorUsesUsageEstimateWhenStatuslineCacheIsStale() async throws {
-    let stats = #"{"version":3,"lastComputedDate":"2026-04-26","dailyActivity":[],"modelUsage":{},"totalSessions":2,"totalMessages":3}"#.data(using: .utf8)!
-    let cache = #"{"observed_at":1788379200,"rate_limits":{"five_hour":{"used_percentage":4,"resets_at":1788397200},"seven_day":{"used_percentage":0,"resets_at":1788984000}}}"#.data(using: .utf8)!
-    let blocks = #"{"blocks":[{"isActive":false,"totalTokens":1000},{"isActive":true,"totalTokens":500,"projection":{"totalTokens":1200,"remainingMinutes":30},"models":["claude-sonnet-4-6"]}]}"#.data(using: .utf8)!
-    let connector = ClaudeLocalStatusConnector(
-        accounts: [ClaudeAccountConfiguration(
-            accountName: "Claude",
-            statsPath: "/tmp/stats.json",
-            rateLimitSnapshotPath: "/tmp/claude-statusline.json",
-            rateLimitSnapshotMaximumAge: 60,
-            usageBlocksPath: "/tmp/ccusage-blocks.json"
-        )],
-        fileLoader: { path in
-            switch path {
-            case "/tmp/claude-statusline.json": cache
-            case "/tmp/ccusage-blocks.json": blocks
-            default: stats
-            }
-        },
-        fileExists: { path in path == "/tmp/stats.json" || path == "/tmp/claude-statusline.json" || path == "/tmp/ccusage-blocks.json" }
-    )
-
-    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_788_379_500))
-
-    #expect(result.reports[0].status == .healthy)
-    #expect(result.snapshot.limits.count == 1)
-    #expect(result.snapshot.limits[0].label == "Claude 5-hour estimate")
-    #expect(result.snapshot.limits[0].confidence == .estimated)
-    #expect(result.snapshot.limits[0].lastUpdatedAt == Date(timeIntervalSince1970: 1_788_379_500))
-}
-
-@Test func claudeConnectorSkipsCorruptUsageBlocksCacheWhenFallbackIsValid() async throws {
-    let stats = #"{"version":3,"lastComputedDate":"2026-04-26","dailyActivity":[],"modelUsage":{},"totalSessions":2,"totalMessages":3}"#.data(using: .utf8)!
-    let corrupt = #"{"blocks":"not-an-array"}"#.data(using: .utf8)!
-    let fallback = #"{"blocks":[{"isActive":false,"totalTokens":1000},{"isActive":true,"totalTokens":500,"projection":{"totalTokens":1200,"remainingMinutes":30},"models":["claude-sonnet-4-6"]}]}"#.data(using: .utf8)!
-    let primaryPath = "/tmp/ccusage-corrupt-blocks.json"
-    let fallbackPath = "/tmp/ccusage-fallback-blocks.json"
-    let connector = ClaudeLocalStatusConnector(
-        accounts: [ClaudeAccountConfiguration(
-            accountName: "Claude",
-            statsPath: "/tmp/stats.json",
-            usageBlocksPath: primaryPath,
-            fallbackUsageBlocksPaths: [fallbackPath]
-        )],
-        fileLoader: { path in
-            switch path {
-            case primaryPath: corrupt
-            case fallbackPath: fallback
-            default: stats
-            }
-        },
-        fileExists: { path in path == "/tmp/stats.json" || path == primaryPath || path == fallbackPath }
-    )
-
-    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_000))
-
-    #expect(result.reports[0].status == .healthy)
-    #expect(result.snapshot.limits.count == 1)
-    #expect(result.snapshot.limits[0].confidence == .estimated)
-    #expect(result.snapshot.limits[0].used == 500)
-    #expect(result.snapshot.limits[0].limit == 1000)
-}
-
-@Test func claudeConnectorReportsEveryCodeUsageEstimate() async throws {
-    let stats = #"{"version":3,"lastComputedDate":"2026-04-26","dailyActivity":[],"modelUsage":{},"totalSessions":2,"totalMessages":3}"#.data(using: .utf8)!
-    let blocks = #"{"blocks":[{"isActive":false,"totalTokens":1000},{"isActive":true,"totalTokens":500,"projection":{"totalTokens":1200,"remainingMinutes":30},"models":["claude-sonnet-4-6"]}]}"#.data(using: .utf8)!
-    let connector = ClaudeLocalStatusConnector(
-        accounts: [ClaudeAccountConfiguration(
-            accountName: "Claude",
-            statsPath: "/tmp/stats.json",
-            usageBlocksPath: "/tmp/ccusage-blocks.json"
-        )],
-        fileLoader: { path in path == "/tmp/ccusage-blocks.json" ? blocks : stats },
-        fileExists: { path in path == "/tmp/stats.json" || path == "/tmp/ccusage-blocks.json" }
-    )
-
-    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_000))
-
-    #expect(result.reports[0].status == .healthy)
-    #expect(result.snapshot.limits.count == 1)
-    #expect(result.snapshot.limits[0].confidence == .estimated)
-    #expect(result.snapshot.limits[0].used == 500)
-    #expect(result.snapshot.limits[0].limit == 1000)
-    #expect(result.snapshot.limits[0].note?.contains("Every Code/Claude sessions") == true)
 }
 
 @Test func providerConnectorRuntimeAggregatesConnectorSnapshots() async {

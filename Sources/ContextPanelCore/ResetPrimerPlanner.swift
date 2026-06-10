@@ -553,7 +553,7 @@ public struct ResetPrimerExecutor: Sendable {
         guard let account, account.isEnabled else {
             return .skip("Account is disabled or missing")
         }
-        guard account.connectorKind != .geminiCodeAssist else {
+        guard account.connectorKind != .googleAntigravityQuota else {
             return .skip("Reset priming is not supported for this provider")
         }
         guard let commandURL = primerCommandURL(for: account) else {
@@ -601,9 +601,9 @@ public struct ResetPrimerExecutor: Sendable {
         switch account.connectorKind {
         case .codexRateLimits:
             path = account.commandPath ?? defaultCodeCommandPath()
-        case .claudeLocalStatus, .claudeOAuthUsage:
+        case .claudeOAuthUsage:
             path = account.commandPath
-        case .geminiCodeAssist:
+        case .googleAntigravityQuota:
             path = nil
         }
 
@@ -617,7 +617,7 @@ public struct ResetPrimerExecutor: Sendable {
         switch account.connectorKind {
         case .codexRateLimits:
             return []
-        case .claudeLocalStatus, .claudeOAuthUsage, .geminiCodeAssist:
+        case .claudeOAuthUsage, .googleAntigravityQuota:
             return []
         }
     }

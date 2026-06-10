@@ -7,7 +7,7 @@
   connector. Do not read Claude Code's Keychain item, Claude Desktop cookies,
   browser local storage, transcripts, or raw provider response bodies.
 - Claude Web capture was removed. Do not reintroduce WebKit usage scraping as a
-  refresh path; use OAuth setup plus statusline/ccusage fallback diagnostics.
+  refresh path; use OAuth setup and the OAuth usage endpoint.
 - Decide whether the app needs a privacy-safe way to show Claude login or
   subscription metadata without using `claude auth status --json` or other App
   Store-sensitive access.

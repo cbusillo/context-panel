@@ -67,9 +67,11 @@ MVP connectors:
   refresh them through Google's OAuth endpoint, discover the active Antigravity
   project, call Cloud Code model availability, and normalize `quotaInfo` into
   reported availability percentages.
-- `ClaudeLocalStatusConnector`: runs `claude auth status --json` and summarizes
-  `~/.claude/stats-cache.json`; live personal subscription allowance remains
-  unknown unless a clean provider signal appears.
+- Claude provider: store Context Panel-owned Claude OAuth tokens, refresh them
+  through Anthropic's OAuth token endpoint when needed, call the Claude OAuth
+  usage endpoint, and normalize returned utilization windows into reported
+  percentages. Legacy Claude Code status-line/cache paths are not runtime data
+  sources.
 
 Connector implementations must keep secrets out of normalized state. Do not
 persist or print tokens, account IDs, project IDs, organization IDs, emails,
@@ -117,11 +119,12 @@ and skip intervals that cross resets.
 ## Account Configuration
 
 The MVP account configuration is also local JSON. It stores account labels,
-enabled/disabled state, connector kind, and local paths or command names needed
-to locate provider CLI auth. It does not store provider secrets. Google usage can
-use Antigravity's Keychain token when present; Gemini OAuth client inputs are
-referenced by environment variable names so the values can remain outside the
-repository and outside the account config file.
+enabled/disabled state, connector kind, and local auth-file paths only for
+file-backed OpenAI/Codex accounts. It does not store provider secrets. Google
+Antigravity and Claude usage use Context Panel-owned OAuth credentials stored in
+Keychain, and OAuth client inputs are referenced by environment variable names
+so the values can remain outside the repository and outside the account config
+file.
 
 Widget interactions should keep the widget simple. Tapping the widget should
 open the app to the relevant provider or account detail; mutation and setup stay

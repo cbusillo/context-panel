@@ -12,7 +12,7 @@ import Testing
     #expect(result.document.accounts.count == 4)
     #expect(result.document.accounts.contains { $0.id == "openai-code-default" && $0.displayName == "Every Code" && $0.isEnabled })
     #expect(result.document.accounts.contains { $0.id == "openai-codex-default" && $0.displayName == "Codex" && !$0.isEnabled })
-    #expect(result.document.accounts.contains { $0.connectorKind == .geminiCodeAssist && $0.isEnabled })
+    #expect(result.document.accounts.contains { $0.connectorKind == .googleAntigravityQuota && $0.isEnabled })
     #expect(result.document.accounts.contains { $0.connectorKind == .claudeOAuthUsage && $0.effectiveAuthPath == nil })
 }
 
@@ -41,7 +41,7 @@ import Testing
     let account = LocalProviderAccountConfiguration(
         id: "google-antigravity-default",
         provider: .google,
-        connectorKind: .geminiCodeAssist,
+        connectorKind: .googleAntigravityQuota,
         displayName: "Antigravity"
     )
     let report = StoredProviderReport(
@@ -60,7 +60,7 @@ import Testing
     let account = LocalProviderAccountConfiguration(
         id: "google-antigravity-default",
         provider: .google,
-        connectorKind: .geminiCodeAssist,
+        connectorKind: .googleAntigravityQuota,
         displayName: "Antigravity"
     )
     let report = StoredProviderReport(
@@ -94,28 +94,6 @@ import Testing
     )
 
     #expect(!account.matchesProviderReport(report))
-}
-
-@Test func localProviderAccountConfigurationMatchesClaudeLocalStatusReportsByEffectivePath() throws {
-    let account = LocalProviderAccountConfiguration(
-        id: "claude-local-default",
-        provider: .anthropic,
-        connectorKind: .claudeLocalStatus,
-        displayName: "Claude"
-    )
-    let report = StoredProviderReport(
-        provider: .anthropic,
-        accountID: ConnectorRedactor.localAccountID(
-            provider: .anthropic,
-            path: ContextPanelLocations.claudeStatuslineCacheURL().path
-        ),
-        accountName: "Claude",
-        generatedAt: Date(timeIntervalSince1970: 0),
-        status: .stale,
-        errorMessage: nil
-    )
-
-    #expect(account.matchesProviderReport(report))
 }
 
 @Test func localProviderAccountConfigurationMatchesClaudeOAuthReportsByRedactedStableID() throws {
@@ -157,69 +135,122 @@ import Testing
     #expect(result.document == document)
 }
 
-@Test func accountConfigurationStoreMigratesDefaultClaudeLocalStatusToOAuth() throws {
+@Test func accountConfigurationStoreMigratesClaudeLocalStatusToOAuth() throws {
     let url = try temporaryDirectory().appending(path: "accounts.json")
     let store = AccountConfigurationStore(configurationURL: url)
-    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 10), accounts: [
-        LocalProviderAccountConfiguration(
-            id: "claude-local-default",
-            provider: .anthropic,
-            connectorKind: .claudeLocalStatus,
-            displayName: "Claude",
-            rateLimitSnapshotPath: "/tmp/statusline-cache.json"
-        ),
-        LocalProviderAccountConfiguration(
-            id: "claude-custom-local",
-            provider: .anthropic,
-            connectorKind: .claudeLocalStatus,
-            displayName: "Claude Local",
-            rateLimitSnapshotPath: "/tmp/custom-statusline-cache.json"
-        ),
-    ])
-
-    try store.save(document)
+    let legacyJSON = #"""
+    {
+      "schemaVersion": 1,
+      "updatedAt": "1970-01-01T00:00:10Z",
+      "accounts": [
+        {
+          "id": "claude-local-default",
+          "provider": "anthropic",
+          "connectorKind": "claudeLocalStatus",
+          "displayName": "Claude",
+          "isEnabled": true,
+          "rateLimitSnapshotPath": "/tmp/statusline-cache.json"
+        },
+        {
+          "id": "claude-custom-local",
+          "provider": "anthropic",
+          "connectorKind": "claudeLocalStatus",
+          "displayName": "Claude Local",
+          "isEnabled": true,
+          "rateLimitSnapshotPath": "/tmp/custom-statusline-cache.json"
+        }
+      ]
+    }
+    """#
+    try Data(legacyJSON.utf8).write(to: url)
     let result = store.load(now: Date(timeIntervalSince1970: 20))
 
     #expect(result.status == .healthy)
     #expect(result.document.updatedAt == Date(timeIntervalSince1970: 20))
     #expect(result.document.accounts.contains { $0.id == "claude-oauth-default" && $0.connectorKind == .claudeOAuthUsage })
     #expect(!result.document.accounts.contains { $0.id == "claude-local-default" })
-    #expect(result.document.accounts.contains { $0.id == "claude-custom-local" && $0.connectorKind == .claudeLocalStatus })
+    #expect(result.document.accounts.contains { $0.id == "claude-custom-local" && $0.connectorKind == .claudeOAuthUsage })
 }
 
 @Test func accountConfigurationStoreMigratesRetiredGeminiDefaultToAntigravity() throws {
-    let store = AccountConfigurationStore(configurationURL: try temporaryDirectory().appending(path: "accounts.json"))
-    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 10), accounts: [
-        LocalProviderAccountConfiguration(
-            id: "gemini-code-assist-default",
-            provider: .google,
-            connectorKind: .geminiCodeAssist,
-            displayName: "Gemini",
-            authPath: "/Users/example/.gemini/oauth_creds.json",
-            commandPath: "/opt/homebrew/bin/gemini"
-        ),
-        LocalProviderAccountConfiguration(
-            id: "google-custom",
-            provider: .google,
-            connectorKind: .geminiCodeAssist,
-            displayName: "Other Google",
-            isEnabled: false
-        ),
-    ])
-
-    try store.save(document)
+    let url = try temporaryDirectory().appending(path: "accounts.json")
+    let store = AccountConfigurationStore(configurationURL: url)
+    let legacyJSON = """
+    {
+      "schemaVersion": 1,
+      "updatedAt": "1970-01-01T00:00:10Z",
+      "accounts": [
+        {
+          "id": "gemini-code-assist-default",
+          "provider": "google",
+          "connectorKind": "geminiCodeAssist",
+          "displayName": "Gemini",
+          "isEnabled": true,
+          "authPath": "/Users/example/.gemini/oauth_creds.json",
+          "commandPath": "/opt/homebrew/bin/gemini"
+        },
+        {
+          "id": "google-custom",
+          "provider": "google",
+          "connectorKind": "googleAntigravityQuota",
+          "displayName": "Other Google",
+          "isEnabled": false
+        }
+      ]
+    }
+    """
+    let legacyData = try #require(legacyJSON.data(using: .utf8))
+    try legacyData.write(to: url)
     let result = store.load(now: Date(timeIntervalSince1970: 20))
 
     let migrated = try #require(result.document.accounts.first { $0.id == "google-antigravity-default" })
     #expect(result.status == .healthy)
     #expect(result.document.updatedAt == Date(timeIntervalSince1970: 20))
     #expect(migrated.provider == .google)
-    #expect(migrated.connectorKind == .geminiCodeAssist)
+    #expect(migrated.connectorKind == .googleAntigravityQuota)
     #expect(migrated.displayName == "Antigravity")
     #expect(migrated.authPath == nil)
     #expect(migrated.commandPath == nil)
     #expect(!result.document.accounts.contains { $0.id == "gemini-code-assist-default" })
     #expect(result.document.accounts.contains { $0.id == "google-custom" && !$0.isEnabled })
+
+    let savedJSON = try String(contentsOf: url, encoding: .utf8)
+    #expect(savedJSON.contains("googleAntigravityQuota"))
+    #expect(!savedJSON.contains("geminiCodeAssist"))
+}
+
+@Test func accountConfigurationStoreNormalizesLegacyGoogleConnectorRawValue() throws {
+    let url = try temporaryDirectory().appending(path: "accounts.json")
+    let store = AccountConfigurationStore(configurationURL: url)
+    let legacyJSON = """
+    {
+      "schemaVersion": 1,
+      "updatedAt": "1970-01-01T00:00:10Z",
+      "accounts": [
+        {
+          "id": "google-antigravity-default",
+          "provider": "google",
+          "connectorKind": "geminiCodeAssist",
+          "displayName": "Antigravity",
+          "isEnabled": true
+        }
+      ]
+    }
+    """
+    let legacyData = try #require(legacyJSON.data(using: .utf8))
+    try legacyData.write(to: url)
+
+    let result = store.load(now: Date(timeIntervalSince1970: 20))
+
+    let account = try #require(result.document.accounts.first)
+    #expect(result.status == .healthy)
+    #expect(result.document.updatedAt == Date(timeIntervalSince1970: 10))
+    #expect(account.id == "google-antigravity-default")
+    #expect(account.connectorKind == .googleAntigravityQuota)
+
+    let savedJSON = try String(contentsOf: url, encoding: .utf8)
+    #expect(savedJSON.contains("googleAntigravityQuota"))
+    #expect(!savedJSON.contains("geminiCodeAssist"))
 }
 
 @Test func accountConfigurationStorePreservesCustomNameWhenMigratingRetiredGeminiDefault() throws {
@@ -228,7 +259,7 @@ import Testing
         LocalProviderAccountConfiguration(
             id: "gemini-code-assist-default",
             provider: .google,
-            connectorKind: .geminiCodeAssist,
+            connectorKind: .googleAntigravityQuota,
             displayName: "Work Google"
         ),
     ])
@@ -302,7 +333,7 @@ import Testing
     #expect(!result.document.accounts.contains { $0.id == "openai-code-default" })
 }
 
-@Test func accountConnectorFactorySkipsDisabledAndCreatesGoogleAntigravityConnector() async {
+@Test func accountConnectorFactoryCreatesLiveProviderConnectors() async {
     let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
         LocalProviderAccountConfiguration(
             id: "codex",
@@ -314,15 +345,15 @@ import Testing
         LocalProviderAccountConfiguration(
             id: "google",
             provider: .google,
-            connectorKind: .geminiCodeAssist,
+            connectorKind: .googleAntigravityQuota,
             displayName: "Antigravity"
         ),
         LocalProviderAccountConfiguration(
-            id: "claude-disabled",
+            id: "claude-local",
             provider: .anthropic,
-            connectorKind: .claudeLocalStatus,
+            connectorKind: .claudeOAuthUsage,
             displayName: "Claude",
-            isEnabled: false
+            isEnabled: true
         ),
     ])
 
@@ -332,9 +363,15 @@ import Testing
     )
     let result = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: Date(timeIntervalSince1970: 0))
 
-    #expect(connectors.count == 2)
-    #expect(Set(connectors.map(\.provider)) == [.openAI, .google])
+    #expect(connectors.count == 3)
+    #expect(Set(connectors.map(\.provider)) == [.openAI, .google, .anthropic])
     #expect(connectors.contains { $0 is GoogleAntigravityQuotaConnector })
+    #expect(connectors.contains { $0 is ClaudeOAuthUsageConnector })
+    #expect(result.reports.contains { report in
+        report.provider == .anthropic
+            && report.status == .failure
+            && report.errorMessage == "Claude is not connected. Sign in to Claude from Settings."
+    })
     #expect(result.reports.contains { report in
         report.provider == .google
             && report.status == .failure
