@@ -98,39 +98,13 @@ without printing secrets or raw provider responses:
 
 ```sh
 swift run CodexRateLimitProbe --auth ~/.code/auth_accounts.json
-swift run ClaudeLimitProbe
-swift run SnapshotStoreProbe --codex-auth ~/.code/auth_accounts.json --include-claude
+swift run SnapshotStoreProbe --codex-auth ~/.code/auth_accounts.json
 ```
 
 The Codex probe can return live percent-window quota buckets for CLI-backed
-OpenAI accounts. The retired Gemini CLI / legacy Code Assist probe has been
-removed. The Claude probe intentionally reports local auth/subscription metadata
-and local stats-cache freshness until a Claude Code status-line cache has been
-populated.
-
-To capture Claude subscription usage percentages, configure Claude Code's
-status line to call the helper in this repo. Claude Code sends the helper a JSON
-payload after session responses; the helper stores only five-hour and weekly
-used percentages plus reset timestamps under Context Panel's Application
-Support directory.
-
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "/absolute/path/to/context-panel/scripts/claude-statusline-cache.sh"
-  }
-}
-```
-
-The helper does not store auth tokens, prompts, transcript contents, emails,
-organization IDs, or raw Claude session JSON. Claude Code's non-interactive
-`claude -p` path does not appear to run the status-line hook, so Context Panel
-marks old Claude subscription readings stale instead of treating them as live.
-For Every Code-driven Claude usage, Context Panel also reads `ccusage` aggregate
-block output when available and shows a clearly marked estimated 5-hour token
-window; that estimate is useful for "am I likely to run out soon?" but is not
-Anthropic's official subscription percentage.
+OpenAI accounts. The retired Gemini CLI / legacy Code Assist probe and Claude
+status-line probe have been removed. Claude limits are refreshed through the
+Context Panel-owned Claude OAuth usage connector.
 
 For Google/Gemini, retired Gemini CLI and legacy Code Assist credential paths
 have been removed. Context Panel now uses its own Google OAuth credentials for

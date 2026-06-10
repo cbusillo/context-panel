@@ -11,13 +11,11 @@ struct ProbeConfiguration {
     let outputDirectory: URL
     let codexAccounts: [CodexAccountConfiguration]
     let includeConfiguredAccounts: Bool
-    let includeClaude: Bool
 
     static func fromArguments(_ arguments: [String]) throws -> ProbeConfiguration {
         var outputDirectory: URL?
         var codexAccounts: [CodexAccountConfiguration] = []
         var includeConfiguredAccounts = false
-        var includeClaude = false
         var iterator = arguments.dropFirst().makeIterator()
 
         while let argument = iterator.next() {
@@ -39,8 +37,6 @@ struct ProbeConfiguration {
                 codexAccounts.append(try parseCodexAccount(value))
             case "--configured-accounts":
                 includeConfiguredAccounts = true
-            case "--include-claude":
-                includeClaude = true
             case "--help", "-h":
                 printHelp()
                 Foundation.exit(0)
@@ -52,8 +48,7 @@ struct ProbeConfiguration {
         return ProbeConfiguration(
             outputDirectory: outputDirectory ?? defaultOutputDirectory(),
             codexAccounts: codexAccounts,
-            includeConfiguredAccounts: includeConfiguredAccounts,
-            includeClaude: includeClaude
+            includeConfiguredAccounts: includeConfiguredAccounts
         )
     }
 
@@ -72,7 +67,7 @@ struct ProbeConfiguration {
 
     private static func printHelp() {
         print("""
-        Usage: swift run SnapshotStoreProbe [--output /tmp/context-panel-store] [--configured-accounts] [--codex-account Label=~/.code/auth_accounts.json] [--include-claude]
+        Usage: swift run SnapshotStoreProbe [--output /tmp/context-panel-store] [--configured-accounts] [--codex-account Label=~/.code/auth_accounts.json]
 
         Refreshes selected local connectors, writes the normalized snapshot to
         the JSON snapshot store, then reloads it. The store contains normalized
@@ -122,9 +117,6 @@ struct SnapshotStoreProbe {
         var connectors: [any ProviderConnector] = []
         if !configuration.codexAccounts.isEmpty {
             connectors.append(CodexRateLimitConnector(accounts: configuration.codexAccounts))
-        }
-        if configuration.includeClaude {
-            connectors.append(ClaudeLocalStatusConnector(accounts: [ClaudeAccountConfiguration()]))
         }
         return connectors
     }

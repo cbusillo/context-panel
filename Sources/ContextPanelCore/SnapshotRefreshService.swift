@@ -407,8 +407,6 @@ public struct SnapshotRefreshService: Sendable {
         if let credentialStore {
             ClaudeAccountMigration.migrateClaudeCredentials(credentialStore)
         }
-        guard accounts.contains(where: { $0.id == ClaudeAccountMigration.oldAccountID && $0.connectorKind == .claudeLocalStatus }) else { return }
-
         let migratedDocument = ClaudeAccountMigration.migrateAccountConfiguration(
             AccountConfigurationDocument(updatedAt: now, accounts: accounts),
             now: now
@@ -435,7 +433,7 @@ private extension AccountConnectorKind {
         switch self {
         case .codexRateLimits:
             true
-        case .geminiCodeAssist, .claudeLocalStatus, .claudeOAuthUsage:
+        case .googleAntigravityQuota, .claudeOAuthUsage:
             false
         }
     }

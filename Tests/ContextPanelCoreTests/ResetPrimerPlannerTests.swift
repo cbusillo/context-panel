@@ -1139,14 +1139,14 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     try settingsStore.save(ResetPrimerSettings(
         isEnabled: true,
         delayMinutesAfterReset: 0,
-        accountPreferences: [preference(accountID: "claude-a", provider: .anthropic)]
+        accountPreferences: [preference(accountID: "google-a", provider: .google)]
     ))
     try accountStore.save(AccountConfigurationDocument(updatedAt: now, accounts: [
         LocalProviderAccountConfiguration(
-            id: "claude-a",
-            provider: .anthropic,
-            connectorKind: .claudeLocalStatus,
-            displayName: "Claude",
+            id: "google-a",
+            provider: .google,
+            connectorKind: .googleAntigravityQuota,
+            displayName: "Antigravity",
             commandPath: command.path
         ),
     ]))
@@ -1154,7 +1154,7 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
         savedAt: now,
         snapshot: UsageSnapshot(
             generatedAt: now,
-            limits: [limit(accountID: "claude-a", provider: .anthropic, resetAt: resetAt)]
+            limits: [limit(accountID: "google-a", provider: .google, resetAt: resetAt)]
         )
     ))
     let service = ResetPrimerPlanService(
@@ -1199,7 +1199,7 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
         LocalProviderAccountConfiguration(
             id: "google-antigravity-default",
             provider: .google,
-            connectorKind: .geminiCodeAssist,
+            connectorKind: .googleAntigravityQuota,
             displayName: "Antigravity",
             commandPath: command.path
         ),

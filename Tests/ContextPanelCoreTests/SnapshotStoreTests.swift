@@ -976,15 +976,22 @@ import Testing
         credentialStore: credentialStore
     )
     let savedAt = Date(timeIntervalSince1970: 300)
-    try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
-        updatedAt: savedAt,
-        accounts: [LocalProviderAccountConfiguration(
-            id: "claude-local-default",
-            provider: .anthropic,
-            connectorKind: .claudeLocalStatus,
-            displayName: "Claude"
-        )]
-    ))
+    let legacyJSON = #"""
+    {
+      "schemaVersion": 1,
+      "updatedAt": "1970-01-01T00:05:00Z",
+      "accounts": [
+        {
+          "id": "claude-local-default",
+          "provider": "anthropic",
+          "connectorKind": "claudeLocalStatus",
+          "displayName": "Claude",
+          "isEnabled": true
+        }
+      ]
+    }
+    """#
+    try Data(legacyJSON.utf8).write(to: accountURL)
 
     let accountDocument = service.loadConfiguredAccounts(now: savedAt).document
     let connectors = AccountConnectorFactory.connectors(
@@ -1018,7 +1025,7 @@ import Testing
         accounts: [LocalProviderAccountConfiguration(
             id: "gemini-code-assist-default",
             provider: .google,
-            connectorKind: .geminiCodeAssist,
+            connectorKind: .googleAntigravityQuota,
             displayName: "Gemini"
         )]
     ))
@@ -1026,7 +1033,7 @@ import Testing
     let accountDocument = service.loadConfiguredAccounts(now: savedAt).document
 
     #expect(try credentialStore.load(accountID: "google-antigravity-default") == credentials)
-    #expect(accountDocument.accounts.contains { $0.id == "google-antigravity-default" && $0.connectorKind == .geminiCodeAssist })
+    #expect(accountDocument.accounts.contains { $0.id == "google-antigravity-default" && $0.connectorKind == .googleAntigravityQuota })
     #expect(accountDocument.accounts.contains { $0.displayName == "Antigravity" })
     #expect(!accountDocument.accounts.contains { $0.id == "gemini-code-assist-default" })
 }
@@ -1051,7 +1058,7 @@ import Testing
         accounts: [LocalProviderAccountConfiguration(
             id: "gemini-code-assist-default",
             provider: .google,
-            connectorKind: .geminiCodeAssist,
+            connectorKind: .googleAntigravityQuota,
             displayName: "Gemini"
         )]
     ))

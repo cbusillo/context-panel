@@ -10,7 +10,6 @@
 		0BBD1DF433F345E62C6A26EF /* LimitProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */; };
 		170EC1421ABCDAF9C4612460 /* ClaudeOAuthUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 895A979571D5E5C14830B41D /* ClaudeOAuthUsage.swift */; };
 		198493F605C07AB87B0BDFA9 /* CapacityPool.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8862B929FE544FCB2C3D06B /* CapacityPool.swift */; };
-		1DD89F5634070B75C09BDE99 /* ClaudeLocalStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2E426A482568BBE85357D7E /* ClaudeLocalStatus.swift */; };
 		28FDF54D88C9CB4A982643A6 /* SnapshotRefreshService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45E8D3C3E45C1B6B3FACE828 /* SnapshotRefreshService.swift */; };
 		29FD4D47A21D08ABAE47E778 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 944A3154A0C2E33C5971E571 /* Assets.xcassets */; };
 		2D53BD76E94E68A54CF36F92 /* SnapshotFreshness.swift in Sources */ = {isa = PBXBuildFile; fileRef = D03C19BEA1C610711A048EB7 /* SnapshotFreshness.swift */; };
@@ -27,7 +26,6 @@
 		5873091E47623CBEB29253EF /* ContextPanelRefreshAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC712405A58ED12AA33BDC68 /* ContextPanelRefreshAgent.swift */; };
 		5A0D8445C6C8B0CB88F4D643 /* GoogleAntigravityQuota.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C29BEF2E36108729A8B4EC4 /* GoogleAntigravityQuota.swift */; };
 		66D9A9D36B46051B1C1EA722 /* ResetPrimerSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D9602BF84ECDE08C7275504 /* ResetPrimerSettings.swift */; };
-		7BA3559FC81F11DF2B9493F9 /* ClaudeStatuslineSetup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51474C30B520517CB01103A9 /* ClaudeStatuslineSetup.swift */; };
 		85EBA57F3F1633F2D6E54103 /* ContextPanelWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 07D959D621E594C0CFC2CEF5 /* ContextPanelWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		86D64E082F50479344767059 /* ContextPanelRefreshAgent.app in Embed Dependencies */ = {isa = PBXBuildFile; fileRef = 086B12021073A6F2A49850A1 /* ContextPanelRefreshAgent.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		96B17A7F4844C6A4B3AE59FA /* BackgroundRefreshSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15DC14CB07B8BA4756DAB731 /* BackgroundRefreshSettings.swift */; };
@@ -126,7 +124,6 @@
 		3FC2DAEDD38483FC3A5D4880 /* MainLimitSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainLimitSummary.swift; sourceTree = "<group>"; };
 		407B0E4C039FFF22FA8F8542 /* ContextPanelWidgetViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelWidgetViews.swift; sourceTree = "<group>"; };
 		45E8D3C3E45C1B6B3FACE828 /* SnapshotRefreshService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotRefreshService.swift; sourceTree = "<group>"; };
-		51474C30B520517CB01103A9 /* ClaudeStatuslineSetup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeStatuslineSetup.swift; sourceTree = "<group>"; };
 		5233BBC86AE8057D749F71CD /* WidgetSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSnapshot.swift; sourceTree = "<group>"; };
 		60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LimitProbe.swift; sourceTree = "<group>"; };
 		7BD985B0213AB5987D3B3170 /* FastModeForecast.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FastModeForecast.swift; sourceTree = "<group>"; };
@@ -147,7 +144,6 @@
 		D03C19BEA1C610711A048EB7 /* SnapshotFreshness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotFreshness.swift; sourceTree = "<group>"; };
 		D459054C90410A784EBD308B /* UsageLimit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageLimit.swift; sourceTree = "<group>"; };
 		E195C6E906DA9C0BF082622F /* ContextPanelWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelWidget.swift; sourceTree = "<group>"; };
-		E2E426A482568BBE85357D7E /* ClaudeLocalStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeLocalStatus.swift; sourceTree = "<group>"; };
 		F09182E1FD96DAEEC38F3909 /* libContextPanelCore.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libContextPanelCore.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		F3B93DAA06AE42D89A02C5EE /* PromptCacheTelemetryMirrorService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptCacheTelemetryMirrorService.swift; sourceTree = "<group>"; };
 		FB0E4D0FF6DD744B87D215B9 /* OAuthPKCE.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OAuthPKCE.swift; sourceTree = "<group>"; };
@@ -201,9 +197,7 @@
 				8FB4BEA57ACE8B84CAE71E75 /* BurnRateEstimator.swift */,
 				B8862B929FE544FCB2C3D06B /* CapacityPool.swift */,
 				8BBC1080557704B2EF023A7B /* ClaudeAccountMigration.swift */,
-				E2E426A482568BBE85357D7E /* ClaudeLocalStatus.swift */,
 				895A979571D5E5C14830B41D /* ClaudeOAuthUsage.swift */,
-				51474C30B520517CB01103A9 /* ClaudeStatuslineSetup.swift */,
 				9FA8FE4CC9BE058D8F46FBA2 /* CodexRateLimits.swift */,
 				9909074D7E80648BC2A01C51 /* ContextPanelDateFormatting.swift */,
 				23E9C71457F4E1F101132FCF /* ContextPanelLocations.swift */,
@@ -460,9 +454,7 @@
 				44DFF437D4762A4D0D2DBAA8 /* BurnRateEstimator.swift in Sources */,
 				198493F605C07AB87B0BDFA9 /* CapacityPool.swift in Sources */,
 				4724F8C68962DB03D346B973 /* ClaudeAccountMigration.swift in Sources */,
-				1DD89F5634070B75C09BDE99 /* ClaudeLocalStatus.swift in Sources */,
 				170EC1421ABCDAF9C4612460 /* ClaudeOAuthUsage.swift in Sources */,
-				7BA3559FC81F11DF2B9493F9 /* ClaudeStatuslineSetup.swift in Sources */,
 				47414B1A42BE473BF1644296 /* CodexRateLimits.swift in Sources */,
 				B7244849824A8A58FDFBD181 /* ContextPanelDateFormatting.swift in Sources */,
 				C1DF7B59257060AC0A6AF44D /* ContextPanelLocations.swift in Sources */,

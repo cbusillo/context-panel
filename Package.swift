@@ -29,14 +29,6 @@ let package = Package(
             targets: ["CodexRateLimitProbe"]
         ),
         .executable(
-            name: "ClaudeLimitProbe",
-            targets: ["ClaudeLimitProbe"]
-        ),
-        .executable(
-            name: "ClaudeStatuslineSetup",
-            targets: ["ClaudeStatuslineSetup"]
-        ),
-        .executable(
             name: "SnapshotStoreProbe",
             targets: ["SnapshotStoreProbe"]
         ),
@@ -69,14 +61,6 @@ let package = Package(
         ),
         .executableTarget(
             name: "CodexRateLimitProbe",
-            dependencies: ["ContextPanelCore"]
-        ),
-        .executableTarget(
-            name: "ClaudeLimitProbe",
-            dependencies: ["ContextPanelCore"]
-        ),
-        .executableTarget(
-            name: "ClaudeStatuslineSetup",
             dependencies: ["ContextPanelCore"]
         ),
         .executableTarget(

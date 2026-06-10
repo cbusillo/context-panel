@@ -2,9 +2,31 @@ import Foundation
 
 public enum AccountConnectorKind: String, Codable, Equatable, Sendable {
     case codexRateLimits
-    case geminiCodeAssist
-    case claudeLocalStatus
+    case googleAntigravityQuota
     case claudeOAuthUsage
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        switch rawValue {
+        case Self.codexRateLimits.rawValue:
+            self = .codexRateLimits
+        case "geminiCodeAssist", Self.googleAntigravityQuota.rawValue:
+            self = .googleAntigravityQuota
+        case "claudeLocalStatus", Self.claudeOAuthUsage.rawValue:
+            self = .claudeOAuthUsage
+        default:
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Unknown account connector kind: \(rawValue)"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 }
 
 public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiable, Sendable {
@@ -15,9 +37,6 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
     public var isEnabled: Bool
     public var authPath: String?
     public var commandPath: String?
-    public var statsPath: String?
-    public var rateLimitSnapshotPath: String?
-    public var usageBlocksPath: String?
 
     public init(
         id: String,
@@ -26,10 +45,7 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
         displayName: String,
         isEnabled: Bool = true,
         authPath: String? = nil,
-        commandPath: String? = nil,
-        statsPath: String? = nil,
-        rateLimitSnapshotPath: String? = nil,
-        usageBlocksPath: String? = nil
+        commandPath: String? = nil
     ) {
         self.id = id
         self.provider = provider
@@ -38,19 +54,14 @@ public struct LocalProviderAccountConfiguration: Codable, Equatable, Identifiabl
         self.isEnabled = isEnabled
         self.authPath = authPath
         self.commandPath = commandPath
-        self.statsPath = statsPath
-        self.rateLimitSnapshotPath = rateLimitSnapshotPath
-        self.usageBlocksPath = usageBlocksPath
     }
 
     public var effectiveAuthPath: String? {
         switch connectorKind {
         case .codexRateLimits:
             return authPath
-        case .geminiCodeAssist:
+        case .googleAntigravityQuota:
             return nil
-        case .claudeLocalStatus:
-            return rateLimitSnapshotPath ?? ContextPanelLocations.claudeStatuslineCacheURL().path
         case .claudeOAuthUsage:
             return nil
         }
@@ -63,11 +74,8 @@ public extension LocalProviderAccountConfiguration {
         case .codexRateLimits:
             guard let authPath else { return [] }
             return Self.localAccountIDs(provider: provider, path: authPath)
-        case .geminiCodeAssist:
+        case .googleAntigravityQuota:
             return [ConnectorRedactor.localAccountID(provider: provider, stableID: id)]
-        case .claudeLocalStatus:
-            guard let authPath = effectiveAuthPath else { return [] }
-            return Self.localAccountIDs(provider: provider, path: authPath)
         case .claudeOAuthUsage:
             return [ConnectorRedactor.localAccountID(provider: provider, stableID: id)]
         }
@@ -133,15 +141,16 @@ public struct AccountConfigurationStore: Sendable {
         }
 
         do {
+            let data = try Data(contentsOf: loadURL)
             let document = try Self.makeDecoder().decode(
                 AccountConfigurationDocument.self,
-                from: try Data(contentsOf: loadURL)
+                from: data
             )
             guard document.schemaVersion == 1 else {
                 throw SnapshotStoreError.unsupportedSchema(version: document.schemaVersion)
             }
             let migratedDocument = Self.migratedDocument(document, now: now)
-            if loadURL != configurationURL || migratedDocument != document {
+            if loadURL != configurationURL || migratedDocument != document || Self.containsLegacyConnectorRawValue(data) {
                 try? save(migratedDocument)
             }
             return AccountConfigurationLoadResult(document: migratedDocument, status: .healthy)
@@ -188,7 +197,7 @@ public struct AccountConfigurationStore: Sendable {
             LocalProviderAccountConfiguration(
                 id: "google-antigravity-default",
                 provider: .google,
-                connectorKind: .geminiCodeAssist,
+                connectorKind: .googleAntigravityQuota,
                 displayName: "Antigravity",
                 isEnabled: true
             ),
@@ -196,25 +205,16 @@ public struct AccountConfigurationStore: Sendable {
     }
 
     private static func migratedDocument(_ document: AccountConfigurationDocument, now: Date) -> AccountConfigurationDocument {
-        var document = document
-        var changed = false
+        let originalDocument = document
+        var document = ClaudeAccountMigration.migrateAccountConfiguration(document, now: now)
+        var changed = document != originalDocument
         document.accounts = document.accounts.map { account in
-            if account.id == "claude-local-default", account.connectorKind == .claudeLocalStatus {
-                changed = true
-                return LocalProviderAccountConfiguration(
-                    id: "claude-oauth-default",
-                    provider: .anthropic,
-                    connectorKind: .claudeOAuthUsage,
-                    displayName: account.displayName.isEmpty ? "Claude" : account.displayName,
-                    isEnabled: account.isEnabled
-                )
-            }
-            if account.id == GoogleAccountMigration.oldAccountID, account.connectorKind == .geminiCodeAssist {
+            if account.id == GoogleAccountMigration.oldAccountID, account.connectorKind == .googleAntigravityQuota {
                 changed = true
                 return LocalProviderAccountConfiguration(
                     id: GoogleAccountMigration.newAccountID,
                     provider: .google,
-                    connectorKind: .geminiCodeAssist,
+                    connectorKind: .googleAntigravityQuota,
                     displayName: GoogleAccountMigration.migratedDisplayName(from: account.displayName),
                     isEnabled: account.isEnabled
                 )
@@ -238,6 +238,11 @@ public struct AccountConfigurationStore: Sendable {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return decoder
+    }
+
+    private static func containsLegacyConnectorRawValue(_ data: Data) -> Bool {
+        guard let contents = String(data: data, encoding: .utf8) else { return false }
+        return contents.contains("\"geminiCodeAssist\"") || contents.contains("\"claudeLocalStatus\"")
     }
 }
 
@@ -267,7 +272,7 @@ public enum AccountConnectorFactory {
                     )],
                     fileLoader: authFileLoader
                 )
-            case .geminiCodeAssist:
+            case .googleAntigravityQuota:
                 let effectiveCredentialStore: any ProviderCredentialStoring = credentialStore ?? ProviderCredentialStore()
                 return GoogleAntigravityQuotaConnector(
                     accounts: [GoogleAntigravityAccountConfiguration(
@@ -276,13 +281,6 @@ public enum AccountConnectorFactory {
                     )],
                     credentialStore: effectiveCredentialStore
                 )
-            case .claudeLocalStatus:
-                return ClaudeLocalStatusConnector(accounts: [ClaudeAccountConfiguration(
-                    accountName: account.displayName,
-                    statsPath: nil,
-                    rateLimitSnapshotPath: account.rateLimitSnapshotPath,
-                    usageBlocksPath: account.usageBlocksPath
-                )])
             case .claudeOAuthUsage:
                 let effectiveCredentialStore: any ProviderCredentialStoring = credentialStore ?? ProviderCredentialStore()
                 return ClaudeOAuthUsageConnector(
@@ -290,21 +288,10 @@ public enum AccountConnectorFactory {
                         accountID: account.id,
                         accountName: account.displayName
                     )],
-                    credentialStore: effectiveCredentialStore,
-                    resetHintSnapshot: claudeResetHintSnapshot()
+                    credentialStore: effectiveCredentialStore
                 )
             }
         }
-    }
-
-    private static func claudeResetHintSnapshot() -> ClaudeSubscriptionRateLimitSnapshot? {
-        for url in ContextPanelLocations.claudeStatuslineCacheURLs() {
-            guard let data = try? Data(contentsOf: url) else { continue }
-            if let snapshot = try? ClaudeSubscriptionRateLimitCacheParser.snapshot(from: data), !snapshot.windows.isEmpty {
-                return snapshot
-            }
-        }
-        return nil
     }
 
     private static func makeAuthFileLoader(
