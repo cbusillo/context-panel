@@ -1,0 +1,118 @@
+---
+name: TestFlight Beta Distribution
+
+"on":
+  workflow_call:
+    inputs:
+      version:
+        description: App Store marketing version.
+        required: true
+        type: string
+      build_number:
+        description: Uploaded CFBundleVersion/build number.
+        required: true
+        type: string
+      beta_groups:
+        description: Optional comma-separated TestFlight beta group names. Internal groups are included by default.
+        required: false
+        type: string
+      include_internal_beta_groups:
+        description: Include internal TestFlight beta groups.
+        required: false
+        default: true
+        type: boolean
+      dry_run:
+        description: Validate build and selected beta groups without assigning the build.
+        required: false
+        default: false
+        type: boolean
+  workflow_dispatch:
+    inputs:
+      version:
+        description: App Store marketing version.
+        required: true
+        type: string
+      build_number:
+        description: Uploaded CFBundleVersion/build number.
+        required: true
+        type: string
+      beta_groups:
+        description: Optional comma-separated TestFlight beta group names. Internal groups are included by default.
+        required: false
+        type: string
+      include_internal_beta_groups:
+        description: Include internal TestFlight beta groups.
+        required: true
+        default: true
+        type: boolean
+      dry_run:
+        description: Validate build and selected beta groups without assigning the build.
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testflight-beta-${{ inputs.version }}-${{ inputs.build_number }}
+  cancel-in-progress: false
+
+jobs:
+  distribute:
+    name: Distribute TestFlight Beta
+    runs-on: ubuntu-latest
+
+    env:
+      APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      APP_STORE_CONNECT_API_KEY_P8_BASE64: >-
+        ${{ secrets.APP_STORE_CONNECT_API_KEY_P8_BASE64 }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Python Dependencies
+        run: |
+          python3 -m venv .build/testflight-beta-venv
+          .build/testflight-beta-venv/bin/python -m pip install --upgrade pip
+          .build/testflight-beta-venv/bin/python -m pip install cryptography
+
+      - name: Distribute Beta
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_BUILD_NUMBER: ${{ inputs.build_number }}
+          INPUT_BETA_GROUPS: ${{ inputs.beta_groups }}
+          INPUT_INCLUDE_INTERNAL_BETA_GROUPS: ${{ inputs.include_internal_beta_groups }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          args=(
+            --version "${INPUT_VERSION}"
+            --build-number "${INPUT_BUILD_NUMBER}"
+          )
+          if [[ -n "${INPUT_BETA_GROUPS}" ]]; then
+            args+=(--beta-group "${INPUT_BETA_GROUPS}")
+          fi
+          if [[ "${INPUT_INCLUDE_INTERNAL_BETA_GROUPS}" != "true" ]]; then
+            args+=(--skip-internal-beta-groups)
+          fi
+          if [[ "${INPUT_DRY_RUN}" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+          .build/testflight-beta-venv/bin/python \
+            scripts/distribute-testflight-beta.py \
+            "${args[@]}"
+          {
+            echo "### TestFlight Beta Distribution"
+            echo
+            echo "- Version: ${INPUT_VERSION}"
+            echo "- Build number: ${INPUT_BUILD_NUMBER}"
+            echo "- Commit: ${GITHUB_SHA}"
+            echo "- Beta groups: ${INPUT_BETA_GROUPS:-internal groups}"
+            echo "- Include internal groups: ${INPUT_INCLUDE_INTERNAL_BETA_GROUPS}"
+            echo "- Dry run: ${INPUT_DRY_RUN}"
+            echo "- Result: succeeded"
+          } >>"${GITHUB_STEP_SUMMARY}"

@@ -23,7 +23,7 @@ name: Ship
         default: true
         type: boolean
       app_store_channel:
-        description: App Store Connect action.
+        description: App Store Connect build-upload action.
         required: true
         default: upload
         type: choice
@@ -31,27 +31,19 @@ name: Ship
           - upload
           - export-only
           - skip
-      submit_app_review:
-        description: Submit the uploaded App Store build for review.
+      testflight_beta:
+        description: Distribute the uploaded build to TestFlight beta groups.
         required: true
-        default: false
+        default: true
         type: boolean
-      whats_new:
-        description: Required only when submit_app_review is true.
+      testflight_beta_groups:
+        description: Optional comma-separated TestFlight beta group names. Internal groups are included by default.
         required: false
         type: string
-      copy_from_version:
-        description: Existing App Store version to copy metadata from.
-        required: false
-        type: string
-      remove_active_review_version:
-        description: Active App Store version to cancel before submission.
-        required: false
-        type: string
-      dry_run_review:
-        description: Prepare review metadata without submitting.
+      include_internal_testflight_groups:
+        description: Include internal TestFlight beta groups.
         required: true
-        default: false
+        default: true
         type: boolean
 
 permissions:
@@ -83,20 +75,16 @@ jobs:
           fi
           github_release_selected="${{ inputs.github_release }}"
           app_store_channel="${{ inputs.app_store_channel }}"
-          submit_review_selected="${{ inputs.submit_app_review }}"
+          testflight_beta_selected="${{ inputs.testflight_beta }}"
           if [[ "${github_release_selected}" != "true" ]]; then
             if [[ "${app_store_channel}" == "skip" ]]; then
               echo "select at least one release channel" >&2
               exit 1
             fi
           fi
-          if [[ "${submit_review_selected}" == "true" ]]; then
+          if [[ "${testflight_beta_selected}" == "true" ]]; then
             if [[ "${app_store_channel}" != "upload" ]]; then
-              echo "submit_app_review requires app_store_channel=upload" >&2
-              exit 1
-            fi
-            if [[ -z "${{ inputs.whats_new }}" ]]; then
-              echo "whats_new is required when submit_app_review is true" >&2
+              echo "testflight_beta requires app_store_channel=upload" >&2
               exit 1
             fi
           fi
@@ -114,8 +102,9 @@ jobs:
             echo "- GitHub Release: ${{ inputs.github_release }}"
             echo "- GitHub notarization: ${{ inputs.notarize_github_release }}"
             echo "- App Store channel: ${{ inputs.app_store_channel }}"
-            echo "- Submit App Review: ${{ inputs.submit_app_review }}"
-            echo "- Dry-run review: ${{ inputs.dry_run_review }}"
+            echo "- TestFlight beta: ${{ inputs.testflight_beta }}"
+            echo "- TestFlight groups: ${{ inputs.testflight_beta_groups }}"
+            echo "- Include internal TestFlight groups: ${{ inputs.include_internal_testflight_groups }}"
           } >>"${GITHUB_STEP_SUMMARY}"
 
   github-release:
@@ -131,7 +120,7 @@ jobs:
     secrets: inherit
 
   app-store-upload:
-    name: App Store Connect Upload Channel
+    name: App Store Connect Build Upload Channel
     needs: validate
     if: ${{ inputs.app_store_channel != 'skip' }}
     uses: ./.github/workflows/app-store-connect-upload.yml
@@ -141,21 +130,19 @@ jobs:
       upload: ${{ inputs.app_store_channel == 'upload' }}
     secrets: inherit
 
-  app-store-review:
-    name: App Store Review Submission
+  testflight-beta:
+    name: TestFlight Beta Distribution Channel
     needs:
       - validate
       - app-store-upload
-    if: ${{ inputs.submit_app_review }}
-    uses: ./.github/workflows/submit-app-store-review.yml
+    if: ${{ inputs.testflight_beta }}
+    uses: ./.github/workflows/testflight-beta-distribution.yml
     with:
       version: ${{ inputs.version }}
       build_number: ${{ needs.app-store-upload.outputs.build_number }}
-      whats_new: ${{ inputs.whats_new }}
-      copy_from_version: ${{ inputs.copy_from_version }}
-      remove_active_review_version: ${{ inputs.remove_active_review_version }}
-      dry_run: ${{ inputs.dry_run_review }}
-      cancel_review_only: false
+      beta_groups: ${{ inputs.testflight_beta_groups }}
+      include_internal_beta_groups: ${{ inputs.include_internal_testflight_groups }}
+      dry_run: false
     secrets: inherit
 
   summary:
@@ -164,7 +151,7 @@ jobs:
       - validate
       - github-release
       - app-store-upload
-      - app-store-review
+      - testflight-beta
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
@@ -175,10 +162,10 @@ jobs:
           validate_result="${{ needs.validate.result }}"
           github_release_result="${{ needs.github-release.result }}"
           app_store_upload_result="${{ needs.app-store-upload.result }}"
-          app_store_review_result="${{ needs.app-store-review.result }}"
+          testflight_beta_result="${{ needs.testflight-beta.result }}"
           github_release_selected="${{ inputs.github_release }}"
           app_store_channel="${{ inputs.app_store_channel }}"
-          app_store_review_selected="${{ inputs.submit_app_review }}"
+          testflight_beta_selected="${{ inputs.testflight_beta }}"
           {
             echo "### Ship Summary"
             echo
@@ -187,10 +174,10 @@ jobs:
             echo "- Commit: ${GITHUB_SHA}"
             echo "- Validation: ${validate_result}"
             echo "- GitHub Release: ${github_release_result}"
-            echo "- App Store upload: ${app_store_upload_result}"
-            echo "- App Store review: ${app_store_review_result}"
+            echo "- App Store Connect build upload: ${app_store_upload_result}"
+            echo "- TestFlight beta distribution: ${testflight_beta_result}"
             echo
-            echo "Lower-level workflows remain available for recovery paths."
+            echo "Use Submit App Store Review separately after TestFlight validation."
           } >>"${GITHUB_STEP_SUMMARY}"
 
           failed="false"
@@ -207,8 +194,8 @@ jobs:
               failed="true"
             fi
           fi
-          if [[ "${app_store_review_selected}" == "true" ]]; then
-            if [[ "${app_store_review_result}" != "success" ]]; then
+          if [[ "${testflight_beta_selected}" == "true" ]]; then
+            if [[ "${testflight_beta_result}" != "success" ]]; then
               failed="true"
             fi
           fi

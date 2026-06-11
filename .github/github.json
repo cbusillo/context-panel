@@ -39,7 +39,8 @@
     "CodeQL",
     "Ship",
     "Release",
-    "App Store Connect Upload",
+    "App Store Connect Build Upload",
+    "TestFlight Beta Distribution",
     "Submit App Store Review"
   ],
   "branchProtection": {
