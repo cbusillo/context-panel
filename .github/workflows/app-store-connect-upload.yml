@@ -172,7 +172,7 @@ jobs:
           if [[ "${{ inputs.upload }}" != "true" ]]; then
             args+=(--export-only)
           fi
-          scripts/upload-testflight-macos-app.sh "${args[@]}"
+          scripts/upload-app-store-connect-macos-app.sh "${args[@]}"
           {
             echo "### App Store Connect Upload"
             echo
@@ -190,6 +190,6 @@ jobs:
         with:
           name: app-store-connect-${{ inputs.version }}-${{ steps.build.outputs.build_number }}
           path: |
-            .build/testflight/UploadOptions.plist
-            .build/testflight/upload
+            .build/app-store-connect/UploadOptions.plist
+            .build/app-store-connect/upload
           if-no-files-found: ignore

@@ -134,7 +134,7 @@ jobs:
     name: App Store Connect Upload Channel
     needs: validate
     if: ${{ inputs.app_store_channel != 'skip' }}
-    uses: ./.github/workflows/testflight.yml
+    uses: ./.github/workflows/app-store-connect-upload.yml
     with:
       version: ${{ inputs.version }}
       build_number: ${{ needs.validate.outputs.build_number }}

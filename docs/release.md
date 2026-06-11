@@ -130,9 +130,10 @@ provisioning profiles for all three bundle identifiers:
 - `com.shinycomputers.contextpanel.widget`
 - `com.shinycomputers.contextpanel.refresh-agent`
 
-The workflow calls `scripts/upload-testflight-macos-app.sh`, which generates the
-Xcode project, installs the supplied provisioning profiles, archives with manual
-`Apple Distribution` signing, and exports with `method = app-store-connect` and
+The workflow calls `scripts/upload-app-store-connect-macos-app.sh`, which
+generates the Xcode project, installs the supplied provisioning profiles,
+archives with manual `Apple Distribution` signing, and exports with
+`method = app-store-connect` and
 `installerSigningCertificate = 3rd Party Mac Developer Installer`. The script
 requires an explicit marketing version and rejects the closed `1.0` train before
 archiving. Do not set `testFlightInternalTestingOnly`; internal-only builds are
@@ -143,6 +144,13 @@ uploading it.
 The upload summary and artifact names include the App Store marketing version,
 build number, target SHA, upload/export mode, and the fact that TestFlight beta
 distribution was not requested.
+
+TestFlight beta distribution is intentionally separate from App Store Connect
+upload. If Context Panel later needs automated beta distribution, add a dedicated
+TestFlight distribution workflow that assigns an already uploaded and processed
+build to tester groups. Do not make App Store review submission depend on
+TestFlight distribution; both should consume the uploaded App Store Connect build
+as sibling stages.
 
 After the uploaded build is processed, run the `Submit App Store Review` workflow
 with the App Store marketing version, uploaded build number, and App Store
