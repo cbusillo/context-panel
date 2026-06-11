@@ -420,7 +420,7 @@ struct SettingsPane: View {
                     .onMove(perform: model.moveWidgetMainLimits)
                 }
                 .listStyle(.inset)
-                .frame(height: 184)
+                .frame(height: 248)
             }
 
             Section("Reset Primer") {

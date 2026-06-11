@@ -86,10 +86,7 @@ public struct WidgetDisplayPreferences: Codable, Equatable, Sendable {
             }
         }
 
-        let summaryBackedPreferences = visiblePreferences.filter { summaryByID[$0.id] != nil }
-        let placeholderPreferences = visiblePreferences.filter { summaryByID[$0.id] == nil }
-
-        return Array((summaryBackedPreferences + placeholderPreferences).prefix(maximumCount)).map { preference in
+        return Array(visiblePreferences.prefix(maximumCount)).map { preference in
             WidgetMainLimitLane(preference: preference, summary: summaryByID[preference.id])
         }
     }
