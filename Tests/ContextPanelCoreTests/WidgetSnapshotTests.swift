@@ -265,6 +265,98 @@ import Testing
     #expect(widget.widgetProviderSummaryText(provider: .openAI) == "not connected")
 }
 
+@Test func widgetSnapshotUsesSetupCopyWhenOnlyAuxiliaryLimitsAreAvailable() {
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let stored = StoredUsageSnapshot(
+        savedAt: savedAt,
+        snapshot: UsageSnapshot(generatedAt: savedAt, limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "openai-code-default",
+                configuredAccountID: "openai-code-default",
+                accountName: "Every Code",
+                label: "Spark daily",
+                windowLabel: "Daily",
+                used: 12,
+                limit: 100
+            ),
+        ]),
+        reports: [
+            StoredProviderReport(
+                provider: .openAI,
+                accountID: "openai-code-default",
+                configuredAccountID: "openai-code-default",
+                accountName: "Every Code",
+                generatedAt: savedAt,
+                status: .failure,
+                errorMessage: "The file could not be opened."
+            ),
+        ]
+    )
+
+    let widget = WidgetSnapshot.fromStore(SnapshotStoreLoadResult(snapshot: stored, status: .unknown), now: savedAt)
+
+    #expect(widget.mainLimitSummaries.isEmpty)
+    #expect(widget.limits.isEmpty == false)
+    #expect(widget.needsProviderConnection)
+    #expect(widget.shouldShowMainLimitEmptyRow)
+    #expect(widget.message == "Connect an account to show limits.")
+    #expect(widget.tightestHeadline == "Not connected")
+    #expect(widget.widgetProblemText == "Setup needed")
+    #expect(widget.widgetDeepLinkURL == ContextPanelWidgetURL.reconnect)
+    #expect(widget.widgetProviderSummaryText(provider: .openAI) == "not connected")
+}
+
+@Test func widgetSnapshotKeepsMainLimitsVisibleWhenAnotherProviderFails() {
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let stored = StoredUsageSnapshot(
+        savedAt: savedAt,
+        snapshot: UsageSnapshot(generatedAt: savedAt, limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "openai-working-account",
+                configuredAccountID: "openai-code-default",
+                accountName: "Working OpenAI",
+                label: "Codex weekly",
+                windowLabel: "Weekly",
+                used: 20,
+                limit: 100
+            ),
+        ]),
+        reports: [
+            StoredProviderReport(
+                provider: .openAI,
+                accountID: "openai-working-account",
+                configuredAccountID: "openai-code-default",
+                accountName: "Working OpenAI",
+                generatedAt: savedAt,
+                status: .healthy,
+                errorMessage: nil
+            ),
+            StoredProviderReport(
+                provider: .anthropic,
+                accountID: "claude-oauth-default",
+                configuredAccountID: "claude-oauth-default",
+                accountName: "Claude",
+                generatedAt: savedAt,
+                status: .failure,
+                errorMessage: "Claude is not connected."
+            ),
+        ]
+    )
+
+    let widget = WidgetSnapshot.fromStore(SnapshotStoreLoadResult(snapshot: stored, status: .healthy), now: savedAt)
+
+    #expect(widget.mainLimitSummaries.map(\.provider) == [.openAI])
+    #expect(widget.needsProviderConnection == false)
+    #expect(widget.shouldShowMainLimitEmptyRow == false)
+    #expect(widget.message == "You're good to keep working.")
+    #expect(widget.tightestHeadline == "80% left")
+    #expect(widget.widgetDeepLinkURL == ContextPanelWidgetURL.overview)
+    #expect(widget.widgetProviderSummaryText(provider: .openAI) == "1w 80% left")
+    #expect(widget.widgetProviderSummaryText(provider: .anthropic) == "setup needed")
+}
+
 @Test func widgetSnapshotCarriesPromptCacheTelemetry() {
     let savedAt = Date(timeIntervalSince1970: 100)
     let stored = StoredUsageSnapshot(

@@ -149,7 +149,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     }
 
     public var needsProviderConnection: Bool {
-        limits.isEmpty && reports.contains { $0.status == .failure }
+        usageSnapshot.mainLimitSummaries.isEmpty && reports.contains { $0.status == .failure }
     }
 
     public var promptCacheSummary: PromptCacheSummary {
@@ -176,7 +176,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     private static func message(state: WidgetSnapshotState, stored: StoredUsageSnapshot) -> String {
         switch state {
         case .ready:
-            if stored.snapshot.limits.isEmpty, stored.reports.contains(where: { $0.status == .failure }) {
+            if stored.snapshot.mainLimitSummaries.isEmpty, stored.reports.contains(where: { $0.status == .failure }) {
                 return "Connect an account to show limits."
             }
             let limitedCount = stored.snapshot.mainLimitSummaries.filter { $0.status == .limited }.count
