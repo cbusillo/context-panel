@@ -1,5 +1,5 @@
 ---
-name: App Store Connect Upload
+name: App Store Connect Build Upload
 
 "on":
   workflow_call:
@@ -174,13 +174,13 @@ jobs:
           fi
           scripts/upload-app-store-connect-macos-app.sh "${args[@]}"
           {
-            echo "### App Store Connect Upload"
+            echo "### App Store Connect Build Upload"
             echo
             echo "- Version: ${{ inputs.version }}"
             echo "- Build number: ${{ steps.build.outputs.build_number }}"
             echo "- Commit: ${GITHUB_SHA}"
             echo "- Mode: ${{ inputs.upload == true && 'upload' || 'export-only' }}"
-            echo "- TestFlight beta distribution: not requested by this workflow"
+            echo "- TestFlight beta distribution: handled by the TestFlight Beta Distribution workflow"
             echo "- Result: succeeded"
           } >>"${GITHUB_STEP_SUMMARY}"
 

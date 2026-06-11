@@ -14,6 +14,31 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
         self.assertIn("build_number: ${{ needs.validate.outputs.build_number }}", workflow)
 
+    def test_ship_distributes_testflight_beta_without_app_review(self):
+        workflow = self.read(".github/workflows/ship.yml")
+
+        self.assertIn("testflight_beta:", workflow)
+        self.assertIn("uses: ./.github/workflows/testflight-beta-distribution.yml", workflow)
+        self.assertIn("Use Submit App Store Review separately", workflow)
+        self.assertNotIn("submit_app_review", workflow)
+        self.assertNotIn("uses: ./.github/workflows/submit-app-store-review.yml", workflow)
+
+    def test_app_store_upload_name_does_not_claim_testflight_distribution(self):
+        workflow = self.read(".github/workflows/app-store-connect-upload.yml")
+
+        self.assertIn("name: App Store Connect Build Upload", workflow)
+        self.assertIn("TestFlight beta distribution: handled by the TestFlight Beta Distribution workflow", workflow)
+        self.assertNotIn("TestFlight beta distribution: not requested by this workflow", workflow)
+
+    def test_testflight_beta_distribution_workflow_uses_distribution_script(self):
+        workflow = self.read(".github/workflows/testflight-beta-distribution.yml")
+        script = self.read("scripts/distribute-testflight-beta.py")
+
+        self.assertIn("name: TestFlight Beta Distribution", workflow)
+        self.assertIn("scripts/distribute-testflight-beta.py", workflow)
+        self.assertIn("/betaGroups/{group_id}/relationships/builds", script)
+        self.assertIn("processingState", script)
+
     def test_ship_concurrency_does_not_block_reusable_release_workflow(self):
         ship_workflow = self.read(".github/workflows/ship.yml")
         release_workflow = self.read(".github/workflows/release.yml")
