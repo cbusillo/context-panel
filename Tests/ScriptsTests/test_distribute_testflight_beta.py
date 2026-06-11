@@ -53,6 +53,8 @@ class FakeASCClient:
                 "included": included,
             }
         if method == "GET" and path == "/apps/app-1/betaGroups":
+            if params and "sort" in params:
+                raise AssertionError("beta group listing does not accept sort")
             return {
                 "data": [
                     {

@@ -256,7 +256,6 @@ def beta_groups(client: ASCClient, app_id: str) -> list[dict[str, Any]]:
         f"/apps/{app_id}/betaGroups",
         {
             "fields[betaGroups]": "name,isInternalGroup,hasAccessToAllBuilds",
-            "sort": "name",
         },
         limit=100,
     )
