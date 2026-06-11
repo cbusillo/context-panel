@@ -302,15 +302,18 @@ public struct SnapshotRefreshService: Sendable {
     private let stores: SnapshotRefreshStores
     private let bookmarkStore: SecureFileBookmarkStore?
     private let credentialStore: (any ProviderCredentialStoring)?
-    private let promptCacheTelemetryMirror: @Sendable () -> Void
+    private let promptCacheTelemetryMirror: @Sendable (SecureFileBookmarkStore?, [URL]) -> Void
     private let promptCacheTelemetryReader: @Sendable (Date) -> [PromptCacheObservation]
     public init(
         accountStore: AccountConfigurationStore,
         stores: SnapshotRefreshStores,
         bookmarkStore: SecureFileBookmarkStore? = nil,
         credentialStore: (any ProviderCredentialStoring)? = nil,
-        promptCacheTelemetryMirror: @escaping @Sendable () -> Void = {
-            _ = try? PromptCacheTelemetryMirrorService.mirror()
+        promptCacheTelemetryMirror: @escaping @Sendable (SecureFileBookmarkStore?, [URL]) -> Void = { bookmarkStore, sourceDirectories in
+            _ = try? PromptCacheTelemetryMirrorService.mirror(
+                bookmarkStore: bookmarkStore,
+                sourceDirectories: sourceDirectories
+            )
         },
         promptCacheTelemetryReader: @escaping @Sendable (Date) -> [PromptCacheObservation] = { now in
             PromptCacheTelemetryReader.everyCodeUsageObservations(now: now)
@@ -348,8 +351,37 @@ public struct SnapshotRefreshService: Sendable {
     }
 
     public func promptCacheObservations(now: Date = Date()) -> [PromptCacheObservation] {
-        promptCacheTelemetryMirror()
+        promptCacheTelemetryMirror(bookmarkStore, promptCacheTelemetrySourceDirectories(now: now))
         return promptCacheTelemetryReader(now)
+    }
+
+    public func promptCacheTelemetrySourceDirectories(now: Date = Date()) -> [URL] {
+        let accounts = accountStore.load(now: now).document.accounts
+        var sources = accounts.compactMap { account -> URL? in
+            guard account.isEnabled, account.connectorKind == .codexRateLimits else { return nil }
+            return Self.promptCacheTelemetryDirectory(for: account)
+        }
+        if sources.isEmpty {
+            sources = ContextPanelLocations.everyCodeUsageDirectories()
+        }
+        return deduplicatedDirectories(sources)
+    }
+
+    private static func promptCacheTelemetryDirectory(for account: LocalProviderAccountConfiguration) -> URL? {
+        guard let authPath = account.effectiveAuthPath else { return nil }
+        let expanded = NSString(string: authPath).expandingTildeInPath
+        let authDirectory = URL(fileURLWithPath: expanded).deletingLastPathComponent()
+        let name = authDirectory.lastPathComponent
+        guard name == ".code" || name == ".codex" else { return nil }
+        return authDirectory.appending(path: "usage", directoryHint: .isDirectory)
+    }
+
+    private func deduplicatedDirectories(_ directories: [URL]) -> [URL] {
+        directories.reduce(into: [URL]()) { result, directory in
+            let path = ContextPanelLocations.normalizedPath(directory.path)
+            guard !result.contains(where: { ContextPanelLocations.normalizedPath($0.path) == path }) else { return }
+            result.append(directory)
+        }
     }
 
     public func importConfiguredAuthFiles(now: Date = Date()) {

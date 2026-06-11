@@ -402,6 +402,35 @@ import Testing
     #expect(!FileManager.default.fileExists(atPath: deletedTarget.path))
 }
 
+@Test func promptCacheMirrorServiceUsesBookmarkedUsageDirectory() throws {
+    let root = try promptCacheTemporaryDirectory()
+    let source = root.appending(path: "usage", directoryHint: .isDirectory)
+    let destination = root.appending(path: "mirror", directoryHint: .isDirectory)
+    let bookmarkURL = root.appending(path: "bookmarks.json")
+    let bookmarkStore = SecureFileBookmarkStore(storeURL: bookmarkURL)
+    try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+    let sourceFile = source.appending(path: "usage.json")
+    try promptCachePayload(
+        lastUpdated: "2026-06-04T17:47:50.196967Z",
+        cachedInputTokens: 90
+    ).write(to: sourceFile, atomically: true, encoding: .utf8)
+    try bookmarkStore.createAndStoreBookmark(for: source, path: source.path)
+
+    let result = try PromptCacheTelemetryMirrorService.mirror(
+        bookmarkStore: bookmarkStore,
+        sourceDirectories: [source],
+        destination: destination
+    )
+
+    let target = ContextPanelLocations.promptCacheMirrorTargetURL(
+        destination: destination,
+        sourceDirectory: source,
+        fileURL: sourceFile
+    )
+    #expect(result.copied == 1)
+    #expect(FileManager.default.fileExists(atPath: target.path))
+}
+
 @Test func promptCacheMirrorServiceRemovesLegacyFlatMirrorFiles() throws {
     let root = try promptCacheTemporaryDirectory()
     let source = root.appending(path: "usage", directoryHint: .isDirectory)

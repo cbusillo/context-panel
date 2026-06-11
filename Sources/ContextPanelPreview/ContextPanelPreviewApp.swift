@@ -18,22 +18,46 @@ struct ContextPanelPreviewApp: App {
                 .frame(minWidth: 1080, idealWidth: 1080, minHeight: 720, idealHeight: 720)
                 .onOpenURL { url in
                     appDelegate.model.handleOpenURL(url)
-                    appDelegate.presentMainWindowWhenAvailable()
+                    appDelegate.presentWindow(for: url)
                 }
-                .handlesExternalEvents(preferring: ["overview", "reconnect"], allowing: ["*"])
+                .handlesExternalEvents(preferring: ["overview", "reconnect"], allowing: ["overview", "reconnect"])
         }
         .defaultSize(width: 1080, height: 720)
         .handlesExternalEvents(matching: ["overview", "reconnect"])
 
         Settings {
-            SettingsPane(appModel: appDelegate.model)
+            SettingsPane(appModel: appDelegate.model, navigation: appDelegate.settingsNavigation)
         }
+    }
+}
+
+struct SettingsNavigationRequest: Equatable {
+    enum Destination: Equatable {
+        case cacheStats
+    }
+
+    let id = UUID()
+    let destination: Destination
+}
+
+@MainActor
+final class SettingsNavigationModel: ObservableObject {
+    @Published private(set) var request: SettingsNavigationRequest?
+
+    func focus(_ destination: SettingsNavigationRequest.Destination) {
+        request = SettingsNavigationRequest(destination: destination)
+    }
+
+    func clear() {
+        request = nil
     }
 }
 
 @MainActor
 final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
     let model = ContextPanelAppModel()
+    let settingsNavigation = SettingsNavigationModel()
+    private var settingsWindow: NSWindow?
     private let backgroundRefreshSettingsStore = BackgroundRefreshSettingsStore(
         settingsURL: ContextPanelLocations.backgroundRefreshSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
     )
@@ -92,6 +116,13 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            model.handleOpenURL(url)
+            presentWindow(for: url)
+        }
+    }
+
     func presentMainWindowWhenAvailable(retriesRemaining: Int = 40) {
         if let window = Self.mainWindow() {
             presentMainWindow(window)
@@ -109,6 +140,39 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
     }
 
+    private func presentSettingsWindow(destination: SettingsNavigationRequest.Destination? = nil) {
+        NSApp.activate(ignoringOtherApps: true)
+
+        if let destination {
+            settingsNavigation.focus(destination)
+        } else {
+            settingsNavigation.clear()
+        }
+
+        if NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) ||
+            NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil) {
+            return
+        }
+
+        if let window = settingsWindow {
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
+
+        let hostingController = NSHostingController(
+            rootView: SettingsPane(appModel: model, navigation: settingsNavigation)
+                .frame(minWidth: 520, minHeight: 560)
+        )
+        let window = NSWindow(contentViewController: hostingController)
+        window.title = "Context Panel Settings"
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        window.setContentSize(NSSize(width: 560, height: 620))
+        window.isReleasedWhenClosed = false
+        window.center()
+        settingsWindow = window
+        window.makeKeyAndOrderFront(nil)
+    }
+
     static func mainWindow() -> NSWindow? {
         NSApp.windows.first { window in
             window.title == "Context Panel" && window.isVisible && !window.isMiniaturized
@@ -117,6 +181,22 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
         } ?? NSApp.windows.first { window in
             window.title == "Context Panel"
         }
+    }
+
+    func presentWindow(for url: URL) {
+        if url.host?.lowercased() == "settings" {
+            presentSettingsWindow(destination: settingsDestination(for: url))
+        } else {
+            presentMainWindowWhenAvailable()
+        }
+    }
+
+    private func settingsDestination(for url: URL) -> SettingsNavigationRequest.Destination? {
+        let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
+        if path == "cache-stats" {
+            return .cacheStats
+        }
+        return nil
     }
 }
 
@@ -156,10 +236,15 @@ struct AppRoot: View {
 
 struct SettingsPane: View {
     @ObservedObject var appModel: ContextPanelAppModel
+    @ObservedObject var navigation: SettingsNavigationModel
     @StateObject private var model = SettingsPaneModel()
 
     var body: some View {
         Form {
+            if navigation.request?.destination == .cacheStats {
+                cacheStatsSetupSection
+            }
+
             Section("Accounts") {
                 ForEach(model.accounts) { account in
                     VStack(alignment: .leading, spacing: 4) {
@@ -230,6 +315,27 @@ struct SettingsPane: View {
                             .font(.system(size: 11))
                             .foregroundStyle(CPTheme.secondaryText)
                             .lineLimit(2)
+                        if let promptCacheText = model.promptCacheUsageDetailText(for: account) {
+                            HStack(spacing: 8) {
+                                Text(promptCacheText)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(CPTheme.secondaryText)
+                                    .lineLimit(2)
+                                Spacer(minLength: 8)
+                                if model.hasSavedPromptCacheUsageAuthorization(account) {
+                                    Text("Usage saved")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundStyle(CPTheme.statusColor(.healthy))
+                                    Button("Change") { authorizePromptCacheUsage(for: account) }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+                                } else if model.needsPromptCacheUsageAuthorization(account) {
+                                    Button("Enable Cache Stats") { authorizePromptCacheUsage(for: account) }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+                                }
+                            }
+                        }
                         if let refreshSummary = model.refreshSummary(for: account, storedSnapshot: appModel.storedSnapshot) {
                             Text(refreshSummary.text)
                                 .font(.system(size: 11, weight: .medium))
@@ -388,6 +494,32 @@ struct SettingsPane: View {
         }
     }
 
+    private var cacheStatsSetupSection: some View {
+        Section("Cache Stats") {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(model.promptCacheSetupText)
+                    .font(.system(size: 12))
+                    .foregroundStyle(CPTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let account = model.promptCacheSetupAccount {
+                    Button(model.hasSavedPromptCacheUsageAuthorization(account) ? "Change Usage Folder" : "Enable Cache Stats") {
+                        authorizePromptCacheUsage(for: account)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private func authorizePromptCacheUsage(for account: LocalProviderAccountConfiguration) {
+        model.authorizePromptCacheUsage(for: account) {
+            refreshAfterAuthorization()
+        }
+    }
+
     private func reconnectOAuth(for account: LocalProviderAccountConfiguration) {
         switch account.connectorKind {
         case .claudeOAuthUsage:
@@ -537,6 +669,8 @@ final class SettingsPaneModel: ObservableObject {
     @Published private(set) var authorizedPaths: Set<String> = []
     @Published private(set) var missingAuthPaths: Set<String> = []
     @Published private(set) var legacyAuthPaths: Set<String> = []
+    @Published private(set) var authorizedPromptCacheUsagePaths: Set<String> = []
+    @Published private(set) var missingPromptCacheUsagePaths: Set<String> = []
     @Published var isClaudeOAuthCodeSheetPresented = false
     @Published private(set) var isCompletingClaudeOAuth = false
     @Published var isGoogleOAuthCodeSheetPresented = false
@@ -547,6 +681,7 @@ final class SettingsPaneModel: ObservableObject {
     private let bookmarkStore = SecureFileBookmarkStore(storeURL: ContextPanelLocations.bookmarkStoreURL())
     private let credentialStore = ProviderCredentialStore()
     private var recentlyVerifiedAuthPaths: Set<String> = []
+    private var recentlyVerifiedPromptCacheUsagePaths: Set<String> = []
     private var pendingClaudeOAuth: PendingClaudeOAuth?
     private var pendingGoogleOAuth: PendingGoogleAntigravityOAuth?
     private var googleOAuthCallbackServer: GoogleOAuthCallbackServer?
@@ -579,6 +714,26 @@ final class SettingsPaneModel: ObservableObject {
 
     var configurationPath: String {
         store.configurationURL.path
+    }
+
+    var promptCacheSetupAccount: LocalProviderAccountConfiguration? {
+        accounts.first { account in
+            account.isEnabled &&
+                account.connectorKind.supportsPromptCacheTelemetry &&
+                needsPromptCacheUsageAuthorization(account)
+        } ?? accounts.first { account in
+            account.isEnabled && account.connectorKind.supportsPromptCacheTelemetry
+        }
+    }
+
+    var promptCacheSetupText: String {
+        guard let account = promptCacheSetupAccount else {
+            return "Connect an OpenAI CLI account first, then enable cache stats from this panel."
+        }
+        if hasSavedPromptCacheUsageAuthorization(account) {
+            return "Cache stats are enabled for \(account.displayName). Change the usage folder if the widget cannot read cache hit rates."
+        }
+        return "Enable cache stats for \(account.displayName) by selecting the usage folder that stores Every Code prompt-cache JSON files."
     }
 
     var backgroundRefreshStatusText: String {
@@ -618,6 +773,20 @@ final class SettingsPaneModel: ObservableObject {
         })
         loadedLegacyPaths.subtract(recentlyVerifiedAuthPaths)
         legacyAuthPaths = loadedLegacyPaths
+
+        let usagePaths = promptCacheUsagePaths(for: accounts)
+        var loadedUsagePaths = Set(usagePaths.filter { path in
+            bookmarkStore.hasCurrentBookmark(for: path) && bookmarkStore.canResolveBookmark(for: path)
+        })
+        loadedUsagePaths.formUnion(recentlyVerifiedPromptCacheUsagePaths)
+        authorizedPromptCacheUsagePaths = loadedUsagePaths
+
+        var loadedMissingUsagePaths = Set(usagePaths.filter { path in
+            !bookmarkStore.hasCurrentBookmark(for: path) || !bookmarkStore.canResolveBookmark(for: path)
+        })
+        loadedMissingUsagePaths.subtract(recentlyVerifiedPromptCacheUsagePaths)
+        missingPromptCacheUsagePaths = loadedMissingUsagePaths
+
         widgetPreferences = widgetPreferenceStores.load()
         backgroundRefreshSettings = backgroundRefreshSettingsStore.load()
         var primerSettings = resetPrimerSettingsStore.load()
@@ -765,6 +934,17 @@ final class SettingsPaneModel: ObservableObject {
         return authorizedPaths.contains(expanded)
     }
 
+    func needsPromptCacheUsageAuthorization(_ account: LocalProviderAccountConfiguration) -> Bool {
+        guard account.isEnabled, account.connectorKind.supportsPromptCacheTelemetry else { return false }
+        return !promptCacheUsagePaths(for: [account]).allSatisfy { authorizedPromptCacheUsagePaths.contains($0) }
+    }
+
+    func hasSavedPromptCacheUsageAuthorization(_ account: LocalProviderAccountConfiguration) -> Bool {
+        guard account.connectorKind.supportsPromptCacheTelemetry else { return false }
+        let paths = promptCacheUsagePaths(for: [account])
+        return !paths.isEmpty && paths.allSatisfy { authorizedPromptCacheUsagePaths.contains($0) }
+    }
+
     func hasLegacyAuthorization(_ account: LocalProviderAccountConfiguration) -> Bool {
         guard account.isEnabled else { return false }
         guard let authPath = account.effectiveAuthPath else { return false }
@@ -775,6 +955,10 @@ final class SettingsPaneModel: ObservableObject {
 
     func canAuthorizeAuthFile(for account: LocalProviderAccountConfiguration) -> Bool {
         account.connectorKind.requiresSecurityScopedAuthFile
+    }
+
+    func canAuthorizePromptCacheUsage(for account: LocalProviderAccountConfiguration) -> Bool {
+        account.connectorKind.supportsPromptCacheTelemetry
     }
 
     func canManageOAuth(for account: LocalProviderAccountConfiguration) -> Bool {
@@ -1165,9 +1349,59 @@ final class SettingsPaneModel: ObservableObject {
         }
     }
 
+    func authorizePromptCacheUsage(for account: LocalProviderAccountConfiguration, onVerified: @escaping () -> Void = {}) {
+        guard account.connectorKind.supportsPromptCacheTelemetry else { return }
+        let usageDirectory = promptCacheUsageDirectory(for: account)
+
+        let panel = NSOpenPanel()
+        panel.message = "Select the folder that contains Every Code usage JSON files for prompt-cache hit rates. This is usually ~/.code/usage."
+        panel.prompt = "Select Folder"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = usageDirectory.deletingLastPathComponent()
+        panel.nameFieldStringValue = usageDirectory.lastPathComponent
+
+        panel.begin { [weak self] response in
+            guard let self, response == .OK, let url = panel.url else { return }
+            let selectedPath = ContextPanelLocations.normalizedPath(url.path)
+            let expectedPath = ContextPanelLocations.normalizedPath(usageDirectory.path)
+            guard selectedPath == expectedPath else {
+                errorMessage = "Select \(ConnectorRedactor.redactedPath(expectedPath)) for \(account.displayName) cache stats."
+                return
+            }
+            guard Self.directoryLooksLikePromptCacheUsage(url) else {
+                errorMessage = "That folder does not contain Every Code usage JSON yet. Select the usage folder that contains files like usage snapshots."
+                return
+            }
+            do {
+                try bookmarkStore.createAndStoreBookmark(for: url, path: expectedPath)
+                guard bookmarkStore.canResolveBookmark(for: expectedPath) else {
+                    errorMessage = "Usage access could not be verified for \(account.displayName)."
+                    missingPromptCacheUsagePaths.insert(expectedPath)
+                    authorizedPromptCacheUsagePaths.remove(expectedPath)
+                    return
+                }
+                authorizedPromptCacheUsagePaths.insert(expectedPath)
+                missingPromptCacheUsagePaths.remove(expectedPath)
+                recentlyVerifiedPromptCacheUsagePaths.insert(expectedPath)
+                errorMessage = nil
+                onVerified()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
     func detailText(for account: LocalProviderAccountConfiguration) -> String {
         let path = account.effectiveAuthPath ?? detailSourceLabel(for: account)
         return "\(setupInstruction(for: account)) · \(ConnectorRedactor.redactedPath(path))"
+    }
+
+    func promptCacheUsageDetailText(for account: LocalProviderAccountConfiguration) -> String? {
+        guard account.connectorKind.supportsPromptCacheTelemetry else { return nil }
+        let path = promptCacheUsageDirectory(for: account).path
+        return "Cache stats source · \(ConnectorRedactor.redactedPath(path))"
     }
 
     private func detailSourceLabel(for account: LocalProviderAccountConfiguration) -> String {
@@ -1195,6 +1429,37 @@ final class SettingsPaneModel: ObservableObject {
             return "Connect Google to read Antigravity model capacity"
         case .claudeOAuthUsage:
             return "Connect Claude with OAuth for automatic background refresh"
+        }
+    }
+
+    private func promptCacheUsagePaths(for accounts: [LocalProviderAccountConfiguration]) -> [String] {
+        Array(Set(accounts.compactMap { account -> String? in
+            guard account.isEnabled, account.connectorKind.supportsPromptCacheTelemetry else { return nil }
+            return ContextPanelLocations.normalizedPath(promptCacheUsageDirectory(for: account).path)
+        })).sorted()
+    }
+
+    private func promptCacheUsageDirectory(for account: LocalProviderAccountConfiguration) -> URL {
+        if let authPath = account.effectiveAuthPath {
+            let expanded = NSString(string: authPath).expandingTildeInPath
+            let authDirectory = URL(fileURLWithPath: expanded).deletingLastPathComponent()
+            if authDirectory.lastPathComponent == ".code" || authDirectory.lastPathComponent == ".codex" {
+                return authDirectory.appending(path: "usage", directoryHint: .isDirectory)
+            }
+        }
+        return ContextPanelLocations.everyCodeUsageDirectory()
+    }
+
+    private static func directoryLooksLikePromptCacheUsage(_ url: URL, fileManager: FileManager = .default) -> Bool {
+        guard let urls = try? fileManager.contentsOfDirectory(
+            at: url,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else { return false }
+        return urls.contains { candidate in
+            guard candidate.pathExtension == "json" else { return false }
+            let resourceValues = try? candidate.resourceValues(forKeys: [.isRegularFileKey])
+            return resourceValues?.isRegularFile == true
         }
     }
 
@@ -1423,6 +1688,15 @@ private final class GoogleOAuthCallbackServer: @unchecked Sendable {
 
 private extension AccountConnectorKind {
     var requiresSecurityScopedAuthFile: Bool {
+        switch self {
+        case .codexRateLimits:
+            return true
+        case .googleAntigravityQuota, .claudeOAuthUsage:
+            return false
+        }
+    }
+
+    var supportsPromptCacheTelemetry: Bool {
         switch self {
         case .codexRateLimits:
             return true
@@ -3042,6 +3316,8 @@ final class ContextPanelAppModel: ObservableObject {
 
     func handleOpenURL(_ url: URL) {
         switch url.host?.lowercased() {
+        case "settings":
+            break
         case "reconnect":
             navigationRequest = .reconnect
         case "overview":

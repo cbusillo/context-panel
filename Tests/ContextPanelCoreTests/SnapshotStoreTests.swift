@@ -968,7 +968,7 @@ import Testing
     let service = SnapshotRefreshService(
         accountStore: AccountConfigurationStore(configurationURL: accountURL),
         stores: SnapshotRefreshStores(primary: primary),
-        promptCacheTelemetryMirror: {
+        promptCacheTelemetryMirror: { _, _ in
             callOrder.record("mirror")
         },
         promptCacheTelemetryReader: { _ in
@@ -982,6 +982,59 @@ import Testing
     #expect(callOrder.values == ["mirror", "read"])
 }
 
+@Test func snapshotRefreshServicePassesBookmarkStoreToPromptCacheMirror() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let bookmarkStore = SecureFileBookmarkStore(storeURL: try temporaryDirectory().appending(path: "bookmarks.json"))
+    let callOrder = SnapshotRefreshCallOrderRecorder()
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary),
+        bookmarkStore: bookmarkStore,
+        promptCacheTelemetryMirror: { store, _ in
+            callOrder.record(store == nil ? "missing" : "present")
+        },
+        promptCacheTelemetryReader: { _ in [] }
+    )
+
+    _ = service.promptCacheObservations(now: Date(timeIntervalSince1970: 300))
+
+    #expect(callOrder.values == ["present"])
+}
+
+@Test func snapshotRefreshServiceMirrorsPromptCacheFromConfiguredCodexUsageDirectories() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let customRoot = try temporaryDirectory().appending(path: "custom-home", directoryHint: .isDirectory)
+    let codeRoot = customRoot.appending(path: ".code", directoryHint: .isDirectory)
+    let customAuth = codeRoot.appending(path: "auth_accounts.json")
+    try FileManager.default.createDirectory(at: codeRoot, withIntermediateDirectories: true)
+    try Data().write(to: customAuth)
+    let store = AccountConfigurationStore(configurationURL: accountURL)
+    try store.save(AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 100), accounts: [
+        LocalProviderAccountConfiguration(
+            id: "custom-code",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "Custom Code",
+            authPath: customAuth.path
+        ),
+    ]))
+    let recorder = SnapshotRefreshSourceRecorder()
+    let service = SnapshotRefreshService(
+        accountStore: store,
+        stores: SnapshotRefreshStores(primary: primary),
+        promptCacheTelemetryMirror: { _, sources in
+            recorder.record(sources.map(\.path))
+        },
+        promptCacheTelemetryReader: { _ in [] }
+    )
+
+    _ = service.promptCacheObservations(now: Date(timeIntervalSince1970: 300))
+
+    #expect(recorder.values == [codeRoot.appending(path: "usage", directoryHint: .isDirectory).path])
+}
+
 @Test func snapshotRefreshServiceMirrorsPromptCacheTelemetryDuringFullRefresh() async throws {
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
@@ -989,7 +1042,7 @@ import Testing
     let service = SnapshotRefreshService(
         accountStore: AccountConfigurationStore(configurationURL: accountURL),
         stores: SnapshotRefreshStores(primary: primary),
-        promptCacheTelemetryMirror: {
+        promptCacheTelemetryMirror: { _, _ in
             callOrder.record("mirror")
         },
         promptCacheTelemetryReader: { _ in
@@ -1497,6 +1550,21 @@ private final class SnapshotRefreshCallOrderRecorder: @unchecked Sendable {
     func record(_ value: String) {
         lock.withLock {
             storedValues.append(value)
+        }
+    }
+}
+
+private final class SnapshotRefreshSourceRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValues: [String] = []
+
+    var values: [String] {
+        lock.withLock { storedValues }
+    }
+
+    func record(_ values: [String]) {
+        lock.withLock {
+            storedValues = values
         }
     }
 }

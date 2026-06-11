@@ -34,6 +34,11 @@ public struct SecureFileBookmarkStore: Sendable {
         return SecureFileBookmark.canRead(bookmarkData: bookmark.data, relativeTo: bookmark.relativeURL)
     }
 
+    public func canResolveBookmark(for path: String) -> Bool {
+        guard let bookmark = bookmark(for: path) else { return false }
+        return SecureFileBookmark.canResolve(bookmarkData: bookmark.data, relativeTo: bookmark.relativeURL)
+    }
+
     public func canReadLegacyAppScopedBookmark(for path: String) -> Bool {
         guard let all = loadAll(),
               let value = all[path],
@@ -45,6 +50,15 @@ public struct SecureFileBookmarkStore: Sendable {
     public func createAndStoreBookmark(for fileURL: URL, path: String) throws {
         let data = try SecureFileBookmark.create(for: fileURL)
         try store(bookmarkData: data, for: path)
+    }
+
+    public func withResolvedURL<T>(for path: String, _ body: (URL) throws -> T) throws -> T? {
+        guard let bookmark = bookmark(for: path) else { return nil }
+        return try SecureFileBookmark.withResolvedURL(
+            bookmarkData: bookmark.data,
+            relativeTo: bookmark.relativeURL,
+            body
+        )
     }
 
     public func readData(for path: String) throws -> Data? {
@@ -129,6 +143,27 @@ public enum SecureFileBookmark {
     }
 
     public static func read(bookmarkData: Data, relativeTo relativeURL: URL? = nil) throws -> ReadResult {
+        try withResolvedURLResult(bookmarkData: bookmarkData, relativeTo: relativeURL) { url, isStale in
+            let data = try Data(contentsOf: url)
+            return ReadResult(data: data, resolvedURL: url, isStale: isStale)
+        }
+    }
+
+    public static func withResolvedURL<T>(
+        bookmarkData: Data,
+        relativeTo relativeURL: URL? = nil,
+        _ body: (URL) throws -> T
+    ) throws -> T {
+        try withResolvedURLResult(bookmarkData: bookmarkData, relativeTo: relativeURL) { url, _ in
+            try body(url)
+        }
+    }
+
+    private static func withResolvedURLResult<T>(
+        bookmarkData: Data,
+        relativeTo relativeURL: URL? = nil,
+        _ body: (URL, Bool) throws -> T
+    ) throws -> T {
         var isStale = false
         let url = try URL(
             resolvingBookmarkData: bookmarkData,
@@ -140,14 +175,23 @@ public enum SecureFileBookmark {
             throw CocoaError(.fileReadNoPermission)
         }
         defer { url.stopAccessingSecurityScopedResource() }
-        let data = try Data(contentsOf: url)
-        return ReadResult(data: data, resolvedURL: url, isStale: isStale)
+        return try body(url, isStale)
     }
 
     public static func canRead(bookmarkData: Data, relativeTo relativeURL: URL? = nil) -> Bool {
         do {
             _ = try read(bookmarkData: bookmarkData, relativeTo: relativeURL)
             return true
+        } catch {
+            return false
+        }
+    }
+
+    public static func canResolve(bookmarkData: Data, relativeTo relativeURL: URL? = nil) -> Bool {
+        do {
+            return try withResolvedURL(bookmarkData: bookmarkData, relativeTo: relativeURL) { url in
+                FileManager.default.fileExists(atPath: url.path)
+            }
         } catch {
             return false
         }
