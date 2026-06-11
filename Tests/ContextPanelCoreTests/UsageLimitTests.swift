@@ -927,8 +927,18 @@ import Testing
         "openai:weekly",
         "anthropic:weekly",
         "anthropic:fiveHour",
-        "google:availability",
         "google:weekly",
+        "google:fiveHour",
+    ])
+
+    let mediumWidgetLanes = WidgetDisplayPreferences.defaultPreferences.visibleMainLimitLanes(
+        from: snapshot.mainLimitSummaries,
+        maximumCount: 3
+    )
+    #expect(mediumWidgetLanes.map(\.id) == [
+        "openai:weekly",
+        "google:weekly",
+        "google:fiveHour",
     ])
 }
 

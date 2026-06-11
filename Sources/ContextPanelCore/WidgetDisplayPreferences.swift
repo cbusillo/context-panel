@@ -69,6 +69,8 @@ public struct WidgetDisplayPreferences: Codable, Equatable, Sendable {
     }
 
     public func visibleMainLimitLanes(from summaries: [MainLimitSummary], maximumCount: Int = 4) -> [WidgetMainLimitLane] {
+        guard maximumCount > 0 else { return [] }
+
         let summaryByID = Dictionary(uniqueKeysWithValues: summaries.map { ($0.id, $0) })
         let visiblePreferences = mainLimits.filter(\.isVisible)
 
@@ -86,7 +88,28 @@ public struct WidgetDisplayPreferences: Codable, Equatable, Sendable {
             }
         }
 
-        return Array(visiblePreferences.prefix(maximumCount)).map { preference in
+        let selectedPreferences: [WidgetMainLimitPreference]
+        if visiblePreferences.count <= maximumCount {
+            selectedPreferences = visiblePreferences
+        } else {
+            let livePreferenceIDs = Set(
+                visiblePreferences
+                    .filter { summaryByID[$0.id] != nil }
+                    .prefix(maximumCount)
+                    .map(\.id)
+            )
+            let placeholderSlots = maximumCount - livePreferenceIDs.count
+            let placeholderPreferenceIDs = Set(
+                visiblePreferences
+                    .filter { !livePreferenceIDs.contains($0.id) }
+                    .prefix(placeholderSlots)
+                    .map(\.id)
+            )
+            let selectedIDs = livePreferenceIDs.union(placeholderPreferenceIDs)
+            selectedPreferences = visiblePreferences.filter { selectedIDs.contains($0.id) }
+        }
+
+        return selectedPreferences.map { preference in
             WidgetMainLimitLane(preference: preference, summary: summaryByID[preference.id])
         }
     }
