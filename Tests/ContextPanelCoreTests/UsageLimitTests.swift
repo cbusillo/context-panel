@@ -825,22 +825,50 @@ import Testing
 
     #expect(lanes.map(\.id) == [
         "openai:weekly",
-        "anthropic:fiveHour",
-        "google:daily",
-        "openai:fiveHour",
         "anthropic:weekly",
+        "anthropic:fiveHour",
         "google:availability",
         "google:weekly",
         "google:fiveHour",
+        "google:daily",
+        "openai:fiveHour",
     ])
     #expect(lanes[0].summary?.id == "openai:weekly")
-    #expect(lanes[1].summary?.id == "anthropic:fiveHour")
-    #expect(lanes[2].summary?.id == "google:daily")
-    #expect(lanes[3].summary?.id == "openai:fiveHour")
+    #expect(lanes[1].summary == nil)
+    #expect(lanes[2].summary?.id == "anthropic:fiveHour")
+    #expect(lanes[3].summary == nil)
     #expect(lanes[4].summary == nil)
     #expect(lanes[5].summary == nil)
-    #expect(lanes[6].summary == nil)
-    #expect(lanes[7].summary == nil)
+    #expect(lanes[6].summary?.id == "google:daily")
+    #expect(lanes[7].summary?.id == "openai:fiveHour")
+}
+
+@Test func widgetDisplayPreferencesPreserveSettingsOrderForGooglePlaceholders() {
+    let snapshot = UsageSnapshot(
+        generatedAt: Date(),
+        limits: [
+            UsageLimit(
+                provider: .google,
+                accountID: "google",
+                accountName: "Google",
+                label: "Gemini compute 5-hour",
+                windowLabel: "5-hour",
+                unit: .percent,
+                used: 15,
+                limit: 100
+            ),
+        ]
+    )
+
+    let preferences = WidgetDisplayPreferences(mainLimits: [
+        WidgetMainLimitPreference(provider: .google, window: .weekly, isVisible: true, sortOrder: 0),
+        WidgetMainLimitPreference(provider: .google, window: .fiveHour, isVisible: true, sortOrder: 1),
+    ])
+    let lanes = preferences.visibleMainLimitLanes(from: snapshot.mainLimitSummaries, maximumCount: 2)
+
+    #expect(lanes.map(\.id) == ["google:weekly", "google:fiveHour"])
+    #expect(lanes[0].summary == nil)
+    #expect(lanes[1].summary?.id == "google:fiveHour")
 }
 
 @Test func widgetDisplayPreferencesShowsGeminiWeeklyAndFiveHourLanesByDefault() {
@@ -877,30 +905,30 @@ import Testing
 
     #expect(snapshot.mainLimitSummaries.map(\.id) == ["google:fiveHour", "google:weekly"])
     #expect(lanes.map(\.id) == [
-        "google:weekly",
-        "google:fiveHour",
         "openai:weekly",
         "anthropic:weekly",
         "anthropic:fiveHour",
         "google:availability",
+        "google:weekly",
+        "google:fiveHour",
     ])
-    #expect(lanes[0].summary?.id == "google:weekly")
-    #expect(lanes[1].summary?.id == "google:fiveHour")
+    #expect(lanes[0].summary == nil)
+    #expect(lanes[1].summary == nil)
     #expect(lanes[2].summary == nil)
     #expect(lanes[3].summary == nil)
-    #expect(lanes[4].summary == nil)
-    #expect(lanes[5].summary == nil)
+    #expect(lanes[4].summary?.id == "google:weekly")
+    #expect(lanes[5].summary?.id == "google:fiveHour")
 
     let largeWidgetLanes = WidgetDisplayPreferences.defaultPreferences.visibleMainLimitLanes(
         from: snapshot.mainLimitSummaries,
         maximumCount: 5
     )
     #expect(largeWidgetLanes.map(\.id) == [
-        "google:weekly",
-        "google:fiveHour",
         "openai:weekly",
         "anthropic:weekly",
         "anthropic:fiveHour",
+        "google:availability",
+        "google:weekly",
     ])
 }
 
