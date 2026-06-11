@@ -4,10 +4,10 @@ set -euo pipefail
 scheme="ContextPanel"
 configuration="Release"
 team_id="${APPLE_TEAM_ID:-MM5YXC7T6E}"
-archive_path=".build/testflight/ContextPanel.xcarchive"
-derived_data_path=".build/testflight/xcode-derived"
-export_path=".build/testflight/upload"
-export_options_path=".build/testflight/UploadOptions.plist"
+archive_path=".build/app-store-connect/ContextPanel.xcarchive"
+derived_data_path=".build/app-store-connect/xcode-derived"
+export_path=".build/app-store-connect/upload"
+export_options_path=".build/app-store-connect/UploadOptions.plist"
 app_profile="${MACOS_APP_STORE_APP_PROVISIONING_PROFILE:-.build/provisioning-appstore/ContextPanel.provisionprofile}"
 widget_profile="${MACOS_APP_STORE_WIDGET_PROVISIONING_PROFILE:-.build/provisioning-appstore/ContextPanelWidgetExtension.provisionprofile}"
 refresh_agent_profile="${MACOS_APP_STORE_REFRESH_AGENT_PROVISIONING_PROFILE:-.build/provisioning-appstore/ContextPanelRefreshAgent.provisionprofile}"
@@ -21,10 +21,10 @@ upload="true"
 
 usage() {
 	cat <<'USAGE'
-Usage: scripts/upload-testflight-macos-app.sh [options]
+Usage: scripts/upload-app-store-connect-macos-app.sh [options]
 
 Archives Context Panel for the Mac App Store and exports or uploads the signed
-package to App Store Connect/TestFlight.
+package to App Store Connect.
 
 Options:
   --build-number VALUE                 Override CURRENT_PROJECT_VERSION.

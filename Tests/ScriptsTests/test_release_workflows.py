@@ -32,7 +32,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('CURRENT_PROJECT_VERSION="$build_number"', package_script)
 
     def test_app_store_export_preserves_archived_build_number(self):
-        upload_script = self.read("scripts/upload-testflight-macos-app.sh")
+        upload_script = self.read("scripts/upload-app-store-connect-macos-app.sh")
 
         self.assertNotIn("manageAppVersionAndBuildNumber", upload_script)
 
