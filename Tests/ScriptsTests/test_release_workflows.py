@@ -46,7 +46,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("embeds debug Google OAuth config", script)
         self.assertIn("redact_build_output", script)
         self.assertIn("<redacted>", script)
+        self.assertIn("xcconfig_literal_value", script)
+        self.assertIn("embeds a quoted Google OAuth client id", script)
         self.assertNotIn('CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET="${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET:-}"', script)
+        self.assertNotIn("shell_escape_xcconfig_value", script)
 
     def test_runtime_baseline_local_env_file_is_ignored_but_example_is_tracked(self):
         gitignore = self.read(".gitignore")
