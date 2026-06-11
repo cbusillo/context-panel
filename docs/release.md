@@ -184,9 +184,20 @@ with the App Store marketing version, uploaded build number, and App Store
 release notes. The workflow calls `scripts/submit-app-store-review.py`, which
 creates or reuses the Mac App Store version, attaches the validated build,
 copies localization and review-contact metadata from an existing version, updates
-`What's New`, and submits the review submission. Use `dry_run: true` to create
-or update the version and review-submission item without pressing the API submit
-step.
+`What's New`, and submits the review submission. Use `dry_run: true` to validate
+the metadata source, uploaded build, blocked-version recovery path, and target
+version path without creating, updating, or submitting App Store review objects.
+
+Preferred operator flow:
+
+1. Validate and dogfood the build through TestFlight first.
+2. Run `Submit App Store Review` with `dry_run: true` using the exact marketing
+   version, build number, and release notes intended for review.
+3. If the dry run reports that an older App Store version blocks creating the
+   target version, rerun the dry run with `remove_active_review_version` set to
+   that blocking version.
+4. After the dry run succeeds, rerun the same inputs with `dry_run: false` to
+   submit review.
 
 Cancel-only recovery is available through `Submit App Store Review` by setting
 `cancel_review_only: true` and `remove_active_review_version` to the version
@@ -194,6 +205,11 @@ whose active review should be withdrawn. That path exits after cancellation and
 cannot submit a replacement build as a side effect, so it does not require a
 build number or release notes. Use `dry_run: true` first to verify the target
 review/version.
+
+When submitting a replacement version, `remove_active_review_version` is not
+cancel-only. It allows the submit script to remove or reuse an existing blocked
+App Store version, then continue creating the target version and submitting the
+new build after the dry-run path has validated that transition.
 
 For local operator use, the same script accepts an API key path or the existing
 App Store Connect environment variables:

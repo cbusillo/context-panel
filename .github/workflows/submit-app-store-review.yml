@@ -22,11 +22,12 @@ name: Submit App Store Review
         type: string
       remove_active_review_version:
         description: >-
-          Existing App Store version to remove from active review first.
+          Existing App Store version to remove/reuse first when App Store
+          Connect blocks creating the target version.
         required: false
         type: string
       dry_run:
-        description: Prepare the version and review item without submitting.
+        description: Validate metadata, build, and review path without submitting.
         required: false
         default: false
         type: boolean
@@ -55,12 +56,13 @@ name: Submit App Store Review
         type: string
       remove_active_review_version:
         description: >-
-          Existing App Store version to remove from active review first.
+          Existing App Store version to remove/reuse first when App Store
+          Connect blocks creating the target version.
         required: false
         type: string
       dry_run:
         description: >-
-          Prepare the version and review item without submitting. With
+          Validate metadata, build, and review path without submitting. With
           remove_active_review_version, only validates metadata/build and the
           removal target because the active review is not removed.
         required: true

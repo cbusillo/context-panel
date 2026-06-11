@@ -19,7 +19,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
         self.assertIn("testflight_beta:", workflow)
         self.assertIn("uses: ./.github/workflows/testflight-beta-distribution.yml", workflow)
-        self.assertIn("Use Submit App Store Review separately", workflow)
+        self.assertIn("Ship does not submit App Store Review.", workflow)
+        self.assertIn("run Submit App Store Review separately; use dry_run=true first", workflow)
         self.assertNotIn("submit_app_review", workflow)
         self.assertNotIn("uses: ./.github/workflows/submit-app-store-review.yml", workflow)
 

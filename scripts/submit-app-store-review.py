@@ -840,7 +840,7 @@ def ensure_review_submission(
             raise
         print("Review submission item already exists")
     if args.dry_run:
-        print("Dry run: review submission was prepared but not submitted")
+        print("Dry run: would submit the prepared review submission")
         return submission
     state = submission["attributes"].get("state") if submission.get("attributes") else None
     if state in {"WAITING_FOR_REVIEW", "IN_REVIEW"}:
@@ -895,7 +895,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--support-url")
     parser.add_argument("--uses-idfa", type=parse_bool, default=False)
     parser.add_argument("--non-exempt-encryption", type=parse_bool, default=False)
-    parser.add_argument("--dry-run", action="store_true", help="Prepare the version and submission item without submitting for review")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate metadata, build, blocked-version recovery, and target version path without making App Store Connect changes",
+    )
     return parser.parse_args()
 
 
