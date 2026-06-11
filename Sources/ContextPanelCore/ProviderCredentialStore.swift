@@ -74,11 +74,33 @@ public struct ProviderCredentialStore: ProviderCredentialStoring, ProviderCreden
         }
     }
 
+    public func deleteAll() throws {
+        let status = SecItemDelete(baseServiceQuery() as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw StoreError.unhandledStatus(status)
+        }
+    }
+
+    public func containsAny() throws -> Bool {
+        var query = baseServiceQuery()
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+
+        let status = SecItemCopyMatching(query as CFDictionary, nil)
+        if status == errSecItemNotFound { return false }
+        guard status == errSecSuccess else { throw StoreError.unhandledStatus(status) }
+        return true
+    }
+
     private func baseQuery(accountID: String) -> [String: Any] {
+        var query = baseServiceQuery()
+        query[kSecAttrAccount as String] = accountID
+        return query
+    }
+
+    private func baseServiceQuery() -> [String: Any] {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: accountID,
             kSecUseDataProtectionKeychain as String: true,
         ]
         if let accessGroup {

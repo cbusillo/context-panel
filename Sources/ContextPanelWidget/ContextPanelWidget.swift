@@ -15,6 +15,8 @@ struct ContextPanelTimelineProvider: TimelineProvider {
     let containerFallbackPreferencesStore: WidgetDisplayPreferencesStore
     let forecastSettingsStore: FastModeForecastSettingsStore
     let containerFallbackForecastSettingsStore: FastModeForecastSettingsStore
+    let accountStore: AccountConfigurationStore
+    let bookmarkStore: SecureFileBookmarkStore
 
     init(
         store: JSONSnapshotStore = JSONSnapshotStore(
@@ -34,6 +36,13 @@ struct ContextPanelTimelineProvider: TimelineProvider {
         ),
         containerFallbackForecastSettingsStore: FastModeForecastSettingsStore = FastModeForecastSettingsStore(
             settingsURL: ContextPanelLocations.widgetSandboxLocalFastModeForecastSettingsURL()
+        ),
+        accountStore: AccountConfigurationStore = AccountConfigurationStore(
+            configurationURL: ContextPanelLocations.accountConfigurationURL(),
+            fallbackConfigurationURL: ContextPanelLocations.legacyAccountConfigurationURL()
+        ),
+        bookmarkStore: SecureFileBookmarkStore = SecureFileBookmarkStore(
+            storeURL: ContextPanelLocations.bookmarkStoreURL()
         )
     ) {
         self.store = store
@@ -42,6 +51,8 @@ struct ContextPanelTimelineProvider: TimelineProvider {
         self.containerFallbackPreferencesStore = containerFallbackPreferencesStore
         self.forecastSettingsStore = forecastSettingsStore
         self.containerFallbackForecastSettingsStore = containerFallbackForecastSettingsStore
+        self.accountStore = accountStore
+        self.bookmarkStore = bookmarkStore
     }
 
     func placeholder(in context: Context) -> ContextPanelWidgetEntry {
@@ -58,9 +69,14 @@ struct ContextPanelTimelineProvider: TimelineProvider {
         completion(Timeline(entries: [entry(date: now)], policy: .after(nextRefresh)))
     }
 
-    private func entry(date: Date) -> ContextPanelWidgetEntry {
+    func entry(date: Date) -> ContextPanelWidgetEntry {
         let displayPreferences = loadDisplayPreferences()
         let forecastSettings = loadForecastSettings()
+        let promptCacheWidgetState = WidgetSnapshot.promptCacheWidgetState(
+            accountStore: accountStore,
+            bookmarkStore: bookmarkStore,
+            now: date
+        )
         let result = store.loadCurrent(policy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge), now: date)
         if result.snapshot == nil || result.status == .failure {
             let fallback = containerFallbackStore.loadCurrent(
@@ -74,7 +90,8 @@ struct ContextPanelTimelineProvider: TimelineProvider {
                         fallback,
                         now: date,
                         history: containerFallbackStore.loadHistory(),
-                        fastModeForecastSettings: forecastSettings
+                        fastModeForecastSettings: forecastSettings,
+                        promptCacheWidgetState: promptCacheWidgetState
                     ),
                     displayPreferences: displayPreferences
                 )
@@ -86,7 +103,8 @@ struct ContextPanelTimelineProvider: TimelineProvider {
                 result,
                 now: date,
                 history: store.loadHistory(),
-                fastModeForecastSettings: forecastSettings
+                fastModeForecastSettings: forecastSettings,
+                promptCacheWidgetState: promptCacheWidgetState
             ),
             displayPreferences: displayPreferences
         )
@@ -138,6 +156,7 @@ struct ContextPanelWidgetView: View {
 enum ContextPanelWidgetURL {
     static let overview = URL(string: "contextpanel://overview")!
     static let reconnect = URL(string: "contextpanel://reconnect")!
+    static let cacheStatsSettings = URL(string: "contextpanel://settings/cache-stats")!
 }
 
 @main

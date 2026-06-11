@@ -138,6 +138,18 @@ connector using the same shape as Codex CLI's
 stable or safely testable, fall back to Every Code's local `usage/*.json` cache
 or Codex CLI's app-server request.
 
+In signed app and widget builds, prompt-cache telemetry from Every Code usage
+files requires a separate user-approved bookmark for the matching usage folder,
+normally `~/.code/usage`. The app and refresh agent mirror those JSON files into
+the canonical app-group `PromptCache` directory before building the shared
+snapshot, so the widget reads only normalized app-owned snapshot data. This
+usage-folder permission is intentionally separate from the `auth_accounts.json`
+permission used for live Codex limit refresh.
+When an enabled Codex/Every Code account is missing that usage-folder bookmark,
+medium and large widgets may show a compact `Enable Cache` pill that opens the
+app's settings flow; the settings row uses the more explicit `Enable Cache Stats`
+label before presenting the folder picker.
+
 ### Codex Limits Connector
 
 Preferred v1 connector scope:

@@ -137,13 +137,17 @@ struct ContextPanelMediumWidget: View {
                 )
                 CPWSectionHeader(
                     title: "Main Limits",
-                    accessory: CPWPromptCacheInlineStat(summary: snapshot.promptCacheSummary)
+                    accessory: CPWPromptCacheInlineStat(
+                        state: snapshot.promptCacheWidgetState,
+                        summary: snapshot.promptCacheSummary
+                    )
                 )
-                ForEach(lanes) { lane in
-                    CPWMainLimitRow(lane: lane)
-                }
                 if snapshot.limits.isEmpty {
                     CPWEmptyRow(message: snapshot.message)
+                } else {
+                    ForEach(lanes) { lane in
+                        CPWMainLimitRow(lane: lane)
+                    }
                 }
             }
         }
@@ -192,13 +196,17 @@ struct ContextPanelLargeWidget: View {
                 )
                 CPWSectionHeader(
                     title: "Main Limits",
-                    accessory: CPWPromptCacheInlineStat(summary: snapshot.promptCacheSummary)
+                    accessory: CPWPromptCacheInlineStat(
+                        state: snapshot.promptCacheWidgetState,
+                        summary: snapshot.promptCacheSummary
+                    )
                 )
-                ForEach(lanes) { lane in
-                    CPWMainLimitRow(lane: lane)
-                }
                 if snapshot.limits.isEmpty {
                     CPWEmptyRow(message: snapshot.message)
+                } else {
+                    ForEach(lanes) { lane in
+                        CPWMainLimitRow(lane: lane)
+                    }
                 }
             }
         }
@@ -208,6 +216,7 @@ struct ContextPanelLargeWidget: View {
 }
 
 struct CPWPromptCacheInlineStat: View {
+    let state: PromptCacheWidgetState
     let summary: PromptCacheSummary
 
     private var currentRate: Double? {
@@ -219,7 +228,8 @@ struct CPWPromptCacheInlineStat: View {
     }
 
     var body: some View {
-        if summary.isAvailable {
+        switch state {
+        case .available:
             HStack(alignment: .center, spacing: 0) {
                 HStack(spacing: 4) {
                     CPWStatusMark(status: summary.comparisonStatus, size: 5)
@@ -256,7 +266,45 @@ struct CPWPromptCacheInlineStat: View {
             .clipShape(Capsule(style: .continuous))
             .fixedSize(horizontal: true, vertical: false)
             .accessibilityLabel(accessibilityLabel)
+        case .needsAuthorization:
+            Link(destination: ContextPanelWidgetURL.cacheStatsSettings) {
+                promptCachePill(
+                    text: "Enable Cache",
+                    foreground: CPWTheme.accent,
+                    background: CPWTheme.accent.opacity(0.16),
+                    accessibilityLabel: "Enable cache stats"
+                )
+            }
+            .buttonStyle(.plain)
+        case .stale:
+            promptCachePill(
+                text: "Cache stale",
+                foreground: CPWTheme.statusColor(.stale),
+                background: CPWTheme.statusColor(.stale).opacity(0.14),
+                accessibilityLabel: "Cache stats are stale"
+            )
+        case .unavailable:
+            EmptyView()
         }
+    }
+
+    private func promptCachePill(
+        text: String,
+        foreground: Color,
+        background: Color,
+        accessibilityLabel: String
+    ) -> some View {
+        Text(text)
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(foreground)
+            .lineLimit(1)
+            .minimumScaleFactor(0.82)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(background)
+            .clipShape(Capsule(style: .continuous))
+            .fixedSize(horizontal: true, vertical: false)
+            .accessibilityLabel(accessibilityLabel)
     }
 
     private var accessibilityLabel: String {
@@ -783,10 +831,12 @@ extension WidgetSnapshot {
     }
 
     var tightestHeadline: String {
-        tightestMainLimitSummary?.widgetRemainingHeadline ?? "No data"
+        if needsProviderConnection { return "Not connected" }
+        return tightestMainLimitSummary?.widgetRemainingHeadline ?? "No data"
     }
 
     var tightestSubheadline: String {
+        if needsProviderConnection { return "No provider data yet" }
         guard let summary = tightestMainLimitSummary else { return message }
         return "\(summary.provider.shortName) \(summary.widgetWindowName)"
     }
@@ -821,17 +871,20 @@ extension WidgetSnapshot {
     }
 
     var fastModeVerdict: String {
-        fastModeForecast?.copy ?? message
+        if needsProviderConnection { return "Connect accounts to track limits" }
+        return fastModeForecast?.copy ?? message
     }
 
     var fastModeDetail: String {
-        mainLimitSummaries.openAIFastModeCapacityForecast(
+        if needsProviderConnection { return "Open the app to connect OpenAI, Claude, or Google." }
+        return mainLimitSummaries.openAIFastModeCapacityForecast(
             observedBurnRates: observedBurnRates,
             settings: fastModeForecastSettings
         ).detailCopy
     }
 
     var fastModeResetDetail: String {
+        if needsProviderConnection { return "limits appear after setup" }
         guard let resetAt = fastModeForecast?.nextResetAt else { return "next reset unknown" }
         return "reset \(resetAt.widgetDateTimeWithRelativeText)"
     }
@@ -845,6 +898,7 @@ extension WidgetSnapshot {
         case .setupNeeded:
             return limits.isEmpty ? nil : "Setup needed"
         case .ready:
+            if needsProviderConnection { return "Setup needed" }
             if status == .failure { return "Reconnect account" }
             if status == .stale { return hasProviderReconnectIssue ? "Reconnect account" : "Refresh needed" }
             if status == .unknown { return "Awaiting data" }
@@ -853,15 +907,21 @@ extension WidgetSnapshot {
     }
 
     var widgetDeepLinkURL: URL {
-        switch state {
+        return switch state {
         case .failure:
             ContextPanelWidgetURL.reconnect
         case .stale:
             hasProviderReconnectIssue ? ContextPanelWidgetURL.reconnect : ContextPanelWidgetURL.overview
         case .ready:
-            status == .failure || (status == .stale && hasProviderReconnectIssue) ? ContextPanelWidgetURL.reconnect : ContextPanelWidgetURL.overview
+            if needsProviderConnection || status == .failure || (status == .stale && hasProviderReconnectIssue) {
+                ContextPanelWidgetURL.reconnect
+            } else if promptCacheWidgetState == .needsAuthorization {
+                ContextPanelWidgetURL.cacheStatsSettings
+            } else {
+                ContextPanelWidgetURL.overview
+            }
         case .setupNeeded:
-            ContextPanelWidgetURL.overview
+            promptCacheWidgetState == .needsAuthorization ? ContextPanelWidgetURL.cacheStatsSettings : ContextPanelWidgetURL.overview
         }
     }
 
@@ -869,6 +929,7 @@ extension WidgetSnapshot {
         let providerLimits = limits.filter { $0.provider == provider }
         let summaries = mainLimitSummaries.filter { $0.provider == provider }
         guard !summaries.isEmpty else {
+            if needsProviderConnection { return "not connected" }
             return providerLimits.isEmpty ? "setup needed" : "connected"
         }
         let tightest = summaries.sorted(by: { ($0.usageRatio ?? 0) > ($1.usageRatio ?? 0) }).first!

@@ -96,6 +96,36 @@ fail() {
 }
 ok() { printf 'OK: %s\n' "$*"; }
 
+run_with_timeout() {
+	local seconds="$1"
+	shift
+	local stdout stderr pid waited status
+	stdout="$(mktemp)"
+	stderr="$(mktemp)"
+	"$@" >"$stdout" 2>"$stderr" &
+	pid=$!
+	waited=0
+	while kill -0 "$pid" >/dev/null 2>&1; do
+		if ((waited >= seconds)); then
+			kill "$pid" >/dev/null 2>&1 || true
+			sleep 1
+			kill -9 "$pid" >/dev/null 2>&1 || true
+			cat "$stdout" "$stderr"
+			rm -f "$stdout" "$stderr"
+			return 124
+		fi
+		sleep 1
+		waited=$((waited + 1))
+	done
+	set +e
+	wait "$pid"
+	status=$?
+	set -e
+	cat "$stdout" "$stderr"
+	rm -f "$stdout" "$stderr"
+	return "$status"
+}
+
 xcconfig_literal_value() {
 	local value="$1"
 	if [[ -z "$value" ]]; then
@@ -248,9 +278,68 @@ context_files() {
 	done
 }
 
+non_snapshot_context_files() {
+	context_files | grep -v '/Snapshots/current-snapshot\.json$' || true
+}
+
+current_snapshot_is_fresh_reset_state() {
+	local snapshot="$HOME/Library/Group Containers/$canonical_app_group/Context Panel/Snapshots/current-snapshot.json"
+	[[ -f "$snapshot" ]] || return 1
+	command -v jq >/dev/null 2>&1 || return 1
+	jq -e '
+        ((.promptCacheObservations // []) | length) == 0
+        and ((.snapshot.limits // []) | length) == 0
+        and ((.reports // []) | length) > 0
+        and all((.reports // [])[]; .status == "failure")
+    ' "$snapshot" >/dev/null 2>&1
+}
+
 widget_timeline_files() {
 	find "$HOME/Library/Containers/com.shinycomputers.contextpanel.widget/Data/SystemData/com.apple.chrono" -maxdepth 6 \
 		-name '*.chrono-timeline' -print 2>/dev/null || true
+}
+
+provider_credential_state() {
+	local executable="$refresh_agent_path/Contents/MacOS/ContextPanelRefreshAgent"
+	if [[ ! -x "$executable" ]]; then
+		printf 'Context Panel provider credential check unavailable: missing %s\n' "$executable"
+		return 2
+	fi
+
+	local output status
+	set +e
+	output="$(run_with_timeout 10 "$executable" --provider-credentials-present 2>&1)"
+	status=$?
+	set -e
+	printf '%s\n' "$output"
+	case "$status" in
+	0) return 0 ;;
+	10) return 10 ;;
+	*) return 2 ;;
+	esac
+}
+
+clear_provider_credentials() {
+	local executable="$refresh_agent_path/Contents/MacOS/ContextPanelRefreshAgent"
+	if [[ ! -x "$executable" ]]; then
+		fail "Context Panel provider credential cleanup unavailable: missing $executable"
+		return 1
+	fi
+
+	local output status
+	set +e
+	output="$(run_with_timeout 10 "$executable" --clear-provider-credentials 2>&1)"
+	status=$?
+	set -e
+	if [[ -n "$output" ]]; then
+		printf '%s\n' "$output"
+	fi
+	if [[ "$status" == "0" ]]; then
+		ok "removed Context Panel provider credentials from Keychain"
+	else
+		fail "Context Panel provider credential cleanup failed"
+		return 1
+	fi
 }
 
 current_snapshot_saved_at() {
@@ -512,7 +601,7 @@ quarantine_path() {
 unregister_refresh_agent_with_app() {
 	local app="$1"
 	[[ -d "$app" ]] || return 0
-	open -W -a "$app" --args --unregister-refresh-agent >/dev/null 2>&1 || true
+	run_with_timeout 10 "$app/Contents/MacOS/Context Panel" --unregister-refresh-agent >/dev/null 2>&1 || true
 }
 
 unregister_refresh_agent_quietly() {
@@ -785,6 +874,7 @@ reset_runtime() {
 	neutralize_bundle_extensions "$quarantine"
 	neutralize_bundle_extensions "$HOME/.Trash"
 	install_checkout_app
+	clear_provider_credentials
 	quarantine_path "$built_app_path" "$quarantine"
 	quarantine_path "$derived_data_path/Build/Products/Debug/ContextPanelWidgetExtension.appex" "$quarantine"
 	quarantine_path "$derived_data_path/Build/Products/Debug/ContextPanelRefreshAgent.app" "$quarantine"
@@ -1008,8 +1098,14 @@ check_runtime() {
 	local saved_at
 	saved_at="$(current_snapshot_saved_at)"
 	if [[ "$mode" == "reset" ]]; then
+		local reset_blocking_files
+		reset_blocking_files="$(non_snapshot_context_files)"
 		if [[ -z "$files" ]]; then
 			ok "no persisted account config/bookmarks/snapshots/reset-primer settings are present"
+			note "note: the app still shows built-in default accounts when accounts.json is absent"
+		elif [[ -z "$reset_blocking_files" && "$(current_snapshot_is_fresh_reset_state && printf yes || true)" == "yes" ]]; then
+			printf '%s\n' "$files"
+			ok "only fresh first-launch failure snapshot is present after reset"
 			note "note: the app still shows built-in default accounts when accounts.json is absent"
 		else
 			printf '%s\n' "$files"
@@ -1032,6 +1128,33 @@ check_runtime() {
 	else
 		printf '%s\n' "$timelines"
 		ok "WidgetKit timeline cache files exist after launch"
+	fi
+
+	section "Provider Credentials"
+	local credential_state credential_status
+	set +e
+	credential_state="$(provider_credential_state)"
+	credential_status=$?
+	set -e
+	if [[ -n "$credential_state" ]]; then
+		printf '%s\n' "$credential_state"
+	fi
+	if [[ "$mode" == "reset" ]]; then
+		if [[ "$credential_status" == "0" ]]; then
+			ok "no Context Panel provider credentials are present in Keychain"
+		elif [[ "$credential_status" == "10" ]]; then
+			fail "Context Panel provider credentials remain in Keychain"
+		else
+			fail "could not verify Context Panel provider credentials"
+		fi
+	else
+		if [[ "$credential_status" == "0" ]]; then
+			ok "no Context Panel provider credentials are present in Keychain"
+		elif [[ "$credential_status" == "10" ]]; then
+			ok "Context Panel provider credentials are present in Keychain"
+		else
+			fail "could not verify Context Panel provider credentials"
+		fi
 	fi
 }
 

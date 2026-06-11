@@ -7,12 +7,20 @@ public enum WidgetSnapshotState: String, Codable, Equatable, Sendable {
     case failure
 }
 
+public enum PromptCacheWidgetState: String, Codable, Equatable, Sendable {
+    case unavailable
+    case needsAuthorization
+    case available
+    case stale
+}
+
 public struct WidgetSnapshot: Codable, Equatable, Sendable {
     public let state: WidgetSnapshotState
     public let generatedAt: Date
     public let limits: [UsageLimit]
     public let reports: [StoredProviderReport]
     public let promptCacheObservations: [PromptCacheObservation]
+    public let promptCacheWidgetState: PromptCacheWidgetState
     public let observedBurnRates: [String: ObservedBurnRate]
     public let fastModeForecastSettings: FastModeForecastSettings
     public let status: UsageStatus
@@ -24,6 +32,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         limits: [UsageLimit],
         reports: [StoredProviderReport] = [],
         promptCacheObservations: [PromptCacheObservation] = [],
+        promptCacheWidgetState: PromptCacheWidgetState = .unavailable,
         observedBurnRates: [String: ObservedBurnRate] = [:],
         fastModeForecastSettings: FastModeForecastSettings = .defaultSettings,
         status: UsageStatus,
@@ -34,6 +43,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         self.limits = limits
         self.reports = reports
         self.promptCacheObservations = promptCacheObservations
+        self.promptCacheWidgetState = promptCacheWidgetState
         self.observedBurnRates = observedBurnRates
         self.fastModeForecastSettings = fastModeForecastSettings
         self.status = status
@@ -81,7 +91,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         _ result: SnapshotStoreLoadResult,
         now: Date = Date(),
         history: [StoredUsageSnapshot] = [],
-        fastModeForecastSettings: FastModeForecastSettings = .defaultSettings
+        fastModeForecastSettings: FastModeForecastSettings = .defaultSettings,
+        promptCacheWidgetState: PromptCacheWidgetState? = nil
     ) -> WidgetSnapshot {
         guard let stored = result.snapshot else {
             return WidgetSnapshot(
@@ -105,15 +116,23 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
 
         let status = widgetStatus(for: stored.snapshot, fallback: result.status)
 
+        let recentPromptCacheObservations = PromptCacheTelemetryReader.filteredRecentObservations(
+            stored.promptCacheObservations,
+            now: now
+        )
+        let resolvedPromptCacheState = promptCacheWidgetState ?? Self.promptCacheWidgetState(
+            observations: recentPromptCacheObservations,
+            stored: stored,
+            resultStatus: result.status
+        )
+
         return WidgetSnapshot(
             state: state,
             generatedAt: stored.snapshot.generatedAt,
             limits: stored.snapshot.limits,
             reports: stored.reports,
-            promptCacheObservations: PromptCacheTelemetryReader.filteredRecentObservations(
-                stored.promptCacheObservations,
-                now: now
-            ),
+            promptCacheObservations: recentPromptCacheObservations,
+            promptCacheWidgetState: resolvedPromptCacheState,
             observedBurnRates: MainLimitBurnRateEstimator.observedBurnRates(
                 current: stored.snapshot,
                 history: history,
@@ -129,13 +148,37 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         reports.hasReconnectBlockingFailure
     }
 
+    public var needsProviderConnection: Bool {
+        limits.isEmpty && reports.contains { $0.status == .failure }
+    }
+
     public var promptCacheSummary: PromptCacheSummary {
         PromptCacheSummary(observations: promptCacheObservations)
+    }
+
+    public static func promptCacheWidgetState(
+        accountStore: AccountConfigurationStore,
+        bookmarkStore: SecureFileBookmarkStore,
+        now: Date = Date()
+    ) -> PromptCacheWidgetState? {
+        let accounts = accountStore.load(now: now).document.accounts
+        let usagePaths = accounts.compactMap { account -> String? in
+            guard account.isEnabled, account.connectorKind == .codexRateLimits else { return nil }
+            return promptCacheTelemetryDirectoryPath(for: account)
+        }
+        guard !usagePaths.isEmpty else { return nil }
+        let hasMissingBookmark = usagePaths.contains { path in
+            !bookmarkStore.hasCurrentBookmark(for: path)
+        }
+        return hasMissingBookmark ? .needsAuthorization : nil
     }
 
     private static func message(state: WidgetSnapshotState, stored: StoredUsageSnapshot) -> String {
         switch state {
         case .ready:
+            if stored.snapshot.limits.isEmpty, stored.reports.contains(where: { $0.status == .failure }) {
+                return "Connect an account to show limits."
+            }
             let limitedCount = stored.snapshot.mainLimitSummaries.filter { $0.status == .limited }.count
                 + stored.snapshot.limits.filter { !$0.isMainLimit && $0.status == .limited }.count
             if limitedCount > 0 {
@@ -174,6 +217,34 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         let statuses = summaries.map(\.status) + nonMainStatuses
         guard !statuses.isEmpty else { return fallback }
         return statuses.contextPanelWorstStatus
+    }
+
+    private static func promptCacheWidgetState(
+        observations: [PromptCacheObservation],
+        stored: StoredUsageSnapshot,
+        resultStatus: UsageStatus
+    ) -> PromptCacheWidgetState {
+        if !PromptCacheSummary(observations: observations).isAvailable {
+            return .unavailable
+        }
+        if resultStatus == .stale || resultStatus == .failure {
+            return .stale
+        }
+        if stored.reports.hasReconnectBlockingFailure {
+            return .stale
+        }
+        return .available
+    }
+
+    private static func promptCacheTelemetryDirectoryPath(for account: LocalProviderAccountConfiguration) -> String? {
+        guard let authPath = account.effectiveAuthPath else { return nil }
+        let expanded = NSString(string: authPath).expandingTildeInPath
+        let authDirectory = URL(fileURLWithPath: expanded).deletingLastPathComponent()
+        let name = authDirectory.lastPathComponent
+        guard name == ".code" || name == ".codex" else { return nil }
+        return ContextPanelLocations.normalizedPath(
+            authDirectory.appending(path: "usage", directoryHint: .isDirectory).path
+        )
     }
 
     private func capacityRatio(for limits: [UsageLimit]) -> Double {

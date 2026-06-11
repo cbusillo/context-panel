@@ -5,11 +5,19 @@ import WidgetKit
 @main
 struct ContextPanelRefreshAgent {
     static func main() async {
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("--clear-provider-credentials") {
+            clearProviderCredentials()
+        }
+        if arguments.contains("--provider-credentials-present") {
+            checkProviderCredentials()
+        }
+
         let runner = SnapshotRefreshRunner.appDefault()
         let settingsStore = BackgroundRefreshSettingsStore(
             settingsURL: ContextPanelLocations.backgroundRefreshSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
         )
-        if ProcessInfo.processInfo.arguments.contains("--refresh-once") {
+        if arguments.contains("--refresh-once") {
             do {
                 let decision = try await runner.refresh()
                 if decision.wasRefreshed {
@@ -42,6 +50,31 @@ struct ContextPanelRefreshAgent {
             } catch {
                 return
             }
+        }
+    }
+
+    private static func clearProviderCredentials() -> Never {
+        do {
+            try ProviderCredentialStore().deleteAll()
+            print("Context Panel provider credentials cleared")
+            Foundation.exit(0)
+        } catch {
+            fputs("ContextPanelRefreshAgent: provider credential cleanup failed: \(error.localizedDescription)\n", stderr)
+            Foundation.exit(1)
+        }
+    }
+
+    private static func checkProviderCredentials() -> Never {
+        do {
+            if try ProviderCredentialStore().containsAny() {
+                print("Context Panel provider credentials are present")
+                Foundation.exit(10)
+            }
+            print("Context Panel provider credentials are absent")
+            Foundation.exit(0)
+        } catch {
+            fputs("ContextPanelRefreshAgent: provider credential check failed: \(error.localizedDescription)\n", stderr)
+            Foundation.exit(1)
         }
     }
 }

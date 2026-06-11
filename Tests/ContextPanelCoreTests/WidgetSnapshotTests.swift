@@ -224,6 +224,47 @@ import Testing
     #expect(summaries[.anthropic]?.limitCount == 0)
 }
 
+@Test func widgetSnapshotUsesSetupCopyWhenProviderAccessIsMissing() {
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let stored = StoredUsageSnapshot(
+        savedAt: savedAt,
+        snapshot: UsageSnapshot(generatedAt: savedAt, limits: []),
+        reports: [
+            StoredProviderReport(
+                provider: .openAI,
+                accountID: "openai-code-default",
+                configuredAccountID: "openai-code-default",
+                accountName: "Every Code",
+                generatedAt: savedAt,
+                status: .failure,
+                errorMessage: "The file could not be opened."
+            ),
+            StoredProviderReport(
+                provider: .anthropic,
+                accountID: "claude-oauth-default",
+                configuredAccountID: nil,
+                accountName: "Claude",
+                generatedAt: savedAt,
+                status: .failure,
+                errorMessage: "Claude is not connected."
+            ),
+        ]
+    )
+
+    let widget = WidgetSnapshot.fromStore(SnapshotStoreLoadResult(snapshot: stored, status: .unknown), now: savedAt)
+
+    #expect(widget.state == .ready)
+    #expect(widget.needsProviderConnection)
+    #expect(widget.message == "Connect an account to show limits.")
+    #expect(widget.tightestHeadline == "Not connected")
+    #expect(widget.tightestSubheadline == "No provider data yet")
+    #expect(widget.fastModeVerdict == "Connect accounts to track limits")
+    #expect(widget.fastModeDetail == "Open the app to connect OpenAI, Claude, or Google.")
+    #expect(widget.fastModeResetDetail == "limits appear after setup")
+    #expect(widget.widgetProblemText == "Setup needed")
+    #expect(widget.widgetProviderSummaryText(provider: .openAI) == "not connected")
+}
+
 @Test func widgetSnapshotCarriesPromptCacheTelemetry() {
     let savedAt = Date(timeIntervalSince1970: 100)
     let stored = StoredUsageSnapshot(
@@ -250,6 +291,181 @@ import Testing
 
     #expect(widget.promptCacheObservations.count == 1)
     #expect(widget.promptCacheSummary.tokenWeightedHitRate == 0.9)
+    #expect(widget.promptCacheWidgetState == .available)
+}
+
+@Test func widgetSnapshotCanRequestPromptCacheAuthorizationForConfiguredCodexAccount() throws {
+    let root = try widgetSnapshotTemporaryDirectory()
+    let codeDirectory = root.appending(path: ".code", directoryHint: .isDirectory)
+    let usageDirectory = codeDirectory.appending(path: "usage", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: usageDirectory, withIntermediateDirectories: true)
+
+    let accountStore = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    try accountStore.save(AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 100), accounts: [
+        LocalProviderAccountConfiguration(
+            id: "openai-code-default",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "Every Code",
+            authPath: codeDirectory.appending(path: "auth_accounts.json").path
+        ),
+    ]))
+
+    let bookmarkStore = SecureFileBookmarkStore(storeURL: root.appending(path: "bookmarks.json"))
+
+    #expect(WidgetSnapshot.promptCacheWidgetState(
+        accountStore: accountStore,
+        bookmarkStore: bookmarkStore,
+        now: Date(timeIntervalSince1970: 110)
+    ) == .needsAuthorization)
+}
+
+@Test func widgetSnapshotDoesNotRequestPromptCacheAuthorizationAfterUsageBookmarkIsSaved() throws {
+    let root = try widgetSnapshotTemporaryDirectory()
+    let codeDirectory = root.appending(path: ".code", directoryHint: .isDirectory)
+    let usageDirectory = codeDirectory.appending(path: "usage", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: usageDirectory, withIntermediateDirectories: true)
+
+    let accountStore = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    try accountStore.save(AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 100), accounts: [
+        LocalProviderAccountConfiguration(
+            id: "openai-code-default",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "Every Code",
+            authPath: codeDirectory.appending(path: "auth_accounts.json").path
+        ),
+    ]))
+
+    let bookmarkStore = SecureFileBookmarkStore(storeURL: root.appending(path: "bookmarks.json"))
+    try bookmarkStore.createAndStoreBookmark(
+        for: usageDirectory,
+        path: ContextPanelLocations.normalizedPath(usageDirectory.path)
+    )
+
+    #expect(WidgetSnapshot.promptCacheWidgetState(
+        accountStore: accountStore,
+        bookmarkStore: bookmarkStore,
+        now: Date(timeIntervalSince1970: 110)
+    ) == nil)
+}
+
+@Test func widgetSnapshotTrustsSavedPromptCacheBookmarkRecordWithoutResolvingIt() throws {
+    let root = try widgetSnapshotTemporaryDirectory()
+    let codeDirectory = root.appending(path: ".code", directoryHint: .isDirectory)
+    let usageDirectory = codeDirectory.appending(path: "usage", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: usageDirectory, withIntermediateDirectories: true)
+
+    let accountStore = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    try accountStore.save(AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 100), accounts: [
+        LocalProviderAccountConfiguration(
+            id: "openai-code-default",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "Every Code",
+            authPath: codeDirectory.appending(path: "auth_accounts.json").path
+        ),
+    ]))
+
+    let bookmarkStoreURL = root.appending(path: "bookmarks.json")
+    let bookmarkPath = ContextPanelLocations.normalizedPath(usageDirectory.path)
+    let data = try JSONEncoder().encode([bookmarkPath: "appScoped:AQID"])
+    try data.write(to: bookmarkStoreURL, options: .atomic)
+    let bookmarkStore = SecureFileBookmarkStore(storeURL: bookmarkStoreURL)
+
+    #expect(bookmarkStore.hasCurrentBookmark(for: bookmarkPath))
+    #expect(WidgetSnapshot.promptCacheWidgetState(
+        accountStore: accountStore,
+        bookmarkStore: bookmarkStore,
+        now: Date(timeIntervalSince1970: 110)
+    ) == nil)
+}
+
+@Test func widgetSnapshotUsesTelemetryAfterPromptCacheAuthorizationOverrideClears() throws {
+    let now = Date(timeIntervalSince1970: 100)
+    let stored = StoredUsageSnapshot(
+        savedAt: now,
+        snapshot: UsageSnapshot(generatedAt: now, limits: [
+            UsageLimit(provider: .openAI, label: "Codex", used: 20, limit: 100),
+        ]),
+        promptCacheObservations: [
+            PromptCacheObservation(
+                provider: .openAI,
+                accountID: "every-code",
+                accountName: "Every Code",
+                observedAt: now,
+                windowLabel: "Last hour",
+                tokens: PromptCacheTokenSet(inputTokens: 1_000, cachedInputTokens: 940)
+            ),
+        ]
+    )
+    let widget = WidgetSnapshot.fromStore(
+        SnapshotStoreLoadResult(snapshot: stored, status: .healthy),
+        now: now.addingTimeInterval(60),
+        promptCacheWidgetState: nil
+    )
+
+    #expect(widget.promptCacheWidgetState == .available)
+    #expect(widget.promptCacheSummary.latestHitRate == 0.94)
+}
+
+@Test func timelineProviderShowsPromptCacheTelemetryAfterUsageBookmarkExists() throws {
+    let root = try widgetSnapshotTemporaryDirectory()
+    let now = Date(timeIntervalSince1970: 100)
+    let codeDirectory = root.appending(path: ".code", directoryHint: .isDirectory)
+    let usageDirectory = codeDirectory.appending(path: "usage", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: usageDirectory, withIntermediateDirectories: true)
+
+    let primaryStore = JSONSnapshotStore(rootDirectory: root.appending(path: "snapshots", directoryHint: .isDirectory))
+    try primaryStore.save(StoredUsageSnapshot(
+        savedAt: now,
+        snapshot: UsageSnapshot(generatedAt: now, limits: [
+            UsageLimit(provider: .openAI, label: "Codex", used: 20, limit: 100),
+        ]),
+        promptCacheObservations: [
+            PromptCacheObservation(
+                provider: .openAI,
+                accountID: "every-code",
+                accountName: "Every Code",
+                observedAt: now,
+                windowLabel: "Last hour",
+                tokens: PromptCacheTokenSet(inputTokens: 1_000, cachedInputTokens: 940)
+            ),
+        ]
+    ))
+
+    let accountStore = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    try accountStore.save(AccountConfigurationDocument(updatedAt: now, accounts: [
+        LocalProviderAccountConfiguration(
+            id: "openai-code-default",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "Every Code",
+            authPath: codeDirectory.appending(path: "auth_accounts.json").path
+        ),
+    ]))
+
+    let bookmarkStore = SecureFileBookmarkStore(storeURL: root.appending(path: "bookmarks.json"))
+    try bookmarkStore.createAndStoreBookmark(
+        for: usageDirectory,
+        path: ContextPanelLocations.normalizedPath(usageDirectory.path)
+    )
+
+    let provider = ContextPanelTimelineProvider(
+        store: primaryStore,
+        containerFallbackStore: JSONSnapshotStore(rootDirectory: root.appending(path: "fallback", directoryHint: .isDirectory)),
+        preferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "widget-prefs.json")),
+        containerFallbackPreferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "fallback-widget-prefs.json")),
+        forecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "forecast.json")),
+        containerFallbackForecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "fallback-forecast.json")),
+        accountStore: accountStore,
+        bookmarkStore: bookmarkStore
+    )
+
+    let entry = provider.entry(date: now.addingTimeInterval(60))
+
+    #expect(entry.snapshot.promptCacheWidgetState == .available)
+    #expect(entry.snapshot.promptCacheSummary.latestHitRate == 0.94)
 }
 
 @Test func providerSummariesUseTheTightestWindowInsteadOfAverageCapacity() {
@@ -462,4 +678,12 @@ import Testing
     let summary = MainLimitSummary(provider: .anthropic, window: .weekly, limits: [healthyLimit])
     #expect(summary.resetsAt == nil)
     #expect(summary.status == .healthy)
+}
+
+private func widgetSnapshotTemporaryDirectory() throws -> URL {
+    let url = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-widget-tests")
+        .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
 }
