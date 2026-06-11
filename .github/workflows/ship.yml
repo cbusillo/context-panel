@@ -177,7 +177,8 @@ jobs:
             echo "- App Store Connect build upload: ${app_store_upload_result}"
             echo "- TestFlight beta distribution: ${testflight_beta_result}"
             echo
-            echo "Use Submit App Store Review separately after TestFlight validation."
+            echo "Ship does not submit App Store Review."
+            echo "After TestFlight validation, run Submit App Store Review separately; use dry_run=true first."
           } >>"${GITHUB_STEP_SUMMARY}"
 
           failed="false"
