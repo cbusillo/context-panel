@@ -142,7 +142,7 @@ struct ContextPanelMediumWidget: View {
                         summary: snapshot.promptCacheSummary
                     )
                 )
-                if snapshot.limits.isEmpty {
+                if snapshot.shouldShowMainLimitEmptyRow {
                     CPWEmptyRow(message: snapshot.message)
                 } else {
                     ForEach(lanes) { lane in
@@ -201,7 +201,7 @@ struct ContextPanelLargeWidget: View {
                         summary: snapshot.promptCacheSummary
                     )
                 )
-                if snapshot.limits.isEmpty {
+                if snapshot.shouldShowMainLimitEmptyRow {
                     CPWEmptyRow(message: snapshot.message)
                 } else {
                     ForEach(lanes) { lane in
@@ -797,7 +797,11 @@ extension UsageLimit {
 
 extension WidgetSnapshot {
     var shouldShowSetupPlaceholder: Bool {
-        state == .setupNeeded && limits.isEmpty
+        state == .setupNeeded && mainLimitSummaries.isEmpty
+    }
+
+    var shouldShowMainLimitEmptyRow: Bool {
+        mainLimitSummaries.isEmpty
     }
 
     var mainLimitSummaries: [MainLimitSummary] {
