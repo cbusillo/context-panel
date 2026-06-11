@@ -37,7 +37,7 @@ struct SettingsNavigationRequest: Equatable {
     }
 
     let id = UUID()
-    let destination: Destination
+    let destination: Destination?
 }
 
 @MainActor
@@ -49,7 +49,12 @@ final class SettingsNavigationModel: ObservableObject {
     }
 
     func clear() {
-        request = nil
+        request = SettingsNavigationRequest(destination: nil)
+    }
+
+    func consumeRequest() -> SettingsNavigationRequest? {
+        defer { request = nil }
+        return request
     }
 }
 
@@ -238,10 +243,11 @@ struct SettingsPane: View {
     @ObservedObject var appModel: ContextPanelAppModel
     @ObservedObject var navigation: SettingsNavigationModel
     @StateObject private var model = SettingsPaneModel()
+    @State private var focusedDestination: SettingsNavigationRequest.Destination?
 
     var body: some View {
         Form {
-            if navigation.request?.destination == .cacheStats {
+            if focusedDestination == .cacheStats {
                 cacheStatsSetupSection
             }
 
@@ -482,10 +488,26 @@ struct SettingsPane: View {
         .sheet(isPresented: $model.isGoogleOAuthCodeSheetPresented) {
             GoogleAntigravityOAuthCodeSheet(model: model) {}
         }
-        .onAppear { model.load() }
+        .onAppear {
+            model.load()
+            consumeNavigationRequest(clearWhenEmpty: true)
+        }
+        .onChange(of: navigation.request?.id) { _, _ in
+            consumeNavigationRequest()
+        }
         .onChange(of: model.authorizationRefreshCounter) { _, _ in
             refreshAfterAuthorization()
         }
+    }
+
+    private func consumeNavigationRequest(clearWhenEmpty: Bool = false) {
+        guard let request = navigation.consumeRequest() else {
+            if clearWhenEmpty {
+                focusedDestination = nil
+            }
+            return
+        }
+        focusedDestination = request.destination
     }
 
     private func authorizeAuthFile(for account: LocalProviderAccountConfiguration) {
