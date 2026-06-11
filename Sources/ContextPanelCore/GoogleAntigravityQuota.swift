@@ -543,8 +543,18 @@ public enum GoogleAntigravityOAuthMetadata {
         let environmentValue = ProcessInfo.processInfo.environment[key]
         let bundleValue = Bundle.main.object(forInfoDictionaryKey: key) as? String
         return [environmentValue, bundleValue]
-            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .compactMap { normalizedConfiguredValue($0) }
             .first { !$0.isEmpty && !$0.hasPrefix("$(") }
+    }
+
+    static func normalizedConfiguredValue(_ value: String?) -> String? {
+        guard var value = value?.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
+        while value.count >= 2, value.first == "\"", value.last == "\"" {
+            value.removeFirst()
+            value.removeLast()
+            value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return value
     }
 }
 

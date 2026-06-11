@@ -29,6 +29,56 @@ import Testing
     #expect(store.loadHistory().count == 1)
 }
 
+@Test func refreshFailureCategoryClassifiesProviderAuthAndOAuthFailures() {
+    #expect(RefreshFailureCategory(errorMessage: nil) == .none)
+    #expect(RefreshFailureCategory(
+        errorMessage: "Every Code auth for this ChatGPT account is no longer authorized for Codex usage. Sign in again from Every Code or Codex, then refresh Context Panel."
+    ) == .providerAuthorization)
+    #expect(RefreshFailureCategory(
+        errorMessage: "Google Antigravity OAuth refresh failed with invalid_client. The OAuth client was not found. Sign in again from Settings to refresh the OAuth client session."
+    ) == .oauthInvalidClient)
+    #expect(RefreshFailureCategory(
+        errorMessage: "Google Antigravity OAuth session has expired. Sign in again from Settings."
+    ) == .oauthExpired)
+    #expect(RefreshFailureCategory(
+        errorMessage: "Google Antigravity credentials are in an unexpected format. Sign in again from Settings."
+    ) == .credentialFormat)
+    #expect(RefreshFailureCategory(
+        errorMessage: "Provider returned no usage records for this account."
+    ) == .unknown)
+    #expect(RefreshFailureCategory(
+        errorMessage: "Provider request failed with HTTP status code 429."
+    ) == .httpFailure)
+}
+
+@Test func reconnectFailuresAreNotCoveredByDifferentAccountsWithSharedConfiguredID() throws {
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let reports = [
+        StoredProviderReport(
+            provider: .openAI,
+            accountID: "openai-account-limited",
+            configuredAccountID: "openai-code-default",
+            accountName: "Limited OpenAI",
+            generatedAt: savedAt,
+            status: .failure,
+            errorMessage: "Every Code auth for this ChatGPT account is no longer authorized for Codex usage."
+        ),
+        StoredProviderReport(
+            provider: .openAI,
+            accountID: "openai-account-healthy",
+            configuredAccountID: "openai-code-default",
+            accountName: "Healthy OpenAI",
+            generatedAt: savedAt,
+            status: .healthy,
+            errorMessage: nil
+        ),
+    ]
+
+    let failures = reports.reconnectBlockingFailures
+
+    #expect(failures.map(\.accountID) == ["openai-account-limited"])
+}
+
 @Test func storedSnapshotsDowngradeSuccessfulReportsWithoutMatchingLimits() throws {
     let root = try temporaryDirectory()
     let store = JSONSnapshotStore(rootDirectory: root)

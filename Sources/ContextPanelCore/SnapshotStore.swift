@@ -151,7 +151,7 @@ private extension StoredProviderReport {
     var reconnectGroupKey: ProviderReportReconnectGroupKey {
         ProviderReportReconnectGroupKey(
             provider: provider,
-            accountID: configuredAccountID ?? accountID
+            accountID: accountID
         )
     }
 

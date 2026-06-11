@@ -1,5 +1,8 @@
 import Foundation
 import Darwin
+import OSLog
+
+private let refreshDiagnosticsLogger = Logger(subsystem: "com.shinycomputers.contextpanel", category: "refresh")
 
 public struct SnapshotRefreshStores: Sendable {
     public let primary: JSONSnapshotStore
@@ -378,13 +381,19 @@ public struct SnapshotRefreshService: Sendable {
             credentialStore: credentialStore,
             requiresBookmarkedAuthFiles: ContextPanelLocations.isRunningInAppSandbox
         )
+        RefreshDiagnostics.logRefreshStarted(
+            enabledAccountCount: accountDocument.accounts.filter(\.isEnabled).count,
+            connectorCount: connectors.count
+        )
         let connectorResult = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: now)
         let refreshResult = ConnectorRefreshResult(
             generatedAt: connectorResult.generatedAt,
             reports: connectorResult.reports,
             promptCacheObservations: connectorResult.promptCacheObservations + promptCacheObservations(now: now)
         )
+        RefreshDiagnostics.logProviderReports(refreshResult.reports, previous: stores.primary.loadCurrent().snapshot)
         guard refreshResult.hasSnapshotPayload else {
+            RefreshDiagnostics.logRefreshSkippedNoPayload(reportCount: refreshResult.reports.count)
             return SnapshotRefreshOutcome(savedAt: now, refreshResult: refreshResult)
         }
         return try saveMerged(refreshResult: refreshResult, savedAt: now)
@@ -425,6 +434,135 @@ public struct SnapshotRefreshService: Sendable {
 private extension ConnectorRefreshResult {
     var hasSnapshotPayload: Bool {
         !reports.isEmpty || !promptCacheObservations.isEmpty
+    }
+}
+
+enum RefreshDiagnostics {
+    static func logRefreshStarted(enabledAccountCount: Int, connectorCount: Int) {
+        refreshDiagnosticsLogger.notice(
+            "provider refresh started enabledAccounts=\(enabledAccountCount, privacy: .public) connectors=\(connectorCount, privacy: .public)"
+        )
+    }
+
+    static func logProviderReports(_ reports: [ProviderConnectorReport], previous: StoredUsageSnapshot?) {
+        let ordinals = reportOrdinals(reports.map { ($0.provider, $0.accountID) })
+        refreshDiagnosticsLogger.notice(
+            "provider refresh completed reports=\(reports.count, privacy: .public) failures=\(reports.filter { $0.status == .failure }.count, privacy: .public) limits=\(reports.flatMap(\.limits).count, privacy: .public)"
+        )
+        for report in reports {
+            let previousSummary = PreviousLimitSummary(
+                limits: previous?.snapshot.limits.filter { $0.provider == report.provider && $0.accountID == report.accountID } ?? []
+            )
+            let ordinal = ordinals[ProviderAccountOrdinalKey(provider: report.provider, accountID: report.accountID)] ?? 0
+            logProviderReport(report, ordinal: ordinal, previousSummary: previousSummary)
+        }
+    }
+
+    static func logRefreshSkippedNoPayload(reportCount: Int) {
+        refreshDiagnosticsLogger.notice(
+            "provider refresh produced no snapshot payload reports=\(reportCount, privacy: .public)"
+        )
+    }
+
+    private static func logProviderReport(
+        _ report: ProviderConnectorReport,
+        ordinal: Int,
+        previousSummary: PreviousLimitSummary
+    ) {
+        refreshDiagnosticsLogger.notice(
+            "provider report provider=\(report.provider.rawValue, privacy: .public) ordinal=\(ordinal, privacy: .public) status=\(report.status.rawValue, privacy: .public) limits=\(report.limits.count, privacy: .public) failureCategory=\(RefreshFailureCategory(errorMessage: report.errorMessage).rawValue, privacy: .public) previousLimits=\(previousSummary.count, privacy: .public) previousLimited=\(previousSummary.limitedCount, privacy: .public) previousMaxUsedPercent=\(previousSummary.maxUsedPercentDescription, privacy: .public) previousSoonestReset=\(previousSummary.soonestResetDescription, privacy: .public)"
+        )
+    }
+
+    private static func reportOrdinals(_ keys: [(provider: Provider, accountID: String)]) -> [ProviderAccountOrdinalKey: Int] {
+        var nextOrdinalByProvider: [Provider: Int] = [:]
+        var ordinals: [ProviderAccountOrdinalKey: Int] = [:]
+        for key in keys {
+            let ordinalKey = ProviderAccountOrdinalKey(provider: key.provider, accountID: key.accountID)
+            if ordinals[ordinalKey] != nil { continue }
+            let ordinal = (nextOrdinalByProvider[key.provider] ?? 0) + 1
+            nextOrdinalByProvider[key.provider] = ordinal
+            ordinals[ordinalKey] = ordinal
+        }
+        return ordinals
+    }
+}
+
+private struct ProviderAccountOrdinalKey: Hashable {
+    let provider: Provider
+    let accountID: String
+}
+
+private struct PreviousLimitSummary {
+    let count: Int
+    let limitedCount: Int
+    let maxUsedPercent: Int?
+    let soonestReset: Date?
+
+    init(limits: [UsageLimit]) {
+        count = limits.count
+        limitedCount = limits.filter { $0.status == .limited }.count
+        maxUsedPercent = limits
+            .filter { $0.unit == .percent }
+            .compactMap(\.used)
+            .max()
+        soonestReset = limits.compactMap(\.resetsAt).min()
+    }
+
+    var maxUsedPercentDescription: String {
+        maxUsedPercent.map(String.init) ?? "none"
+    }
+
+    var soonestResetDescription: String {
+        soonestReset.map { ContextPanelDateFormatting.string(from: $0) } ?? "none"
+    }
+}
+
+enum RefreshFailureCategory: String {
+    case none
+    case providerAuthorization
+    case oauthInvalidClient
+    case oauthExpired
+    case oauthMissingRefreshToken
+    case credentialFormat
+    case missingAuth
+    case httpFailure
+    case rateLimited
+    case decoding
+    case processFailure
+    case filePermission
+    case unknown
+
+    init(errorMessage: String?) {
+        guard let message = errorMessage?.lowercased(), !message.isEmpty else {
+            self = .none
+            return
+        }
+        if message.contains("no longer authorized") || message.contains("not authorized") || message.contains("not authorized") || message.contains("unauthorized") {
+            self = .providerAuthorization
+        } else if message.contains("invalid_client") || message.contains("oauth client was not found") {
+            self = .oauthInvalidClient
+        } else if message.contains("session has expired") || message.contains("invalid_grant") {
+            self = .oauthExpired
+        } else if message.contains("refresh token") {
+            self = .oauthMissingRefreshToken
+        } else if message.contains("unexpected format") || message.contains("does not contain") {
+            self = .credentialFormat
+        } else if message.contains("not connected") || message.contains("missing") || message.contains("sign in") {
+            self = .missingAuth
+        } else if message.contains("rate limited") {
+            self = .rateLimited
+        } else if message.contains("http") || message.contains("status code") || message.contains("response code") {
+            self = .httpFailure
+        } else if message.contains("decode") || message.contains("decoding") {
+            self = .decoding
+        } else if message.contains("exit code") {
+            self = .processFailure
+        } else if message.contains("permission") {
+            self = .filePermission
+        } else {
+            self = .unknown
+        }
     }
 }
 

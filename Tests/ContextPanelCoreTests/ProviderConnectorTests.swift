@@ -1136,6 +1136,12 @@ import Testing
     #expect(GoogleAntigravityOAuthMetadata.clientID != nil)
 }
 
+@Test func googleAntigravityOAuthMetadataNormalizesQuotedBuildSettings() {
+    #expect(GoogleAntigravityOAuthMetadata.normalizedConfiguredValue(" \"\"google-client-id\"\" ") == "google-client-id")
+    #expect(GoogleAntigravityOAuthMetadata.normalizedConfiguredValue("\"\"") == "")
+    #expect(GoogleAntigravityOAuthMetadata.normalizedConfiguredValue("google-client-id") == "google-client-id")
+}
+
 @Test func claudeOAuthConnectorRefreshesUsageWindows() async throws {
     let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
     let usage = #"""
