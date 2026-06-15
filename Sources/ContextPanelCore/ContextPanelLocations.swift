@@ -124,6 +124,16 @@ public enum ContextPanelLocations {
         return applicationSupportDirectory().appending(path: "limit-warning-state.json")
     }
 
+    public static func limitWarningPendingNotificationsURL(appGroupID: String? = nil) -> URL {
+        if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
+            return containerURL
+                .appending(path: "Context Panel", directoryHint: .isDirectory)
+                .appending(path: "limit-warning-pending-notifications.json")
+        }
+
+        return applicationSupportDirectory().appending(path: "limit-warning-pending-notifications.json")
+    }
+
     public static func webhookSettingsURL(appGroupID: String? = nil) -> URL {
         if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
             return containerURL

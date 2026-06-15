@@ -1,6 +1,5 @@
 import ContextPanelCore
 import Foundation
-@preconcurrency import UserNotifications
 import WidgetKit
 
 @main
@@ -117,7 +116,7 @@ struct ContextPanelRefreshAgent {
 private struct LimitWarningNotificationService {
     let settingsStore: LimitWarningSettingsStore
     let stateStore: LimitWarningStateStore
-    let notificationCenter: UNUserNotificationCenter
+    let pendingNotificationStore: LimitWarningPendingNotificationStore
     let webhookService: LimitWarningWebhookDeliveryService
 
     static func appDefault() -> LimitWarningNotificationService {
@@ -128,7 +127,9 @@ private struct LimitWarningNotificationService {
             stateStore: LimitWarningStateStore(
                 stateURL: ContextPanelLocations.limitWarningStateURL(appGroupID: ContextPanelLocations.appGroupID)
             ),
-            notificationCenter: .current(),
+            pendingNotificationStore: LimitWarningPendingNotificationStore(
+                queueURL: ContextPanelLocations.limitWarningPendingNotificationsURL(appGroupID: ContextPanelLocations.appGroupID)
+            ),
             webhookService: .appDefault()
         )
     }
@@ -147,42 +148,29 @@ private struct LimitWarningNotificationService {
         guard result.state != state else {
             return
         }
-        if !result.events.isEmpty {
-            guard await notificationsAreAuthorized() else { return }
-        }
         do {
+            if !result.events.isEmpty {
+                let notifications = result.events.map { event in
+                    LimitWarningPendingNotification(event: event, queuedAt: outcome.savedAt, playsSound: settings.playsSound)
+                }
+                try pendingNotificationStore.append(notifications)
+            }
             try stateStore.save(result.state)
+            if !result.events.isEmpty {
+                wakeMainAppForPendingNotifications()
+            }
         } catch {
-            fputs("ContextPanelRefreshAgent: limit warning state save failed: \(error.localizedDescription)\n", stderr)
-        }
-        guard !result.events.isEmpty else { return }
-        for event in result.events {
-            await deliver(event: event, playsSound: settings.playsSound)
+            fputs("ContextPanelRefreshAgent: limit warning queue failed: \(error.localizedDescription)\n", stderr)
         }
     }
 
-    private func notificationsAreAuthorized() async -> Bool {
-        let settings = await notificationCenter.notificationSettings()
-        return settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
-    }
-
-    private func deliver(event: LimitWarningEvent, playsSound: Bool) async {
-        let content = UNMutableNotificationContent()
-        content.title = event.title
-        content.body = event.body
-        if playsSound {
-            content.sound = .default
-        }
-        let request = UNNotificationRequest(
-            identifier: "context-panel-limit-warning-\(event.laneID)",
-            content: content,
-            trigger: nil
+    private func wakeMainAppForPendingNotifications() {
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name(LimitWarningNotificationWakeup.distributedNotificationName),
+            object: nil,
+            userInfo: nil,
+            deliverImmediately: true
         )
-        do {
-            try await notificationCenter.add(request)
-        } catch {
-            fputs("ContextPanelRefreshAgent: limit warning notification failed: \(error.localizedDescription)\n", stderr)
-        }
     }
 }
 

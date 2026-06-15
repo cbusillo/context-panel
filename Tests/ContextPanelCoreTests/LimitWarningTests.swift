@@ -404,6 +404,41 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
     #expect(await poster.postCount == 1)
 }
 
+@Test func limitWarningPendingNotificationQueueKeepsNewestPerLaneAndRemovesDelivered() throws {
+    let directory = try temporaryWarningDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = LimitWarningPendingNotificationStore(
+        queueURL: directory.appending(path: "limit-warning-pending-notifications.json")
+    )
+    let older = LimitWarningPendingNotification(
+        event: warningEvent(laneID: "openai:weekly", capacityRatio: 0.10),
+        queuedAt: warningNow,
+        playsSound: true
+    )
+    let newer = LimitWarningPendingNotification(
+        event: warningEvent(laneID: "openai:weekly", capacityRatio: 0.05),
+        queuedAt: warningNow.addingTimeInterval(60),
+        playsSound: false
+    )
+    let anthropic = LimitWarningPendingNotification(
+        event: warningEvent(laneID: "anthropic:weekly", provider: .anthropic, capacityRatio: 0.08),
+        queuedAt: warningNow.addingTimeInterval(30),
+        playsSound: true
+    )
+
+    try store.append([older, anthropic, newer])
+    var loaded = store.load()
+
+    #expect(loaded.notifications.map(\.id) == ["anthropic:weekly", "openai:weekly"])
+    #expect(loaded.notifications.first { $0.id == "openai:weekly" }?.event.capacityRatio == 0.05)
+    #expect(loaded.notifications.first { $0.id == "openai:weekly" }?.playsSound == false)
+
+    loaded.remove(ids: ["openai:weekly"])
+    try store.save(loaded)
+
+    #expect(store.load().notifications.map(\.id) == ["anthropic:weekly"])
+}
+
 private func warningLimit(
     provider: Provider,
     accountID: String,
@@ -422,6 +457,25 @@ private func warningLimit(
         limit: limit,
         resetsAt: resetsAt,
         lastUpdatedAt: warningNow
+    )
+}
+
+private func warningEvent(
+    laneID: String,
+    provider: Provider = .openAI,
+    window: MainLimitWindow = .weekly,
+    capacityRatio: Double
+) -> LimitWarningEvent {
+    LimitWarningEvent(
+        laneID: laneID,
+        provider: provider,
+        window: window,
+        thresholdPercentRemaining: 10,
+        capacityRatio: capacityRatio,
+        remaining: Int((capacityRatio * 100).rounded()),
+        limit: 100,
+        resetsAt: warningNow.addingTimeInterval(3_600),
+        accountCount: 1
     )
 }
 

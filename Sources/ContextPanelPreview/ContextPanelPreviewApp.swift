@@ -64,6 +64,7 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
     let model = ContextPanelAppModel()
     let settingsNavigation = SettingsNavigationModel()
     private var settingsWindow: NSWindow?
+    private var pendingLimitWarningObserver: NSObjectProtocol?
     private let backgroundRefreshSettingsStore = BackgroundRefreshSettingsStore(
         settingsURL: ContextPanelLocations.backgroundRefreshSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
     )
@@ -72,9 +73,27 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
         if handleCommandLineUtilityMode() {
             return
         }
+        registerPendingLimitWarningObserver()
         reconcileRefreshAgentRegistration()
         model.loadSnapshot()
+        Task { await model.deliverPendingLimitWarnings() }
         WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        if let pendingLimitWarningObserver {
+            DistributedNotificationCenter.default().removeObserver(pendingLimitWarningObserver)
+        }
+    }
+
+    private func registerPendingLimitWarningObserver() {
+        pendingLimitWarningObserver = DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name(LimitWarningNotificationWakeup.distributedNotificationName),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { await self?.model.deliverPendingLimitWarnings() }
+        }
     }
 
     private func handleCommandLineUtilityMode() -> Bool {
@@ -839,6 +858,9 @@ final class SettingsPaneModel: ObservableObject {
     private let limitWarningStateStore = LimitWarningStateStore(
         stateURL: ContextPanelLocations.limitWarningStateURL(appGroupID: ContextPanelLocations.appGroupID)
     )
+    private let limitWarningPendingNotificationStore = LimitWarningPendingNotificationStore(
+        queueURL: ContextPanelLocations.limitWarningPendingNotificationsURL(appGroupID: ContextPanelLocations.appGroupID)
+    )
     private let webhookSettingsStore = LimitWarningWebhookSettingsStore(
         settingsURL: ContextPanelLocations.webhookSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
     )
@@ -1172,6 +1194,7 @@ final class SettingsPaneModel: ObservableObject {
     private func clearLimitWarningState() {
         do {
             try limitWarningStateStore.save(.empty)
+            try limitWarningPendingNotificationStore.save(.empty)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -3764,6 +3787,10 @@ final class ContextPanelAppModel: ObservableObject {
         }
     }
 
+    func deliverPendingLimitWarnings() async {
+        await limitWarningNotificationService.deliverPendingNotifications()
+    }
+
     func setError(_ message: String) {
         storeStatus = .failure
         errorMessage = ConnectorRedactor.redact(message)
@@ -3825,6 +3852,7 @@ struct CapacityDial: View {
 private struct AppLimitWarningNotificationService {
     let settingsStore: LimitWarningSettingsStore
     let stateStore: LimitWarningStateStore
+    let pendingNotificationStore: LimitWarningPendingNotificationStore
     let notificationCenter: UNUserNotificationCenter
 
     static func appDefault() -> AppLimitWarningNotificationService {
@@ -3834,6 +3862,9 @@ private struct AppLimitWarningNotificationService {
             ),
             stateStore: LimitWarningStateStore(
                 stateURL: ContextPanelLocations.limitWarningStateURL(appGroupID: ContextPanelLocations.appGroupID)
+            ),
+            pendingNotificationStore: LimitWarningPendingNotificationStore(
+                queueURL: ContextPanelLocations.limitWarningPendingNotificationsURL(appGroupID: ContextPanelLocations.appGroupID)
             ),
             notificationCenter: .current()
         )
@@ -3864,12 +3895,38 @@ private struct AppLimitWarningNotificationService {
         }
     }
 
+    func deliverPendingNotifications() async {
+        let queue = pendingNotificationStore.load()
+        guard !queue.notifications.isEmpty else { return }
+        guard await notificationsAreAuthorized() else {
+            contextPanelLogger.error("pending limit warnings could not be delivered: notifications are not authorized for Context Panel")
+            return
+        }
+
+        var deliveredIDs = Set<String>()
+        for notification in queue.notifications {
+            if await deliver(event: notification.event, playsSound: notification.playsSound) {
+                deliveredIDs.insert(notification.id)
+            }
+        }
+        guard !deliveredIDs.isEmpty else { return }
+
+        do {
+            var updatedQueue = pendingNotificationStore.load()
+            updatedQueue.remove(ids: deliveredIDs)
+            try pendingNotificationStore.save(updatedQueue)
+        } catch {
+            contextPanelLogger.error("pending limit warning queue update failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     private func notificationsAreAuthorized() async -> Bool {
         let settings = await notificationCenter.notificationSettings()
         return settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
     }
 
-    private func deliver(event: LimitWarningEvent, playsSound: Bool) async {
+    @discardableResult
+    private func deliver(event: LimitWarningEvent, playsSound: Bool) async -> Bool {
         let content = UNMutableNotificationContent()
         content.title = event.title
         content.body = event.body
@@ -3883,8 +3940,10 @@ private struct AppLimitWarningNotificationService {
         )
         do {
             try await notificationCenter.add(request)
+            return true
         } catch {
             contextPanelLogger.error("limit warning notification failed: \(error.localizedDescription, privacy: .public)")
+            return false
         }
     }
 }

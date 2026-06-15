@@ -221,7 +221,7 @@ public struct LimitWarningStateStore: Sendable {
     }
 }
 
-public struct LimitWarningEvent: Equatable, Identifiable, Sendable {
+public struct LimitWarningEvent: Codable, Equatable, Identifiable, Sendable {
     public let laneID: String
     public let provider: Provider
     public let window: MainLimitWindow
@@ -249,6 +249,126 @@ public struct LimitWarningEvent: Equatable, Identifiable, Sendable {
         }
         return "\(headroom) for \(provider.displayName) \(window.displayName); \(detail)."
     }
+}
+
+public struct LimitWarningPendingNotification: Codable, Equatable, Identifiable, Sendable {
+    public let id: String
+    public let event: LimitWarningEvent
+    public let queuedAt: Date
+    public let playsSound: Bool
+
+    public init(event: LimitWarningEvent, queuedAt: Date, playsSound: Bool) {
+        id = event.laneID
+        self.event = event
+        self.queuedAt = queuedAt
+        self.playsSound = playsSound
+    }
+}
+
+public struct LimitWarningPendingNotificationQueue: Codable, Equatable, Sendable {
+    public let schemaVersion: Int
+    public var notifications: [LimitWarningPendingNotification]
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case notifications
+    }
+
+    public init(notifications: [LimitWarningPendingNotification] = []) {
+        schemaVersion = 1
+        self.notifications = Self.normalized(notifications)
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        notifications = Self.normalized(try container.decode([LimitWarningPendingNotification].self, forKey: .notifications))
+    }
+
+    public static var empty: LimitWarningPendingNotificationQueue { LimitWarningPendingNotificationQueue() }
+
+    public mutating func append(_ notification: LimitWarningPendingNotification) {
+        notifications.removeAll { $0.id == notification.id }
+        notifications.append(notification)
+        notifications = Self.normalized(notifications)
+    }
+
+    public mutating func remove(ids: Set<String>) {
+        notifications.removeAll { ids.contains($0.id) }
+    }
+
+    private static func normalized(_ notifications: [LimitWarningPendingNotification]) -> [LimitWarningPendingNotification] {
+        notifications
+            .reduce(into: [String: LimitWarningPendingNotification]()) { result, notification in
+                if let existing = result[notification.id], existing.queuedAt > notification.queuedAt {
+                    return
+                }
+                result[notification.id] = notification
+            }
+            .values
+            .sorted { lhs, rhs in lhs.queuedAt < rhs.queuedAt }
+    }
+}
+
+public struct LimitWarningPendingNotificationStore: Sendable {
+    public let queueURL: URL
+
+    public init(queueURL: URL) {
+        self.queueURL = queueURL
+    }
+
+    public func load() -> LimitWarningPendingNotificationQueue {
+        loadIfAvailable() ?? .empty
+    }
+
+    public func loadIfAvailable() -> LimitWarningPendingNotificationQueue? {
+        guard FileManager.default.fileExists(atPath: queueURL.path) else {
+            return nil
+        }
+
+        do {
+            let queue = try Self.makeDecoder().decode(
+                LimitWarningPendingNotificationQueue.self,
+                from: try Data(contentsOf: queueURL)
+            )
+            guard queue.schemaVersion == 1 else { return nil }
+            return queue
+        } catch {
+            return nil
+        }
+    }
+
+    public func save(_ queue: LimitWarningPendingNotificationQueue) throws {
+        let directory = queueURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let data = try Self.makeEncoder().encode(queue)
+        try data.write(to: queueURL, options: [.atomic])
+    }
+
+    public func append(_ notifications: [LimitWarningPendingNotification]) throws {
+        var queue = load()
+        for notification in notifications {
+            queue.append(notification)
+        }
+        try save(queue)
+    }
+
+    private static func makeEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }
+
+    private static func makeDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }
+}
+
+public enum LimitWarningNotificationWakeup {
+    public static let distributedNotificationName = "com.shinycomputers.contextpanel.limit-warning-pending-notifications"
 }
 
 public enum LimitWarningEvaluator {
