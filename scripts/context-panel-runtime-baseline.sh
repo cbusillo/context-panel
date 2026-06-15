@@ -273,7 +273,7 @@ context_files() {
 	for root in "${roots[@]}"; do
 		[[ -e "$root" ]] || continue
 		find "$root" -maxdepth 12 \
-			\( -name accounts.json -o -name file-bookmarks.json -o -name current-snapshot.json -o -name history.json -o -name reset-primer-settings.json -o -name reset-primer-runs.json -o -name background-refresh-settings.json \) \
+			\( -name accounts.json -o -name file-bookmarks.json -o -name current-snapshot.json -o -name history.json -o -name reset-primer-settings.json -o -name reset-primer-runs.json -o -name background-refresh-settings.json -o -name limit-warning-settings.json -o -name limit-warning-state.json \) \
 			-print 2>/dev/null || true
 	done
 }
