@@ -139,26 +139,43 @@ private struct LimitWarningNotificationService {
         guard case let .refreshed(outcome) = decision else { return }
         let settings = settingsStore.load()
         let state = stateStore.load()
+        let warningSnapshot = LimitWarningSnapshotResolver.effectiveSnapshot(
+            transientSnapshot: outcome.refreshResult.snapshot,
+            persistedSnapshot: loadPersistedSnapshot()
+        )
         let result = LimitWarningEvaluator.evaluate(
             settings: settings,
             state: state,
-            snapshot: outcome.refreshResult.snapshot,
+            snapshot: warningSnapshot,
             now: outcome.savedAt
         )
-        guard result.state != state else {
+        let commitPlan = LimitWarningNotificationCommitPlan(
+            currentState: state,
+            targetState: result.state,
+            snapshot: warningSnapshot,
+            settings: settings
+        )
+        guard commitPlan.hasPendingChanges else {
             return
         }
+        if commitPlan.hasPersistedStateChanges {
+            do {
+                try stateStore.save(commitPlan.persistedState)
+            } catch {
+                fputs("ContextPanelRefreshAgent: limit warning state save failed: \(error.localizedDescription)\n", stderr)
+            }
+        }
+        if result.events.isEmpty {
+            return
+        }
+
         do {
-            if !result.events.isEmpty {
-                let notifications = result.events.map { event in
-                    LimitWarningPendingNotification(event: event, queuedAt: outcome.savedAt, playsSound: settings.playsSound)
-                }
-                try pendingNotificationStore.append(notifications)
+            let notifications = result.events.map { event in
+                LimitWarningPendingNotification(event: event, queuedAt: outcome.savedAt, playsSound: settings.playsSound)
             }
-            try stateStore.save(result.state)
-            if !result.events.isEmpty {
-                wakeMainAppForPendingNotifications()
-            }
+            try pendingNotificationStore.append(notifications)
+            try stateStore.save(commitPlan.persistedState)
+            wakeMainAppForPendingNotifications()
         } catch {
             fputs("ContextPanelRefreshAgent: limit warning queue failed: \(error.localizedDescription)\n", stderr)
         }
@@ -171,6 +188,12 @@ private struct LimitWarningNotificationService {
             userInfo: nil,
             deliverImmediately: true
         )
+    }
+
+    private func loadPersistedSnapshot() -> StoredUsageSnapshot? {
+        JSONSnapshotStore(
+            rootDirectory: ContextPanelLocations.snapshotDirectory(appGroupID: ContextPanelLocations.appGroupID)
+        ).loadCurrent().snapshot
     }
 }
 

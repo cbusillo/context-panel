@@ -3874,24 +3874,45 @@ private struct AppLimitWarningNotificationService {
         guard case let .refreshed(outcome) = decision else { return }
         let settings = settingsStore.load()
         let state = stateStore.load()
+        let warningSnapshot = LimitWarningSnapshotResolver.effectiveSnapshot(
+            transientSnapshot: outcome.refreshResult.snapshot,
+            persistedSnapshot: loadPersistedSnapshot()
+        )
         let result = LimitWarningEvaluator.evaluate(
             settings: settings,
             state: state,
-            snapshot: outcome.refreshResult.snapshot,
+            snapshot: warningSnapshot,
             now: outcome.savedAt
         )
-        guard result.state != state else { return }
+        var commitPlan = LimitWarningNotificationCommitPlan(
+            currentState: state,
+            targetState: result.state,
+            snapshot: warningSnapshot,
+            settings: settings
+        )
+        guard commitPlan.hasPendingChanges else { return }
+        if commitPlan.hasPersistedStateChanges {
+            do {
+                try stateStore.save(commitPlan.persistedState)
+            } catch {
+                contextPanelLogger.error("limit warning state save failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        if result.events.isEmpty {
+            return
+        }
+
         if !result.events.isEmpty {
             guard await notificationsAreAuthorized() else { return }
         }
-        do {
-            try stateStore.save(result.state)
-        } catch {
-            contextPanelLogger.error("limit warning state save failed: \(error.localizedDescription, privacy: .public)")
-        }
-        guard !result.events.isEmpty else { return }
         for event in result.events {
-            await deliver(event: event, playsSound: settings.playsSound)
+            guard await deliver(event: event, playsSound: settings.playsSound) else { return }
+            commitPlan.commitDeliveredEvent(for: event.laneID)
+            do {
+                try stateStore.save(commitPlan.persistedState)
+            } catch {
+                contextPanelLogger.error("limit warning state save failed: \(error.localizedDescription, privacy: .public)")
+            }
         }
     }
 
@@ -3904,9 +3925,22 @@ private struct AppLimitWarningNotificationService {
         }
 
         var deliveredIDs = Set<String>()
+        let state = stateStore.load()
+        var commitPlan = LimitWarningNotificationCommitPlan(
+            currentState: state,
+            targetState: pendingTargetState(from: queue, currentState: state),
+            snapshot: pendingSnapshot(from: queue),
+            settings: settingsStore.load()
+        )
         for notification in queue.notifications {
             if await deliver(event: notification.event, playsSound: notification.playsSound) {
                 deliveredIDs.insert(notification.id)
+                commitPlan.commitDeliveredEvent(for: notification.id)
+                do {
+                    try stateStore.save(commitPlan.persistedState)
+                } catch {
+                    contextPanelLogger.error("limit warning state save failed: \(error.localizedDescription, privacy: .public)")
+                }
             }
         }
         guard !deliveredIDs.isEmpty else { return }
@@ -3923,6 +3957,37 @@ private struct AppLimitWarningNotificationService {
     private func notificationsAreAuthorized() async -> Bool {
         let settings = await notificationCenter.notificationSettings()
         return settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
+    }
+
+    private func loadPersistedSnapshot() -> StoredUsageSnapshot? {
+        JSONSnapshotStore(
+            rootDirectory: ContextPanelLocations.snapshotDirectory(appGroupID: ContextPanelLocations.appGroupID)
+        ).loadCurrent().snapshot
+    }
+
+    private func pendingTargetState(
+        from queue: LimitWarningPendingNotificationQueue,
+        currentState: LimitWarningState
+    ) -> LimitWarningState {
+        var state = currentState
+        for notification in queue.notifications {
+            let event = notification.event
+            state.upsert(LimitWarningRecord(
+                laneID: event.laneID,
+                lastThresholdPercentRemaining: event.thresholdPercentRemaining,
+                lastNotifiedAt: notification.queuedAt,
+                lastCapacityRatio: event.capacityRatio,
+                resetIdentity: event.resetsAt.map { String(Int($0.timeIntervalSince1970)) }
+            ))
+        }
+        return state
+    }
+
+    private func pendingSnapshot(from queue: LimitWarningPendingNotificationQueue) -> UsageSnapshot {
+        UsageSnapshot(
+            generatedAt: queue.notifications.last?.queuedAt ?? Date(),
+            limits: []
+        )
     }
 
     @discardableResult

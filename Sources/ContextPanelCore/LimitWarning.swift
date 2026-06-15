@@ -371,6 +371,68 @@ public enum LimitWarningNotificationWakeup {
     public static let distributedNotificationName = "com.shinycomputers.contextpanel.limit-warning-pending-notifications"
 }
 
+public enum LimitWarningSnapshotResolver {
+    public static func effectiveSnapshot(
+        transientSnapshot: UsageSnapshot,
+        persistedSnapshot: StoredUsageSnapshot?
+    ) -> UsageSnapshot {
+        persistedSnapshot?.snapshot ?? transientSnapshot
+    }
+}
+
+public struct LimitWarningNotificationCommitPlan: Equatable, Sendable {
+    private let currentState: LimitWarningState
+    private let targetState: LimitWarningState
+    public private(set) var persistedState: LimitWarningState
+
+    public init(
+        currentState: LimitWarningState,
+        targetState: LimitWarningState,
+        snapshot: UsageSnapshot,
+        settings: LimitWarningSettings
+    ) {
+        self.currentState = currentState
+        self.targetState = targetState
+        persistedState = currentState
+        pruneRecoveredRecords(using: snapshot, settings: settings)
+    }
+
+    public var hasPendingChanges: Bool {
+        currentState != persistedState || persistedState != targetState
+    }
+
+    public var hasPersistedStateChanges: Bool {
+        currentState != persistedState
+    }
+
+    public mutating func commitDeliveredEvent(for laneID: String) {
+        guard let record = targetState.record(for: laneID) else { return }
+        persistedState.upsert(record)
+    }
+
+    private mutating func pruneRecoveredRecords(
+        using snapshot: UsageSnapshot,
+        settings: LimitWarningSettings
+    ) {
+        guard settings.isEnabled else {
+            persistedState = .empty
+            return
+        }
+        let summariesByID = Dictionary(uniqueKeysWithValues: snapshot.mainLimitSummaries.map { ($0.id, $0) })
+        for record in persistedState.records {
+            guard let summary = summariesByID[record.laneID] else { continue }
+            guard let usageRatio = summary.usageRatio else {
+                persistedState.removeRecord(for: record.laneID)
+                continue
+            }
+            let capacityRatio = max(1 - usageRatio, 0)
+            if capacityRatio > LimitWarningEvaluator.recoveryCapacityRatio(for: settings) {
+                persistedState.removeRecord(for: record.laneID)
+            }
+        }
+    }
+}
+
 public enum LimitWarningEvaluator {
     public static func evaluate(
         settings: LimitWarningSettings,
@@ -433,7 +495,7 @@ public enum LimitWarningEvaluator {
         return (events.sorted { $0.capacityRatio < $1.capacityRatio }, nextState)
     }
 
-    private static func recoveryCapacityRatio(for settings: LimitWarningSettings) -> Double {
+    public static func recoveryCapacityRatio(for settings: LimitWarningSettings) -> Double {
         min(settings.thresholdCapacityRatio + 0.05, 1)
     }
 
