@@ -190,6 +190,255 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
     #expect(loaded.record(for: "openai:fiveHour")?.lastThresholdPercentRemaining == 15)
 }
 
+@Test func limitWarningWebhookSettingsStoreRoundTripsAndClamps() throws {
+    let directory = try temporaryWarningDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = LimitWarningWebhookSettingsStore(settingsURL: directory.appending(path: "webhook-settings.json"))
+
+    try store.save(LimitWarningWebhookSettings(
+        isEnabled: true,
+        preset: .genericJSON,
+        destinationLabel: String(repeating: "A", count: 120),
+        mentionText: String(repeating: "B", count: 180),
+        timeoutSeconds: 99
+    ))
+
+    let loaded = store.load()
+    #expect(loaded.isEnabled)
+    #expect(loaded.preset == .genericJSON)
+    #expect(loaded.destinationLabel.count == 80)
+    #expect(loaded.mentionText.count == 120)
+    #expect(loaded.timeoutSeconds == 15)
+}
+
+@Test func limitWarningWebhookPayloadOmitsSecretsAndFormatsDiscord() throws {
+    let event = LimitWarningEvent(
+        laneID: "openai:fiveHour",
+        provider: .openAI,
+        window: .fiveHour,
+        thresholdPercentRemaining: 10,
+        capacityRatio: 0.04,
+        remaining: 4,
+        limit: 100,
+        resetsAt: warningNow.addingTimeInterval(3_600),
+        accountCount: 2
+    )
+    let settings = LimitWarningWebhookSettings(isEnabled: true, preset: .discord, mentionText: "@here")
+
+    let payload = try LimitWarningWebhookPayloadBuilder.payload(
+        for: event,
+        settings: settings,
+        sentAt: warningNow,
+        appVersion: "1.0.test"
+    )
+    let object = try #require(JSONSerialization.jsonObject(with: payload.data) as? [String: Any])
+    let payloadText = String(decoding: payload.data, as: UTF8.self)
+
+    #expect(object["content"] as? String == "@here")
+    #expect(payloadText.contains("OpenAI 5-hour is low"))
+    #expect(payloadText.contains("4% left"))
+    #expect(!payloadText.contains("discord.com/api/webhooks"))
+    #expect(!payloadText.localizedCaseInsensitiveContains("token"))
+}
+
+@Test func limitWarningWebhookSecretValidationRequiresHTTPS() {
+    #expect(LimitWarningWebhookSecretStore.validatedWebhookURL("http://example.com/hook") == nil)
+    #expect(LimitWarningWebhookSecretStore.validatedWebhookURL("not a url") == nil)
+    #expect(LimitWarningWebhookSecretStore.validatedWebhookURL("https://example.com/hook") != nil)
+}
+
+@Test func limitWarningWebhookDeliveryRetriesAfterFailureUntilSuccess() async throws {
+    let directory = try temporaryWarningDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let settingsStore = LimitWarningWebhookSettingsStore(settingsURL: directory.appending(path: "webhook-settings.json"))
+    let warningSettingsStore = LimitWarningSettingsStore(settingsURL: directory.appending(path: "warning-settings.json"))
+    let stateStore = LimitWarningWebhookDeliveryStateStore(stateURL: directory.appending(path: "webhook-state.json"))
+    try settingsStore.save(LimitWarningWebhookSettings(isEnabled: true, preset: .genericJSON))
+    try warningSettingsStore.save(LimitWarningSettings(isEnabled: true, thresholdPercentRemaining: 10))
+    let poster = FakeWebhookPoster(statusCodes: [500, 204])
+    let service = LimitWarningWebhookDeliveryService(
+        warningSettingsStore: warningSettingsStore,
+        settingsStore: settingsStore,
+        stateStore: stateStore,
+        secretStore: StaticWebhookSecretStore(url: URL(string: "https://example.com/hook")),
+        poster: poster,
+        appVersion: "1.0.test"
+    )
+    let snapshot = UsageSnapshot(generatedAt: warningNow, limits: [
+        warningLimit(provider: .anthropic, accountID: "claude", label: "Claude Weekly", used: 93, limit: 100),
+    ])
+
+    let failed = await service.deliverIfNeeded(snapshot: snapshot, now: warningNow)
+    let succeeded = await service.deliverIfNeeded(snapshot: snapshot, now: warningNow.addingTimeInterval(60))
+    let suppressed = await service.deliverIfNeeded(snapshot: snapshot, now: warningNow.addingTimeInterval(120))
+
+    #expect(failed.first?.statusCode == 500)
+    #expect(failed.first?.succeeded == false)
+    #expect(succeeded.first?.statusCode == 204)
+    #expect(succeeded.first?.succeeded == true)
+    #expect(suppressed.isEmpty)
+    #expect(await poster.postCount == 2)
+}
+
+@Test func limitWarningWebhookDeliveryStateKeepsOneLiveRecordPerLaneAndSeparateTestRecord() {
+    let older = warningNow
+    let newer = warningNow.addingTimeInterval(60)
+    let state = LimitWarningWebhookDeliveryState(records: [
+        LimitWarningWebhookDeliveryRecord(
+            deliveryKey: "primary-webhook:openai:fiveHour:reset-a:10",
+            laneID: "openai:fiveHour",
+            lastAttemptedAt: older,
+            lastSucceededAt: older,
+            lastHTTPStatus: 204,
+            lastError: nil
+        ),
+        LimitWarningWebhookDeliveryRecord(
+            deliveryKey: "primary-webhook:openai:fiveHour:reset-b:10",
+            laneID: "openai:fiveHour",
+            lastAttemptedAt: newer,
+            lastSucceededAt: nil,
+            lastHTTPStatus: 500,
+            lastError: "HTTP 500"
+        ),
+        LimitWarningWebhookDeliveryRecord(
+            deliveryKey: "test:123",
+            laneID: "test:fiveHour",
+            isTest: true,
+            lastAttemptedAt: newer.addingTimeInterval(60),
+            lastSucceededAt: newer.addingTimeInterval(60),
+            lastHTTPStatus: 204,
+            lastError: nil
+        ),
+    ])
+
+    #expect(state.records.count == 2)
+    #expect(state.record(for: "primary-webhook:openai:fiveHour:reset-b:10")?.lastHTTPStatus == 500)
+    #expect(state.latestRecord?.deliveryKey == "primary-webhook:openai:fiveHour:reset-b:10")
+    #expect(state.latestTestRecord?.deliveryKey == "test:123")
+}
+
+@Test func limitWarningWebhookDeliveryPrunesMissingLanes() throws {
+    var state = LimitWarningWebhookDeliveryState(records: [
+        LimitWarningWebhookDeliveryRecord(
+            deliveryKey: "primary-webhook:openai:fiveHour:reset:10",
+            laneID: "openai:fiveHour",
+            lastAttemptedAt: warningNow,
+            lastSucceededAt: warningNow,
+            lastHTTPStatus: 204,
+            lastError: nil
+        ),
+        LimitWarningWebhookDeliveryRecord(
+            deliveryKey: "primary-webhook:anthropic:weekly:reset:10",
+            laneID: "anthropic:weekly",
+            lastAttemptedAt: warningNow,
+            lastSucceededAt: warningNow,
+            lastHTTPStatus: 204,
+            lastError: nil
+        ),
+        LimitWarningWebhookDeliveryRecord(
+            deliveryKey: "test:123",
+            laneID: "test:fiveHour",
+            isTest: true,
+            lastAttemptedAt: warningNow.addingTimeInterval(1),
+            lastSucceededAt: warningNow.addingTimeInterval(1),
+            lastHTTPStatus: 204,
+            lastError: nil
+        ),
+    ])
+
+    state.removeRecords(forMissing: ["anthropic:weekly"])
+
+    #expect(state.records.map(\.laneID).sorted() == ["anthropic:weekly", "test:fiveHour"])
+    #expect(state.latestTestRecord?.deliveryKey == "test:123")
+}
+
+@Test func limitWarningWebhookSendTestWritesSeparateTestStatus() async throws {
+    let directory = try temporaryWarningDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let settingsStore = LimitWarningWebhookSettingsStore(settingsURL: directory.appending(path: "webhook-settings.json"))
+    let warningSettingsStore = LimitWarningSettingsStore(settingsURL: directory.appending(path: "warning-settings.json"))
+    let stateStore = LimitWarningWebhookDeliveryStateStore(stateURL: directory.appending(path: "webhook-state.json"))
+    try settingsStore.save(LimitWarningWebhookSettings(isEnabled: false, preset: .discord))
+    let poster = FakeWebhookPoster(statusCodes: [204])
+    let service = LimitWarningWebhookDeliveryService(
+        warningSettingsStore: warningSettingsStore,
+        settingsStore: settingsStore,
+        stateStore: stateStore,
+        secretStore: StaticWebhookSecretStore(url: URL(string: "https://example.com/hook")),
+        poster: poster,
+        appVersion: "1.0.test"
+    )
+
+    let result = await service.sendTest(now: warningNow)
+    let state = stateStore.load()
+
+    #expect(result.succeeded == true)
+    #expect(state.latestRecord == nil)
+    #expect(state.latestTestRecord?.succeeded == true)
+}
+
+@Test func limitWarningWebhookDeliveryUsesConfiguredWarningThreshold() async throws {
+    let directory = try temporaryWarningDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let settingsStore = LimitWarningWebhookSettingsStore(settingsURL: directory.appending(path: "webhook-settings.json"))
+    let warningSettingsStore = LimitWarningSettingsStore(settingsURL: directory.appending(path: "warning-settings.json"))
+    let stateStore = LimitWarningWebhookDeliveryStateStore(stateURL: directory.appending(path: "webhook-state.json"))
+    try settingsStore.save(LimitWarningWebhookSettings(isEnabled: true, preset: .genericJSON))
+    try warningSettingsStore.save(LimitWarningSettings(isEnabled: true, thresholdPercentRemaining: 25))
+    let poster = FakeWebhookPoster(statusCodes: [204])
+    let service = LimitWarningWebhookDeliveryService(
+        warningSettingsStore: warningSettingsStore,
+        settingsStore: settingsStore,
+        stateStore: stateStore,
+        secretStore: StaticWebhookSecretStore(url: URL(string: "https://example.com/hook")),
+        poster: poster,
+        appVersion: "1.0.test"
+    )
+    let snapshot = UsageSnapshot(generatedAt: warningNow, limits: [
+        warningLimit(provider: .openAI, accountID: "codex", label: "Codex 5-hour", used: 80, limit: 100),
+    ])
+
+    let result = await service.deliverIfNeeded(snapshot: snapshot, now: warningNow)
+
+    #expect(result.first?.succeeded == true)
+    #expect(await poster.postCount == 1)
+}
+
+@Test func limitWarningPendingNotificationQueueKeepsNewestPerLaneAndRemovesDelivered() throws {
+    let directory = try temporaryWarningDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = LimitWarningPendingNotificationStore(
+        queueURL: directory.appending(path: "limit-warning-pending-notifications.json")
+    )
+    let older = LimitWarningPendingNotification(
+        event: warningEvent(laneID: "openai:weekly", capacityRatio: 0.10),
+        queuedAt: warningNow,
+        playsSound: true
+    )
+    let newer = LimitWarningPendingNotification(
+        event: warningEvent(laneID: "openai:weekly", capacityRatio: 0.05),
+        queuedAt: warningNow.addingTimeInterval(60),
+        playsSound: false
+    )
+    let anthropic = LimitWarningPendingNotification(
+        event: warningEvent(laneID: "anthropic:weekly", provider: .anthropic, capacityRatio: 0.08),
+        queuedAt: warningNow.addingTimeInterval(30),
+        playsSound: true
+    )
+
+    try store.append([older, anthropic, newer])
+    var loaded = store.load()
+
+    #expect(loaded.notifications.map(\.id) == ["anthropic:weekly", "openai:weekly"])
+    #expect(loaded.notifications.first { $0.id == "openai:weekly" }?.event.capacityRatio == 0.05)
+    #expect(loaded.notifications.first { $0.id == "openai:weekly" }?.playsSound == false)
+
+    loaded.remove(ids: ["openai:weekly"])
+    try store.save(loaded)
+
+    #expect(store.load().notifications.map(\.id) == ["anthropic:weekly"])
+}
+
 private func warningLimit(
     provider: Provider,
     accountID: String,
@@ -211,10 +460,51 @@ private func warningLimit(
     )
 }
 
+private func warningEvent(
+    laneID: String,
+    provider: Provider = .openAI,
+    window: MainLimitWindow = .weekly,
+    capacityRatio: Double
+) -> LimitWarningEvent {
+    LimitWarningEvent(
+        laneID: laneID,
+        provider: provider,
+        window: window,
+        thresholdPercentRemaining: 10,
+        capacityRatio: capacityRatio,
+        remaining: Int((capacityRatio * 100).rounded()),
+        limit: 100,
+        resetsAt: warningNow.addingTimeInterval(3_600),
+        accountCount: 1
+    )
+}
+
 private func temporaryWarningDirectory() throws -> URL {
     let url = FileManager.default.temporaryDirectory
         .appending(path: "context-panel-warning-tests")
         .appending(path: UUID().uuidString, directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     return url
+}
+
+private struct StaticWebhookSecretStore: LimitWarningWebhookSecretLoading {
+    let url: URL?
+
+    func loadWebhookURL() throws -> URL? {
+        url
+    }
+}
+
+private actor FakeWebhookPoster: LimitWarningWebhookPosting {
+    private var statusCodes: [Int]
+    private(set) var postCount = 0
+
+    init(statusCodes: [Int]) {
+        self.statusCodes = statusCodes
+    }
+
+    func post(payload: LimitWarningWebhookPayload, to url: URL, timeoutSeconds: Double) async throws -> Int {
+        postCount += 1
+        return statusCodes.isEmpty ? 204 : statusCodes.removeFirst()
+    }
 }

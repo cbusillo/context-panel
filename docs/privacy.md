@@ -10,6 +10,15 @@ sell personal data. Account configuration, credentials, usage snapshots, widget
 preferences, refresh history, and diagnostics are stored locally on the user's
 Mac.
 
+If the user enables outbound webhook alerts, Context Panel sends selected
+normalized limit-warning data to the user-configured webhook URL. This can
+include provider name, main-limit window, percent remaining, remaining and limit
+values when known, reset time, event time, and app version. Webhook alerts do
+not intentionally include provider tokens, webhook URLs, prompts, transcripts,
+raw provider responses, account IDs, email addresses, organization identifiers,
+project identifiers, or local auth paths. Webhook URLs are stored in the macOS
+Keychain and are not written to JSON settings, diagnostics, or logs.
+
 When a user connects local provider accounts, Context Panel may read local
 provider credential files or call provider services to refresh usage-limit
 status. Those requests are made for the user's configured accounts so the app

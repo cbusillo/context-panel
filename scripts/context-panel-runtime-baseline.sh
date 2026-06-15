@@ -273,7 +273,7 @@ context_files() {
 	for root in "${roots[@]}"; do
 		[[ -e "$root" ]] || continue
 		find "$root" -maxdepth 12 \
-			\( -name accounts.json -o -name file-bookmarks.json -o -name current-snapshot.json -o -name history.json -o -name reset-primer-settings.json -o -name reset-primer-runs.json -o -name background-refresh-settings.json -o -name limit-warning-settings.json -o -name limit-warning-state.json \) \
+			\( -name accounts.json -o -name file-bookmarks.json -o -name current-snapshot.json -o -name history.json -o -name reset-primer-settings.json -o -name reset-primer-runs.json -o -name background-refresh-settings.json -o -name limit-warning-settings.json -o -name limit-warning-state.json -o -name limit-warning-pending-notifications.json -o -name webhook-settings.json -o -name webhook-delivery-state.json \) \
 			-print 2>/dev/null || true
 	done
 }
@@ -338,6 +338,49 @@ clear_provider_credentials() {
 		ok "removed Context Panel provider credentials from Keychain"
 	else
 		fail "Context Panel provider credential cleanup failed"
+		return 1
+	fi
+}
+
+webhook_credential_state() {
+	local executable="$refresh_agent_path/Contents/MacOS/ContextPanelRefreshAgent"
+	if [[ ! -x "$executable" ]]; then
+		printf 'Context Panel webhook credential check unavailable: missing %s\n' "$executable"
+		return 2
+	fi
+
+	local output status
+	set +e
+	output="$(run_with_timeout 10 "$executable" --webhook-credentials-present 2>&1)"
+	status=$?
+	set -e
+	printf '%s\n' "$output"
+	case "$status" in
+	0) return 0 ;;
+	10) return 10 ;;
+	*) return 2 ;;
+	esac
+}
+
+clear_webhook_credentials() {
+	local executable="$refresh_agent_path/Contents/MacOS/ContextPanelRefreshAgent"
+	if [[ ! -x "$executable" ]]; then
+		fail "Context Panel webhook credential cleanup unavailable: missing $executable"
+		return 1
+	fi
+
+	local output status
+	set +e
+	output="$(run_with_timeout 10 "$executable" --clear-webhook-credentials 2>&1)"
+	status=$?
+	set -e
+	if [[ -n "$output" ]]; then
+		printf '%s\n' "$output"
+	fi
+	if [[ "$status" == "0" ]]; then
+		ok "removed Context Panel webhook credentials from Keychain"
+	else
+		fail "Context Panel webhook credential cleanup failed"
 		return 1
 	fi
 }
@@ -875,6 +918,7 @@ reset_runtime() {
 	neutralize_bundle_extensions "$HOME/.Trash"
 	install_checkout_app
 	clear_provider_credentials
+	clear_webhook_credentials
 	quarantine_path "$built_app_path" "$quarantine"
 	quarantine_path "$derived_data_path/Build/Products/Debug/ContextPanelWidgetExtension.appex" "$quarantine"
 	quarantine_path "$derived_data_path/Build/Products/Debug/ContextPanelRefreshAgent.app" "$quarantine"
@@ -1154,6 +1198,33 @@ check_runtime() {
 			ok "Context Panel provider credentials are present in Keychain"
 		else
 			fail "could not verify Context Panel provider credentials"
+		fi
+	fi
+
+	section "Webhook Credentials"
+	local webhook_state webhook_status
+	set +e
+	webhook_state="$(webhook_credential_state)"
+	webhook_status=$?
+	set -e
+	if [[ -n "$webhook_state" ]]; then
+		printf '%s\n' "$webhook_state"
+	fi
+	if [[ "$mode" == "reset" ]]; then
+		if [[ "$webhook_status" == "0" ]]; then
+			ok "no Context Panel webhook credentials are present in Keychain"
+		elif [[ "$webhook_status" == "10" ]]; then
+			fail "Context Panel webhook credentials remain in Keychain"
+		else
+			fail "could not verify Context Panel webhook credentials"
+		fi
+	else
+		if [[ "$webhook_status" == "0" ]]; then
+			ok "no Context Panel webhook credentials are present in Keychain"
+		elif [[ "$webhook_status" == "10" ]]; then
+			ok "Context Panel webhook credentials are present in Keychain"
+		else
+			fail "could not verify Context Panel webhook credentials"
 		fi
 	fi
 }

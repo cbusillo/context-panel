@@ -13,9 +13,20 @@ Context Panel is expected to split into a few native boundaries:
 - macOS app: account setup, credentials, manual refresh, detailed charts,
   provider health, and settings.
 - Refresh agent: a bundled native login item that performs periodic provider
-  refreshes when the app UI is not running.
+  refreshes when the app UI is not running. It evaluates local limit-warning
+  thresholds but queues pending local notifications for the main app to deliver
+  under the app's notification authorization.
 - Widget extension: compact read-only display backed by the app's latest local
   snapshot.
+- Optional outbound webhook channel: user-configured limit-warning delivery to
+  a third-party URL, with secrets stored in Keychain and normalized payloads
+  built from `LimitWarningEvent`.
+
+Local limit-warning notifications use app-group state. The refresh agent records
+warning state and writes pending notification events to shared storage, then
+wakes the running app with a distributed notification. The main app drains that
+queue through `UNUserNotificationCenter`, so macOS authorization stays attached
+to the user-facing app bundle rather than the background login item.
 
 The shared vocabulary now lives in `ContextPanelCore`. App, widget, probes, and
 the background refresh agent all consume the same normalized provider reports,
@@ -109,6 +120,16 @@ writing overlapping refresh results.
 The WidgetKit implementation uses a `WidgetSnapshot` projection from the stored
 snapshot. That projection owns setup-needed, stale, failure, provider-summary,
 and most-constrained row selection so the widget view stays read-only and small.
+
+Limit warnings are evaluated from normalized `MainLimitSummary` capacity, not
+raw provider payloads. Local macOS notifications and outbound webhooks use
+separate delivery state so one channel cannot suppress the other. Webhook
+settings and delivery status live in the App Group as non-secret JSON, while the
+webhook URL is treated as a capability secret and stored in Keychain. Webhook
+payloads must contain only normalized warning data such as provider, main-limit
+window, percent remaining, remaining/limit values, reset time, and app version.
+They must not include account IDs, emails, provider organization/project IDs,
+auth paths, prompts, raw provider responses, tokens, or the webhook URL itself.
 
 OpenAI fast-mode guidance is built from the same `MainLimitSummary` values used
 elsewhere. Weekly capacity is treated as the primary pool and shorter windows,
