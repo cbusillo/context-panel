@@ -886,12 +886,12 @@ final class SettingsPaneModel: ObservableObject {
     }
 
     func setLimitWarningsEnabled(_ isEnabled: Bool) {
-        var updated = limitWarningSettings
-        updated.isEnabled = isEnabled
-        if saveLimitWarningSettings(updated) {
-            if isEnabled {
-                Task { await requestLimitWarningNotificationAuthorization() }
-            } else {
+        if isEnabled {
+            Task { await enableLimitWarningNotifications() }
+        } else {
+            var updated = limitWarningSettings
+            updated.isEnabled = false
+            if saveLimitWarningSettings(updated) {
                 clearLimitWarningState()
             }
         }
@@ -943,18 +943,44 @@ final class SettingsPaneModel: ObservableObject {
         }
     }
 
-    private func requestLimitWarningNotificationAuthorization() async {
-        do {
-            let isAuthorized = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
-            if !isAuthorized {
-                await MainActor.run {
+    @MainActor
+    private func enableLimitWarningNotifications() async {
+        let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+        switch settings.authorizationStatus {
+        case .authorized, .provisional, .ephemeral:
+            var updated = limitWarningSettings
+            updated.isEnabled = true
+            _ = saveLimitWarningSettings(updated)
+        case .notDetermined:
+            do {
+                let isAuthorized = try await center.requestAuthorization(options: [.alert, .sound])
+                if isAuthorized {
+                    var updated = limitWarningSettings
+                    updated.isEnabled = true
+                    _ = saveLimitWarningSettings(updated)
+                } else {
+                    var updated = limitWarningSettings
+                    updated.isEnabled = false
+                    _ = saveLimitWarningSettings(updated)
                     errorMessage = "Notifications are off for Context Panel. Enable them in System Settings to receive limit warnings."
                 }
-            }
-        } catch {
-            await MainActor.run {
+            } catch {
+                var updated = limitWarningSettings
+                updated.isEnabled = false
+                _ = saveLimitWarningSettings(updated)
                 errorMessage = "Limit warning notifications could not be enabled: \(error.localizedDescription)"
             }
+        case .denied:
+            var updated = limitWarningSettings
+            updated.isEnabled = false
+            _ = saveLimitWarningSettings(updated)
+            errorMessage = "Notifications are off for Context Panel. Enable them in System Settings to receive limit warnings."
+        @unknown default:
+            var updated = limitWarningSettings
+            updated.isEnabled = false
+            _ = saveLimitWarningSettings(updated)
+            errorMessage = "Context Panel could not read its notification permission. Check System Settings before enabling limit warnings."
         }
     }
 
