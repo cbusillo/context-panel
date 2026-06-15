@@ -571,7 +571,16 @@ public struct LimitWarningWebhookDeliveryService: Sendable {
         now: Date = Date()
     ) async -> [LimitWarningWebhookDeliveryResult] {
         guard case let .refreshed(outcome) = decision else { return [] }
-        return await deliverIfNeeded(snapshot: outcome.refreshResult.snapshot, now: now)
+        let persistedSnapshot = JSONSnapshotStore(
+            rootDirectory: ContextPanelLocations.snapshotDirectory(appGroupID: ContextPanelLocations.appGroupID)
+        ).loadCurrent().snapshot
+        return await deliverIfNeeded(
+            snapshot: LimitWarningSnapshotResolver.effectiveSnapshot(
+                transientSnapshot: outcome.refreshResult.snapshot,
+                persistedSnapshot: persistedSnapshot
+            ),
+            now: now
+        )
     }
 
     public func deliverIfNeeded(

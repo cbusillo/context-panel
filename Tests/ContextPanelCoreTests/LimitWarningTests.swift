@@ -162,6 +162,168 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
     #expect(recovered.state.record(for: "openai:fiveHour") == nil)
 }
 
+@Test func limitWarningSnapshotResolverUsesPersistedMergedSnapshotWhenAvailable() throws {
+    let persistedSnapshot = StoredUsageSnapshot(
+        savedAt: warningNow,
+        snapshot: UsageSnapshot(generatedAt: warningNow, limits: [
+            warningLimit(provider: .openAI, accountID: "codex", label: "Codex 5-hour", used: 95, limit: 100),
+            warningLimit(provider: .anthropic, accountID: "claude", label: "Claude 5-hour", used: 91, limit: 100),
+        ])
+    )
+    let transientSnapshot = UsageSnapshot(generatedAt: warningNow.addingTimeInterval(60), limits: [
+        warningLimit(provider: .openAI, accountID: "codex", label: "Codex 5-hour", used: 95, limit: 100),
+    ])
+
+    let effective = LimitWarningSnapshotResolver.effectiveSnapshot(
+        transientSnapshot: transientSnapshot,
+        persistedSnapshot: persistedSnapshot
+    )
+
+    #expect(Set(effective.mainLimitSummaries.map(\.id)) == ["openai:fiveHour", "anthropic:fiveHour"])
+}
+
+@Test func limitWarningSnapshotResolverFallsBackToTransientSnapshotWhenNoPersistedSnapshotExists() throws {
+    let transientSnapshot = UsageSnapshot(generatedAt: warningNow, limits: [
+        warningLimit(provider: .openAI, accountID: "codex", label: "Codex 5-hour", used: 95, limit: 100),
+    ])
+
+    let effective = LimitWarningSnapshotResolver.effectiveSnapshot(
+        transientSnapshot: transientSnapshot,
+        persistedSnapshot: nil
+    )
+
+    #expect(effective.mainLimitSummaries.map(\.id) == ["openai:fiveHour"])
+}
+
+@Test func limitWarningCommitPlanAdvancesStateOnlyAfterDeliveryCommit() throws {
+    let settings = LimitWarningSettings(isEnabled: true, thresholdPercentRemaining: 10)
+    let snapshot = UsageSnapshot(generatedAt: warningNow, limits: [
+        warningLimit(provider: .openAI, accountID: "codex", label: "Codex 5-hour", used: 95, limit: 100),
+    ])
+    let evaluation = LimitWarningEvaluator.evaluate(
+        settings: settings,
+        state: .empty,
+        snapshot: snapshot,
+        now: warningNow
+    )
+
+    var plan = LimitWarningNotificationCommitPlan(
+        currentState: .empty,
+        targetState: evaluation.state,
+        snapshot: snapshot,
+        settings: settings
+    )
+
+    #expect(plan.hasPendingChanges)
+    #expect(plan.persistedState.records.isEmpty)
+
+    plan.commitDeliveredEvent(for: "openai:fiveHour")
+
+    #expect(plan.persistedState == evaluation.state)
+}
+
+@Test func limitWarningCommitPlanPreservesStillLowSuppressionAcrossPartialRefresh() throws {
+    let settings = LimitWarningSettings(isEnabled: true, thresholdPercentRemaining: 10)
+    let existingState = LimitWarningState(records: [
+        LimitWarningRecord(
+            laneID: "openai:fiveHour",
+            lastThresholdPercentRemaining: 10,
+            lastNotifiedAt: warningNow,
+            lastCapacityRatio: 0.05,
+            resetIdentity: nil
+        ),
+        LimitWarningRecord(
+            laneID: "anthropic:fiveHour",
+            lastThresholdPercentRemaining: 10,
+            lastNotifiedAt: warningNow,
+            lastCapacityRatio: 0.09,
+            resetIdentity: nil
+        ),
+    ])
+    let stillLowPartialSnapshot = UsageSnapshot(generatedAt: warningNow.addingTimeInterval(60), limits: [
+        warningLimit(provider: .openAI, accountID: "codex", label: "Codex 5-hour", used: 95, limit: 100),
+    ])
+
+    let plan = LimitWarningNotificationCommitPlan(
+        currentState: existingState,
+        targetState: existingState,
+        snapshot: stillLowPartialSnapshot,
+        settings: settings
+    )
+
+    #expect(plan.hasPendingChanges == false)
+    #expect(plan.persistedState == existingState)
+}
+
+@Test func limitWarningCommitPlanClearsRecoveredLaneWithoutCommittingNewWarnings() throws {
+    let settings = LimitWarningSettings(isEnabled: true, thresholdPercentRemaining: 10)
+    let existingState = LimitWarningState(records: [
+        LimitWarningRecord(
+            laneID: "openai:fiveHour",
+            lastThresholdPercentRemaining: 10,
+            lastNotifiedAt: warningNow,
+            lastCapacityRatio: 0.05,
+            resetIdentity: nil
+        ),
+    ])
+    let recoveredSnapshot = UsageSnapshot(generatedAt: warningNow.addingTimeInterval(60), limits: [
+        warningLimit(provider: .openAI, accountID: "codex", label: "Codex 5-hour", used: 80, limit: 100),
+    ])
+    let recoveredEvaluation = LimitWarningEvaluator.evaluate(
+        settings: settings,
+        state: existingState,
+        snapshot: recoveredSnapshot,
+        now: warningNow.addingTimeInterval(60)
+    )
+
+    let plan = LimitWarningNotificationCommitPlan(
+        currentState: existingState,
+        targetState: recoveredEvaluation.state,
+        snapshot: recoveredSnapshot,
+        settings: settings
+    )
+
+    #expect(plan.hasPendingChanges)
+    #expect(plan.persistedState.records.isEmpty)
+}
+
+@Test func limitWarningCommitPlanSeparatesRecoveredCleanupFromUndeliveredNewWarning() throws {
+    let settings = LimitWarningSettings(isEnabled: true, thresholdPercentRemaining: 10)
+    let existingState = LimitWarningState(records: [
+        LimitWarningRecord(
+            laneID: "openai:fiveHour",
+            lastThresholdPercentRemaining: 10,
+            lastNotifiedAt: warningNow,
+            lastCapacityRatio: 0.05,
+            resetIdentity: nil
+        ),
+    ])
+    let mixedSnapshot = UsageSnapshot(generatedAt: warningNow.addingTimeInterval(60), limits: [
+        warningLimit(provider: .openAI, accountID: "codex", label: "Codex 5-hour", used: 80, limit: 100),
+        warningLimit(provider: .anthropic, accountID: "claude", label: "Claude 5-hour", used: 95, limit: 100),
+    ])
+    let evaluation = LimitWarningEvaluator.evaluate(
+        settings: settings,
+        state: existingState,
+        snapshot: mixedSnapshot,
+        now: warningNow.addingTimeInterval(60)
+    )
+
+    var plan = LimitWarningNotificationCommitPlan(
+        currentState: existingState,
+        targetState: evaluation.state,
+        snapshot: mixedSnapshot,
+        settings: settings
+    )
+
+    #expect(plan.hasPersistedStateChanges)
+    #expect(plan.persistedState.records.isEmpty)
+
+    plan.commitDeliveredEvent(for: "anthropic:fiveHour")
+
+    #expect(plan.persistedState == evaluation.state)
+}
+
 @Test func limitWarningStateStoreKeepsNewestRecordPerLane() throws {
     let directory = try temporaryWarningDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
