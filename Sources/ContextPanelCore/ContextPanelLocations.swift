@@ -124,6 +124,26 @@ public enum ContextPanelLocations {
         return applicationSupportDirectory().appending(path: "limit-warning-state.json")
     }
 
+    public static func webhookSettingsURL(appGroupID: String? = nil) -> URL {
+        if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
+            return containerURL
+                .appending(path: "Context Panel", directoryHint: .isDirectory)
+                .appending(path: "webhook-settings.json")
+        }
+
+        return applicationSupportDirectory().appending(path: "webhook-settings.json")
+    }
+
+    public static func webhookDeliveryStateURL(appGroupID: String? = nil) -> URL {
+        if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
+            return containerURL
+                .appending(path: "Context Panel", directoryHint: .isDirectory)
+                .appending(path: "webhook-delivery-state.json")
+        }
+
+        return applicationSupportDirectory().appending(path: "webhook-delivery-state.json")
+    }
+
     public static func everyCodeUsageDirectory() -> URL {
         let defaultUsageDirectory = realUserHomeDirectory()
             .appending(path: ".code", directoryHint: .isDirectory)

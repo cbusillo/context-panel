@@ -434,6 +434,64 @@ struct SettingsPane: View {
                 Text(model.limitWarningStatusText)
                     .font(.system(size: 11))
                     .foregroundStyle(CPTheme.secondaryText)
+
+                Divider()
+
+                Toggle(isOn: Binding(
+                    get: { model.webhookSettings.isEnabled },
+                    set: { model.setWebhookEnabled($0) }
+                )) {
+                    Text("Send webhook alerts")
+                }
+                .toggleStyle(.switch)
+
+                Picker("Webhook type", selection: Binding(
+                    get: { model.webhookSettings.preset },
+                    set: { model.setWebhookPreset($0) }
+                )) {
+                    ForEach(LimitWarningWebhookPreset.allCases) { preset in
+                        Text(preset.displayName).tag(preset)
+                    }
+                }
+                .disabled(!model.webhookSettings.isEnabled)
+
+                SecureField("Webhook URL", text: $model.webhookURLInputText)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(!model.webhookSettings.isEnabled)
+
+                HStack(spacing: 8) {
+                    Button("Save URL") { model.saveWebhookURL() }
+                        .disabled(!model.webhookSettings.isEnabled || model.webhookURLInputText.isEmpty)
+                    Button("Clear URL") { model.clearWebhookURL() }
+                        .disabled(model.webhookURLDisplayText.isEmpty)
+                    Spacer()
+                    Text(model.webhookURLDisplayText.isEmpty ? "No webhook URL saved" : model.webhookURLDisplayText)
+                        .font(.system(size: 11))
+                        .foregroundStyle(CPTheme.secondaryText)
+                }
+
+                TextField("Destination label", text: Binding(
+                    get: { model.webhookSettings.destinationLabel },
+                    set: { model.setWebhookDestinationLabel($0) }
+                ))
+                .textFieldStyle(.roundedBorder)
+                .disabled(!model.webhookSettings.isEnabled)
+
+                TextField("Discord mention", text: Binding(
+                    get: { model.webhookSettings.mentionText },
+                    set: { model.setWebhookMentionText($0) }
+                ))
+                .textFieldStyle(.roundedBorder)
+                .disabled(!model.webhookSettings.isEnabled || model.webhookSettings.preset != .discord)
+
+                HStack(spacing: 8) {
+                    Button(model.webhookTestButtonText) { model.sendWebhookTest() }
+                        .disabled(!model.canSendWebhookTest)
+                    Text(model.webhookStatusText)
+                        .font(.system(size: 11))
+                        .foregroundStyle(CPTheme.secondaryText)
+                    Spacer()
+                }
             }
 
             Section("Widget Main Limits") {
@@ -721,6 +779,12 @@ final class SettingsPaneModel: ObservableObject {
     @Published private(set) var resetPrimerSettings: ResetPrimerSettings = .defaultSettings
     @Published private(set) var backgroundRefreshSettings: BackgroundRefreshSettings = .defaultSettings
     @Published private(set) var limitWarningSettings: LimitWarningSettings = .defaultSettings
+    @Published private(set) var webhookSettings: LimitWarningWebhookSettings = .defaultSettings
+    @Published private(set) var webhookDeliveryState: LimitWarningWebhookDeliveryState = .empty
+    @Published private(set) var webhookURLDisplayText: String = ""
+    @Published var webhookURLInputText: String = ""
+    @Published private(set) var isSendingWebhookTest = false
+    @Published private(set) var lastWebhookTestSentAt: Date?
     @Published private(set) var status: UsageStatus = .unknown
     @Published private(set) var errorMessage: String?
     @Published private(set) var authorizedPaths: Set<String> = []
@@ -742,6 +806,11 @@ final class SettingsPaneModel: ObservableObject {
     private var pendingClaudeOAuth: PendingClaudeOAuth?
     private var pendingGoogleOAuth: PendingGoogleAntigravityOAuth?
     private var googleOAuthCallbackServer: GoogleOAuthCallbackServer?
+    private var webhookTestCooldownTask: Task<Void, Never>?
+
+    deinit {
+        webhookTestCooldownTask?.cancel()
+    }
 
     var pendingClaudeOAuthAuthorizationURL: URL? {
         pendingClaudeOAuth?.authorizationURL
@@ -770,6 +839,13 @@ final class SettingsPaneModel: ObservableObject {
     private let limitWarningStateStore = LimitWarningStateStore(
         stateURL: ContextPanelLocations.limitWarningStateURL(appGroupID: ContextPanelLocations.appGroupID)
     )
+    private let webhookSettingsStore = LimitWarningWebhookSettingsStore(
+        settingsURL: ContextPanelLocations.webhookSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
+    )
+    private let webhookDeliveryStateStore = LimitWarningWebhookDeliveryStateStore(
+        stateURL: ContextPanelLocations.webhookDeliveryStateURL(appGroupID: ContextPanelLocations.appGroupID)
+    )
+    private let webhookSecretStore = LimitWarningWebhookSecretStore()
 
     private var widgetPreferenceStores: WidgetDisplayPreferencesStoreSet {
         WidgetDisplayPreferencesStoreSet(stores: [widgetPreferenceStore])
@@ -811,6 +887,51 @@ final class SettingsPaneModel: ObservableObject {
             return "Context Panel warns once when a main limit falls to \(limitWarningSettings.thresholdPercentRemaining)% remaining."
         }
         return "Warnings are off. Turn them on to get a local alert before a main limit runs out."
+    }
+
+    var webhookStatusText: String {
+        guard let latest = webhookDeliveryState.latestRecord else {
+            if let latestTest = webhookDeliveryState.latestTestRecord {
+                let time = latestTest.lastAttemptedAt.formatted(date: .omitted, time: .shortened)
+                if latestTest.succeeded {
+                    return "Last webhook test sent at \(time)."
+                }
+                if let status = latestTest.lastHTTPStatus {
+                    return "Last webhook test failed at \(time): HTTP \(status)."
+                }
+                return "Last webhook test failed at \(time): \(latestTest.lastError ?? "unknown error")."
+            }
+            if webhookSettings.isEnabled {
+                return "Webhook alerts are on. No delivery attempts yet."
+            }
+            return "Webhook alerts are off. Add a webhook URL to send limit warnings outside this Mac."
+        }
+        let time = latest.lastAttemptedAt.formatted(date: .omitted, time: .shortened)
+        if latest.succeeded {
+            return "Last webhook sent at \(time)."
+        }
+        if let status = latest.lastHTTPStatus {
+            return "Last webhook failed at \(time): HTTP \(status)."
+        }
+        return "Last webhook failed at \(time): \(latest.lastError ?? "unknown error")."
+    }
+
+    var canSendWebhookTest: Bool {
+        webhookSettings.isEnabled
+            && !webhookURLDisplayText.isEmpty
+            && !isSendingWebhookTest
+            && !isWebhookTestCoolingDown
+    }
+
+    var webhookTestButtonText: String {
+        if isSendingWebhookTest { return "Sending..." }
+        if isWebhookTestCoolingDown { return "Sent" }
+        return "Send Test"
+    }
+
+    private var isWebhookTestCoolingDown: Bool {
+        guard let lastWebhookTestSentAt else { return false }
+        return Date().timeIntervalSince(lastWebhookTestSentAt) < 30
     }
 
     func load() {
@@ -860,6 +981,9 @@ final class SettingsPaneModel: ObservableObject {
         widgetPreferences = widgetPreferenceStores.load()
         backgroundRefreshSettings = backgroundRefreshSettingsStore.load()
         limitWarningSettings = limitWarningSettingsStore.load()
+        webhookSettings = webhookSettingsStore.load()
+        webhookDeliveryState = webhookDeliveryStateStore.load()
+        refreshWebhookURLDisplayText()
         var primerSettings = resetPrimerSettingsStore.load()
         primerSettings.syncAccounts(result.document.accounts)
         resetPrimerSettings = primerSettings
@@ -911,6 +1035,87 @@ final class SettingsPaneModel: ObservableObject {
         _ = saveLimitWarningSettings(updated)
     }
 
+    func setWebhookEnabled(_ isEnabled: Bool) {
+        var updated = webhookSettings
+        updated.isEnabled = isEnabled
+        _ = saveWebhookSettings(updated)
+    }
+
+    func setWebhookPreset(_ preset: LimitWarningWebhookPreset) {
+        var updated = webhookSettings
+        updated.preset = preset
+        if saveWebhookSettings(updated) {
+            clearWebhookDeliveryState()
+        }
+    }
+
+    func setWebhookDestinationLabel(_ label: String) {
+        var updated = webhookSettings
+        updated.setDestinationLabel(label)
+        _ = saveWebhookSettings(updated)
+    }
+
+    func setWebhookMentionText(_ text: String) {
+        var updated = webhookSettings
+        updated.setMentionText(text)
+        _ = saveWebhookSettings(updated)
+    }
+
+    func saveWebhookURL() {
+        let trimmed = webhookURLInputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = LimitWarningWebhookSecretStore.validatedWebhookURL(trimmed) else {
+            errorMessage = "Webhook URL must be a valid https URL."
+            return
+        }
+        do {
+            try webhookSecretStore.saveWebhookURL(url)
+            webhookURLInputText = ""
+            webhookURLDisplayText = Self.redactedWebhookURL(url)
+            clearWebhookDeliveryState()
+        } catch {
+            errorMessage = "Webhook URL could not be saved: \(error.localizedDescription)"
+        }
+    }
+
+    func clearWebhookURL() {
+        do {
+            try webhookSecretStore.deleteWebhookURL()
+            webhookURLDisplayText = ""
+            webhookURLInputText = ""
+            clearWebhookDeliveryState()
+        } catch {
+            errorMessage = "Webhook URL could not be cleared: \(error.localizedDescription)"
+        }
+    }
+
+    func sendWebhookTest() {
+        guard canSendWebhookTest else { return }
+        isSendingWebhookTest = true
+        Task {
+            let service = LimitWarningWebhookDeliveryService(
+                warningSettingsStore: limitWarningSettingsStore,
+                settingsStore: webhookSettingsStore,
+                stateStore: webhookDeliveryStateStore,
+                secretStore: webhookSecretStore
+            )
+            let result = await service.sendTest()
+            await MainActor.run {
+                webhookDeliveryState = webhookDeliveryStateStore.load()
+                isSendingWebhookTest = false
+                let sentAt = Date()
+                lastWebhookTestSentAt = sentAt
+                scheduleWebhookTestCooldownRefresh(sentAt: sentAt)
+                if result.succeeded {
+                    errorMessage = nil
+                } else if let message = result.errorMessage {
+                    errorMessage = "Webhook test failed: \(message)"
+                } else {
+                    errorMessage = "Webhook test could not be sent. Save a webhook URL first."
+                }
+            }
+        }
+    }
+
     @discardableResult
     private func saveBackgroundRefreshSettings(_ updated: BackgroundRefreshSettings) -> Bool {
         do {
@@ -935,11 +1140,59 @@ final class SettingsPaneModel: ObservableObject {
         }
     }
 
+    @discardableResult
+    private func saveWebhookSettings(_ updated: LimitWarningWebhookSettings) -> Bool {
+        do {
+            try webhookSettingsStore.save(updated)
+            webhookSettings = updated
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    private func refreshWebhookURLDisplayText() {
+        do {
+            if let url = try webhookSecretStore.loadWebhookURL() {
+                webhookURLDisplayText = Self.redactedWebhookURL(url)
+            } else {
+                webhookURLDisplayText = ""
+            }
+        } catch {
+            webhookURLDisplayText = ""
+        }
+    }
+
+    private static func redactedWebhookURL(_ url: URL) -> String {
+        guard let host = url.host else { return "Saved webhook URL" }
+        return "Saved webhook for \(host)"
+    }
+
     private func clearLimitWarningState() {
         do {
             try limitWarningStateStore.save(.empty)
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func clearWebhookDeliveryState() {
+        do {
+            try webhookDeliveryStateStore.save(.empty)
+            webhookDeliveryState = .empty
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func scheduleWebhookTestCooldownRefresh(sentAt: Date) {
+        webhookTestCooldownTask?.cancel()
+        webhookTestCooldownTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(30))
+            guard let self, self.lastWebhookTestSentAt == sentAt else { return }
+            self.lastWebhookTestSentAt = nil
+            self.webhookTestCooldownTask = nil
         }
     }
 

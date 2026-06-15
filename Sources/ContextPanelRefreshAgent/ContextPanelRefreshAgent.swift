@@ -10,8 +10,14 @@ struct ContextPanelRefreshAgent {
         if arguments.contains("--clear-provider-credentials") {
             clearProviderCredentials()
         }
+        if arguments.contains("--clear-webhook-credentials") {
+            clearWebhookCredentials()
+        }
         if arguments.contains("--provider-credentials-present") {
             checkProviderCredentials()
+        }
+        if arguments.contains("--webhook-credentials-present") {
+            checkWebhookCredentials()
         }
 
         let runner = SnapshotRefreshRunner.appDefault()
@@ -81,12 +87,38 @@ struct ContextPanelRefreshAgent {
             Foundation.exit(1)
         }
     }
+
+    private static func clearWebhookCredentials() -> Never {
+        do {
+            try LimitWarningWebhookSecretStore().deleteWebhookURL()
+            print("Context Panel webhook credentials cleared")
+            Foundation.exit(0)
+        } catch {
+            fputs("ContextPanelRefreshAgent: webhook credential cleanup failed: \(error.localizedDescription)\n", stderr)
+            Foundation.exit(1)
+        }
+    }
+
+    private static func checkWebhookCredentials() -> Never {
+        do {
+            if try LimitWarningWebhookSecretStore().loadWebhookURL() != nil {
+                print("Context Panel webhook credentials are present")
+                Foundation.exit(10)
+            }
+            print("Context Panel webhook credentials are absent")
+            Foundation.exit(0)
+        } catch {
+            fputs("ContextPanelRefreshAgent: webhook credential check failed: \(error.localizedDescription)\n", stderr)
+            Foundation.exit(1)
+        }
+    }
 }
 
 private struct LimitWarningNotificationService {
     let settingsStore: LimitWarningSettingsStore
     let stateStore: LimitWarningStateStore
     let notificationCenter: UNUserNotificationCenter
+    let webhookService: LimitWarningWebhookDeliveryService
 
     static func appDefault() -> LimitWarningNotificationService {
         LimitWarningNotificationService(
@@ -96,11 +128,13 @@ private struct LimitWarningNotificationService {
             stateStore: LimitWarningStateStore(
                 stateURL: ContextPanelLocations.limitWarningStateURL(appGroupID: ContextPanelLocations.appGroupID)
             ),
-            notificationCenter: .current()
+            notificationCenter: .current(),
+            webhookService: .appDefault()
         )
     }
 
     func notifyIfNeeded(decision: SnapshotRefreshRunDecision) async {
+        _ = await webhookService.deliverIfNeeded(decision: decision)
         guard case let .refreshed(outcome) = decision else { return }
         let settings = settingsStore.load()
         let state = stateStore.load()
