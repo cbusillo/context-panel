@@ -4,6 +4,7 @@ import Network
 import os
 import ServiceManagement
 import SwiftUI
+@preconcurrency import UserNotifications
 import WidgetKit
 
 private let contextPanelLogger = Logger(subsystem: "com.shinycomputers.contextpanel", category: "app")
@@ -402,6 +403,39 @@ struct SettingsPane: View {
                     .foregroundStyle(CPTheme.secondaryText)
             }
 
+            Section("Limit Warnings") {
+                Toggle(isOn: Binding(
+                    get: { model.limitWarningSettings.isEnabled },
+                    set: { model.setLimitWarningsEnabled($0) }
+                )) {
+                    Text("Notify when capacity is low")
+                }
+                .toggleStyle(.switch)
+
+                Picker("Warn at", selection: Binding(
+                    get: { model.limitWarningSettings.thresholdPercentRemaining },
+                    set: { model.setLimitWarningThreshold($0) }
+                )) {
+                    ForEach([5, 10, 15, 20, 25, 50], id: \.self) { percent in
+                        Text("\(percent)% left").tag(percent)
+                    }
+                }
+                .disabled(!model.limitWarningSettings.isEnabled)
+
+                Toggle(isOn: Binding(
+                    get: { model.limitWarningSettings.playsSound },
+                    set: { model.setLimitWarningSoundEnabled($0) }
+                )) {
+                    Text("Play sound")
+                }
+                .toggleStyle(.switch)
+                .disabled(!model.limitWarningSettings.isEnabled)
+
+                Text(model.limitWarningStatusText)
+                    .font(.system(size: 11))
+                    .foregroundStyle(CPTheme.secondaryText)
+            }
+
             Section("Widget Main Limits") {
                 Text("Choose which main limits appear in the widget and drag rows to set their priority.")
                     .font(.system(size: 11))
@@ -686,6 +720,7 @@ final class SettingsPaneModel: ObservableObject {
     @Published private(set) var widgetPreferences: WidgetDisplayPreferences = .defaultPreferences
     @Published private(set) var resetPrimerSettings: ResetPrimerSettings = .defaultSettings
     @Published private(set) var backgroundRefreshSettings: BackgroundRefreshSettings = .defaultSettings
+    @Published private(set) var limitWarningSettings: LimitWarningSettings = .defaultSettings
     @Published private(set) var status: UsageStatus = .unknown
     @Published private(set) var errorMessage: String?
     @Published private(set) var authorizedPaths: Set<String> = []
@@ -729,6 +764,12 @@ final class SettingsPaneModel: ObservableObject {
     private let backgroundRefreshSettingsStore = BackgroundRefreshSettingsStore(
         settingsURL: ContextPanelLocations.backgroundRefreshSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
     )
+    private let limitWarningSettingsStore = LimitWarningSettingsStore(
+        settingsURL: ContextPanelLocations.limitWarningSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
+    )
+    private let limitWarningStateStore = LimitWarningStateStore(
+        stateURL: ContextPanelLocations.limitWarningStateURL(appGroupID: ContextPanelLocations.appGroupID)
+    )
 
     private var widgetPreferenceStores: WidgetDisplayPreferencesStoreSet {
         WidgetDisplayPreferencesStoreSet(stores: [widgetPreferenceStore])
@@ -763,6 +804,13 @@ final class SettingsPaneModel: ObservableObject {
             return "Updates run every \(backgroundRefreshSettings.intervalMinutes) minutes in the background."
         }
         return "Background updates are off. Manual refresh still works."
+    }
+
+    var limitWarningStatusText: String {
+        if limitWarningSettings.isEnabled {
+            return "Context Panel warns once when a main limit falls to \(limitWarningSettings.thresholdPercentRemaining)% remaining."
+        }
+        return "Warnings are off. Turn them on to get a local alert before a main limit runs out."
     }
 
     func load() {
@@ -811,6 +859,7 @@ final class SettingsPaneModel: ObservableObject {
 
         widgetPreferences = widgetPreferenceStores.load()
         backgroundRefreshSettings = backgroundRefreshSettingsStore.load()
+        limitWarningSettings = limitWarningSettingsStore.load()
         var primerSettings = resetPrimerSettingsStore.load()
         primerSettings.syncAccounts(result.document.accounts)
         resetPrimerSettings = primerSettings
@@ -836,6 +885,32 @@ final class SettingsPaneModel: ObservableObject {
         }
     }
 
+    func setLimitWarningsEnabled(_ isEnabled: Bool) {
+        var updated = limitWarningSettings
+        updated.isEnabled = isEnabled
+        if saveLimitWarningSettings(updated) {
+            if isEnabled {
+                Task { await requestLimitWarningNotificationAuthorization() }
+            } else {
+                clearLimitWarningState()
+            }
+        }
+    }
+
+    func setLimitWarningThreshold(_ percent: Int) {
+        var updated = limitWarningSettings
+        updated.setThresholdPercentRemaining(percent)
+        if saveLimitWarningSettings(updated) {
+            clearLimitWarningState()
+        }
+    }
+
+    func setLimitWarningSoundEnabled(_ isEnabled: Bool) {
+        var updated = limitWarningSettings
+        updated.playsSound = isEnabled
+        _ = saveLimitWarningSettings(updated)
+    }
+
     @discardableResult
     private func saveBackgroundRefreshSettings(_ updated: BackgroundRefreshSettings) -> Bool {
         do {
@@ -845,6 +920,41 @@ final class SettingsPaneModel: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
             return false
+        }
+    }
+
+    @discardableResult
+    private func saveLimitWarningSettings(_ updated: LimitWarningSettings) -> Bool {
+        do {
+            try limitWarningSettingsStore.save(updated)
+            limitWarningSettings = updated
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    private func clearLimitWarningState() {
+        do {
+            try limitWarningStateStore.save(.empty)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func requestLimitWarningNotificationAuthorization() async {
+        do {
+            let isAuthorized = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+            if !isAuthorized {
+                await MainActor.run {
+                    errorMessage = "Notifications are off for Context Panel. Enable them in System Settings to receive limit warnings."
+                }
+            }
+        } catch {
+            await MainActor.run {
+                errorMessage = "Limit warning notifications could not be enabled: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -3170,6 +3280,7 @@ final class ContextPanelAppModel: ObservableObject {
     private let forecastSettingsStore = FastModeForecastSettingsStore(
         settingsURL: ContextPanelLocations.fastModeForecastSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
     )
+    private let limitWarningNotificationService = AppLimitWarningNotificationService.appDefault()
 
     var currentSnapshot: UsageSnapshot {
         storedSnapshot?.snapshot ?? UsageSnapshot(generatedAt: Date(), limits: [])
@@ -3366,6 +3477,7 @@ final class ContextPanelAppModel: ObservableObject {
                 errorMessage = "Another refresh is still running. Try again in a moment."
                 return
             }
+            await limitWarningNotificationService.notifyIfNeeded(decision: decision)
             loadSnapshot()
         } catch {
             storeStatus = .failure
@@ -3428,6 +3540,73 @@ struct CapacityDial: View {
             }
         }
         .frame(width: size, height: size)
+    }
+}
+
+private struct AppLimitWarningNotificationService {
+    let settingsStore: LimitWarningSettingsStore
+    let stateStore: LimitWarningStateStore
+    let notificationCenter: UNUserNotificationCenter
+
+    static func appDefault() -> AppLimitWarningNotificationService {
+        AppLimitWarningNotificationService(
+            settingsStore: LimitWarningSettingsStore(
+                settingsURL: ContextPanelLocations.limitWarningSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
+            ),
+            stateStore: LimitWarningStateStore(
+                stateURL: ContextPanelLocations.limitWarningStateURL(appGroupID: ContextPanelLocations.appGroupID)
+            ),
+            notificationCenter: .current()
+        )
+    }
+
+    func notifyIfNeeded(decision: SnapshotRefreshRunDecision) async {
+        guard case let .refreshed(outcome) = decision else { return }
+        let settings = settingsStore.load()
+        let state = stateStore.load()
+        let result = LimitWarningEvaluator.evaluate(
+            settings: settings,
+            state: state,
+            snapshot: outcome.refreshResult.snapshot,
+            now: outcome.savedAt
+        )
+        guard result.state != state else { return }
+        if !result.events.isEmpty {
+            guard await notificationsAreAuthorized() else { return }
+        }
+        do {
+            try stateStore.save(result.state)
+        } catch {
+            contextPanelLogger.error("limit warning state save failed: \(error.localizedDescription, privacy: .public)")
+        }
+        guard !result.events.isEmpty else { return }
+        for event in result.events {
+            await deliver(event: event, playsSound: settings.playsSound)
+        }
+    }
+
+    private func notificationsAreAuthorized() async -> Bool {
+        let settings = await notificationCenter.notificationSettings()
+        return settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
+    }
+
+    private func deliver(event: LimitWarningEvent, playsSound: Bool) async {
+        let content = UNMutableNotificationContent()
+        content.title = event.title
+        content.body = event.body
+        if playsSound {
+            content.sound = .default
+        }
+        let request = UNNotificationRequest(
+            identifier: "context-panel-limit-warning-\(event.laneID)",
+            content: content,
+            trigger: nil
+        )
+        do {
+            try await notificationCenter.add(request)
+        } catch {
+            contextPanelLogger.error("limit warning notification failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 }
 

@@ -104,6 +104,26 @@ public enum ContextPanelLocations {
         return applicationSupportDirectory().appending(path: "background-refresh-settings.json")
     }
 
+    public static func limitWarningSettingsURL(appGroupID: String? = nil) -> URL {
+        if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
+            return containerURL
+                .appending(path: "Context Panel", directoryHint: .isDirectory)
+                .appending(path: "limit-warning-settings.json")
+        }
+
+        return applicationSupportDirectory().appending(path: "limit-warning-settings.json")
+    }
+
+    public static func limitWarningStateURL(appGroupID: String? = nil) -> URL {
+        if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
+            return containerURL
+                .appending(path: "Context Panel", directoryHint: .isDirectory)
+                .appending(path: "limit-warning-state.json")
+        }
+
+        return applicationSupportDirectory().appending(path: "limit-warning-state.json")
+    }
+
     public static func everyCodeUsageDirectory() -> URL {
         let defaultUsageDirectory = realUserHomeDirectory()
             .appending(path: ".code", directoryHint: .isDirectory)

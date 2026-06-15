@@ -15,6 +15,7 @@
 		2D53BD76E94E68A54CF36F92 /* SnapshotFreshness.swift in Sources */ = {isa = PBXBuildFile; fileRef = D03C19BEA1C610711A048EB7 /* SnapshotFreshness.swift */; };
 		36A035769881D4A450BA3BD8 /* libContextPanelCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = F09182E1FD96DAEEC38F3909 /* libContextPanelCore.a */; };
 		38E9E0A22491522FF4E0A8F4 /* ContextPanelPreviewApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A46D6040EB6F68FC91EC477D /* ContextPanelPreviewApp.swift */; };
+		43A84E96C9E0812C69B93E18 /* LimitWarning.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1161DC4C994F71A1E6CEE608 /* LimitWarning.swift */; };
 		44B9C8ACA1DFFB743B5BD86A /* ResetPrimerPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C30C085B935F62134E5C8C5 /* ResetPrimerPlanner.swift */; };
 		44DFF437D4762A4D0D2DBAA8 /* BurnRateEstimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FB4BEA57ACE8B84CAE71E75 /* BurnRateEstimator.swift */; };
 		459C8EC82194CE1A950FE1B5 /* UsageLimit.swift in Sources */ = {isa = PBXBuildFile; fileRef = D459054C90410A784EBD308B /* UsageLimit.swift */; };
@@ -113,6 +114,7 @@
 /* Begin PBXFileReference section */
 		07D959D621E594C0CFC2CEF5 /* ContextPanelWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ContextPanelWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		086B12021073A6F2A49850A1 /* ContextPanelRefreshAgent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ContextPanelRefreshAgent.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		1161DC4C994F71A1E6CEE608 /* LimitWarning.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LimitWarning.swift; sourceTree = "<group>"; };
 		15DC14CB07B8BA4756DAB731 /* BackgroundRefreshSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundRefreshSettings.swift; sourceTree = "<group>"; };
 		186D607FE2EEFDFFE2E70446 /* AccountConfigurationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountConfigurationStore.swift; sourceTree = "<group>"; };
 		1C30C085B935F62134E5C8C5 /* ResetPrimerPlanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResetPrimerPlanner.swift; sourceTree = "<group>"; };
@@ -205,6 +207,7 @@
 				25E82B6087974E01B972918C /* GoogleAccountMigration.swift */,
 				8C29BEF2E36108729A8B4EC4 /* GoogleAntigravityQuota.swift */,
 				60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */,
+				1161DC4C994F71A1E6CEE608 /* LimitWarning.swift */,
 				3FC2DAEDD38483FC3A5D4880 /* MainLimitSummary.swift */,
 				FB0E4D0FF6DD744B87D215B9 /* OAuthPKCE.swift */,
 				96C85B770C80B786EAE068CF /* PromptCacheTelemetry.swift */,
@@ -462,6 +465,7 @@
 				4C21A68400F35036382C1798 /* GoogleAccountMigration.swift in Sources */,
 				5A0D8445C6C8B0CB88F4D643 /* GoogleAntigravityQuota.swift in Sources */,
 				0BBD1DF433F345E62C6A26EF /* LimitProbe.swift in Sources */,
+				43A84E96C9E0812C69B93E18 /* LimitWarning.swift in Sources */,
 				A9464088796B38105C01F7D3 /* MainLimitSummary.swift in Sources */,
 				4BA8FE73012AF7F7900B5D4E /* OAuthPKCE.swift in Sources */,
 				576079E3E46B8EF5C2A9F61C /* PromptCacheTelemetry.swift in Sources */,
