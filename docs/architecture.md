@@ -4,6 +4,10 @@ Context Panel is expected to split into a few native boundaries:
 
 - `ContextPanelCore`: provider-neutral domain models, limit math, and refresh
   policy.
+- `ContextPanelWidgetUI`: reusable SwiftUI glance presentation for widget-sized
+  limit summaries. It consumes normalized snapshots and display preferences but
+  does not own WidgetKit timelines, local stores, provider refresh, or platform
+  storage roots.
 - Account store: multiple logins per provider, local credential references,
   display names, and enabled/disabled state.
 - Provider adapters: small clients that retrieve or normalize usage state for
@@ -119,7 +123,17 @@ writing overlapping refresh results.
 
 The WidgetKit implementation uses a `WidgetSnapshot` projection from the stored
 snapshot. That projection owns setup-needed, stale, failure, provider-summary,
-and most-constrained row selection so the widget view stays read-only and small.
+and most-constrained row selection. `ContextPanelWidgetUI` renders the shared
+small, medium, and large glance layouts, while the macOS widget extension owns
+the timeline provider, family mapping, widget URL wiring, local App Group store,
+and widget-container fallback behavior.
+
+`CompanionSnapshot` is the transport-neutral projection for future Apple
+companion clients such as iPhone, iPad, and visionOS. It is constructed from a
+stored local snapshot but intentionally omits raw account IDs, configured account
+IDs, local notes, auth paths, provider error strings, webhook secrets, tokens,
+and raw provider responses. Companion sync transports must publish this safe
+projection or a stricter descendant, not `StoredUsageSnapshot`.
 
 Limit warnings are evaluated from normalized `MainLimitSummary` capacity, not
 raw provider payloads. Local macOS notifications and outbound webhooks use
