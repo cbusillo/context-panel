@@ -224,9 +224,27 @@ public enum GoogleAntigravityQuotaParser {
         accountID: String,
         configuredAccountID: String?,
         accountName: String,
-        observedAt: Date
+        observedAt: Date,
+        statusOverride: UsageStatus? = nil
     ) throws -> [UsageLimit] {
         let payload = try JSONDecoder.contextPanelISO8601.decode(GoogleAntigravityAvailableModelsPayload.self, from: data)
+        return payload.limits(
+            accountID: accountID,
+            configuredAccountID: configuredAccountID,
+            accountName: accountName,
+            observedAt: observedAt,
+            statusOverride: statusOverride
+        )
+    }
+
+    public static func usageLimitsFromSummary(
+        from data: Data,
+        accountID: String,
+        configuredAccountID: String?,
+        accountName: String,
+        observedAt: Date
+    ) throws -> [UsageLimit] {
+        let payload = try JSONDecoder.contextPanelISO8601.decode(GoogleAntigravityQuotaSummaryPayload.self, from: data)
         return payload.limits(
             accountID: accountID,
             configuredAccountID: configuredAccountID,
@@ -341,22 +359,52 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
         if credentials.projectID != projectID {
             try? saveCredentials(credentials.withProjectID(projectID), accountID: account.accountID)
         }
-        let response = try await httpClient.data(for: ConnectorHTTPRequest(
-            url: codeAssistURL(path: "v1internal:fetchAvailableModels", baseURL: account.codeAssistBaseURL),
+        let summaryResponse = try await httpClient.data(for: ConnectorHTTPRequest(
+            url: codeAssistURL(path: "v1internal:retrieveUserQuotaSummary", baseURL: account.codeAssistBaseURL),
             method: "POST",
             headers: requestHeaders(accessToken: accessToken, account: account),
             body: try JSONSerialization.data(withJSONObject: ["project": projectID])
         ))
-        guard (200..<300).contains(response.statusCode) else {
-            throw ConnectorError.httpFailure(operation: "Google Antigravity model availability", statusCode: response.statusCode)
+        guard (200..<300).contains(summaryResponse.statusCode) else {
+            throw ConnectorError.httpFailure(operation: "Google Antigravity quota summary", statusCode: summaryResponse.statusCode)
         }
-        let limits = try GoogleAntigravityQuotaParser.usageLimits(
-            from: response.data,
+        let summaryLimits = try GoogleAntigravityQuotaParser.usageLimitsFromSummary(
+            from: summaryResponse.data,
             accountID: localAccountID,
             configuredAccountID: account.accountID,
             accountName: account.accountName,
             observedAt: now
         )
+        let limits: [UsageLimit]
+        let status: UsageStatus?
+        let errorMessage: String?
+        if summaryLimits.isEmpty {
+            let availabilityResponse = try await httpClient.data(for: ConnectorHTTPRequest(
+                url: codeAssistURL(path: "v1internal:fetchAvailableModels", baseURL: account.codeAssistBaseURL),
+                method: "POST",
+                headers: requestHeaders(accessToken: accessToken, account: account),
+                body: try JSONSerialization.data(withJSONObject: ["project": projectID])
+            ))
+            guard (200..<300).contains(availabilityResponse.statusCode) else {
+                throw ConnectorError.httpFailure(operation: "Google Antigravity model availability", statusCode: availabilityResponse.statusCode)
+            }
+            limits = try GoogleAntigravityQuotaParser.usageLimits(
+                from: availabilityResponse.data,
+                accountID: localAccountID,
+                configuredAccountID: account.accountID,
+                accountName: account.accountName,
+                observedAt: now,
+                statusOverride: .unknown
+            )
+            status = .unknown
+            errorMessage = limits.isEmpty
+                ? "Google Antigravity did not report quota summary or model availability."
+                : "Google Antigravity did not report quota summary; showing model availability only."
+        } else {
+            limits = summaryLimits
+            status = nil
+            errorMessage = nil
+        }
         return ProviderConnectorReport(
             provider: provider,
             accountID: localAccountID,
@@ -364,8 +412,8 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
             accountName: account.accountName,
             generatedAt: now,
             limits: limits,
-            status: limits.isEmpty ? .unknown : nil,
-            errorMessage: limits.isEmpty ? "Google Antigravity did not report model quota availability." : nil
+            status: status,
+            errorMessage: errorMessage
         )
     }
 
@@ -603,6 +651,219 @@ private struct GoogleAntigravityProjectObject: Decodable, Equatable {
     let id: String
 }
 
+private struct GoogleAntigravityQuotaSummaryPayload: Decodable {
+    let buckets: [GoogleAntigravityQuotaSummaryBucket]
+    let groups: [GoogleAntigravityQuotaSummaryGroup]
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        buckets = try container.decodeIfPresent([GoogleAntigravityQuotaSummaryBucket].self, forKey: .buckets) ?? []
+        groups = try container.decodeIfPresent([GoogleAntigravityQuotaSummaryGroup].self, forKey: .groups) ?? []
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case buckets
+        case groups
+    }
+
+    func limits(
+        accountID: String,
+        configuredAccountID: String?,
+        accountName: String,
+        observedAt: Date
+    ) -> [UsageLimit] {
+        let groupedLimits = groups.flatMap { group in
+            group.buckets.compactMap { bucket in
+                bucket.usageLimit(
+                    group: group,
+                    accountID: accountID,
+                    configuredAccountID: configuredAccountID,
+                    accountName: accountName,
+                    observedAt: observedAt
+                )
+            }
+        }
+        if !groupedLimits.isEmpty { return groupedLimits }
+        return buckets.compactMap { bucket in
+            bucket.usageLimit(
+                group: nil,
+                accountID: accountID,
+                configuredAccountID: configuredAccountID,
+                accountName: accountName,
+                observedAt: observedAt
+            )
+        }
+    }
+}
+
+private struct GoogleAntigravityQuotaSummaryGroup: Decodable {
+    let displayName: String?
+    let description: String?
+    let buckets: [GoogleAntigravityQuotaSummaryBucket]
+
+    enum CodingKeys: String, CodingKey {
+        case displayName
+        case displayNameSnake = "display_name"
+        case description
+        case buckets
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        displayName = try container.decodeFirstPresent(String.self, forKeys: [.displayName, .displayNameSnake])
+        description = try container.decodeIfPresent(String.self, forKey: .description)
+        buckets = try container.decodeIfPresent([GoogleAntigravityQuotaSummaryBucket].self, forKey: .buckets) ?? []
+    }
+}
+
+private struct GoogleAntigravityQuotaSummaryBucket: Decodable {
+    let bucketID: String?
+    let displayName: String?
+    let description: String?
+    let window: String?
+    let remainingFraction: Double?
+    let remainingAmount: Int?
+    let disabled: Bool?
+    let resetTime: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case bucketID = "bucketId"
+        case bucketIDSnake = "bucket_id"
+        case displayName
+        case displayNameSnake = "display_name"
+        case description
+        case window
+        case remainingFraction
+        case remainingFractionSnake = "remaining_fraction"
+        case remainingAmount
+        case remainingAmountSnake = "remaining_amount"
+        case disabled
+        case resetTime
+        case resetTimeSnake = "reset_time"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        bucketID = try container.decodeFirstPresent(String.self, forKeys: [.bucketID, .bucketIDSnake])
+        displayName = try container.decodeFirstPresent(String.self, forKeys: [.displayName, .displayNameSnake])
+        description = try container.decodeIfPresent(String.self, forKey: .description)
+        window = try container.decodeIfPresent(String.self, forKey: .window)
+        remainingFraction = try Self.decodeFlexibleDouble(container: container, keys: [.remainingFraction, .remainingFractionSnake])
+        remainingAmount = try Self.decodeFlexibleInt(container: container, keys: [.remainingAmount, .remainingAmountSnake])
+        disabled = try container.decodeIfPresent(Bool.self, forKey: .disabled)
+        resetTime = try container.decodeFirstPresent(Date.self, forKeys: [.resetTime, .resetTimeSnake])
+    }
+
+    func usageLimit(
+        group: GoogleAntigravityQuotaSummaryGroup?,
+        accountID: String,
+        configuredAccountID: String?,
+        accountName: String,
+        observedAt: Date
+    ) -> UsageLimit? {
+        guard disabled != true else { return nil }
+        let clampedRemainingFraction = remainingFraction.map { max(0, min($0, 1)) }
+        let used: Int?
+        let limit: Int
+        let unit: UsageUnit
+        if let clampedRemainingFraction {
+            used = Int(((1 - clampedRemainingFraction) * 100).rounded())
+            limit = 100
+            unit = .percent
+        } else if let remainingAmount {
+            if remainingAmount <= 0 {
+                used = 1
+                limit = 1
+            } else {
+                used = nil
+                limit = remainingAmount
+            }
+            unit = .requests
+        } else {
+            return nil
+        }
+
+        let groupName = normalized(group?.displayName)
+        let bucketName = normalized(displayName) ?? normalized(bucketID) ?? "Quota"
+        let label = groupName.map { "\($0) \(bucketName)" } ?? bucketName
+        let noteParts = [
+            "source: Google Antigravity quota summary",
+            normalized(description),
+            normalized(group?.description),
+        ]
+        return UsageLimit(
+            provider: .google,
+            accountID: accountID,
+            configuredAccountID: configuredAccountID,
+            accountName: accountName,
+            label: label,
+            windowLabel: normalized(window) ?? bucketName,
+            modelLabel: groupName,
+            unit: unit,
+            used: used,
+            limit: limit,
+            resetsAt: resetTime,
+            lastUpdatedAt: observedAt,
+            confidence: .observed,
+            note: noteParts.compactMap { $0 }.joined(separator: "; ")
+        )
+    }
+
+    private static func decodeFlexibleDouble<Key: CodingKey>(container: KeyedDecodingContainer<Key>, keys: [Key]) throws -> Double? {
+        try container.decodeFirstPresent(FlexibleDouble.self, forKeys: keys)?.value
+    }
+
+    private static func decodeFlexibleInt<Key: CodingKey>(container: KeyedDecodingContainer<Key>, keys: [Key]) throws -> Int? {
+        try container.decodeFirstPresent(FlexibleInt.self, forKeys: keys)?.value
+    }
+
+    private func normalized(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
+        return trimmed
+    }
+}
+
+private extension KeyedDecodingContainer {
+    func decodeFirstPresent<Value: Decodable>(_ type: Value.Type, forKeys keys: [Key]) throws -> Value? {
+        for key in keys {
+            if let value = try decodeIfPresent(type, forKey: key) {
+                return value
+            }
+        }
+        return nil
+    }
+}
+
+private struct FlexibleDouble: Decodable {
+    let value: Double?
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let doubleValue = try? container.decode(Double.self) {
+            value = doubleValue
+        } else if let stringValue = try? container.decode(String.self) {
+            value = Double(stringValue)
+        } else {
+            value = nil
+        }
+    }
+}
+
+private struct FlexibleInt: Decodable {
+    let value: Int?
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let intValue = try? container.decode(Int.self) {
+            value = intValue
+        } else if let stringValue = try? container.decode(String.self) {
+            value = Int(stringValue)
+        } else {
+            value = nil
+        }
+    }
+}
+
 private struct GoogleAntigravityAvailableModelsPayload: Decodable {
     let models: [String: GoogleAntigravityModelInfo]
 
@@ -610,7 +871,8 @@ private struct GoogleAntigravityAvailableModelsPayload: Decodable {
         accountID: String,
         configuredAccountID: String?,
         accountName: String,
-        observedAt: Date
+        observedAt: Date,
+        statusOverride: UsageStatus? = nil
     ) -> [UsageLimit] {
         let groups = groupedQuotas()
         return groups.sorted(by: { $0.key.sortOrder < $1.key.sortOrder }).map { group, quota in
@@ -628,6 +890,7 @@ private struct GoogleAntigravityAvailableModelsPayload: Decodable {
                 resetsAt: quota.resetTime,
                 lastUpdatedAt: observedAt,
                 confidence: .observed,
+                statusOverride: statusOverride,
                 note: "source: Google Antigravity model availability"
             )
         }
