@@ -395,7 +395,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
 
 @Test func widgetSnapshotCanRequestPromptCacheAuthorizationForConfiguredCodexAccount() throws {
     let root = try widgetSnapshotTemporaryDirectory()
-    let codeDirectory = root.appending(path: ".code", directoryHint: .isDirectory)
+    let codeDirectory = root.appending(path: ".code-chris", directoryHint: .isDirectory)
     let usageDirectory = codeDirectory.appending(path: "usage", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: usageDirectory, withIntermediateDirectories: true)
 

@@ -1270,6 +1270,9 @@ final class SettingsPaneModel: ObservableObject {
         updated.isEnabled = isEnabled
         if saveBackgroundRefreshSettings(updated) {
             reconcileRefreshAgentRegistration(settings: updated)
+            if updated.isEnabled {
+                RefreshAgentRegistration.repairIfEnabledAgentDoesNotLaunch(settingsStore: backgroundRefreshSettingsStore)
+            }
         }
     }
 
