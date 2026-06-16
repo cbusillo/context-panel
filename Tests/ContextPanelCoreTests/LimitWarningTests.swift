@@ -395,12 +395,56 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
     )
     let object = try #require(JSONSerialization.jsonObject(with: payload.data) as? [String: Any])
     let payloadText = String(decoding: payload.data, as: UTF8.self)
+    let embeds = try #require(object["embeds"] as? [[String: Any]])
+    let embed = try #require(embeds.first)
+    let fields = try #require(embed["fields"] as? [[String: Any]])
+    let capacityField = try #require(fields.first { $0["name"] as? String == "Capacity" })
+    let capacityValue = try #require(capacityField["value"] as? String)
+    let resetField = try #require(fields.first { $0["name"] as? String == "Reset" })
 
     #expect(object["content"] as? String == "@here")
-    #expect(payloadText.contains("OpenAI 5-hour is low"))
-    #expect(payloadText.contains("4% left"))
+    #expect(embed["title"] as? String == "OpenAI 5-hour is low")
+    #expect(embed["description"] as? String == "OpenAI 5-hour capacity is below your 10% warning threshold.")
+    #expect(capacityValue == "[----------] 4% left (4/100 points)")
+    #expect(resetField["value"] as? String == "<t:\(Int(warningNow.addingTimeInterval(3_600).timeIntervalSince1970)):R>")
+    #expect(fields.contains { $0["name"] as? String == "Limit" } == false)
+    #expect(payloadText.components(separatedBy: "4% left").count == 2)
+    #expect(!payloadText.contains("4 of 100 remaining"))
     #expect(!payloadText.contains("discord.com/api/webhooks"))
     #expect(!payloadText.localizedCaseInsensitiveContains("token"))
+}
+
+@Test func limitWarningWebhookDiscordPayloadHandlesMissingAbsoluteCapacity() throws {
+    let event = LimitWarningEvent(
+        laneID: "openai:fiveHour",
+        provider: .openAI,
+        window: .fiveHour,
+        thresholdPercentRemaining: 10,
+        capacityRatio: 0.08,
+        remaining: nil,
+        limit: nil,
+        resetsAt: nil,
+        accountCount: 1
+    )
+    let settings = LimitWarningWebhookSettings(isEnabled: true, preset: .discord)
+
+    let payload = try LimitWarningWebhookPayloadBuilder.payload(
+        for: event,
+        settings: settings,
+        sentAt: warningNow,
+        appVersion: "1.0.test"
+    )
+    let object = try #require(JSONSerialization.jsonObject(with: payload.data) as? [String: Any])
+    let embeds = try #require(object["embeds"] as? [[String: Any]])
+    let embed = try #require(embeds.first)
+    let fields = try #require(embed["fields"] as? [[String: Any]])
+    let capacityField = try #require(fields.first { $0["name"] as? String == "Capacity" })
+    let capacityValue = try #require(capacityField["value"] as? String)
+    let resetField = try #require(fields.first { $0["name"] as? String == "Reset" })
+
+    #expect(object["content"] == nil)
+    #expect(capacityValue == "[#---------] 8% left")
+    #expect(resetField["value"] as? String == "Unknown")
 }
 
 @Test func limitWarningWebhookSecretValidationRequiresHTTPS() {
