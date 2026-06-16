@@ -253,10 +253,10 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
     private static func compactResetDistance(until date: Date, now: Date) -> String {
         let seconds = max(Int(date.timeIntervalSince(now)), 0)
         if seconds < 60 { return "now" }
-        let minutes = seconds / 60
+        let minutes = max((seconds + 59) / 60, 1)
         if minutes < 60 { return "\(minutes)m" }
-        let hours = minutes / 60
-        if hours < 24 { return "\(hours)h" }
+        let hours = max((minutes + 59) / 60, 1)
+        if hours <= 24 { return "\(hours)h" }
         let days = hours / 24
         let remainingHours = hours % 24
         if remainingHours == 0 { return "\(days)d" }

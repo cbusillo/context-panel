@@ -5078,10 +5078,10 @@ extension Date {
         let seconds = Int(timeIntervalSince(Date()))
         if abs(seconds) < 60 { return "now" }
         if seconds >= 0 {
-            let minutes = seconds / 60
+            let minutes = Self.roundedUpMinutes(seconds: seconds)
             if minutes < 60 { return "in \(minutes)m" }
-            let hours = minutes / 60
-            if hours < 24 { return "in \(hours)h" }
+            let hours = Self.roundedUpHours(minutes: minutes)
+            if hours <= 24 { return "in \(hours)h" }
             return "in \(Self.formatDaysAndHours(hours: hours))"
         }
         let elapsed = abs(seconds)
@@ -5118,6 +5118,14 @@ extension Date {
             return "\(days)d"
         }
         return "\(days)d \(remainingHours)h"
+    }
+
+    private static func roundedUpMinutes(seconds: Int) -> Int {
+        max((seconds + 59) / 60, 1)
+    }
+
+    private static func roundedUpHours(minutes: Int) -> Int {
+        max((minutes + 59) / 60, 1)
     }
 }
 
