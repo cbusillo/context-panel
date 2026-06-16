@@ -14,5 +14,9 @@
 	<array>
 		<string>iCloud.com.shinycomputers.contextpanel</string>
 	</array>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.shinycomputers.contextpanel</string>
+	</array>
 </dict>
 </plist>

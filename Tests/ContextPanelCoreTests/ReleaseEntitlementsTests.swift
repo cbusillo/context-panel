@@ -81,26 +81,31 @@ import Testing
     #expect(entitlements["com.apple.security.files.bookmarks.document-scope"] == nil)
 }
 
-@Test func companionEntitlementsUseOnlyICloudSyncAccess() throws {
-    for path in [
-        "Config/ContextPanelCompanion.entitlements",
-        "Config/ContextPanelCompanionWidget.entitlements",
-    ] {
-        let entitlements = try loadEntitlements(path)
-        try expectICloudDocumentEntitlements(entitlements)
+@Test func companionEntitlementsMirrorICloudIntoIOSSuite() throws {
+    let appEntitlements = try loadEntitlements("Config/ContextPanelCompanion.entitlements")
+    try expectICloudDocumentEntitlements(appEntitlements)
+    let appGroups = try #require(appEntitlements["com.apple.security.application-groups"] as? [String])
+    #expect(appGroups == ["group.com.shinycomputers.contextpanel"])
+    #expect(appEntitlements["com.apple.security.app-sandbox"] == nil)
+    #expect(appEntitlements["com.apple.security.network.client"] == nil)
+    #expect(appEntitlements["keychain-access-groups"] == nil)
 
-        #expect(entitlements["com.apple.security.app-sandbox"] == nil)
-        #expect(entitlements["com.apple.security.network.client"] == nil)
-        #expect(entitlements["com.apple.security.application-groups"] == nil)
-        #expect(entitlements["keychain-access-groups"] == nil)
-    }
+    let widgetEntitlements = try loadEntitlements("Config/ContextPanelCompanionWidget.entitlements")
+    let widgetAppGroups = try #require(widgetEntitlements["com.apple.security.application-groups"] as? [String])
+    #expect(widgetAppGroups == ["group.com.shinycomputers.contextpanel"])
+    #expect(widgetEntitlements["com.apple.developer.icloud-container-identifiers"] == nil)
+    #expect(widgetEntitlements["com.apple.developer.icloud-services"] == nil)
+    #expect(widgetEntitlements["com.apple.developer.ubiquity-container-identifiers"] == nil)
+    #expect(widgetEntitlements["com.apple.security.app-sandbox"] == nil)
+    #expect(widgetEntitlements["com.apple.security.network.client"] == nil)
+    #expect(widgetEntitlements["keychain-access-groups"] == nil)
 }
 
 @Test func companionProjectTargetsUseSharedSyncAndWidgetModules() throws {
     let project = try loadProjectYAML()
 
     let appSettings = try #require(project.targetSettings(named: "ContextPanelCompanion"))
-    #expect(appSettings["PRODUCT_BUNDLE_IDENTIFIER"] as? String == "com.shinycomputers.contextpanel.companion")
+    #expect(appSettings["PRODUCT_BUNDLE_IDENTIFIER"] as? String == "com.shinycomputers.contextpanel")
     #expect(appSettings["CODE_SIGN_ENTITLEMENTS"] as? String == "Config/ContextPanelCompanion.entitlements")
     #expect(appSettings["TARGETED_DEVICE_FAMILY"] as? String == "1,2,7")
     let appReleaseSettings = try #require(project.releaseTargetSettings(named: "ContextPanelCompanion"))
@@ -113,7 +118,7 @@ import Testing
     let widgetSettings = try #require(project.targetSettings(named: "ContextPanelCompanionWidgetExtension"))
     #expect(
         widgetSettings["PRODUCT_BUNDLE_IDENTIFIER"] as? String
-            == "com.shinycomputers.contextpanel.companion.widget"
+            == "com.shinycomputers.contextpanel.widget"
     )
     #expect(
         widgetSettings["CODE_SIGN_ENTITLEMENTS"] as? String

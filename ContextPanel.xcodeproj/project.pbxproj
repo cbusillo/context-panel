@@ -1225,7 +1225,7 @@
 					"$(inherited)",
 					"-ObjC",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.shinycomputers.contextpanel.companion.widget;
+				PRODUCT_BUNDLE_IDENTIFIER = com.shinycomputers.contextpanel.widget;
 				PRODUCT_NAME = ContextPanelCompanionWidgetExtension;
 				PROVISIONING_PROFILE_SPECIFIER = "$(CONTEXT_PANEL_APP_STORE_COMPANION_WIDGET_PROFILE_SPECIFIER)";
 				SDKROOT = auto;
@@ -1541,7 +1541,7 @@
 					"$(inherited)",
 					"-ObjC",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.shinycomputers.contextpanel.companion;
+				PRODUCT_BUNDLE_IDENTIFIER = com.shinycomputers.contextpanel;
 				PRODUCT_NAME = "Context Panel";
 				PROVISIONING_PROFILE_SPECIFIER = "$(CONTEXT_PANEL_APP_STORE_COMPANION_PROFILE_SPECIFIER)";
 				SDKROOT = auto;
@@ -1572,7 +1572,7 @@
 					"$(inherited)",
 					"-ObjC",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.shinycomputers.contextpanel.companion.widget;
+				PRODUCT_BUNDLE_IDENTIFIER = com.shinycomputers.contextpanel.widget;
 				PRODUCT_NAME = ContextPanelCompanionWidgetExtension;
 				SDKROOT = auto;
 				SKIP_INSTALL = YES;
@@ -1723,7 +1723,7 @@
 					"$(inherited)",
 					"-ObjC",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.shinycomputers.contextpanel.companion;
+				PRODUCT_BUNDLE_IDENTIFIER = com.shinycomputers.contextpanel;
 				PRODUCT_NAME = "Context Panel";
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator xros xrsimulator";
