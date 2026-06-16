@@ -33,6 +33,39 @@ public enum SnapshotRefreshRunDecision: Equatable, Sendable {
     case skippedFresh
     case skippedAlreadyRunning
     case skippedNoReports
+
+    public var diagnosticsDecision: RefreshDiagnosticsDecision {
+        switch self {
+        case .refreshed:
+            .refreshed
+        case .skippedFresh:
+            .skippedFresh
+        case .skippedAlreadyRunning:
+            .skippedAlreadyRunning
+        case .skippedNoReports:
+            .skippedNoReports
+        }
+    }
+
+    public var diagnosticsReportCount: Int? {
+        guard case let .refreshed(outcome) = self else { return nil }
+        return outcome.refreshResult.reports.count
+    }
+
+    public var diagnosticsLimitCount: Int? {
+        guard case let .refreshed(outcome) = self else { return nil }
+        return outcome.refreshResult.reports.flatMap(\.limits).count
+    }
+
+    public var diagnosticsFailureCount: Int? {
+        guard case let .refreshed(outcome) = self else { return nil }
+        return outcome.refreshResult.reports.filter { $0.status == .failure }.count
+    }
+
+    public var diagnosticsSavedSnapshotAt: Date? {
+        guard case let .refreshed(outcome) = self else { return nil }
+        return outcome.savedAt
+    }
 }
 
 public struct SnapshotRefreshLock: Sendable {

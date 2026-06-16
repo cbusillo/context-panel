@@ -106,6 +106,12 @@ and the refresh agent own connector refreshes through the same
 `SnapshotRefreshService` in `ContextPanelCore`; account setup, diagnostics, and
 future migration from JSON to a richer store stay in the app.
 
+Refresh diagnostics are persisted as redacted App Group JSON so Settings can
+show the last app or agent refresh decision, provider failure counts, limit
+warning evaluation, and local/webhook alert delivery breadcrumbs. The record is
+support-oriented state rather than a provider payload archive: it stores only
+summaries, timestamps, HTTP status codes, and redacted errors.
+
 The app, widget, and refresh agent share durable state through the
 `MM5YXC7T6E.group.com.shinycomputers.contextpanel` App Group. The account configuration
 store keeps non-secret connector settings in that group container so the login
@@ -144,6 +150,9 @@ payloads must contain only normalized warning data such as provider, main-limit
 window, percent remaining, remaining/limit values, reset time, and app version.
 They must not include account IDs, emails, provider organization/project IDs,
 auth paths, prompts, raw provider responses, tokens, or the webhook URL itself.
+The refresh agent may queue local warnings, but only the main app records local
+notification delivery success after `UNUserNotificationCenter` accepts the
+notification.
 
 OpenAI fast-mode guidance is built from the same `MainLimitSummary` values used
 elsewhere. Weekly capacity is treated as the primary pool and shorter windows,

@@ -51,6 +51,7 @@
 		6234444D0DD8D8136CB59A1F /* ClaudeAccountMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BBC1080557704B2EF023A7B /* ClaudeAccountMigration.swift */; };
 		652E3352E67082CBC13D4064 /* UsageLimit.swift in Sources */ = {isa = PBXBuildFile; fileRef = D459054C90410A784EBD308B /* UsageLimit.swift */; };
 		66D9A9D36B46051B1C1EA722 /* ResetPrimerSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D9602BF84ECDE08C7275504 /* ResetPrimerSettings.swift */; };
+		762B3AD1D74922F681D202DF /* RefreshDiagnosticsState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DAF08B3CB69404A37DECA39 /* RefreshDiagnosticsState.swift */; };
 		764E6B79575AA8EC460441E3 /* CodexRateLimits.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FA8FE4CC9BE058D8F46FBA2 /* CodexRateLimits.swift */; };
 		7C2FC7CB5590C95244023520 /* ContextPanelDateFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9909074D7E80648BC2A01C51 /* ContextPanelDateFormatting.swift */; };
 		7FD021610CC3841DE13AD70E /* ContextPanelCompanionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E29EEFA73267A8346212E7A /* ContextPanelCompanionApp.swift */; };
@@ -86,6 +87,7 @@
 		DD6CB227B5A063BB614BA45B /* ContextPanelCompanionWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FFE6BBDF595A795C1DC34D9 /* ContextPanelCompanionWidget.swift */; };
 		DF3FC5B0066366171DBBA651 /* CapacityPool.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8862B929FE544FCB2C3D06B /* CapacityPool.swift */; };
 		E223E001AF708A36F7976205 /* WidgetDisplayPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBDCF9F49A90CA3576BF2792 /* WidgetDisplayPreferences.swift */; };
+		E3A8EF704692B59DF4727D9A /* RefreshDiagnosticsState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DAF08B3CB69404A37DECA39 /* RefreshDiagnosticsState.swift */; };
 		E531B1C3F49F941A7EA36603 /* LimitProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */; };
 		E755DFF9AC42460A40C2102E /* SecureFileBookmark.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FA0C66F95091A96B8F7CBF4 /* SecureFileBookmark.swift */; };
 		E77C3B3D8985239A004E8CDC /* AccountConfigurationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 186D607FE2EEFDFFE2E70446 /* AccountConfigurationStore.swift */; };
@@ -264,6 +266,7 @@
 		23E9C71457F4E1F101132FCF /* ContextPanelLocations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelLocations.swift; sourceTree = "<group>"; };
 		25E82B6087974E01B972918C /* GoogleAccountMigration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleAccountMigration.swift; sourceTree = "<group>"; };
 		2D9602BF84ECDE08C7275504 /* ResetPrimerSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResetPrimerSettings.swift; sourceTree = "<group>"; };
+		2DAF08B3CB69404A37DECA39 /* RefreshDiagnosticsState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RefreshDiagnosticsState.swift; sourceTree = "<group>"; };
 		2E29EEFA73267A8346212E7A /* ContextPanelCompanionApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelCompanionApp.swift; sourceTree = "<group>"; };
 		32D8515D047F5A8117DB762C /* SnapshotStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotStore.swift; sourceTree = "<group>"; };
 		350ED5589FB23C42ED32704A /* ProviderConnector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderConnector.swift; sourceTree = "<group>"; };
@@ -395,6 +398,7 @@
 				F3B93DAA06AE42D89A02C5EE /* PromptCacheTelemetryMirrorService.swift */,
 				350ED5589FB23C42ED32704A /* ProviderConnector.swift */,
 				A625CCDC97920B24B000C170 /* ProviderCredentialStore.swift */,
+				2DAF08B3CB69404A37DECA39 /* RefreshDiagnosticsState.swift */,
 				1C30C085B935F62134E5C8C5 /* ResetPrimerPlanner.swift */,
 				2D9602BF84ECDE08C7275504 /* ResetPrimerSettings.swift */,
 				8FA0C66F95091A96B8F7CBF4 /* SecureFileBookmark.swift */,
@@ -917,6 +921,7 @@
 				504BF827465F73E39B4729A8 /* PromptCacheTelemetryMirrorService.swift in Sources */,
 				37A4E1CCC9D22CDA3580CB61 /* ProviderConnector.swift in Sources */,
 				AC3469A0B162D8FF6A47822A /* ProviderCredentialStore.swift in Sources */,
+				762B3AD1D74922F681D202DF /* RefreshDiagnosticsState.swift in Sources */,
 				24959582F7C5BF2A99317616 /* ResetPrimerPlanner.swift in Sources */,
 				102D3ACBAA59BFC0B2B4BA8D /* ResetPrimerSettings.swift in Sources */,
 				B929FCB2C981C6CCCFC72B7C /* SecureFileBookmark.swift in Sources */,
@@ -971,6 +976,7 @@
 				A1E12E6C1FA3E1356F93519B /* PromptCacheTelemetryMirrorService.swift in Sources */,
 				F4B9B4FB75A285E38AE52B1D /* ProviderConnector.swift in Sources */,
 				C0DD7394E058BEE84E20AA43 /* ProviderCredentialStore.swift in Sources */,
+				E3A8EF704692B59DF4727D9A /* RefreshDiagnosticsState.swift in Sources */,
 				44B9C8ACA1DFFB743B5BD86A /* ResetPrimerPlanner.swift in Sources */,
 				66D9A9D36B46051B1C1EA722 /* ResetPrimerSettings.swift in Sources */,
 				E755DFF9AC42460A40C2102E /* SecureFileBookmark.swift in Sources */,
