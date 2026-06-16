@@ -144,6 +144,57 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         )
     }
 
+    public static func fromCompanionSync(
+        _ result: CompanionSyncLoadResult,
+        now: Date = Date()
+    ) -> WidgetSnapshot {
+        guard let document = result.document else {
+            return WidgetSnapshot(
+                state: result.status == .failure ? .failure : .setupNeeded,
+                generatedAt: now,
+                limits: [],
+                fastModeForecastSettings: .defaultSettings,
+                status: result.status,
+                message: result.errorMessage ?? "Sync Context Panel from your Mac."
+            )
+        }
+
+        let companion = document.snapshot
+        let state: WidgetSnapshotState = switch result.status {
+        case .failure:
+            .failure
+        case .stale:
+            .stale
+        default:
+            .ready
+        }
+        let limits = companion.limits.map(\.usageLimit)
+        let reports = companion.providerStatuses.map(\.storedProviderReport)
+        let promptCacheObservations = companion.promptCacheSummaries.map(\.promptCacheObservation)
+        let stored = StoredUsageSnapshot(
+            savedAt: companion.publishedAt,
+            snapshot: UsageSnapshot(generatedAt: companion.generatedAt, limits: limits),
+            reports: reports,
+            promptCacheObservations: promptCacheObservations
+        )
+        let status = widgetStatus(for: stored.snapshot, fallback: result.status)
+        let promptCacheState: PromptCacheWidgetState = promptCacheObservations.isEmpty
+            ? .unavailable
+            : (result.status == .stale || result.status == .failure ? .stale : .available)
+
+        return WidgetSnapshot(
+            state: state,
+            generatedAt: companion.generatedAt,
+            limits: limits,
+            reports: reports,
+            promptCacheObservations: promptCacheObservations,
+            promptCacheWidgetState: promptCacheState,
+            fastModeForecastSettings: document.fastModeForecastSettings,
+            status: status,
+            message: message(state: state, stored: stored)
+        )
+    }
+
     public var hasProviderReconnectIssue: Bool {
         reports.hasReconnectBlockingFailure
     }
