@@ -18,7 +18,7 @@ public enum ContextPanelLocations {
 
     public static func applicationSupportDirectory() -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support")
+            ?? platformApplicationSupportFallbackDirectory()
         return base.appending(path: "Context Panel", directoryHint: .isDirectory)
     }
 
@@ -66,7 +66,7 @@ public enum ContextPanelLocations {
             return nil
         }
         return containerURL
-            .appending(path: "Documents", directoryHint: .isDirectory)
+            .appending(path: "Data", directoryHint: .isDirectory)
             .appending(path: "Context Panel", directoryHint: .isDirectory)
             .appending(path: "Companion", directoryHint: .isDirectory)
             .appending(path: companionSyncDocumentFileName)
@@ -304,11 +304,25 @@ public enum ContextPanelLocations {
                 return URL(fileURLWithPath: home, isDirectory: true)
             }
         }
+        #if os(macOS)
         if let user = ProcessInfo.processInfo.environment["USER"],
            let home = NSHomeDirectoryForUser(user), !home.isEmpty {
             return URL(fileURLWithPath: home, isDirectory: true)
         }
         return FileManager.default.homeDirectoryForCurrentUser
+        #else
+        return URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+        #endif
+    }
+
+    private static func platformApplicationSupportFallbackDirectory() -> URL {
+        #if os(macOS)
+        FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support")
+        #else
+        URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            .appending(path: "Library", directoryHint: .isDirectory)
+            .appending(path: "Application Support", directoryHint: .isDirectory)
+        #endif
     }
 
     private static func hostApplicationSupportDirectory() -> URL {

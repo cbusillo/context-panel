@@ -627,6 +627,7 @@ public struct ResetPrimerExecutor: Sendable {
     }
 
     public static func defaultProcessRunner(commandURL: URL, arguments: [String], timeout: TimeInterval) async throws -> Int32 {
+        #if os(macOS)
         let process = Process()
         process.executableURL = commandURL
         process.arguments = arguments
@@ -644,6 +645,9 @@ public struct ResetPrimerExecutor: Sendable {
         process.waitUntilExit()
         timeoutTask.cancel()
         return process.terminationStatus
+        #else
+        throw CocoaError(.featureUnsupported)
+        #endif
     }
 
     private func defaultCodeCommandPath() -> String? {

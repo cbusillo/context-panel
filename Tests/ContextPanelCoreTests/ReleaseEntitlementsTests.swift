@@ -13,6 +13,7 @@ import Testing
     #expect(appGroups == ["MM5YXC7T6E.group.com.shinycomputers.contextpanel"])
     let keychainGroups = try #require(appEntitlements["keychain-access-groups"] as? [String])
     #expect(keychainGroups == ["MM5YXC7T6E.com.shinycomputers.contextpanel.provider-credentials"])
+    try expectICloudDocumentEntitlements(appEntitlements)
 
     let refreshAgentEntitlements = try loadEntitlements("Config/ContextPanelRefreshAgentAppStore.entitlements")
     #expect(refreshAgentEntitlements["com.apple.security.app-sandbox"] as? Bool == true)
@@ -25,14 +26,17 @@ import Testing
     #expect(refreshAgentAppGroups == ["MM5YXC7T6E.group.com.shinycomputers.contextpanel"])
     let refreshAgentKeychainGroups = try #require(refreshAgentEntitlements["keychain-access-groups"] as? [String])
     #expect(refreshAgentKeychainGroups == ["MM5YXC7T6E.com.shinycomputers.contextpanel.provider-credentials"])
+    try expectICloudDocumentEntitlements(refreshAgentEntitlements)
 }
 
 @Test func debugAppEntitlementAllowsLocalOAuthCallbackServer() throws {
     let entitlements = try loadEntitlements("Config/ContextPanel.entitlements")
     #expect(entitlements["com.apple.security.network.server"] as? Bool == true)
+    try expectICloudDocumentEntitlements(entitlements)
 
     let refreshAgentEntitlements = try loadEntitlements("Config/ContextPanelRefreshAgent.entitlements")
     #expect(refreshAgentEntitlements["com.apple.security.network.server"] == nil)
+    try expectICloudDocumentEntitlements(refreshAgentEntitlements)
 }
 
 @Test func appStoreEntitlementsSupportSandboxedRefreshAgent() throws {
@@ -49,6 +53,7 @@ import Testing
         #expect(appGroups == ["MM5YXC7T6E.group.com.shinycomputers.contextpanel"])
         let keychainGroups = try #require(entitlements["keychain-access-groups"] as? [String])
         #expect(keychainGroups == ["MM5YXC7T6E.com.shinycomputers.contextpanel.provider-credentials"])
+        try expectICloudDocumentEntitlements(entitlements)
     }
 }
 
@@ -74,6 +79,65 @@ import Testing
     #expect(entitlements["com.apple.security.files.user-selected.read-only"] == nil)
     #expect(entitlements["com.apple.security.files.bookmarks.app-scope"] == nil)
     #expect(entitlements["com.apple.security.files.bookmarks.document-scope"] == nil)
+}
+
+@Test func companionEntitlementsUseOnlyICloudSyncAccess() throws {
+    for path in [
+        "Config/ContextPanelCompanion.entitlements",
+        "Config/ContextPanelCompanionWidget.entitlements",
+    ] {
+        let entitlements = try loadEntitlements(path)
+        try expectICloudDocumentEntitlements(entitlements)
+
+        #expect(entitlements["com.apple.security.app-sandbox"] == nil)
+        #expect(entitlements["com.apple.security.network.client"] == nil)
+        #expect(entitlements["com.apple.security.application-groups"] == nil)
+        #expect(entitlements["keychain-access-groups"] == nil)
+    }
+}
+
+@Test func companionProjectTargetsUseSharedSyncAndWidgetModules() throws {
+    let project = try loadProjectYAML()
+
+    let appSettings = try #require(project.targetSettings(named: "ContextPanelCompanion"))
+    #expect(appSettings["PRODUCT_BUNDLE_IDENTIFIER"] as? String == "com.shinycomputers.contextpanel.companion")
+    #expect(appSettings["CODE_SIGN_ENTITLEMENTS"] as? String == "Config/ContextPanelCompanion.entitlements")
+    #expect(appSettings["TARGETED_DEVICE_FAMILY"] as? String == "1,2,7")
+    let appReleaseSettings = try #require(project.releaseTargetSettings(named: "ContextPanelCompanion"))
+    #expect(appReleaseSettings["CODE_SIGN_IDENTITY"] as? String == "Apple Distribution")
+    #expect(
+        appReleaseSettings["PROVISIONING_PROFILE_SPECIFIER"] as? String
+            == "$(CONTEXT_PANEL_APP_STORE_COMPANION_PROFILE_SPECIFIER)"
+    )
+
+    let widgetSettings = try #require(project.targetSettings(named: "ContextPanelCompanionWidgetExtension"))
+    #expect(
+        widgetSettings["PRODUCT_BUNDLE_IDENTIFIER"] as? String
+            == "com.shinycomputers.contextpanel.companion.widget"
+    )
+    #expect(
+        widgetSettings["CODE_SIGN_ENTITLEMENTS"] as? String
+            == "Config/ContextPanelCompanionWidget.entitlements"
+    )
+    let widgetReleaseSettings = try #require(
+        project.releaseTargetSettings(named: "ContextPanelCompanionWidgetExtension")
+    )
+    #expect(widgetReleaseSettings["CODE_SIGN_IDENTITY"] as? String == "Apple Distribution")
+    #expect(
+        widgetReleaseSettings["PROVISIONING_PROFILE_SPECIFIER"] as? String
+            == "$(CONTEXT_PANEL_APP_STORE_COMPANION_WIDGET_PROFILE_SPECIFIER)"
+    )
+
+    let appDependencies = try #require(project.dependencies(named: "ContextPanelCompanion"))
+    #expect(appDependencies.contains("ContextPanelCoreCompanion"))
+    #expect(appDependencies.contains("ContextPanelWidgetUICompanion"))
+    #expect(appDependencies.contains("ContextPanelCompanionSupport"))
+    #expect(appDependencies.contains("ContextPanelCompanionWidgetExtension"))
+
+    let widgetDependencies = try #require(project.dependencies(named: "ContextPanelCompanionWidgetExtension"))
+    #expect(widgetDependencies.contains("ContextPanelCoreCompanion"))
+    #expect(widgetDependencies.contains("ContextPanelWidgetUICompanion"))
+    #expect(widgetDependencies.contains("ContextPanelCompanionSupport"))
 }
 
 @Test func refreshAgentDoesNotReferenceRetiredGoogleCredentialPaths() throws {
@@ -123,6 +187,20 @@ private func loadEntitlements(_ path: String) throws -> [String: Any] {
     try loadInfoPlist(path)
 }
 
+private func expectICloudDocumentEntitlements(_ entitlements: [String: Any]) throws {
+    let iCloudContainers = try #require(
+        entitlements["com.apple.developer.icloud-container-identifiers"] as? [String]
+    )
+    #expect(iCloudContainers == ["iCloud.com.shinycomputers.contextpanel"])
+    let ubiquityContainers = try #require(
+        entitlements["com.apple.developer.ubiquity-container-identifiers"] as? [String]
+    )
+    #expect(ubiquityContainers == ["iCloud.com.shinycomputers.contextpanel"])
+    let services = try #require(entitlements["com.apple.developer.icloud-services"] as? [String])
+    #expect(services == ["CloudDocuments"])
+    #expect(entitlements["com.apple.developer.ubiquity-kvstore-identifier"] == nil)
+}
+
 private func loadInfoPlist(_ path: String) throws -> [String: Any] {
     let url = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appending(path: path)
     let data = try Data(contentsOf: url)
@@ -164,6 +242,58 @@ private struct ProjectYAML {
             return nil
         }
         return mapping(after: baseLine, indentation: 8)
+    }
+
+    func releaseTargetSettings(named targetName: String) -> [String: Any]? {
+        guard let targetLine = firstLineIndex(matching: "  \(targetName):") else {
+            return nil
+        }
+        guard let configsLine = firstLineIndex(
+            after: targetLine,
+            matching: "      configs:",
+            beforeIndentLessThan: 4
+        ) else {
+            return nil
+        }
+        guard let releaseLine = firstLineIndex(
+            after: configsLine,
+            matching: "        Release:",
+            beforeIndentLessThan: 8
+        ) else {
+            return nil
+        }
+        return mapping(after: releaseLine, indentation: 10)
+    }
+
+    func dependencies(named targetName: String) -> [String]? {
+        guard let targetLine = firstLineIndex(matching: "  \(targetName):") else {
+            return nil
+        }
+        guard let dependenciesLine = firstLineIndex(
+            after: targetLine,
+            matching: "    dependencies:",
+            beforeIndentLessThan: 4
+        ) else {
+            return []
+        }
+
+        var dependencies: [String] = []
+        var index = dependenciesLine + 1
+        while index < lines.count {
+            let line = lines[index]
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let indent = indentation(of: line)
+            guard !trimmed.isEmpty else {
+                index += 1
+                continue
+            }
+            if indent <= 4 { break }
+            if indent == 6, trimmed.hasPrefix("- target: ") {
+                dependencies.append(String(trimmed.dropFirst("- target: ".count)))
+            }
+            index += 1
+        }
+        return dependencies
     }
 
     private func firstLineIndex(matching text: String) -> Int? {

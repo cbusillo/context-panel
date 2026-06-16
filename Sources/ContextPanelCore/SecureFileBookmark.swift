@@ -1,5 +1,6 @@
 import Foundation
 
+#if os(macOS)
 public struct SecureFileBookmarkStore: Sendable {
     private static let currentBookmarkPrefix = "appScoped:"
     private static let documentScopedBookmarkPrefix = "documentScoped:"
@@ -217,3 +218,66 @@ public enum SecureFileBookmark {
         }
     }
 }
+#else
+public struct SecureFileBookmarkStore: Sendable {
+    public init(storeURL: URL) {}
+
+    public func bookmarkData(for path: String) -> Data? { nil }
+
+    public func currentBookmarkData(for path: String) -> Data? { nil }
+
+    public func hasBookmark(for path: String) -> Bool { false }
+
+    public func hasCurrentBookmark(for path: String) -> Bool { false }
+
+    public func canReadBookmark(for path: String) -> Bool { false }
+
+    public func canResolveBookmark(for path: String) -> Bool { false }
+
+    public func canReadLegacyAppScopedBookmark(for path: String) -> Bool { false }
+
+    public func createAndStoreBookmark(for fileURL: URL, path: String) throws {
+        throw CocoaError(.featureUnsupported)
+    }
+
+    public func withResolvedURL<T>(for path: String, _ body: (URL) throws -> T) throws -> T? { nil }
+
+    public func readData(for path: String) throws -> Data? { nil }
+
+    public func remove(for path: String) throws {}
+}
+
+public enum SecureFileBookmark {
+    public struct ReadResult: Sendable {
+        public let data: Data
+        public let resolvedURL: URL
+        public let isStale: Bool
+    }
+
+    public static func create(for url: URL, relativeTo relativeURL: URL? = nil) throws -> Data {
+        throw CocoaError(.featureUnsupported)
+    }
+
+    public static func readData(bookmarkData: Data, relativeTo relativeURL: URL? = nil) throws -> Data {
+        throw CocoaError(.fileReadNoPermission)
+    }
+
+    public static func read(bookmarkData: Data, relativeTo relativeURL: URL? = nil) throws -> ReadResult {
+        throw CocoaError(.fileReadNoPermission)
+    }
+
+    public static func withResolvedURL<T>(
+        bookmarkData: Data,
+        relativeTo relativeURL: URL? = nil,
+        _ body: (URL) throws -> T
+    ) throws -> T {
+        throw CocoaError(.fileReadNoPermission)
+    }
+
+    public static func canRead(bookmarkData: Data, relativeTo relativeURL: URL? = nil) -> Bool { false }
+
+    public static func canResolve(bookmarkData: Data, relativeTo relativeURL: URL? = nil) -> Bool { false }
+
+    public static func canReadLegacyAppScoped(bookmarkData: Data) -> Bool { false }
+}
+#endif
