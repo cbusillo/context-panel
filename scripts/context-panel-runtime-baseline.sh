@@ -278,7 +278,7 @@ context_files() {
 	for root in "${roots[@]}"; do
 		[[ -e "$root" ]] || continue
 		find "$root" -maxdepth 12 \
-			\( -name accounts.json -o -name file-bookmarks.json -o -name current-snapshot.json -o -name history.json -o -name reset-primer-settings.json -o -name reset-primer-runs.json -o -name background-refresh-settings.json -o -name limit-warning-settings.json -o -name limit-warning-state.json -o -name limit-warning-pending-notifications.json -o -name webhook-settings.json -o -name webhook-delivery-state.json \) \
+			\( -name accounts.json -o -name file-bookmarks.json -o -name current-snapshot.json -o -name history.json -o -name background-refresh-settings.json -o -name limit-warning-settings.json -o -name limit-warning-state.json -o -name limit-warning-pending-notifications.json -o -name webhook-settings.json -o -name webhook-delivery-state.json \) \
 			-print 2>/dev/null || true
 	done
 }
@@ -1379,7 +1379,7 @@ check_runtime() {
 		local reset_blocking_files
 		reset_blocking_files="$(non_snapshot_context_files)"
 		if [[ -z "$files" ]]; then
-			ok "no persisted account config/bookmarks/snapshots/reset-primer settings are present"
+			ok "no persisted account config/bookmarks/snapshots/settings are present"
 			note "note: the app still shows built-in default accounts when accounts.json is absent"
 		elif [[ -z "$reset_blocking_files" && "$(current_snapshot_is_fresh_reset_state && printf yes || true)" == "yes" ]]; then
 			printf '%s\n' "$files"

@@ -159,16 +159,6 @@ public enum ContextPanelLocations {
         return applicationSupportDirectory().appending(path: "fast-mode-forecast-settings.json")
     }
 
-    public static func resetPrimerSettingsURL(appGroupID: String? = nil) -> URL {
-        if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
-            return containerURL
-                .appending(path: "Context Panel", directoryHint: .isDirectory)
-                .appending(path: "reset-primer-settings.json")
-        }
-
-        return applicationSupportDirectory().appending(path: "reset-primer-settings.json")
-    }
-
     public static func backgroundRefreshSettingsURL(appGroupID: String? = nil) -> URL {
         if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
             return containerURL
@@ -310,16 +300,6 @@ public enum ContextPanelLocations {
             normalized = "/var/" + normalized.dropFirst("/private/var/".count)
         }
         return normalized
-    }
-
-    public static func resetPrimerRunStateURL(appGroupID: String? = nil) -> URL {
-        if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
-            return containerURL
-                .appending(path: "Context Panel", directoryHint: .isDirectory)
-                .appending(path: "reset-primer-runs.json")
-        }
-
-        return applicationSupportDirectory().appending(path: "reset-primer-runs.json")
     }
 
     public static func realUserHomeDirectory() -> URL {

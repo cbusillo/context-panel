@@ -94,9 +94,9 @@ behavior. If the app was closed, launch the canonical app with
 the active process path to be the installed app before saying it is ready to test.
 When a fresh install was requested, also require the storage/cache check to
 report no persisted account config, bookmarks, snapshots, widget timelines,
-reset-primer settings, reset-primer run state, background-refresh settings,
-limit-warning settings, limit-warning notification state, pending limit-warning
-notifications, webhook settings, webhook delivery state, or webhook credentials.
+background-refresh settings, limit-warning settings, limit-warning notification
+state, pending limit-warning notifications, webhook settings, webhook delivery
+state, or webhook credentials.
 Treat any mismatch as a blocker. Avoid repeatedly opening `contextpanel://`
 during ordinary validation; use that only for explicit widget click-through
 testing, because URL activation can change the visible app window state.
