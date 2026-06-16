@@ -80,8 +80,8 @@ MVP connectors:
   discovery are removed. The Antigravity adapter follows the Claude-style
   Context Panel credential model: store Context Panel-owned Google OAuth tokens,
   refresh them through Google's OAuth endpoint, discover the active Antigravity
-  project, call Cloud Code model availability, and normalize `quotaInfo` into
-  reported availability percentages.
+  project, call Cloud Code quota summary for weekly and 5-hour buckets, and use
+  Cloud Code model availability only as a degraded availability fallback/detail.
 - Claude provider: store Context Panel-owned Claude OAuth tokens, refresh them
   through Anthropic's OAuth token endpoint when needed, call the Claude OAuth
   usage endpoint, and normalize returned utilization windows into reported

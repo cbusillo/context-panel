@@ -807,20 +807,214 @@ import Testing
     #expect(limits[1].resetsAt == ISO8601DateFormatter().date(from: "2026-06-07T13:00:00Z"))
 }
 
-@Test func googleAntigravityConnectorDiscoversProjectAndFetchesModelQuota() async throws {
+@Test func googleAntigravityParserReadsQuotaSummaryGroups() throws {
+    let observedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let payload = #"""
+    {
+      "groups": [
+        {
+          "displayName": "Gemini models",
+          "description": "Usage across Gemini models.",
+          "buckets": [
+            {
+              "bucketId": "gemini-weekly",
+              "displayName": "Weekly Limit",
+              "window": "Weekly",
+              "remainingFraction": 0.8432,
+              "resetTime": "2026-06-18T19:32:00Z"
+            },
+            {
+              "bucketId": "gemini-five-hour",
+              "displayName": "Five Hour Limit",
+              "window": "5-hour",
+              "remainingFraction": "0.9601",
+              "resetTime": "2026-06-16T16:51:00Z"
+            }
+          ]
+        },
+        {
+          "displayName": "Claude and GPT models",
+          "buckets": [
+            {
+              "bucketId": "third-party-weekly",
+              "displayName": "Weekly Limit",
+              "window": "Weekly",
+              "remainingFraction": 0.6477,
+              "resetTime": "2026-06-21T10:00:00Z"
+            },
+            {
+              "bucketId": "third-party-five-hour",
+              "displayName": "Five Hour Limit",
+              "window": "5-hour",
+              "remainingFraction": 1,
+              "resetTime": "2026-06-16T19:30:00Z"
+            }
+          ]
+        }
+      ]
+    }
+    """#.data(using: .utf8)!
+
+    let limits = try GoogleAntigravityQuotaParser.usageLimitsFromSummary(
+        from: payload,
+        accountID: "google-antigravity",
+        configuredAccountID: "google-antigravity-default",
+        accountName: "Antigravity",
+        observedAt: observedAt
+    )
+
+    #expect(limits.map(\.label) == [
+        "Gemini models Weekly Limit",
+        "Gemini models Five Hour Limit",
+        "Claude and GPT models Weekly Limit",
+        "Claude and GPT models Five Hour Limit",
+    ])
+    #expect(limits.map(\.modelLabel) == ["Gemini models", "Gemini models", "Claude and GPT models", "Claude and GPT models"])
+    #expect(limits.map(\.windowLabel) == ["Weekly", "5-hour", "Weekly", "5-hour"])
+    #expect(limits.map(\.mainLimitWindow) == [.weekly, .fiveHour, .weekly, .fiveHour])
+    #expect(limits.map(\.used) == [16, 4, 35, 0])
+    #expect(limits.allSatisfy { $0.provider == .google && $0.unit == .percent && $0.limit == 100 })
+    #expect(limits[0].resetsAt == ISO8601DateFormatter().date(from: "2026-06-18T19:32:00Z"))
+    #expect(limits[1].resetsAt == ISO8601DateFormatter().date(from: "2026-06-16T16:51:00Z"))
+    #expect(limits[0].note?.contains("Google Antigravity quota summary") == true)
+}
+
+@Test func googleAntigravityParserReadsSnakeCaseQuotaSummaryBuckets() throws {
+    let observedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let payload = #"""
+    {
+      "groups": [
+        {
+          "display_name": "Gemini models",
+          "description": "Usage across Gemini models.",
+          "buckets": [
+            {
+              "bucket_id": "gemini-weekly",
+              "display_name": "Weekly Limit",
+              "window": "Weekly",
+              "remaining_fraction": "0.8432",
+              "reset_time": "2026-06-18T19:32:00Z"
+            },
+            {
+              "bucket_id": "gemini-five-hour",
+              "display_name": "Five Hour Limit",
+              "window": "5-hour",
+              "remaining_amount": "12",
+              "reset_time": "2026-06-16T16:51:00Z"
+            }
+          ]
+        }
+      ]
+    }
+    """#.data(using: .utf8)!
+
+    let limits = try GoogleAntigravityQuotaParser.usageLimitsFromSummary(
+        from: payload,
+        accountID: "google-antigravity",
+        configuredAccountID: "google-antigravity-default",
+        accountName: "Antigravity",
+        observedAt: observedAt
+    )
+
+    #expect(limits.map(\.label) == ["Gemini models Weekly Limit", "Gemini models Five Hour Limit"])
+    #expect(limits.map(\.windowLabel) == ["Weekly", "5-hour"])
+    #expect(limits.map(\.used) == [16, nil])
+    #expect(limits.map(\.limit) == [100, 12])
+    #expect(limits.map(\.unit) == [.percent, .requests])
+    #expect(limits[0].resetsAt == ISO8601DateFormatter().date(from: "2026-06-18T19:32:00Z"))
+    #expect(limits[1].resetsAt == ISO8601DateFormatter().date(from: "2026-06-16T16:51:00Z"))
+}
+
+@Test func googleAntigravityParserHandlesZeroRemainingAmountAsExhaustedBucket() throws {
+    let observedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let payload = #"""
+    {
+      "groups": [
+        {
+          "displayName": "Gemini models",
+          "buckets": [
+            {
+              "displayName": "Five Hour Limit",
+              "window": "5-hour",
+              "remaining_amount": 0,
+              "reset_time": "2026-06-16T16:51:00Z"
+            }
+          ]
+        }
+      ]
+    }
+    """#.data(using: .utf8)!
+
+    let limits = try GoogleAntigravityQuotaParser.usageLimitsFromSummary(
+        from: payload,
+        accountID: "google-antigravity",
+        configuredAccountID: "google-antigravity-default",
+        accountName: "Antigravity",
+        observedAt: observedAt
+    )
+
+    #expect(limits.map(\.label) == ["Gemini models Five Hour Limit"])
+    #expect(limits.map(\.used) == [1])
+    #expect(limits.map(\.limit) == [1])
+    #expect(limits.map(\.status) == [.limited])
+    #expect(limits.map(\.mainLimitWindow) == [.fiveHour])
+}
+
+@Test func googleAntigravityParserReadsUngroupedQuotaSummaryBuckets() throws {
+    let observedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let payload = #"""
+    {
+      "buckets": [
+        {
+          "bucket_id": "gemini-weekly",
+          "display_name": "Gemini Weekly Limit",
+          "window": "Weekly",
+          "remaining_fraction": 0.5,
+          "reset_time": "2026-06-18T19:32:00Z"
+        },
+        {
+          "bucket_id": "disabled-lane",
+          "display_name": "Disabled Lane",
+          "remaining_fraction": 0.1,
+          "disabled": true
+        }
+      ]
+    }
+    """#.data(using: .utf8)!
+
+    let limits = try GoogleAntigravityQuotaParser.usageLimitsFromSummary(
+        from: payload,
+        accountID: "google-antigravity",
+        configuredAccountID: "google-antigravity-default",
+        accountName: "Antigravity",
+        observedAt: observedAt
+    )
+
+    #expect(limits.map(\.label) == ["Gemini Weekly Limit"])
+    #expect(limits.map(\.modelLabel) == [nil])
+    #expect(limits.map(\.used) == [50])
+    #expect(limits[0].mainLimitWindow == .weekly)
+}
+
+@Test func googleAntigravityConnectorDiscoversProjectAndFetchesQuotaSummary() async throws {
     let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["https://www.googleapis.com/auth/cloud-platform"]}"#.data(using: .utf8)!
     let project = #"{"cloudaicompanionProject":{"id":"project-a"}}"#.data(using: .utf8)!
-    let models = #"""
+    let summary = #"""
     {
-      "models": {
-        "gemini-3-pro-high": { "quotaInfo": { "remainingFraction": 0.25, "resetTime": "2026-06-07T12:00:00Z" } },
-        "gemini-3-flash": { "quotaInfo": { "remainingFraction": 1.0, "resetTime": "2026-06-07T13:00:00Z" } }
-      }
+      "groups": [
+        {
+          "displayName": "Gemini models",
+          "buckets": [
+            { "bucketId": "gemini-weekly", "displayName": "Weekly Limit", "window": "Weekly", "remainingFraction": 0.84, "resetTime": "2026-06-18T12:00:00Z" },
+            { "bucketId": "gemini-five-hour", "displayName": "Five Hour Limit", "window": "5-hour", "remainingFraction": 0.96, "resetTime": "2026-06-07T13:00:00Z" }
+          ]
+        }
+      ]
     }
     """#.data(using: .utf8)!
     let http = StubHTTPClient(responses: [
         ConnectorHTTPResponse(statusCode: 200, data: project),
-        ConnectorHTTPResponse(statusCode: 200, data: models),
+        ConnectorHTTPResponse(statusCode: 200, data: summary),
     ])
     let store = StubCredentialStore(storage: ["google-antigravity-default": credentials])
     let connector = GoogleAntigravityQuotaConnector(
@@ -835,12 +1029,13 @@ import Testing
     #expect(result.reports[0].provider == .google)
     #expect(result.reports[0].status == .healthy)
     #expect(result.reports[0].configuredAccountID == "google-antigravity-default")
-    #expect(result.snapshot.limits.map(\.modelLabel) == ["Gemini Pro", "Gemini Flash"])
-    #expect(result.snapshot.limits.map(\.used) == [75, 0])
-    #expect(http.requests.map(\.url.path) == ["/v1internal:loadCodeAssist", "/v1internal:fetchAvailableModels"])
+    #expect(result.snapshot.limits.map(\.label) == ["Gemini models Weekly Limit", "Gemini models Five Hour Limit"])
+    #expect(result.snapshot.limits.map(\.mainLimitWindow) == [.weekly, .fiveHour])
+    #expect(result.snapshot.limits.map(\.used) == [16, 4])
+    #expect(http.requests.map(\.url.path) == ["/v1internal:loadCodeAssist", "/v1internal:retrieveUserQuotaSummary"])
     #expect(http.requests.map(\.url.absoluteString) == [
         "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
-        "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+        "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
     ])
     #expect(http.requests[0].headers["Authorization"] == "Bearer access-secret")
     #expect(http.requests[0].headers["X-Goog-Api-Client"] == "gl-mac/1.0.0 antigravity-context-panel/1.0.0")
@@ -849,20 +1044,59 @@ import Testing
     #expect(http.requests[1].headers["X-Goog-Api-Client"] == "gl-mac/1.0.0 antigravity-context-panel/1.0.0")
     #expect(http.requests[1].headers["X-Goog-QuotaUser"] == "google-antigravity-default")
     #expect(http.requests[1].headers["Client-Metadata"] == #"{"ideType":"ANTIGRAVITY","platform":"MACOS","pluginType":"GEMINI"}"#)
-    #expect(http.requests[1].body.flatMap { String(data: $0, encoding: .utf8) }?.contains("project-a") == true)
+    #expect(http.requests[1].body.flatMap { String(data: $0, encoding: .utf8) } == #"{"project":"project-a"}"#)
     #expect(store.savedAccountID == "google-antigravity-default")
     #expect(store.savedData.flatMap {
         try? JSONDecoder.contextPanelISO8601.decode(GoogleAntigravityOAuthCredentials.self, from: $0)
     }?.projectID == "project-a")
 }
 
+@Test func googleAntigravityConnectorFallsBackToModelAvailabilityWhenSummaryIsEmpty() async throws {
+    let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["https://www.googleapis.com/auth/cloud-platform"]}"#.data(using: .utf8)!
+    let project = #"{"cloudaicompanionProject":{"id":"project-a"}}"#.data(using: .utf8)!
+    let emptySummary = #"{"groups":[],"buckets":[]}"#.data(using: .utf8)!
+    let models = #"""
+    {
+      "models": {
+        "gemini-3-pro-high": { "quotaInfo": { "remainingFraction": 0.25, "resetTime": "2026-06-07T12:00:00Z" } },
+        "gemini-3-flash": { "quotaInfo": { "remainingFraction": 1.0, "resetTime": "2026-06-07T13:00:00Z" } }
+      }
+    }
+    """#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: project),
+        ConnectorHTTPResponse(statusCode: 200, data: emptySummary),
+        ConnectorHTTPResponse(statusCode: 200, data: models),
+    ])
+    let connector = GoogleAntigravityQuotaConnector(
+        accounts: [googleAntigravityTestAccount()],
+        httpClient: http,
+        credentialStore: StubCredentialStore(storage: ["google-antigravity-default": credentials])
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+
+    #expect(result.reports[0].status == .unknown)
+    #expect(result.reports[0].errorMessage == "Google Antigravity did not report quota summary; showing model availability only.")
+    #expect(result.snapshot.limits.map(\.modelLabel) == ["Gemini Pro", "Gemini Flash"])
+    #expect(result.snapshot.limits.map(\.mainLimitWindow) == [.availability, .availability])
+    #expect(result.snapshot.limits.map(\.status) == [.unknown, .unknown])
+    #expect(result.snapshot.mainLimitSummaries.map(\.status) == [.unknown])
+    #expect(result.snapshot.limits.map(\.used) == [75, 0])
+    #expect(http.requests.map(\.url.path) == [
+        "/v1internal:loadCodeAssist",
+        "/v1internal:retrieveUserQuotaSummary",
+        "/v1internal:fetchAvailableModels",
+    ])
+}
+
 @Test func googleAntigravityConnectorContinuesWhenProjectCacheWriteFails() async throws {
     let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":[]}"#.data(using: .utf8)!
     let project = #"{"cloudaicompanionProject":{"id":"project-a"}}"#.data(using: .utf8)!
-    let models = #"{"models":{"gemini-3-pro-high":{"quotaInfo":{"remainingFraction":0.5,"resetTime":"2026-06-07T12:00:00Z"}}}}"#.data(using: .utf8)!
+    let summary = #"{"groups":[{"displayName":"Gemini models","buckets":[{"displayName":"Five Hour Limit","window":"5-hour","remainingFraction":0.5,"resetTime":"2026-06-07T12:00:00Z"}]}]}"#.data(using: .utf8)!
     let http = StubHTTPClient(responses: [
         ConnectorHTTPResponse(statusCode: 200, data: project),
-        ConnectorHTTPResponse(statusCode: 200, data: models),
+        ConnectorHTTPResponse(statusCode: 200, data: summary),
     ])
     let store = FailingCredentialStore(storage: ["google-antigravity-default": credentials])
     let connector = GoogleAntigravityQuotaConnector(
@@ -881,16 +1115,10 @@ import Testing
 @Test func googleAntigravityConnectorAcceptsStoredCredentialsWithoutScopes() async throws {
     let credentials = #"{"accessToken":"old-access","refreshToken":"refresh-secret","expiresAt":"2000-01-01T00:00:00Z","projectID":"project-a"}"#.data(using: .utf8)!
     let token = #"{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600}"#.data(using: .utf8)!
-    let models = #"""
-    {
-      "models": {
-        "gemini-3-pro-high": { "quotaInfo": { "remainingFraction": 0.25, "resetTime": "2026-06-07T12:00:00Z" } }
-      }
-    }
-    """#.data(using: .utf8)!
+    let summary = #"{"groups":[{"displayName":"Gemini models","buckets":[{"displayName":"Weekly Limit","window":"Weekly","remainingFraction":0.25,"resetTime":"2026-06-07T12:00:00Z"}]}]}"#.data(using: .utf8)!
     let http = StubHTTPClient(responses: [
         ConnectorHTTPResponse(statusCode: 200, data: token),
-        ConnectorHTTPResponse(statusCode: 200, data: models),
+        ConnectorHTTPResponse(statusCode: 200, data: summary),
     ])
     let store = StubCredentialStore(storage: ["google-antigravity-default": credentials])
     let connector = GoogleAntigravityQuotaConnector(
@@ -904,7 +1132,7 @@ import Testing
     #expect(result.reports.count == 1)
     #expect(result.reports[0].status == .healthy)
     #expect(result.reports[0].errorMessage == nil)
-    #expect(result.snapshot.limits.map(\.modelLabel) == ["Gemini Pro"])
+    #expect(result.snapshot.limits.map(\.label) == ["Gemini models Weekly Limit"])
     let savedCredentials = try #require(store.savedData.flatMap {
         try? JSONDecoder.contextPanelISO8601.decode(GoogleAntigravityOAuthCredentials.self, from: $0)
     })
@@ -930,10 +1158,10 @@ import Testing
 @Test func googleAntigravityConnectorRefreshesExpiredAccessToken() async throws {
     let credentials = #"{"accessToken":"old-access","refreshToken":"refresh-secret","expiresAt":"2000-01-01T00:00:00Z","scopes":[]}"#.data(using: .utf8)!
     let token = #"{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600,"scope":"https://www.googleapis.com/auth/cloud-platform"}"#.data(using: .utf8)!
-    let models = #"{"models":{"gemini-3-pro-high":{"quotaInfo":{"remainingFraction":0.5,"resetTime":"2026-06-07T12:00:00Z"}}}}"#.data(using: .utf8)!
+    let summary = #"{"groups":[{"displayName":"Gemini models","buckets":[{"displayName":"Five Hour Limit","window":"5-hour","remainingFraction":0.5,"resetTime":"2026-06-07T12:00:00Z"}]}]}"#.data(using: .utf8)!
     let http = StubHTTPClient(responses: [
         ConnectorHTTPResponse(statusCode: 200, data: token),
-        ConnectorHTTPResponse(statusCode: 200, data: models),
+        ConnectorHTTPResponse(statusCode: 200, data: summary),
     ])
     let store = StubCredentialStore(storage: ["google-antigravity-default": credentials])
     let connector = GoogleAntigravityQuotaConnector(
@@ -997,14 +1225,14 @@ import Testing
     #expect(store.savedData == nil)
 }
 
-@Test func googleAntigravityConnectorRefreshesWhenModelAvailabilityIsUnauthorized() async throws {
+@Test func googleAntigravityConnectorRefreshesWhenQuotaSummaryIsUnauthorized() async throws {
     let credentials = #"{"accessToken":"old-access","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":[],"projectID":"project-a"}"#.data(using: .utf8)!
     let token = #"{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600,"scope":"https://www.googleapis.com/auth/cloud-platform"}"#.data(using: .utf8)!
-    let models = #"{"models":{"gemini-3-pro-high":{"quotaInfo":{"remainingFraction":0.5,"resetTime":"2026-06-07T12:00:00Z"}}}}"#.data(using: .utf8)!
+    let summary = #"{"groups":[{"displayName":"Gemini models","buckets":[{"displayName":"Five Hour Limit","window":"5-hour","remainingFraction":0.5,"resetTime":"2026-06-07T12:00:00Z"}]}]}"#.data(using: .utf8)!
     let http = StubHTTPClient(responses: [
         ConnectorHTTPResponse(statusCode: 401, data: Data(#"{"error":"invalid_token"}"#.utf8)),
         ConnectorHTTPResponse(statusCode: 200, data: token),
-        ConnectorHTTPResponse(statusCode: 200, data: models),
+        ConnectorHTTPResponse(statusCode: 200, data: summary),
     ])
     let store = StubCredentialStore(storage: ["google-antigravity-default": credentials])
     let connector = GoogleAntigravityQuotaConnector(

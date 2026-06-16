@@ -108,10 +108,11 @@ Context Panel-owned Claude OAuth usage connector.
 
 For Google/Gemini, retired Gemini CLI and legacy Code Assist credential paths
 have been removed. Context Panel now uses its own Google OAuth credentials for
-the Antigravity model-availability adapter instead of reading Antigravity's
-Keychain item or Gemini CLI files. The Google surface reports model availability
-percentages when Antigravity returns `quotaInfo`; treat those as reported
-availability rather than a public billing or quota contract.
+the Antigravity adapter instead of reading Antigravity's Keychain item or Gemini
+CLI files. The Google surface reports quota-summary weekly and 5-hour buckets
+when Antigravity returns them, and uses model availability only as a degraded
+fallback/detail. Treat both as internal provider signals rather than a public
+billing or quota contract.
 
 The probes call the same `ContextPanelCore` connectors the app will use, so
 passing probe output is also a smoke test for the production connector runtime.

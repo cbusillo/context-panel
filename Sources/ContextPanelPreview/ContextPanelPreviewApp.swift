@@ -4428,7 +4428,7 @@ private extension String {
 
 extension UsageLimit {
     var previewDisplayLimit: UsageLimit {
-        googleAntigravityResetCarriedForward(at: Date()) ?? self
+        self
     }
 
     var planText: String? {
