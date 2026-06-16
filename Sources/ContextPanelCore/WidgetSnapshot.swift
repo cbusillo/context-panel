@@ -288,14 +288,10 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     }
 
     private static func promptCacheTelemetryDirectoryPath(for account: LocalProviderAccountConfiguration) -> String? {
-        guard let authPath = account.effectiveAuthPath else { return nil }
-        let expanded = NSString(string: authPath).expandingTildeInPath
-        let authDirectory = URL(fileURLWithPath: expanded).deletingLastPathComponent()
-        let name = authDirectory.lastPathComponent
-        guard name == ".code" || name == ".codex" else { return nil }
-        return ContextPanelLocations.normalizedPath(
-            authDirectory.appending(path: "usage", directoryHint: .isDirectory).path
-        )
+        guard let usageDirectory = ContextPanelLocations.promptCacheUsageDirectory(
+            forAuthPath: account.effectiveAuthPath
+        ) else { return nil }
+        return ContextPanelLocations.normalizedPath(usageDirectory.path)
     }
 
     private func capacityRatio(for limits: [UsageLimit]) -> Double {

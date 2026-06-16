@@ -406,12 +406,7 @@ public struct SnapshotRefreshService: Sendable {
     }
 
     private static func promptCacheTelemetryDirectory(for account: LocalProviderAccountConfiguration) -> URL? {
-        guard let authPath = account.effectiveAuthPath else { return nil }
-        let expanded = NSString(string: authPath).expandingTildeInPath
-        let authDirectory = URL(fileURLWithPath: expanded).deletingLastPathComponent()
-        let name = authDirectory.lastPathComponent
-        guard name == ".code" || name == ".codex" else { return nil }
-        return authDirectory.appending(path: "usage", directoryHint: .isDirectory)
+        ContextPanelLocations.promptCacheUsageDirectory(forAuthPath: account.effectiveAuthPath)
     }
 
     private func deduplicatedDirectories(_ directories: [URL]) -> [URL] {
