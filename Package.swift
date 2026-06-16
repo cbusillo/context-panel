@@ -40,6 +40,10 @@ let package = Package(
             name: "PromptCacheTelemetryProbe",
             targets: ["PromptCacheTelemetryProbe"]
         ),
+        .library(
+            name: "ContextPanelWidgetUI",
+            targets: ["ContextPanelWidgetUI"]
+        ),
         .executable(
             name: "ContextPanelWidget",
             targets: ["ContextPanelWidget"]
@@ -47,6 +51,10 @@ let package = Package(
     ],
     targets: [
         .target(name: "ContextPanelCore"),
+        .target(
+            name: "ContextPanelWidgetUI",
+            dependencies: ["ContextPanelCore"]
+        ),
         .executableTarget(
             name: "ContextPanelPreview",
             dependencies: ["ContextPanelCore"]
@@ -77,11 +85,11 @@ let package = Package(
         ),
         .executableTarget(
             name: "ContextPanelWidget",
-            dependencies: ["ContextPanelCore"]
+            dependencies: ["ContextPanelCore", "ContextPanelWidgetUI"]
         ),
         .testTarget(
             name: "ContextPanelCoreTests",
-            dependencies: ["ContextPanelCore", "ContextPanelWidget"]
+            dependencies: ["ContextPanelCore", "ContextPanelWidget", "ContextPanelWidgetUI"]
         )
     ]
 )

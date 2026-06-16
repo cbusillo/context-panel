@@ -1,7 +1,74 @@
 import ContextPanelCore
-import AppKit
 import SwiftUI
 import WidgetKit
+
+#if canImport(AppKit)
+import AppKit
+private typealias CPWPlatformColor = NSColor
+#elseif canImport(UIKit)
+import UIKit
+private typealias CPWPlatformColor = UIColor
+#endif
+
+public struct ContextPanelWidgetLinks: Sendable {
+    public let overview: URL
+    public let reconnect: URL
+    public let cacheStatsSettings: URL
+
+    public init(overview: URL, reconnect: URL, cacheStatsSettings: URL) {
+        self.overview = overview
+        self.reconnect = reconnect
+        self.cacheStatsSettings = cacheStatsSettings
+    }
+}
+
+public struct ContextPanelWidgetContentView: View {
+    let family: WidgetFamily
+    let snapshot: WidgetSnapshot
+    let displayPreferences: WidgetDisplayPreferences
+    let links: ContextPanelWidgetLinks
+
+    public init(
+        family: WidgetFamily,
+        snapshot: WidgetSnapshot,
+        displayPreferences: WidgetDisplayPreferences,
+        links: ContextPanelWidgetLinks
+    ) {
+        self.family = family
+        self.snapshot = snapshot
+        self.displayPreferences = displayPreferences
+        self.links = links
+    }
+
+    public var body: some View {
+        content
+            .widgetURL(snapshot.widgetDeepLinkURL(links: links))
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if snapshot.shouldShowSetupPlaceholder {
+            CPWSetupPlaceholderWidget(family: family)
+        } else {
+            switch family {
+            case .systemSmall:
+                ContextPanelSmallWidget(snapshot: snapshot)
+            case .systemLarge, .systemExtraLarge:
+                ContextPanelLargeWidget(
+                    snapshot: snapshot,
+                    displayPreferences: displayPreferences,
+                    links: links
+                )
+            default:
+                ContextPanelMediumWidget(
+                    snapshot: snapshot,
+                    displayPreferences: displayPreferences,
+                    links: links
+                )
+            }
+        }
+    }
+}
 
 struct CPWSetupPlaceholderWidget: View {
     let family: WidgetFamily
@@ -102,6 +169,7 @@ struct ContextPanelSmallWidget: View {
 struct ContextPanelMediumWidget: View {
     let snapshot: WidgetSnapshot
     let displayPreferences: WidgetDisplayPreferences
+    let links: ContextPanelWidgetLinks
 
     var body: some View {
         HStack(spacing: 8) {
@@ -139,7 +207,8 @@ struct ContextPanelMediumWidget: View {
                     title: "Main Limits",
                     accessory: CPWPromptCacheInlineStat(
                         state: snapshot.promptCacheWidgetState,
-                        summary: snapshot.promptCacheSummary
+                        summary: snapshot.promptCacheSummary,
+                        cacheStatsSettingsURL: links.cacheStatsSettings
                     )
                 )
                 if snapshot.shouldShowMainLimitEmptyRow {
@@ -159,6 +228,7 @@ struct ContextPanelMediumWidget: View {
 struct ContextPanelLargeWidget: View {
     let snapshot: WidgetSnapshot
     let displayPreferences: WidgetDisplayPreferences
+    let links: ContextPanelWidgetLinks
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -198,7 +268,8 @@ struct ContextPanelLargeWidget: View {
                     title: "Main Limits",
                     accessory: CPWPromptCacheInlineStat(
                         state: snapshot.promptCacheWidgetState,
-                        summary: snapshot.promptCacheSummary
+                        summary: snapshot.promptCacheSummary,
+                        cacheStatsSettingsURL: links.cacheStatsSettings
                     )
                 )
                 if snapshot.shouldShowMainLimitEmptyRow {
@@ -218,6 +289,7 @@ struct ContextPanelLargeWidget: View {
 struct CPWPromptCacheInlineStat: View {
     let state: PromptCacheWidgetState
     let summary: PromptCacheSummary
+    let cacheStatsSettingsURL: URL
 
     private var currentRate: Double? {
         summary.latestHitRate
@@ -267,7 +339,7 @@ struct CPWPromptCacheInlineStat: View {
             .fixedSize(horizontal: true, vertical: false)
             .accessibilityLabel(accessibilityLabel)
         case .needsAuthorization:
-            Link(destination: ContextPanelWidgetURL.cacheStatsSettings) {
+            Link(destination: cacheStatsSettingsURL) {
                 promptCachePill(
                     text: "Enable Cache",
                     foreground: CPWTheme.accent,
@@ -657,26 +729,27 @@ struct CPWLabel: View {
     }
 }
 
-enum CPWTheme {
-    static let surface = adaptiveColor(
-        light: NSColor(red: 250 / 255, green: 250 / 255, blue: 250 / 255, alpha: 1),
-        dark: NSColor(red: 32 / 255, green: 33 / 255, blue: 36 / 255, alpha: 1)
+public enum CPWTheme {
+    // Exposed so platform widget targets can apply the shared surface behind the rendered content.
+    public static let surface = adaptiveColor(
+        light: CPWPlatformColor(red: 250 / 255, green: 250 / 255, blue: 250 / 255, alpha: 1),
+        dark: CPWPlatformColor(red: 32 / 255, green: 33 / 255, blue: 36 / 255, alpha: 1)
     )
     static let line = adaptiveColor(
-        light: NSColor.black.withAlphaComponent(0.08),
-        dark: NSColor.white.withAlphaComponent(0.11)
+        light: CPWPlatformColor.black.withAlphaComponent(0.08),
+        dark: CPWPlatformColor.white.withAlphaComponent(0.11)
     )
     static let primaryText = adaptiveColor(
-        light: NSColor(red: 10 / 255, green: 10 / 255, blue: 11 / 255, alpha: 1),
-        dark: NSColor(red: 239 / 255, green: 240 / 255, blue: 242 / 255, alpha: 1)
+        light: CPWPlatformColor(red: 10 / 255, green: 10 / 255, blue: 11 / 255, alpha: 1),
+        dark: CPWPlatformColor(red: 239 / 255, green: 240 / 255, blue: 242 / 255, alpha: 1)
     )
     static let secondaryText = adaptiveColor(
-        light: NSColor(red: 87 / 255, green: 87 / 255, blue: 92 / 255, alpha: 1),
-        dark: NSColor(red: 178 / 255, green: 180 / 255, blue: 186 / 255, alpha: 1)
+        light: CPWPlatformColor(red: 87 / 255, green: 87 / 255, blue: 92 / 255, alpha: 1),
+        dark: CPWPlatformColor(red: 178 / 255, green: 180 / 255, blue: 186 / 255, alpha: 1)
     )
     static let tertiaryText = adaptiveColor(
-        light: NSColor(red: 130 / 255, green: 130 / 255, blue: 136 / 255, alpha: 1),
-        dark: NSColor(red: 128 / 255, green: 131 / 255, blue: 139 / 255, alpha: 1)
+        light: CPWPlatformColor(red: 130 / 255, green: 130 / 255, blue: 136 / 255, alpha: 1),
+        dark: CPWPlatformColor(red: 128 / 255, green: 131 / 255, blue: 139 / 255, alpha: 1)
     )
     static let accent = Color(red: 74 / 255, green: 91 / 255, blue: 122 / 255)
 
@@ -719,12 +792,24 @@ enum CPWTheme {
         }
     }
 
+    #if canImport(AppKit)
     private static func adaptiveColor(light: NSColor, dark: NSColor) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
             let best = appearance.bestMatch(from: [.darkAqua, .aqua])
             return best == .darkAqua ? dark : light
         })
     }
+    #elseif canImport(UIKit)
+    private static func adaptiveColor(light: UIColor, dark: UIColor) -> Color {
+        Color(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark ? dark : light
+        })
+    }
+    #else
+    private static func adaptiveColor(light: Color, dark: Color) -> Color {
+        light
+    }
+    #endif
 }
 
 private extension MainLimitWindow {
@@ -910,22 +995,22 @@ extension WidgetSnapshot {
         }
     }
 
-    var widgetDeepLinkURL: URL {
+    func widgetDeepLinkURL(links: ContextPanelWidgetLinks) -> URL {
         return switch state {
         case .failure:
-            ContextPanelWidgetURL.reconnect
+            links.reconnect
         case .stale:
-            hasProviderReconnectIssue ? ContextPanelWidgetURL.reconnect : ContextPanelWidgetURL.overview
+            hasProviderReconnectIssue ? links.reconnect : links.overview
         case .ready:
             if needsProviderConnection || status == .failure || (status == .stale && hasProviderReconnectIssue) {
-                ContextPanelWidgetURL.reconnect
+                links.reconnect
             } else if promptCacheWidgetState == .needsAuthorization {
-                ContextPanelWidgetURL.cacheStatsSettings
+                links.cacheStatsSettings
             } else {
-                ContextPanelWidgetURL.overview
+                links.overview
             }
         case .setupNeeded:
-            promptCacheWidgetState == .needsAuthorization ? ContextPanelWidgetURL.cacheStatsSettings : ContextPanelWidgetURL.overview
+            promptCacheWidgetState == .needsAuthorization ? links.cacheStatsSettings : links.overview
         }
     }
 
@@ -1145,10 +1230,14 @@ extension Date {
     }
 
     var widgetDateTimeText: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "EEE h:mm a"
-        return formatter.string(from: self)
+        Self.widgetDateTimeFormatter.string(from: self)
     }
+
+    private static let widgetDateTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("EEEjmm")
+        return formatter
+    }()
 
     private static func formatDaysAndHours(hours: Int) -> String {
         let days = hours / 24

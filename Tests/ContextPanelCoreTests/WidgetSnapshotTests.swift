@@ -3,6 +3,13 @@ import Testing
 
 @testable import ContextPanelCore
 @testable import ContextPanelWidget
+@testable import ContextPanelWidgetUI
+
+private let testWidgetLinks = ContextPanelWidgetLinks(
+    overview: URL(string: "contextpanel://overview")!,
+    reconnect: URL(string: "contextpanel://reconnect")!,
+    cacheStatsSettings: URL(string: "contextpanel://settings/cache-stats")!
+)
 
 @Test func widgetSnapshotUsesSetupNeededForMissingStore() {
     let widget = WidgetSnapshot.fromStore(
@@ -303,7 +310,7 @@ import Testing
     #expect(widget.message == "Connect an account to show limits.")
     #expect(widget.tightestHeadline == "Not connected")
     #expect(widget.widgetProblemText == "Setup needed")
-    #expect(widget.widgetDeepLinkURL == ContextPanelWidgetURL.reconnect)
+    #expect(widget.widgetDeepLinkURL(links: testWidgetLinks) == testWidgetLinks.reconnect)
     #expect(widget.widgetProviderSummaryText(provider: .openAI) == "not connected")
 }
 
@@ -352,7 +359,7 @@ import Testing
     #expect(widget.shouldShowMainLimitEmptyRow == false)
     #expect(widget.message == "You're good to keep working.")
     #expect(widget.tightestHeadline == "80% left")
-    #expect(widget.widgetDeepLinkURL == ContextPanelWidgetURL.overview)
+    #expect(widget.widgetDeepLinkURL(links: testWidgetLinks) == testWidgetLinks.overview)
     #expect(widget.widgetProviderSummaryText(provider: .openAI) == "1w 80% left")
     #expect(widget.widgetProviderSummaryText(provider: .anthropic) == "setup needed")
 }

@@ -1,4 +1,5 @@
 import ContextPanelCore
+import ContextPanelWidgetUI
 import SwiftUI
 import WidgetKit
 
@@ -132,24 +133,12 @@ struct ContextPanelWidgetView: View {
     let entry: ContextPanelWidgetEntry
 
     var body: some View {
-        content
-            .widgetURL(entry.snapshot.widgetDeepLinkURL)
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        if entry.snapshot.shouldShowSetupPlaceholder {
-            CPWSetupPlaceholderWidget(family: family)
-        } else {
-            switch family {
-            case .systemSmall:
-                ContextPanelSmallWidget(snapshot: entry.snapshot)
-            case .systemLarge, .systemExtraLarge:
-                ContextPanelLargeWidget(snapshot: entry.snapshot, displayPreferences: entry.displayPreferences)
-            default:
-                ContextPanelMediumWidget(snapshot: entry.snapshot, displayPreferences: entry.displayPreferences)
-            }
-        }
+        ContextPanelWidgetContentView(
+            family: family,
+            snapshot: entry.snapshot,
+            displayPreferences: entry.displayPreferences,
+            links: ContextPanelWidgetURL.links
+        )
     }
 }
 
@@ -157,6 +146,11 @@ enum ContextPanelWidgetURL {
     static let overview = URL(string: "contextpanel://overview")!
     static let reconnect = URL(string: "contextpanel://reconnect")!
     static let cacheStatsSettings = URL(string: "contextpanel://settings/cache-stats")!
+    static let links = ContextPanelWidgetLinks(
+        overview: overview,
+        reconnect: reconnect,
+        cacheStatsSettings: cacheStatsSettings
+    )
 }
 
 @main
