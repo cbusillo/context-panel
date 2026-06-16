@@ -26,6 +26,13 @@ can display current capacity. Context Panel does not intentionally store raw
 provider responses, prompts, transcript contents, API keys, emails,
 organization identifiers, or access tokens in diagnostic reports.
 
+Refresh and alert diagnostics are stored locally to help explain whether the app
+or background agent refreshed successfully and whether configured local or
+webhook alerts were attempted. These diagnostics are summary records only and do
+not intentionally include provider tokens, raw provider responses, webhook URLs,
+account IDs, emails, organization identifiers, project identifiers, or local
+auth paths.
+
 For support or privacy questions, contact:
 
 Shiny Computers Leasing LLC  

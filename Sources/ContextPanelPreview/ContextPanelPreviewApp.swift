@@ -376,6 +376,9 @@ struct SettingsPane: View {
             Section("Diagnostics") {
                 DetailRow(label: "Status", value: model.status.previewStatusText)
                 DetailRow(label: "Last refresh", value: appModel.lastRefreshText)
+                ForEach(model.refreshDiagnosticRows(now: Date())) { row in
+                    DetailRow(label: row.label, value: row.value)
+                }
                 if let successfulRefreshText = appModel.lastSuccessfulProviderRefreshText {
                     DetailRow(label: "Last successful refresh", value: successfulRefreshText)
                 }
@@ -791,6 +794,29 @@ struct SettingsAccountRefreshSummary: Equatable {
     let status: UsageStatus
 }
 
+struct RefreshDiagnosticRow: Identifiable, Equatable {
+    let id: String
+    let label: String
+    let value: String
+}
+
+private extension RefreshDiagnosticsDecision {
+    var displayText: String {
+        switch self {
+        case .refreshed:
+            "refreshed"
+        case .skippedFresh:
+            "skipped fresh"
+        case .skippedAlreadyRunning:
+            "already running"
+        case .skippedNoReports:
+            "no reports"
+        case .failed:
+            "failed"
+        }
+    }
+}
+
 @MainActor
 final class SettingsPaneModel: ObservableObject {
     @Published private(set) var accounts: [LocalProviderAccountConfiguration] = []
@@ -867,6 +893,9 @@ final class SettingsPaneModel: ObservableObject {
     private let webhookDeliveryStateStore = LimitWarningWebhookDeliveryStateStore(
         stateURL: ContextPanelLocations.webhookDeliveryStateURL(appGroupID: ContextPanelLocations.appGroupID)
     )
+    private let refreshDiagnosticsStore = RefreshDiagnosticsStateStore(
+        stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.appGroupID)
+    )
     private let webhookSecretStore = LimitWarningWebhookSecretStore()
 
     private var widgetPreferenceStores: WidgetDisplayPreferencesStoreSet {
@@ -936,6 +965,126 @@ final class SettingsPaneModel: ObservableObject {
             return "Last webhook failed at \(time): HTTP \(status)."
         }
         return "Last webhook failed at \(time): \(latest.lastError ?? "unknown error")."
+    }
+
+    var refreshDiagnosticsState: RefreshDiagnosticsState {
+        refreshDiagnosticsStore.load()
+    }
+
+    func refreshDiagnosticRows(now: Date) -> [RefreshDiagnosticRow] {
+        let state = refreshDiagnosticsState
+        var rows: [RefreshDiagnosticRow] = []
+        if let run = state.lastRun {
+            rows.append(RefreshDiagnosticRow(
+                id: "last-agent-wake",
+                label: run.source == .refreshAgent ? "Agent last woke" : "App refresh started",
+                value: relativeDiagnosticTime(run.startedAt, now: now)
+            ))
+            rows.append(RefreshDiagnosticRow(
+                id: "last-refresh-decision",
+                label: "Refresh decision",
+                value: diagnosticDecisionText(run)
+            ))
+        } else {
+            rows.append(RefreshDiagnosticRow(
+                id: "last-agent-wake",
+                label: "Agent last woke",
+                value: "No background run recorded"
+            ))
+        }
+        if let successfulRun = state.lastSuccessfulRun {
+            rows.append(RefreshDiagnosticRow(
+                id: "last-successful-run",
+                label: "Last successful run",
+                value: diagnosticSuccessText(successfulRun, now: now)
+            ))
+        }
+        if let evaluatedAt = state.lastAlertEvaluationAt {
+            let eventCount = state.lastAlertEvaluationEventCount ?? 0
+            rows.append(RefreshDiagnosticRow(
+                id: "last-alert-eval",
+                label: "Limit warning eval",
+                value: "\(relativeDiagnosticTime(evaluatedAt, now: now)) · \(eventCount) event\(eventCount == 1 ? "" : "s")"
+            ))
+        }
+        if let notification = state.lastLocalNotification {
+            rows.append(RefreshDiagnosticRow(
+                id: "last-local-notification",
+                label: "Local warning queue",
+                value: diagnosticAlertText(notification, now: now)
+            ))
+        }
+        if let webhook = state.lastWebhook {
+            rows.append(RefreshDiagnosticRow(
+                id: "last-webhook",
+                label: "Webhook warning",
+                value: diagnosticAlertText(webhook, now: now)
+            ))
+        }
+        return rows
+    }
+
+    private func diagnosticDecisionText(_ run: RefreshDiagnosticsRun) -> String {
+        let decision = run.decision?.displayText ?? "running"
+        var parts = [decision]
+        if let intervalSeconds = run.intervalSeconds {
+            parts.append("every \(max(intervalSeconds / 60, 1)) min")
+        }
+        if let reportCount = run.reportCount {
+            let failureCount = run.failureCount ?? 0
+            if failureCount > 0 {
+                parts.append("\(failureCount)/\(reportCount) provider failures")
+            } else {
+                parts.append("\(reportCount) provider reports")
+            }
+        }
+        if let errorMessage = run.errorMessage, !errorMessage.isEmpty {
+            parts.append(errorMessage)
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func diagnosticSuccessText(_ run: RefreshDiagnosticsRun, now: Date) -> String {
+        let time = run.savedSnapshotAt ?? run.finishedAt ?? run.startedAt
+        let reportCount = run.reportCount ?? 0
+        let failureCount = run.failureCount ?? 0
+        let limitCount = run.limitCount ?? 0
+        var parts = [relativeDiagnosticTime(time, now: now)]
+        parts.append("\(reportCount) reports")
+        parts.append("\(limitCount) limits")
+        if failureCount > 0 {
+            parts.append("\(failureCount) failure\(failureCount == 1 ? "" : "s")")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func diagnosticAlertText(_ record: RefreshDiagnosticsAlertRecord, now: Date) -> String {
+        var parts = [relativeDiagnosticTime(record.attemptedAt, now: now)]
+        if record.succeeded {
+            parts.append("succeeded")
+        } else if record.channel == .localNotification, record.errorMessage == nil {
+            parts.append("queued")
+        } else {
+            parts.append("failed")
+        }
+        parts.append("\(record.eventCount) event\(record.eventCount == 1 ? "" : "s")")
+        if let status = record.lastHTTPStatus {
+            parts.append("HTTP \(status)")
+        }
+        if let error = record.errorMessage, !error.isEmpty {
+            parts.append(error)
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func relativeDiagnosticTime(_ date: Date, now: Date) -> String {
+        let seconds = max(Int(now.timeIntervalSince(date)), 0)
+        if seconds < 60 { return "just now" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(minutes)m ago" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours)h ago" }
+        return "\(hours / 24)d ago"
     }
 
     var canSendWebhookTest: Bool {
@@ -3584,6 +3733,9 @@ final class ContextPanelAppModel: ObservableObject {
     private let forecastSettingsStore = FastModeForecastSettingsStore(
         settingsURL: ContextPanelLocations.fastModeForecastSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
     )
+    private let refreshDiagnosticsStore = RefreshDiagnosticsStateStore(
+        stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.appGroupID)
+    )
     private let limitWarningNotificationService = AppLimitWarningNotificationService.appDefault()
 
     var currentSnapshot: UsageSnapshot {
@@ -3772,9 +3924,12 @@ final class ContextPanelAppModel: ObservableObject {
         guard !isRefreshing else { return }
         isRefreshing = true
         defer { isRefreshing = false }
+        let startedAt = Date()
+        let runID = recordRefreshStarted(at: startedAt)
 
         do {
             let decision = try await refreshRunner.refresh()
+            recordRefreshFinished(runID: runID, decision: decision, finishedAt: Date())
             if case .skippedAlreadyRunning = decision {
                 loadSnapshot()
                 storeStatus = .stale
@@ -3784,8 +3939,42 @@ final class ContextPanelAppModel: ObservableObject {
             await limitWarningNotificationService.notifyIfNeeded(decision: decision)
             loadSnapshot()
         } catch {
+            recordRefreshFailed(runID: runID, finishedAt: Date(), error: error)
             storeStatus = .failure
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func recordRefreshStarted(at startedAt: Date) -> String {
+        let runID = UUID().uuidString
+        try? refreshDiagnosticsStore.update { state in
+            state.recordRunStarted(id: runID, source: .app, at: startedAt)
+        }
+        return runID
+    }
+
+    private func recordRefreshFinished(runID: String, decision: SnapshotRefreshRunDecision, finishedAt: Date) {
+        try? refreshDiagnosticsStore.update { state in
+            state.recordRunFinished(
+                id: runID,
+                decision: decision.diagnosticsDecision,
+                finishedAt: finishedAt,
+                reportCount: decision.diagnosticsReportCount,
+                failureCount: decision.diagnosticsFailureCount,
+                limitCount: decision.diagnosticsLimitCount,
+                savedSnapshotAt: decision.diagnosticsSavedSnapshotAt
+            )
+        }
+    }
+
+    private func recordRefreshFailed(runID: String, finishedAt: Date, error: Error) {
+        try? refreshDiagnosticsStore.update { state in
+            state.recordRunFinished(
+                id: runID,
+                decision: .failed,
+                finishedAt: finishedAt,
+                errorMessage: error.localizedDescription
+            )
         }
     }
 
@@ -3865,6 +4054,7 @@ private struct AppLimitWarningNotificationService {
     let stateStore: LimitWarningStateStore
     let pendingNotificationStore: LimitWarningPendingNotificationStore
     let notificationCenter: UNUserNotificationCenter
+    let diagnosticsStore: RefreshDiagnosticsStateStore
 
     static func appDefault() -> AppLimitWarningNotificationService {
         AppLimitWarningNotificationService(
@@ -3877,7 +4067,10 @@ private struct AppLimitWarningNotificationService {
             pendingNotificationStore: LimitWarningPendingNotificationStore(
                 queueURL: ContextPanelLocations.limitWarningPendingNotificationsURL(appGroupID: ContextPanelLocations.appGroupID)
             ),
-            notificationCenter: .current()
+            notificationCenter: .current(),
+            diagnosticsStore: RefreshDiagnosticsStateStore(
+                stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.appGroupID)
+            )
         )
     }
 
@@ -3895,6 +4088,7 @@ private struct AppLimitWarningNotificationService {
             snapshot: warningSnapshot,
             now: outcome.savedAt
         )
+        recordAlertEvaluation(at: outcome.savedAt, eventCount: result.events.count)
         var commitPlan = LimitWarningNotificationCommitPlan(
             currentState: state,
             targetState: result.state,
@@ -3914,10 +4108,26 @@ private struct AppLimitWarningNotificationService {
         }
 
         if !result.events.isEmpty {
-            guard await notificationsAreAuthorized() else { return }
+            guard await notificationsAreAuthorized() else {
+                recordLocalNotificationDiagnostics(
+                    attemptedAt: outcome.savedAt,
+                    succeededAt: nil,
+                    eventCount: result.events.count,
+                    errorMessage: "notifications are not authorized for Context Panel"
+                )
+                return
+            }
         }
         for event in result.events {
-            guard await deliver(event: event, playsSound: settings.playsSound) else { return }
+            guard await deliver(event: event, playsSound: settings.playsSound) else {
+                recordLocalNotificationDiagnostics(
+                    attemptedAt: outcome.savedAt,
+                    succeededAt: nil,
+                    eventCount: result.events.count,
+                    errorMessage: "notification delivery failed"
+                )
+                return
+            }
             commitPlan.commitDeliveredEvent(for: event.laneID)
             do {
                 try stateStore.save(commitPlan.persistedState)
@@ -3925,6 +4135,12 @@ private struct AppLimitWarningNotificationService {
                 contextPanelLogger.error("limit warning state save failed: \(error.localizedDescription, privacy: .public)")
             }
         }
+        recordLocalNotificationDiagnostics(
+            attemptedAt: outcome.savedAt,
+            succeededAt: outcome.savedAt,
+            eventCount: result.events.count,
+            errorMessage: nil
+        )
     }
 
     func deliverPendingNotifications() async {
@@ -3941,6 +4157,12 @@ private struct AppLimitWarningNotificationService {
         }
         guard !pendingNotifications.isEmpty else { return }
         guard await notificationsAreAuthorized() else {
+            recordLocalNotificationDiagnostics(
+                attemptedAt: Date(),
+                succeededAt: nil,
+                eventCount: pendingNotifications.count,
+                errorMessage: "notifications are not authorized for Context Panel"
+            )
             contextPanelLogger.error("pending limit warnings could not be delivered: notifications are not authorized for Context Panel")
             return
         }
@@ -3966,6 +4188,35 @@ private struct AppLimitWarningNotificationService {
             }
         }
         removePendingNotifications(deliveredNotifications)
+        recordLocalNotificationDiagnostics(
+            attemptedAt: Date(),
+            succeededAt: deliveredNotifications.isEmpty ? nil : Date(),
+            eventCount: pendingNotifications.count,
+            errorMessage: deliveredNotifications.isEmpty ? "no pending notifications delivered" : nil
+        )
+    }
+
+    private func recordAlertEvaluation(at evaluatedAt: Date, eventCount: Int) {
+        try? diagnosticsStore.update { state in
+            state.recordAlertEvaluation(at: evaluatedAt, eventCount: eventCount)
+        }
+    }
+
+    private func recordLocalNotificationDiagnostics(
+        attemptedAt: Date,
+        succeededAt: Date?,
+        eventCount: Int,
+        errorMessage: String?
+    ) {
+        try? diagnosticsStore.update { state in
+            state.recordAlert(RefreshDiagnosticsAlertRecord(
+                channel: .localNotification,
+                attemptedAt: attemptedAt,
+                succeededAt: succeededAt,
+                eventCount: eventCount,
+                errorMessage: errorMessage
+            ))
+        }
     }
 
     private func removePendingNotifications(_ notifications: [LimitWarningPendingNotification]) {
