@@ -9,6 +9,111 @@ import WidgetKit
 
 private let contextPanelLogger = Logger(subsystem: "com.shinycomputers.contextpanel", category: "app")
 
+private enum RefreshAgentRegistration {
+    private static let reconciledBuildKey = "ContextPanelRefreshAgentReconciledBuild"
+    private static let repairedBuildKey = "ContextPanelRefreshAgentRepairedBuild"
+    private static let repairGraceSeconds: UInt64 = 8
+
+    static func reconcile(settings: BackgroundRefreshSettings) throws {
+        let service = SMAppService.loginItem(identifier: ContextPanelLocations.refreshAgentBundleID)
+        if settings.isEnabled {
+            try register(service: service)
+        } else {
+            try unregister(service: service)
+        }
+    }
+
+    @MainActor
+    static func repairIfEnabledAgentDoesNotLaunch(settingsStore: BackgroundRefreshSettingsStore) {
+        guard settingsStore.load().isEnabled else { return }
+        let currentBuild = currentBuild()
+        guard UserDefaults.standard.string(forKey: repairedBuildKey) != currentBuild else { return }
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: repairGraceSeconds * 1_000_000_000)
+            guard settingsStore.load().isEnabled else { return }
+            let service = SMAppService.loginItem(identifier: ContextPanelLocations.refreshAgentBundleID)
+            guard service.status == .enabled else {
+                contextPanelLogger.notice(
+                    "refresh agent repair skipped status=\(String(describing: service.status), privacy: .public) build=\(currentBuild, privacy: .public)"
+                )
+                return
+            }
+            guard !isRefreshAgentRunning() else {
+                let lastReconciledBuild = UserDefaults.standard.string(forKey: reconciledBuildKey)
+                contextPanelLogger.notice(
+                    "refresh agent repair skipped because agent is running build=\(currentBuild, privacy: .public) reconciled=\(lastReconciledBuild ?? "none", privacy: .public)"
+                )
+                if lastReconciledBuild == currentBuild {
+                    UserDefaults.standard.set(currentBuild, forKey: repairedBuildKey)
+                }
+                return
+            }
+
+            contextPanelLogger.notice("refresh agent enabled but not running; repairing registration build=\(currentBuild, privacy: .public)")
+            do {
+                try await service.unregister()
+                guard settingsStore.load().isEnabled else {
+                    contextPanelLogger.notice("refresh agent repair stopped after unregister because background refresh was disabled build=\(currentBuild, privacy: .public)")
+                    return
+                }
+                try service.register()
+                UserDefaults.standard.set(currentBuild, forKey: reconciledBuildKey)
+                UserDefaults.standard.set(currentBuild, forKey: repairedBuildKey)
+                contextPanelLogger.notice("refresh agent registration repair succeeded status=\(String(describing: service.status), privacy: .public) build=\(currentBuild, privacy: .public)")
+            } catch {
+                UserDefaults.standard.removeObject(forKey: repairedBuildKey)
+                contextPanelLogger.error("refresh agent registration repair failed error=\(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
+    private static func register(service: SMAppService) throws {
+        let currentBuild = currentBuild()
+        let lastReconciledBuild = UserDefaults.standard.string(forKey: reconciledBuildKey)
+        var shouldMarkReconciled = lastReconciledBuild == currentBuild
+        if lastReconciledBuild != currentBuild, service.status == .enabled {
+            contextPanelLogger.notice(
+                "refresh agent registration build changed previous=\(lastReconciledBuild ?? "none", privacy: .public) current=\(currentBuild, privacy: .public); refreshing enabled login item"
+            )
+            do {
+                try service.register()
+                shouldMarkReconciled = true
+            } catch {
+                contextPanelLogger.error("refresh agent non-destructive registration refresh failed error=\(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        if service.status != .enabled {
+            try service.register()
+            shouldMarkReconciled = true
+        }
+        if shouldMarkReconciled {
+            UserDefaults.standard.set(currentBuild, forKey: reconciledBuildKey)
+        } else {
+            contextPanelLogger.notice("refresh agent registration left unreconciled status=\(String(describing: service.status), privacy: .public) build=\(currentBuild, privacy: .public)")
+        }
+        contextPanelLogger.notice("refresh agent registration status=\(String(describing: service.status), privacy: .public) build=\(currentBuild, privacy: .public)")
+    }
+
+    private static func unregister(service: SMAppService) throws {
+        if service.status != .notRegistered {
+            try service.unregister()
+        }
+        UserDefaults.standard.removeObject(forKey: reconciledBuildKey)
+        UserDefaults.standard.removeObject(forKey: repairedBuildKey)
+        contextPanelLogger.notice("refresh agent registration disabled status=\(String(describing: service.status), privacy: .public)")
+    }
+
+    private static func currentBuild() -> String {
+        Bundle.main.object(forInfoDictionaryKey: kCFBundleVersionKey as String) as? String ?? "unknown"
+    }
+
+    private static func isRefreshAgentRunning() -> Bool {
+        !NSRunningApplication.runningApplications(withBundleIdentifier: ContextPanelLocations.refreshAgentBundleID).isEmpty
+    }
+}
+
 @main
 struct ContextPanelPreviewApp: App {
     @NSApplicationDelegateAdaptor(ContextPanelAppDelegate.self) private var appDelegate
@@ -121,13 +226,9 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
 
     private func reconcileRefreshAgentRegistration() {
         let settings = backgroundRefreshSettingsStore.load()
-        let service = SMAppService.loginItem(identifier: ContextPanelLocations.refreshAgentBundleID)
         do {
-            if settings.isEnabled {
-                try service.register()
-            } else {
-                try service.unregister()
-            }
+            try RefreshAgentRegistration.reconcile(settings: settings)
+            RefreshAgentRegistration.repairIfEnabledAgentDoesNotLaunch(settingsStore: backgroundRefreshSettingsStore)
         } catch {
             model.setError("Background refresh could not be updated: \(error.localizedDescription)")
         }
@@ -1410,13 +1511,8 @@ final class SettingsPaneModel: ObservableObject {
     }
 
     private func reconcileRefreshAgentRegistration(settings: BackgroundRefreshSettings) {
-        let service = SMAppService.loginItem(identifier: ContextPanelLocations.refreshAgentBundleID)
         do {
-            if settings.isEnabled {
-                try service.register()
-            } else {
-                try service.unregister()
-            }
+            try RefreshAgentRegistration.reconcile(settings: settings)
         } catch {
             errorMessage = "Background refresh could not be updated: \(error.localizedDescription)"
         }
@@ -1942,8 +2038,7 @@ final class SettingsPaneModel: ObservableObject {
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
-        panel.directoryURL = usageDirectory.deletingLastPathComponent()
-        panel.nameFieldStringValue = usageDirectory.lastPathComponent
+        panel.directoryURL = usageDirectory
 
         panel.begin { [weak self] response in
             guard let self, response == .OK, let url = panel.url else { return }
@@ -2023,12 +2118,8 @@ final class SettingsPaneModel: ObservableObject {
     }
 
     private func promptCacheUsageDirectory(for account: LocalProviderAccountConfiguration) -> URL {
-        if let authPath = account.effectiveAuthPath {
-            let expanded = NSString(string: authPath).expandingTildeInPath
-            let authDirectory = URL(fileURLWithPath: expanded).deletingLastPathComponent()
-            if authDirectory.lastPathComponent == ".code" || authDirectory.lastPathComponent == ".codex" {
-                return authDirectory.appending(path: "usage", directoryHint: .isDirectory)
-            }
+        if let usageDirectory = ContextPanelLocations.promptCacheUsageDirectory(forAuthPath: account.effectiveAuthPath) {
+            return usageDirectory
         }
         return ContextPanelLocations.everyCodeUsageDirectory()
     }

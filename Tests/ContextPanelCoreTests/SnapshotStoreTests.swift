@@ -1006,7 +1006,7 @@ import Testing
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
     let customRoot = try temporaryDirectory().appending(path: "custom-home", directoryHint: .isDirectory)
-    let codeRoot = customRoot.appending(path: ".code", directoryHint: .isDirectory)
+    let codeRoot = customRoot.appending(path: ".code-chris", directoryHint: .isDirectory)
     let customAuth = codeRoot.appending(path: "auth_accounts.json")
     try FileManager.default.createDirectory(at: codeRoot, withIntermediateDirectories: true)
     try Data().write(to: customAuth)
