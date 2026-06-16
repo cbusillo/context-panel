@@ -22,17 +22,24 @@ struct ContextPanelRefreshAgent {
 
         let runner = SnapshotRefreshRunner.appDefault()
         let warningService = LimitWarningNotificationService.appDefault()
+        let diagnosticsStore = RefreshDiagnosticsStateStore(
+            stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.appGroupID)
+        )
         let settingsStore = BackgroundRefreshSettingsStore(
             settingsURL: ContextPanelLocations.backgroundRefreshSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
         )
         if arguments.contains("--refresh-once") {
+            let startedAt = Date()
+            let runID = recordRefreshStarted(diagnosticsStore, source: .refreshAgent, startedAt: startedAt)
             do {
                 let decision = try await runner.refresh()
+                recordRefreshFinished(diagnosticsStore, runID: runID, decision: decision, finishedAt: Date())
                 if decision.wasRefreshed {
                     await warningService.notifyIfNeeded(decision: decision)
                     WidgetCenter.shared.reloadAllTimelines()
                 }
             } catch {
+                recordRefreshFailed(diagnosticsStore, runID: runID, finishedAt: Date(), error: error)
                 fputs("ContextPanelRefreshAgent: \(ConnectorRedactor.redact(error.localizedDescription))\n", stderr)
             }
             Foundation.exit(0)
@@ -40,16 +47,25 @@ struct ContextPanelRefreshAgent {
 
         while !Task.isCancelled {
             let startedAt = ContinuousClock.now
+            let wallStartedAt = Date()
             let settings = settingsStore.load()
             guard settings.isEnabled else { return }
+            let runID = recordRefreshStarted(
+                diagnosticsStore,
+                source: .refreshAgent,
+                startedAt: wallStartedAt,
+                intervalSeconds: settings.intervalSeconds
+            )
 
             do {
                 let decision = try await runner.refreshIfNeeded()
+                recordRefreshFinished(diagnosticsStore, runID: runID, decision: decision, finishedAt: Date())
                 if decision.wasRefreshed {
                     await warningService.notifyIfNeeded(decision: decision)
                     WidgetCenter.shared.reloadAllTimelines()
                 }
             } catch {
+                recordRefreshFailed(diagnosticsStore, runID: runID, finishedAt: Date(), error: error)
                 fputs("ContextPanelRefreshAgent: \(ConnectorRedactor.redact(error.localizedDescription))\n", stderr)
             }
 
@@ -60,6 +76,54 @@ struct ContextPanelRefreshAgent {
             } catch {
                 return
             }
+        }
+    }
+
+    private static func recordRefreshStarted(
+        _ store: RefreshDiagnosticsStateStore,
+        source: RefreshDiagnosticsSource,
+        startedAt: Date,
+        intervalSeconds: Int? = nil
+    ) -> String {
+        let runID = UUID().uuidString
+        try? store.update { state in
+            state.recordRunStarted(id: runID, source: source, at: startedAt, intervalSeconds: intervalSeconds)
+        }
+        return runID
+    }
+
+    private static func recordRefreshFinished(
+        _ store: RefreshDiagnosticsStateStore,
+        runID: String,
+        decision: SnapshotRefreshRunDecision,
+        finishedAt: Date
+    ) {
+        try? store.update { state in
+            state.recordRunFinished(
+                id: runID,
+                decision: decision.diagnosticsDecision,
+                finishedAt: finishedAt,
+                reportCount: decision.diagnosticsReportCount,
+                failureCount: decision.diagnosticsFailureCount,
+                limitCount: decision.diagnosticsLimitCount,
+                savedSnapshotAt: decision.diagnosticsSavedSnapshotAt
+            )
+        }
+    }
+
+    private static func recordRefreshFailed(
+        _ store: RefreshDiagnosticsStateStore,
+        runID: String,
+        finishedAt: Date,
+        error: Error
+    ) {
+        try? store.update { state in
+            state.recordRunFinished(
+                id: runID,
+                decision: .failed,
+                finishedAt: finishedAt,
+                errorMessage: error.localizedDescription
+            )
         }
     }
 
@@ -119,6 +183,7 @@ private struct LimitWarningNotificationService {
     let stateStore: LimitWarningStateStore
     let pendingNotificationStore: LimitWarningPendingNotificationStore
     let webhookService: LimitWarningWebhookDeliveryService
+    let diagnosticsStore: RefreshDiagnosticsStateStore
 
     static func appDefault() -> LimitWarningNotificationService {
         LimitWarningNotificationService(
@@ -131,12 +196,16 @@ private struct LimitWarningNotificationService {
             pendingNotificationStore: LimitWarningPendingNotificationStore(
                 queueURL: ContextPanelLocations.limitWarningPendingNotificationsURL(appGroupID: ContextPanelLocations.appGroupID)
             ),
-            webhookService: .appDefault()
+            webhookService: .appDefault(),
+            diagnosticsStore: RefreshDiagnosticsStateStore(
+                stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.appGroupID)
+            )
         )
     }
 
     func notifyIfNeeded(decision: SnapshotRefreshRunDecision) async {
-        _ = await webhookService.deliverIfNeeded(decision: decision)
+        let webhookResults = await webhookService.deliverIfNeeded(decision: decision)
+        recordWebhookDiagnostics(webhookResults, attemptedAt: Date())
         guard case let .refreshed(outcome) = decision else { return }
         let settings = settingsStore.load()
         let state = stateStore.load()
@@ -150,6 +219,7 @@ private struct LimitWarningNotificationService {
             snapshot: warningSnapshot,
             now: outcome.savedAt
         )
+        recordAlertEvaluation(at: outcome.savedAt, eventCount: result.events.count)
         let commitPlan = LimitWarningNotificationCommitPlan(
             currentState: state,
             targetState: result.state,
@@ -175,9 +245,61 @@ private struct LimitWarningNotificationService {
                 LimitWarningPendingNotification(event: event, queuedAt: outcome.savedAt, playsSound: settings.playsSound)
             }
             try pendingNotificationStore.append(notifications)
+            recordLocalNotificationDiagnostics(
+                attemptedAt: outcome.savedAt,
+                succeededAt: nil,
+                eventCount: notifications.count,
+                errorMessage: nil
+            )
             await wakeMainAppForPendingNotifications()
         } catch {
+            recordLocalNotificationDiagnostics(
+                attemptedAt: outcome.savedAt,
+                succeededAt: nil,
+                eventCount: result.events.count,
+                errorMessage: error.localizedDescription
+            )
             fputs("ContextPanelRefreshAgent: limit warning queue failed: \(error.localizedDescription)\n", stderr)
+        }
+    }
+
+    private func recordAlertEvaluation(at evaluatedAt: Date, eventCount: Int) {
+        try? diagnosticsStore.update { state in
+            state.recordAlertEvaluation(at: evaluatedAt, eventCount: eventCount)
+        }
+    }
+
+    private func recordWebhookDiagnostics(_ results: [LimitWarningWebhookDeliveryResult], attemptedAt: Date) {
+        guard !results.isEmpty else { return }
+        let succeeded = results.contains(where: \.succeeded)
+        let latestStatus = results.reversed().compactMap(\.statusCode).first
+        let latestError = results.reversed().compactMap(\.errorMessage).first
+        try? diagnosticsStore.update { state in
+            state.recordAlert(RefreshDiagnosticsAlertRecord(
+                channel: .webhook,
+                attemptedAt: attemptedAt,
+                succeededAt: succeeded ? attemptedAt : nil,
+                eventCount: results.count,
+                lastHTTPStatus: latestStatus,
+                errorMessage: latestError
+            ))
+        }
+    }
+
+    private func recordLocalNotificationDiagnostics(
+        attemptedAt: Date,
+        succeededAt: Date?,
+        eventCount: Int,
+        errorMessage: String?
+    ) {
+        try? diagnosticsStore.update { state in
+            state.recordAlert(RefreshDiagnosticsAlertRecord(
+                channel: .localNotification,
+                attemptedAt: attemptedAt,
+                succeededAt: succeededAt,
+                eventCount: eventCount,
+                errorMessage: errorMessage
+            ))
         }
     }
 

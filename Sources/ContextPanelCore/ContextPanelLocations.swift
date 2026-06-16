@@ -179,6 +179,16 @@ public enum ContextPanelLocations {
         return applicationSupportDirectory().appending(path: "background-refresh-settings.json")
     }
 
+    public static func refreshDiagnosticsStateURL(appGroupID: String? = nil) -> URL {
+        if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
+            return containerURL
+                .appending(path: "Context Panel", directoryHint: .isDirectory)
+                .appending(path: "refresh-diagnostics-state.json")
+        }
+
+        return applicationSupportDirectory().appending(path: "refresh-diagnostics-state.json")
+    }
+
     public static func limitWarningSettingsURL(appGroupID: String? = nil) -> URL {
         if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
             return containerURL
@@ -270,6 +280,17 @@ public enum ContextPanelLocations {
         return directories.first(where: { fileManager.fileExists(atPath: $0.path) })
             .map { [$0] }
             ?? Array(directories.prefix(1))
+    }
+
+    public static func promptCacheUsageDirectory(forAuthPath authPath: String?) -> URL? {
+        guard let authPath else { return nil }
+        let expanded = NSString(string: authPath).expandingTildeInPath
+        let authDirectory = URL(fileURLWithPath: expanded).deletingLastPathComponent()
+        let name = authDirectory.lastPathComponent
+        guard name == ".code" || name == ".codex" || name.hasPrefix(".code-") || name.hasPrefix(".codex-") else {
+            return nil
+        }
+        return authDirectory.appending(path: "usage", directoryHint: .isDirectory)
     }
 
     public static func promptCacheTelemetryDirectory(appGroupID: String? = nil) -> URL {
