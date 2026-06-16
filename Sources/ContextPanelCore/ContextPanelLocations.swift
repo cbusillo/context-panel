@@ -3,6 +3,7 @@ import Darwin
 
 public enum ContextPanelLocations {
     public static let appGroupID = "MM5YXC7T6E.group.com.shinycomputers.contextpanel"
+    public static let appBundleID = "com.shinycomputers.contextpanel"
     public static let widgetExtensionBundleID = "com.shinycomputers.contextpanel.widget"
     public static let refreshAgentBundleID = "com.shinycomputers.contextpanel.refresh-agent"
 

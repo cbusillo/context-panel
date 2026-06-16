@@ -601,6 +601,85 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
     #expect(store.load().notifications.map(\.id) == ["anthropic:weekly"])
 }
 
+@Test func limitWarningNotificationPresentationUsesStableLaneIdentifierAndContent() {
+    let event = warningEvent(laneID: "openai:weekly", capacityRatio: 0.09)
+    let notification = LimitWarningPendingNotification(
+        event: event,
+        queuedAt: warningNow,
+        playsSound: true
+    )
+
+    let presentation = notification.presentation
+
+    #expect(presentation.identifier == "context-panel-limit-warning-openai:weekly")
+    #expect(presentation.title == event.title)
+    #expect(presentation.body == event.body)
+    #expect(presentation.playsSound == true)
+}
+
+@Test func limitWarningPendingNotificationQueueRemovesOnlyExactDeliveredNotification() {
+    let queued = LimitWarningPendingNotification(
+        event: warningEvent(laneID: "openai:weekly", capacityRatio: 0.05),
+        queuedAt: warningNow.addingTimeInterval(60),
+        playsSound: false
+    )
+    let staleDelivered = LimitWarningPendingNotification(
+        event: warningEvent(laneID: "openai:weekly", capacityRatio: 0.10),
+        queuedAt: warningNow,
+        playsSound: true
+    )
+    var queue = LimitWarningPendingNotificationQueue(notifications: [queued])
+
+    queue.remove([staleDelivered])
+    #expect(queue.notifications == [queued])
+
+    queue.remove([queued])
+    #expect(queue.notifications.isEmpty)
+}
+
+@Test func limitWarningRecordMatchesDeliveredPendingNotificationOnlyForSameWarning() {
+    let event = warningEvent(laneID: "openai:weekly", capacityRatio: 0.09)
+    let notification = LimitWarningPendingNotification(
+        event: event,
+        queuedAt: warningNow,
+        playsSound: true
+    )
+    let deliveredRecord = LimitWarningRecord(
+        laneID: notification.id,
+        lastThresholdPercentRemaining: event.thresholdPercentRemaining,
+        lastNotifiedAt: warningNow.addingTimeInterval(1),
+        lastCapacityRatio: event.capacityRatio,
+        resetIdentity: event.resetIdentity
+    )
+
+    #expect(deliveredRecord.matchesDeliveredNotification(notification))
+
+    let sameWarningIdentityWithDifferentCapacity = LimitWarningPendingNotification(
+        event: warningEvent(laneID: "openai:weekly", capacityRatio: 0.06),
+        queuedAt: warningNow,
+        playsSound: true
+    )
+    #expect(deliveredRecord.matchesDeliveredNotification(sameWarningIdentityWithDifferentCapacity))
+
+    let olderRecord = LimitWarningRecord(
+        laneID: notification.id,
+        lastThresholdPercentRemaining: event.thresholdPercentRemaining,
+        lastNotifiedAt: warningNow.addingTimeInterval(-1),
+        lastCapacityRatio: event.capacityRatio,
+        resetIdentity: event.resetIdentity
+    )
+    let differentThresholdRecord = LimitWarningRecord(
+        laneID: notification.id,
+        lastThresholdPercentRemaining: event.thresholdPercentRemaining + 5,
+        lastNotifiedAt: warningNow.addingTimeInterval(1),
+        lastCapacityRatio: event.capacityRatio,
+        resetIdentity: event.resetIdentity
+    )
+
+    #expect(olderRecord.matchesDeliveredNotification(notification))
+    #expect(!differentThresholdRecord.matchesDeliveredNotification(notification))
+}
+
 private func warningLimit(
     provider: Provider,
     accountID: String,

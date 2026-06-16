@@ -1,4 +1,5 @@
 import ContextPanelCore
+@preconcurrency import AppKit
 import Foundation
 import WidgetKit
 
@@ -174,20 +175,63 @@ private struct LimitWarningNotificationService {
                 LimitWarningPendingNotification(event: event, queuedAt: outcome.savedAt, playsSound: settings.playsSound)
             }
             try pendingNotificationStore.append(notifications)
-            try stateStore.save(commitPlan.persistedState)
-            wakeMainAppForPendingNotifications()
+            await wakeMainAppForPendingNotifications()
         } catch {
             fputs("ContextPanelRefreshAgent: limit warning queue failed: \(error.localizedDescription)\n", stderr)
         }
     }
 
-    private func wakeMainAppForPendingNotifications() {
+    private func wakeMainAppForPendingNotifications() async {
         DistributedNotificationCenter.default().postNotificationName(
             Notification.Name(LimitWarningNotificationWakeup.distributedNotificationName),
             object: nil,
             userInfo: nil,
             deliverImmediately: true
         )
+        await launchMainAppForPendingNotifications()
+    }
+
+    private func launchMainAppForPendingNotifications() async {
+        guard let appURL = mainAppURLForPendingNotifications() else {
+            fputs("ContextPanelRefreshAgent: Context Panel app could not be located for pending limit warnings\n", stderr)
+            return
+        }
+
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = false
+        configuration.addsToRecentItems = false
+        await withCheckedContinuation { continuation in
+            NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { _, error in
+                if let error {
+                    fputs("ContextPanelRefreshAgent: Context Panel app launch failed for pending limit warnings: \(error.localizedDescription)\n", stderr)
+                }
+                continuation.resume()
+            }
+        }
+    }
+
+    private func mainAppURLForPendingNotifications() -> URL? {
+        containingMainAppURL() ?? canonicalInstalledMainAppURL()
+    }
+
+    private func containingMainAppURL() -> URL? {
+        let appURL = Bundle.main.bundleURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        return isContextPanelApp(at: appURL) ? appURL : nil
+    }
+
+    private func canonicalInstalledMainAppURL() -> URL? {
+        let appURL = URL(fileURLWithPath: "/Applications/Context Panel.app", isDirectory: true)
+        return isContextPanelApp(at: appURL) ? appURL : nil
+    }
+
+    private func isContextPanelApp(at url: URL) -> Bool {
+        guard url.lastPathComponent == "Context Panel.app" else { return false }
+        guard FileManager.default.fileExists(atPath: url.path) else { return false }
+        return Bundle(url: url)?.bundleIdentifier == ContextPanelLocations.appBundleID
     }
 
     private func loadPersistedSnapshot() -> StoredUsageSnapshot? {
