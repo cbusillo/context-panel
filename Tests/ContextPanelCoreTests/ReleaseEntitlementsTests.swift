@@ -104,16 +104,23 @@ import Testing
 @Test func companionProjectTargetsUseSharedSyncAndWidgetModules() throws {
     let project = try loadProjectYAML()
 
+    let appTarget = try #require(project.target(named: "ContextPanelCompanion"))
+    #expect(appTarget["supportedDestinations"] as? String == "[iOS, visionOS]")
+
     let appSettings = try #require(project.targetSettings(named: "ContextPanelCompanion"))
     #expect(appSettings["PRODUCT_BUNDLE_IDENTIFIER"] as? String == "com.shinycomputers.contextpanel")
     #expect(appSettings["CODE_SIGN_ENTITLEMENTS"] as? String == "Config/ContextPanelCompanion.entitlements")
     #expect(appSettings["TARGETED_DEVICE_FAMILY"] as? String == "1,2,7")
+    #expect(appSettings["XROS_DEPLOYMENT_TARGET"] as? String == "26.0")
     let appReleaseSettings = try #require(project.releaseTargetSettings(named: "ContextPanelCompanion"))
     #expect(appReleaseSettings["CODE_SIGN_IDENTITY"] as? String == "Apple Distribution")
     #expect(
         appReleaseSettings["PROVISIONING_PROFILE_SPECIFIER"] as? String
             == "$(CONTEXT_PANEL_APP_STORE_COMPANION_PROFILE_SPECIFIER)"
     )
+
+    let widgetTarget = try #require(project.target(named: "ContextPanelCompanionWidgetExtension"))
+    #expect(widgetTarget["supportedDestinations"] as? String == "[iOS, visionOS]")
 
     let widgetSettings = try #require(project.targetSettings(named: "ContextPanelCompanionWidgetExtension"))
     #expect(
@@ -124,6 +131,8 @@ import Testing
         widgetSettings["CODE_SIGN_ENTITLEMENTS"] as? String
             == "Config/ContextPanelCompanionWidget.entitlements"
     )
+    #expect(widgetSettings["TARGETED_DEVICE_FAMILY"] as? String == "1,2,7")
+    #expect(widgetSettings["XROS_DEPLOYMENT_TARGET"] as? String == "26.0")
     let widgetReleaseSettings = try #require(
         project.releaseTargetSettings(named: "ContextPanelCompanionWidgetExtension")
     )
@@ -226,6 +235,13 @@ private struct ProjectYAML {
     init(text: String) {
         lines = text.split(separator: "\n", omittingEmptySubsequences: false)
             .map(String.init)
+    }
+
+    func target(named targetName: String) -> [String: Any]? {
+        guard let targetLine = firstLineIndex(matching: "  \(targetName):") else {
+            return nil
+        }
+        return mapping(after: targetLine, indentation: 4)
     }
 
     func targetSettings(named targetName: String) -> [String: Any]? {
