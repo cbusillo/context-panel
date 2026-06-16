@@ -60,7 +60,7 @@ public enum MainLimitWindow: String, CaseIterable, Codable, Equatable, Identifia
             return nil
         }
         if limit.windowLabel?.isModelCapacityWindowLabel == true {
-            return limit.googleAntigravityInferredWindow ?? .availability
+            return .availability
         }
         if searchable.contains("5-hour")
             || searchable.contains("5 hour")
@@ -269,12 +269,9 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
 
     public var liveLimits: [UsageLimit] {
         limits.compactMap { limit in
-            let liveLimit = limit.isLiveCapacityBucket(at: generatedAt)
-                ? limit
-                : limit.googleAntigravityResetCarriedForward(at: generatedAt)
-            guard let liveLimit else { return nil }
-            guard !hasExhaustedLongerWindow(for: liveLimit) else { return nil }
-            return liveLimit
+            guard limit.isLiveCapacityBucket(at: generatedAt) else { return nil }
+            guard !hasExhaustedLongerWindow(for: limit) else { return nil }
+            return limit
         }
     }
 
@@ -362,66 +359,6 @@ public extension UsageLimit {
         return modelText.contains("gemini")
     }
 
-    /// Google Antigravity reports model capacity reset timestamps but not the quota window duration.
-    var googleAntigravityInferredWindow: MainLimitWindow? {
-        guard provider == .google else { return nil }
-        guard isGoogleAntigravityGeminiAvailability else { return nil }
-        guard let resetsAt, let lastUpdatedAt else { return nil }
-        let hoursUntilReset = resetsAt.timeIntervalSince(lastUpdatedAt) / 3_600
-        // Paid Gemini/Antigravity rolling capacity refreshes around every 5 hours;
-        // use 8 hours of headroom for clock drift, stale snapshots, and delayed refreshes.
-        if hoursUntilReset <= 8 {
-            return .fiveHour
-        }
-        return .weekly
-    }
-
-    private var googleAntigravityInferredWindowDuration: TimeInterval? {
-        switch googleAntigravityInferredWindow {
-        case .fiveHour:
-            5 * 3_600
-        case .weekly:
-            7 * 24 * 3_600
-        case .daily, .availability, nil:
-            nil
-        }
-    }
-
-    func googleAntigravityResetCarriedForward(at date: Date) -> UsageLimit? {
-        guard provider == .google else { return nil }
-        guard isGoogleAntigravityGeminiAvailability else { return nil }
-        guard status != .failure && status != .stale && status != .unknown else { return nil }
-        guard let resetsAt, resetsAt <= date.addingTimeInterval(-60) else { return nil }
-        guard let limit, let duration = googleAntigravityInferredWindowDuration else { return nil }
-
-        var projectedReset = resetsAt
-        while projectedReset <= date {
-            projectedReset = projectedReset.addingTimeInterval(duration)
-        }
-
-        return UsageLimit(
-            id: id,
-            provider: provider,
-            accountID: accountID,
-            configuredAccountID: configuredAccountID,
-            accountName: accountName,
-            label: label,
-            windowLabel: windowLabel,
-            modelLabel: modelLabel,
-            unit: unit,
-            used: 0,
-            limit: limit,
-            resetsAt: projectedReset,
-            lastUpdatedAt: lastUpdatedAt,
-            confidence: .estimated,
-            note: [note, "projected after observed Google Antigravity reset"]
-                .compactMap { value in
-                    guard let value, !value.isEmpty else { return nil }
-                    return value
-                }
-                .joined(separator: "; ")
-        )
-    }
 }
 
 public extension UsageSnapshot {

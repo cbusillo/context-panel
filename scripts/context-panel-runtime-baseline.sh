@@ -7,6 +7,7 @@ launch_after_reset=0
 open_url_after_reset=0
 reset_widget_placement=0
 include_btm_diagnostics=0
+source_only=0
 
 usage() {
 	cat <<'USAGE'
@@ -55,6 +56,10 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--btm-diagnostics)
 		include_btm_diagnostics=1
+		shift
+		;;
+	--source-only)
+		source_only=1
 		shift
 		;;
 	-h | --help)
@@ -546,6 +551,211 @@ signed_team_identifier() {
 		awk -F= '/^TeamIdentifier=/ { print $2; exit }'
 }
 
+plist_scalar_value() {
+	local plist="$1"
+	local key_path="$2"
+	/usr/libexec/PlistBuddy -c "Print :$key_path" "$plist" 2>/dev/null || true
+}
+
+plist_array_values() {
+	local plist="$1"
+	local key_path="$2"
+	/usr/libexec/PlistBuddy -c "Print :$key_path" "$plist" 2>/dev/null |
+		awk '/^[[:space:]]+[^{}[:space:]][^{}]*$/ { gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print }' || true
+}
+
+plist_array_contains_value() {
+	local plist="$1"
+	local key_path="$2"
+	local expected="$3"
+	rg -qx --fixed-strings "$expected" <<<"$(plist_array_values "$plist" "$key_path")"
+}
+
+profile_entitlement_value() {
+	local profile_plist="$1"
+	local entitlement="$2"
+	plist_scalar_value "$profile_plist" "Entitlements:$entitlement"
+}
+
+profile_entitlement_authorizes_value() {
+	local profile_plist="$1"
+	local entitlement="$2"
+	local expected="$3"
+	local profile_value value wildcard_prefix
+	profile_value="$(profile_entitlement_value "$profile_plist" "$entitlement")"
+	if [[ "$profile_value" == "$expected" || "$profile_value" == "*" ]]; then
+		return 0
+	fi
+	while IFS= read -r value; do
+		[[ -n "$value" ]] || continue
+		if [[ "$value" == "$expected" || "$value" == "*" ]]; then
+			return 0
+		fi
+		if [[ "$value" == *"*" ]]; then
+			wildcard_prefix="${value%\*}"
+			if [[ -n "$wildcard_prefix" && "$expected" == "$wildcard_prefix"* ]]; then
+				return 0
+			fi
+		fi
+	done < <(plist_array_values "$profile_plist" "Entitlements:$entitlement")
+	return 1
+}
+
+signed_entitlement_value() {
+	local entitlements_plist="$1"
+	local entitlement="$2"
+	plist_scalar_value "$entitlements_plist" "$entitlement"
+}
+
+signed_entitlement_array_values() {
+	local entitlements_plist="$1"
+	local entitlement="$2"
+	plist_array_values "$entitlements_plist" "$entitlement"
+}
+
+check_profile_authorizes_scalar_entitlement() {
+	local profile_plist="$1"
+	local entitlements_plist="$2"
+	local label="$3"
+	local entitlement="$4"
+	local expected profile_value
+	expected="$(signed_entitlement_value "$entitlements_plist" "$entitlement")"
+	[[ -n "$expected" ]] || return 0
+	profile_value="$(profile_entitlement_value "$profile_plist" "$entitlement")"
+	if [[ "$profile_value" == "$expected" || "$profile_value" == "*" ]]; then
+		return 0
+	fi
+	fail "$label provisioning profile does not authorize $entitlement: $expected"
+	return 1
+}
+
+check_profile_authorizes_array_entitlement() {
+	local profile_plist="$1"
+	local entitlements_plist="$2"
+	local label="$3"
+	local entitlement="$4"
+	local value missing=0
+	while IFS= read -r value; do
+		[[ -n "$value" ]] || continue
+		if ! profile_entitlement_authorizes_value "$profile_plist" "$entitlement" "$value"; then
+			fail "$label provisioning profile does not authorize $entitlement: $value"
+			missing=1
+		fi
+	done < <(signed_entitlement_array_values "$entitlements_plist" "$entitlement")
+	[[ "$missing" == "0" ]]
+}
+
+check_profile_plist_covers_entitlements() {
+	local profile_plist="$1"
+	local entitlements_plist="$2"
+	local label="$3"
+	local profile_name profile_team signed_team signed_app_id profile_app_id
+	local failures_before="$failures"
+
+	if [[ ! -f "$profile_plist" ]]; then
+		fail "$label provisioning profile is missing: $profile_plist"
+		return 1
+	fi
+	if [[ ! -f "$entitlements_plist" ]]; then
+		fail "$label signed entitlements are missing: $entitlements_plist"
+		return 1
+	fi
+
+	profile_name="$(plist_scalar_value "$profile_plist" Name)"
+	profile_team="$(plist_array_values "$profile_plist" TeamIdentifier | head -n 1)"
+	signed_team="$(signed_entitlement_value "$entitlements_plist" com.apple.developer.team-identifier)"
+	signed_app_id="$(signed_entitlement_value "$entitlements_plist" com.apple.application-identifier)"
+	[[ -n "$signed_app_id" ]] || signed_app_id="$(signed_entitlement_value "$entitlements_plist" application-identifier)"
+	profile_app_id="$(profile_entitlement_value "$profile_plist" com.apple.application-identifier)"
+	[[ -n "$profile_app_id" ]] || profile_app_id="$(profile_entitlement_value "$profile_plist" application-identifier)"
+
+	if [[ -z "$profile_name" ]]; then
+		fail "$label provisioning profile has no Name"
+	fi
+	if [[ -n "$signed_team" && "$profile_team" != "$signed_team" ]]; then
+		fail "$label provisioning profile team ${profile_team:-unknown} does not match signed team $signed_team"
+	fi
+	if [[ -n "$signed_app_id" && "$profile_app_id" != "$signed_app_id" ]]; then
+		fail "$label provisioning profile does not authorize application identifier: $signed_app_id"
+	fi
+
+	check_profile_authorizes_array_entitlement "$profile_plist" "$entitlements_plist" "$label" "com.apple.security.application-groups" || true
+	check_profile_authorizes_array_entitlement "$profile_plist" "$entitlements_plist" "$label" "keychain-access-groups" || true
+	check_profile_authorizes_array_entitlement "$profile_plist" "$entitlements_plist" "$label" "com.apple.developer.icloud-container-identifiers" || true
+	check_profile_authorizes_array_entitlement "$profile_plist" "$entitlements_plist" "$label" "com.apple.developer.icloud-services" || true
+	check_profile_authorizes_array_entitlement "$profile_plist" "$entitlements_plist" "$label" "com.apple.developer.ubiquity-container-identifiers" || true
+	check_profile_authorizes_scalar_entitlement "$profile_plist" "$entitlements_plist" "$label" "com.apple.developer.team-identifier" || true
+
+	if [[ "$failures" == "$failures_before" ]]; then
+		ok "$label provisioning profile covers signed entitlements${profile_name:+: $profile_name}"
+		return 0
+	fi
+	return 1
+}
+
+decode_provisioning_profile() {
+	local profile="$1"
+	local output="$2"
+	security cms -D -i "$profile" >"$output" 2>/dev/null
+}
+
+signed_entitlements_plist() {
+	local bundle="$1"
+	local output="$2"
+	codesign -d --entitlements :- "$bundle" >"$output" 2>/dev/null
+}
+
+check_bundle_profile_covers_signed_entitlements() {
+	local bundle="$1"
+	local label="$2"
+	local profile="$bundle/Contents/embedded.provisionprofile"
+	local profile_plist entitlements_plist status team_id
+	if [[ ! -f "$profile" ]]; then
+		team_id="$(signed_team_identifier "$bundle")"
+		if [[ "$team_id" == "$developer_team_id" ]]; then
+			ok "$label has no embedded provisioning profile; signed team authorizes runtime entitlements"
+			return 0
+		fi
+		fail "$label has no embedded provisioning profile for restricted entitlement validation"
+		return 1
+	fi
+	profile_plist="$(mktemp)"
+	entitlements_plist="$(mktemp)"
+	set +e
+	decode_provisioning_profile "$profile" "$profile_plist"
+	status=$?
+	set -e
+	if [[ "$status" != "0" ]]; then
+		rm -f "$profile_plist" "$entitlements_plist"
+		fail "$label embedded provisioning profile could not be decoded"
+		return 1
+	fi
+	set +e
+	signed_entitlements_plist "$bundle" "$entitlements_plist"
+	status=$?
+	set -e
+	if [[ "$status" != "0" ]]; then
+		rm -f "$profile_plist" "$entitlements_plist"
+		fail "$label signed entitlements could not be read"
+		return 1
+	fi
+	check_profile_plist_covers_entitlements "$profile_plist" "$entitlements_plist" "$label"
+	status=$?
+	rm -f "$profile_plist" "$entitlements_plist"
+	return "$status"
+}
+
+preflight_built_runtime_profiles() {
+	section "Built Runtime Profile Preflight"
+	local failures_before="$failures"
+	check_bundle_profile_covers_signed_entitlements "$built_app_path" "built app" || true
+	check_bundle_profile_covers_signed_entitlements "$built_widget_path" "built widget" || true
+	check_bundle_profile_covers_signed_entitlements "$built_refresh_agent_path" "built refresh agent" || true
+	if [[ "$failures" != "$failures_before" ]]; then
+		return 1
+	fi
+}
+
 check_canonical_team_identifier() {
 	local bundle="$1"
 	local label="$2"
@@ -714,6 +924,7 @@ build_checkout_app() {
 		-configuration Debug \
 		-derivedDataPath "$derived_data_path" \
 		-xcconfig "$local_oauth_xcconfig_path" \
+		-allowProvisioningUpdates \
 		build | redact_build_output
 	fingerprint="$("${repo_root}/scripts/context-panel-build-fingerprint.sh" 2>/dev/null || true)"
 	expected_fingerprint="$fingerprint"
@@ -759,6 +970,7 @@ install_checkout_app() {
 
 install_runtime() {
 	build_checkout_app
+	preflight_built_runtime_profiles
 
 	section "Install"
 	local stamp quarantine
@@ -769,6 +981,7 @@ install_runtime() {
 
 	stop_context_panel
 	bootout_refresh_agent
+	quarantine_stale_runtime_bundles "$quarantine"
 	install_checkout_app
 	quarantine_path "$built_app_path" "$quarantine"
 	quarantine_path "$derived_data_path/Build/Products/Debug/ContextPanelWidgetExtension.appex" "$quarantine"
@@ -812,23 +1025,11 @@ btm_has_enabled_context_entries() {
 	grep -q "Disposition: \[enabled" <<<"$btm"
 }
 
-reset_runtime() {
-	build_checkout_app
-
-	section "Reset"
-	local stamp quarantine
-	stamp="$(date +%Y%m%d-%H%M%S)"
-	quarantine="$HOME/.Trash/ContextPanel-runtime-baseline-$stamp"
-	remove_prior_baseline_trash
-	mkdir -p "$quarantine"
-
-	stop_context_panel
-	bootout_refresh_agent
+quarantine_stale_runtime_bundles() {
+	local quarantine="$1"
+	local bundle path
 	unregister_stale_plugin_paths
 	unregister_stale_launchservices_paths
-	# Preserve the installed bundle path during reset. Removing the containing app can
-	# make macOS drop the user's placed widget even when WidgetKit caches remain.
-	# Known app artifacts with this bundle id that are not the installed runtime app.
 	while IFS= read -r bundle; do
 		[[ -n "$bundle" ]] || continue
 		case "$bundle" in
@@ -843,19 +1044,7 @@ reset_runtime() {
 		esac
 	done < <(discoverable_bundles)
 
-	unregister_refresh_agent_quietly
-	bootout_refresh_agent
-
-	# Known local build roots that Spotlight may miss because the bundle was already moved or deleted.
-	for path in \
-		"$repo_root/.build/DerivedData/Build/Products/Debug/Context Panel.app" \
-		"$repo_root/.build/profile-probe/Build/Products/Release/Context Panel.app" \
-		"$HOME/Developer/context-panel-clean-main/.build/dogfood-main-local-nokeychain/Context Panel.app" \
-		"$HOME/Developer/context-panel-clean-main/.build/xcode-derived-release/Build/Products/Release/Context Panel.app" \
-		"$HOME/Developer/context-panel-baseline-main-20260512/.build/xcode-derived-baseline/Build/Products/Debug/Context Panel.app" \
-		"$repo_root/dist/Context Panel.app"; do
-		quarantine_path "$path" "$quarantine"
-	done
+	quarantine_path "$repo_root/dist/Context Panel.app" "$quarantine"
 	while IFS= read -r -d '' bundle; do
 		if is_runtime_or_build_artifact "$bundle"; then
 			:
@@ -870,6 +1059,51 @@ reset_runtime() {
 			quarantine_path "$bundle" "$quarantine"
 		fi
 	done < <(find_context_panel_bundles "$HOME/.code/working/context-panel")
+	while IFS= read -r bundle; do
+		if is_runtime_or_build_artifact "$bundle"; then
+			:
+		else
+			quarantine_path "$bundle" "$quarantine"
+		fi
+	done < <(find_context_panel_bundles "$HOME/Library/Developer/Xcode/DerivedData")
+	while IFS= read -r bundle; do
+		if is_runtime_or_build_artifact "$bundle"; then
+			:
+		else
+			quarantine_path "$bundle" "$quarantine"
+		fi
+	done < <(find_context_panel_bundles "${TMPDIR:-/tmp}")
+	while IFS= read -r bundle; do
+		if is_runtime_or_build_artifact "$bundle"; then
+			:
+		else
+			quarantine_path "$bundle" "$quarantine"
+		fi
+	done < <(find_context_panel_bundles "/tmp")
+
+	unregister_bundle_tree "$quarantine"
+	unregister_stale_plugin_paths
+	unregister_stale_launchservices_paths
+}
+
+reset_runtime() {
+	build_checkout_app
+	preflight_built_runtime_profiles
+
+	section "Reset"
+	local stamp quarantine
+	stamp="$(date +%Y%m%d-%H%M%S)"
+	quarantine="$HOME/.Trash/ContextPanel-runtime-baseline-$stamp"
+	remove_prior_baseline_trash
+	mkdir -p "$quarantine"
+
+	stop_context_panel
+	bootout_refresh_agent
+	# Preserve the installed bundle path during reset. Removing the containing app can
+	# make macOS drop the user's placed widget even when WidgetKit caches remain.
+	quarantine_stale_runtime_bundles "$quarantine"
+	unregister_refresh_agent_quietly
+	bootout_refresh_agent
 
 	for path in \
 		"$HOME/Library/Application Scripts/com.shinycomputers.contextpanel" \
@@ -1232,6 +1466,11 @@ check_runtime() {
 require pluginkit || true
 require mdfind || true
 require xcrun || true
+
+if [[ "$source_only" == "1" ]]; then
+	# shellcheck disable=SC2317
+	return 0 2>/dev/null || exit 0
+fi
 
 case "$mode" in
 install)
