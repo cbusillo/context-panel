@@ -117,6 +117,12 @@ public struct LimitWarningRecord: Codable, Equatable, Sendable {
         self.lastCapacityRatio = lastCapacityRatio
         self.resetIdentity = resetIdentity
     }
+
+    public func matchesDeliveredNotification(_ notification: LimitWarningPendingNotification) -> Bool {
+        laneID == notification.id
+            && lastThresholdPercentRemaining == notification.event.thresholdPercentRemaining
+            && resetIdentity == notification.event.resetIdentity
+    }
 }
 
 public struct LimitWarningState: Codable, Equatable, Sendable {
@@ -265,6 +271,43 @@ public struct LimitWarningPendingNotification: Codable, Equatable, Identifiable,
     }
 }
 
+public extension LimitWarningEvent {
+    var resetIdentity: String? {
+        resetsAt.map { String(Int($0.timeIntervalSince1970)) }
+    }
+}
+
+public struct LimitWarningNotificationPresentation: Equatable, Sendable {
+    public let identifier: String
+    public let title: String
+    public let body: String
+    public let playsSound: Bool
+
+    public init(identifier: String, title: String, body: String, playsSound: Bool) {
+        self.identifier = identifier
+        self.title = title
+        self.body = body
+        self.playsSound = playsSound
+    }
+}
+
+public extension LimitWarningEvent {
+    func notificationPresentation(playsSound: Bool) -> LimitWarningNotificationPresentation {
+        LimitWarningNotificationPresentation(
+            identifier: "context-panel-limit-warning-\(laneID)",
+            title: title,
+            body: body,
+            playsSound: playsSound
+        )
+    }
+}
+
+public extension LimitWarningPendingNotification {
+    var presentation: LimitWarningNotificationPresentation {
+        event.notificationPresentation(playsSound: playsSound)
+    }
+}
+
 public struct LimitWarningPendingNotificationQueue: Codable, Equatable, Sendable {
     public let schemaVersion: Int
     public var notifications: [LimitWarningPendingNotification]
@@ -295,6 +338,15 @@ public struct LimitWarningPendingNotificationQueue: Codable, Equatable, Sendable
 
     public mutating func remove(ids: Set<String>) {
         notifications.removeAll { ids.contains($0.id) }
+    }
+
+    public mutating func remove(_ deliveredNotifications: [LimitWarningPendingNotification]) {
+        let deliveredByID = Dictionary(
+            uniqueKeysWithValues: deliveredNotifications.map { ($0.id, $0) }
+        )
+        notifications.removeAll { notification in
+            deliveredByID[notification.id] == notification
+        }
     }
 
     private static func normalized(_ notifications: [LimitWarningPendingNotification]) -> [LimitWarningPendingNotification] {

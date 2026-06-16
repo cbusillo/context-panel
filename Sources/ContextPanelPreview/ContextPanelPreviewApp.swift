@@ -3576,6 +3576,8 @@ final class ContextPanelAppModel: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var lastRefreshAt: Date?
     @Published private(set) var navigationRequest: AppNavigationSelection?
+    private var isDeliveringPendingLimitWarnings = false
+    private var pendingLimitWarningDeliveryRequested = false
 
     private let refreshService: SnapshotRefreshService
     private let refreshRunner: SnapshotRefreshRunner
@@ -3788,7 +3790,16 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     func deliverPendingLimitWarnings() async {
-        await limitWarningNotificationService.deliverPendingNotifications()
+        if isDeliveringPendingLimitWarnings {
+            pendingLimitWarningDeliveryRequested = true
+            return
+        }
+        isDeliveringPendingLimitWarnings = true
+        defer { isDeliveringPendingLimitWarnings = false }
+        repeat {
+            pendingLimitWarningDeliveryRequested = false
+            await limitWarningNotificationService.deliverPendingNotifications()
+        } while pendingLimitWarningDeliveryRequested
     }
 
     func setError(_ message: String) {
@@ -3919,35 +3930,49 @@ private struct AppLimitWarningNotificationService {
     func deliverPendingNotifications() async {
         let queue = pendingNotificationStore.load()
         guard !queue.notifications.isEmpty else { return }
+        let state = stateStore.load()
+        let alreadyDeliveredNotifications = queue.notifications.filter { notification in
+            state.record(for: notification.id)?.matchesDeliveredNotification(notification) == true
+        }
+        removePendingNotifications(alreadyDeliveredNotifications)
+
+        let pendingNotifications = queue.notifications.filter { notification in
+            !alreadyDeliveredNotifications.contains(notification)
+        }
+        guard !pendingNotifications.isEmpty else { return }
         guard await notificationsAreAuthorized() else {
             contextPanelLogger.error("pending limit warnings could not be delivered: notifications are not authorized for Context Panel")
             return
         }
 
-        var deliveredIDs = Set<String>()
-        let state = stateStore.load()
+        var deliveredNotifications: [LimitWarningPendingNotification] = []
         var commitPlan = LimitWarningNotificationCommitPlan(
             currentState: state,
-            targetState: pendingTargetState(from: queue, currentState: state),
-            snapshot: pendingSnapshot(from: queue),
+            targetState: pendingTargetState(from: pendingNotifications, currentState: state),
+            snapshot: pendingSnapshot(from: pendingNotifications),
             settings: settingsStore.load()
         )
-        for notification in queue.notifications {
+        for notification in pendingNotifications {
             if await deliver(event: notification.event, playsSound: notification.playsSound) {
-                deliveredIDs.insert(notification.id)
-                commitPlan.commitDeliveredEvent(for: notification.id)
+                var deliveredCommitPlan = commitPlan
+                deliveredCommitPlan.commitDeliveredEvent(for: notification.id)
                 do {
-                    try stateStore.save(commitPlan.persistedState)
+                    try stateStore.save(deliveredCommitPlan.persistedState)
+                    commitPlan = deliveredCommitPlan
+                    deliveredNotifications.append(notification)
                 } catch {
                     contextPanelLogger.error("limit warning state save failed: \(error.localizedDescription, privacy: .public)")
                 }
             }
         }
-        guard !deliveredIDs.isEmpty else { return }
+        removePendingNotifications(deliveredNotifications)
+    }
 
+    private func removePendingNotifications(_ notifications: [LimitWarningPendingNotification]) {
+        guard !notifications.isEmpty else { return }
         do {
             var updatedQueue = pendingNotificationStore.load()
-            updatedQueue.remove(ids: deliveredIDs)
+            updatedQueue.remove(notifications)
             try pendingNotificationStore.save(updatedQueue)
         } catch {
             contextPanelLogger.error("pending limit warning queue update failed: \(error.localizedDescription, privacy: .public)")
@@ -3966,11 +3991,11 @@ private struct AppLimitWarningNotificationService {
     }
 
     private func pendingTargetState(
-        from queue: LimitWarningPendingNotificationQueue,
+        from notifications: [LimitWarningPendingNotification],
         currentState: LimitWarningState
     ) -> LimitWarningState {
         var state = currentState
-        for notification in queue.notifications {
+        for notification in notifications {
             let event = notification.event
             state.upsert(LimitWarningRecord(
                 laneID: event.laneID,
@@ -3983,23 +4008,28 @@ private struct AppLimitWarningNotificationService {
         return state
     }
 
-    private func pendingSnapshot(from queue: LimitWarningPendingNotificationQueue) -> UsageSnapshot {
+    private func pendingSnapshot(from notifications: [LimitWarningPendingNotification]) -> UsageSnapshot {
         UsageSnapshot(
-            generatedAt: queue.notifications.last?.queuedAt ?? Date(),
+            generatedAt: notifications.last?.queuedAt ?? Date(),
             limits: []
         )
     }
 
     @discardableResult
     private func deliver(event: LimitWarningEvent, playsSound: Bool) async -> Bool {
+        await deliver(event.notificationPresentation(playsSound: playsSound))
+    }
+
+    @discardableResult
+    private func deliver(_ presentation: LimitWarningNotificationPresentation) async -> Bool {
         let content = UNMutableNotificationContent()
-        content.title = event.title
-        content.body = event.body
-        if playsSound {
+        content.title = presentation.title
+        content.body = presentation.body
+        if presentation.playsSound {
             content.sound = .default
         }
         let request = UNNotificationRequest(
-            identifier: "context-panel-limit-warning-\(event.laneID)",
+            identifier: presentation.identifier,
             content: content,
             trigger: nil
         )
