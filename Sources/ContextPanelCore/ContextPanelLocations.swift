@@ -3,11 +3,12 @@ import Darwin
 
 public enum ContextPanelLocations {
     public static let appGroupID = "MM5YXC7T6E.group.com.shinycomputers.contextpanel"
+    public static let companionAppGroupID = "group.com.shinycomputers.contextpanel"
     public static let iCloudContainerID = "iCloud.com.shinycomputers.contextpanel"
     public static let appBundleID = "com.shinycomputers.contextpanel"
-    public static let companionAppBundleID = "com.shinycomputers.contextpanel.companion"
+    public static let companionAppBundleID = "com.shinycomputers.contextpanel"
     public static let widgetExtensionBundleID = "com.shinycomputers.contextpanel.widget"
-    public static let companionWidgetExtensionBundleID = "com.shinycomputers.contextpanel.companion.widget"
+    public static let companionWidgetExtensionBundleID = "com.shinycomputers.contextpanel.widget"
     public static let refreshAgentBundleID = "com.shinycomputers.contextpanel.refresh-agent"
     public static let companionSyncDocumentFileName = "context-panel-companion.json"
 
@@ -57,6 +58,16 @@ public enum ContextPanelLocations {
 
     public static func companionSyncDocumentURL(appGroupID: String? = nil) -> URL {
         companionSyncDirectory(appGroupID: appGroupID)
+            .appending(path: companionSyncDocumentFileName)
+    }
+
+    public static func companionAppGroupSyncDocumentURL(
+        appGroupID: String = companionAppGroupID
+    ) -> URL? {
+        guard let containerURL = appGroupContainerURL(appGroupID: appGroupID) else {
+            return nil
+        }
+        return companionSyncDirectory(containerURL: containerURL)
             .appending(path: companionSyncDocumentFileName)
     }
 
@@ -111,12 +122,16 @@ public enum ContextPanelLocations {
 
     private static func companionSyncDirectory(appGroupID: String?) -> URL {
         if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
-            return containerURL
-                .appending(path: "Context Panel", directoryHint: .isDirectory)
-                .appending(path: "Companion", directoryHint: .isDirectory)
+            return companionSyncDirectory(containerURL: containerURL)
         }
 
         return applicationSupportDirectory()
+            .appending(path: "Companion", directoryHint: .isDirectory)
+    }
+
+    private static func companionSyncDirectory(containerURL: URL) -> URL {
+        containerURL
+            .appending(path: "Context Panel", directoryHint: .isDirectory)
             .appending(path: "Companion", directoryHint: .isDirectory)
     }
 

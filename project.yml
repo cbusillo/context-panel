@@ -210,7 +210,7 @@ targets:
         embed: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.shinycomputers.contextpanel.companion
+        PRODUCT_BUNDLE_IDENTIFIER: com.shinycomputers.contextpanel
         PRODUCT_NAME: Context Panel
         GENERATE_INFOPLIST_FILE: false
         INFOPLIST_FILE: Config/ContextPanelCompanion-Info.plist
@@ -253,7 +253,7 @@ targets:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.shinycomputers.contextpanel.companion.widget
+        PRODUCT_BUNDLE_IDENTIFIER: com.shinycomputers.contextpanel.widget
         PRODUCT_NAME: ContextPanelCompanionWidgetExtension
         GENERATE_INFOPLIST_FILE: false
         MARKETING_VERSION: "1.0"

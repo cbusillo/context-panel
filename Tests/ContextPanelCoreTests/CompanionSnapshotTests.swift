@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import ContextPanelCore
+@testable import ContextPanelCompanionSupport
 
 @Test func companionSnapshotOmitsSensitiveStoredFields() throws {
     let generatedAt = Date(timeIntervalSince1970: 1_000)
@@ -429,6 +430,74 @@ import Testing
     let loadResult = storeSet.load(policy: SnapshotStoreStalenessPolicy(maximumAge: 60), now: now)
     #expect(loadResult.document == document)
     #expect(resolveCount.value == 2)
+}
+
+@Test func companionSyncLoaderMirrorsICloudDocumentIntoLocalAppGroupStore() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 3_540)
+    let localURL = root.appending(path: "local/companion.json")
+    let iCloudURL = root.appending(path: "icloud/companion.json")
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    )
+    try CompanionSyncStore(documentURL: iCloudURL).save(document)
+
+    let result = CompanionSyncLoader.load(
+        localMirrorURL: localURL,
+        iCloudDocumentURL: iCloudURL,
+        now: now
+    )
+    let mirrored = CompanionSyncLoader.loadWidgetMirror(localMirrorURL: localURL, now: now)
+
+    #expect(result.document == document)
+    #expect(result.status == .close)
+    #expect(mirrored.document == document)
+    #expect(mirrored.status == .close)
+}
+
+@Test func companionSyncLoaderReportsMirrorWriteFailures() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 3_550)
+    let blockedFile = root.appending(path: "blocked")
+    let localURL = blockedFile.appending(path: "companion.json")
+    let iCloudURL = root.appending(path: "icloud/companion.json")
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    )
+    try Data().write(to: blockedFile)
+    try CompanionSyncStore(documentURL: iCloudURL).save(document)
+
+    let result = CompanionSyncLoader.load(
+        localMirrorURL: localURL,
+        iCloudDocumentURL: iCloudURL,
+        now: now
+    )
+
+    #expect(result.document == document)
+    #expect(result.status == .failure)
+    #expect(result.errorMessage?.contains("app group mirror could not be updated") == true)
+}
+
+@Test func companionSyncLoaderRequiresResolvedAppGroupMirror() {
+    let now = Date(timeIntervalSince1970: 3_560)
+
+    let appLoad = CompanionSyncLoader.load(
+        localMirrorURL: nil,
+        iCloudDocumentURL: nil,
+        now: now
+    )
+    let widgetLoad = CompanionSyncLoader.loadWidgetMirror(localMirrorURL: nil, now: now)
+
+    #expect(appLoad.document == nil)
+    #expect(appLoad.status == .failure)
+    #expect(appLoad.errorMessage?.contains("app group is unavailable") == true)
+    #expect(widgetLoad.document == nil)
+    #expect(widgetLoad.status == .failure)
+    #expect(widgetLoad.errorMessage?.contains("app group is unavailable") == true)
 }
 
 @Test func widgetSnapshotFromCompanionSyncReusesSyncedDisplayPayload() throws {

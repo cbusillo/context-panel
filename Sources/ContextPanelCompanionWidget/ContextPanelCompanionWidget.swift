@@ -52,7 +52,7 @@ private enum CompanionWidgetLoadQueue {
     }
 
     private static func entry(date: Date) -> ContextPanelCompanionWidgetEntry {
-        let result = CompanionSyncLoader.load(now: date)
+        let result = CompanionSyncLoader.loadWidgetMirror(now: date)
         return ContextPanelCompanionWidgetEntry(
             date: date,
             snapshot: WidgetSnapshot.fromCompanionSync(result, now: date),

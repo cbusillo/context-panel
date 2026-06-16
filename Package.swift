@@ -55,6 +55,10 @@ let package = Package(
             name: "ContextPanelWidgetUI",
             dependencies: ["ContextPanelCore"]
         ),
+        .target(
+            name: "ContextPanelCompanionSupport",
+            dependencies: ["ContextPanelCore", "ContextPanelWidgetUI"]
+        ),
         .executableTarget(
             name: "ContextPanelPreview",
             dependencies: ["ContextPanelCore"]
@@ -89,7 +93,12 @@ let package = Package(
         ),
         .testTarget(
             name: "ContextPanelCoreTests",
-            dependencies: ["ContextPanelCore", "ContextPanelWidget", "ContextPanelWidgetUI"]
+            dependencies: [
+                "ContextPanelCore",
+                "ContextPanelCompanionSupport",
+                "ContextPanelWidget",
+                "ContextPanelWidgetUI",
+            ]
         )
     ]
 )
