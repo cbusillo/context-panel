@@ -127,7 +127,7 @@ public struct CompanionSyncStore: Sendable {
             withIntermediateDirectories: true
         )
         let data = try Self.makeEncoder().encode(document)
-        try data.write(to: documentURL, options: [.atomic])
+        try coordinatedWrite(data: data)
     }
 
     public func load() -> CompanionSyncLoadResult {
@@ -168,7 +168,7 @@ public struct CompanionSyncStore: Sendable {
     private func loadDocument() throws -> CompanionSyncDocument {
         let document = try Self.makeDecoder().decode(
             CompanionSyncDocument.self,
-            from: try Data(contentsOf: documentURL)
+            from: try coordinatedRead()
         )
         guard document.schemaVersion == CompanionSyncDocument.schemaVersion else {
             throw SnapshotStoreError.unsupportedSchema(version: document.schemaVersion)
@@ -177,6 +177,46 @@ public struct CompanionSyncStore: Sendable {
             throw SnapshotStoreError.unsupportedSchema(version: document.snapshot.schemaVersion)
         }
         return document
+    }
+
+    private func coordinatedRead() throws -> Data {
+        var readData: Data?
+        var readError: Error?
+        var coordinatorError: NSError?
+        NSFileCoordinator(filePresenter: nil).coordinate(
+            readingItemAt: documentURL,
+            options: [],
+            error: &coordinatorError
+        ) { coordinatedURL in
+            do {
+                readData = try Data(contentsOf: coordinatedURL)
+            } catch {
+                readError = error
+            }
+        }
+
+        if let readError { throw readError }
+        if let coordinatorError { throw coordinatorError }
+        return try readData ?? Data(contentsOf: documentURL)
+    }
+
+    private func coordinatedWrite(data: Data) throws {
+        var writeError: Error?
+        var coordinatorError: NSError?
+        NSFileCoordinator(filePresenter: nil).coordinate(
+            writingItemAt: documentURL,
+            options: .forReplacing,
+            error: &coordinatorError
+        ) { coordinatedURL in
+            do {
+                try data.write(to: coordinatedURL)
+            } catch {
+                writeError = error
+            }
+        }
+
+        if let writeError { throw writeError }
+        if let coordinatorError { throw coordinatorError }
     }
 
     private static func makeEncoder() -> JSONEncoder {
