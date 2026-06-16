@@ -423,13 +423,12 @@ public enum LimitWarningWebhookPayloadBuilder {
     ) throws -> LimitWarningWebhookPayload {
         let title = event.title
         let fields: [[String: Any]] = [
-            ["name": "Capacity", "value": "\(Int((event.capacityRatio * 100).rounded()))% left", "inline": true],
-            ["name": "Limit", "value": limitText(event), "inline": true],
+            ["name": "Capacity", "value": capacityText(event), "inline": false],
             ["name": "Reset", "value": resetText(event), "inline": true],
         ]
         let embed: [String: Any] = [
             "title": title,
-            "description": event.body,
+            "description": discordDescription(event),
             "color": discordColor(for: event.capacityRatio),
             "fields": fields,
             "footer": ["text": "Context Panel \(appVersion)"],
@@ -484,11 +483,28 @@ public enum LimitWarningWebhookPayloadBuilder {
         return 0xFEC84B
     }
 
-    private static func limitText(_ event: LimitWarningEvent) -> String {
+    private static func discordDescription(_ event: LimitWarningEvent) -> String {
+        "\(event.provider.displayName) \(event.window.displayName) capacity is below your "
+            + "\(event.thresholdPercentRemaining)% warning threshold."
+    }
+
+    private static func capacityText(_ event: LimitWarningEvent) -> String {
+        let percent = Int((event.capacityRatio * 100).rounded())
+        let limitSummary: String
         if let remaining = event.remaining, let limit = event.limit {
-            return "\(remaining) of \(limit) remaining"
+            limitSummary = " (\(remaining)/\(limit) points)"
+        } else {
+            limitSummary = ""
         }
-        return "Below warning threshold"
+        return "\(capacityBar(for: event.capacityRatio)) \(percent)% left\(limitSummary)"
+    }
+
+    private static func capacityBar(for capacityRatio: Double) -> String {
+        let segments = 10
+        let clampedRatio = min(max(capacityRatio, 0), 1)
+        let filled = Int((clampedRatio * Double(segments)).rounded())
+        let empty = segments - filled
+        return "[\(String(repeating: "#", count: filled))\(String(repeating: "-", count: empty))]"
     }
 
     private static func resetText(_ event: LimitWarningEvent) -> String {
