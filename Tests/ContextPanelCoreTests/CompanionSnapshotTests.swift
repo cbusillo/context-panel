@@ -200,6 +200,436 @@ import Testing
     #expect(data.count < 500_000)
 }
 
+@Test func companionSyncStoreRoundTripsDocumentAndReportsStaleness() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let generatedAt = Date(timeIntervalSince1970: 3_000)
+    let publishedAt = generatedAt.addingTimeInterval(60)
+    var preferences = WidgetDisplayPreferences.defaultPreferences
+    preferences.setMainLimit(provider: .openAI, window: .fiveHour, isVisible: true)
+    let forecastSettings = FastModeForecastSettings(
+        defaultStandardBurnRateUnitsPerHour: 4,
+        fastModeMultiplier: 3,
+        reserveUnits: 8,
+        minimumSafeHours: 2
+    )
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: generatedAt),
+        publishedAt: publishedAt,
+        widgetDisplayPreferences: preferences,
+        fastModeForecastSettings: forecastSettings
+    )
+    let store = CompanionSyncStore(documentURL: root.appending(path: "companion.json"))
+
+    try store.save(document)
+
+    let fresh = store.load(policy: SnapshotStoreStalenessPolicy(maximumAge: 5 * 60), now: publishedAt.addingTimeInterval(10))
+    #expect(fresh.document == document)
+    #expect(fresh.status == .close)
+    #expect(fresh.document?.widgetDisplayPreferences == preferences)
+    #expect(fresh.document?.fastModeForecastSettings == forecastSettings)
+
+    let stale = store.load(policy: SnapshotStoreStalenessPolicy(maximumAge: 5 * 60), now: publishedAt.addingTimeInterval(10 * 60))
+    #expect(stale.document == document)
+    #expect(stale.status == .stale)
+}
+
+@Test func companionSyncStoreStalenessUsesSourceGenerationTime() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let generatedAt = Date(timeIntervalSince1970: 3_050)
+    let publishedAt = generatedAt.addingTimeInterval(60 * 60)
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: generatedAt),
+        publishedAt: publishedAt
+    )
+    let store = CompanionSyncStore(documentURL: root.appending(path: "companion.json"))
+
+    try store.save(document)
+
+    let result = store.load(policy: SnapshotStoreStalenessPolicy(maximumAge: 5 * 60), now: publishedAt)
+    #expect(result.document == document)
+    #expect(result.status == .stale)
+}
+
+@Test func companionSyncStoreStatusIncludesProviderFailuresWithoutLimits() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 3_075)
+    let stored = StoredUsageSnapshot(
+        savedAt: now,
+        snapshot: UsageSnapshot(generatedAt: now, limits: []),
+        reports: [StoredProviderReport(
+            provider: .openAI,
+            accountID: "raw-openai",
+            configuredAccountID: "configured-openai",
+            accountName: "Work OpenAI",
+            generatedAt: now,
+            status: .failure,
+            errorMessage: "sk-secret should not sync"
+        )]
+    )
+    let document = CompanionSyncDocument(storedSnapshot: stored, publishedAt: now)
+    let store = CompanionSyncStore(documentURL: root.appending(path: "companion.json"))
+
+    try store.save(document)
+
+    let result = store.load(policy: SnapshotStoreStalenessPolicy(maximumAge: 60), now: now)
+    #expect(result.status == .failure)
+    #expect(result.document?.snapshot.providerStatuses.first?.status == .failure)
+}
+
+@Test func companionSyncStoreStatusIsUnknownForEmptyDocument() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 3_090)
+    let document = CompanionSyncDocument(
+        snapshot: CompanionSnapshot(
+            generatedAt: now,
+            publishedAt: now,
+            limits: [],
+            providerStatuses: [],
+            promptCacheSummaries: []
+        )
+    )
+    let store = CompanionSyncStore(documentURL: root.appending(path: "companion.json"))
+
+    try store.save(document)
+
+    let result = store.load(policy: SnapshotStoreStalenessPolicy(maximumAge: 60), now: now)
+    #expect(result.status == .unknown)
+}
+
+@Test func companionSyncStoreSetFallsBackPastFailedMirror() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 3_100)
+    let failedURL = root.appending(path: "failed.json")
+    let reachableURL = root.appending(path: "reachable.json")
+    try Data("not json".utf8).write(to: failedURL)
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    )
+    try CompanionSyncStore(documentURL: reachableURL).save(document)
+    let storeSet = CompanionSyncStoreSet(stores: [
+        CompanionSyncStore(documentURL: failedURL),
+        CompanionSyncStore(documentURL: reachableURL),
+    ])
+
+    let result = storeSet.load(policy: SnapshotStoreStalenessPolicy(maximumAge: 60), now: now)
+
+    #expect(result.document == document)
+    #expect(result.status == .close)
+    #expect(result.errorMessage == nil)
+}
+
+@Test func companionSyncStoreSetChoosesFreshestAvailableMirror() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let oldGeneratedAt = Date(timeIntervalSince1970: 3_120)
+    let newGeneratedAt = Date(timeIntervalSince1970: 3_300)
+    let oldDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: oldGeneratedAt),
+        publishedAt: oldGeneratedAt
+    )
+    let newDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: newGeneratedAt),
+        publishedAt: newGeneratedAt
+    )
+    let oldStore = CompanionSyncStore(documentURL: root.appending(path: "old.json"))
+    let newStore = CompanionSyncStore(documentURL: root.appending(path: "new.json"))
+    try oldStore.save(oldDocument)
+    try newStore.save(newDocument)
+    let storeSet = CompanionSyncStoreSet(stores: [oldStore, newStore])
+
+    let result = storeSet.load(policy: SnapshotStoreStalenessPolicy(maximumAge: 60), now: newGeneratedAt)
+
+    #expect(result.document == newDocument)
+    #expect(result.status == .close)
+}
+
+@Test func companionSyncStoreSetPrefersFreshDocumentOverNewerStaleDocument() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let staleGeneratedAt = Date(timeIntervalSince1970: 3_120)
+    let freshGeneratedAt = Date(timeIntervalSince1970: 3_400)
+    let staleDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: staleGeneratedAt),
+        publishedAt: freshGeneratedAt.addingTimeInterval(10)
+    )
+    let freshDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: freshGeneratedAt),
+        publishedAt: freshGeneratedAt
+    )
+    let staleStore = CompanionSyncStore(documentURL: root.appending(path: "stale.json"))
+    let freshStore = CompanionSyncStore(documentURL: root.appending(path: "fresh.json"))
+    try staleStore.save(staleDocument)
+    try freshStore.save(freshDocument)
+    let storeSet = CompanionSyncStoreSet(stores: [staleStore, freshStore])
+
+    let result = storeSet.load(policy: SnapshotStoreStalenessPolicy(maximumAge: 60), now: freshGeneratedAt)
+
+    #expect(result.document == freshDocument)
+    #expect(result.status == .close)
+}
+
+@Test func companionSyncStoreSetReportsPartialAndCompleteSaveFailures() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 3_500)
+    let blockedFile = root.appending(path: "blocked")
+    try Data().write(to: blockedFile)
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    )
+    let failingStore = CompanionSyncStore(documentURL: blockedFile.appending(path: "companion.json"))
+    let reachableStore = CompanionSyncStore(documentURL: root.appending(path: "reachable/companion.json"))
+
+    let partial = CompanionSyncStoreSet(stores: [failingStore, reachableStore]).save(document)
+    #expect(partial.attemptedStoreCount == 2)
+    #expect(partial.successfulStoreCount == 1)
+    #expect(partial.succeeded)
+    #expect(partial.failures.count == 1)
+
+    let complete = CompanionSyncStoreSet(stores: [failingStore]).save(document)
+    #expect(complete.attemptedStoreCount == 1)
+    #expect(complete.successfulStoreCount == 0)
+    #expect(complete.succeeded == false)
+    #expect(complete.failures.count == 1)
+}
+
+@Test func companionSyncStoreSetResolvesLazyMirrorsOnlyDuringOperations() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 3_520)
+    let localURL = root.appending(path: "local/companion.json")
+    let lazyURL = root.appending(path: "lazy/companion.json")
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    )
+    let resolveCount = LockedCounter()
+    let storeSet = CompanionSyncStoreSet(
+        stores: [CompanionSyncStore(documentURL: localURL)],
+        lazyStores: [CompanionSyncStoreResolver {
+            resolveCount.increment()
+            return CompanionSyncStore(documentURL: lazyURL)
+        }]
+    )
+
+    #expect(resolveCount.value == 0)
+
+    let saveResult = storeSet.save(document)
+    #expect(saveResult.attemptedStoreCount == 2)
+    #expect(saveResult.successfulStoreCount == 2)
+    #expect(resolveCount.value == 1)
+
+    let loadResult = storeSet.load(policy: SnapshotStoreStalenessPolicy(maximumAge: 60), now: now)
+    #expect(loadResult.document == document)
+    #expect(resolveCount.value == 2)
+}
+
+@Test func widgetSnapshotFromCompanionSyncReusesSyncedDisplayPayload() throws {
+    let generatedAt = Date(timeIntervalSince1970: 3_200)
+    let publishedAt = generatedAt.addingTimeInterval(5)
+    let forecastSettings = FastModeForecastSettings(
+        defaultStandardBurnRateUnitsPerHour: 6,
+        fastModeMultiplier: 2.5,
+        reserveUnits: 9,
+        minimumSafeHours: 1.5
+    )
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: generatedAt),
+        publishedAt: publishedAt,
+        fastModeForecastSettings: forecastSettings
+    )
+
+    let widget = WidgetSnapshot.fromCompanionSync(
+        CompanionSyncLoadResult(document: document, status: .close),
+        now: publishedAt
+    )
+
+    #expect(widget.state == .ready)
+    #expect(widget.status == .close)
+    #expect(widget.generatedAt == generatedAt)
+    #expect(widget.fastModeForecastSettings == forecastSettings)
+    #expect(widget.limits.count == 1)
+    #expect(widget.limits.first?.accountName == "Work OpenAI")
+    #expect(widget.limits.first?.accountID != "raw-openai")
+    #expect(widget.limits.first?.configuredAccountID == widget.limits.first?.accountID)
+    #expect(widget.reports.first?.accountID == widget.limits.first?.accountID)
+    #expect(widget.reports.first?.errorMessage == nil)
+    #expect(widget.promptCacheObservations.first?.accountID == widget.limits.first?.accountID)
+    #expect(widget.promptCacheWidgetState == .available)
+    #expect(widget.promptCacheSummary.latestHitRate == 0.9)
+    #expect(widget.message == "You're good to keep working.")
+}
+
+@Test func widgetSnapshotFromMissingCompanionSyncAsksForMacSync() {
+    let now = Date(timeIntervalSince1970: 3_300)
+
+    let widget = WidgetSnapshot.fromCompanionSync(
+        CompanionSyncLoadResult(document: nil, status: .unknown),
+        now: now
+    )
+
+    #expect(widget.state == .setupNeeded)
+    #expect(widget.generatedAt == now)
+    #expect(widget.message == "Sync Context Panel from your Mac.")
+}
+
+@Test func companionSyncPublisherIncludesCurrentPreferencesAndForecastSettings() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let generatedAt = Date(timeIntervalSince1970: 3_400)
+    let publishedAt = generatedAt.addingTimeInterval(20)
+    let preferencesURL = root.appending(path: "preferences.json")
+    let settingsURL = root.appending(path: "forecast.json")
+    let companionURL = root.appending(path: "companion.json")
+    var preferences = WidgetDisplayPreferences.defaultPreferences
+    preferences.moveMainLimits(fromOffsets: IndexSet(integer: 6), toOffset: 0)
+    let forecastSettings = FastModeForecastSettings(
+        defaultStandardBurnRateUnitsPerHour: 5,
+        fastModeMultiplier: 4,
+        reserveUnits: 12,
+        minimumSafeHours: 3
+    )
+    try WidgetDisplayPreferencesStore(preferencesURL: preferencesURL).save(preferences)
+    try FastModeForecastSettingsStore(settingsURL: settingsURL).save(forecastSettings)
+    let publisher = CompanionSyncPublisher(
+        stores: CompanionSyncStoreSet(stores: [CompanionSyncStore(documentURL: companionURL)]),
+        widgetPreferencesStore: WidgetDisplayPreferencesStore(preferencesURL: preferencesURL),
+        fastModeForecastSettingsStore: FastModeForecastSettingsStore(settingsURL: settingsURL)
+    )
+
+    publisher.publish(storedSnapshot: companionStoredSnapshot(generatedAt: generatedAt), publishedAt: publishedAt)
+
+    let result = CompanionSyncStore(documentURL: companionURL).load()
+    #expect(result.document?.snapshot.generatedAt == generatedAt)
+    #expect(result.document?.snapshot.publishedAt == publishedAt)
+    #expect(result.document?.widgetDisplayPreferences == preferences)
+    #expect(result.document?.fastModeForecastSettings == forecastSettings)
+}
+
+@Test func snapshotRefreshServicePublishesCompanionSyncAfterSavingSnapshot() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let savedAt = Date(timeIntervalSince1970: 3_500)
+    let primary = JSONSnapshotStore(rootDirectory: root.appending(path: "snapshots", directoryHint: .isDirectory))
+    let companionURL = root.appending(path: "companion.json")
+    let publisher = CompanionSyncPublisher(
+        stores: CompanionSyncStoreSet(stores: [CompanionSyncStore(documentURL: companionURL)]),
+        widgetPreferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "preferences.json")),
+        fastModeForecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "forecast.json"))
+    )
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json")),
+        stores: SnapshotRefreshStores(primary: primary),
+        companionSyncPublisher: publisher,
+        promptCacheTelemetryReader: { _ in [] }
+    )
+    let report = ProviderConnectorReport(
+        provider: .openAI,
+        accountID: "raw-openai",
+        configuredAccountID: "configured-openai",
+        accountName: "Work OpenAI",
+        generatedAt: savedAt,
+        limits: [UsageLimit(
+            provider: .openAI,
+            accountID: "raw-openai",
+            configuredAccountID: "configured-openai",
+            accountName: "Work OpenAI",
+            label: "Weekly",
+            windowLabel: "Weekly",
+            unit: .percent,
+            used: 94,
+            limit: 100,
+            statusOverride: .close
+        )],
+        status: .close
+    )
+
+    _ = try service.saveMerged(
+        refreshResult: ConnectorRefreshResult(generatedAt: savedAt, reports: [report]),
+        savedAt: savedAt
+    )
+
+    let result = CompanionSyncStore(documentURL: companionURL).load()
+    #expect(primary.loadCurrent().snapshot?.snapshot.limits.first?.accountID == "raw-openai")
+    #expect(result.document?.snapshot.publishedAt == savedAt)
+    #expect(result.document?.snapshot.limits.first?.accountName == "Work OpenAI")
+    #expect(result.document?.snapshot.limits.first?.companionAccountID != "raw-openai")
+}
+
+private func companionStoredSnapshot(generatedAt: Date) -> StoredUsageSnapshot {
+    StoredUsageSnapshot(
+        savedAt: generatedAt,
+        snapshot: UsageSnapshot(generatedAt: generatedAt, limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "raw-openai",
+                configuredAccountID: "configured-openai",
+                accountName: "Work OpenAI",
+                label: "Weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 91,
+                limit: 100,
+                resetsAt: generatedAt.addingTimeInterval(7 * 24 * 3_600),
+                lastUpdatedAt: generatedAt,
+                confidence: .observed,
+                statusOverride: .close
+            ),
+        ]),
+        reports: [
+            StoredProviderReport(
+                provider: .openAI,
+                accountID: "raw-openai",
+                configuredAccountID: "configured-openai",
+                accountName: "Work OpenAI",
+                generatedAt: generatedAt,
+                status: .close,
+                errorMessage: "sk-secret should not sync"
+            ),
+        ],
+        promptCacheObservations: [
+            PromptCacheObservation(
+                provider: .openAI,
+                accountID: "raw-openai",
+                accountName: "Work OpenAI",
+                observedAt: generatedAt,
+                windowLabel: "Last hour",
+                tokens: PromptCacheTokenSet(inputTokens: 1_000, cachedInputTokens: 900)
+            ),
+        ]
+    )
+}
+
+private func temporaryDirectory() throws -> URL {
+    let url = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-companion-tests")
+        .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
+}
+
+private final class LockedCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue = 0
+
+    var value: Int {
+        lock.withLock { storedValue }
+    }
+
+    func increment() {
+        lock.withLock {
+            storedValue += 1
+        }
+    }
+}
+
 private extension JSONEncoder {
     static var contextPanelCompanionEncoder: JSONEncoder {
         let encoder = JSONEncoder()

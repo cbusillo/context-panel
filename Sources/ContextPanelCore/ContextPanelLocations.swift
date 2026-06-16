@@ -3,9 +3,13 @@ import Darwin
 
 public enum ContextPanelLocations {
     public static let appGroupID = "MM5YXC7T6E.group.com.shinycomputers.contextpanel"
+    public static let iCloudContainerID = "iCloud.com.shinycomputers.contextpanel"
     public static let appBundleID = "com.shinycomputers.contextpanel"
+    public static let companionAppBundleID = "com.shinycomputers.contextpanel.companion"
     public static let widgetExtensionBundleID = "com.shinycomputers.contextpanel.widget"
+    public static let companionWidgetExtensionBundleID = "com.shinycomputers.contextpanel.companion.widget"
     public static let refreshAgentBundleID = "com.shinycomputers.contextpanel.refresh-agent"
+    public static let companionSyncDocumentFileName = "context-panel-companion.json"
 
     public static var isRunningInAppSandbox: Bool {
         getenv("APP_SANDBOX_CONTAINER_ID") != nil
@@ -51,6 +55,50 @@ public enum ContextPanelLocations {
         applicationSupportDirectory().appending(path: "fast-mode-forecast-settings.json")
     }
 
+    public static func companionSyncDocumentURL(appGroupID: String? = nil) -> URL {
+        companionSyncDirectory(appGroupID: appGroupID)
+            .appending(path: companionSyncDocumentFileName)
+    }
+
+    public static func companionUbiquitySyncDocumentURL(containerID: String? = iCloudContainerID) -> URL? {
+        guard let containerID else { return nil }
+        guard let containerURL = FileManager.default.url(forUbiquityContainerIdentifier: containerID) else {
+            return nil
+        }
+        return containerURL
+            .appending(path: "Documents", directoryHint: .isDirectory)
+            .appending(path: "Context Panel", directoryHint: .isDirectory)
+            .appending(path: "Companion", directoryHint: .isDirectory)
+            .appending(path: companionSyncDocumentFileName)
+    }
+
+    public static func companionSyncStores(
+        appGroupID: String? = appGroupID,
+        iCloudContainerID: String? = iCloudContainerID
+    ) -> [CompanionSyncStore] {
+        var stores = [CompanionSyncStore(documentURL: companionSyncDocumentURL(appGroupID: appGroupID))]
+        if let iCloudURL = companionUbiquitySyncDocumentURL(containerID: iCloudContainerID) {
+            stores.append(CompanionSyncStore(documentURL: iCloudURL))
+        }
+        return stores
+    }
+
+    public static func companionSyncStoreSet(
+        appGroupID: String? = appGroupID,
+        iCloudContainerID: String? = iCloudContainerID
+    ) -> CompanionSyncStoreSet {
+        let localStore = CompanionSyncStore(documentURL: companionSyncDocumentURL(appGroupID: appGroupID))
+        let iCloudStores: [CompanionSyncStoreResolver]
+        if let iCloudContainerID {
+            iCloudStores = [CompanionSyncStoreResolver {
+                companionUbiquitySyncDocumentURL(containerID: iCloudContainerID).map(CompanionSyncStore.init(documentURL:))
+            }]
+        } else {
+            iCloudStores = []
+        }
+        return CompanionSyncStoreSet(stores: [localStore], lazyStores: iCloudStores)
+    }
+
     public static func accountConfigurationURL() -> URL {
         if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
             return containerURL
@@ -59,6 +107,17 @@ public enum ContextPanelLocations {
         }
 
         return applicationSupportDirectory().appending(path: "accounts.json")
+    }
+
+    private static func companionSyncDirectory(appGroupID: String?) -> URL {
+        if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
+            return containerURL
+                .appending(path: "Context Panel", directoryHint: .isDirectory)
+                .appending(path: "Companion", directoryHint: .isDirectory)
+        }
+
+        return applicationSupportDirectory()
+            .appending(path: "Companion", directoryHint: .isDirectory)
     }
 
     public static func legacyAccountConfigurationURL() -> URL {

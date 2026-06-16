@@ -302,13 +302,16 @@ public struct SnapshotRefreshService: Sendable {
     private let stores: SnapshotRefreshStores
     private let bookmarkStore: SecureFileBookmarkStore?
     private let credentialStore: (any ProviderCredentialStoring)?
+    private let companionSyncPublisher: CompanionSyncPublisher?
     private let promptCacheTelemetryMirror: @Sendable (SecureFileBookmarkStore?, [URL]) -> Void
     private let promptCacheTelemetryReader: @Sendable (Date) -> [PromptCacheObservation]
+
     public init(
         accountStore: AccountConfigurationStore,
         stores: SnapshotRefreshStores,
         bookmarkStore: SecureFileBookmarkStore? = nil,
         credentialStore: (any ProviderCredentialStoring)? = nil,
+        companionSyncPublisher: CompanionSyncPublisher? = nil,
         promptCacheTelemetryMirror: @escaping @Sendable (SecureFileBookmarkStore?, [URL]) -> Void = { bookmarkStore, sourceDirectories in
             _ = try? PromptCacheTelemetryMirrorService.mirror(
                 bookmarkStore: bookmarkStore,
@@ -323,6 +326,7 @@ public struct SnapshotRefreshService: Sendable {
         self.stores = stores
         self.bookmarkStore = bookmarkStore
         self.credentialStore = credentialStore
+        self.companionSyncPublisher = companionSyncPublisher
         self.promptCacheTelemetryMirror = promptCacheTelemetryMirror
         self.promptCacheTelemetryReader = promptCacheTelemetryReader
     }
@@ -335,7 +339,8 @@ public struct SnapshotRefreshService: Sendable {
             ),
             stores: .appDefault(),
             bookmarkStore: SecureFileBookmarkStore(storeURL: ContextPanelLocations.bookmarkStoreURL()),
-            credentialStore: ProviderCredentialStore()
+            credentialStore: ProviderCredentialStore(),
+            companionSyncPublisher: .appDefault()
         )
     }
 
@@ -441,6 +446,9 @@ public struct SnapshotRefreshService: Sendable {
             savedAt: savedAt,
             preservesUnreportedAccounts: preservesUnreportedAccounts
         )
+        if let storedSnapshot = stores.primary.loadCurrent().snapshot {
+            companionSyncPublisher?.publish(storedSnapshot: storedSnapshot, publishedAt: savedAt)
+        }
         return SnapshotRefreshOutcome(savedAt: savedAt, refreshResult: refreshResult)
     }
 
