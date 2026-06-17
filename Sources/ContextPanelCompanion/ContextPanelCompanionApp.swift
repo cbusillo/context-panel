@@ -190,15 +190,25 @@ private struct CompanionRefreshSettingsView: View {
 private struct CompanionSyncStatusView: View {
     let result: CompanionSyncLoadResult
 
+    private var presentation: CompanionSyncPresentation {
+        CompanionSyncPresentation(result: result)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label(statusTitle, systemImage: statusSymbol)
+            Label(presentation.title, systemImage: presentation.symbol)
                 .font(.headline)
                 .foregroundStyle(.primary)
 
-            Text(statusDetail)
+            Text(presentation.detail)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+
+            if let usageSummary = presentation.usageSummary {
+                Label(usageSummary, systemImage: "gauge.medium")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
 
             if let generatedAt = result.document?.snapshot.generatedAt {
                 Text("Last synced " + generatedAt.formatted(date: .abbreviated, time: .shortened))
@@ -212,61 +222,5 @@ private struct CompanionSyncStatusView: View {
             Color(uiColor: .secondarySystemGroupedBackground),
             in: RoundedRectangle(cornerRadius: 8, style: .continuous)
         )
-    }
-
-    private var statusTitle: String {
-        switch result.status {
-        case .healthy:
-            "Synced"
-        case .close:
-            "Close to limit"
-        case .limited:
-            "Limited"
-        case .stale:
-            "Sync is stale"
-        case .failure:
-            "Sync failed"
-        case .loading:
-            "Loading"
-        case .unknown:
-            "Waiting for Mac sync"
-        }
-    }
-
-    private var statusDetail: String {
-        if let error = result.errorMessage {
-            return error
-        }
-        switch result.status {
-        case .stale:
-            return "Open Context Panel on your Mac to publish a fresh snapshot."
-        case .unknown:
-            return "Open Context Panel on your Mac to publish usage lanes through iCloud."
-        case .failure:
-            return "The companion could not read the synced snapshot."
-        case .close, .limited:
-            return "Latest Mac sync is current. Check the highlighted lane before starting heavier work."
-        default:
-            return "Latest Mac sync is current."
-        }
-    }
-
-    private var statusSymbol: String {
-        switch result.status {
-        case .healthy:
-            "checkmark.icloud"
-        case .close:
-            "gauge.with.dots.needle.67percent"
-        case .limited:
-            "exclamationmark.octagon"
-        case .stale:
-            "clock.badge.exclamationmark"
-        case .failure:
-            "icloud.slash"
-        case .loading:
-            "arrow.clockwise.icloud"
-        case .unknown:
-            "icloud.and.arrow.down"
-        }
     }
 }

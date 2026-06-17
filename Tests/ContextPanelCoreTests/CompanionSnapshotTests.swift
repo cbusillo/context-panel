@@ -280,6 +280,92 @@ import Testing
     #expect(result.document?.snapshot.providerStatuses.first?.status == .failure)
 }
 
+@Test func companionSyncPresentationSeparatesSyncHealthFromLimitPressure() throws {
+    let now = Date(timeIntervalSince1970: 3_080)
+    let stored = StoredUsageSnapshot(
+        savedAt: now,
+        snapshot: UsageSnapshot(generatedAt: now, limits: [
+            companionUsageLimit(status: .limited, accountID: "openai-weekly"),
+        ])
+    )
+    let document = CompanionSyncDocument(storedSnapshot: stored, publishedAt: now)
+
+    let presentation = CompanionSyncPresentation(
+        result: CompanionSyncLoadResult(document: document, status: .limited)
+    )
+
+    #expect(presentation.title == "Synced from Mac")
+    #expect(presentation.detail == "Latest Mac snapshot received through iCloud.")
+    #expect(presentation.symbol == "checkmark.icloud")
+    #expect(presentation.usageSummary == "1 usage lane needs attention.")
+    #expect(presentation.title.contains("Limited") == false)
+    #expect(presentation.usageSummary?.contains("Limited") == false)
+}
+
+@Test func companionSyncPresentationSeparatesSyncHealthFromProviderFailures() throws {
+    let now = Date(timeIntervalSince1970: 3_085)
+    let stored = StoredUsageSnapshot(
+        savedAt: now,
+        snapshot: UsageSnapshot(generatedAt: now, limits: []),
+        reports: [StoredProviderReport(
+            provider: .openAI,
+            accountID: "raw-openai",
+            configuredAccountID: "configured-openai",
+            accountName: "Work OpenAI",
+            generatedAt: now,
+            status: .failure,
+            errorMessage: "Provider read failed"
+        )]
+    )
+    let document = CompanionSyncDocument(storedSnapshot: stored, publishedAt: now)
+
+    let presentation = CompanionSyncPresentation(
+        result: CompanionSyncLoadResult(document: document, status: .failure)
+    )
+
+    #expect(presentation.title == "Synced from Mac")
+    #expect(presentation.detail == "Latest Mac snapshot received through iCloud.")
+    #expect(presentation.symbol == "checkmark.icloud")
+    #expect(presentation.usageSummary == "1 provider needs attention on your Mac.")
+}
+
+@Test func companionSyncPresentationKeepsTransportFailuresSeparate() throws {
+    let now = Date(timeIntervalSince1970: 3_088)
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    )
+
+    let presentation = CompanionSyncPresentation(
+        result: CompanionSyncLoadResult(
+            document: document,
+            status: .failure,
+            errorMessage: "app group mirror could not be updated"
+        )
+    )
+
+    #expect(presentation.title == "Sync failed")
+    #expect(presentation.detail == "app group mirror could not be updated")
+    #expect(presentation.symbol == "icloud.slash")
+    #expect(presentation.usageSummary == nil)
+}
+
+@Test func companionSyncPresentationUsesSyncProblemTitlesForTransportStates() {
+    let stale = CompanionSyncPresentation(
+        result: CompanionSyncLoadResult(document: nil, status: .stale)
+    )
+    let failure = CompanionSyncPresentation(
+        result: CompanionSyncLoadResult(document: nil, status: .failure)
+    )
+    let unknown = CompanionSyncPresentation(
+        result: CompanionSyncLoadResult(document: nil, status: .unknown)
+    )
+
+    #expect(stale.title == "Mac sync is stale")
+    #expect(failure.title == "Sync failed")
+    #expect(unknown.title == "Waiting for Mac sync")
+}
+
 @Test func companionSyncStoreStatusIsUnknownForEmptyDocument() throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -711,6 +797,21 @@ private func companionStoredSnapshot(generatedAt: Date) -> StoredUsageSnapshot {
                 tokens: PromptCacheTokenSet(inputTokens: 1_000, cachedInputTokens: 900)
             ),
         ]
+    )
+}
+
+private func companionUsageLimit(status: UsageStatus, accountID: String) -> UsageLimit {
+    UsageLimit(
+        provider: .openAI,
+        accountID: accountID,
+        configuredAccountID: accountID,
+        accountName: "Work OpenAI",
+        label: "Weekly",
+        windowLabel: "Weekly",
+        unit: .percent,
+        used: status == .limited ? 100 : 90,
+        limit: 100,
+        statusOverride: status
     )
 }
 

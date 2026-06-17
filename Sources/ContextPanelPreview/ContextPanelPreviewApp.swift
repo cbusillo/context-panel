@@ -2319,7 +2319,7 @@ struct AccountsSidebar: View {
     var body: some View {
         List(selection: $selection) {
             Section {
-                Label("Overview", systemImage: "gauge.with.dots.needle.67percent")
+                Label("Overview", systemImage: "gauge.medium")
                     .tag(AppNavigationSelection.overview)
                 if model.shouldShowReconnectNavigation {
                     Label(model.attentionNavigationTitle, systemImage: "exclamationmark.triangle.fill")
