@@ -1223,7 +1223,7 @@ check_runtime() {
 	check_canonical_app_group "$app_path" "app"
 	check_canonical_app_group "$widget_path" "widget"
 	check_canonical_app_group "$refresh_agent_path" "refresh agent"
-	check_entitlement_enabled "$app_path" "app" "com.apple.security.network.server" "local OAuth callback listener"
+	check_entitlement_absent "$app_path" "app" "com.apple.security.network.server"
 	check_canonical_team_identifier "$app_path" "app"
 	check_canonical_team_identifier "$widget_path" "widget"
 	check_canonical_team_identifier "$refresh_agent_path" "refresh agent"

@@ -109,12 +109,12 @@ public struct GoogleAntigravityAccountConfiguration: Equatable, Sendable {
 }
 
 public enum GoogleAntigravityOAuthFlow {
+    public static let callbackScheme = "com.shinycomputers.contextpanel"
     public static let callbackPath = "/oauth-callback"
-    public static let fallbackLoopbackPort: UInt16 = 51121
-    public static let manualRedirectURI = loopbackRedirectURI(port: fallbackLoopbackPort)
+    public static let redirectURI = "\(callbackScheme):\(callbackPath)"
 
-    public static func loopbackRedirectURI(port: UInt16) -> String {
-        "http://127.0.0.1:\(port)\(callbackPath)"
+    public static func isCallbackURL(_ url: URL) -> Bool {
+        url.scheme == callbackScheme && url.path == callbackPath
     }
 
     public static func normalizedAuthorizationCode(from value: String) -> GoogleAntigravityAuthorizationCode {
@@ -132,7 +132,7 @@ public enum GoogleAntigravityOAuthFlow {
     public static func authorizationURL(
         codeChallenge: String,
         state: String,
-        redirectURI: String = manualRedirectURI,
+        redirectURI: String = redirectURI,
         clientID: String? = GoogleAntigravityOAuthMetadata.clientID,
         scopes: [String] = GoogleAntigravityOAuthMetadata.scopes
     ) throws -> URL {
@@ -160,7 +160,7 @@ public enum GoogleAntigravityOAuthFlow {
     public static func authorizationCodeTokenRequestBody(
         code: GoogleAntigravityAuthorizationCode,
         codeVerifier: String,
-        redirectURI: String = manualRedirectURI,
+        redirectURI: String = redirectURI,
         clientID: String? = GoogleAntigravityOAuthMetadata.clientID,
         clientSecret: String? = GoogleAntigravityOAuthMetadata.clientSecret
     ) throws -> Data {
