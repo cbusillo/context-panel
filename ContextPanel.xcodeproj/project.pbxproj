@@ -11,7 +11,6 @@
 		057A71BA0CD90371C675C014 /* WidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5233BBC86AE8057D749F71CD /* WidgetSnapshot.swift */; };
 		0BBD1DF433F345E62C6A26EF /* LimitProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */; };
 		0FF2EE405686EB21167A520B /* SnapshotRefreshService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45E8D3C3E45C1B6B3FACE828 /* SnapshotRefreshService.swift */; };
-		102D3ACBAA59BFC0B2B4BA8D /* ResetPrimerSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D9602BF84ECDE08C7275504 /* ResetPrimerSettings.swift */; };
 		15F3A62CFA13DDC406C99EA5 /* libContextPanelCoreCompanion.a in Frameworks */ = {isa = PBXBuildFile; fileRef = DBD0BD51B5F5AD8D24CA217D /* libContextPanelCoreCompanion.a */; };
 		170EC1421ABCDAF9C4612460 /* ClaudeOAuthUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 895A979571D5E5C14830B41D /* ClaudeOAuthUsage.swift */; };
 		188E64070A38D747957C4332 /* ContextPanelCompanionWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 97822BE5E66CA9D319A09950 /* ContextPanelCompanionWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -19,7 +18,6 @@
 		206412EFA28E871ADCA8246C /* libContextPanelWidgetUICompanion.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A3C9122F0E0741C701520316 /* libContextPanelWidgetUICompanion.a */; };
 		206D119AB834D38BBB5B4D0E /* CompanionSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8211A4CCCDD1AA6113F22D1 /* CompanionSnapshot.swift */; };
 		23ABE5B585C86CEE16E84D05 /* OAuthPKCE.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB0E4D0FF6DD744B87D215B9 /* OAuthPKCE.swift */; };
-		24959582F7C5BF2A99317616 /* ResetPrimerPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C30C085B935F62134E5C8C5 /* ResetPrimerPlanner.swift */; };
 		28FDF54D88C9CB4A982643A6 /* SnapshotRefreshService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45E8D3C3E45C1B6B3FACE828 /* SnapshotRefreshService.swift */; };
 		29FD4D47A21D08ABAE47E778 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 944A3154A0C2E33C5971E571 /* Assets.xcassets */; };
 		2D53BD76E94E68A54CF36F92 /* SnapshotFreshness.swift in Sources */ = {isa = PBXBuildFile; fileRef = D03C19BEA1C610711A048EB7 /* SnapshotFreshness.swift */; };
@@ -35,7 +33,6 @@
 		41FFD8CABE8E04612544A607 /* libContextPanelWidgetUICompanion.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A3C9122F0E0741C701520316 /* libContextPanelWidgetUICompanion.a */; };
 		43A84E96C9E0812C69B93E18 /* LimitWarning.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1161DC4C994F71A1E6CEE608 /* LimitWarning.swift */; };
 		43AEBC47E228C383860005E5 /* LimitWarningWebhook.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE09AE825E3B368ED89CD521 /* LimitWarningWebhook.swift */; };
-		44B9C8ACA1DFFB743B5BD86A /* ResetPrimerPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C30C085B935F62134E5C8C5 /* ResetPrimerPlanner.swift */; };
 		44DFF437D4762A4D0D2DBAA8 /* BurnRateEstimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FB4BEA57ACE8B84CAE71E75 /* BurnRateEstimator.swift */; };
 		459C8EC82194CE1A950FE1B5 /* UsageLimit.swift in Sources */ = {isa = PBXBuildFile; fileRef = D459054C90410A784EBD308B /* UsageLimit.swift */; };
 		4724F8C68962DB03D346B973 /* ClaudeAccountMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BBC1080557704B2EF023A7B /* ClaudeAccountMigration.swift */; };
@@ -50,7 +47,6 @@
 		5A0D8445C6C8B0CB88F4D643 /* GoogleAntigravityQuota.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C29BEF2E36108729A8B4EC4 /* GoogleAntigravityQuota.swift */; };
 		6234444D0DD8D8136CB59A1F /* ClaudeAccountMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BBC1080557704B2EF023A7B /* ClaudeAccountMigration.swift */; };
 		652E3352E67082CBC13D4064 /* UsageLimit.swift in Sources */ = {isa = PBXBuildFile; fileRef = D459054C90410A784EBD308B /* UsageLimit.swift */; };
-		66D9A9D36B46051B1C1EA722 /* ResetPrimerSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D9602BF84ECDE08C7275504 /* ResetPrimerSettings.swift */; };
 		762B3AD1D74922F681D202DF /* RefreshDiagnosticsState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DAF08B3CB69404A37DECA39 /* RefreshDiagnosticsState.swift */; };
 		764E6B79575AA8EC460441E3 /* CodexRateLimits.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FA8FE4CC9BE058D8F46FBA2 /* CodexRateLimits.swift */; };
 		7C2FC7CB5590C95244023520 /* ContextPanelDateFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9909074D7E80648BC2A01C51 /* ContextPanelDateFormatting.swift */; };
@@ -261,11 +257,9 @@
 		15DC14CB07B8BA4756DAB731 /* BackgroundRefreshSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundRefreshSettings.swift; sourceTree = "<group>"; };
 		186D607FE2EEFDFFE2E70446 /* AccountConfigurationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountConfigurationStore.swift; sourceTree = "<group>"; };
 		1973426645A7260EC4F9B396 /* ContextPanelWidgetViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelWidgetViews.swift; sourceTree = "<group>"; };
-		1C30C085B935F62134E5C8C5 /* ResetPrimerPlanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResetPrimerPlanner.swift; sourceTree = "<group>"; };
 		1FFE6BBDF595A795C1DC34D9 /* ContextPanelCompanionWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelCompanionWidget.swift; sourceTree = "<group>"; };
 		23E9C71457F4E1F101132FCF /* ContextPanelLocations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelLocations.swift; sourceTree = "<group>"; };
 		25E82B6087974E01B972918C /* GoogleAccountMigration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleAccountMigration.swift; sourceTree = "<group>"; };
-		2D9602BF84ECDE08C7275504 /* ResetPrimerSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResetPrimerSettings.swift; sourceTree = "<group>"; };
 		2DAF08B3CB69404A37DECA39 /* RefreshDiagnosticsState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RefreshDiagnosticsState.swift; sourceTree = "<group>"; };
 		2E29EEFA73267A8346212E7A /* ContextPanelCompanionApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelCompanionApp.swift; sourceTree = "<group>"; };
 		32D8515D047F5A8117DB762C /* SnapshotStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotStore.swift; sourceTree = "<group>"; };
@@ -399,8 +393,6 @@
 				350ED5589FB23C42ED32704A /* ProviderConnector.swift */,
 				A625CCDC97920B24B000C170 /* ProviderCredentialStore.swift */,
 				2DAF08B3CB69404A37DECA39 /* RefreshDiagnosticsState.swift */,
-				1C30C085B935F62134E5C8C5 /* ResetPrimerPlanner.swift */,
-				2D9602BF84ECDE08C7275504 /* ResetPrimerSettings.swift */,
 				8FA0C66F95091A96B8F7CBF4 /* SecureFileBookmark.swift */,
 				D03C19BEA1C610711A048EB7 /* SnapshotFreshness.swift */,
 				45E8D3C3E45C1B6B3FACE828 /* SnapshotRefreshService.swift */,
@@ -922,8 +914,6 @@
 				37A4E1CCC9D22CDA3580CB61 /* ProviderConnector.swift in Sources */,
 				AC3469A0B162D8FF6A47822A /* ProviderCredentialStore.swift in Sources */,
 				762B3AD1D74922F681D202DF /* RefreshDiagnosticsState.swift in Sources */,
-				24959582F7C5BF2A99317616 /* ResetPrimerPlanner.swift in Sources */,
-				102D3ACBAA59BFC0B2B4BA8D /* ResetPrimerSettings.swift in Sources */,
 				B929FCB2C981C6CCCFC72B7C /* SecureFileBookmark.swift in Sources */,
 				B59F4707B276A4C93680E7F6 /* SnapshotFreshness.swift in Sources */,
 				0FF2EE405686EB21167A520B /* SnapshotRefreshService.swift in Sources */,
@@ -977,8 +967,6 @@
 				F4B9B4FB75A285E38AE52B1D /* ProviderConnector.swift in Sources */,
 				C0DD7394E058BEE84E20AA43 /* ProviderCredentialStore.swift in Sources */,
 				E3A8EF704692B59DF4727D9A /* RefreshDiagnosticsState.swift in Sources */,
-				44B9C8ACA1DFFB743B5BD86A /* ResetPrimerPlanner.swift in Sources */,
-				66D9A9D36B46051B1C1EA722 /* ResetPrimerSettings.swift in Sources */,
 				E755DFF9AC42460A40C2102E /* SecureFileBookmark.swift in Sources */,
 				2D53BD76E94E68A54CF36F92 /* SnapshotFreshness.swift in Sources */,
 				28FDF54D88C9CB4A982643A6 /* SnapshotRefreshService.swift in Sources */,

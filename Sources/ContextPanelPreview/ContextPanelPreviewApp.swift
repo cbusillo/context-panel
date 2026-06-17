@@ -638,60 +638,6 @@ struct SettingsPane: View {
                 .frame(height: 248)
             }
 
-            Section("Reset Primer") {
-                Text("Coming soon. Context Panel will be able to run a minimal refresh shortly after provider limits reset.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(CPTheme.secondaryText)
-
-                Toggle("Reset primer", isOn: .constant(false))
-                    .toggleStyle(.switch)
-                    .disabled(true)
-
-                Stepper(
-                    value: Binding(
-                        get: { model.resetPrimerSettings.delayMinutesAfterReset },
-                        set: { model.setResetPrimerDelay($0) }
-                    ),
-                    in: 0...120,
-                    step: 5
-                ) {
-                    DetailRow(
-                        label: "Delay after reset",
-                        value: "\(model.resetPrimerSettings.delayMinutesAfterReset) min"
-                    )
-                }
-                .disabled(true)
-
-                Stepper(
-                    value: Binding(
-                        get: { model.resetPrimerSettings.accountStaggerMinutes },
-                        set: { model.setResetPrimerStagger($0) }
-                    ),
-                    in: 0...120,
-                    step: 5
-                ) {
-                    DetailRow(
-                        label: "Stagger accounts",
-                        value: "\(model.resetPrimerSettings.accountStaggerMinutes) min"
-                    )
-                }
-                .disabled(true)
-
-                List {
-                    ForEach(model.resetPrimerSettings.accountPreferences) { preference in
-                        ResetPrimerAccountPreferenceRow(
-                            preference: preference,
-                            isEnabled: Binding(
-                                get: { preference.isEnabled },
-                                set: { model.setResetPrimerAccount(preference.accountID, provider: preference.provider, isEnabled: $0) }
-                            )
-                        )
-                    }
-                }
-                .listStyle(.inset)
-                .frame(height: 150)
-                .disabled(true)
-            }
         }
         .formStyle(.grouped)
         .padding(20)
@@ -922,7 +868,6 @@ private extension RefreshDiagnosticsDecision {
 final class SettingsPaneModel: ObservableObject {
     @Published private(set) var accounts: [LocalProviderAccountConfiguration] = []
     @Published private(set) var widgetPreferences: WidgetDisplayPreferences = .defaultPreferences
-    @Published private(set) var resetPrimerSettings: ResetPrimerSettings = .defaultSettings
     @Published private(set) var backgroundRefreshSettings: BackgroundRefreshSettings = .defaultSettings
     @Published private(set) var limitWarningSettings: LimitWarningSettings = .defaultSettings
     @Published private(set) var webhookSettings: LimitWarningWebhookSettings = .defaultSettings
@@ -972,9 +917,6 @@ final class SettingsPaneModel: ObservableObject {
     )
     private let widgetPreferenceStore = WidgetDisplayPreferencesStore(
         preferencesURL: ContextPanelLocations.widgetDisplayPreferencesURL(appGroupID: ContextPanelLocations.appGroupID)
-    )
-    private let resetPrimerSettingsStore = ResetPrimerSettingsStore(
-        settingsURL: ContextPanelLocations.resetPrimerSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
     )
     private let backgroundRefreshSettingsStore = BackgroundRefreshSettingsStore(
         settingsURL: ContextPanelLocations.backgroundRefreshSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
@@ -1256,9 +1198,6 @@ final class SettingsPaneModel: ObservableObject {
         webhookSettings = webhookSettingsStore.load()
         webhookDeliveryState = webhookDeliveryStateStore.load()
         refreshWebhookURLDisplayText()
-        var primerSettings = resetPrimerSettingsStore.load()
-        primerSettings.syncAccounts(result.document.accounts)
-        resetPrimerSettings = primerSettings
         status = result.status
         if errorMessage == nil {
             errorMessage = result.errorMessage
@@ -1549,46 +1488,9 @@ final class SettingsPaneModel: ObservableObject {
         }
     }
 
-    func setResetPrimerEnabled(_ isEnabled: Bool) {
-        var updated = resetPrimerSettings
-        updated.isEnabled = isEnabled
-        saveResetPrimerSettings(updated)
-    }
-
-    func setResetPrimerDelay(_ minutes: Int) {
-        var updated = resetPrimerSettings
-        updated.setDelayMinutesAfterReset(minutes)
-        saveResetPrimerSettings(updated)
-    }
-
-    func setResetPrimerStagger(_ minutes: Int) {
-        var updated = resetPrimerSettings
-        updated.setAccountStaggerMinutes(minutes)
-        saveResetPrimerSettings(updated)
-    }
-
-    func setResetPrimerAccount(_ accountID: String, provider: Provider, isEnabled: Bool) {
-        var updated = resetPrimerSettings
-        updated.setAccount(accountID, provider: provider, isEnabled: isEnabled)
-        saveResetPrimerSettings(updated)
-    }
-
-    private func saveResetPrimerSettings(_ updated: ResetPrimerSettings) {
-        do {
-            try resetPrimerSettingsStore.save(updated)
-            resetPrimerSettings = updated
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
     private func saveAccounts() {
         do {
             try store.save(AccountConfigurationDocument(updatedAt: Date(), accounts: accounts))
-            var primerSettings = resetPrimerSettings
-            primerSettings.syncAccounts(accounts)
-            try resetPrimerSettingsStore.save(primerSettings)
-            resetPrimerSettings = primerSettings
             WidgetCenter.shared.reloadAllTimelines()
         } catch {
             errorMessage = error.localizedDescription
@@ -2380,26 +2282,6 @@ private extension AccountConnectorKind {
         case .googleAntigravityQuota, .claudeOAuthUsage:
             return false
         }
-    }
-}
-
-struct ResetPrimerAccountPreferenceRow: View {
-    let preference: ResetPrimerAccountPreference
-    @Binding var isEnabled: Bool
-
-    var body: some View {
-        Toggle(isOn: $isEnabled) {
-            HStack(spacing: 8) {
-                ProviderBadge(provider: preference.provider)
-                Text(preference.accountName)
-                Spacer()
-                Text(preference.isEnabled ? "Enabled" : "Off")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(CPTheme.secondaryText)
-            }
-        }
-        .toggleStyle(.switch)
-        .padding(.vertical, 2)
     }
 }
 
