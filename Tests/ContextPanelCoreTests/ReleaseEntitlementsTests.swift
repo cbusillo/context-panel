@@ -45,7 +45,7 @@ import Testing
     let schemes = urlTypes.flatMap { $0["CFBundleURLSchemes"] as? [String] ?? [] }
 
     #expect(schemes.contains("contextpanel"))
-    #expect(schemes.contains("com.shinycomputers.contextpanel"))
+    #expect(schemes.contains("$(CONTEXT_PANEL_GOOGLE_OAUTH_CALLBACK_SCHEME)"))
 }
 
 @Test func appStoreEntitlementsSupportSandboxedRefreshAgent() throws {
@@ -180,6 +180,9 @@ import Testing
         let settings = try #require(project.targetSettings(named: targetName))
         #expect(settings["CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID"] as? String == "")
         #expect(settings["CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET"] as? String == "")
+        #expect(settings["CONTEXT_PANEL_GOOGLE_OAUTH_CALLBACK_SCHEME"] as? String == "")
+        #expect(settings["CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_ID"] as? String == "")
+        #expect(settings["CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_SECRET"] as? String == "")
     }
 
     let refreshAgentSettings = try #require(
@@ -199,6 +202,14 @@ import Testing
     #expect(
         plist["CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET"] as? String
             == "$(CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET)"
+    )
+    #expect(
+        plist["CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_ID"] as? String
+            == "$(CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_ID)"
+    )
+    #expect(
+        plist["CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_SECRET"] as? String
+            == "$(CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_SECRET)"
     )
     #expect(plist["LSBackgroundOnly"] as? Bool == true)
     #expect(plist["LSUIElement"] as? Bool == true)

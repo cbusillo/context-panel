@@ -34,8 +34,14 @@ The lower-level workflows remain callable for recovery and validation:
   the widget extension
 
 The native Xcode path is the one to use for widget installability. Workflows
-that build or upload the app require the Google OAuth client ID and client
-secret so shipped builds keep the Google Antigravity reconnect flow working.
+that build or upload the app require a Google OAuth client ID for an Apple/iOS
+installed-app client so shipped builds keep the Google Antigravity reconnect
+flow working. The app derives the callback scheme as
+`com.googleusercontent.apps.<client-id-prefix>` unless
+`CONTEXT_PANEL_GOOGLE_OAUTH_CALLBACK_SCHEME` is explicitly configured. A client
+secret is optional for native clients. Legacy client ID/secret settings can be
+provided to keep refresh tokens issued by an older web/confidential client alive
+until users reconnect.
 
 ## Normal Ship Workflow
 

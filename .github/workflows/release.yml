@@ -78,6 +78,12 @@ jobs:
         ${{ secrets.CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID }}
       CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET: >-
         ${{ secrets.CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET }}
+      CONTEXT_PANEL_GOOGLE_OAUTH_CALLBACK_SCHEME: >-
+        ${{ secrets.CONTEXT_PANEL_GOOGLE_OAUTH_CALLBACK_SCHEME }}
+      CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_ID: >-
+        ${{ secrets.CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_ID }}
+      CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_SECRET: >-
+        ${{ secrets.CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_SECRET }}
 
     steps:
       - name: Checkout
@@ -132,10 +138,6 @@ jobs:
           if [[ "${publish_requested}" == "true" ]]; then
             if [[ -z "${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID:-}" ]]; then
               echo "CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID is required" >&2
-              exit 1
-            fi
-            if [[ -z "${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET:-}" ]]; then
-              echo "CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET is required" >&2
               exit 1
             fi
           fi

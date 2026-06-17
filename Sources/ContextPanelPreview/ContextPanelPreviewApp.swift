@@ -2096,7 +2096,9 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         let body = try GoogleAntigravityOAuthFlow.authorizationCodeTokenRequestBody(
             code: authorizationCode,
             codeVerifier: flow.pkce.verifier,
-            redirectURI: flow.redirectURI
+            redirectURI: flow.redirectURI,
+            clientID: flow.clientID,
+            clientSecret: flow.clientSecret
         )
         var request = URLRequest(url: GoogleAntigravityOAuthMetadata.tokenEndpoint)
         request.httpMethod = "POST"
@@ -2118,7 +2120,9 @@ final class SettingsPaneModel: NSObject, ObservableObject {
             accessToken: token.accessToken,
             refreshToken: token.refreshToken,
             expiresAt: token.expiresIn.map { Date().addingTimeInterval(TimeInterval($0)) },
-            scopes: token.scopes
+            scopes: token.scopes,
+            clientID: flow.clientID,
+            clientSecret: flow.clientSecret
         )
     }
 }
@@ -2152,6 +2156,8 @@ private struct PendingGoogleAntigravityOAuth {
     let accountID: String
     let pkce: OAuthPKCEChallenge
     let state: String
+    let clientID: String
+    let clientSecret: String?
     let redirectURI: String
     let authorizationURL: URL
 
@@ -2159,11 +2165,17 @@ private struct PendingGoogleAntigravityOAuth {
         self.accountID = accountID
         pkce = try OAuthPKCE.makeChallenge()
         state = try OAuthPKCE.makeChallenge(byteCount: 24).verifier
+        guard let configuredClientID = GoogleAntigravityOAuthMetadata.clientID, !configuredClientID.isEmpty else {
+            throw ConnectorError.invalidAuth("Google Antigravity OAuth client ID is not configured.")
+        }
+        clientID = configuredClientID
+        clientSecret = GoogleAntigravityOAuthMetadata.clientSecret
         redirectURI = GoogleAntigravityOAuthFlow.redirectURI
         authorizationURL = try GoogleAntigravityOAuthFlow.authorizationURL(
             codeChallenge: pkce.challenge,
             state: state,
-            redirectURI: redirectURI
+            redirectURI: redirectURI,
+            clientID: clientID
         )
     }
 }

@@ -6,19 +6,25 @@ public struct GoogleAntigravityOAuthCredentials: Codable, Equatable, Sendable {
     public let expiresAt: Date?
     public let scopes: [String]
     public let projectID: String?
+    public let clientID: String
+    public let clientSecret: String?
 
     public init(
         accessToken: String?,
         refreshToken: String?,
         expiresAt: Date?,
         scopes: [String] = [],
-        projectID: String? = nil
+        projectID: String? = nil,
+        clientID: String = GoogleAntigravityOAuthMetadata.clientID ?? "",
+        clientSecret: String? = GoogleAntigravityOAuthMetadata.clientSecret
     ) {
         self.accessToken = accessToken
         self.refreshToken = refreshToken
         self.expiresAt = expiresAt
         self.scopes = scopes
         self.projectID = projectID
+        self.clientID = clientID
+        self.clientSecret = clientSecret
     }
 
     enum CodingKeys: String, CodingKey {
@@ -27,6 +33,8 @@ public struct GoogleAntigravityOAuthCredentials: Codable, Equatable, Sendable {
         case expiresAt
         case scopes
         case projectID
+        case clientID
+        case clientSecret
     }
 
     public init(from decoder: Decoder) throws {
@@ -36,6 +44,16 @@ public struct GoogleAntigravityOAuthCredentials: Codable, Equatable, Sendable {
         expiresAt = try container.decodeIfPresent(Date.self, forKey: .expiresAt)
         scopes = try container.decodeIfPresent([String].self, forKey: .scopes) ?? GoogleAntigravityOAuthMetadata.scopes
         projectID = try container.decodeIfPresent(String.self, forKey: .projectID)
+        let storedClientID = try container.decodeIfPresent(String.self, forKey: .clientID)
+        let storedClientSecret = try container.decodeIfPresent(String.self, forKey: .clientSecret)
+        let hasStoredClientMetadata = container.contains(.clientID) || container.contains(.clientSecret)
+        let resolvedClientMetadata = Self.resolvedClientMetadata(
+            storedClientID: storedClientID,
+            storedClientSecret: storedClientSecret,
+            hasStoredClientMetadata: hasStoredClientMetadata
+        )
+        clientID = resolvedClientMetadata.clientID
+        clientSecret = resolvedClientMetadata.clientSecret
 
         let hasAccessToken = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         let hasRefreshToken = refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
@@ -45,6 +63,24 @@ public struct GoogleAntigravityOAuthCredentials: Codable, Equatable, Sendable {
                 debugDescription: "Google Antigravity credentials do not contain an access or refresh token."
             ))
         }
+    }
+
+    static func resolvedClientMetadata(
+        storedClientID: String?,
+        storedClientSecret: String?,
+        hasStoredClientMetadata: Bool,
+        legacyClientID: String? = GoogleAntigravityOAuthMetadata.legacyClientID,
+        legacyClientSecret: String? = GoogleAntigravityOAuthMetadata.legacyClientSecret,
+        currentClientID: String? = GoogleAntigravityOAuthMetadata.clientID,
+        currentClientSecret: String? = GoogleAntigravityOAuthMetadata.clientSecret
+    ) -> (clientID: String, clientSecret: String?) {
+        if hasStoredClientMetadata {
+            return (storedClientID ?? "", storedClientSecret)
+        }
+        return (
+            legacyClientID ?? currentClientID ?? "",
+            legacyClientSecret ?? currentClientSecret
+        )
     }
 }
 
@@ -109,12 +145,35 @@ public struct GoogleAntigravityAccountConfiguration: Equatable, Sendable {
 }
 
 public enum GoogleAntigravityOAuthFlow {
-    public static let callbackScheme = "com.shinycomputers.contextpanel"
     public static let callbackPath = "/oauth-callback"
-    public static let redirectURI = "\(callbackScheme):\(callbackPath)"
+
+    public static var callbackScheme: String {
+        if let configured = GoogleAntigravityOAuthMetadata.callbackScheme {
+            return configured
+        }
+        guard let clientID = GoogleAntigravityOAuthMetadata.clientID,
+              let derived = callbackScheme(forClientID: clientID)
+        else {
+            return ""
+        }
+        return derived
+    }
+
+    public static var redirectURI: String {
+        "\(callbackScheme):\(callbackPath)"
+    }
+
+    public static func callbackScheme(forClientID clientID: String) -> String? {
+        let suffix = ".apps.googleusercontent.com"
+        guard clientID.hasSuffix(suffix) else { return nil }
+        let prefix = String(clientID.dropLast(suffix.count))
+        guard !prefix.isEmpty else { return nil }
+        return "com.googleusercontent.apps.\(prefix)"
+    }
 
     public static func isCallbackURL(_ url: URL) -> Bool {
-        url.scheme == callbackScheme && url.path == callbackPath
+        guard !callbackScheme.isEmpty else { return false }
+        return url.scheme == callbackScheme && url.path == callbackPath
     }
 
     public static func normalizedAuthorizationCode(from value: String) -> GoogleAntigravityAuthorizationCode {
@@ -138,6 +197,9 @@ public enum GoogleAntigravityOAuthFlow {
     ) throws -> URL {
         guard let clientID, !clientID.isEmpty else {
             throw ConnectorError.invalidAuth("Google Antigravity OAuth client ID is not configured.")
+        }
+        guard !redirectURI.isEmpty, !redirectURI.hasPrefix(":") else {
+            throw ConnectorError.invalidAuth("Google Antigravity OAuth callback scheme is not configured.")
         }
         var components = URLComponents(url: GoogleAntigravityOAuthMetadata.authorizationEndpoint, resolvingAgainstBaseURL: false)!
         components.queryItems = [
@@ -486,8 +548,8 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
             ],
             body: try GoogleAntigravityOAuthFlow.refreshTokenRequestBody(
                 refreshToken: refreshToken,
-                clientID: account.clientID,
-                clientSecret: account.clientSecret
+                clientID: credentials.clientID.isEmpty ? account.clientID : credentials.clientID,
+                clientSecret: credentials.clientSecret ?? account.clientSecret
             )
         ))
         guard (200..<300).contains(response.statusCode) else {
@@ -502,7 +564,9 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
             refreshToken: token.refreshToken ?? refreshToken,
             expiresAt: token.expiresIn.map { now.addingTimeInterval(TimeInterval($0)) },
             scopes: token.scopes.isEmpty ? credentials.scopes : token.scopes,
-            projectID: credentials.projectID
+            projectID: credentials.projectID,
+            clientID: credentials.clientID.isEmpty ? account.clientID : credentials.clientID,
+            clientSecret: credentials.clientSecret ?? account.clientSecret
         )
         try saveCredentials(credentials, accountID: account.accountID)
         return token.accessToken
@@ -560,7 +624,9 @@ private extension GoogleAntigravityOAuthCredentials {
             refreshToken: refreshToken,
             expiresAt: expiresAt,
             scopes: scopes,
-            projectID: projectID
+            projectID: projectID,
+            clientID: clientID,
+            clientSecret: clientSecret
         )
     }
 }
@@ -578,6 +644,15 @@ public enum GoogleAntigravityOAuthMetadata {
     }
     public static var clientSecret: String? {
         configuredValue(named: "CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET")
+    }
+    public static var legacyClientID: String? {
+        configuredValue(named: "CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_ID")
+    }
+    public static var legacyClientSecret: String? {
+        configuredValue(named: "CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_SECRET")
+    }
+    public static var callbackScheme: String? {
+        configuredValue(named: "CONTEXT_PANEL_GOOGLE_OAUTH_CALLBACK_SCHEME")
     }
     public static let scopes = [
         "https://www.googleapis.com/auth/cloud-platform",

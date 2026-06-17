@@ -160,6 +160,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("<redacted>", script)
         self.assertIn("xcconfig_literal_value", script)
         self.assertIn("embeds a quoted Google OAuth client id", script)
+        self.assertIn("CONTEXT_PANEL_GOOGLE_OAUTH_CALLBACK_SCHEME", script)
+        self.assertIn("google_oauth_callback_scheme_for_client_id", script)
+        self.assertIn("does not register the derived Google OAuth callback scheme", script)
         self.assertIn("require_local_google_oauth_config", script)
         self.assertIn("debug Google OAuth build settings are required for install/reset", script)
         self.assertNotIn('CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET="${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET:-}"', script)
@@ -184,6 +187,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn(".build/runtime-baseline-local-oauth.xcconfig", gitignore)
         self.assertIn("CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID=", example)
         self.assertIn("CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET=", example)
+        self.assertIn("CONTEXT_PANEL_GOOGLE_OAUTH_CALLBACK_SCHEME=", example)
+        self.assertIn("CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_ID=", example)
 
     def test_runtime_baseline_build_allows_xcode_to_update_explicit_profiles(self):
         script = self.read("scripts/context-panel-runtime-baseline.sh")
