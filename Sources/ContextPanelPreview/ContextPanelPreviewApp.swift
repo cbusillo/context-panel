@@ -1,6 +1,6 @@
 import ContextPanelCore
 import AppKit
-import Network
+import AuthenticationServices
 import os
 import ServiceManagement
 import SwiftUI
@@ -139,6 +139,7 @@ struct ContextPanelPreviewApp: App {
 
 struct SettingsNavigationRequest: Equatable {
     enum Destination: Equatable {
+        case accounts
         case cacheStats
     }
 
@@ -310,7 +311,9 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func presentWindow(for url: URL) {
-        if url.host?.lowercased() == "settings" {
+        if GoogleAntigravityOAuthFlow.isCallbackURL(url) {
+            presentSettingsWindow(destination: .accounts)
+        } else if url.host?.lowercased() == "settings" {
             presentSettingsWindow(destination: settingsDestination(for: url))
         } else {
             presentMainWindowWhenAvailable()
@@ -365,6 +368,7 @@ struct SettingsPane: View {
     @ObservedObject var navigation: SettingsNavigationModel
     @StateObject private var model = SettingsPaneModel()
     @State private var focusedDestination: SettingsNavigationRequest.Destination?
+    @State private var handledGoogleOAuthCallback: URL?
 
     var body: some View {
         Form {
@@ -652,9 +656,14 @@ struct SettingsPane: View {
         .onAppear {
             model.load()
             consumeNavigationRequest(clearWhenEmpty: true)
+            consumePendingGoogleOAuthCallback()
         }
         .onChange(of: navigation.request?.id) { _, _ in
             consumeNavigationRequest()
+            consumePendingGoogleOAuthCallback()
+        }
+        .onChange(of: appModel.pendingGoogleOAuthCallbackURL) { _, _ in
+            consumePendingGoogleOAuthCallback()
         }
         .onChange(of: model.authorizationRefreshCounter) { _, _ in
             refreshAfterAuthorization()
@@ -669,6 +678,15 @@ struct SettingsPane: View {
             return
         }
         focusedDestination = request.destination
+    }
+
+    private func consumePendingGoogleOAuthCallback() {
+        guard let callbackURL = appModel.pendingGoogleOAuthCallbackURL else { return }
+        guard model.hasPendingGoogleOAuth else { return }
+        guard handledGoogleOAuthCallback != callbackURL else { return }
+        handledGoogleOAuthCallback = callbackURL
+        appModel.clearPendingGoogleOAuthCallbackURL(callbackURL)
+        model.completeGoogleAntigravityOAuth(code: callbackURL.absoluteString) {}
     }
 
     private func authorizeAuthFile(for account: LocalProviderAccountConfiguration) {
@@ -788,11 +806,7 @@ struct GoogleAntigravityOAuthCodeSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Connect Google")
                 .font(.system(size: 18, weight: .semibold))
-            Text(
-                model.isGoogleOAuthCallbackListening
-                    ? "Approve Google in the browser. Context Panel is listening for the local callback and will finish automatically."
-                    : "Approve Google in the browser. If the callback cannot return to Context Panel, paste the redirected URL or authorization code here."
-            )
+            Text("Approve Google in the browser. Context Panel will finish automatically. If sign-in cannot complete, paste the redirected URL or authorization code here.")
                 .font(.system(size: 12))
                 .foregroundStyle(CPTheme.secondaryText)
             if let url = model.pendingGoogleOAuthAuthorizationURL {
@@ -865,7 +879,7 @@ private extension RefreshDiagnosticsDecision {
 }
 
 @MainActor
-final class SettingsPaneModel: ObservableObject {
+final class SettingsPaneModel: NSObject, ObservableObject {
     @Published private(set) var accounts: [LocalProviderAccountConfiguration] = []
     @Published private(set) var widgetPreferences: WidgetDisplayPreferences = .defaultPreferences
     @Published private(set) var backgroundRefreshSettings: BackgroundRefreshSettings = .defaultSettings
@@ -887,7 +901,6 @@ final class SettingsPaneModel: ObservableObject {
     @Published private(set) var isCompletingClaudeOAuth = false
     @Published var isGoogleOAuthCodeSheetPresented = false
     @Published private(set) var isCompletingGoogleOAuth = false
-    @Published private(set) var isGoogleOAuthCallbackListening = false
     @Published private(set) var authorizationRefreshCounter = 0
 
     private let bookmarkStore = SecureFileBookmarkStore(storeURL: ContextPanelLocations.bookmarkStoreURL())
@@ -896,7 +909,7 @@ final class SettingsPaneModel: ObservableObject {
     private var recentlyVerifiedPromptCacheUsagePaths: Set<String> = []
     private var pendingClaudeOAuth: PendingClaudeOAuth?
     private var pendingGoogleOAuth: PendingGoogleAntigravityOAuth?
-    private var googleOAuthCallbackServer: GoogleOAuthCallbackServer?
+    private var googleOAuthSession: ASWebAuthenticationSession?
     private var webhookTestCooldownTask: Task<Void, Never>?
 
     deinit {
@@ -909,6 +922,10 @@ final class SettingsPaneModel: ObservableObject {
 
     var pendingGoogleOAuthAuthorizationURL: URL? {
         pendingGoogleOAuth?.authorizationURL
+    }
+
+    var hasPendingGoogleOAuth: Bool {
+        pendingGoogleOAuth != nil
     }
 
     private let store = AccountConfigurationStore(
@@ -1674,8 +1691,7 @@ final class SettingsPaneModel: ObservableObject {
         do {
             let flow = try PendingGoogleAntigravityOAuth(accountID: account.id)
             pendingGoogleOAuth = flow
-            isGoogleOAuthCodeSheetPresented = true
-            startGoogleOAuthCallbackListener(for: flow)
+            startGoogleOAuthSession(for: flow)
             contextPanelLogger.info("Google Antigravity OAuth connect clicked for accountID=\(account.id, privacy: .public)")
         } catch {
             contextPanelLogger.error("Google Antigravity OAuth connect failed: \(error.localizedDescription, privacy: .public)")
@@ -1684,7 +1700,8 @@ final class SettingsPaneModel: ObservableObject {
     }
 
     func cancelGoogleAntigravityOAuth() {
-        stopGoogleOAuthCallbackListener()
+        googleOAuthSession?.cancel()
+        googleOAuthSession = nil
         pendingGoogleOAuth = nil
         isCompletingGoogleOAuth = false
     }
@@ -1782,7 +1799,7 @@ final class SettingsPaneModel: ObservableObject {
                         return
                     }
                     contextPanelLogger.info("Google Antigravity OAuth code exchange succeeded")
-                    self.stopGoogleOAuthCallbackListener()
+                    self.googleOAuthSession = nil
                     self.pendingGoogleOAuth = nil
                     self.isCompletingGoogleOAuth = false
                     self.isGoogleOAuthCodeSheetPresented = false
@@ -1800,90 +1817,74 @@ final class SettingsPaneModel: ObservableObject {
         }
     }
 
-    private func startGoogleOAuthCallbackListener(for flow: PendingGoogleAntigravityOAuth) {
-        stopGoogleOAuthCallbackListener()
-        do {
-            let server = try GoogleOAuthCallbackServer(
-                redirectURI: flow.redirectURI,
-                expectedState: flow.state,
-                onReady: { [weak self] port in
-                    Task { @MainActor [weak self] in
-                        guard let self, self.pendingGoogleOAuth?.state == flow.state else { return }
-                        do {
-                            var readyFlow = flow
-                            try readyFlow.useLoopbackPort(port)
-                            guard let authorizationURL = readyFlow.authorizationURL else {
-                                throw ConnectorError.invalidAuth("Google authorization URL was not available after the callback listener started.")
-                            }
-                            self.pendingGoogleOAuth = readyFlow
-                            self.isGoogleOAuthCallbackListening = true
-                            self.openGoogleAuthorizationURL(authorizationURL)
-                        } catch {
-                            self.stopGoogleOAuthCallbackListener()
-                            self.isGoogleOAuthCallbackListening = false
-                            self.errorMessage = "Google authorization URL could not be created. Check the Google OAuth configuration and try again."
-                            contextPanelLogger.error("Google OAuth callback listener could not prepare authorization URL: \(error.localizedDescription, privacy: .public)")
-                        }
-                    }
-                },
-                onFailure: { [weak self] message in
-                    Task { @MainActor [weak self] in
-                        guard let self, self.pendingGoogleOAuth?.state == flow.state else { return }
-                        do {
-                            var fallbackFlow = flow
-                            try fallbackFlow.useManualFallback()
-                            self.pendingGoogleOAuth = fallbackFlow
-                        } catch {
-                            contextPanelLogger.error("Google OAuth callback listener could not prepare fallback authorization URL: \(error.localizedDescription, privacy: .public)")
-                        }
-                        self.isGoogleOAuthCallbackListening = false
-                        self.errorMessage = "Automatic Google callback could not start. Use the link in this sheet, then paste the redirected URL if Safari cannot return to Context Panel."
-                        contextPanelLogger.error("Google OAuth callback listener failed: \(message, privacy: .public)")
-                    }
-                }
-            ) { [weak self] authorizationCode in
-                Task { @MainActor [weak self] in
-                    guard let self, let activeFlow = self.pendingGoogleOAuth else { return }
-                    guard activeFlow.state == flow.state else { return }
-                    self.completeGoogleAntigravityOAuth(
-                        authorizationCode: authorizationCode,
-                        flow: activeFlow,
-                        onConnected: {}
-                    )
-                }
-            }
-            googleOAuthCallbackServer = server
-            isGoogleOAuthCallbackListening = false
-            errorMessage = nil
-            server.start()
-        } catch {
-            isGoogleOAuthCallbackListening = false
-            if pendingGoogleOAuth?.state == flow.state {
-                do {
-                    var fallbackFlow = flow
-                    try fallbackFlow.useManualFallback()
-                    pendingGoogleOAuth = fallbackFlow
-                } catch {
-                    contextPanelLogger.error("Google OAuth callback listener could not prepare fallback authorization URL: \(error.localizedDescription, privacy: .public)")
-                }
-            }
-            errorMessage = "Automatic Google callback could not start. Use the link in this sheet, then paste the redirected URL if Safari cannot return to Context Panel."
-            contextPanelLogger.error("Google OAuth callback listener failed: \(error.localizedDescription, privacy: .public)")
-        }
-    }
+    private func startGoogleOAuthSession(for flow: PendingGoogleAntigravityOAuth) {
+        googleOAuthSession?.cancel()
+        let session = ASWebAuthenticationSession(
+            url: flow.authorizationURL,
+            callbackURLScheme: GoogleAntigravityOAuthFlow.callbackScheme
+        ) { [weak self] callbackURL, error in
+            Task { @MainActor [weak self] in
+                guard let self, let activeFlow = self.pendingGoogleOAuth else { return }
+                guard activeFlow.state == flow.state else { return }
+                self.googleOAuthSession = nil
 
-    private func openGoogleAuthorizationURL(_ url: URL) {
-        let opened = NSWorkspace.shared.open(url)
-        contextPanelLogger.info("Google Antigravity OAuth authorization URL open result=\(opened, privacy: .public)")
-        if !opened {
-            errorMessage = "Google authorization did not open automatically. Use the link in the Connect Google sheet."
-        }
-    }
+                if let error {
+                    if let authError = error as? ASWebAuthenticationSessionError,
+                       authError.code == .canceledLogin {
+                        self.pendingGoogleOAuth = nil
+                        self.isCompletingGoogleOAuth = false
+                        self.isGoogleOAuthCodeSheetPresented = false
+                        contextPanelLogger.info("Google Antigravity OAuth session canceled")
+                        return
+                    }
+                    self.isGoogleOAuthCodeSheetPresented = true
+                    self.errorMessage = "Google sign-in could not finish automatically. Use the link in this sheet, then paste the redirected URL or authorization code."
+                    contextPanelLogger.error("Google Antigravity OAuth session failed: \(error.localizedDescription, privacy: .public)")
+                    return
+                }
 
-    private func stopGoogleOAuthCallbackListener() {
-        googleOAuthCallbackServer?.cancel()
-        googleOAuthCallbackServer = nil
-        isGoogleOAuthCallbackListening = false
+                guard let callbackURL else {
+                    self.isGoogleOAuthCodeSheetPresented = true
+                    self.errorMessage = "Google sign-in did not return a callback URL. Paste the redirected URL or authorization code to finish setup."
+                    contextPanelLogger.error("Google Antigravity OAuth session finished without a callback URL")
+                    return
+                }
+
+                let authorizationCode = GoogleAntigravityOAuthFlow.normalizedAuthorizationCode(from: callbackURL.absoluteString)
+                guard !authorizationCode.code.isEmpty else {
+                    self.isGoogleOAuthCodeSheetPresented = true
+                    self.errorMessage = "Google sign-in did not return an authorization code. Paste the redirected URL or authorization code to finish setup."
+                    contextPanelLogger.error("Google Antigravity OAuth callback did not include an authorization code")
+                    return
+                }
+                if let state = authorizationCode.state, state != activeFlow.state {
+                    self.isGoogleOAuthCodeSheetPresented = true
+                    self.errorMessage = "Google authorization state did not match this connection attempt. Start Google sign-in again."
+                    contextPanelLogger.error("Google Antigravity OAuth callback state mismatch")
+                    return
+                }
+
+                self.completeGoogleAntigravityOAuth(
+                    authorizationCode: authorizationCode,
+                    flow: activeFlow,
+                    onConnected: {}
+                )
+            }
+        }
+        session.presentationContextProvider = self
+        session.prefersEphemeralWebBrowserSession = false
+        googleOAuthSession = session
+        errorMessage = nil
+
+        if !session.start() {
+            googleOAuthSession = nil
+            isGoogleOAuthCodeSheetPresented = true
+            let opened = NSWorkspace.shared.open(flow.authorizationURL)
+            errorMessage = opened
+                ? "Google sign-in opened in the browser. Paste the redirected URL or authorization code to finish setup."
+                : "Google sign-in could not start automatically. Use the link in this sheet, then paste the redirected URL or authorization code."
+            contextPanelLogger.error("Google Antigravity OAuth session did not start")
+        }
     }
 
     func authorizeAuthFile(for account: LocalProviderAccountConfiguration, onVerified: @escaping () -> Void = {}) {
@@ -2114,6 +2115,15 @@ final class SettingsPaneModel: ObservableObject {
     }
 }
 
+extension SettingsPaneModel: ASWebAuthenticationPresentationContextProviding {
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        NSApplication.shared.keyWindow
+            ?? NSApplication.shared.mainWindow
+            ?? NSApplication.shared.windows.first(where: { $0.isVisible })
+            ?? ASPresentationAnchor()
+    }
+}
+
 private struct PendingClaudeOAuth {
     let accountID: String
     let pkce: OAuthPKCEChallenge
@@ -2134,134 +2144,19 @@ private struct PendingGoogleAntigravityOAuth {
     let accountID: String
     let pkce: OAuthPKCEChallenge
     let state: String
-    private(set) var redirectURI: String
-    private(set) var authorizationURL: URL?
+    let redirectURI: String
+    let authorizationURL: URL
 
     init(accountID: String) throws {
         self.accountID = accountID
         pkce = try OAuthPKCE.makeChallenge()
         state = try OAuthPKCE.makeChallenge(byteCount: 24).verifier
-        redirectURI = GoogleAntigravityOAuthFlow.manualRedirectURI
-        authorizationURL = nil
-    }
-
-    mutating func useLoopbackPort(_ port: UInt16) throws {
-        redirectURI = GoogleAntigravityOAuthFlow.loopbackRedirectURI(port: port)
+        redirectURI = GoogleAntigravityOAuthFlow.redirectURI
         authorizationURL = try GoogleAntigravityOAuthFlow.authorizationURL(
             codeChallenge: pkce.challenge,
             state: state,
             redirectURI: redirectURI
         )
-    }
-
-    mutating func useManualFallback() throws {
-        redirectURI = GoogleAntigravityOAuthFlow.manualRedirectURI
-        authorizationURL = try GoogleAntigravityOAuthFlow.authorizationURL(
-            codeChallenge: pkce.challenge,
-            state: state,
-            redirectURI: redirectURI
-        )
-    }
-}
-
-private final class GoogleOAuthCallbackServer: @unchecked Sendable {
-    private let listener: NWListener
-    private let expectedState: String
-    private let onReady: @Sendable (UInt16) -> Void
-    private let onFailure: @Sendable (String) -> Void
-    private let onCode: @Sendable (GoogleAntigravityAuthorizationCode) -> Void
-
-    init(
-        redirectURI: String,
-        expectedState: String,
-        onReady: @escaping @Sendable (UInt16) -> Void,
-        onFailure: @escaping @Sendable (String) -> Void,
-        onCode: @escaping @Sendable (GoogleAntigravityAuthorizationCode) -> Void
-    ) throws {
-        guard
-            let url = URL(string: redirectURI),
-            url.host == "localhost" || url.host == "127.0.0.1"
-        else {
-            throw ConnectorError.invalidAuth("Google OAuth callback URL is not a supported localhost URL.")
-        }
-
-        let parameters = NWParameters.tcp
-        parameters.requiredInterfaceType = .loopback
-        listener = try NWListener(using: parameters, on: .any)
-        self.expectedState = expectedState
-        self.onReady = onReady
-        self.onFailure = onFailure
-        self.onCode = onCode
-    }
-
-    func start() {
-        listener.stateUpdateHandler = { [weak self] state in
-            guard let self else { return }
-            switch state {
-            case .ready:
-                guard let port = self.listener.port?.rawValue else {
-                    self.onFailure("Google OAuth callback listener did not report its port.")
-                    return
-                }
-                self.onReady(port)
-            case .failed(let error), .waiting(let error):
-                self.onFailure(error.localizedDescription)
-            default:
-                break
-            }
-        }
-        listener.newConnectionHandler = { [weak self] connection in
-            self?.handle(connection)
-        }
-        listener.start(queue: .main)
-    }
-
-    func cancel() {
-        listener.cancel()
-    }
-
-    private func handle(_ connection: NWConnection) {
-        connection.start(queue: .main)
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { [weak self] data, _, _, _ in
-            guard let self else {
-                connection.cancel()
-                return
-            }
-            let request = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-            let authorizationCode = Self.authorizationCode(from: request)
-            let isExpectedCallback = authorizationCode?.state == expectedState
-            let response = Self.httpResponse(success: isExpectedCallback)
-            connection.send(content: response, completion: .contentProcessed { _ in
-                connection.cancel()
-            })
-            if let authorizationCode, isExpectedCallback {
-                onCode(authorizationCode)
-            }
-        }
-    }
-
-    private static func authorizationCode(from request: String) -> GoogleAntigravityAuthorizationCode? {
-        guard let requestLine = request.split(separator: "\n", maxSplits: 1).first else { return nil }
-        let pieces = requestLine.split(separator: " ")
-        guard pieces.count >= 2, pieces[0] == "GET" else { return nil }
-        let path = String(pieces[1])
-        guard let url = URL(string: "http://localhost\(path)") else { return nil }
-        guard url.path == GoogleAntigravityOAuthFlow.callbackPath else { return nil }
-        let authorizationCode = GoogleAntigravityOAuthFlow.normalizedAuthorizationCode(from: url.absoluteString)
-        return authorizationCode.code.isEmpty ? nil : authorizationCode
-    }
-
-    private static func httpResponse(success: Bool) -> Data {
-        let title = success ? "Context Panel received the Google callback" : "Context Panel could not read the Google callback"
-        let body = """
-        <!doctype html><html><head><meta charset="utf-8"><title>\(title)</title></head>
-        <body style="font: -apple-system-body; margin: 32px; color: #1d1d1f;">
-        <h1>\(title)</h1><p>You can close this browser tab and return to Context Panel.</p>
-        </body></html>
-        """
-        let status = success ? "200 OK" : "400 Bad Request"
-        let headers = "HTTP/1.1 \(status)\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n"
-        return Data((headers + body).utf8)
     }
 }
 
@@ -3701,6 +3596,7 @@ final class ContextPanelAppModel: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var lastRefreshAt: Date?
     @Published private(set) var navigationRequest: AppNavigationSelection?
+    @Published private(set) var pendingGoogleOAuthCallbackURL: URL?
     private var isDeliveringPendingLimitWarnings = false
     private var pendingLimitWarningDeliveryRequested = false
 
@@ -3880,6 +3776,11 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     func handleOpenURL(_ url: URL) {
+        if GoogleAntigravityOAuthFlow.isCallbackURL(url) {
+            pendingGoogleOAuthCallbackURL = url
+            return
+        }
+
         switch url.host?.lowercased() {
         case "settings":
             break
@@ -3889,6 +3790,12 @@ final class ContextPanelAppModel: ObservableObject {
             navigationRequest = .overview
         default:
             navigationRequest = .overview
+        }
+    }
+
+    func clearPendingGoogleOAuthCallbackURL(_ url: URL) {
+        if pendingGoogleOAuthCallbackURL == url {
+            pendingGoogleOAuthCallbackURL = nil
         }
     }
 
