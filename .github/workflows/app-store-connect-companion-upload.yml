@@ -1,0 +1,209 @@
+---
+name: App Store Connect Companion Build Upload
+
+"on":
+  workflow_call:
+    inputs:
+      version:
+        description: App Store marketing version, for example 1.0.29.
+        required: true
+        type: string
+      build_number:
+        description: Build number. Defaults to UTC timestamp.
+        required: false
+        type: string
+      platform:
+        description: Companion platform to archive.
+        required: false
+        default: ios
+        type: string
+      upload:
+        description: Upload to App Store Connect. Disable to only export an IPA.
+        required: false
+        default: true
+        type: boolean
+    outputs:
+      build_number:
+        description: Resolved CFBundleVersion build number.
+        value: ${{ jobs.upload.outputs.build_number }}
+      app_store_platform:
+        description: App Store Connect platform for the uploaded build.
+        value: ${{ jobs.upload.outputs.app_store_platform }}
+  workflow_dispatch:
+    inputs:
+      version:
+        description: App Store marketing version, for example 1.0.29.
+        required: true
+        type: string
+      build_number:
+        description: Build number. Defaults to UTC timestamp.
+        required: false
+        type: string
+      platform:
+        description: Companion platform to archive.
+        required: true
+        default: ios
+        type: choice
+        options:
+          - ios
+          - visionos
+      upload:
+        description: Upload to App Store Connect. Disable to only export an IPA.
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-store-connect-companion-upload-${{ inputs.version || github.ref }}-${{ inputs.platform || 'ios' }}
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    name: Upload Companion App
+    runs-on: macos-latest
+    outputs:
+      build_number: ${{ steps.build.outputs.build_number }}
+      app_store_platform: ${{ steps.platform.outputs.app_store_platform }}
+
+    env:
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      APP_STORE_CONNECT_API_KEY_P8_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8_BASE64 }}
+      MACOS_APP_STORE_DISTRIBUTION_CERTIFICATE_P12: ${{ secrets.MACOS_APP_STORE_DISTRIBUTION_CERTIFICATE_P12 }}
+      MACOS_APP_STORE_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_APP_STORE_CERTIFICATE_PASSWORD }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+      COMPANION_APP_STORE_APP_PROVISIONING_PROFILE_BASE64: ${{ secrets.COMPANION_APP_STORE_APP_PROVISIONING_PROFILE_BASE64 }}
+      COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64: ${{ secrets.COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64 }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+
+      - name: Resolve Platform
+        id: platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          platform="${{ inputs.platform }}"
+          if [[ -z "${platform}" ]]; then
+            platform="ios"
+          fi
+          case "${platform}" in
+            ios)
+              app_store_platform="IOS"
+              ;;
+            visionos)
+              app_store_platform="VISION_OS"
+              ;;
+            *)
+              echo "unsupported companion platform: ${platform}" >&2
+              exit 2
+              ;;
+          esac
+          echo "platform=${platform}" >>"${GITHUB_OUTPUT}"
+          echo "app_store_platform=${app_store_platform}" >>"${GITHUB_OUTPUT}"
+
+      - name: Resolve Build Number
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_number="${{ inputs.build_number }}"
+          if [[ -z "${build_number}" ]]; then
+            build_number="$(date -u +%Y%m%d%H%M)"
+          fi
+          echo "build_number=${build_number}" >>"${GITHUB_OUTPUT}"
+
+      - name: Import Signing Assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          keychain_password="${MACOS_KEYCHAIN_PASSWORD:-$(uuidgen)}"
+          keychain_path="${RUNNER_TEMP}/context-panel-companion-app-store.keychain-db"
+          security create-keychain -p "${keychain_password}" "${keychain_path}"
+          security set-keychain-settings -lut 21600 "${keychain_path}"
+          security unlock-keychain -p "${keychain_password}" "${keychain_path}"
+
+          certificate_path="${RUNNER_TEMP}/app-store-distribution.p12"
+          if [[ -z "${MACOS_APP_STORE_DISTRIBUTION_CERTIFICATE_P12:-}" ]]; then
+            echo "MACOS_APP_STORE_DISTRIBUTION_CERTIFICATE_P12 is required." >&2
+            exit 1
+          fi
+          printf '%s' "${MACOS_APP_STORE_DISTRIBUTION_CERTIFICATE_P12}" | base64 -D >"${certificate_path}"
+          security import "${certificate_path}" \
+            -P "${MACOS_APP_STORE_CERTIFICATE_PASSWORD:-${MACOS_CERTIFICATE_PASSWORD:-}}" \
+            -A \
+            -k "${keychain_path}"
+
+          existing_keychains=()
+          while IFS= read -r keychain; do
+            keychain="$({ printf '%s\n' "${keychain}" | tr -d '"'; } \
+              | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            if [[ -n "${keychain}" ]]; then
+              existing_keychains+=("${keychain}")
+            fi
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "${keychain_path}" "${existing_keychains[@]}"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "${keychain_password}" "${keychain_path}"
+          security find-identity -v "${keychain_path}"
+
+      - name: Write Provisioning Profiles
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .build/provisioning-appstore
+          if [[ -z "${COMPANION_APP_STORE_APP_PROVISIONING_PROFILE_BASE64:-}" || -z "${COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64:-}" ]]; then
+            echo "Companion app and widget App Store provisioning profile secrets are required." >&2
+            exit 1
+          fi
+          printf '%s' "${COMPANION_APP_STORE_APP_PROVISIONING_PROFILE_BASE64}" | base64 -D > .build/provisioning-appstore/ContextPanelCompanion.provisionprofile
+          printf '%s' "${COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64}" | base64 -D > .build/provisioning-appstore/ContextPanelCompanionWidgetExtension.provisionprofile
+
+      - name: Archive and Upload
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(
+            --platform "${{ steps.platform.outputs.platform }}"
+            --version "${{ inputs.version }}"
+            --build-number "${{ steps.build.outputs.build_number }}"
+          )
+          if [[ "${{ inputs.upload }}" != "true" ]]; then
+            args+=(--export-only)
+          fi
+          scripts/upload-app-store-connect-companion-app.sh "${args[@]}"
+          {
+            echo "### App Store Connect Companion Build Upload"
+            echo
+            echo "- Version: ${{ inputs.version }}"
+            echo "- Build number: ${{ steps.build.outputs.build_number }}"
+            echo "- Commit: ${GITHUB_SHA}"
+            echo "- Platform: ${{ steps.platform.outputs.platform }}"
+            echo "- App Store Connect platform: ${{ steps.platform.outputs.app_store_platform }}"
+            echo "- Mode: ${{ inputs.upload == true && 'upload' || 'export-only' }}"
+            echo "- Result: succeeded"
+          } >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload Export Logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-store-connect-companion-${{ inputs.version }}-${{ steps.build.outputs.build_number }}
+          path: |
+            .build/app-store-connect-companion/UploadOptions-*.plist
+            .build/app-store-connect-companion/upload-*
+          if-no-files-found: ignore

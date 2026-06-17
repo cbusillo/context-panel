@@ -39,10 +39,31 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
         self.assertIn("testflight_beta:", workflow)
         self.assertIn("uses: ./.github/workflows/testflight-beta-distribution.yml", workflow)
+        self.assertIn("companion_app_store_channel:", workflow)
+        self.assertIn("testflight_beta_source:", workflow)
+        self.assertIn("uses: ./.github/workflows/app-store-connect-companion-upload.yml", workflow)
+        self.assertIn("needs.companion-app-store-upload.outputs.app_store_platform", workflow)
+        self.assertIn("testflight_beta_source=companion requires companion_app_store_channel=upload", workflow)
+        self.assertIn("testflight_beta_source=macos requires app_store_channel=upload", workflow)
         self.assertIn("Ship does not submit App Store Review.", workflow)
         self.assertIn("run Submit App Store Review separately; use dry_run=true first", workflow)
         self.assertNotIn("submit_app_review", workflow)
         self.assertNotIn("uses: ./.github/workflows/submit-app-store-review.yml", workflow)
+
+    def test_companion_upload_workflow_uses_companion_script_and_profiles(self):
+        workflow = self.read(".github/workflows/app-store-connect-companion-upload.yml")
+        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
+
+        self.assertIn("name: App Store Connect Companion Build Upload", workflow)
+        self.assertIn("scripts/upload-app-store-connect-companion-app.sh", workflow)
+        self.assertIn("COMPANION_APP_STORE_APP_PROVISIONING_PROFILE_BASE64", workflow)
+        self.assertIn("COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64", workflow)
+        self.assertIn("ContextPanelCompanion", script)
+        self.assertIn("generic/platform=iOS", script)
+        self.assertIn("generic/platform=visionOS", script)
+        self.assertIn("CONTEXT_PANEL_APP_STORE_COMPANION_PROFILE_SPECIFIER", script)
+        self.assertIn("iCloud.com.shinycomputers.contextpanel", script)
+        self.assertIn("group.com.shinycomputers.contextpanel", script)
 
     def test_app_store_upload_name_does_not_claim_testflight_distribution(self):
         workflow = self.read(".github/workflows/app-store-connect-upload.yml")
@@ -57,6 +78,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
         self.assertIn("name: TestFlight Beta Distribution", workflow)
         self.assertIn("scripts/distribute-testflight-beta.py", workflow)
+        self.assertIn("--platform", workflow)
+        self.assertIn("required: true", workflow)
         self.assertIn("/betaGroups/{group_id}/relationships/builds", script)
         self.assertIn("processingState", script)
 

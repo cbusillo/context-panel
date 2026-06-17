@@ -12,6 +12,10 @@ name: TestFlight Beta Distribution
         description: Uploaded CFBundleVersion/build number.
         required: true
         type: string
+      platform:
+        description: App Store Connect platform to distribute.
+        required: false
+        type: string
       beta_groups:
         description: Optional comma-separated TestFlight beta group names. Internal groups are included by default.
         required: false
@@ -36,6 +40,14 @@ name: TestFlight Beta Distribution
         description: Uploaded CFBundleVersion/build number.
         required: true
         type: string
+      platform:
+        description: App Store Connect platform to distribute.
+        required: true
+        type: choice
+        options:
+          - IOS
+          - MAC_OS
+          - VISION_OS
       beta_groups:
         description: Optional comma-separated TestFlight beta group names. Internal groups are included by default.
         required: false
@@ -84,6 +96,7 @@ jobs:
         env:
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_BUILD_NUMBER: ${{ inputs.build_number }}
+          INPUT_PLATFORM: ${{ inputs.platform }}
           INPUT_BETA_GROUPS: ${{ inputs.beta_groups }}
           INPUT_INCLUDE_INTERNAL_BETA_GROUPS: ${{ inputs.include_internal_beta_groups }}
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
@@ -93,6 +106,9 @@ jobs:
             --version "${INPUT_VERSION}"
             --build-number "${INPUT_BUILD_NUMBER}"
           )
+          if [[ -n "${INPUT_PLATFORM}" ]]; then
+            args+=(--platform "${INPUT_PLATFORM}")
+          fi
           if [[ -n "${INPUT_BETA_GROUPS}" ]]; then
             args+=(--beta-group "${INPUT_BETA_GROUPS}")
           fi
@@ -111,6 +127,7 @@ jobs:
             echo "- Version: ${INPUT_VERSION}"
             echo "- Build number: ${INPUT_BUILD_NUMBER}"
             echo "- Commit: ${GITHUB_SHA}"
+            echo "- Platform: ${INPUT_PLATFORM:-any}"
             echo "- Beta groups: ${INPUT_BETA_GROUPS:-internal groups}"
             echo "- Include internal groups: ${INPUT_INCLUDE_INTERNAL_BETA_GROUPS}"
             echo "- Dry run: ${INPUT_DRY_RUN}"

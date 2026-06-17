@@ -40,6 +40,7 @@
     "Ship",
     "Release",
     "App Store Connect Build Upload",
+    "App Store Connect Companion Build Upload",
     "TestFlight Beta Distribution",
     "Submit App Store Review"
   ],
