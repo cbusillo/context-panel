@@ -212,10 +212,15 @@ public struct SnapshotStoreQuery: Equatable, Sendable {
 
 public struct SnapshotStoreStalenessPolicy: Equatable, Sendable {
     public let maximumAge: TimeInterval
+    public let resetExpiryRefreshState: ResetExpiryRefreshState?
 
-    public init(maximumAge: TimeInterval = 15 * 60) {
+    public init(
+        maximumAge: TimeInterval = 15 * 60,
+        resetExpiryRefreshState: ResetExpiryRefreshState? = nil
+    ) {
         precondition(maximumAge >= 0, "maximumAge must not be negative")
         self.maximumAge = maximumAge
+        self.resetExpiryRefreshState = resetExpiryRefreshState
     }
 
     public func status(for storedSnapshot: StoredUsageSnapshot?, now: Date) -> UsageStatus {
@@ -223,7 +228,21 @@ public struct SnapshotStoreStalenessPolicy: Equatable, Sendable {
         if now.timeIntervalSince(storedSnapshot.snapshot.generatedAt) > maximumAge {
             return .stale
         }
+        if hasDueResetExpiry(in: storedSnapshot.snapshot, now: now) {
+            return .stale
+        }
         return storedSnapshot.snapshot.aggregateStatus
+    }
+
+    private func hasDueResetExpiry(in snapshot: UsageSnapshot, now: Date) -> Bool {
+        let dueKeys = snapshot.resetRefreshDueKeys(now: now)
+        guard !dueKeys.isEmpty else { return false }
+        guard let resetExpiryRefreshState else { return true }
+        return dueKeys.contains { key in
+            guard let record = resetExpiryRefreshState.record(for: key) else { return true }
+            guard let nextRetryAt = record.nextRetryAt else { return false }
+            return nextRetryAt <= now
+        }
     }
 }
 

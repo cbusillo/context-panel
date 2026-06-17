@@ -194,6 +194,16 @@ public enum ContextPanelLocations {
         return applicationSupportDirectory().appending(path: "refresh-diagnostics-state.json")
     }
 
+    public static func resetExpiryRefreshStateURL(appGroupID: String? = nil) -> URL {
+        if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
+            return containerURL
+                .appending(path: "Context Panel", directoryHint: .isDirectory)
+                .appending(path: "reset-expiry-refresh-state.json")
+        }
+
+        return applicationSupportDirectory().appending(path: "reset-expiry-refresh-state.json")
+    }
+
     public static func limitWarningSettingsURL(appGroupID: String? = nil) -> URL {
         if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
             return containerURL
