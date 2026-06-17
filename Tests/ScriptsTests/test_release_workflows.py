@@ -119,6 +119,28 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 self.assertIn("PATH=\"$(xcodebuild_system_path)\" /usr/bin/xcodebuild", script)
                 self.assertNotRegex(script, r"(?m)^xcodebuild \\")
 
+    def test_companion_build_validation_supports_ios_and_visionos_without_signing(self):
+        workflow = self.read(".github/workflows/ci.yml")
+        script = self.read("scripts/validate-companion-builds.sh")
+
+        self.assertIn("scripts/validate-companion-builds.sh ios", workflow)
+        self.assertIn("platforms=(ios visionos)", script)
+        self.assertIn("generic/platform=iOS", script)
+        self.assertIn("generic/platform=visionOS", script)
+        self.assertIn("CODE_SIGNING_ALLOWED=NO", script)
+        self.assertIn("ContextPanelCompanion", script)
+        self.assertIn("PATH=\"$(xcodebuild_system_path)\" /usr/bin/xcodebuild", script)
+
+    def test_companion_upload_preflights_profile_platforms(self):
+        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
+
+        self.assertIn("assert_profile_platform_any()", script)
+        self.assertIn("plist_array_contains_value \"$plist\" 'Platform'", script)
+        self.assertIn("profile_platforms=(iOS)", script)
+        self.assertIn("profile_platforms=(visionOS xrOS)", script)
+        self.assertIn("assert_profile_platform_any \"$app_profile\" \"companion app\"", script)
+        self.assertIn("assert_profile_platform_any \"$widget_profile\" \"companion widget\"", script)
+
     def test_runtime_baseline_uses_local_oauth_xcconfig_without_echoing_secret(self):
         script = self.read("scripts/context-panel-runtime-baseline.sh")
 
