@@ -141,6 +141,13 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("assert_profile_platform_any \"$app_profile\" \"companion app\"", script)
         self.assertIn("assert_profile_platform_any \"$widget_profile\" \"companion widget\"", script)
 
+    def test_companion_upload_preflights_widget_icloud_documents_profile(self):
+        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
+
+        self.assertIn("assert_profile_icloud_documents()", script)
+        self.assertIn("assert_profile_icloud_documents \"$app_profile\" \"companion app\"", script)
+        self.assertIn("assert_profile_icloud_documents \"$widget_profile\" \"companion widget\"", script)
+
     def test_runtime_baseline_uses_local_oauth_xcconfig_without_echoing_secret(self):
         script = self.read("scripts/context-panel-runtime-baseline.sh")
 
@@ -153,8 +160,20 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("<redacted>", script)
         self.assertIn("xcconfig_literal_value", script)
         self.assertIn("embeds a quoted Google OAuth client id", script)
+        self.assertIn("require_local_google_oauth_config", script)
+        self.assertIn("debug Google OAuth build settings are required for install/reset", script)
         self.assertNotIn('CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET="${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET:-}"', script)
         self.assertNotIn("shell_escape_xcconfig_value", script)
+
+    def test_runtime_baseline_requires_google_oauth_before_local_install_build(self):
+        script = self.read("scripts/context-panel-runtime-baseline.sh")
+        build_function = re.search(r"build_checkout_app\(\) \{(?P<body>.*?)\n\}", script, re.S)
+
+        self.assertIsNotNone(build_function)
+        body = build_function.group("body")
+        self.assertLess(body.index("load_local_runtime_env"), body.index("require_local_google_oauth_config"))
+        self.assertLess(body.index("require_local_google_oauth_config"), body.index("write_local_oauth_xcconfig"))
+        self.assertLess(body.index("write_local_oauth_xcconfig"), body.index('\txcodebuild \\'))
 
     def test_runtime_baseline_local_env_file_is_ignored_but_example_is_tracked(self):
         gitignore = self.read(".gitignore")

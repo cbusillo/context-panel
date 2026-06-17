@@ -457,6 +457,40 @@ import Testing
     #expect(mirrored.status == .close)
 }
 
+@Test func companionWidgetLoaderRefreshesStaleMirrorFromICloudDocument() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 3_545)
+    let staleGeneratedAt = now.addingTimeInterval(-SnapshotFreshness.widgetMaximumAge - 30)
+    let localURL = root.appending(path: "local/companion.json")
+    let iCloudURL = root.appending(path: "icloud/companion.json")
+    let staleDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: staleGeneratedAt),
+        publishedAt: staleGeneratedAt
+    )
+    let freshDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    )
+    try CompanionSyncStore(documentURL: localURL).save(staleDocument)
+    try CompanionSyncStore(documentURL: iCloudURL).save(freshDocument)
+
+    let result = CompanionSyncLoader.loadWidgetMirror(
+        localMirrorURL: localURL,
+        iCloudDocumentURL: iCloudURL,
+        now: now
+    )
+    let mirrored = CompanionSyncStore(documentURL: localURL).load(
+        policy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge),
+        now: now
+    )
+
+    #expect(result.document == freshDocument)
+    #expect(result.status == .close)
+    #expect(mirrored.document == freshDocument)
+    #expect(mirrored.status == .close)
+}
+
 @Test func companionSyncLoaderReportsMirrorWriteFailures() throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }

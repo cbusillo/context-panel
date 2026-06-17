@@ -349,6 +349,7 @@ assert_profile_platform_any "$widget_profile" "companion widget" "${profile_plat
 assert_profile_app_group "$app_profile" "companion app"
 assert_profile_app_group "$widget_profile" "companion widget"
 assert_profile_icloud_documents "$app_profile" "companion app"
+assert_profile_icloud_documents "$widget_profile" "companion widget"
 install_profile "$app_profile" "$app_profile_uuid"
 install_profile "$widget_profile" "$widget_profile_uuid"
 

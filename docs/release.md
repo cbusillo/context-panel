@@ -224,11 +224,14 @@ scripts/submit-app-store-review.py \
 
 The app and refresh-agent App Store entitlements must keep the sandbox enabled
 with App Group, outbound network, read-only user-selected file access, and
-app-scope bookmark permissions. The widget should keep only the sandbox and App
-Group entitlements. The App Store Connect upload script fails early when any
-supplied provisioning profile does not authorize the Context Panel App Group;
-App Store profiles may express that authorization as either the exact app group
-or a same-team wildcard.
+app-scope bookmark permissions. The macOS widget should keep only the sandbox
+and App Group entitlements. The App Store Connect upload script fails early when
+any supplied provisioning profile does not authorize the Context Panel App
+Group; App Store profiles may express that authorization as either the exact app
+group or a same-team wildcard. Companion iOS and visionOS uploads also require
+the companion app and widget profiles to authorize the Context Panel iCloud
+Documents container so the read-only companion surfaces can sync fresh snapshots
+through iCloud.
 
 ## Build The Native App And Widget
 
