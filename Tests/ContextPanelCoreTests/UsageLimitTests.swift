@@ -623,16 +623,17 @@ import Testing
     )
 
     var preferences = WidgetDisplayPreferences.defaultPreferences
-    preferences.moveMainLimits(fromOffsets: IndexSet(integer: 6), toOffset: 0)
+    preferences.moveMainLimits(fromOffsets: IndexSet(integer: 7), toOffset: 0)
 
     #expect(preferences.visibleMainLimitSummaries(from: snapshot.mainLimitSummaries, maximumCount: 3).map(\.id) == [
         "google:daily",
         "openai:weekly",
-        "anthropic:weekly",
+        "openai:fiveHour",
     ])
     #expect(preferences.visibleMainLimitSummaries(from: snapshot.mainLimitSummaries, maximumCount: 5).map(\.id) == [
         "google:daily",
         "openai:weekly",
+        "openai:fiveHour",
         "anthropic:weekly",
         "anthropic:fiveHour",
     ])
@@ -685,29 +686,26 @@ import Testing
         ]
     )
 
-    var preferences = WidgetDisplayPreferences.defaultPreferences
-    preferences.setMainLimit(provider: .openAI, window: .fiveHour, isVisible: true)
-
-    let lanes = preferences.visibleMainLimitLanes(from: snapshot.mainLimitSummaries, maximumCount: 8)
+    let lanes = WidgetDisplayPreferences.defaultPreferences.visibleMainLimitLanes(from: snapshot.mainLimitSummaries, maximumCount: 8)
 
     #expect(lanes.map(\.id) == [
         "openai:weekly",
+        "openai:fiveHour",
         "anthropic:weekly",
         "anthropic:fiveHour",
         "google:availability",
         "google:weekly",
         "google:fiveHour",
         "google:daily",
-        "openai:fiveHour",
     ])
     #expect(lanes[0].summary?.id == "openai:weekly")
-    #expect(lanes[1].summary == nil)
-    #expect(lanes[2].summary?.id == "anthropic:fiveHour")
-    #expect(lanes[3].summary == nil)
+    #expect(lanes[1].summary?.id == "openai:fiveHour")
+    #expect(lanes[2].summary == nil)
+    #expect(lanes[3].summary?.id == "anthropic:fiveHour")
     #expect(lanes[4].summary == nil)
     #expect(lanes[5].summary == nil)
-    #expect(lanes[6].summary?.id == "google:daily")
-    #expect(lanes[7].summary?.id == "openai:fiveHour")
+    #expect(lanes[6].summary == nil)
+    #expect(lanes[7].summary?.id == "google:daily")
 }
 
 @Test func widgetDisplayPreferencesPreserveSettingsOrderForGooglePlaceholders() {
@@ -773,9 +771,9 @@ import Testing
     #expect(snapshot.mainLimitSummaries.map(\.id) == ["google:fiveHour", "google:weekly"])
     #expect(lanes.map(\.id) == [
         "openai:weekly",
+        "openai:fiveHour",
         "anthropic:weekly",
         "anthropic:fiveHour",
-        "google:availability",
         "google:weekly",
         "google:fiveHour",
     ])
@@ -792,8 +790,8 @@ import Testing
     )
     #expect(largeWidgetLanes.map(\.id) == [
         "openai:weekly",
+        "openai:fiveHour",
         "anthropic:weekly",
-        "anthropic:fiveHour",
         "google:weekly",
         "google:fiveHour",
     ])
@@ -897,6 +895,56 @@ import Testing
     #expect(preferences.preference(for: MainLimitSummary(provider: .google, window: .fiveHour, limits: []))?.isVisible == true)
 }
 
+@Test func widgetDisplayPreferencesMigratesLegacyDefaultOpenAIFiveHourVisibility() {
+    let preferences = WidgetDisplayPreferences(mainLimits: [
+        WidgetMainLimitPreference(provider: .openAI, window: .weekly, isVisible: true, sortOrder: 0),
+        WidgetMainLimitPreference(provider: .anthropic, window: .weekly, isVisible: true, sortOrder: 1),
+        WidgetMainLimitPreference(provider: .anthropic, window: .fiveHour, isVisible: true, sortOrder: 2),
+        WidgetMainLimitPreference(provider: .google, window: .availability, isVisible: true, sortOrder: 3),
+        WidgetMainLimitPreference(provider: .google, window: .weekly, isVisible: true, sortOrder: 4),
+        WidgetMainLimitPreference(provider: .google, window: .fiveHour, isVisible: true, sortOrder: 5),
+        WidgetMainLimitPreference(provider: .google, window: .daily, isVisible: true, sortOrder: 6),
+        WidgetMainLimitPreference(provider: .openAI, window: .fiveHour, isVisible: false, sortOrder: 7),
+    ])
+
+    #expect(preferences.mainLimits.map(\.id) == [
+        "openai:weekly",
+        "openai:fiveHour",
+        "anthropic:weekly",
+        "anthropic:fiveHour",
+        "google:availability",
+        "google:weekly",
+        "google:fiveHour",
+        "google:daily",
+    ])
+    #expect(preferences.preference(for: MainLimitSummary(provider: .openAI, window: .fiveHour, limits: []))?.isVisible == true)
+}
+
+@Test func widgetDisplayPreferencesPreservesCustomHiddenOpenAIFiveHourPreference() {
+    let preferences = WidgetDisplayPreferences(mainLimits: [
+        WidgetMainLimitPreference(provider: .openAI, window: .weekly, isVisible: true, sortOrder: 0),
+        WidgetMainLimitPreference(provider: .anthropic, window: .weekly, isVisible: true, sortOrder: 1),
+        WidgetMainLimitPreference(provider: .anthropic, window: .fiveHour, isVisible: true, sortOrder: 2),
+        WidgetMainLimitPreference(provider: .google, window: .availability, isVisible: true, sortOrder: 3),
+        WidgetMainLimitPreference(provider: .google, window: .weekly, isVisible: true, sortOrder: 4),
+        WidgetMainLimitPreference(provider: .google, window: .fiveHour, isVisible: true, sortOrder: 5),
+        WidgetMainLimitPreference(provider: .openAI, window: .fiveHour, isVisible: false, sortOrder: 6),
+        WidgetMainLimitPreference(provider: .google, window: .daily, isVisible: true, sortOrder: 7),
+    ])
+
+    #expect(preferences.mainLimits.map(\.id) == [
+        "openai:weekly",
+        "anthropic:weekly",
+        "anthropic:fiveHour",
+        "google:availability",
+        "google:weekly",
+        "google:fiveHour",
+        "openai:fiveHour",
+        "google:daily",
+    ])
+    #expect(preferences.preference(for: MainLimitSummary(provider: .openAI, window: .fiveHour, limits: []))?.isVisible == false)
+}
+
 @Test func widgetDisplayPreferencesStoreMigratesSavedDefaultsToIncludeGeminiWindows() throws {
     let json = #"""
     {
@@ -934,7 +982,7 @@ import Testing
         preferencesURL: directory.appending(path: "widget-display-preferences.json")
     )
     var preferences = WidgetDisplayPreferences.defaultPreferences
-    preferences.moveMainLimits(fromOffsets: IndexSet(integer: 6), toOffset: 0)
+    preferences.moveMainLimits(fromOffsets: IndexSet(integer: 7), toOffset: 0)
     preferences.setMainLimit(provider: .anthropic, window: .weekly, isVisible: false)
 
     try store.save(preferences)
@@ -944,7 +992,7 @@ import Testing
     #expect(Array(loaded.mainLimits.map(\.id).prefix(3)) == [
         "google:daily",
         "openai:weekly",
-        "anthropic:weekly",
+        "openai:fiveHour",
     ])
     #expect(loaded.preference(for: MainLimitSummary(provider: .anthropic, window: .weekly, limits: []))?.isVisible == false)
 }
