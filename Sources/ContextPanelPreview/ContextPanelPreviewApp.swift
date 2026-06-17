@@ -639,7 +639,7 @@ struct SettingsPane: View {
                     .onMove(perform: model.moveWidgetMainLimits)
                 }
                 .listStyle(.inset)
-                .frame(height: 248)
+                .frame(height: widgetMainLimitListHeight)
             }
 
         }
@@ -668,6 +668,14 @@ struct SettingsPane: View {
         .onChange(of: model.authorizationRefreshCounter) { _, _ in
             refreshAfterAuthorization()
         }
+    }
+
+    private var widgetMainLimitListHeight: CGFloat {
+        let rowHeight: CGFloat = 36
+        let verticalInset: CGFloat = 16
+        let minimumVisibleRows: CGFloat = 4
+        let rowCount = CGFloat(model.widgetPreferences.mainLimits.count)
+        return max(rowHeight * minimumVisibleRows, rowHeight * rowCount) + verticalInset
     }
 
     private func consumeNavigationRequest(clearWhenEmpty: Bool = false) {
@@ -2195,7 +2203,7 @@ struct WidgetMainLimitPreferenceRow: View {
                     ProviderBadge(provider: preference.provider)
                     Text(preference.window.settingsDisplayName)
                     Spacer()
-                    Text(preference.isVisible ? "Shown" : "Hidden")
+                    Text(isVisible ? "Shown" : "Hidden")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(CPTheme.secondaryText)
                 }
