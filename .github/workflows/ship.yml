@@ -23,7 +23,7 @@ name: Ship
         default: true
         type: boolean
       app_store_channel:
-        description: App Store Connect build-upload action.
+        description: Mac App Store Connect build-upload action.
         required: true
         default: upload
         type: choice
@@ -31,11 +31,36 @@ name: Ship
           - upload
           - export-only
           - skip
+      companion_app_store_channel:
+        description: Companion App Store Connect build-upload action.
+        required: true
+        default: skip
+        type: choice
+        options:
+          - upload
+          - export-only
+          - skip
+      companion_platform:
+        description: Companion platform to archive.
+        required: true
+        default: ios
+        type: choice
+        options:
+          - ios
+          - visionos
       testflight_beta:
         description: Distribute the uploaded build to TestFlight beta groups.
         required: true
         default: true
         type: boolean
+      testflight_beta_source:
+        description: Uploaded build source to distribute to TestFlight.
+        required: true
+        default: macos
+        type: choice
+        options:
+          - macos
+          - companion
       testflight_beta_groups:
         description: Optional comma-separated TestFlight beta group names. Internal groups are included by default.
         required: false
@@ -75,18 +100,34 @@ jobs:
           fi
           github_release_selected="${{ inputs.github_release }}"
           app_store_channel="${{ inputs.app_store_channel }}"
+          companion_app_store_channel="${{ inputs.companion_app_store_channel }}"
           testflight_beta_selected="${{ inputs.testflight_beta }}"
+          testflight_beta_source="${{ inputs.testflight_beta_source }}"
           if [[ "${github_release_selected}" != "true" ]]; then
-            if [[ "${app_store_channel}" == "skip" ]]; then
+            if [[ "${app_store_channel}" == "skip" && "${companion_app_store_channel}" == "skip" ]]; then
               echo "select at least one release channel" >&2
               exit 1
             fi
           fi
           if [[ "${testflight_beta_selected}" == "true" ]]; then
-            if [[ "${app_store_channel}" != "upload" ]]; then
-              echo "testflight_beta requires app_store_channel=upload" >&2
-              exit 1
-            fi
+            case "${testflight_beta_source}" in
+              macos)
+                if [[ "${app_store_channel}" != "upload" ]]; then
+                  echo "testflight_beta_source=macos requires app_store_channel=upload" >&2
+                  exit 1
+                fi
+                ;;
+              companion)
+                if [[ "${companion_app_store_channel}" != "upload" ]]; then
+                  echo "testflight_beta_source=companion requires companion_app_store_channel=upload" >&2
+                  exit 1
+                fi
+                ;;
+              *)
+                echo "unsupported testflight_beta_source: ${testflight_beta_source}" >&2
+                exit 2
+                ;;
+            esac
           fi
           build_number="${{ inputs.build_number }}"
           if [[ -z "${build_number}" ]]; then
@@ -101,8 +142,11 @@ jobs:
             echo "- Commit: ${GITHUB_SHA}"
             echo "- GitHub Release: ${{ inputs.github_release }}"
             echo "- GitHub notarization: ${{ inputs.notarize_github_release }}"
-            echo "- App Store channel: ${{ inputs.app_store_channel }}"
+            echo "- Mac App Store channel: ${{ inputs.app_store_channel }}"
+            echo "- Companion App Store channel: ${{ inputs.companion_app_store_channel }}"
+            echo "- Companion platform: ${{ inputs.companion_platform }}"
             echo "- TestFlight beta: ${{ inputs.testflight_beta }}"
+            echo "- TestFlight source: ${{ inputs.testflight_beta_source }}"
             echo "- TestFlight groups: ${{ inputs.testflight_beta_groups }}"
             echo "- Include internal TestFlight groups: ${{ inputs.include_internal_testflight_groups }}"
           } >>"${GITHUB_STEP_SUMMARY}"
@@ -120,7 +164,7 @@ jobs:
     secrets: inherit
 
   app-store-upload:
-    name: App Store Connect Build Upload Channel
+    name: Mac App Store Connect Build Upload Channel
     needs: validate
     if: ${{ inputs.app_store_channel != 'skip' }}
     uses: ./.github/workflows/app-store-connect-upload.yml
@@ -130,16 +174,43 @@ jobs:
       upload: ${{ inputs.app_store_channel == 'upload' }}
     secrets: inherit
 
+  companion-app-store-upload:
+    name: Companion App Store Connect Build Upload Channel
+    needs: validate
+    if: ${{ inputs.companion_app_store_channel != 'skip' }}
+    uses: ./.github/workflows/app-store-connect-companion-upload.yml
+    with:
+      version: ${{ inputs.version }}
+      build_number: ${{ needs.validate.outputs.build_number }}
+      platform: ${{ inputs.companion_platform }}
+      upload: ${{ inputs.companion_app_store_channel == 'upload' }}
+    secrets: inherit
+
   testflight-beta:
     name: TestFlight Beta Distribution Channel
     needs:
       - validate
       - app-store-upload
-    if: ${{ inputs.testflight_beta }}
+      - companion-app-store-upload
+    if: >-
+      ${{
+        always()
+        && inputs.testflight_beta
+        && needs.validate.result == 'success'
+        && (inputs.app_store_channel != 'upload' || needs.app-store-upload.result == 'success')
+        && (inputs.companion_app_store_channel != 'upload' || needs.companion-app-store-upload.result == 'success')
+        && (
+          (inputs.testflight_beta_source == 'macos' && needs.app-store-upload.result == 'success')
+          || (inputs.testflight_beta_source == 'companion' && needs.companion-app-store-upload.result == 'success')
+        )
+      }}
     uses: ./.github/workflows/testflight-beta-distribution.yml
     with:
       version: ${{ inputs.version }}
-      build_number: ${{ needs.app-store-upload.outputs.build_number }}
+      build_number: >-
+        ${{ inputs.testflight_beta_source == 'companion' && needs.companion-app-store-upload.outputs.build_number || needs.app-store-upload.outputs.build_number }}
+      platform: >-
+        ${{ inputs.testflight_beta_source == 'companion' && needs.companion-app-store-upload.outputs.app_store_platform || 'MAC_OS' }}
       beta_groups: ${{ inputs.testflight_beta_groups }}
       include_internal_beta_groups: ${{ inputs.include_internal_testflight_groups }}
       dry_run: false
@@ -151,6 +222,7 @@ jobs:
       - validate
       - github-release
       - app-store-upload
+      - companion-app-store-upload
       - testflight-beta
     if: ${{ always() }}
     runs-on: ubuntu-latest
@@ -162,10 +234,13 @@ jobs:
           validate_result="${{ needs.validate.result }}"
           github_release_result="${{ needs.github-release.result }}"
           app_store_upload_result="${{ needs.app-store-upload.result }}"
+          companion_app_store_upload_result="${{ needs.companion-app-store-upload.result }}"
           testflight_beta_result="${{ needs.testflight-beta.result }}"
           github_release_selected="${{ inputs.github_release }}"
           app_store_channel="${{ inputs.app_store_channel }}"
+          companion_app_store_channel="${{ inputs.companion_app_store_channel }}"
           testflight_beta_selected="${{ inputs.testflight_beta }}"
+          testflight_beta_source="${{ inputs.testflight_beta_source }}"
           {
             echo "### Ship Summary"
             echo
@@ -174,8 +249,10 @@ jobs:
             echo "- Commit: ${GITHUB_SHA}"
             echo "- Validation: ${validate_result}"
             echo "- GitHub Release: ${github_release_result}"
-            echo "- App Store Connect build upload: ${app_store_upload_result}"
+            echo "- Mac App Store Connect build upload: ${app_store_upload_result}"
+            echo "- Companion App Store Connect build upload: ${companion_app_store_upload_result}"
             echo "- TestFlight beta distribution: ${testflight_beta_result}"
+            echo "- TestFlight source: ${testflight_beta_source}"
             echo
             echo "Ship does not submit App Store Review."
             echo "After TestFlight validation, run Submit App Store Review separately; use dry_run=true first."
@@ -192,6 +269,11 @@ jobs:
           fi
           if [[ "${app_store_channel}" != "skip" ]]; then
             if [[ "${app_store_upload_result}" != "success" ]]; then
+              failed="true"
+            fi
+          fi
+          if [[ "${companion_app_store_channel}" != "skip" ]]; then
+            if [[ "${companion_app_store_upload_result}" != "success" ]]; then
               failed="true"
             fi
           fi

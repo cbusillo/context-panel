@@ -166,6 +166,7 @@ def ensure_build(
     app_id: str,
     marketing_version: str,
     build_number: str,
+    platform: str | None,
     non_exempt_encryption: bool | None,
     dry_run: bool,
     wait_timeout_seconds: int,
@@ -183,13 +184,14 @@ def ensure_build(
                 "include": "preReleaseVersion",
                 "fields[builds]": "version,processingState,uploadedDate,expired,usesNonExemptEncryption,preReleaseVersion",
                 "fields[preReleaseVersions]": "version,platform",
-                "limit": 1,
+                "limit": 200,
             },
         )
         last_payload = payload
         builds = payload.get("data") or []
-        if builds:
-            build = builds[0]
+        matching_builds = matching_platform_builds(payload, builds, marketing_version, build_number, platform)
+        if matching_builds:
+            build = matching_builds[0]
             validate_build_marketing_version(payload, build, marketing_version, build_number)
             attributes = build["attributes"]
             if attributes.get("processingState") == "VALID":
@@ -225,15 +227,20 @@ def ensure_build(
                 f"waiting {poll_seconds}s for App Store Connect processing"
             )
         else:
+            if builds and not any(
+                build_marketing_version_and_platform(payload, build)[0] == marketing_version
+                for build in builds
+            ):
+                validate_build_marketing_version(payload, builds[0], marketing_version, build_number)
             if time.monotonic() >= deadline:
-                raise AppStoreConnectError(f"missing build {build_number}", payload=last_payload)
-            print(f"Build {build_number} is not visible yet; waiting {poll_seconds}s")
+                platform_suffix = f" for platform {platform}" if platform else ""
+                raise AppStoreConnectError(f"missing build {build_number}{platform_suffix}", payload=last_payload)
+            platform_suffix = f" for platform {platform}" if platform else ""
+            print(f"Build {build_number}{platform_suffix} is not visible yet; waiting {poll_seconds}s")
         time.sleep(max(1, poll_seconds))
 
 
-def validate_build_marketing_version(
-    payload: dict[str, Any], build: dict[str, Any], marketing_version: str, build_number: str
-) -> None:
+def build_marketing_version_and_platform(payload: dict[str, Any], build: dict[str, Any]) -> tuple[str | None, str | None]:
     relationship = build.get("relationships", {}).get("preReleaseVersion", {}).get("data")
     pre_release_id = relationship.get("id") if isinstance(relationship, dict) else None
     included = {
@@ -243,6 +250,38 @@ def validate_build_marketing_version(
     }
     pre_release = included.get(pre_release_id) if pre_release_id else None
     found_version = pre_release.get("attributes", {}).get("version") if pre_release else None
+    found_platform = pre_release.get("attributes", {}).get("platform") if pre_release else None
+    return found_version, found_platform
+
+
+def matching_platform_builds(
+    payload: dict[str, Any],
+    builds: list[dict[str, Any]],
+    marketing_version: str,
+    build_number: str,
+    platform: str | None,
+) -> list[dict[str, Any]]:
+    matching: list[dict[str, Any]] = []
+    for build in builds:
+        found_version, found_platform = build_marketing_version_and_platform(payload, build)
+        if found_version != marketing_version:
+            continue
+        if platform and found_platform != platform:
+            continue
+        matching.append(build)
+    if len(matching) > 1:
+        qualifier = f" for platform {platform}" if platform else ""
+        raise AppStoreConnectError(
+            f"multiple builds match {marketing_version} ({build_number}){qualifier}; pass --platform to disambiguate",
+            payload={"data": matching},
+        )
+    return matching
+
+
+def validate_build_marketing_version(
+    payload: dict[str, Any], build: dict[str, Any], marketing_version: str, build_number: str
+) -> None:
+    found_version, _ = build_marketing_version_and_platform(payload, build)
     if found_version != marketing_version:
         raise AppStoreConnectError(
             f"build {build_number} belongs to marketing version {found_version or '<unknown>'}, not {marketing_version}",
@@ -343,6 +382,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--version", required=True, help="App Store marketing version, for example 1.0.22")
     parser.add_argument("--build-number", required=True, help="CFBundleVersion uploaded to App Store Connect")
     parser.add_argument(
+        "--platform",
+        choices=("IOS", "MAC_OS", "TV_OS", "VISION_OS"),
+        help="Only distribute a build for the selected App Store Connect platform.",
+    )
+    parser.add_argument(
         "--beta-group",
         action="append",
         help="TestFlight beta group name. May be provided multiple times or as comma-separated names.",
@@ -385,6 +429,7 @@ def main() -> int:
             app_id,
             args.version,
             args.build_number,
+            args.platform,
             args.non_exempt_encryption,
             args.dry_run,
             args.wait_timeout_seconds,

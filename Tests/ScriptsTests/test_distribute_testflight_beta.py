@@ -18,6 +18,7 @@ class FakeASCClient:
         self.requests: list[tuple[Any, ...]] = []
         self.build_state = "VALID"
         self.marketing_version = "1.0.22"
+        self.platform = "MAC_OS"
         self.group_builds: dict[str, list[str]] = {"group-internal": []}
         self.conflict_on_add = False
 
@@ -45,7 +46,7 @@ class FakeASCClient:
                     {
                         "id": "pre-release-1",
                         "type": "preReleaseVersions",
-                        "attributes": {"version": self.marketing_version, "platform": "MAC_OS"},
+                        "attributes": {"version": self.marketing_version, "platform": self.platform},
                     }
                 )
             return {
@@ -158,6 +159,7 @@ class TestFlightDistributionTests(unittest.TestCase):
                 "app-1",
                 "1.0.22",
                 "202606111944",
+                None,
                 False,
                 False,
                 wait_timeout_seconds=60,
@@ -175,6 +177,7 @@ class TestFlightDistributionTests(unittest.TestCase):
                 "app-1",
                 "1.0.21",
                 "202606111944",
+                None,
                 False,
                 False,
                 wait_timeout_seconds=60,
@@ -182,6 +185,42 @@ class TestFlightDistributionTests(unittest.TestCase):
             )
 
         self.assertIn("belongs to marketing version 1.0.22", str(context.exception))
+
+    def test_ensure_build_selects_requested_platform(self):
+        client = FakeASCClient()
+        client.platform = "IOS"
+
+        build = distribute_testflight_beta.ensure_build(
+            client,
+            "app-1",
+            "1.0.22",
+            "202606111944",
+            "IOS",
+            False,
+            False,
+            wait_timeout_seconds=0,
+            poll_seconds=1,
+        )
+
+        self.assertEqual(build["id"], "build-1")
+
+    def test_ensure_build_rejects_missing_requested_platform(self):
+        client = FakeASCClient()
+
+        with self.assertRaises(distribute_testflight_beta.AppStoreConnectError) as context:
+            distribute_testflight_beta.ensure_build(
+                client,
+                "app-1",
+                "1.0.22",
+                "202606111944",
+                "IOS",
+                False,
+                False,
+                wait_timeout_seconds=0,
+                poll_seconds=1,
+            )
+
+        self.assertIn("missing build 202606111944 for platform IOS", str(context.exception))
 
 
 if __name__ == "__main__":
