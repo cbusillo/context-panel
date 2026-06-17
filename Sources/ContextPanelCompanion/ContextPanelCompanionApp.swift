@@ -129,11 +129,13 @@ private struct CompanionSyncStatusView: View {
         case .stale:
             return "Open Context Panel on your Mac to publish a fresh snapshot."
         case .unknown:
-            return "Once your Mac publishes through iCloud, this companion will show your usage lanes here."
+            return "Open Context Panel on your Mac to publish usage lanes through iCloud."
         case .failure:
             return "The companion could not read the synced snapshot."
+        case .close, .limited:
+            return "Latest Mac sync is current. Check the highlighted lane before starting heavier work."
         default:
-            return "This read-only companion is using the latest snapshot synced from your Mac."
+            return "Latest Mac sync is current."
         }
     }
 

@@ -91,11 +91,9 @@ import Testing
     #expect(appEntitlements["keychain-access-groups"] == nil)
 
     let widgetEntitlements = try loadEntitlements("Config/ContextPanelCompanionWidget.entitlements")
+    try expectICloudDocumentEntitlements(widgetEntitlements)
     let widgetAppGroups = try #require(widgetEntitlements["com.apple.security.application-groups"] as? [String])
     #expect(widgetAppGroups == ["group.com.shinycomputers.contextpanel"])
-    #expect(widgetEntitlements["com.apple.developer.icloud-container-identifiers"] == nil)
-    #expect(widgetEntitlements["com.apple.developer.icloud-services"] == nil)
-    #expect(widgetEntitlements["com.apple.developer.ubiquity-container-identifiers"] == nil)
     #expect(widgetEntitlements["com.apple.security.app-sandbox"] == nil)
     #expect(widgetEntitlements["com.apple.security.network.client"] == nil)
     #expect(widgetEntitlements["keychain-access-groups"] == nil)

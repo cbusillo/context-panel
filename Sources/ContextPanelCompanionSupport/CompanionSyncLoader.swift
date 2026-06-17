@@ -54,21 +54,19 @@ public enum CompanionSyncLoader {
     public static func loadWidgetMirror(now: Date = Date()) -> CompanionSyncLoadResult {
         loadWidgetMirror(
             localMirrorURL: ContextPanelLocations.companionAppGroupSyncDocumentURL(),
+            iCloudDocumentURL: ContextPanelLocations.companionUbiquitySyncDocumentURL(),
             now: now
         )
     }
 
-    static func loadWidgetMirror(localMirrorURL: URL?, now: Date = Date()) -> CompanionSyncLoadResult {
-        guard let localMirrorURL else {
-            return CompanionSyncLoadResult(
-                document: nil,
-                status: .failure,
-                errorMessage: "Context Panel iOS app group is unavailable."
-            )
-        }
-
-        return CompanionSyncStore(documentURL: localMirrorURL).load(
-            policy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge),
+    static func loadWidgetMirror(
+        localMirrorURL: URL?,
+        iCloudDocumentURL: URL? = nil,
+        now: Date = Date()
+    ) -> CompanionSyncLoadResult {
+        load(
+            localMirrorURL: localMirrorURL,
+            iCloudDocumentURL: iCloudDocumentURL,
             now: now
         )
     }

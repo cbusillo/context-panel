@@ -206,6 +206,19 @@ report_local_google_oauth_config() {
 	fi
 }
 
+require_local_google_oauth_config() {
+	if [[ -n "${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID:-}" && -n "${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET:-}" ]]; then
+		ok "debug Google OAuth build settings are configured"
+		return 0
+	fi
+	if [[ -n "${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID:-}" || -n "${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET:-}" ]]; then
+		fail "debug Google OAuth build settings are incomplete; set both CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID and CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET"
+	else
+		fail "debug Google OAuth build settings are required for install/reset; set CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID and CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET or create $local_runtime_env_path"
+	fi
+	return 1
+}
+
 normalize_plist_build_setting_value() {
 	local value="$1"
 	case "$value" in
@@ -915,7 +928,7 @@ build_checkout_app() {
 	require rsync
 
 	load_local_runtime_env
-	report_local_google_oauth_config
+	require_local_google_oauth_config || return 1
 	write_local_oauth_xcconfig
 	xcodegen generate --spec "$repo_root/project.yml"
 	xcodebuild \
