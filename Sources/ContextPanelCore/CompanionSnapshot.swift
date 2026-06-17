@@ -91,10 +91,39 @@ public struct CompanionSyncLoadResult: Equatable, Sendable {
 public struct CompanionSyncStoreFailure: Equatable, Sendable {
     public let documentURL: URL
     public let errorMessage: String
+    public let errorDomain: String
+    public let errorCode: Int
 
     public init(documentURL: URL, errorMessage: String) {
+        self.init(documentURL: documentURL, errorMessage: errorMessage, errorDomain: "unknown", errorCode: 0)
+    }
+
+    public init(documentURL: URL, error: Error) {
+        let nsError = error as NSError
+        self.init(
+            documentURL: documentURL,
+            errorMessage: error.localizedDescription,
+            errorDomain: nsError.domain,
+            errorCode: nsError.code
+        )
+    }
+
+    private init(documentURL: URL, errorMessage: String, errorDomain: String, errorCode: Int) {
         self.documentURL = documentURL
         self.errorMessage = ConnectorRedactor.redact(errorMessage)
+        self.errorDomain = ConnectorRedactor.redact(errorDomain)
+        self.errorCode = errorCode
+    }
+
+    public var storeRole: String {
+        let path = documentURL.path
+        if path.contains("Mobile Documents") || path.contains(".icloud") {
+            return "icloud"
+        }
+        if path.contains(ContextPanelLocations.appGroupID) {
+            return "app-group"
+        }
+        return "custom"
     }
 }
 
@@ -160,7 +189,7 @@ public struct CompanionSyncStore: Sendable {
             return CompanionSyncSaveResult(
                 attemptedStoreCount: 1,
                 successfulStoreCount: 0,
-                failures: [CompanionSyncStoreFailure(documentURL: documentURL, errorMessage: error.localizedDescription)]
+                failures: [CompanionSyncStoreFailure(documentURL: documentURL, error: error)]
             )
         }
     }
@@ -347,6 +376,11 @@ public struct CompanionSyncPublisher: Sendable {
             companionSyncLogger.error("companion sync publish failed stores=\(result.attemptedStoreCount, privacy: .public)")
         } else if !result.failures.isEmpty {
             companionSyncLogger.warning("companion sync publish partially failed succeeded=\(result.successfulStoreCount, privacy: .public) failed=\(result.failures.count, privacy: .public)")
+        }
+        for failure in result.failures {
+            companionSyncLogger.error(
+                "companion sync publish store failed store=\(failure.storeRole, privacy: .public) domain=\(failure.errorDomain, privacy: .public) code=\(failure.errorCode, privacy: .public) error=\(failure.errorMessage, privacy: .public)"
+            )
         }
         return result
     }
