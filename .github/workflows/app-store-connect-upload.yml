@@ -47,7 +47,7 @@ concurrency:
 jobs:
   upload:
     name: Upload Mac App
-    runs-on: macos-latest
+    runs-on: macos-26
     outputs:
       build_number: ${{ steps.build.outputs.build_number }}
 
@@ -76,6 +76,9 @@ jobs:
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Validate Release Xcode
+        run: scripts/validate-release-xcode.sh --required-major 26
 
       - name: Install XcodeGen
         run: |
