@@ -153,6 +153,37 @@ plist_array_contains_value() {
 	return 1
 }
 
+join_values() {
+	local output=""
+	local value
+	for value in "$@"; do
+		if [[ -n "$output" ]]; then
+			output+=", "
+		fi
+		output+="$value"
+	done
+	printf '%s' "$output"
+}
+
+assert_profile_platform_any() {
+	local profile="$1"
+	local label="$2"
+	shift 2
+	local plist
+	local platform
+	plist="$(mktemp)"
+	security cms -D -i "$profile" -o "$plist"
+	for platform in "$@"; do
+		if plist_array_contains_value "$plist" 'Platform' "$platform"; then
+			rm -f "$plist"
+			return 0
+		fi
+	done
+	rm -f "$plist"
+	echo "$label provisioning profile does not support platform: $(join_values "$@")" >&2
+	exit 1
+}
+
 assert_profile_bundle_id() {
 	local profile="$1"
 	local label="$2"
@@ -239,10 +270,12 @@ case "$platform" in
 	ios)
 		xcode_destination="generic/platform=iOS"
 		platform_label="iOS"
+		profile_platforms=(iOS)
 		;;
 	visionos)
 		xcode_destination="generic/platform=visionOS"
 		platform_label="visionOS"
+		profile_platforms=(visionOS xrOS)
 		;;
 	*)
 		echo "unsupported companion platform: $platform" >&2
@@ -311,6 +344,8 @@ app_profile_uuid="$(profile_uuid "$app_profile")"
 widget_profile_uuid="$(profile_uuid "$widget_profile")"
 assert_profile_bundle_id "$app_profile" "companion app" "com.shinycomputers.contextpanel"
 assert_profile_bundle_id "$widget_profile" "companion widget" "com.shinycomputers.contextpanel.widget"
+assert_profile_platform_any "$app_profile" "companion app" "${profile_platforms[@]}"
+assert_profile_platform_any "$widget_profile" "companion widget" "${profile_platforms[@]}"
 assert_profile_app_group "$app_profile" "companion app"
 assert_profile_app_group "$widget_profile" "companion widget"
 assert_profile_icloud_documents "$app_profile" "companion app"

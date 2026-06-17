@@ -24,3 +24,12 @@ jobs:
 
       - name: Run commit gate
         run: scripts/commit-gate.sh
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+
+      - name: Validate companion iOS build
+        run: scripts/validate-companion-builds.sh ios
