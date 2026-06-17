@@ -1280,7 +1280,7 @@ import Testing
     #expect(components.path == "/o/oauth2/v2/auth")
     #expect(queryItems["client_id"] == "google-client-id")
     #expect(queryItems["response_type"] == "code")
-    #expect(queryItems["redirect_uri"] == GoogleAntigravityOAuthFlow.manualRedirectURI)
+    #expect(queryItems["redirect_uri"] == GoogleAntigravityOAuthFlow.redirectURI)
     #expect(queryItems["code_challenge"] == "challenge-value")
     #expect(queryItems["code_challenge_method"] == "S256")
     #expect(queryItems["state"] == "state-value")
@@ -1289,25 +1289,26 @@ import Testing
     #expect(queryItems["scope"]?.contains("https://www.googleapis.com/auth/cloud-platform") == true)
 }
 
-@Test func googleAntigravityOAuthFlowBuildsLoopbackRedirectURIForAvailablePort() throws {
+@Test func googleAntigravityOAuthFlowBuildsNativeCallbackRedirectURI() throws {
     #expect(GoogleAntigravityOAuthFlow.callbackPath == "/oauth-callback")
-    #expect(GoogleAntigravityOAuthFlow.manualRedirectURI == "http://127.0.0.1:51121/oauth-callback")
-    #expect(GoogleAntigravityOAuthFlow.loopbackRedirectURI(port: 49_152) == "http://127.0.0.1:49152/oauth-callback")
+    #expect(GoogleAntigravityOAuthFlow.callbackScheme == "com.shinycomputers.contextpanel")
+    #expect(GoogleAntigravityOAuthFlow.redirectURI == "com.shinycomputers.contextpanel:/oauth-callback")
+    #expect(GoogleAntigravityOAuthFlow.isCallbackURL(URL(string: "com.shinycomputers.contextpanel:/oauth-callback?code=abc")!))
+    #expect(!GoogleAntigravityOAuthFlow.isCallbackURL(URL(string: "contextpanel://overview")!))
 
     let url = try GoogleAntigravityOAuthFlow.authorizationURL(
         codeChallenge: "challenge-value",
         state: "state-value",
-        redirectURI: GoogleAntigravityOAuthFlow.loopbackRedirectURI(port: 49_152),
         clientID: "google-client-id"
     )
     let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
     let redirectURI = components.queryItems?.first(where: { $0.name == "redirect_uri" })?.value
-    #expect(redirectURI == "http://127.0.0.1:49152/oauth-callback")
+    #expect(redirectURI == GoogleAntigravityOAuthFlow.redirectURI)
 }
 
 @Test func googleAntigravityOAuthFlowNormalizesCallbackURLsAndBuildsTokenBodies() throws {
     let callback = GoogleAntigravityOAuthFlow.normalizedAuthorizationCode(
-        from: "http://localhost:51121/oauth-callback?code=callback-code&state=callback-state"
+        from: "com.shinycomputers.contextpanel:/oauth-callback?code=callback-code&state=callback-state"
     )
     #expect(callback.code == "callback-code")
     #expect(callback.state == "callback-state")
@@ -1318,10 +1319,12 @@ import Testing
         clientID: "google-client-id",
         clientSecret: "google-client-secret"
     ), encoding: .utf8)
-    #expect(codeBody?.contains("grant_type=authorization_code") == true)
-    #expect(codeBody?.contains("code=code-secret") == true)
-    #expect(codeBody?.contains("code_verifier=verifier-secret") == true)
-    #expect(codeBody?.contains("client_secret=") == true)
+    let codeForm = formValues(from: try #require(codeBody))
+    #expect(codeForm["grant_type"] == "authorization_code")
+    #expect(codeForm["code"] == "code-secret")
+    #expect(codeForm["code_verifier"] == "verifier-secret")
+    #expect(codeForm["redirect_uri"] == GoogleAntigravityOAuthFlow.redirectURI)
+    #expect(codeForm["client_secret"]?.isEmpty == false)
 
     let refreshBody = String(data: try GoogleAntigravityOAuthFlow.refreshTokenRequestBody(
         refreshToken: "refresh-secret",
@@ -1723,6 +1726,14 @@ private struct StubConnector: ProviderConnector {
     func refresh(now: Date) async -> ConnectorRefreshResult {
         ConnectorRefreshResult(generatedAt: now, reports: [report])
     }
+}
+
+private func formValues(from body: String) -> [String: String] {
+    var components = URLComponents()
+    components.percentEncodedQuery = body
+    return Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).compactMap { item in
+        item.value.map { (item.name, $0) }
+    })
 }
 
 private func jwtPayload(email: String, name: String, accountID: String, planType: String) -> String {

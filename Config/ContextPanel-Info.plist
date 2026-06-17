@@ -28,6 +28,14 @@
 				<string>contextpanel</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.shinycomputers.contextpanel.google-oauth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.shinycomputers.contextpanel</string>
+			</array>
+		</dict>
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
