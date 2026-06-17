@@ -18,7 +18,7 @@ permissions:
 jobs:
   analyze:
     name: Analyze Swift
-    runs-on: [self-hosted, macOS, ARM64, context-panel]
+    runs-on: macos-26
     timeout-minutes: 45
 
     steps:

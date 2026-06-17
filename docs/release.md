@@ -43,9 +43,11 @@ Do not use `macos-latest` for release or App Store Connect upload jobs. GitHub's
 floating macOS image can lag App Store Connect SDK requirements, which makes
 failures arrive late during export/upload instead of before signing starts.
 
-Routine macOS validation jobs should use the repository self-hosted runner
-labels `[self-hosted, macOS, ARM64, context-panel]`. That runner is intended for
-fast compile/test/code-scanning feedback on the primary local development host.
+Routine Swift build/test validation jobs should use the repository self-hosted
+runner labels `[self-hosted, macOS, ARM64, context-panel]`. That runner is
+intended for fast compile/test feedback on the primary local development host.
+CodeQL should stay on an explicit GitHub-hosted macOS image unless its temp-file
+cleanup is proven stable on the self-hosted runner.
 
 Release, App Store Connect upload, and companion upload jobs should use explicit
 GitHub-hosted `macos-26` while App Store Connect accepts the Xcode 26 train. The
