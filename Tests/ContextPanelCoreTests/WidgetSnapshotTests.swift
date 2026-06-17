@@ -395,7 +395,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
 
 @Test func widgetSnapshotCanRequestPromptCacheAuthorizationForConfiguredCodexAccount() throws {
     let root = try widgetSnapshotTemporaryDirectory()
-    let codeDirectory = root.appending(path: ".code", directoryHint: .isDirectory)
+    let codeDirectory = root.appending(path: ".code-chris", directoryHint: .isDirectory)
     let usageDirectory = codeDirectory.appending(path: "usage", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: usageDirectory, withIntermediateDirectories: true)
 
@@ -732,6 +732,85 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(summary.usageRatio == nil)
     #expect(summary.widgetResetText != nil)
     #expect(summary.widgetResetConfidenceText?.contains("estimated") == true)
+}
+
+@Test func resetCountdownRoundsFutureHoursUp() {
+    let now = Date(timeIntervalSince1970: 1_000)
+    let summary = MainLimitSummary(
+        provider: .openAI,
+        window: .fiveHour,
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "openai",
+                accountName: "OpenAI",
+                label: "OpenAI 5-hour",
+                windowLabel: "5-hour",
+                unit: .percent,
+                used: 0,
+                limit: 100,
+                resetsAt: now.addingTimeInterval((5 * 3_600) - 1),
+                lastUpdatedAt: now,
+                confidence: .official
+            ),
+        ],
+        generatedAt: now
+    )
+
+    #expect(summary.resetCountdownText(now: now) == "5h")
+}
+
+@Test func resetCountdownKeepsNearlyDayLongWindowsCompact() {
+    let now = Date(timeIntervalSince1970: 1_000)
+    let summary = MainLimitSummary(
+        provider: .openAI,
+        window: .daily,
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "openai",
+                accountName: "OpenAI",
+                label: "OpenAI daily",
+                windowLabel: "Daily",
+                unit: .percent,
+                used: 0,
+                limit: 100,
+                resetsAt: now.addingTimeInterval((23 * 3_600) + 60),
+                lastUpdatedAt: now,
+                confidence: .official
+            ),
+        ],
+        generatedAt: now
+    )
+
+    #expect(summary.resetCountdownText(now: now) == "24h")
+}
+
+@Test func widgetResetTextRoundsFiveHourWindowUp() {
+    let now = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
+    let reset = now.addingTimeInterval((5 * 3_600) - 1)
+    let summary = MainLimitSummary(
+        provider: .openAI,
+        window: .fiveHour,
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "openai",
+                accountName: "OpenAI",
+                label: "OpenAI 5-hour",
+                windowLabel: "5-hour",
+                unit: .percent,
+                used: 0,
+                limit: 100,
+                resetsAt: reset,
+                lastUpdatedAt: now,
+                confidence: .official
+            ),
+        ],
+        generatedAt: now
+    )
+
+    #expect(summary.widgetResetText == "5h")
 }
 
 @Test func anthropicWidgetSnapshotSurfacesConnectedUnknownOAuthStatusWithoutMainLimit() {

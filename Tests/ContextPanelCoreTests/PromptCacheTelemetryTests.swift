@@ -358,6 +358,22 @@ import Testing
     #expect(selected == [codeUsage])
 }
 
+@Test func promptCacheUsageDirectorySupportsCustomCodeHomeAuthPaths() throws {
+    let root = try promptCacheTemporaryDirectory()
+    let customCodeHome = root.appending(path: ".code-chris", directoryHint: .isDirectory)
+    let customCodexHome = root.appending(path: ".codex-work", directoryHint: .isDirectory)
+
+    #expect(ContextPanelLocations.promptCacheUsageDirectory(
+        forAuthPath: customCodeHome.appending(path: "auth_accounts.json").path
+    ) == customCodeHome.appending(path: "usage", directoryHint: .isDirectory))
+    #expect(ContextPanelLocations.promptCacheUsageDirectory(
+        forAuthPath: customCodexHome.appending(path: "auth.json").path
+    ) == customCodexHome.appending(path: "usage", directoryHint: .isDirectory))
+    #expect(ContextPanelLocations.promptCacheUsageDirectory(
+        forAuthPath: root.appending(path: "downloads/auth_accounts.json").path
+    ) == nil)
+}
+
 @Test func promptCacheMirrorServiceRemovesDeletedSourceFiles() throws {
     let root = try promptCacheTemporaryDirectory()
     let source = root.appending(path: "usage", directoryHint: .isDirectory)
