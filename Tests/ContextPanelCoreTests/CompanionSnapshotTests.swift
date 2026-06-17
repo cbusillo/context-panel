@@ -393,6 +393,10 @@ import Testing
     #expect(partial.successfulStoreCount == 1)
     #expect(partial.succeeded)
     #expect(partial.failures.count == 1)
+    #expect(partial.failures.first?.storeRole == "custom")
+    #expect(partial.failures.first?.errorDomain.isEmpty == false)
+    #expect(partial.failures.first?.errorCode != 0)
+    #expect(partial.failures.first?.errorMessage.isEmpty == false)
 
     let complete = CompanionSyncStoreSet(stores: [failingStore]).save(document)
     #expect(complete.attemptedStoreCount == 1)
