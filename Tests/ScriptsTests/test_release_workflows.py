@@ -64,6 +64,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("CONTEXT_PANEL_APP_STORE_COMPANION_PROFILE_SPECIFIER", script)
         self.assertIn("iCloud.com.shinycomputers.contextpanel", script)
         self.assertIn("group.com.shinycomputers.contextpanel", script)
+        self.assertIn("'Entitlements:com.apple.developer.icloud-services' '*'", script)
 
     def test_app_store_upload_name_does_not_claim_testflight_distribution(self):
         workflow = self.read(".github/workflows/app-store-connect-upload.yml")

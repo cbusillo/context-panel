@@ -202,9 +202,11 @@ assert_profile_icloud_documents() {
 		exit 1
 	fi
 	if ! plist_array_contains_value "$plist" 'Entitlements:com.apple.developer.icloud-services' 'CloudDocuments'; then
-		rm -f "$plist"
-		echo "$label provisioning profile does not authorize CloudDocuments" >&2
-		exit 1
+		if ! plist_array_contains_value "$plist" 'Entitlements:com.apple.developer.icloud-services' '*'; then
+			rm -f "$plist"
+			echo "$label provisioning profile does not authorize CloudDocuments" >&2
+			exit 1
+		fi
 	fi
 	if ! plist_array_contains_value "$plist" 'Entitlements:com.apple.developer.ubiquity-container-identifiers' "$container"; then
 		rm -f "$plist"
