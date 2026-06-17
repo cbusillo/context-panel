@@ -146,7 +146,7 @@ private final class CompanionSyncModel {
 private struct CompanionRefreshSettingsView: View {
     let settings: CompanionRefreshSettings
     let errorMessage: String?
-    let onIntervalChange: @MainActor @Sendable (Int) -> Void
+    let onIntervalChange: (Int) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -156,7 +156,11 @@ private struct CompanionRefreshSettingsView: View {
                 Spacer(minLength: 12)
                 Picker("Auto-update", selection: Binding(
                     get: { settings.intervalMinutes },
-                    set: onIntervalChange
+                    set: { minutes in
+                        MainActor.assumeIsolated {
+                            onIntervalChange(minutes)
+                        }
+                    }
                 )) {
                     ForEach(CompanionRefreshSettings.allowedIntervalMinutes, id: \.self) { minutes in
                         Text("\(minutes)m").tag(minutes)
