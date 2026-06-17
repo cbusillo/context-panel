@@ -46,7 +46,6 @@ struct ContextPanelRefreshAgent {
         }
 
         while !Task.isCancelled {
-            let startedAt = ContinuousClock.now
             let wallStartedAt = Date()
             let settings = settingsStore.load()
             guard settings.isEnabled else { return }
@@ -70,9 +69,13 @@ struct ContextPanelRefreshAgent {
             }
 
             do {
-                let elapsed = startedAt.duration(to: ContinuousClock.now)
-                let interval = Duration.seconds(settings.intervalSeconds)
-                try await Task.sleep(for: max(.zero, interval - elapsed))
+                let sleepInterval = SnapshotRefreshRunner.nextRefreshCheckInterval(
+                    normalInterval: TimeInterval(settings.intervalSeconds),
+                    nextCheckDate: runner.nextRefreshCheckDate(now: Date()),
+                    startedAt: wallStartedAt,
+                    finishedAt: Date()
+                )
+                try await Task.sleep(for: .seconds(sleepInterval))
             } catch {
                 return
             }
