@@ -33,7 +33,7 @@
 			<string>com.shinycomputers.contextpanel.google-oauth</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>com.shinycomputers.contextpanel</string>
+				<string>$(CONTEXT_PANEL_GOOGLE_OAUTH_CALLBACK_SCHEME)</string>
 			</array>
 		</dict>
 	</array>
@@ -43,6 +43,12 @@
 	<string>$(CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID)</string>
 	<key>CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET</key>
 	<string>$(CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET)</string>
+	<key>CONTEXT_PANEL_GOOGLE_OAUTH_CALLBACK_SCHEME</key>
+	<string>$(CONTEXT_PANEL_GOOGLE_OAUTH_CALLBACK_SCHEME)</string>
+	<key>CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_ID</key>
+	<string>$(CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_ID)</string>
+	<key>CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_SECRET</key>
+	<string>$(CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_SECRET)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSApplicationCategoryType</key>

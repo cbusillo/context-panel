@@ -1290,25 +1290,28 @@ import Testing
 }
 
 @Test func googleAntigravityOAuthFlowBuildsNativeCallbackRedirectURI() throws {
+    let nativeClientID = "1071006060591-nativeclient.apps.googleusercontent.com"
+    let nativeScheme = "com.googleusercontent.apps.1071006060591-nativeclient"
+
     #expect(GoogleAntigravityOAuthFlow.callbackPath == "/oauth-callback")
-    #expect(GoogleAntigravityOAuthFlow.callbackScheme == "com.shinycomputers.contextpanel")
-    #expect(GoogleAntigravityOAuthFlow.redirectURI == "com.shinycomputers.contextpanel:/oauth-callback")
-    #expect(GoogleAntigravityOAuthFlow.isCallbackURL(URL(string: "com.shinycomputers.contextpanel:/oauth-callback?code=abc")!))
+    #expect(GoogleAntigravityOAuthFlow.callbackScheme(forClientID: nativeClientID) == nativeScheme)
+    #expect(GoogleAntigravityOAuthFlow.callbackScheme(forClientID: "bad-client") == nil)
     #expect(!GoogleAntigravityOAuthFlow.isCallbackURL(URL(string: "contextpanel://overview")!))
 
     let url = try GoogleAntigravityOAuthFlow.authorizationURL(
         codeChallenge: "challenge-value",
         state: "state-value",
-        clientID: "google-client-id"
+        redirectURI: "\(nativeScheme):/oauth-callback",
+        clientID: nativeClientID
     )
     let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
     let redirectURI = components.queryItems?.first(where: { $0.name == "redirect_uri" })?.value
-    #expect(redirectURI == GoogleAntigravityOAuthFlow.redirectURI)
+    #expect(redirectURI == "\(nativeScheme):/oauth-callback")
 }
 
 @Test func googleAntigravityOAuthFlowNormalizesCallbackURLsAndBuildsTokenBodies() throws {
     let callback = GoogleAntigravityOAuthFlow.normalizedAuthorizationCode(
-        from: "com.shinycomputers.contextpanel:/oauth-callback?code=callback-code&state=callback-state"
+        from: "com.googleusercontent.apps.1071006060591-native:/oauth-callback?code=callback-code&state=callback-state"
     )
     #expect(callback.code == "callback-code")
     #expect(callback.state == "callback-state")
@@ -1316,6 +1319,7 @@ import Testing
     let codeBody = String(data: try GoogleAntigravityOAuthFlow.authorizationCodeTokenRequestBody(
         code: GoogleAntigravityAuthorizationCode(code: "code-secret", state: "state-secret"),
         codeVerifier: "verifier-secret",
+        redirectURI: "com.googleusercontent.apps.1071006060591-native:/oauth-callback",
         clientID: "google-client-id",
         clientSecret: "google-client-secret"
     ), encoding: .utf8)
@@ -1323,8 +1327,18 @@ import Testing
     #expect(codeForm["grant_type"] == "authorization_code")
     #expect(codeForm["code"] == "code-secret")
     #expect(codeForm["code_verifier"] == "verifier-secret")
-    #expect(codeForm["redirect_uri"] == GoogleAntigravityOAuthFlow.redirectURI)
+    #expect(codeForm["redirect_uri"] == "com.googleusercontent.apps.1071006060591-native:/oauth-callback")
     #expect(codeForm["client_secret"]?.isEmpty == false)
+
+    let nativeCodeBody = String(data: try GoogleAntigravityOAuthFlow.authorizationCodeTokenRequestBody(
+        code: GoogleAntigravityAuthorizationCode(code: "code-secret", state: nil),
+        codeVerifier: "verifier-secret",
+        redirectURI: "com.googleusercontent.apps.1071006060591-native:/oauth-callback",
+        clientID: "native-client-id",
+        clientSecret: nil
+    ), encoding: .utf8)
+    let nativeCodeForm = formValues(from: try #require(nativeCodeBody))
+    #expect(nativeCodeForm["client_secret"] == nil)
 
     let refreshBody = String(data: try GoogleAntigravityOAuthFlow.refreshTokenRequestBody(
         refreshToken: "refresh-secret",
@@ -1336,6 +1350,14 @@ import Testing
     #expect(refreshBody?.contains("client_id=") == true)
     #expect(refreshBody?.contains("client_secret=") == true)
 
+    let nativeRefreshBody = String(data: try GoogleAntigravityOAuthFlow.refreshTokenRequestBody(
+        refreshToken: "refresh-secret",
+        clientID: "native-client-id",
+        clientSecret: nil
+    ), encoding: .utf8)
+    let nativeRefreshForm = formValues(from: try #require(nativeRefreshBody))
+    #expect(nativeRefreshForm["client_secret"] == nil)
+
     let confidentialClientBody = String(data: try GoogleAntigravityOAuthFlow.authorizationCodeTokenRequestBody(
         code: GoogleAntigravityAuthorizationCode(code: "code-secret", state: "state-secret"),
         codeVerifier: "verifier-secret",
@@ -1343,6 +1365,50 @@ import Testing
         clientSecret: "configured-secret"
     ), encoding: .utf8)
     #expect(confidentialClientBody?.contains("client_secret=configured-secret") == true)
+}
+
+@Test func googleAntigravityOAuthCredentialsPersistClientMetadata() throws {
+    let credentials = GoogleAntigravityOAuthCredentials(
+        accessToken: "access-token",
+        refreshToken: "refresh-token",
+        expiresAt: nil,
+        scopes: ["scope-a"],
+        clientID: "native-client-id",
+        clientSecret: nil
+    )
+
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    let encoded = try encoder.encode(credentials)
+    let decoded = try JSONDecoder.contextPanelISO8601.decode(GoogleAntigravityOAuthCredentials.self, from: encoded)
+
+    #expect(decoded.clientID == "native-client-id")
+    #expect(decoded.clientSecret == nil)
+    #expect(decoded.refreshToken == "refresh-token")
+
+    let nativeMetadata = GoogleAntigravityOAuthCredentials.resolvedClientMetadata(
+        storedClientID: "native-client-id",
+        storedClientSecret: nil,
+        hasStoredClientMetadata: true,
+        legacyClientID: "legacy-client-id",
+        legacyClientSecret: "legacy-client-secret",
+        currentClientID: "current-client-id",
+        currentClientSecret: nil
+    )
+    #expect(nativeMetadata.clientID == "native-client-id")
+    #expect(nativeMetadata.clientSecret == nil)
+
+    let legacyMetadata = GoogleAntigravityOAuthCredentials.resolvedClientMetadata(
+        storedClientID: nil,
+        storedClientSecret: nil,
+        hasStoredClientMetadata: false,
+        legacyClientID: "legacy-client-id",
+        legacyClientSecret: "legacy-client-secret",
+        currentClientID: "current-client-id",
+        currentClientSecret: nil
+    )
+    #expect(legacyMetadata.clientID == "legacy-client-id")
+    #expect(legacyMetadata.clientSecret == "legacy-client-secret")
 }
 
 @Test func googleAntigravityOAuthFlowFailsWhenClientIDIsMissing() throws {
