@@ -216,6 +216,22 @@ require_command xcodegen
 require_command xcodebuild
 require_command security
 
+xcodebuild_system_path() {
+	local developer_dir
+	local system_path
+	developer_dir="$(/usr/bin/xcode-select -p)"
+	system_path="/usr/bin:/bin:/usr/sbin:/sbin:$developer_dir/usr/bin:$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+	if [[ -n "${PATH:-}" ]]; then
+		printf '%s:%s' "$system_path" "$PATH"
+	else
+		printf '%s' "$system_path"
+	fi
+}
+
+run_xcodebuild() {
+	PATH="$(xcodebuild_system_path)" /usr/bin/xcodebuild "$@"
+}
+
 validate_marketing_version
 
 if [[ ! -f "$app_profile" ]]; then
@@ -328,9 +344,9 @@ if [[ -n "$marketing_version" ]]; then
 fi
 
 rm -rf "$archive_path" "$derived_data_path" "$export_path"
-xcodebuild "${archive_args[@]}" archive
+run_xcodebuild "${archive_args[@]}" archive
 
-xcodebuild \
+run_xcodebuild \
 	-exportArchive \
 	-archivePath "$archive_path" \
 	-exportPath "$export_path" \

@@ -106,6 +106,19 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
         self.assertNotIn("manageAppVersionAndBuildNumber", upload_script)
 
+    def test_app_store_upload_scripts_prefer_system_xcode_tools(self):
+        for script_path in (
+            "scripts/upload-app-store-connect-macos-app.sh",
+            "scripts/upload-app-store-connect-companion-app.sh",
+        ):
+            with self.subTest(script_path=script_path):
+                script = self.read(script_path)
+
+                self.assertIn("xcodebuild_system_path()", script)
+                self.assertIn("/usr/bin:/bin:/usr/sbin:/sbin", script)
+                self.assertIn("PATH=\"$(xcodebuild_system_path)\" /usr/bin/xcodebuild", script)
+                self.assertNotRegex(script, r"(?m)^xcodebuild \\")
+
     def test_runtime_baseline_uses_local_oauth_xcconfig_without_echoing_secret(self):
         script = self.read("scripts/context-panel-runtime-baseline.sh")
 
