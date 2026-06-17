@@ -27,7 +27,10 @@ struct ContextPanelCompanionTimelineProvider: TimelineProvider {
     func getTimeline(in context: Context, completion: @escaping (Timeline<ContextPanelCompanionWidgetEntry>) -> Void) {
         let now = Date()
         loadEntry(date: now) { entry in
-            completion(Timeline(entries: [entry], policy: .after(now.addingTimeInterval(15 * 60))))
+            let settings = ContextPanelLocations.companionRefreshSettingsURL()
+                .map { CompanionRefreshSettingsStore(settingsURL: $0).load() }
+                ?? .defaultSettings
+            completion(Timeline(entries: [entry], policy: .after(now.addingTimeInterval(settings.widgetInterval))))
         }
     }
 
