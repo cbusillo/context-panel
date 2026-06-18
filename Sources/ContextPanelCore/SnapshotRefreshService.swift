@@ -448,6 +448,7 @@ public struct SnapshotRefreshService: Sendable {
     private let companionSyncPublisher: CompanionSyncPublisher?
     private let promptCacheTelemetryMirror: @Sendable (SecureFileBookmarkStore?, [URL]) -> Void
     private let promptCacheTelemetryReader: @Sendable (Date) -> [PromptCacheObservation]
+    private let allowsExternalGoogleKeychain: Bool
 
     public init(
         accountStore: AccountConfigurationStore,
@@ -455,6 +456,7 @@ public struct SnapshotRefreshService: Sendable {
         bookmarkStore: SecureFileBookmarkStore? = nil,
         credentialStore: (any ProviderCredentialStoring)? = nil,
         companionSyncPublisher: CompanionSyncPublisher? = nil,
+        allowsExternalGoogleKeychain: Bool = true,
         promptCacheTelemetryMirror: @escaping @Sendable (SecureFileBookmarkStore?, [URL]) -> Void = { bookmarkStore, sourceDirectories in
             _ = try? PromptCacheTelemetryMirrorService.mirror(
                 bookmarkStore: bookmarkStore,
@@ -472,9 +474,10 @@ public struct SnapshotRefreshService: Sendable {
         self.companionSyncPublisher = companionSyncPublisher
         self.promptCacheTelemetryMirror = promptCacheTelemetryMirror
         self.promptCacheTelemetryReader = promptCacheTelemetryReader
+        self.allowsExternalGoogleKeychain = allowsExternalGoogleKeychain
     }
 
-    public static func appDefault() -> SnapshotRefreshService {
+    public static func appDefault(allowsExternalGoogleKeychain: Bool = true) -> SnapshotRefreshService {
         SnapshotRefreshService(
             accountStore: AccountConfigurationStore(
                 configurationURL: ContextPanelLocations.accountConfigurationURL(),
@@ -483,7 +486,8 @@ public struct SnapshotRefreshService: Sendable {
             stores: .appDefault(),
             bookmarkStore: SecureFileBookmarkStore(storeURL: ContextPanelLocations.bookmarkStoreURL()),
             credentialStore: ProviderCredentialStore(),
-            companionSyncPublisher: .appDefault()
+            companionSyncPublisher: .appDefault(),
+            allowsExternalGoogleKeychain: allowsExternalGoogleKeychain
         )
     }
 
@@ -558,6 +562,7 @@ public struct SnapshotRefreshService: Sendable {
             from: accountDocument,
             bookmarkStore: bookmarkStore,
             credentialStore: credentialStore,
+            googleAntigravityCredentialLoader: googleAntigravityCredentialLoader(),
             requiresBookmarkedAuthFiles: ContextPanelLocations.isRunningInAppSandbox
         )
         RefreshDiagnostics.logRefreshStarted(
@@ -576,6 +581,11 @@ public struct SnapshotRefreshService: Sendable {
             return SnapshotRefreshOutcome(savedAt: now, refreshResult: refreshResult)
         }
         return try saveMerged(refreshResult: refreshResult, savedAt: now)
+    }
+
+    private func googleAntigravityCredentialLoader() -> (any ProviderCredentialLoading)? {
+        guard !allowsExternalGoogleKeychain else { return nil }
+        return GoogleAntigravityForegroundRequiredCredentialLoader()
     }
 
     public func saveMerged(
@@ -720,7 +730,7 @@ enum RefreshFailureCategory: String {
             self = .none
             return
         }
-        if message.contains("no longer authorized") || message.contains("not authorized") || message.contains("not authorized") || message.contains("unauthorized") {
+        if message.contains("no longer authorized") || message.contains("not authorized") || message.contains("unauthorized") || message.contains("rejected quota access") || message.contains("rejected") {
             self = .providerAuthorization
         } else if message.contains("invalid_client") || message.contains("oauth client was not found") {
             self = .oauthInvalidClient

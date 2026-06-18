@@ -251,6 +251,7 @@ public enum AccountConnectorFactory {
         from document: AccountConfigurationDocument,
         bookmarkStore: SecureFileBookmarkStore? = nil,
         credentialStore: (any ProviderCredentialStoring)? = nil,
+        googleAntigravityCredentialLoader: (any ProviderCredentialLoading)? = nil,
         requiresBookmarkedAuthFiles: Bool = ContextPanelLocations.isRunningInAppSandbox
     ) -> [any ProviderConnector] {
         return document.accounts.compactMap { account -> (any ProviderConnector)? in
@@ -273,13 +274,14 @@ public enum AccountConnectorFactory {
                     fileLoader: authFileLoader
                 )
             case .googleAntigravityQuota:
-                let effectiveCredentialStore: any ProviderCredentialStoring = credentialStore ?? ProviderCredentialStore()
+                let credentialLoader: any ProviderCredentialLoading = googleAntigravityCredentialLoader
+                    ?? GenericPasswordCredentialLoader(service: GoogleAntigravityLocalAuthMetadata.credentialService)
                 return GoogleAntigravityQuotaConnector(
                     accounts: [GoogleAntigravityAccountConfiguration(
                         accountID: account.id,
                         accountName: account.displayName
                     )],
-                    credentialStore: effectiveCredentialStore
+                    credentialLoader: credentialLoader
                 )
             case .claudeOAuthUsage:
                 let effectiveCredentialStore: any ProviderCredentialStoring = credentialStore ?? ProviderCredentialStore()

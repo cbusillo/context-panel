@@ -76,12 +76,12 @@ MVP connectors:
 - `CodexRateLimitConnector`: reads Codex-style auth roots such as `~/.code` or
   `~/.codex`, calls the live Codex usage endpoint, and normalizes primary,
   secondary, and additional percent-window buckets.
-- Google provider: retired Gemini CLI credential files and local metadata
-  discovery are removed. The Antigravity adapter follows the Claude-style
-  Context Panel credential model: store Context Panel-owned Google OAuth tokens,
-  refresh them through Google's OAuth endpoint, discover the active Antigravity
-  project, call Cloud Code quota summary for weekly and 5-hour buckets, and use
-  Cloud Code model availability only as a degraded availability fallback/detail.
+- Google provider: retired Gemini CLI credential files, Context Panel Google
+  OAuth, and local metadata discovery are removed. The Antigravity adapter
+  follows the OpenAI/Codex local-auth pattern: read Antigravity's local Keychain
+  login once per refresh, let Antigravity own sign-in and token refresh,
+  discover the active project through `loadCodeAssist`, and call
+  `retrieveUserQuota` for reported quota buckets.
 - Claude provider: store Context Panel-owned Claude OAuth tokens, refresh them
   through Anthropic's OAuth token endpoint when needed, call the Claude OAuth
   usage endpoint, and normalize returned utilization windows into reported
@@ -165,10 +165,9 @@ and skip intervals that cross resets.
 The MVP account configuration is also local JSON. It stores account labels,
 enabled/disabled state, connector kind, and local auth-file paths only for
 file-backed OpenAI/Codex accounts. It does not store provider secrets. Google
-Antigravity and Claude usage use Context Panel-owned OAuth credentials stored in
-Keychain, and OAuth client inputs are referenced by environment variable names
-so the values can remain outside the repository and outside the account config
-file.
+Antigravity uses Antigravity's local Keychain login at refresh time and does not
+persist Antigravity tokens in Context Panel storage. Claude usage uses Context
+Panel-owned OAuth credentials stored in Keychain.
 
 Widget interactions should keep the widget simple. Tapping the widget should
 open the app to the relevant provider or account detail; mutation and setup stay

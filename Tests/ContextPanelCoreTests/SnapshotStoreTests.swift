@@ -44,6 +44,9 @@ import Testing
         errorMessage: "Google Antigravity credentials are in an unexpected format. Sign in again from Settings."
     ) == .credentialFormat)
     #expect(RefreshFailureCategory(
+        errorMessage: "Google Antigravity is connected, but Google Code Assist rejected quota access for this app or account."
+    ) == .providerAuthorization)
+    #expect(RefreshFailureCategory(
         errorMessage: "Provider returned no usage records for this account."
     ) == .unknown)
     #expect(RefreshFailureCategory(
@@ -1139,6 +1142,35 @@ import Testing
     #expect(accountDocument.accounts.contains { $0.id == "google-antigravity-default" && $0.connectorKind == .googleAntigravityQuota })
     #expect(accountDocument.accounts.contains { $0.displayName == "Antigravity" })
     #expect(!accountDocument.accounts.contains { $0.id == "gemini-code-assist-default" })
+}
+
+@Test func snapshotRefreshServiceCanSkipExternalGoogleKeychainInBackgroundRefreshes() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary),
+        allowsExternalGoogleKeychain: false,
+        promptCacheTelemetryReader: { _ in [] }
+    )
+    let savedAt = Date(timeIntervalSince1970: 300)
+    try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
+        updatedAt: savedAt,
+        accounts: [LocalProviderAccountConfiguration(
+            id: "google-antigravity-default",
+            provider: .google,
+            connectorKind: .googleAntigravityQuota,
+            displayName: "Antigravity"
+        )]
+    ))
+
+    let outcome = try await service.refresh(now: savedAt)
+    let report = try #require(outcome.refreshResult.reports.first)
+
+    #expect(report.provider == .google)
+    #expect(report.status == .failure)
+    #expect(report.errorMessage?.contains("Always Allow") == true)
+    #expect(primary.loadCurrent().snapshot?.reports.first?.errorMessage?.contains("Always Allow") == true)
 }
 
 @Test func snapshotRefreshServiceDoesNotOverwriteExistingMigratedGoogleCredentials() throws {

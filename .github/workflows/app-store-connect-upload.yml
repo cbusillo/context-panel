@@ -65,16 +65,6 @@ jobs:
       MACOS_APP_STORE_APP_PROVISIONING_PROFILE_BASE64: ${{ secrets.MACOS_APP_STORE_APP_PROVISIONING_PROFILE_BASE64 }}
       MACOS_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64: ${{ secrets.MACOS_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64 }}
       MACOS_APP_STORE_REFRESH_AGENT_PROVISIONING_PROFILE_BASE64: ${{ secrets.MACOS_APP_STORE_REFRESH_AGENT_PROVISIONING_PROFILE_BASE64 }}
-      CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID: >-
-        ${{ secrets.CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID }}
-      CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET: >-
-        ${{ secrets.CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET }}
-      CONTEXT_PANEL_GOOGLE_OAUTH_CALLBACK_SCHEME: >-
-        ${{ secrets.CONTEXT_PANEL_GOOGLE_OAUTH_CALLBACK_SCHEME }}
-      CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_ID: >-
-        ${{ secrets.CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_ID }}
-      CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_SECRET: >-
-        ${{ secrets.CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_SECRET }}
 
     steps:
       - name: Checkout
@@ -103,14 +93,6 @@ jobs:
           fi
           echo "build_number=${build_number}" >>"${GITHUB_OUTPUT}"
 
-      - name: Validate Release Configuration
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID:-}" ]]; then
-            echo "CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID is required" >&2
-            exit 1
-          fi
       - name: Import Signing Assets
         shell: bash
         run: |

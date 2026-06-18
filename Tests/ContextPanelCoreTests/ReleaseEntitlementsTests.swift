@@ -39,13 +39,12 @@ import Testing
     try expectICloudDocumentEntitlements(refreshAgentEntitlements)
 }
 
-@Test func mainAppInfoPlistRegistersGoogleOAuthCallbackScheme() throws {
+@Test func mainAppInfoPlistRegistersOnlyContextPanelURLScheme() throws {
     let plist = try loadInfoPlist("Config/ContextPanel-Info.plist")
     let urlTypes = try #require(plist["CFBundleURLTypes"] as? [[String: Any]])
     let schemes = urlTypes.flatMap { $0["CFBundleURLSchemes"] as? [String] ?? [] }
 
-    #expect(schemes.contains("contextpanel"))
-    #expect(schemes.contains("$(CONTEXT_PANEL_GOOGLE_OAUTH_CALLBACK_SCHEME)"))
+    #expect(schemes == ["contextpanel"])
 }
 
 @Test func appStoreEntitlementsSupportSandboxedRefreshAgent() throws {
@@ -166,23 +165,19 @@ import Testing
         .appending(path: "Sources/ContextPanelRefreshAgent/ContextPanelRefreshAgent.swift")
     let source = try String(contentsOf: url, encoding: .utf8)
 
-    #expect(source.contains("SnapshotRefreshRunner.appDefault"))
+    #expect(source.contains(".appDefault(allowsExternalGoogleKeychain: false)"))
     #expect(!source.contains("GeminiQuotaProbe"))
     #expect(!source.contains("allowsLegacyGeminiOAuth"))
     #expect(!source.contains("antigravityCredentialSource"))
     #expect(!source.contains("oauth_creds.json"))
 }
 
-@Test func appAndRefreshAgentTargetsReceiveGoogleOAuthBuildSettings() throws {
+@Test func appAndRefreshAgentTargetsDoNotCarryGoogleOAuthBuildSettings() throws {
     let project = try loadProjectYAML()
 
     for targetName in ["ContextPanel", "ContextPanelRefreshAgent"] {
         let settings = try #require(project.targetSettings(named: targetName))
-        #expect(settings["CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID"] as? String == "")
-        #expect(settings["CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET"] as? String == "")
-        #expect(settings["CONTEXT_PANEL_GOOGLE_OAUTH_CALLBACK_SCHEME"] as? String == "")
-        #expect(settings["CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_ID"] as? String == "")
-        #expect(settings["CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_SECRET"] as? String == "")
+        #expect(settings.keys.allSatisfy { !$0.hasPrefix("CONTEXT_PANEL_GOOGLE_") })
     }
 
     let refreshAgentSettings = try #require(
@@ -195,22 +190,7 @@ import Testing
     )
 
     let plist = try loadInfoPlist("Config/ContextPanelRefreshAgent-Info.plist")
-    #expect(
-        plist["CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID"] as? String
-            == "$(CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID)"
-    )
-    #expect(
-        plist["CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET"] as? String
-            == "$(CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET)"
-    )
-    #expect(
-        plist["CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_ID"] as? String
-            == "$(CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_ID)"
-    )
-    #expect(
-        plist["CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_SECRET"] as? String
-            == "$(CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_SECRET)"
-    )
+    #expect(plist.keys.allSatisfy { !$0.hasPrefix("CONTEXT_PANEL_GOOGLE_") })
     #expect(plist["LSBackgroundOnly"] as? Bool == true)
     #expect(plist["LSUIElement"] as? Bool == true)
 }

@@ -359,7 +359,8 @@ import Testing
 
     let connectors = AccountConnectorFactory.connectors(
         from: document,
-        credentialStore: InMemoryProviderCredentialStore(storage: [:])
+        credentialStore: InMemoryProviderCredentialStore(storage: [:]),
+        googleAntigravityCredentialLoader: InMemoryProviderCredentialStore(storage: [:])
     )
     let result = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: Date(timeIntervalSince1970: 0))
 
@@ -375,8 +376,32 @@ import Testing
     #expect(result.reports.contains { report in
         report.provider == .google
             && report.status == .failure
-            && report.errorMessage == "Google Antigravity is not connected. Sign in to Google from Settings."
+            && report.errorMessage == "Google Antigravity local login was not found. Open Antigravity and sign in, then refresh Google in Context Panel. If macOS asks for Keychain access, choose Always Allow."
     })
+}
+
+@Test func accountConnectorFactoryUsesAntigravityLoaderInsteadOfAppCredentialStoreForGoogle() async throws {
+    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
+        LocalProviderAccountConfiguration(
+            id: "google-antigravity-default",
+            provider: .google,
+            connectorKind: .googleAntigravityQuota,
+            displayName: "Antigravity"
+        ),
+    ])
+    let connectors = AccountConnectorFactory.connectors(
+        from: document,
+        credentialStore: InMemoryProviderCredentialStore(storage: [:]),
+        googleAntigravityCredentialLoader: InMemoryProviderCredentialStore(storage: ["antigravity": Data("not-json".utf8)]),
+        requiresBookmarkedAuthFiles: false
+    )
+
+    let report = try #require(await ProviderConnectorRuntime(connectors: connectors)
+        .refreshAll(now: Date(timeIntervalSince1970: 0))
+        .reports
+        .first { $0.provider == .google })
+
+    #expect(report.errorMessage?.contains("unexpected format") == true)
 }
 
 @Test func sandboxedAuthLoaderRequiresSecurityScopedBookmark() async {
