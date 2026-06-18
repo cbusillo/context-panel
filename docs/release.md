@@ -43,6 +43,31 @@ secret is optional for native clients. Legacy client ID/secret settings can be
 provided to keep refresh tokens issued by an older web/confidential client alive
 until users reconnect.
 
+## Runner And Xcode Policy
+
+Do not use `macos-latest` for release or App Store Connect upload jobs. GitHub's
+floating macOS image can lag App Store Connect SDK requirements, which makes
+failures arrive late during export/upload instead of before signing starts.
+
+Routine Swift build/test validation jobs should use the repository self-hosted
+runner labels `[self-hosted, macOS, ARM64, context-panel]`. That runner is
+intended for fast compile/test feedback on the primary local development host.
+CodeQL should stay on an explicit GitHub-hosted macOS image unless its temp-file
+cleanup is proven stable on the self-hosted runner.
+
+Release, App Store Connect upload, and companion upload jobs should use explicit
+GitHub-hosted `macos-26` while App Store Connect accepts the Xcode 26 train. The
+workflows run `scripts/validate-release-xcode.sh --required-major 26` before
+signing assets are imported or archives are produced. Keep that preflight
+conservative: update it only after App Store Connect release notes or a controlled
+upload canary confirm that a newer Xcode train, such as Xcode 27, is accepted for
+App Store/TestFlight distribution.
+
+When Xcode 27 is officially accepted, update the release runner/image and the
+preflight required major together. Until then, a macOS 27 / Xcode 27 self-hosted
+runner is appropriate for fast local validation, but not the default path for
+official App Store or TestFlight upload jobs.
+
 ## Normal Ship Workflow
 
 Use `Ship` for normal releases. It accepts:
