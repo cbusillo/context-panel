@@ -92,20 +92,15 @@ public struct WidgetDisplayPreferences: Codable, Equatable, Sendable {
         if visiblePreferences.count <= maximumCount {
             selectedPreferences = visiblePreferences
         } else {
-            let livePreferenceIDs = Set(
-                visiblePreferences
-                    .filter { summaryByID[$0.id] != nil }
-                    .prefix(maximumCount)
-                    .map(\.id)
-            )
-            let placeholderSlots = maximumCount - livePreferenceIDs.count
-            let placeholderPreferenceIDs = Set(
-                visiblePreferences
-                    .filter { !livePreferenceIDs.contains($0.id) }
-                    .prefix(placeholderSlots)
-                    .map(\.id)
-            )
-            let selectedIDs = livePreferenceIDs.union(placeholderPreferenceIDs)
+            var selectedIDs = Set<String>()
+            for preference in visiblePreferences where summaryByID[preference.id] != nil {
+                guard selectedIDs.count < maximumCount else { break }
+                selectedIDs.insert(preference.id)
+            }
+            for preference in visiblePreferences where !selectedIDs.contains(preference.id) {
+                guard selectedIDs.count < maximumCount else { break }
+                selectedIDs.insert(preference.id)
+            }
             selectedPreferences = visiblePreferences.filter { selectedIDs.contains($0.id) }
         }
 
@@ -142,6 +137,10 @@ public struct WidgetDisplayPreferences: Codable, Equatable, Sendable {
     }
 
     private static func normalized(_ preferences: [WidgetMainLimitPreference]) -> [WidgetMainLimitPreference] {
+        if matchesLegacyHiddenOpenAIFiveHourDefaults(preferences) {
+            return renumbered(defaultMainLimits)
+        }
+
         var merged: [WidgetMainLimitPreference] = []
         var seen = Set<String>()
 
@@ -179,8 +178,8 @@ public struct WidgetDisplayPreferences: Codable, Equatable, Sendable {
         }
     }
 
-    private static var defaultMainLimits: [WidgetMainLimitPreference] {
-        [
+    private static func matchesLegacyHiddenOpenAIFiveHourDefaults(_ preferences: [WidgetMainLimitPreference]) -> Bool {
+        let legacyDefaults = [
             WidgetMainLimitPreference(provider: .openAI, window: .weekly, isVisible: true, sortOrder: 0),
             WidgetMainLimitPreference(provider: .anthropic, window: .weekly, isVisible: true, sortOrder: 1),
             WidgetMainLimitPreference(provider: .anthropic, window: .fiveHour, isVisible: true, sortOrder: 2),
@@ -189,6 +188,21 @@ public struct WidgetDisplayPreferences: Codable, Equatable, Sendable {
             WidgetMainLimitPreference(provider: .google, window: .fiveHour, isVisible: true, sortOrder: 5),
             WidgetMainLimitPreference(provider: .google, window: .daily, isVisible: true, sortOrder: 6),
             WidgetMainLimitPreference(provider: .openAI, window: .fiveHour, isVisible: false, sortOrder: 7),
+        ]
+
+        return preferences == legacyDefaults
+    }
+
+    private static var defaultMainLimits: [WidgetMainLimitPreference] {
+        [
+            WidgetMainLimitPreference(provider: .openAI, window: .weekly, isVisible: true, sortOrder: 0),
+            WidgetMainLimitPreference(provider: .openAI, window: .fiveHour, isVisible: true, sortOrder: 1),
+            WidgetMainLimitPreference(provider: .anthropic, window: .weekly, isVisible: true, sortOrder: 2),
+            WidgetMainLimitPreference(provider: .anthropic, window: .fiveHour, isVisible: true, sortOrder: 3),
+            WidgetMainLimitPreference(provider: .google, window: .availability, isVisible: true, sortOrder: 4),
+            WidgetMainLimitPreference(provider: .google, window: .weekly, isVisible: true, sortOrder: 5),
+            WidgetMainLimitPreference(provider: .google, window: .fiveHour, isVisible: true, sortOrder: 6),
+            WidgetMainLimitPreference(provider: .google, window: .daily, isVisible: true, sortOrder: 7),
         ]
     }
 }

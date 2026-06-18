@@ -240,6 +240,19 @@ if [[ "$configuration" == "Release" ]]; then
 	refresh_agent_entitlements="Config/ContextPanelRefreshAgentAppStore.entitlements"
 fi
 
+google_oauth_callback_scheme_for_client_id() {
+	local client_id="$1"
+	local suffix=".apps.googleusercontent.com"
+	if [[ "$client_id" == *"$suffix" ]]; then
+		printf 'com.googleusercontent.apps.%s' "${client_id%$suffix}"
+	fi
+}
+
+google_oauth_callback_scheme="${CONTEXT_PANEL_GOOGLE_OAUTH_CALLBACK_SCHEME:-}"
+if [[ -z "$google_oauth_callback_scheme" && -n "${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID:-}" ]]; then
+	google_oauth_callback_scheme="$(google_oauth_callback_scheme_for_client_id "${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID}")"
+fi
+
 xcodegen generate --spec project.yml
 
 xcodebuild_args=(
@@ -250,6 +263,9 @@ xcodebuild_args=(
 	-destination 'platform=macOS'
 	CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID="${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID:-}"
 	CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET="${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET:-}"
+	CONTEXT_PANEL_GOOGLE_OAUTH_CALLBACK_SCHEME="$google_oauth_callback_scheme"
+	CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_ID="${CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_ID:-}"
+	CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_SECRET="${CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_SECRET:-}"
 	MARKETING_VERSION="$version"
 	CODE_SIGNING_ALLOWED=NO
 )
@@ -304,7 +320,7 @@ assert_app_group_entitlement "$widget_path" "Context Panel widget"
 assert_app_group_entitlement "$refresh_agent_path" "Context Panel refresh agent"
 assert_entitlement_enabled "$app_path" "Context Panel app" "com.apple.security.app-sandbox"
 assert_entitlement_enabled "$app_path" "Context Panel app" "com.apple.security.network.client"
-assert_entitlement_enabled "$app_path" "Context Panel app" "com.apple.security.network.server"
+assert_entitlement_absent "$app_path" "Context Panel app" "com.apple.security.network.server"
 assert_entitlement_enabled "$app_path" "Context Panel app" "com.apple.security.files.bookmarks.app-scope"
 assert_entitlement_absent "$widget_path" "Context Panel widget" "com.apple.security.network.server"
 assert_entitlement_enabled "$refresh_agent_path" "Context Panel refresh agent" "com.apple.security.app-sandbox"

@@ -5,7 +5,7 @@ import Testing
     let appEntitlements = try loadEntitlements("Config/ContextPanelAppStore.entitlements")
     #expect(appEntitlements["com.apple.security.app-sandbox"] as? Bool == true)
     #expect(appEntitlements["com.apple.security.network.client"] as? Bool == true)
-    #expect(appEntitlements["com.apple.security.network.server"] as? Bool == true)
+    #expect(appEntitlements["com.apple.security.network.server"] == nil)
     #expect(appEntitlements["com.apple.security.files.user-selected.read-only"] as? Bool == true)
     #expect(appEntitlements["com.apple.security.files.bookmarks.app-scope"] as? Bool == true)
     #expect(appEntitlements["com.apple.security.files.bookmarks.document-scope"] == nil)
@@ -29,14 +29,23 @@ import Testing
     try expectICloudDocumentEntitlements(refreshAgentEntitlements)
 }
 
-@Test func debugAppEntitlementAllowsLocalOAuthCallbackServer() throws {
+@Test func debugAppEntitlementsDoNotRequireOAuthCallbackServer() throws {
     let entitlements = try loadEntitlements("Config/ContextPanel.entitlements")
-    #expect(entitlements["com.apple.security.network.server"] as? Bool == true)
+    #expect(entitlements["com.apple.security.network.server"] == nil)
     try expectICloudDocumentEntitlements(entitlements)
 
     let refreshAgentEntitlements = try loadEntitlements("Config/ContextPanelRefreshAgent.entitlements")
     #expect(refreshAgentEntitlements["com.apple.security.network.server"] == nil)
     try expectICloudDocumentEntitlements(refreshAgentEntitlements)
+}
+
+@Test func mainAppInfoPlistRegistersGoogleOAuthCallbackScheme() throws {
+    let plist = try loadInfoPlist("Config/ContextPanel-Info.plist")
+    let urlTypes = try #require(plist["CFBundleURLTypes"] as? [[String: Any]])
+    let schemes = urlTypes.flatMap { $0["CFBundleURLSchemes"] as? [String] ?? [] }
+
+    #expect(schemes.contains("contextpanel"))
+    #expect(schemes.contains("$(CONTEXT_PANEL_GOOGLE_OAUTH_CALLBACK_SCHEME)"))
 }
 
 @Test func appStoreEntitlementsSupportSandboxedRefreshAgent() throws {
@@ -171,6 +180,9 @@ import Testing
         let settings = try #require(project.targetSettings(named: targetName))
         #expect(settings["CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID"] as? String == "")
         #expect(settings["CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET"] as? String == "")
+        #expect(settings["CONTEXT_PANEL_GOOGLE_OAUTH_CALLBACK_SCHEME"] as? String == "")
+        #expect(settings["CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_ID"] as? String == "")
+        #expect(settings["CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_SECRET"] as? String == "")
     }
 
     let refreshAgentSettings = try #require(
@@ -190,6 +202,14 @@ import Testing
     #expect(
         plist["CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET"] as? String
             == "$(CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET)"
+    )
+    #expect(
+        plist["CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_ID"] as? String
+            == "$(CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_ID)"
+    )
+    #expect(
+        plist["CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_SECRET"] as? String
+            == "$(CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_SECRET)"
     )
     #expect(plist["LSBackgroundOnly"] as? Bool == true)
     #expect(plist["LSUIElement"] as? Bool == true)

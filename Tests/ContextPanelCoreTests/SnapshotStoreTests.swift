@@ -1381,6 +1381,195 @@ import Testing
     #expect(primary.loadHistory().count == 1)
 }
 
+@Test func snapshotStalenessPolicyMarksExpiredResetAsStaleAfterGrace() throws {
+    let savedAt = Date(timeIntervalSince1970: 1_000)
+    let resetAt = savedAt.addingTimeInterval(60)
+    let stored = StoredUsageSnapshot(savedAt: savedAt, snapshot: UsageSnapshot(
+        generatedAt: savedAt,
+        limits: [usageLimit(provider: .openAI, accountID: "openai", used: 100, savedAt: savedAt, resetsAt: resetAt)]
+    ))
+    let policy = SnapshotStoreStalenessPolicy(maximumAge: 5 * 60)
+
+    #expect(policy.status(for: stored, now: resetAt.addingTimeInterval(9)) == .limited)
+    #expect(policy.status(for: stored, now: resetAt.addingTimeInterval(10)) == .stale)
+}
+
+@Test func snapshotRefreshRunnerRefreshesWhenResetExpired() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let resetStateStore = ResetExpiryRefreshStateStore(stateURL: try temporaryDirectory().appending(path: "reset-state.json"))
+    let savedAt = Date(timeIntervalSince1970: 1_000)
+    let resetAt = savedAt.addingTimeInterval(60)
+    try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
+        updatedAt: savedAt,
+        accounts: []
+    ))
+    try primary.save(StoredUsageSnapshot(savedAt: savedAt, snapshot: UsageSnapshot(
+        generatedAt: savedAt,
+        limits: [usageLimit(provider: .openAI, accountID: "openai", used: 100, savedAt: savedAt, resetsAt: resetAt)]
+    )))
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary),
+        promptCacheTelemetryReader: { _ in [] }
+    )
+    let runner = SnapshotRefreshRunner(
+        service: service,
+        stalenessPolicy: SnapshotStoreStalenessPolicy(maximumAge: 5 * 60),
+        resetExpiryRefreshStore: resetStateStore,
+        lock: nil
+    )
+
+    let decision = try await runner.refreshIfNeeded(now: resetAt.addingTimeInterval(10))
+
+    #expect(decision == .skippedNoReports)
+    #expect(resetStateStore.load().records.count == 1)
+}
+
+@Test func resetExpiryRefreshStateSuppressesImmediateRetryForSameExpiredWindow() throws {
+    let savedAt = Date(timeIntervalSince1970: 1_000)
+    let resetAt = savedAt.addingTimeInterval(60)
+    let staleSnapshot = UsageSnapshot(generatedAt: savedAt, limits: [
+        usageLimit(provider: .openAI, accountID: "openai", used: 100, savedAt: savedAt, resetsAt: resetAt),
+    ])
+    var state = ResetExpiryRefreshState()
+
+    state.recordAttempt(
+        previousSnapshot: staleSnapshot,
+        refreshedSnapshot: staleSnapshot,
+        attemptedAt: resetAt.addingTimeInterval(10)
+    )
+
+    let suppressedPolicy = SnapshotStoreStalenessPolicy(maximumAge: 5 * 60, resetExpiryRefreshState: state)
+    let stored = StoredUsageSnapshot(savedAt: resetAt.addingTimeInterval(10), snapshot: staleSnapshot)
+    #expect(suppressedPolicy.status(for: stored, now: resetAt.addingTimeInterval(20)) == .limited)
+    #expect(suppressedPolicy.status(for: stored, now: resetAt.addingTimeInterval(40)) == .stale)
+}
+
+@Test func resetExpiryRefreshStateSchedulesRetryInsteadOfPastResetDeadline() throws {
+    let savedAt = Date(timeIntervalSince1970: 1_000)
+    let resetAt = savedAt.addingTimeInterval(60)
+    let staleSnapshot = UsageSnapshot(generatedAt: savedAt, limits: [
+        usageLimit(provider: .openAI, accountID: "openai", used: 100, savedAt: savedAt, resetsAt: resetAt),
+    ])
+    var state = ResetExpiryRefreshState()
+    state.recordAttempt(
+        previousSnapshot: staleSnapshot,
+        refreshedSnapshot: staleSnapshot,
+        attemptedAt: resetAt.addingTimeInterval(10)
+    )
+
+    #expect(state.nextRefreshCheckDate(for: staleSnapshot, now: resetAt.addingTimeInterval(20)) == resetAt.addingTimeInterval(40))
+}
+
+@Test func resetExpiryRefreshStateDoesNotConsumeRetryForUnattemptedAccount() throws {
+    let savedAt = Date(timeIntervalSince1970: 1_000)
+    let resetAt = savedAt.addingTimeInterval(60)
+    let openAIStuck = usageLimit(provider: .openAI, accountID: "openai", used: 100, savedAt: savedAt, resetsAt: resetAt)
+    let googleStuck = usageLimit(provider: .google, accountID: "google", used: 100, savedAt: savedAt, resetsAt: resetAt)
+    let staleSnapshot = UsageSnapshot(generatedAt: savedAt, limits: [openAIStuck, googleStuck])
+    var state = ResetExpiryRefreshState()
+    state.recordAttempt(
+        previousSnapshot: staleSnapshot,
+        refreshedSnapshot: staleSnapshot,
+        attemptedAccounts: [ResetExpiryRefreshAccountKey(provider: .openAI, accountID: "openai", configuredAccountID: nil)],
+        attemptedAt: resetAt.addingTimeInterval(10)
+    )
+
+    state.recordAttempt(
+        previousSnapshot: staleSnapshot,
+        refreshedSnapshot: staleSnapshot,
+        attemptedAccounts: [ResetExpiryRefreshAccountKey(provider: .google, accountID: "google", configuredAccountID: nil)],
+        attemptedAt: resetAt.addingTimeInterval(20)
+    )
+
+    let openAIKey = try #require(ResetExpiryRefreshKey(limit: openAIStuck))
+    let googleKey = try #require(ResetExpiryRefreshKey(limit: googleStuck))
+    let openAIRecord = try #require(state.record(for: openAIKey))
+    let googleRecord = try #require(state.record(for: googleKey))
+    #expect(openAIRecord.retryCount == 1)
+    #expect(openAIRecord.nextRetryAt == resetAt.addingTimeInterval(40))
+    #expect(googleRecord.retryCount == 1)
+    #expect(googleRecord.nextRetryAt == resetAt.addingTimeInterval(50))
+}
+
+@Test func snapshotRefreshRunnerDefersResetRetryWhenRefreshLockIsHeld() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let resetStateStore = ResetExpiryRefreshStateStore(stateURL: try temporaryDirectory().appending(path: "reset-state.json"))
+    let lockURL = try temporaryDirectory().appending(path: "refresh.lock")
+    try FileManager.default.createDirectory(at: lockURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    FileManager.default.createFile(atPath: lockURL.path, contents: Data())
+    let savedAt = Date(timeIntervalSince1970: 1_000)
+    let resetAt = savedAt.addingTimeInterval(60)
+    try primary.save(StoredUsageSnapshot(savedAt: savedAt, snapshot: UsageSnapshot(
+        generatedAt: savedAt,
+        limits: [usageLimit(provider: .openAI, accountID: "openai", used: 100, savedAt: savedAt, resetsAt: resetAt)]
+    )))
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary),
+        promptCacheTelemetryReader: { _ in [] }
+    )
+    let runner = SnapshotRefreshRunner(
+        service: service,
+        resetExpiryRefreshStore: resetStateStore,
+        lock: SnapshotRefreshLock(lockURL: lockURL, staleAfter: 60)
+    )
+    let now = resetAt.addingTimeInterval(10)
+
+    let decision = try await runner.refresh(now: now)
+
+    #expect(decision == .skippedAlreadyRunning)
+    #expect(runner.nextRefreshCheckDate(now: now) == now.addingTimeInterval(30))
+}
+
+@Test func resetExpiryRefreshStateClearsWhenResetWindowAdvances() throws {
+    let savedAt = Date(timeIntervalSince1970: 1_000)
+    let resetAt = savedAt.addingTimeInterval(60)
+    let previous = UsageSnapshot(generatedAt: savedAt, limits: [
+        usageLimit(provider: .openAI, accountID: "openai", used: 100, savedAt: savedAt, resetsAt: resetAt),
+    ])
+    let refreshed = UsageSnapshot(generatedAt: resetAt.addingTimeInterval(10), limits: [
+        usageLimit(
+            provider: .openAI,
+            accountID: "openai",
+            used: 0,
+            savedAt: resetAt.addingTimeInterval(10),
+            resetsAt: resetAt.addingTimeInterval(3_600)
+        ),
+    ])
+    var state = ResetExpiryRefreshState(records: [ResetExpiryRefreshRecord(
+        key: try #require(ResetExpiryRefreshKey(limit: previous.limits[0])),
+        attemptedAt: resetAt.addingTimeInterval(10),
+        nextRetryAt: resetAt.addingTimeInterval(40),
+        retryCount: 1
+    )])
+
+    state.recordAttempt(
+        previousSnapshot: previous,
+        refreshedSnapshot: refreshed,
+        attemptedAt: resetAt.addingTimeInterval(10)
+    )
+
+    #expect(state.records.isEmpty)
+}
+
+@Test func snapshotRefreshRunnerNextRefreshCheckIntervalUsesResetDeadline() {
+    let startedAt = Date(timeIntervalSince1970: 1_000)
+    let finishedAt = startedAt.addingTimeInterval(2)
+    let resetCheckAt = startedAt.addingTimeInterval(20)
+
+    let interval = SnapshotRefreshRunner.nextRefreshCheckInterval(
+        normalInterval: 5 * 60,
+        nextCheckDate: resetCheckAt,
+        startedAt: startedAt,
+        finishedAt: finishedAt
+    )
+
+    #expect(interval == 18)
+}
+
 @Test func snapshotRefreshRunnerSkipsWhenRefreshLockIsHeld() async throws {
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
@@ -1514,7 +1703,8 @@ private func usageLimit(
     accountID: String,
     configuredAccountID: String? = nil,
     used: Int,
-    savedAt: Date
+    savedAt: Date,
+    resetsAt: Date? = nil
 ) -> UsageLimit {
     UsageLimit(
         provider: provider,
@@ -1525,7 +1715,7 @@ private func usageLimit(
         unit: .percent,
         used: used,
         limit: 100,
-        resetsAt: savedAt.addingTimeInterval(3_600),
+        resetsAt: resetsAt ?? savedAt.addingTimeInterval(3_600),
         lastUpdatedAt: savedAt,
         confidence: .observed
     )

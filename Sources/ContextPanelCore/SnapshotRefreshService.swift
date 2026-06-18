@@ -176,15 +176,18 @@ private struct SnapshotRefreshLockMetadata: Codable {
 public struct SnapshotRefreshRunner: Sendable {
     public let service: SnapshotRefreshService
     public let stalenessPolicy: SnapshotStoreStalenessPolicy
+    public let resetExpiryRefreshStore: ResetExpiryRefreshStateStore?
     public let lock: SnapshotRefreshLock?
 
     public init(
         service: SnapshotRefreshService,
         stalenessPolicy: SnapshotStoreStalenessPolicy = SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.refreshNeededAge),
+        resetExpiryRefreshStore: ResetExpiryRefreshStateStore? = .appDefault(),
         lock: SnapshotRefreshLock? = .appDefault()
     ) {
         self.service = service
         self.stalenessPolicy = stalenessPolicy
+        self.resetExpiryRefreshStore = resetExpiryRefreshStore
         self.lock = lock
     }
 
@@ -194,7 +197,7 @@ public struct SnapshotRefreshRunner: Sendable {
 
     public func refreshIfNeeded(now: Date = Date()) async throws -> SnapshotRefreshRunDecision {
         service.importConfiguredAuthFiles(now: now)
-        let current = service.loadCurrent(policy: stalenessPolicy, now: now)
+        let current = service.loadCurrent(policy: effectiveStalenessPolicy(), now: now)
         let promptCacheObservations = service.promptCacheObservations(now: now)
         if shouldSavePromptCacheOnly(
             current: current.snapshot,
@@ -223,17 +226,71 @@ public struct SnapshotRefreshRunner: Sendable {
     }
 
     public func refresh(now: Date = Date()) async throws -> SnapshotRefreshRunDecision {
+        let previousSnapshot = service.loadCurrent().snapshot?.snapshot
         if let lock {
             guard let outcome = try await lock.withLock(now: now, {
                 try await service.refresh(now: now)
-            }) else { return .skippedAlreadyRunning }
-            guard outcome.refreshResult.hasSnapshotPayload else { return .skippedNoReports }
+            }) else {
+                deferResetExpiryRefreshAfterLockContention(previousSnapshot: previousSnapshot, savedAt: now)
+                return .skippedAlreadyRunning
+            }
+            guard outcome.refreshResult.hasSnapshotPayload else {
+                recordResetExpiryRefreshAttemptWithoutSnapshot(
+                    previousSnapshot: previousSnapshot,
+                    savedAt: outcome.savedAt
+                )
+                return .skippedNoReports
+            }
+            recordResetExpiryRefreshAttempt(
+                previousSnapshot: previousSnapshot,
+                refreshedSnapshot: service.loadCurrent().snapshot?.snapshot ?? outcome.refreshResult.snapshot,
+                refreshResult: outcome.refreshResult,
+                savedAt: outcome.savedAt
+            )
             return .refreshed(outcome)
         }
 
         let outcome = try await service.refresh(now: now)
-        guard outcome.refreshResult.hasSnapshotPayload else { return .skippedNoReports }
+        guard outcome.refreshResult.hasSnapshotPayload else {
+            recordResetExpiryRefreshAttemptWithoutSnapshot(previousSnapshot: previousSnapshot, savedAt: outcome.savedAt)
+            return .skippedNoReports
+        }
+        recordResetExpiryRefreshAttempt(
+            previousSnapshot: previousSnapshot,
+            refreshedSnapshot: service.loadCurrent().snapshot?.snapshot ?? outcome.refreshResult.snapshot,
+            refreshResult: outcome.refreshResult,
+            savedAt: outcome.savedAt
+        )
         return .refreshed(outcome)
+    }
+
+    public func nextRefreshCheckDate(now: Date = Date()) -> Date? {
+        let current = service.loadCurrent().snapshot
+        return Self.nextRefreshCheckDate(
+            snapshot: current?.snapshot,
+            resetExpiryRefreshState: resetExpiryRefreshStore?.load() ?? .empty,
+            now: now
+        )
+    }
+
+    public static func nextRefreshCheckDate(
+        snapshot: UsageSnapshot?,
+        resetExpiryRefreshState: ResetExpiryRefreshState = .empty,
+        now: Date = Date()
+    ) -> Date? {
+        guard let snapshot else { return nil }
+        return resetExpiryRefreshState.nextRefreshCheckDate(for: snapshot, now: now)
+    }
+
+    public static func nextRefreshCheckInterval(
+        normalInterval: TimeInterval,
+        nextCheckDate: Date?,
+        startedAt: Date,
+        finishedAt: Date
+    ) -> TimeInterval {
+        let normalWakeAt = startedAt.addingTimeInterval(normalInterval)
+        let wakeAt = [normalWakeAt, nextCheckDate].compactMap { $0 }.min() ?? normalWakeAt
+        return max(wakeAt.timeIntervalSince(finishedAt), 0)
     }
 
     public func saveMerged(refreshResult: ConnectorRefreshResult, savedAt: Date) async throws -> SnapshotRefreshRunDecision {
@@ -271,6 +328,7 @@ public struct SnapshotRefreshRunner: Sendable {
         preservesUnreportedAccounts: Bool
     ) async throws -> SnapshotRefreshRunDecision {
         guard refreshResult.hasSnapshotPayload else { return .skippedNoReports }
+        let previousSnapshot = service.loadCurrent().snapshot?.snapshot
         if let lock {
             guard let outcome = try await lock.withLock(now: savedAt, {
                 try service.saveMerged(
@@ -279,14 +337,66 @@ public struct SnapshotRefreshRunner: Sendable {
                     preservesUnreportedAccounts: preservesUnreportedAccounts
                 )
             }) else { return .skippedAlreadyRunning }
+            recordResetExpiryRefreshAttempt(
+                previousSnapshot: previousSnapshot,
+                refreshedSnapshot: service.loadCurrent().snapshot?.snapshot ?? refreshResult.snapshot,
+                refreshResult: refreshResult,
+                savedAt: savedAt
+            )
             return .refreshed(outcome)
         }
 
-        return .refreshed(try service.saveMerged(
+        let outcome = try service.saveMerged(
             refreshResult: refreshResult,
             savedAt: savedAt,
             preservesUnreportedAccounts: preservesUnreportedAccounts
-        ))
+        )
+        recordResetExpiryRefreshAttempt(
+            previousSnapshot: previousSnapshot,
+            refreshedSnapshot: service.loadCurrent().snapshot?.snapshot ?? refreshResult.snapshot,
+            refreshResult: refreshResult,
+            savedAt: savedAt
+        )
+        return .refreshed(outcome)
+    }
+
+    private func effectiveStalenessPolicy() -> SnapshotStoreStalenessPolicy {
+        SnapshotStoreStalenessPolicy(
+            maximumAge: stalenessPolicy.maximumAge,
+            resetExpiryRefreshState: resetExpiryRefreshStore?.load()
+        )
+    }
+
+    private func recordResetExpiryRefreshAttempt(
+        previousSnapshot: UsageSnapshot?,
+        refreshedSnapshot: UsageSnapshot,
+        refreshResult: ConnectorRefreshResult,
+        savedAt: Date
+    ) {
+        guard let resetExpiryRefreshStore else { return }
+        let attemptedAccounts = Set(refreshResult.reports.map(ResetExpiryRefreshAccountKey.init(report:)))
+        try? resetExpiryRefreshStore.update { state in
+            state.recordAttempt(
+                previousSnapshot: previousSnapshot,
+                refreshedSnapshot: refreshedSnapshot,
+                attemptedAccounts: attemptedAccounts.isEmpty ? nil : attemptedAccounts,
+                attemptedAt: savedAt
+            )
+        }
+    }
+
+    private func recordResetExpiryRefreshAttemptWithoutSnapshot(previousSnapshot: UsageSnapshot?, savedAt: Date) {
+        guard let resetExpiryRefreshStore else { return }
+        try? resetExpiryRefreshStore.update { state in
+            state.recordAttemptWithoutSnapshot(previousSnapshot: previousSnapshot, attemptedAt: savedAt)
+        }
+    }
+
+    private func deferResetExpiryRefreshAfterLockContention(previousSnapshot: UsageSnapshot?, savedAt: Date) {
+        guard let resetExpiryRefreshStore else { return }
+        try? resetExpiryRefreshStore.update { state in
+            state.deferDueResets(previousSnapshot: previousSnapshot, attemptedAt: savedAt)
+        }
     }
 
     private func shouldSavePromptCacheOnly(
@@ -386,6 +496,10 @@ public struct SnapshotRefreshService: Sendable {
 
     public func loadCurrent(policy: SnapshotStoreStalenessPolicy, now: Date = Date()) -> SnapshotStoreLoadResult {
         stores.primary.loadCurrent(policy: policy, now: now)
+    }
+
+    public func loadCurrent() -> SnapshotStoreLoadResult {
+        stores.primary.loadCurrent()
     }
 
     public func promptCacheObservations(now: Date = Date()) -> [PromptCacheObservation] {
