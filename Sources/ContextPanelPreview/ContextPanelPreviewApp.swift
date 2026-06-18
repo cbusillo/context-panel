@@ -2455,7 +2455,7 @@ private struct ReconnectAccountRow: View {
             if attentionReport?.hasProviderConfigurationFailure == true {
                 return "Google setup is missing from this build. Check provider configuration, then refresh."
             }
-            return "Reconnect Google if Antigravity model availability refresh keeps failing."
+            return "Open Antigravity to refresh its local login, then refresh Google."
         }
         return settingsModel.detailText(for: account)
     }

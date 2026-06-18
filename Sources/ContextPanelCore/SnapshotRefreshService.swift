@@ -557,12 +557,12 @@ public struct SnapshotRefreshService: Sendable {
         let accountResult = accountStore.load(now: now)
         migrateClaudeStateIfNeeded(accounts: accountResult.document.accounts, now: now)
         migrateGoogleStateIfNeeded()
-        let accountDocument = accountResult.document
+        let skippedGoogleAntigravityAccounts = skippedGoogleAntigravityAccounts(in: accountResult.document)
+        let accountDocument = accountDocumentForRefresh(accountResult.document)
         let connectors = AccountConnectorFactory.connectors(
             from: accountDocument,
             bookmarkStore: bookmarkStore,
             credentialStore: credentialStore,
-            googleAntigravityCredentialLoader: googleAntigravityCredentialLoader(),
             requiresBookmarkedAuthFiles: ContextPanelLocations.isRunningInAppSandbox
         )
         RefreshDiagnostics.logRefreshStarted(
@@ -570,10 +570,13 @@ public struct SnapshotRefreshService: Sendable {
             connectorCount: connectors.count
         )
         let connectorResult = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: now)
-        let refreshResult = ConnectorRefreshResult(
-            generatedAt: connectorResult.generatedAt,
-            reports: connectorResult.reports,
-            promptCacheObservations: connectorResult.promptCacheObservations + promptCacheObservations(now: now)
+        let refreshResult = refreshResultPreservingSkippedGoogleAntigravity(
+            ConnectorRefreshResult(
+                generatedAt: connectorResult.generatedAt,
+                reports: connectorResult.reports,
+                promptCacheObservations: connectorResult.promptCacheObservations + promptCacheObservations(now: now)
+            ),
+            skippedAccountIDs: skippedGoogleAntigravityAccounts
         )
         RefreshDiagnostics.logProviderReports(refreshResult.reports, previous: stores.primary.loadCurrent().snapshot)
         guard refreshResult.hasSnapshotPayload else {
@@ -583,9 +586,61 @@ public struct SnapshotRefreshService: Sendable {
         return try saveMerged(refreshResult: refreshResult, savedAt: now)
     }
 
-    private func googleAntigravityCredentialLoader() -> (any ProviderCredentialLoading)? {
-        guard !allowsExternalGoogleKeychain else { return nil }
-        return GoogleAntigravityForegroundRequiredCredentialLoader()
+    private func accountDocumentForRefresh(_ document: AccountConfigurationDocument) -> AccountConfigurationDocument {
+        guard !allowsExternalGoogleKeychain else { return document }
+        return AccountConfigurationDocument(
+            updatedAt: document.updatedAt,
+            accounts: document.accounts.filter { account in
+                account.connectorKind != .googleAntigravityQuota
+            }
+        )
+    }
+
+    private func skippedGoogleAntigravityAccounts(in document: AccountConfigurationDocument) -> Set<String> {
+        guard !allowsExternalGoogleKeychain else { return [] }
+        return Set(document.accounts.compactMap { account in
+            guard account.isEnabled, account.connectorKind == .googleAntigravityQuota else { return nil }
+            return account.id
+        })
+    }
+
+    private func refreshResultPreservingSkippedGoogleAntigravity(
+        _ refreshResult: ConnectorRefreshResult,
+        skippedAccountIDs: Set<String>
+    ) -> ConnectorRefreshResult {
+        guard !skippedAccountIDs.isEmpty,
+              let current = stores.primary.loadCurrent().snapshot
+        else { return refreshResult }
+
+        let preservedReports = current.reports.compactMap { storedReport -> ProviderConnectorReport? in
+            guard storedReport.provider == .google,
+                  let configuredAccountID = storedReport.configuredAccountID,
+                  skippedAccountIDs.contains(configuredAccountID)
+            else { return nil }
+
+            let preservedLimits = current.snapshot.limits.filter { limit in
+                limit.provider == .google && limit.configuredAccountID == configuredAccountID
+            }
+            guard !preservedLimits.isEmpty else { return nil }
+
+            return ProviderConnectorReport(
+                provider: storedReport.provider,
+                accountID: storedReport.accountID,
+                configuredAccountID: storedReport.configuredAccountID,
+                accountName: storedReport.accountName,
+                generatedAt: storedReport.generatedAt,
+                limits: preservedLimits,
+                status: storedReport.status,
+                errorMessage: storedReport.errorMessage
+            )
+        }
+
+        guard !preservedReports.isEmpty else { return refreshResult }
+        return ConnectorRefreshResult(
+            generatedAt: refreshResult.generatedAt,
+            reports: refreshResult.reports + preservedReports,
+            promptCacheObservations: refreshResult.promptCacheObservations
+        )
     }
 
     public func saveMerged(

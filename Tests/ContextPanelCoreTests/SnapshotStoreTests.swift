@@ -1144,9 +1144,33 @@ import Testing
     #expect(!accountDocument.accounts.contains { $0.id == "gemini-code-assist-default" })
 }
 
-@Test func snapshotRefreshServiceCanSkipExternalGoogleKeychainInBackgroundRefreshes() async throws {
+@Test func snapshotRefreshServiceSkipsGoogleAntigravityInBackgroundRefreshes() async throws {
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let previousAt = Date(timeIntervalSince1970: 240)
+    let googleAccountID = ConnectorRedactor.localAccountID(provider: .google, stableID: "google-antigravity-default")
+    try primary.save(StoredUsageSnapshot(savedAt: previousAt, refreshResult: ConnectorRefreshResult(
+        generatedAt: previousAt,
+        reports: [ProviderConnectorReport(
+            provider: .google,
+            accountID: googleAccountID,
+            configuredAccountID: "google-antigravity-default",
+            accountName: "Antigravity",
+            generatedAt: previousAt,
+            limits: [UsageLimit(
+                provider: .google,
+                accountID: googleAccountID,
+                configuredAccountID: "google-antigravity-default",
+                accountName: "Antigravity",
+                label: "Gemini 3.1 Pro High 5-hour",
+                windowLabel: "5-hour",
+                unit: .percent,
+                used: 7,
+                limit: 100,
+                resetsAt: previousAt.addingTimeInterval(3_600)
+            )]
+        )]
+    )))
     let service = SnapshotRefreshService(
         accountStore: AccountConfigurationStore(configurationURL: accountURL),
         stores: SnapshotRefreshStores(primary: primary),
@@ -1165,12 +1189,16 @@ import Testing
     ))
 
     let outcome = try await service.refresh(now: savedAt)
-    let report = try #require(outcome.refreshResult.reports.first)
+    let current = try #require(primary.loadCurrent().snapshot)
 
-    #expect(report.provider == .google)
-    #expect(report.status == .failure)
-    #expect(report.errorMessage?.contains("Always Allow") == true)
-    #expect(primary.loadCurrent().snapshot?.reports.first?.errorMessage?.contains("Always Allow") == true)
+    #expect(outcome.refreshResult.reports.first?.provider == .google)
+    #expect(outcome.refreshResult.reports.first?.status == .healthy)
+    #expect(outcome.refreshResult.reports.first?.errorMessage == nil)
+    #expect(current.reports.first?.provider == .google)
+    #expect(current.reports.first?.status == .healthy)
+    #expect(current.reports.first?.errorMessage == nil)
+    #expect(current.snapshot.limits.first?.provider == .google)
+    #expect(current.snapshot.limits.first?.used == 7)
 }
 
 @Test func snapshotRefreshServiceDoesNotOverwriteExistingMigratedGoogleCredentials() throws {
