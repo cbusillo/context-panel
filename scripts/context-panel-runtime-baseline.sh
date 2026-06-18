@@ -233,7 +233,7 @@ google_oauth_callback_scheme_for_client_id() {
 	local client_id="$1"
 	local suffix=".apps.googleusercontent.com"
 	if [[ "$client_id" == *"$suffix" ]]; then
-		printf 'com.googleusercontent.apps.%s' "${client_id%$suffix}"
+		printf 'com.googleusercontent.apps.%s' "${client_id%"$suffix"}"
 	fi
 }
 
@@ -564,6 +564,20 @@ signed_entitlement_enabled() {
 	[[ "$value" == "true" ]]
 }
 
+signed_entitlement_present() {
+	local bundle="$1"
+	local entitlement="$2"
+	local plist value
+	plist="$(mktemp)"
+	if ! codesign -d --entitlements :- "$bundle" >"$plist" 2>/dev/null; then
+		rm -f "$plist"
+		return 2
+	fi
+	value="$(/usr/libexec/PlistBuddy -c "Print :$entitlement" "$plist" 2>/dev/null || true)"
+	rm -f "$plist"
+	[[ -n "$value" ]]
+}
+
 check_entitlement_enabled() {
 	local bundle="$1"
 	local label="$2"
@@ -574,6 +588,28 @@ check_entitlement_enabled() {
 	else
 		fail "$label is missing $entitlement required for $required_for"
 	fi
+}
+
+check_entitlement_absent() {
+	local bundle="$1"
+	local label="$2"
+	local entitlement="$3"
+	local status
+	set +e
+	signed_entitlement_present "$bundle" "$entitlement"
+	status=$?
+	set -e
+	case "$status" in
+	0)
+		fail "$label unexpectedly has $entitlement"
+		;;
+	1)
+		ok "$label does not have $entitlement"
+		;;
+	*)
+		fail "could not read signed entitlements for $label"
+		;;
+	esac
 }
 
 signed_team_identifier() {

@@ -997,7 +997,11 @@ import Testing
 }
 
 @Test func googleAntigravityConnectorDiscoversProjectAndFetchesQuotaSummary() async throws {
-    let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["https://www.googleapis.com/auth/cloud-platform"]}"#.data(using: .utf8)!
+    let credentials = try googleAntigravityCredentialData(
+        accessToken: "access-secret",
+        refreshToken: "refresh-secret",
+        expiresAt: Date(timeIntervalSince1970: 4_071_398_400)
+    )
     let project = #"{"cloudaicompanionProject":{"id":"project-a"}}"#.data(using: .utf8)!
     let summary = #"""
     {
@@ -1052,7 +1056,11 @@ import Testing
 }
 
 @Test func googleAntigravityConnectorFallsBackToModelAvailabilityWhenSummaryIsEmpty() async throws {
-    let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["https://www.googleapis.com/auth/cloud-platform"]}"#.data(using: .utf8)!
+    let credentials = try googleAntigravityCredentialData(
+        accessToken: "access-secret",
+        refreshToken: "refresh-secret",
+        expiresAt: Date(timeIntervalSince1970: 4_071_398_400)
+    )
     let project = #"{"cloudaicompanionProject":{"id":"project-a"}}"#.data(using: .utf8)!
     let emptySummary = #"{"groups":[],"buckets":[]}"#.data(using: .utf8)!
     let models = #"""
@@ -1091,7 +1099,11 @@ import Testing
 }
 
 @Test func googleAntigravityConnectorContinuesWhenProjectCacheWriteFails() async throws {
-    let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":[]}"#.data(using: .utf8)!
+    let credentials = try googleAntigravityCredentialData(
+        accessToken: "access-secret",
+        refreshToken: "refresh-secret",
+        expiresAt: Date(timeIntervalSince1970: 4_071_398_400)
+    )
     let project = #"{"cloudaicompanionProject":{"id":"project-a"}}"#.data(using: .utf8)!
     let summary = #"{"groups":[{"displayName":"Gemini models","buckets":[{"displayName":"Five Hour Limit","window":"5-hour","remainingFraction":0.5,"resetTime":"2026-06-07T12:00:00Z"}]}]}"#.data(using: .utf8)!
     let http = StubHTTPClient(responses: [
@@ -1112,14 +1124,9 @@ import Testing
     #expect(store.saveErrorCount == 1)
 }
 
-@Test func googleAntigravityConnectorAcceptsStoredCredentialsWithoutScopes() async throws {
+@Test func googleAntigravityConnectorRejectsStoredCredentialsWithoutRequiredScopes() async throws {
     let credentials = #"{"accessToken":"old-access","refreshToken":"refresh-secret","expiresAt":"2000-01-01T00:00:00Z","projectID":"project-a"}"#.data(using: .utf8)!
-    let token = #"{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600}"#.data(using: .utf8)!
-    let summary = #"{"groups":[{"displayName":"Gemini models","buckets":[{"displayName":"Weekly Limit","window":"Weekly","remainingFraction":0.25,"resetTime":"2026-06-07T12:00:00Z"}]}]}"#.data(using: .utf8)!
-    let http = StubHTTPClient(responses: [
-        ConnectorHTTPResponse(statusCode: 200, data: token),
-        ConnectorHTTPResponse(statusCode: 200, data: summary),
-    ])
+    let http = StubHTTPClient(responses: [])
     let store = StubCredentialStore(storage: ["google-antigravity-default": credentials])
     let connector = GoogleAntigravityQuotaConnector(
         accounts: [googleAntigravityTestAccount()],
@@ -1130,13 +1137,10 @@ import Testing
     let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
 
     #expect(result.reports.count == 1)
-    #expect(result.reports[0].status == .healthy)
-    #expect(result.reports[0].errorMessage == nil)
-    #expect(result.snapshot.limits.map(\.label) == ["Gemini models Weekly Limit"])
-    let savedCredentials = try #require(store.savedData.flatMap {
-        try? JSONDecoder.contextPanelISO8601.decode(GoogleAntigravityOAuthCredentials.self, from: $0)
-    })
-    #expect(savedCredentials.scopes == GoogleAntigravityOAuthMetadata.scopes)
+    #expect(result.reports[0].status == .failure)
+    #expect(result.reports[0].errorMessage == "Google Antigravity OAuth credentials are missing required permissions. Sign in to Google from Settings.")
+    #expect(http.requests.isEmpty)
+    #expect(store.savedData == nil)
 }
 
 @Test func googleAntigravityConnectorReportsUnexpectedCredentialFormatClearly() async throws {
@@ -1156,8 +1160,12 @@ import Testing
 }
 
 @Test func googleAntigravityConnectorRefreshesExpiredAccessToken() async throws {
-    let credentials = #"{"accessToken":"old-access","refreshToken":"refresh-secret","expiresAt":"2000-01-01T00:00:00Z","scopes":[]}"#.data(using: .utf8)!
-    let token = #"{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600,"scope":"https://www.googleapis.com/auth/cloud-platform"}"#.data(using: .utf8)!
+    let credentials = try googleAntigravityCredentialData(
+        accessToken: "old-access",
+        refreshToken: "refresh-secret",
+        expiresAt: Date(timeIntervalSince1970: 946_684_800)
+    )
+    let token = try googleAntigravityTokenData(accessToken: "new-access", refreshToken: "new-refresh")
     let summary = #"{"groups":[{"displayName":"Gemini models","buckets":[{"displayName":"Five Hour Limit","window":"5-hour","remainingFraction":0.5,"resetTime":"2026-06-07T12:00:00Z"}]}]}"#.data(using: .utf8)!
     let http = StubHTTPClient(responses: [
         ConnectorHTTPResponse(statusCode: 200, data: token),
@@ -1181,8 +1189,42 @@ import Testing
     #expect(store.savedData.flatMap { try? JSONDecoder.contextPanelISO8601.decode(GoogleAntigravityOAuthCredentials.self, from: $0) }?.refreshToken == "new-refresh")
 }
 
+@Test func googleAntigravityConnectorRejectsRefreshTokenWithIncompleteScopes() async throws {
+    let credentials = try googleAntigravityCredentialData(
+        accessToken: "old-access",
+        refreshToken: "refresh-secret",
+        expiresAt: Date(timeIntervalSince1970: 946_684_800)
+    )
+    let token = try googleAntigravityTokenData(
+        accessToken: "new-access",
+        refreshToken: "new-refresh",
+        scopes: ["https://www.googleapis.com/auth/cloud-platform"]
+    )
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: token),
+    ])
+    let store = StubCredentialStore(storage: ["google-antigravity-default": credentials])
+    let connector = GoogleAntigravityQuotaConnector(
+        accounts: [googleAntigravityTestAccount(projectID: "configured-project")],
+        httpClient: http,
+        credentialStore: store
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].status == .failure)
+    #expect(result.reports[0].errorMessage == "Google Antigravity OAuth credentials are missing required permissions. Sign in to Google from Settings.")
+    #expect(http.requests.map(\.url.host) == ["oauth2.googleapis.com"])
+    #expect(store.savedData == nil)
+}
+
 @Test func googleAntigravityConnectorReportsInvalidRequestRefreshDetails() async throws {
-    let credentials = #"{"accessToken":"old-access","refreshToken":"refresh-secret","expiresAt":"2000-01-01T00:00:00Z","scopes":[]}"#.data(using: .utf8)!
+    let credentials = try googleAntigravityCredentialData(
+        accessToken: "old-access",
+        refreshToken: "refresh-secret",
+        expiresAt: Date(timeIntervalSince1970: 946_684_800)
+    )
     let error = #"{"error":"invalid_request","error_description":"Token was issued to a different client."}"#.data(using: .utf8)!
     let http = StubHTTPClient(responses: [
         ConnectorHTTPResponse(statusCode: 400, data: error),
@@ -1204,7 +1246,11 @@ import Testing
 }
 
 @Test func googleAntigravityConnectorReportsMissingClientSecretAsConfigurationError() async throws {
-    let credentials = #"{"accessToken":"old-access","refreshToken":"refresh-secret","expiresAt":"2000-01-01T00:00:00Z","scopes":[]}"#.data(using: .utf8)!
+    let credentials = try googleAntigravityCredentialData(
+        accessToken: "old-access",
+        refreshToken: "refresh-secret",
+        expiresAt: Date(timeIntervalSince1970: 946_684_800)
+    )
     let error = #"{"error":"invalid_request","error_description":"client_secret is missing."}"#.data(using: .utf8)!
     let http = StubHTTPClient(responses: [
         ConnectorHTTPResponse(statusCode: 400, data: error),
@@ -1226,8 +1272,13 @@ import Testing
 }
 
 @Test func googleAntigravityConnectorRefreshesWhenQuotaSummaryIsUnauthorized() async throws {
-    let credentials = #"{"accessToken":"old-access","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":[],"projectID":"project-a"}"#.data(using: .utf8)!
-    let token = #"{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600,"scope":"https://www.googleapis.com/auth/cloud-platform"}"#.data(using: .utf8)!
+    let credentials = try googleAntigravityCredentialData(
+        accessToken: "old-access",
+        refreshToken: "refresh-secret",
+        expiresAt: Date(timeIntervalSince1970: 4_071_398_400),
+        projectID: "project-a"
+    )
+    let token = try googleAntigravityTokenData(accessToken: "new-access", refreshToken: "new-refresh")
     let summary = #"{"groups":[{"displayName":"Gemini models","buckets":[{"displayName":"Five Hour Limit","window":"5-hour","remainingFraction":0.5,"resetTime":"2026-06-07T12:00:00Z"}]}]}"#.data(using: .utf8)!
     let http = StubHTTPClient(responses: [
         ConnectorHTTPResponse(statusCode: 401, data: Data(#"{"error":"invalid_token"}"#.utf8)),
@@ -1737,6 +1788,46 @@ private func googleAntigravityTestAccount(projectID: String? = nil) -> GoogleAnt
         clientSecret: "google-client-secret",
         projectID: projectID
     )
+}
+
+private func googleAntigravityCredentialData(
+    accessToken: String,
+    refreshToken: String,
+    expiresAt: Date,
+    scopes: [String] = GoogleAntigravityOAuthMetadata.scopes,
+    projectID: String? = nil,
+    clientID: String = "google-client-id",
+    clientSecret: String? = "google-client-secret"
+) throws -> Data {
+    let credentials = GoogleAntigravityOAuthCredentials(
+        accessToken: accessToken,
+        refreshToken: refreshToken,
+        expiresAt: expiresAt,
+        scopes: scopes,
+        projectID: projectID,
+        clientID: clientID,
+        clientSecret: clientSecret
+    )
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    encoder.dateEncodingStrategy = .iso8601
+    return try encoder.encode(credentials)
+}
+
+private func googleAntigravityTokenData(
+    accessToken: String,
+    refreshToken: String? = nil,
+    scopes: [String] = GoogleAntigravityOAuthMetadata.scopes
+) throws -> Data {
+    var payload: [String: Any] = [
+        "access_token": accessToken,
+        "expires_in": 3600,
+        "scope": scopes.joined(separator: " "),
+    ]
+    if let refreshToken {
+        payload["refresh_token"] = refreshToken
+    }
+    return try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
 }
 
 private final class StubCredentialStore: ProviderCredentialStoring, @unchecked Sendable {

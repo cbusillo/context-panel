@@ -692,9 +692,10 @@ struct SettingsPane: View {
         guard let callbackURL = appModel.pendingGoogleOAuthCallbackURL else { return }
         guard model.hasPendingGoogleOAuth else { return }
         guard handledGoogleOAuthCallback != callbackURL else { return }
-        handledGoogleOAuthCallback = callbackURL
-        appModel.clearPendingGoogleOAuthCallbackURL(callbackURL)
-        model.completeGoogleAntigravityOAuth(code: callbackURL.absoluteString) {}
+        if model.completeGoogleAntigravityOAuth(code: callbackURL.absoluteString, onConnected: {}) {
+            handledGoogleOAuthCallback = callbackURL
+            appModel.clearPendingGoogleOAuthCallbackURL(callbackURL)
+        }
     }
 
     private func authorizeAuthFile(for account: LocalProviderAccountConfiguration) {
@@ -1761,23 +1762,25 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         }
     }
 
-    func completeGoogleAntigravityOAuth(code: String, onConnected: @escaping () -> Void) {
-        guard let flow = pendingGoogleOAuth else { return }
+    @discardableResult
+    func completeGoogleAntigravityOAuth(code: String, onConnected: @escaping () -> Void) -> Bool {
+        guard let flow = pendingGoogleOAuth else { return false }
         let authorizationCode = GoogleAntigravityOAuthFlow.normalizedAuthorizationCode(from: code)
-        guard !authorizationCode.code.isEmpty else { return }
+        guard !authorizationCode.code.isEmpty else { return false }
         if let state = authorizationCode.state, state != flow.state {
             errorMessage = "Google authorization state did not match this connection attempt. Start Google sign-in again."
-            return
+            return false
         }
-        completeGoogleAntigravityOAuth(authorizationCode: authorizationCode, flow: flow, onConnected: onConnected)
+        return completeGoogleAntigravityOAuth(authorizationCode: authorizationCode, flow: flow, onConnected: onConnected)
     }
 
+    @discardableResult
     private func completeGoogleAntigravityOAuth(
         authorizationCode: GoogleAntigravityAuthorizationCode,
         flow: PendingGoogleAntigravityOAuth,
         onConnected: @escaping () -> Void
-    ) {
-        guard !isCompletingGoogleOAuth else { return }
+    ) -> Bool {
+        guard !isCompletingGoogleOAuth else { return false }
         isCompletingGoogleOAuth = true
         contextPanelLogger.info("Google Antigravity OAuth code exchange started")
         Task { [weak self] in
@@ -1823,6 +1826,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
                 }
             }
         }
+        return true
     }
 
     private func startGoogleOAuthSession(for flow: PendingGoogleAntigravityOAuth) {
@@ -2052,7 +2056,21 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     private func hasImportedCredential(for account: LocalProviderAccountConfiguration) -> Bool {
-        (try? credentialStore.load(accountID: account.id)) != nil
+        switch account.connectorKind {
+        case .googleAntigravityQuota:
+            return oauthCredentialAccountIDs(for: account).contains { accountID in
+                guard let data = try? credentialStore.load(accountID: accountID),
+                      let credentials = try? JSONDecoder.contextPanelISO8601.decode(GoogleAntigravityOAuthCredentials.self, from: data)
+                else { return false }
+                return credentials.hasRequiredScopes
+            }
+        case .claudeOAuthUsage:
+            return oauthCredentialAccountIDs(for: account).contains { accountID in
+                (try? credentialStore.load(accountID: accountID)) != nil
+            }
+        case .codexRateLimits:
+            return (try? credentialStore.load(accountID: account.id)) != nil
+        }
     }
 
     private static func exchangeClaudeOAuthCode(
@@ -2116,11 +2134,15 @@ final class SettingsPaneModel: NSObject, ObservableObject {
             throw ConnectorError.invalidAuth("Google Antigravity OAuth token exchange returned HTTP \(http.statusCode): \(redactedBody)")
         }
         let token = try JSONDecoder().decode(GoogleAntigravityOAuthTokenResponse.self, from: data)
+        let scopes = token.scopes.isEmpty ? GoogleAntigravityOAuthMetadata.scopes : token.scopes
+        guard GoogleAntigravityOAuthCredentials.hasRequiredScopes(scopes) else {
+            throw ConnectorError.invalidAuth("Google Antigravity OAuth credentials are missing required permissions. Sign in to Google from Settings.")
+        }
         return GoogleAntigravityOAuthCredentials(
             accessToken: token.accessToken,
             refreshToken: token.refreshToken,
             expiresAt: token.expiresIn.map { Date().addingTimeInterval(TimeInterval($0)) },
-            scopes: token.scopes,
+            scopes: scopes,
             clientID: flow.clientID,
             clientSecret: flow.clientSecret
         )
@@ -2403,6 +2425,7 @@ struct ReconnectDashboard: View {
     @ObservedObject var appModel: ContextPanelAppModel
     let snapshot: UsageSnapshot
     @StateObject private var settingsModel = SettingsPaneModel()
+    @State private var handledGoogleOAuthCallback: URL?
 
     private var accountsNeedingAction: [LocalProviderAccountConfiguration] {
         settingsModel.accounts.filter { account in
@@ -2492,16 +2515,27 @@ struct ReconnectDashboard: View {
             }
         }
         .sheet(isPresented: $settingsModel.isGoogleOAuthCodeSheetPresented) {
-            GoogleAntigravityOAuthCodeSheet(model: settingsModel) {
-                Task {
-                    await appModel.refreshLocalConnectors()
-                    settingsModel.load()
-                }
-            }
+            GoogleAntigravityOAuthCodeSheet(model: settingsModel) {}
         }
-        .onAppear { settingsModel.load() }
+        .onAppear {
+            settingsModel.load()
+            consumePendingGoogleOAuthCallback()
+        }
+        .onChange(of: appModel.pendingGoogleOAuthCallbackURL) { _, _ in
+            consumePendingGoogleOAuthCallback()
+        }
         .onChange(of: settingsModel.authorizationRefreshCounter) { _, _ in
             refreshAfterAuthorization()
+        }
+    }
+
+    private func consumePendingGoogleOAuthCallback() {
+        guard let callbackURL = appModel.pendingGoogleOAuthCallbackURL else { return }
+        guard settingsModel.hasPendingGoogleOAuth else { return }
+        guard handledGoogleOAuthCallback != callbackURL else { return }
+        if settingsModel.completeGoogleAntigravityOAuth(code: callbackURL.absoluteString, onConnected: {}) {
+            handledGoogleOAuthCallback = callbackURL
+            appModel.clearPendingGoogleOAuthCallbackURL(callbackURL)
         }
     }
 

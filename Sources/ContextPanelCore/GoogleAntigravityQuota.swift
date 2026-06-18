@@ -42,7 +42,7 @@ public struct GoogleAntigravityOAuthCredentials: Codable, Equatable, Sendable {
         accessToken = try container.decodeIfPresent(String.self, forKey: .accessToken)
         refreshToken = try container.decodeIfPresent(String.self, forKey: .refreshToken)
         expiresAt = try container.decodeIfPresent(Date.self, forKey: .expiresAt)
-        scopes = try container.decodeIfPresent([String].self, forKey: .scopes) ?? GoogleAntigravityOAuthMetadata.scopes
+        scopes = try container.decodeIfPresent([String].self, forKey: .scopes) ?? []
         projectID = try container.decodeIfPresent(String.self, forKey: .projectID)
         let storedClientID = try container.decodeIfPresent(String.self, forKey: .clientID)
         let storedClientSecret = try container.decodeIfPresent(String.self, forKey: .clientSecret)
@@ -81,6 +81,15 @@ public struct GoogleAntigravityOAuthCredentials: Codable, Equatable, Sendable {
             legacyClientID ?? currentClientID ?? "",
             legacyClientSecret ?? currentClientSecret
         )
+    }
+
+    public var hasRequiredScopes: Bool {
+        Self.hasRequiredScopes(scopes)
+    }
+
+    public static func hasRequiredScopes(_ scopes: [String]) -> Bool {
+        let grantedScopes = Set(scopes)
+        return GoogleAntigravityOAuthMetadata.scopes.allSatisfy { grantedScopes.contains($0) }
     }
 }
 
@@ -508,7 +517,13 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
             throw ConnectorError.missingAuth("Google Antigravity is not connected. Sign in to Google from Settings.")
         }
         do {
-            return try JSONDecoder.contextPanelISO8601.decode(GoogleAntigravityOAuthCredentials.self, from: data)
+            let credentials = try JSONDecoder.contextPanelISO8601.decode(GoogleAntigravityOAuthCredentials.self, from: data)
+            guard credentials.hasRequiredScopes else {
+                throw ConnectorError.invalidAuth("Google Antigravity OAuth credentials are missing required permissions. Sign in to Google from Settings.")
+            }
+            return credentials
+        } catch let error as ConnectorError {
+            throw error
         } catch is DecodingError {
             throw ConnectorError.invalidAuth("Google Antigravity credentials are in an unexpected format. Sign in again from Settings.")
         }
@@ -559,11 +574,15 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
             throw ConnectorError.httpFailure(operation: "Google Antigravity OAuth refresh", statusCode: response.statusCode)
         }
         let token = try JSONDecoder().decode(GoogleAntigravityOAuthTokenResponse.self, from: response.data)
+        let refreshedScopes = token.scopes.isEmpty ? credentials.scopes : token.scopes
+        guard GoogleAntigravityOAuthCredentials.hasRequiredScopes(refreshedScopes) else {
+            throw ConnectorError.invalidAuth("Google Antigravity OAuth credentials are missing required permissions. Sign in to Google from Settings.")
+        }
         credentials = GoogleAntigravityOAuthCredentials(
             accessToken: token.accessToken,
             refreshToken: token.refreshToken ?? refreshToken,
             expiresAt: token.expiresIn.map { now.addingTimeInterval(TimeInterval($0)) },
-            scopes: token.scopes.isEmpty ? credentials.scopes : token.scopes,
+            scopes: refreshedScopes,
             projectID: credentials.projectID,
             clientID: credentials.clientID.isEmpty ? account.clientID : credentials.clientID,
             clientSecret: credentials.clientSecret ?? account.clientSecret

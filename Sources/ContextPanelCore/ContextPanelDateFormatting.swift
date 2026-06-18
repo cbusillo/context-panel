@@ -1,7 +1,7 @@
 import Foundation
 
 extension JSONDecoder {
-    static var contextPanelISO8601: JSONDecoder {
+    public static var contextPanelISO8601: JSONDecoder {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
