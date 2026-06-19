@@ -151,10 +151,6 @@ public struct CompanionSyncStore: Sendable {
     }
 
     public func save(_ document: CompanionSyncDocument) throws {
-        try FileManager.default.createDirectory(
-            at: documentURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
         let data = try Self.makeEncoder().encode(document)
         try coordinatedWrite(data: data)
     }
@@ -238,7 +234,11 @@ public struct CompanionSyncStore: Sendable {
             error: &coordinatorError
         ) { coordinatedURL in
             do {
-                try data.write(to: coordinatedURL)
+                try FileManager.default.createDirectory(
+                    at: coordinatedURL.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try Self.replaceDocument(at: coordinatedURL, with: data)
             } catch {
                 writeError = error
             }
@@ -246,6 +246,35 @@ public struct CompanionSyncStore: Sendable {
 
         if let writeError { throw writeError }
         if let coordinatorError { throw coordinatorError }
+    }
+
+    private static func replaceDocument(at documentURL: URL, with data: Data) throws {
+        let fileManager = FileManager.default
+        let temporaryURL = replacementTemporaryURL(for: documentURL)
+        var removeTemporaryFile = true
+        defer {
+            if removeTemporaryFile {
+                try? fileManager.removeItem(at: temporaryURL)
+            }
+        }
+
+        try data.write(to: temporaryURL, options: [.atomic])
+        if fileManager.fileExists(atPath: documentURL.path) {
+            _ = try fileManager.replaceItemAt(
+                documentURL,
+                withItemAt: temporaryURL,
+                backupItemName: nil,
+                options: []
+            )
+        } else {
+            try fileManager.moveItem(at: temporaryURL, to: documentURL)
+        }
+        removeTemporaryFile = false
+    }
+
+    private static func replacementTemporaryURL(for documentURL: URL) -> URL {
+        documentURL.deletingLastPathComponent()
+            .appending(path: ".\(documentURL.lastPathComponent).\(UUID().uuidString).tmp")
     }
 
     private static func makeEncoder() -> JSONEncoder {
