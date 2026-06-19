@@ -1328,9 +1328,9 @@ import Testing
     #expect(current.reports.filter { $0.provider == .google }.count == 1)
     #expect(current.reports.first?.configuredAccountID == "google-antigravity-default")
     #expect(current.reports.first?.accountID == migratedAccountID)
-    #expect(current.snapshot.limits.map(\.configuredAccountID) == ["google-antigravity-default"])
-    #expect(current.snapshot.limits.map(\.accountID) == [migratedAccountID])
-    #expect(current.snapshot.limits.map(\.label) == ["Migrated Gemini Weekly"])
+    #expect(current.snapshot.limits.map(\.configuredAccountID) == ["google-antigravity-default", "google-antigravity-default"])
+    #expect(current.snapshot.limits.map(\.accountID) == [migratedAccountID, migratedAccountID])
+    #expect(current.snapshot.limits.map(\.label) == ["Migrated Gemini Weekly", "Legacy Gemini Weekly"])
 }
 
 @Test func snapshotRefreshServicePreservesFailureOnlyGoogleAntigravityReportWhenBackgroundSkipsGoogle() async throws {
