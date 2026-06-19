@@ -211,13 +211,27 @@ public struct CompanionSyncSaveResult: Equatable, Sendable {
     }
 }
 
+public enum CompanionSyncConditionalSaveResult: Equatable, Sendable {
+    case saved(CompanionSyncSaveResult)
+    case keptCurrent(CompanionSyncLoadResult)
+}
+
 public struct CompanionSyncLoadDiagnosticsResult: Equatable, Sendable {
     public let result: CompanionSyncLoadResult
     public let storeOutcomes: [CompanionSyncStoreOutcome]
+    public let selectedStoreRole: String?
+    public let selectedStoreIsICloud: Bool
 
-    public init(result: CompanionSyncLoadResult, storeOutcomes: [CompanionSyncStoreOutcome]) {
+    public init(
+        result: CompanionSyncLoadResult,
+        storeOutcomes: [CompanionSyncStoreOutcome],
+        selectedStoreRole: String? = nil,
+        selectedStoreIsICloud: Bool = false
+    ) {
         self.result = result
         self.storeOutcomes = storeOutcomes
+        self.selectedStoreRole = selectedStoreRole.map { ConnectorRedactor.redact($0) }
+        self.selectedStoreIsICloud = selectedStoreIsICloud
     }
 
     public func diagnosticsRecord(at attemptedAt: Date) -> CompanionSyncDiagnosticsRecord {
@@ -324,35 +338,40 @@ public struct CompanionSyncStore: Sendable {
     public func saveResult(_ document: CompanionSyncDocument) -> CompanionSyncSaveResult {
         do {
             try save(document)
-            return CompanionSyncSaveResult(
-                attemptedStoreCount: 1,
-                successfulStoreCount: 1,
-                failures: [],
-                storeOutcomes: [CompanionSyncStoreOutcome(
-                    storeRole: CompanionSyncStoreFailure.storeRole(for: documentURL),
-                    succeeded: true
-                )]
-            )
+            return Self.successfulSaveResult(for: documentURL)
         } catch {
-            let failure = CompanionSyncStoreFailure(documentURL: documentURL, error: error)
-            return CompanionSyncSaveResult(
-                attemptedStoreCount: 1,
-                successfulStoreCount: 0,
-                failures: [failure],
-                storeOutcomes: [CompanionSyncStoreOutcome(
-                    storeRole: failure.storeRole,
-                    succeeded: false,
-                    errorMessage: failure.errorMessage
-                )]
-            )
+            return Self.failedSaveResult(for: documentURL, error: error)
+        }
+    }
+
+    public func saveResult(
+        _ document: CompanionSyncDocument,
+        policy: SnapshotStoreStalenessPolicy,
+        now: Date = Date(),
+        unlessKeepingCurrent shouldKeepCurrent: @escaping @Sendable (CompanionSyncLoadResult) -> Bool
+    ) -> CompanionSyncConditionalSaveResult {
+        do {
+            let data = try Self.makeEncoder().encode(document)
+            if let keptCurrentResult = try coordinatedWrite(
+                data: data,
+                policy: policy,
+                now: now,
+                unlessKeepingCurrent: shouldKeepCurrent
+            ) {
+                return .keptCurrent(keptCurrentResult)
+            }
+            return .saved(Self.successfulSaveResult(for: documentURL))
+        } catch {
+            return .saved(Self.failedSaveResult(for: documentURL, error: error))
         }
     }
 
     private func loadDocument() throws -> CompanionSyncDocument {
-        let document = try Self.makeDecoder().decode(
-            CompanionSyncDocument.self,
-            from: try coordinatedRead()
-        )
+        try Self.decodeDocument(from: try coordinatedRead())
+    }
+
+    private static func decodeDocument(from data: Data) throws -> CompanionSyncDocument {
+        let document = try makeDecoder().decode(CompanionSyncDocument.self, from: data)
         guard document.schemaVersion == CompanionSyncDocument.schemaVersion else {
             throw SnapshotStoreError.unsupportedSchema(version: document.schemaVersion)
         }
@@ -360,6 +379,34 @@ public struct CompanionSyncStore: Sendable {
             throw SnapshotStoreError.unsupportedSchema(version: document.snapshot.schemaVersion)
         }
         return document
+    }
+
+    private static func loadResult(
+        at documentURL: URL,
+        policy: SnapshotStoreStalenessPolicy,
+        now: Date
+    ) -> CompanionSyncLoadResult {
+        guard FileManager.default.fileExists(atPath: documentURL.path) else {
+            return CompanionSyncLoadResult(document: nil, status: .unknown)
+        }
+
+        do {
+            let document = try decodeDocument(from: try Data(contentsOf: documentURL))
+            let status = now.timeIntervalSince(document.snapshot.generatedAt) > policy.maximumAge
+                ? .stale
+                : document.companionStatus
+            return CompanionSyncLoadResult(document: document, status: status)
+        } catch {
+            return CompanionSyncLoadResult(
+                document: nil,
+                status: .failure,
+                errorMessage: CompanionSyncStoreFailure.diagnosticErrorMessage(
+                    storeRole: CompanionSyncStoreFailure.storeRole(for: documentURL),
+                    operation: "read",
+                    error: error
+                )
+            )
+        }
     }
 
     private func coordinatedRead() throws -> Data {
@@ -416,6 +463,67 @@ public struct CompanionSyncStore: Sendable {
 
         if let writeError { throw writeError }
         if let coordinatorError { throw coordinatorError }
+    }
+
+    private func coordinatedWrite(
+        data: Data,
+        policy: SnapshotStoreStalenessPolicy,
+        now: Date,
+        unlessKeepingCurrent shouldKeepCurrent: @escaping @Sendable (CompanionSyncLoadResult) -> Bool
+    ) throws -> CompanionSyncLoadResult? {
+        var keptCurrentResult: CompanionSyncLoadResult?
+        var writeError: Error?
+        var coordinatorError: NSError?
+        NSFileCoordinator(filePresenter: nil).coordinate(
+            writingItemAt: documentURL,
+            options: .forReplacing,
+            error: &coordinatorError
+        ) { coordinatedURL in
+            do {
+                let currentResult = Self.loadResult(at: coordinatedURL, policy: policy, now: now)
+                if shouldKeepCurrent(currentResult) {
+                    keptCurrentResult = currentResult
+                    return
+                }
+                try FileManager.default.createDirectory(
+                    at: coordinatedURL.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try Self.replaceDocument(at: coordinatedURL, with: data)
+            } catch {
+                writeError = error
+            }
+        }
+
+        if let writeError { throw writeError }
+        if let coordinatorError { throw coordinatorError }
+        return keptCurrentResult
+    }
+
+    private static func successfulSaveResult(for documentURL: URL) -> CompanionSyncSaveResult {
+        CompanionSyncSaveResult(
+            attemptedStoreCount: 1,
+            successfulStoreCount: 1,
+            failures: [],
+            storeOutcomes: [CompanionSyncStoreOutcome(
+                storeRole: CompanionSyncStoreFailure.storeRole(for: documentURL),
+                succeeded: true
+            )]
+        )
+    }
+
+    private static func failedSaveResult(for documentURL: URL, error: Error) -> CompanionSyncSaveResult {
+        let failure = CompanionSyncStoreFailure(documentURL: documentURL, error: error)
+        return CompanionSyncSaveResult(
+            attemptedStoreCount: 1,
+            successfulStoreCount: 0,
+            failures: [failure],
+            storeOutcomes: [CompanionSyncStoreOutcome(
+                storeRole: failure.storeRole,
+                succeeded: false,
+                errorMessage: failure.errorMessage
+            )]
+        )
     }
 
     private static func replaceDocument(at documentURL: URL, with data: Data) throws {
@@ -529,14 +637,18 @@ public struct CompanionSyncStoreSet: Sendable {
         policy: SnapshotStoreStalenessPolicy,
         now: Date = Date()
     ) -> CompanionSyncLoadDiagnosticsResult {
-        var bestResult: CompanionSyncLoadResult?
+        var bestCandidate: CompanionSyncLoadCandidate?
         var firstFailure: CompanionSyncLoadResult?
         var storeOutcomes: [CompanionSyncStoreOutcome] = []
         for store in stores {
             let result = store.load(policy: policy, now: now)
-            storeOutcomes.append(Self.loadOutcome(storeRole: CompanionSyncStoreFailure.storeRole(for: store.documentURL), result: result))
+            let storeRole = CompanionSyncStoreFailure.storeRole(for: store.documentURL)
+            storeOutcomes.append(Self.loadOutcome(storeRole: storeRole, result: result))
             if result.document != nil {
-                bestResult = Self.preferredResult(lhs: bestResult, rhs: result)
+                bestCandidate = Self.preferredCandidate(
+                    lhs: bestCandidate,
+                    rhs: CompanionSyncLoadCandidate(result: result, storeRole: storeRole)
+                )
                 continue
             }
             if result.status == .failure, firstFailure == nil {
@@ -554,9 +666,13 @@ public struct CompanionSyncStoreSet: Sendable {
                 continue
             }
             let result = store.load(policy: policy, now: now)
-            storeOutcomes.append(Self.loadOutcome(storeRole: CompanionSyncStoreFailure.storeRole(for: store.documentURL), result: result))
+            let storeRole = resolver.storeRole
+            storeOutcomes.append(Self.loadOutcome(storeRole: storeRole, result: result))
             if result.document != nil {
-                bestResult = Self.preferredResult(lhs: bestResult, rhs: result)
+                bestCandidate = Self.preferredCandidate(
+                    lhs: bestCandidate,
+                    rhs: CompanionSyncLoadCandidate(result: result, storeRole: storeRole)
+                )
                 continue
             }
             if result.status == .failure, firstFailure == nil {
@@ -564,8 +680,10 @@ public struct CompanionSyncStoreSet: Sendable {
             }
         }
         return CompanionSyncLoadDiagnosticsResult(
-            result: bestResult ?? firstFailure ?? CompanionSyncLoadResult(document: nil, status: .unknown),
-            storeOutcomes: storeOutcomes
+            result: bestCandidate?.result ?? firstFailure ?? CompanionSyncLoadResult(document: nil, status: .unknown),
+            storeOutcomes: storeOutcomes,
+            selectedStoreRole: bestCandidate?.storeRole,
+            selectedStoreIsICloud: bestCandidate?.storeRole == "icloud"
         )
     }
 
@@ -581,20 +699,25 @@ public struct CompanionSyncStoreSet: Sendable {
         )
     }
 
-    private static func preferredResult(
-        lhs: CompanionSyncLoadResult?,
-        rhs: CompanionSyncLoadResult
-    ) -> CompanionSyncLoadResult {
+    private static func preferredCandidate(
+        lhs: CompanionSyncLoadCandidate?,
+        rhs: CompanionSyncLoadCandidate
+    ) -> CompanionSyncLoadCandidate {
         guard let lhs else { return rhs }
-        guard let lhsDocument = lhs.document, let rhsDocument = rhs.document else { return lhs }
+        guard let lhsDocument = lhs.result.document, let rhsDocument = rhs.result.document else { return lhs }
 
-        if lhs.status == .stale, rhs.status != .stale { return rhs }
-        if lhs.status != .stale, rhs.status == .stale { return lhs }
+        if lhs.result.status == .stale, rhs.result.status != .stale { return rhs }
+        if lhs.result.status != .stale, rhs.result.status == .stale { return lhs }
         if lhsDocument.snapshot.generatedAt != rhsDocument.snapshot.generatedAt {
             return lhsDocument.snapshot.generatedAt < rhsDocument.snapshot.generatedAt ? rhs : lhs
         }
         return lhsDocument.snapshot.publishedAt < rhsDocument.snapshot.publishedAt ? rhs : lhs
     }
+}
+
+private struct CompanionSyncLoadCandidate: Equatable, Sendable {
+    let result: CompanionSyncLoadResult
+    let storeRole: String
 }
 
 public struct CompanionSyncPublisher: Sendable {
