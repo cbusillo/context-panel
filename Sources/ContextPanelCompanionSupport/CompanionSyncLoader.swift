@@ -4,9 +4,11 @@ import Foundation
 
 public enum CompanionSyncLoader {
     public static func load(now: Date = Date()) -> CompanionSyncLoadResult {
-        load(
+        let iCloudDocumentURL = ContextPanelLocations.cachedCompanionUbiquitySyncDocumentURL()
+        return load(
             localMirrorURL: ContextPanelLocations.companionAppGroupSyncDocumentURL(),
-            iCloudDocumentURL: ContextPanelLocations.companionUbiquitySyncDocumentURL(),
+            iCloudDocumentURL: iCloudDocumentURL,
+            mirrorLoadedDocument: iCloudDocumentURL != nil,
             now: now
         )
     }
@@ -14,6 +16,7 @@ public enum CompanionSyncLoader {
     static func load(
         localMirrorURL: URL?,
         iCloudDocumentURL: URL?,
+        mirrorLoadedDocument: Bool = true,
         now: Date = Date()
     ) -> CompanionSyncLoadResult {
         guard let localMirrorURL else {
@@ -38,7 +41,7 @@ public enum CompanionSyncLoader {
             policy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge),
             now: now
         )
-        if let document = result.document {
+        if mirrorLoadedDocument, let document = result.document {
             let saveResult = localStore.saveResult(document)
             if !saveResult.succeeded {
                 return CompanionSyncLoadResult(
@@ -54,7 +57,6 @@ public enum CompanionSyncLoader {
     public static func loadWidgetMirror(now: Date = Date()) -> CompanionSyncLoadResult {
         loadWidgetMirror(
             localMirrorURL: ContextPanelLocations.companionAppGroupSyncDocumentURL(),
-            iCloudDocumentURL: ContextPanelLocations.companionUbiquitySyncDocumentURL(),
             now: now
         )
     }
@@ -67,6 +69,7 @@ public enum CompanionSyncLoader {
         load(
             localMirrorURL: localMirrorURL,
             iCloudDocumentURL: iCloudDocumentURL,
+            mirrorLoadedDocument: iCloudDocumentURL != nil,
             now: now
         )
     }
