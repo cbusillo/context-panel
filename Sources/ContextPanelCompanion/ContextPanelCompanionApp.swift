@@ -81,6 +81,7 @@ private final class CompanionSyncModel {
     private(set) var refreshSettings: CompanionRefreshSettings
     private(set) var settingsErrorMessage: String?
     private var reloadTask: Task<Void, Never>?
+    private let stalenessPolicy = SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
 
     init() {
         if let settingsURL = ContextPanelLocations.companionRefreshSettingsURL() {
@@ -105,7 +106,11 @@ private final class CompanionSyncModel {
             guard !Task.isCancelled else { return }
             guard let self else { return }
             result = loaded
-            snapshot = WidgetSnapshot.fromCompanionSync(loaded, now: now)
+            snapshot = WidgetSnapshot.fromCompanionSync(
+                loaded,
+                now: now,
+                stalenessPolicy: stalenessPolicy
+            )
             displayPreferences = loaded.document?.widgetDisplayPreferences ?? .defaultPreferences
             if loaded.document != previousDocument {
                 WidgetCenter.shared.reloadAllTimelines()

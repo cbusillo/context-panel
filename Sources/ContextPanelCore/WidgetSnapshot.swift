@@ -96,7 +96,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         history: [StoredUsageSnapshot] = [],
         fastModeForecastSettings: FastModeForecastSettings = .defaultSettings,
         promptCacheWidgetState: PromptCacheWidgetState? = nil,
-        stalenessPolicy: SnapshotStoreStalenessPolicy = SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
+        stalenessPolicy: SnapshotStoreStalenessPolicy = SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge)
     ) -> WidgetSnapshot {
         guard let stored = result.snapshot else {
             return WidgetSnapshot(
@@ -153,7 +153,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     public static func fromCompanionSync(
         _ result: CompanionSyncLoadResult,
         now: Date = Date(),
-        stalenessPolicy: SnapshotStoreStalenessPolicy = SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
+        stalenessPolicy: SnapshotStoreStalenessPolicy = SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge)
     ) -> WidgetSnapshot {
         guard let document = result.document else {
             return WidgetSnapshot(

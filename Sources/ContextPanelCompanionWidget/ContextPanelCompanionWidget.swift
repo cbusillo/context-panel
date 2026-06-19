@@ -58,7 +58,11 @@ private enum CompanionWidgetLoadQueue {
         let result = CompanionSyncLoader.loadWidgetMirror(now: date)
         return ContextPanelCompanionWidgetEntry(
             date: date,
-            snapshot: WidgetSnapshot.fromCompanionSync(result, now: date),
+            snapshot: WidgetSnapshot.fromCompanionSync(
+                result,
+                now: date,
+                stalenessPolicy: SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
+            ),
             displayPreferences: result.document?.widgetDisplayPreferences ?? .defaultPreferences
         )
     }
