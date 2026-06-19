@@ -82,7 +82,7 @@ private final class CompanionSyncModel {
     private(set) var settingsErrorMessage: String?
     private var reloadTask: Task<Void, Never>?
     private var iCloudCacheRefreshTask: Task<Void, Never>?
-    private let stalenessPolicy = SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
+    private var needsReloadAfterCurrentTask = false
 
     init() {
         if let settingsURL = ContextPanelLocations.companionRefreshSettingsURL() {
@@ -97,9 +97,20 @@ private final class CompanionSyncModel {
     }
 
     func reload(now: Date = Date()) {
-        guard reloadTask == nil else { return }
+        guard reloadTask == nil else {
+            needsReloadAfterCurrentTask = true
+            return
+        }
+        needsReloadAfterCurrentTask = false
         reloadTask = Task { [weak self] in
-            defer { self?.reloadTask = nil }
+            defer {
+                if let self {
+                    reloadTask = nil
+                    if needsReloadAfterCurrentTask {
+                        reload()
+                    }
+                }
+            }
             let previousDocument = self?.result.document
             let loaded = await Task.detached(priority: .userInitiated) {
                 CompanionSyncLoader.load(now: now)
@@ -110,7 +121,7 @@ private final class CompanionSyncModel {
             snapshot = WidgetSnapshot.fromCompanionSync(
                 loaded,
                 now: now,
-                stalenessPolicy: stalenessPolicy
+                stalenessPolicy: SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
             )
             displayPreferences = loaded.document?.widgetDisplayPreferences ?? .defaultPreferences
             if loaded.document != previousDocument {
