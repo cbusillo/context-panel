@@ -415,6 +415,56 @@ import Testing
     #expect(result.status == .unknown)
 }
 
+@Test func companionSyncStoreReportsUnknownForMissingDocument() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = CompanionSyncStore(documentURL: root.appending(path: "missing.json"))
+
+    let result = store.load()
+
+    #expect(result.document == nil)
+    #expect(result.status == .unknown)
+    #expect(result.errorMessage == nil)
+}
+
+@Test func companionSyncStoreReportsFailureForMalformedDocument() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let documentURL = root.appending(path: "malformed.json")
+    try Data("not json".utf8).write(to: documentURL)
+    let store = CompanionSyncStore(documentURL: documentURL)
+
+    let result = store.load()
+
+    #expect(result.document == nil)
+    #expect(result.status == .failure)
+    #expect(result.errorMessage?.isEmpty == false)
+}
+
+@Test func companionSyncStoreFailsWhenCoordinatedReadCompletesWithoutData() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 3_095)
+    let documentURL = root.appending(path: "companion.json")
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    )
+    try CompanionSyncStore(documentURL: documentURL).save(document)
+    let readAttempts = LockedCounter()
+    let store = CompanionSyncStore(documentURL: documentURL) { _, _ in
+        readAttempts.increment()
+        return nil
+    }
+
+    let result = store.load()
+
+    #expect(readAttempts.value == 1)
+    #expect(result.document == nil)
+    #expect(result.status == .failure)
+    #expect(result.errorMessage == "Companion sync document could not be read through file coordination.")
+}
+
 @Test func companionSyncStoreSetFallsBackPastFailedMirror() throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
