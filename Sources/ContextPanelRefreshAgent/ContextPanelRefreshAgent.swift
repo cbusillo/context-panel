@@ -20,7 +20,7 @@ struct ContextPanelRefreshAgent {
             checkWebhookCredentials()
         }
 
-        let runner = SnapshotRefreshRunner.appDefault()
+        let runner = SnapshotRefreshRunner(service: .appDefault(allowsExternalGoogleKeychain: false))
         let warningService = LimitWarningNotificationService.appDefault()
         let diagnosticsStore = RefreshDiagnosticsStateStore(
             stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.appGroupID)

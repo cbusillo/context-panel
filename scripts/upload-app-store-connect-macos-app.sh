@@ -269,19 +269,6 @@ if [[ ! -f "$api_key_path" ]]; then
 	exit 1
 fi
 
-google_oauth_callback_scheme_for_client_id() {
-	local client_id="$1"
-	local suffix=".apps.googleusercontent.com"
-	if [[ "$client_id" == *"$suffix" ]]; then
-		printf 'com.googleusercontent.apps.%s' "${client_id%$suffix}"
-	fi
-}
-
-google_oauth_callback_scheme="${CONTEXT_PANEL_GOOGLE_OAUTH_CALLBACK_SCHEME:-}"
-if [[ -z "$google_oauth_callback_scheme" && -n "${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID:-}" ]]; then
-	google_oauth_callback_scheme="$(google_oauth_callback_scheme_for_client_id "${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID}")"
-fi
-
 app_profile_uuid="$(profile_uuid "$app_profile")"
 widget_profile_uuid="$(profile_uuid "$widget_profile")"
 refresh_agent_profile_uuid="$(profile_uuid "$refresh_agent_profile")"
@@ -346,11 +333,6 @@ archive_args=(
 	CONTEXT_PANEL_APP_STORE_APP_PROFILE_SPECIFIER="$app_profile_uuid"
 	CONTEXT_PANEL_APP_STORE_WIDGET_PROFILE_SPECIFIER="$widget_profile_uuid"
 	CONTEXT_PANEL_APP_STORE_REFRESH_AGENT_PROFILE_SPECIFIER="$refresh_agent_profile_uuid"
-	CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID="${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID:-}"
-	CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET="${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET:-}"
-	CONTEXT_PANEL_GOOGLE_OAUTH_CALLBACK_SCHEME="$google_oauth_callback_scheme"
-	CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_ID="${CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_ID:-}"
-	CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_SECRET="${CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_SECRET:-}"
 )
 if [[ -n "$build_number" ]]; then
 	archive_args+=(CURRENT_PROJECT_VERSION="$build_number")

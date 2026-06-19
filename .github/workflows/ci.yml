@@ -13,11 +13,16 @@ permissions:
 
 jobs:
   swift:
-    runs-on: [self-hosted, macOS, ARM64, context-panel]
+    runs-on: >-
+      ${{ fromJSON(github.event_name == 'pull_request' && '["macos-26"]' ||
+      '["self-hosted", "macOS", "ARM64", "context-panel"]') }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
 
       - name: Show Xcode
         run: xcodebuild -version

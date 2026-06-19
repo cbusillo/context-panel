@@ -148,35 +148,19 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("assert_profile_icloud_documents \"$app_profile\" \"companion app\"", script)
         self.assertIn("assert_profile_icloud_documents \"$widget_profile\" \"companion widget\"", script)
 
-    def test_runtime_baseline_uses_local_oauth_xcconfig_without_echoing_secret(self):
+    def test_runtime_baseline_does_not_require_google_oauth_build_settings(self):
         script = self.read("scripts/context-panel-runtime-baseline.sh")
 
-        self.assertIn(".local/context-panel-runtime.env", script)
-        self.assertIn("runtime-baseline-local-oauth.xcconfig", script)
-        self.assertIn('-xcconfig "$local_oauth_xcconfig_path"', script)
-        self.assertIn("check_debug_google_oauth_config", script)
-        self.assertIn("embeds debug Google OAuth config", script)
-        self.assertIn("redact_build_output", script)
-        self.assertIn("<redacted>", script)
-        self.assertIn("xcconfig_literal_value", script)
-        self.assertIn("embeds a quoted Google OAuth client id", script)
-        self.assertIn("CONTEXT_PANEL_GOOGLE_OAUTH_CALLBACK_SCHEME", script)
-        self.assertIn("google_oauth_callback_scheme_for_client_id", script)
-        self.assertIn("does not register the derived Google OAuth callback scheme", script)
-        self.assertIn("require_local_google_oauth_config", script)
-        self.assertIn("debug Google OAuth build settings are required for install/reset", script)
-        self.assertNotIn('CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET="${CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET:-}"', script)
-        self.assertNotIn("shell_escape_xcconfig_value", script)
-
-    def test_runtime_baseline_requires_google_oauth_before_local_install_build(self):
-        script = self.read("scripts/context-panel-runtime-baseline.sh")
         build_function = re.search(r"build_checkout_app\(\) \{(?P<body>.*?)\n\}", script, re.S)
 
         self.assertIsNotNone(build_function)
         body = build_function.group("body")
-        self.assertLess(body.index("load_local_runtime_env"), body.index("require_local_google_oauth_config"))
-        self.assertLess(body.index("require_local_google_oauth_config"), body.index("write_local_oauth_xcconfig"))
-        self.assertLess(body.index("write_local_oauth_xcconfig"), body.index('\txcodebuild \\'))
+        self.assertIn("xcodebuild \\", body)
+        self.assertNotIn("CONTEXT_PANEL_GOOGLE_", script)
+        self.assertNotIn("runtime-baseline-local-oauth.xcconfig", script)
+        self.assertNotIn('-xcconfig "$local_oauth_xcconfig_path"', script)
+        self.assertNotIn("check_debug_google_oauth_config", script)
+        self.assertNotIn("require_local_google_oauth_config", script)
 
     def test_runtime_baseline_local_env_file_is_ignored_but_example_is_tracked(self):
         gitignore = self.read(".gitignore")
@@ -184,11 +168,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
         self.assertIn("!.local/context-panel-runtime.env.example", gitignore)
         self.assertIn(".local/context-panel-runtime.env", gitignore)
-        self.assertIn(".build/runtime-baseline-local-oauth.xcconfig", gitignore)
-        self.assertIn("CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_ID=", example)
-        self.assertIn("CONTEXT_PANEL_GOOGLE_OAUTH_CLIENT_SECRET=", example)
-        self.assertIn("CONTEXT_PANEL_GOOGLE_OAUTH_CALLBACK_SCHEME=", example)
-        self.assertIn("CONTEXT_PANEL_GOOGLE_OAUTH_LEGACY_CLIENT_ID=", example)
+        self.assertNotIn("runtime-baseline-local-oauth.xcconfig", gitignore)
+        self.assertNotIn("CONTEXT_PANEL_GOOGLE_", example)
+        self.assertIn("Antigravity", example)
 
     def test_runtime_baseline_build_allows_xcode_to_update_explicit_profiles(self):
         script = self.read("scripts/context-panel-runtime-baseline.sh")

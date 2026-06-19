@@ -70,10 +70,11 @@
   "deployLabels": [],
   "healthUrls": [],
   "runnerPolicy": {
+    "pullRequestMacOS": "macos-26",
     "routineMacOS": ["self-hosted", "macOS", "ARM64", "context-panel"],
     "releaseMacOS": "macos-26",
     "releaseXcodeMajor": "26",
-    "notes": "Use the local self-hosted runner for routine Swift build/test validation. Keep CodeQL and release/upload jobs on explicit macos-26 until self-hosted CodeQL temp cleanup is proven stable and App Store Connect accepts the newer Xcode train."
+    "notes": "Use GitHub-hosted macos-26 for pull_request validation so untrusted PR code does not run on the persistent self-hosted machine. Use the local self-hosted runner for trusted push/manual routine validation. Keep CodeQL and release/upload jobs on explicit macos-26 until self-hosted CodeQL temp cleanup is proven stable and App Store Connect accepts the newer Xcode train."
   },
   "githubSignals": {
     "postMerge": {
