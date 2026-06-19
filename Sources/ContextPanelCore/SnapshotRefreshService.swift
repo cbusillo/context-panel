@@ -690,15 +690,46 @@ public struct SnapshotRefreshService: Sendable {
         for report in reports {
             if let existingIndex = indexesByAccountID[report.accountID] {
                 let existing = deduplicated[existingIndex]
-                if shouldPreferGoogleAntigravityReport(report, over: existing) {
-                    deduplicated[existingIndex] = report
-                }
+                deduplicated[existingIndex] = mergedGoogleAntigravityReport(existing, report)
             } else {
                 indexesByAccountID[report.accountID] = deduplicated.count
                 deduplicated.append(report)
             }
         }
         return deduplicated
+    }
+
+    private func mergedGoogleAntigravityReport(
+        _ existing: ProviderConnectorReport,
+        _ candidate: ProviderConnectorReport
+    ) -> ProviderConnectorReport {
+        let preferred: ProviderConnectorReport
+        let other: ProviderConnectorReport
+        if shouldPreferGoogleAntigravityReport(candidate, over: existing) {
+            preferred = candidate
+            other = existing
+        } else {
+            preferred = existing
+            other = candidate
+        }
+
+        return ProviderConnectorReport(
+            provider: preferred.provider,
+            accountID: preferred.accountID,
+            configuredAccountID: preferred.configuredAccountID,
+            accountName: preferred.accountName,
+            generatedAt: preferred.generatedAt,
+            limits: deduplicatedGoogleAntigravityLimits(preferred.limits + other.limits),
+            status: preferred.status,
+            errorMessage: preferred.errorMessage
+        )
+    }
+
+    private func deduplicatedGoogleAntigravityLimits(_ limits: [UsageLimit]) -> [UsageLimit] {
+        var seen = Set<String>()
+        return limits.filter { limit in
+            seen.insert(limit.id).inserted
+        }
     }
 
     private func shouldPreferGoogleAntigravityReport(
