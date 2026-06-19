@@ -10,9 +10,11 @@ version:
 - App Store Connect build upload, signed with Mac App Store profiles
 - TestFlight beta distribution for the uploaded build
 
-Companion iOS/iPadOS and visionOS distribution uses the same App Store Connect
-and TestFlight building blocks, but it is deliberately opt-in from `Ship` until
-the companion device path is proven on signed devices.
+Companion iOS/iPadOS distribution uses the same App Store Connect and
+TestFlight building blocks, but it is deliberately opt-in from `Ship` until the
+companion device path is proven on signed devices. visionOS currently has build
+scaffolding and a generic no-sign compile check only; do not treat the
+`visionos` upload options as evidence that a validated visionOS product exists.
 
 App Store Review submission is intentionally separate from `Ship`. Run it only
 after the TestFlight build has been validated and the App Store release decision
@@ -216,6 +218,36 @@ Use this path for issue #174 and companion device dogfood. It is separate from
 the normal Mac TestFlight cut unless `Ship` is explicitly configured to use the
 companion channel.
 
+### visionOS Reality Check
+
+The companion project includes visionOS-capable targets and
+`scripts/validate-companion-builds.sh visionos` can prove that the shared
+companion sources compile for `generic/platform=visionOS` with signing disabled.
+That is a compiler/project compatibility gate only. It does not prove that
+Context Panel has a designed, signed, uploaded, installed, or user-validated
+visionOS app or widget.
+
+For issue #168, the first visionOS deliverable is app-first: a read-only
+companion app that reads the Mac-published iCloud companion document and shows
+current, stale, no-Mac, and degraded sync states. Widget-first validation should
+wait until the app surface, packaging, and signing path are understood.
+
+Before using `--platform visionos` as release evidence, complete the #168
+packaging audit:
+
+- confirm the selected App Store Connect platform state and whether the build
+  is a native visionOS app or only compatible iPhone/iPad availability on Apple
+  Vision Pro;
+- provide provisioning profiles whose platform includes `visionOS` or `xrOS`
+  and whose entitlements match the companion App Group and iCloud Documents
+  container;
+- add or verify visionOS-specific icon assets. Apple treats visionOS app icons
+  as layered circular 3D assets, not the same flat iPhone/iPad icon set;
+- decide whether the embedded companion widget extension is in scope for the
+  first visionOS build, then verify supported widget families on visionOS;
+- prepare App Store Connect visionOS metadata, including any required privacy
+  and motion information, before App Review submission.
+
 ### Required Signing Material
 
 The companion upload path requires the same App Store Connect API key used by
@@ -265,9 +297,14 @@ That canary should archive `ContextPanelCompanion`, embed
 the selected platform, App Group, iCloud Documents, and ubiquity entitlements,
 then export a signed IPA under `.build/app-store-connect-companion/`.
 
-Use `--platform visionos` only after the iOS/iPadOS path is healthy or when the
-validation target is specifically visionOS. The visionOS profile must support
-`visionOS` or `xrOS`.
+Use `--platform visionos` only after #168 has an explicit visionOS surface and
+packaging decision. A passing generic no-sign visionOS build is not enough to
+run this as release evidence. The visionOS profiles must support `visionOS` or
+`xrOS`, and the archive must be followed by a signed Apple Vision Pro device
+smoke test before calling it TestFlight or release validated. A visionOS
+simulator run can be useful for pre-release UI smoke, but it does not validate
+TestFlight installability, App Store provisioning, or physical device runtime
+behavior.
 
 ### Upload And Distribution
 
@@ -299,6 +336,11 @@ For a coordinated one-shot run through `Ship`, select:
 - `testflight_beta_source=companion`
 - `app_store_channel=skip` unless the same run should also upload a Mac build
 
+Use `companion_platform=visionos` only for the #168 visionOS validation path,
+after the packaging audit has confirmed profile, icon, metadata, and App Store
+Connect requirements. The normal companion dogfood path remains `ios` for
+iPhone/iPad.
+
 Do not set `testflight_beta_source=macos` when the intent is companion device
 validation; that distributes the Mac App Store build instead of the companion
 build.
@@ -315,7 +357,11 @@ Panel.app`.
 3. Trigger a Mac refresh that publishes `context-panel-companion.json`.
 4. Open the app Diagnostics view and confirm `Companion publish` is healthy or,
    if degraded, names the failing store without raw paths or account data.
-5. Install the companion build from TestFlight on iPhone or iPad.
+5. Install the companion build from TestFlight on the target device. For the
+   current validated companion lane, that means iPhone or iPad. For a future
+   visionOS lane, release evidence requires Apple Vision Pro after #168
+   packaging requirements are satisfied. A visionOS simulator can be used for a
+   separate pre-release UI smoke check, but not as TestFlight/device validation.
 6. Launch the companion app and confirm it renders current lanes from the Mac
    companion document rather than setup-only, stale, or no-Mac copy.
 7. Add the companion widget and confirm the small/medium/large widget layouts
