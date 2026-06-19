@@ -88,6 +88,50 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(widget.message.contains("Google · Antigravity"))
 }
 
+@Test func widgetSnapshotDefaultStalenessPolicyDoesNotSuppressExpiredResetRefresh() {
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let resetAt = savedAt.addingTimeInterval(60)
+    let limit = UsageLimit(
+        provider: .google,
+        accountID: "google-antigravity",
+        accountName: "Antigravity",
+        label: "Gemini Five Hour Limit",
+        windowLabel: "5-hour",
+        unit: .percent,
+        used: 0,
+        limit: 100,
+        resetsAt: resetAt,
+        lastUpdatedAt: savedAt,
+        confidence: .observed
+    )
+    let stored = StoredUsageSnapshot(
+        savedAt: savedAt,
+        snapshot: UsageSnapshot(generatedAt: savedAt, limits: [limit])
+    )
+    var resetState = ResetExpiryRefreshState()
+    resetState.recordAttempt(
+        previousSnapshot: stored.snapshot,
+        refreshedSnapshot: stored.snapshot,
+        attemptedAt: resetAt.addingTimeInterval(10)
+    )
+
+    let defaultWidget = WidgetSnapshot.fromStore(
+        SnapshotStoreLoadResult(snapshot: stored, status: .stale),
+        now: resetAt.addingTimeInterval(20)
+    )
+    let explicitWidget = WidgetSnapshot.fromStore(
+        SnapshotStoreLoadResult(snapshot: stored, status: .stale),
+        now: resetAt.addingTimeInterval(20),
+        stalenessPolicy: SnapshotStoreStalenessPolicy(
+            maximumAge: SnapshotFreshness.widgetMaximumAge,
+            resetExpiryRefreshState: resetState
+        )
+    )
+
+    #expect(defaultWidget.refreshAttentionSummary?.singleProvider == .google)
+    #expect(explicitWidget.refreshAttentionSummary == nil)
+}
+
 @Test func widgetSnapshotKeepsStaleStatusWhenCachedLimitIsLimited() {
     let savedAt = Date(timeIntervalSince1970: 100)
     let stored = StoredUsageSnapshot(savedAt: savedAt, snapshot: UsageSnapshot(
