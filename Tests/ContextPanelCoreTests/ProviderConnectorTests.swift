@@ -1091,7 +1091,7 @@ import Testing
     #expect(result.reports[0].errorMessage?.contains("missing") == false)
 }
 
-@Test func googleAntigravityConnectorReportsExpiredLocalLogin() async throws {
+@Test func googleAntigravityConnectorReportsExpiredAccessToken() async throws {
     let credentials = googleAntigravityCredentialData(
         accessToken: "old-access",
         refreshToken: "refresh-secret",
@@ -1108,7 +1108,9 @@ import Testing
     let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
 
     #expect(result.reports[0].status == .failure)
-    #expect(result.reports[0].errorMessage?.contains("let it refresh its Google session") == true)
+    #expect(result.reports[0].errorMessage?.contains("access token has expired") == true)
+    #expect(result.reports[0].errorMessage?.contains("local login has expired") == false)
+    #expect(result.reports[0].errorMessage?.contains("so it can refresh its Google session") == true)
     #expect(http.requests.isEmpty)
 }
 
