@@ -78,6 +78,41 @@ import Testing
     #expect(state.lastLocalNotification?.errorMessage?.contains("user@example.com") == false)
 }
 
+@Test func refreshDiagnosticsStateRecordsCompanionSyncDiagnostics() throws {
+    var state = RefreshDiagnosticsState.empty
+    let now = Date(timeIntervalSince1970: 2_100)
+
+    state.recordCompanionSync(CompanionSyncDiagnosticsRecord(
+        operation: .publish,
+        outcome: .partial,
+        attemptedAt: now,
+        appGroupSucceeded: true,
+        iCloudSucceeded: false,
+        iCloudAvailable: true,
+        errorMessage: "iCloud upload failed for user@example.com with token=secret-value"
+    ))
+    state.recordCompanionSync(CompanionSyncDiagnosticsRecord(
+        operation: .load,
+        outcome: .stale,
+        attemptedAt: now.addingTimeInterval(5),
+        appGroupSucceeded: true,
+        iCloudSucceeded: nil,
+        iCloudAvailable: false,
+        loadedDocument: true,
+        mirroredDocument: nil,
+        stale: true
+    ))
+
+    #expect(state.lastCompanionPublish?.outcome == .partial)
+    #expect(state.lastCompanionPublish?.appGroupSucceeded == true)
+    #expect(state.lastCompanionPublish?.iCloudSucceeded == false)
+    #expect(state.lastCompanionPublish?.errorMessage?.contains("user@example.com") == false)
+    #expect(state.lastCompanionPublish?.errorMessage?.contains("secret-value") == false)
+    #expect(state.lastCompanionLoad?.outcome == .stale)
+    #expect(state.lastCompanionLoad?.iCloudAvailable == false)
+    #expect(state.lastCompanionLoad?.stale == true)
+}
+
 @Test func refreshDiagnosticsRunFinishIgnoresStaleRunID() throws {
     var state = RefreshDiagnosticsState.empty
     let firstStart = Date(timeIntervalSince1970: 3_000)

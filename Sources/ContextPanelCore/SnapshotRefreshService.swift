@@ -446,6 +446,7 @@ public struct SnapshotRefreshService: Sendable {
     private let bookmarkStore: SecureFileBookmarkStore?
     private let credentialStore: (any ProviderCredentialStoring)?
     private let companionSyncPublisher: CompanionSyncPublisher?
+    private let refreshDiagnosticsStore: RefreshDiagnosticsStateStore?
     private let promptCacheTelemetryMirror: @Sendable (SecureFileBookmarkStore?, [URL]) -> Void
     private let promptCacheTelemetryReader: @Sendable (Date) -> [PromptCacheObservation]
     private let allowsExternalGoogleKeychain: Bool
@@ -456,6 +457,7 @@ public struct SnapshotRefreshService: Sendable {
         bookmarkStore: SecureFileBookmarkStore? = nil,
         credentialStore: (any ProviderCredentialStoring)? = nil,
         companionSyncPublisher: CompanionSyncPublisher? = nil,
+        refreshDiagnosticsStore: RefreshDiagnosticsStateStore? = nil,
         allowsExternalGoogleKeychain: Bool = true,
         promptCacheTelemetryMirror: @escaping @Sendable (SecureFileBookmarkStore?, [URL]) -> Void = { bookmarkStore, sourceDirectories in
             _ = try? PromptCacheTelemetryMirrorService.mirror(
@@ -472,6 +474,7 @@ public struct SnapshotRefreshService: Sendable {
         self.bookmarkStore = bookmarkStore
         self.credentialStore = credentialStore
         self.companionSyncPublisher = companionSyncPublisher
+        self.refreshDiagnosticsStore = refreshDiagnosticsStore
         self.promptCacheTelemetryMirror = promptCacheTelemetryMirror
         self.promptCacheTelemetryReader = promptCacheTelemetryReader
         self.allowsExternalGoogleKeychain = allowsExternalGoogleKeychain
@@ -487,6 +490,9 @@ public struct SnapshotRefreshService: Sendable {
             bookmarkStore: SecureFileBookmarkStore(storeURL: ContextPanelLocations.bookmarkStoreURL()),
             credentialStore: ProviderCredentialStore(),
             companionSyncPublisher: .appDefault(),
+            refreshDiagnosticsStore: RefreshDiagnosticsStateStore(
+                stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.appGroupID)
+            ),
             allowsExternalGoogleKeychain: allowsExternalGoogleKeychain
         )
     }
@@ -754,7 +760,19 @@ public struct SnapshotRefreshService: Sendable {
             preservesUnreportedAccounts: preservesUnreportedAccounts
         )
         if let storedSnapshot = stores.primary.loadCurrent().snapshot {
-            companionSyncPublisher?.publish(storedSnapshot: storedSnapshot, publishedAt: savedAt)
+            let companionResult = companionSyncPublisher?.publish(storedSnapshot: storedSnapshot, publishedAt: savedAt)
+            if let companionResult {
+                let companionLoadRecord = companionSyncPublisher?.stores.loadWithDiagnostics(
+                    policy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge),
+                    now: savedAt
+                ).diagnosticsRecord(at: savedAt)
+                try? refreshDiagnosticsStore?.update { state in
+                    state.recordCompanionSync(companionResult.diagnosticsRecord(at: savedAt))
+                    if let companionLoadRecord {
+                        state.recordCompanionSync(companionLoadRecord)
+                    }
+                }
+            }
         }
         return SnapshotRefreshOutcome(savedAt: savedAt, refreshResult: refreshResult)
     }

@@ -91,6 +91,56 @@ public struct RefreshDiagnosticsAlertRecord: Codable, Equatable, Sendable {
     public var succeeded: Bool { succeededAt != nil }
 }
 
+public enum CompanionSyncDiagnosticsOperation: String, Codable, Equatable, Sendable {
+    case publish
+    case load
+}
+
+public enum CompanionSyncDiagnosticsOutcome: String, Codable, Equatable, Sendable {
+    case healthy
+    case partial
+    case unavailable
+    case stale
+    case failed
+}
+
+public struct CompanionSyncDiagnosticsRecord: Codable, Equatable, Sendable {
+    public var operation: CompanionSyncDiagnosticsOperation
+    public var outcome: CompanionSyncDiagnosticsOutcome
+    public var attemptedAt: Date
+    public var appGroupSucceeded: Bool?
+    public var iCloudSucceeded: Bool?
+    public var iCloudAvailable: Bool?
+    public var loadedDocument: Bool?
+    public var mirroredDocument: Bool?
+    public var stale: Bool?
+    public var errorMessage: String?
+
+    public init(
+        operation: CompanionSyncDiagnosticsOperation,
+        outcome: CompanionSyncDiagnosticsOutcome,
+        attemptedAt: Date,
+        appGroupSucceeded: Bool? = nil,
+        iCloudSucceeded: Bool? = nil,
+        iCloudAvailable: Bool? = nil,
+        loadedDocument: Bool? = nil,
+        mirroredDocument: Bool? = nil,
+        stale: Bool? = nil,
+        errorMessage: String? = nil
+    ) {
+        self.operation = operation
+        self.outcome = outcome
+        self.attemptedAt = attemptedAt
+        self.appGroupSucceeded = appGroupSucceeded
+        self.iCloudSucceeded = iCloudSucceeded
+        self.iCloudAvailable = iCloudAvailable
+        self.loadedDocument = loadedDocument
+        self.mirroredDocument = mirroredDocument
+        self.stale = stale
+        self.errorMessage = errorMessage.map { ConnectorRedactor.redact($0) }
+    }
+}
+
 public struct RefreshDiagnosticsState: Codable, Equatable, Sendable {
     public let schemaVersion: Int
     public var lastRun: RefreshDiagnosticsRun?
@@ -99,6 +149,8 @@ public struct RefreshDiagnosticsState: Codable, Equatable, Sendable {
     public var lastAlertEvaluationEventCount: Int?
     public var lastLocalNotification: RefreshDiagnosticsAlertRecord?
     public var lastWebhook: RefreshDiagnosticsAlertRecord?
+    public var lastCompanionPublish: CompanionSyncDiagnosticsRecord?
+    public var lastCompanionLoad: CompanionSyncDiagnosticsRecord?
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion
@@ -108,6 +160,8 @@ public struct RefreshDiagnosticsState: Codable, Equatable, Sendable {
         case lastAlertEvaluationEventCount
         case lastLocalNotification
         case lastWebhook
+        case lastCompanionPublish
+        case lastCompanionLoad
     }
 
     public init(
@@ -116,7 +170,9 @@ public struct RefreshDiagnosticsState: Codable, Equatable, Sendable {
         lastAlertEvaluationAt: Date? = nil,
         lastAlertEvaluationEventCount: Int? = nil,
         lastLocalNotification: RefreshDiagnosticsAlertRecord? = nil,
-        lastWebhook: RefreshDiagnosticsAlertRecord? = nil
+        lastWebhook: RefreshDiagnosticsAlertRecord? = nil,
+        lastCompanionPublish: CompanionSyncDiagnosticsRecord? = nil,
+        lastCompanionLoad: CompanionSyncDiagnosticsRecord? = nil
     ) {
         schemaVersion = 1
         self.lastRun = lastRun
@@ -125,6 +181,8 @@ public struct RefreshDiagnosticsState: Codable, Equatable, Sendable {
         self.lastAlertEvaluationEventCount = lastAlertEvaluationEventCount
         self.lastLocalNotification = lastLocalNotification
         self.lastWebhook = lastWebhook
+        self.lastCompanionPublish = lastCompanionPublish
+        self.lastCompanionLoad = lastCompanionLoad
     }
 
     public static var empty: RefreshDiagnosticsState { RefreshDiagnosticsState() }
@@ -183,6 +241,15 @@ public struct RefreshDiagnosticsState: Codable, Equatable, Sendable {
             lastLocalNotification = record
         case .webhook:
             lastWebhook = record
+        }
+    }
+
+    public mutating func recordCompanionSync(_ record: CompanionSyncDiagnosticsRecord) {
+        switch record.operation {
+        case .publish:
+            lastCompanionPublish = record
+        case .load:
+            lastCompanionLoad = record
         }
     }
 }
