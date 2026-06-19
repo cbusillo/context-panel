@@ -42,6 +42,36 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(widget.hasProviderReconnectIssue == false)
 }
 
+@Test func widgetSnapshotProblemTextNamesSingleExpiredResetProvider() {
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let resetAt = savedAt.addingTimeInterval(60)
+    let stored = StoredUsageSnapshot(savedAt: savedAt, snapshot: UsageSnapshot(
+        generatedAt: savedAt,
+        limits: [UsageLimit(
+            provider: .google,
+            accountID: "google-antigravity",
+            accountName: "Antigravity",
+            label: "Gemini Five Hour Limit",
+            windowLabel: "5-hour",
+            unit: .percent,
+            used: 0,
+            limit: 100,
+            resetsAt: resetAt,
+            lastUpdatedAt: savedAt,
+            confidence: .observed
+        )]
+    ))
+
+    let widget = WidgetSnapshot.fromStore(
+        SnapshotStoreLoadResult(snapshot: stored, status: .stale),
+        now: resetAt.addingTimeInterval(10)
+    )
+
+    #expect(widget.refreshAttentionSummary?.singleProvider == .google)
+    #expect(widget.widgetProblemText == "Google refresh needed")
+    #expect(widget.message.contains("Google · Antigravity"))
+}
+
 @Test func widgetSnapshotKeepsStaleStatusWhenCachedLimitIsLimited() {
     let savedAt = Date(timeIntervalSince1970: 100)
     let stored = StoredUsageSnapshot(savedAt: savedAt, snapshot: UsageSnapshot(

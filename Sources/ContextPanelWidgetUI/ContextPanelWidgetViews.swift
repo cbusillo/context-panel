@@ -983,13 +983,15 @@ extension WidgetSnapshot {
         case .failure:
             return "Reconnect account"
         case .stale:
-            return hasProviderReconnectIssue ? "Reconnect account" : "Refresh needed"
+            return hasProviderReconnectIssue ? "Reconnect account" : refreshAttentionSummary?.refreshNeededTitle ?? "Refresh needed"
         case .setupNeeded:
             return limits.isEmpty ? nil : "Setup needed"
         case .ready:
             if needsProviderConnection { return "Setup needed" }
             if status == .failure { return "Reconnect account" }
-            if status == .stale { return hasProviderReconnectIssue ? "Reconnect account" : "Refresh needed" }
+            if status == .stale {
+                return hasProviderReconnectIssue ? "Reconnect account" : refreshAttentionSummary?.refreshNeededTitle ?? "Refresh needed"
+            }
             if status == .unknown { return "Awaiting data" }
             return nil
         }
