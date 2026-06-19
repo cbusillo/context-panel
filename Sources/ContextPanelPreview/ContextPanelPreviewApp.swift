@@ -2455,7 +2455,11 @@ private struct ReconnectAccountRow: View {
             if attentionReport?.hasProviderConfigurationFailure == true {
                 return "Google setup is missing from this build. Check provider configuration, then refresh."
             }
-            return "Open Antigravity to refresh its local login, then refresh Google."
+            if let errorMessage = attentionReport?.userFacingErrorMessage,
+               errorMessage.localizedCaseInsensitiveContains("keychain") || errorMessage.localizedCaseInsensitiveContains("always allow") {
+                return "Click Refresh, then choose Always Allow for the \"gemini\" keychain item."
+            }
+            return "Open Antigravity if its login expired, then refresh Google in Context Panel."
         }
         return settingsModel.detailText(for: account)
     }
@@ -3429,7 +3433,7 @@ final class ContextPanelAppModel: ObservableObject {
             if report.hasProviderConfigurationFailure {
                 return "\(target) needs provider setup. Check the app configuration, then refresh."
             }
-            if let errorMessage = report.errorMessage, !errorMessage.isEmpty {
+            if let errorMessage = report.userFacingErrorMessage, !errorMessage.isEmpty {
                 return "\(target) needs attention: \(errorMessage)"
             }
             if report.status == .failure {
@@ -3499,7 +3503,7 @@ final class ContextPanelAppModel: ObservableObject {
                     title: "\(report.provider.displayName) · \(report.accountName)",
                     summary: "\(report.status.previewStatusText) · \(relativeTime(report.generatedAt))",
                     status: report.status,
-                    detail: report.errorMessage
+                    detail: report.userFacingErrorMessage
                 )
             } ?? []
     }
@@ -4562,6 +4566,14 @@ extension UsageStatus {
 }
 
 private extension StoredProviderReport {
+    var userFacingErrorMessage: String? {
+        guard let errorMessage else { return nil }
+        if provider == .google, errorMessage.localizedCaseInsensitiveContains("status -128") {
+            return "Google Antigravity quota needs macOS Keychain approval. Click Refresh, then choose Always Allow for the \"gemini\" keychain item."
+        }
+        return errorMessage
+    }
+
     var needsRefreshAttention: Bool {
         status == .failure || needsNonFailureRefreshAttention
     }

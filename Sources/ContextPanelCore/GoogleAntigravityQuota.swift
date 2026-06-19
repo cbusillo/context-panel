@@ -3,6 +3,8 @@ import os
 
 private let googleAntigravityLogger = Logger(subsystem: "com.shinycomputers.contextpanel", category: "google-antigravity")
 
+private let googleAntigravityKeychainApprovalMessage = "Google Antigravity quota needs macOS Keychain approval. Click Refresh for Google in Context Panel, then choose Always Allow when macOS asks to access the \"gemini\" keychain item."
+
 public struct GoogleAntigravityAccountConfiguration: Equatable, Sendable {
     public let accountID: String
     public let accountName: String
@@ -36,9 +38,7 @@ public struct GoogleAntigravityForegroundRequiredCredentialLoader: ProviderCrede
     public init() {}
 
     public func load(accountID _: String) throws -> Data? {
-        throw ConnectorError.foregroundRefreshRequired(
-            "Google Antigravity quota needs macOS Keychain approval. Open Context Panel, refresh Google, and choose Always Allow when macOS asks to access Antigravity's login."
-        )
+        throw ConnectorError.foregroundRefreshRequired(googleAntigravityKeychainApprovalMessage)
     }
 }
 
@@ -273,10 +273,18 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
     }
 
     private func loadCredentials(account: GoogleAntigravityAccountConfiguration) throws -> GoogleAntigravityLocalCredentials {
-        guard let data = try credentialLoader.load(accountID: account.credentialAccountID) else {
+        guard let data = try loadCredentialData(accountID: account.credentialAccountID) else {
             throw ConnectorError.missingAuth("Google Antigravity local login was not found. Open Antigravity and sign in, then refresh Google in Context Panel. If macOS asks for Keychain access, choose Always Allow.")
         }
         return try GoogleAntigravityLocalCredentials.decode(from: data)
+    }
+
+    private func loadCredentialData(accountID: String) throws -> Data? {
+        do {
+            return try credentialLoader.load(accountID: accountID)
+        } catch GenericPasswordCredentialLoader.LoadError.unhandledStatus(let status) where status == -128 {
+            throw ConnectorError.foregroundRefreshRequired(googleAntigravityKeychainApprovalMessage)
+        }
     }
 
     private func requestHeaders(

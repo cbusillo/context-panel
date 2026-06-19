@@ -1028,6 +1028,24 @@ import Testing
     #expect(result.reports[0].errorMessage == "Google Antigravity local login was not found. Open Antigravity and sign in, then refresh Google in Context Panel. If macOS asks for Keychain access, choose Always Allow.")
 }
 
+@Test func googleAntigravityConnectorReportsKeychainApprovalWhenUserCancelsKeychainAccess() async throws {
+    let connector = GoogleAntigravityQuotaConnector(
+        accounts: [googleAntigravityTestAccount()],
+        httpClient: StubHTTPClient(responses: []),
+        credentialLoader: ThrowingCredentialLoader(error: GenericPasswordCredentialLoader.LoadError.unhandledStatus(-128))
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].provider == .google)
+    #expect(result.reports[0].status == .failure)
+    #expect(result.reports[0].errorMessage?.contains("Click Refresh") == true)
+    #expect(result.reports[0].errorMessage?.contains("Always Allow") == true)
+    #expect(result.reports[0].errorMessage?.contains("\"gemini\"") == true)
+    #expect(result.reports[0].errorMessage?.contains("-128") == false)
+}
+
 @Test func claudeOAuthConnectorRefreshesUsageWindows() async throws {
     let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
     let usage = #"""
