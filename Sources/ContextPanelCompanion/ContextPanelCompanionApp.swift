@@ -81,6 +81,7 @@ private final class CompanionSyncModel {
     private(set) var refreshSettings: CompanionRefreshSettings
     private(set) var settingsErrorMessage: String?
     private var reloadTask: Task<Void, Never>?
+    private var iCloudCacheRefreshTask: Task<Void, Never>?
     private let stalenessPolicy = SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
 
     init() {
@@ -114,6 +115,23 @@ private final class CompanionSyncModel {
             displayPreferences = loaded.document?.widgetDisplayPreferences ?? .defaultPreferences
             if loaded.document != previousDocument {
                 WidgetCenter.shared.reloadAllTimelines()
+            }
+            refreshICloudCacheIfNeeded()
+        }
+    }
+
+    private func refreshICloudCacheIfNeeded() {
+        guard iCloudCacheRefreshTask == nil else { return }
+        guard ContextPanelLocations.cachedCompanionUbiquitySyncDocumentURL() == nil else { return }
+        iCloudCacheRefreshTask = Task { [weak self] in
+            let refreshedURL = await Task.detached(priority: .utility) {
+                ContextPanelLocations.refreshCachedCompanionUbiquitySyncDocumentURL()
+            }.value
+            guard !Task.isCancelled else { return }
+            guard let self else { return }
+            iCloudCacheRefreshTask = nil
+            if refreshedURL != nil {
+                reload()
             }
         }
     }
