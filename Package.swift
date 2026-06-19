@@ -13,8 +13,8 @@ let package = Package(
             targets: ["ContextPanelCore"]
         ),
         .executable(
-            name: "ContextPanelPreview",
-            targets: ["ContextPanelPreview"]
+            name: "ContextPanelApp",
+            targets: ["ContextPanelApp"]
         ),
         .executable(
             name: "ContextPanelRefreshAgent",
@@ -60,7 +60,7 @@ let package = Package(
             dependencies: ["ContextPanelCore", "ContextPanelWidgetUI"]
         ),
         .executableTarget(
-            name: "ContextPanelPreview",
+            name: "ContextPanelApp",
             dependencies: ["ContextPanelCore"]
         ),
         .executableTarget(

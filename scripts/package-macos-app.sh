@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-product="ContextPanelPreview"
+product="ContextPanelApp"
 display_name="Context Panel"
 bundle_id="com.shinycomputers.contextpanel"
 configuration="release"
@@ -15,7 +15,7 @@ Usage: scripts/package-macos-app.sh [options]
 Builds a SwiftPM executable and wraps it in a launchable macOS .app bundle.
 
 Options:
-  --product NAME          SwiftPM executable product. Default: ContextPanelPreview
+  --product NAME          SwiftPM executable product. Default: ContextPanelApp
   --display-name NAME     App display name. Default: Context Panel
   --bundle-id ID          CFBundleIdentifier. Default: com.shinycomputers.contextpanel
   --debug                 Build debug instead of release

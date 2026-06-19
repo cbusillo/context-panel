@@ -15,7 +15,7 @@ files=(
 )
 
 while IFS= read -r file; do files+=("$file"); done < <(find Sources/ContextPanelCore -type f -name '*.swift' | sort)
-while IFS= read -r file; do files+=("$file"); done < <(find Sources/ContextPanelPreview -type f -name '*.swift' | sort)
+while IFS= read -r file; do files+=("$file"); done < <(find Sources/ContextPanelApp -type f -name '*.swift' | sort)
 while IFS= read -r file; do files+=("$file"); done < <(find Sources/ContextPanelRefreshAgent -type f -name '*.swift' | sort)
 while IFS= read -r file; do files+=("$file"); done < <(find Sources/ContextPanelWidget -type f -name '*.swift' | sort)
 

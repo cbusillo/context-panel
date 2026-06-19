@@ -165,10 +165,11 @@ plist_value() {
 active_context_processes() {
 	ps axww -o pid=,command= |
 		awk '
-			$0 ~ /\/Context Panel\.app\/Contents\/MacOS\/Context Panel$/ ||
-			$0 ~ /\/ContextPanelRefreshAgent\.app\/Contents\/MacOS\/ContextPanelRefreshAgent$/ ||
-			$0 ~ /\/ContextPanelWidgetExtension\.appex\/Contents\/MacOS\/ContextPanelWidgetExtension$/ ||
-			$0 ~ /\/ContextPanelPreview$/ {
+				$0 ~ /\/Context Panel\.app\/Contents\/MacOS\/Context Panel$/ ||
+				$0 ~ /\/ContextPanelRefreshAgent\.app\/Contents\/MacOS\/ContextPanelRefreshAgent$/ ||
+				$0 ~ /\/ContextPanelWidgetExtension\.appex\/Contents\/MacOS\/ContextPanelWidgetExtension$/ ||
+				$0 ~ /\/ContextPanelApp$/ ||
+				$0 ~ /\/ContextPanelPreview$/ {
 				sub(/^[[:space:]]+/, "")
 				print
 			}
@@ -752,6 +753,7 @@ bootout_refresh_agent() {
 
 stop_context_panel() {
 	pkill -x 'Context Panel' >/dev/null 2>&1 || true
+	pkill -x ContextPanelApp >/dev/null 2>&1 || true
 	pkill -x ContextPanelPreview >/dev/null 2>&1 || true
 	pkill -x ContextPanelRefreshAgent >/dev/null 2>&1 || true
 	pkill -x ContextPanelWidgetExtension >/dev/null 2>&1 || true

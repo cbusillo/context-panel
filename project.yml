@@ -96,7 +96,7 @@ targets:
     platform: macOS
     deploymentTarget: "14.0"
     sources:
-      - path: Sources/ContextPanelPreview
+      - path: Sources/ContextPanelApp
       - path: Resources/Assets.xcassets
     dependencies:
       - target: ContextPanelCore

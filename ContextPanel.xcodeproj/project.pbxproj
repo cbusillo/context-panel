@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		0008638B08072E2E1DA6A3AF /* ContextPanelLocations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23E9C71457F4E1F101132FCF /* ContextPanelLocations.swift */; };
 		057A71BA0CD90371C675C014 /* WidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5233BBC86AE8057D749F71CD /* WidgetSnapshot.swift */; };
+		06DA906266959D16484C70BA /* ContextPanelApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 380420B70E6A75C9E356322E /* ContextPanelApp.swift */; };
 		0BBD1DF433F345E62C6A26EF /* LimitProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */; };
 		0FF2EE405686EB21167A520B /* SnapshotRefreshService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45E8D3C3E45C1B6B3FACE828 /* SnapshotRefreshService.swift */; };
 		15F3A62CFA13DDC406C99EA5 /* libContextPanelCoreCompanion.a in Frameworks */ = {isa = PBXBuildFile; fileRef = DBD0BD51B5F5AD8D24CA217D /* libContextPanelCoreCompanion.a */; };
@@ -27,7 +28,6 @@
 		35FFA3B9FB8409D0BFE06E4F /* PromptCacheTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96C85B770C80B786EAE068CF /* PromptCacheTelemetry.swift */; };
 		36A035769881D4A450BA3BD8 /* libContextPanelCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = F09182E1FD96DAEEC38F3909 /* libContextPanelCore.a */; };
 		37A4E1CCC9D22CDA3580CB61 /* ProviderConnector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 350ED5589FB23C42ED32704A /* ProviderConnector.swift */; };
-		38E9E0A22491522FF4E0A8F4 /* ContextPanelPreviewApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A46D6040EB6F68FC91EC477D /* ContextPanelPreviewApp.swift */; };
 		3D2C7B99452A5EF3021D7E79 /* CompanionSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8211A4CCCDD1AA6113F22D1 /* CompanionSnapshot.swift */; };
 		3DC7CCECA7A97D625CC0BC9F /* LimitWarning.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1161DC4C994F71A1E6CEE608 /* LimitWarning.swift */; };
 		415899B432627D7269C97838 /* LimitWarningWebhook.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE09AE825E3B368ED89CD521 /* LimitWarningWebhook.swift */; };
@@ -269,6 +269,7 @@
 		2E29EEFA73267A8346212E7A /* ContextPanelCompanionApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelCompanionApp.swift; sourceTree = "<group>"; };
 		32D8515D047F5A8117DB762C /* SnapshotStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotStore.swift; sourceTree = "<group>"; };
 		350ED5589FB23C42ED32704A /* ProviderConnector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderConnector.swift; sourceTree = "<group>"; };
+		380420B70E6A75C9E356322E /* ContextPanelApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelApp.swift; sourceTree = "<group>"; };
 		3FC2DAEDD38483FC3A5D4880 /* MainLimitSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainLimitSummary.swift; sourceTree = "<group>"; };
 		45E8D3C3E45C1B6B3FACE828 /* SnapshotRefreshService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotRefreshService.swift; sourceTree = "<group>"; };
 		47DB9468EE997E9DAD1CE6D3 /* CompanionSyncPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionSyncPresentation.swift; sourceTree = "<group>"; };
@@ -292,7 +293,6 @@
 		9909074D7E80648BC2A01C51 /* ContextPanelDateFormatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelDateFormatting.swift; sourceTree = "<group>"; };
 		9FA8FE4CC9BE058D8F46FBA2 /* CodexRateLimits.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRateLimits.swift; sourceTree = "<group>"; };
 		A3C9122F0E0741C701520316 /* libContextPanelWidgetUICompanion.a */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = archive.ar; path = libContextPanelWidgetUICompanion.a; sourceTree = BUILT_PRODUCTS_DIR; };
-		A46D6040EB6F68FC91EC477D /* ContextPanelPreviewApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelPreviewApp.swift; sourceTree = "<group>"; };
 		A625CCDC97920B24B000C170 /* ProviderCredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderCredentialStore.swift; sourceTree = "<group>"; };
 		AC712405A58ED12AA33BDC68 /* ContextPanelRefreshAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelRefreshAgent.swift; sourceTree = "<group>"; };
 		B8862B929FE544FCB2C3D06B /* CapacityPool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapacityPool.swift; sourceTree = "<group>"; };
@@ -426,11 +426,11 @@
 		77BADA15D2FF6ABB6F666F43 = {
 			isa = PBXGroup;
 			children = (
+				F5E7F431DF2D59C7DA7B6D1F /* ContextPanelApp */,
 				8DF11E8686B8998368D1DEB1 /* ContextPanelCompanion */,
 				9DECDAB445D24794281BA92D /* ContextPanelCompanionSupport */,
 				7A7EF4EE264F20FE13F919D6 /* ContextPanelCompanionWidget */,
 				537271134D87C7167DEBA0C1 /* ContextPanelCore */,
-				F71E88199DC89A225C8F07FC /* ContextPanelPreview */,
 				E31529C218A60C30ED319763 /* ContextPanelRefreshAgent */,
 				A538E84B22D9D75DE0FD30D4 /* ContextPanelWidget */,
 				DA7C6D59C3746637800FF2FC /* ContextPanelWidgetUI */,
@@ -494,13 +494,13 @@
 			path = Sources/ContextPanelRefreshAgent;
 			sourceTree = "<group>";
 		};
-		F71E88199DC89A225C8F07FC /* ContextPanelPreview */ = {
+		F5E7F431DF2D59C7DA7B6D1F /* ContextPanelApp */ = {
 			isa = PBXGroup;
 			children = (
-				A46D6040EB6F68FC91EC477D /* ContextPanelPreviewApp.swift */,
+				380420B70E6A75C9E356322E /* ContextPanelApp.swift */,
 			);
-			name = ContextPanelPreview;
-			path = Sources/ContextPanelPreview;
+			name = ContextPanelApp;
+			path = Sources/ContextPanelApp;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -1013,7 +1013,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				38E9E0A22491522FF4E0A8F4 /* ContextPanelPreviewApp.swift in Sources */,
+				06DA906266959D16484C70BA /* ContextPanelApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
