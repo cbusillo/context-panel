@@ -89,7 +89,7 @@ public struct GoogleAntigravityLocalCredentials: Equatable, Sendable {
             throw ConnectorError.missingAuth("Google Antigravity local login is missing an access token. Open Antigravity and sign in again.")
         }
         if let expiresAt, expiresAt.timeIntervalSince(now) <= expirationSkew {
-            throw ConnectorError.foregroundRefreshRequired("Google Antigravity local login has expired. Open Antigravity and let it refresh its Google session, then refresh Google in Context Panel.")
+            throw ConnectorError.foregroundRefreshRequired("Google Antigravity access token has expired. Open Antigravity so it can refresh its Google session, then refresh Google in Context Panel.")
         }
         return accessToken
     }
