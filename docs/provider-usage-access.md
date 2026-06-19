@@ -190,13 +190,17 @@ The verified request sequence is:
    https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist` with
    body `{"metadata":{"ideType":"ANTIGRAVITY"}}`.
 4. Use the returned `cloudaicompanionProject` to call `POST
-   /v1internal:retrieveUserQuota` with body `{"project":"<discovered>"}`.
+   /v1internal:retrieveUserQuotaSummary` with body
+   `{"project":"<discovered>"}`.
+5. If the summary endpoint is unavailable or empty, fall back to `POST
+   /v1internal:retrieveUserQuota` with the same project body.
 
 Antigravity owns sign-in and token refresh. If the local login is missing,
 expired, or rejected, Context Panel should tell the user to open Antigravity and
-refresh again. Do not call `retrieveUserQuotaSummary` or `fetchAvailableModels`
-for this connector; both were rejected in live testing for the local
-Antigravity auth path.
+refresh again. `retrieveUserQuotaSummary` is the preferred source for the
+grouped Antigravity UI lanes such as Gemini weekly and five-hour limits; do not
+call `fetchAvailableModels` for quota because it describes model availability,
+not remaining quota.
 
 2026-06-18 app-identity correction: the legacy
 `1071006060591-...apps.googleusercontent.com` client was Antigravity's Google
@@ -215,11 +219,13 @@ adapter uses internal Cloud Code Assist quota surfaces, UI copy and notes should
 describe the result as reported provider data rather than a
 provider-guaranteed billing or exact quota contract.
 
-The `retrieveUserQuota` response is the only current source for Google weekly,
-daily, and five-hour main lanes. Do not synthesize quota windows from model
-availability responses, reset timestamps, or local Gemini usage files. If quota
-buckets are empty, Context Panel should mark the provider state as
-unknown/degraded instead of carrying forward stale healthy quota.
+The `retrieveUserQuotaSummary` response is the current source for Google grouped
+weekly and five-hour main lanes. `retrieveUserQuota` remains a fallback for
+lower-level quota buckets, but raw per-model buckets must not be added together
+as account capacity. Do not synthesize quota windows from model availability
+responses, reset timestamps, or local Gemini usage files. If quota buckets are
+empty, Context Panel should mark the provider state as unknown/degraded instead
+of carrying forward stale healthy quota.
 
 Current public Google docs have a split contract. Gemini Apps help announced
 usage-limit changes starting 2026-05-17 and describes compute-based limits that

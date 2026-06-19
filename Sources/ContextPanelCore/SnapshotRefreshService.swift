@@ -618,31 +618,37 @@ public struct SnapshotRefreshService: Sendable {
                   isSkippedGoogleAntigravityAccount(configuredAccountID, skippedAccountIDs: skippedAccountIDs)
             else { return nil }
 
-            let preservedLimits = current.snapshot.limits.filter { limit in
-                guard limit.provider == .google else { return false }
-                if limit.configuredAccountID == configuredAccountID { return true }
-                return isSkippedGoogleAntigravityAccount(
-                    limit.configuredAccountID,
-                    skippedAccountIDs: skippedAccountIDs
-                )
-            }
+            let normalizedConfiguredAccountID = normalizedSkippedGoogleAntigravityAccountID(configuredAccountID)
+            let normalizedAccountID = ConnectorRedactor.localAccountID(provider: .google, stableID: normalizedConfiguredAccountID)
+            let preservedLimits = preservedGoogleAntigravityLimits(
+                from: current.snapshot.limits,
+                configuredAccountID: configuredAccountID,
+                normalizedConfiguredAccountID: normalizedConfiguredAccountID
+            )
 
             return ProviderConnectorReport(
                 provider: storedReport.provider,
-                accountID: storedReport.accountID,
-                configuredAccountID: storedReport.configuredAccountID,
+                accountID: normalizedAccountID,
+                configuredAccountID: normalizedConfiguredAccountID,
                 accountName: storedReport.accountName,
                 generatedAt: storedReport.generatedAt,
-                limits: preservedLimits,
+                limits: preservedLimits.map { limit in
+                    limit.replacingGoogleAntigravityAccount(
+                        accountID: normalizedAccountID,
+                        configuredAccountID: normalizedConfiguredAccountID,
+                        accountName: storedReport.accountName
+                    )
+                },
                 status: storedReport.status,
                 errorMessage: storedReport.errorMessage
             )
         }
 
-        guard !preservedReports.isEmpty else { return refreshResult }
+        let deduplicatedPreservedReports = deduplicatedGoogleAntigravityReports(preservedReports)
+        guard !deduplicatedPreservedReports.isEmpty else { return refreshResult }
         return ConnectorRefreshResult(
             generatedAt: refreshResult.generatedAt,
-            reports: refreshResult.reports + preservedReports,
+            reports: refreshResult.reports + deduplicatedPreservedReports,
             promptCacheObservations: refreshResult.promptCacheObservations
         )
     }
@@ -655,6 +661,55 @@ public struct SnapshotRefreshService: Sendable {
         if skippedAccountIDs.contains(configuredAccountID) { return true }
         return configuredAccountID == GoogleAccountMigration.oldAccountID
             && skippedAccountIDs.contains(GoogleAccountMigration.newAccountID)
+    }
+
+    private func normalizedSkippedGoogleAntigravityAccountID(_ configuredAccountID: String) -> String {
+        configuredAccountID == GoogleAccountMigration.oldAccountID ? GoogleAccountMigration.newAccountID : configuredAccountID
+    }
+
+    private func preservedGoogleAntigravityLimits(
+        from limits: [UsageLimit],
+        configuredAccountID: String,
+        normalizedConfiguredAccountID: String
+    ) -> [UsageLimit] {
+        let exactMatches = limits.filter { limit in
+            limit.provider == .google && limit.configuredAccountID == configuredAccountID
+        }
+        if !exactMatches.isEmpty { return exactMatches }
+
+        guard normalizedConfiguredAccountID == GoogleAccountMigration.newAccountID else { return [] }
+        return limits.filter { limit in
+            guard limit.provider == .google else { return false }
+            return limit.configuredAccountID == GoogleAccountMigration.oldAccountID
+        }
+    }
+
+    private func deduplicatedGoogleAntigravityReports(_ reports: [ProviderConnectorReport]) -> [ProviderConnectorReport] {
+        var indexesByAccountID: [String: Int] = [:]
+        var deduplicated: [ProviderConnectorReport] = []
+        for report in reports {
+            if let existingIndex = indexesByAccountID[report.accountID] {
+                let existing = deduplicated[existingIndex]
+                if shouldPreferGoogleAntigravityReport(report, over: existing) {
+                    deduplicated[existingIndex] = report
+                }
+            } else {
+                indexesByAccountID[report.accountID] = deduplicated.count
+                deduplicated.append(report)
+            }
+        }
+        return deduplicated
+    }
+
+    private func shouldPreferGoogleAntigravityReport(
+        _ candidate: ProviderConnectorReport,
+        over existing: ProviderConnectorReport
+    ) -> Bool {
+        if existing.limits.isEmpty, !candidate.limits.isEmpty { return true }
+        if !existing.limits.isEmpty, candidate.limits.isEmpty { return false }
+        let candidateLooksMigrated = candidate.accountName.localizedCaseInsensitiveContains("Antigravity")
+        let existingLooksMigrated = existing.accountName.localizedCaseInsensitiveContains("Antigravity")
+        return candidateLooksMigrated && !existingLooksMigrated
     }
 
     public func saveMerged(
@@ -835,5 +890,31 @@ private extension AccountConnectorKind {
         case .googleAntigravityQuota, .claudeOAuthUsage:
             false
         }
+    }
+}
+
+private extension UsageLimit {
+    func replacingGoogleAntigravityAccount(
+        accountID: String,
+        configuredAccountID: String,
+        accountName: String
+    ) -> UsageLimit {
+        UsageLimit(
+            provider: provider,
+            accountID: accountID,
+            configuredAccountID: configuredAccountID,
+            accountName: accountName,
+            label: label,
+            windowLabel: windowLabel,
+            modelLabel: modelLabel,
+            unit: unit,
+            used: used,
+            limit: limit,
+            resetsAt: resetsAt,
+            lastUpdatedAt: lastUpdatedAt,
+            confidence: confidence,
+            statusOverride: statusOverride,
+            note: note
+        )
     }
 }

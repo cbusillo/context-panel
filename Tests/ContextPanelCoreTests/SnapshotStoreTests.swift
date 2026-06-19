@@ -1248,10 +1248,89 @@ import Testing
     _ = try await service.refresh(now: savedAt)
     let current = try #require(primary.loadCurrent().snapshot)
 
-    #expect(current.reports.first?.configuredAccountID == "gemini-code-assist-default")
+    #expect(current.reports.first?.configuredAccountID == "google-antigravity-default")
+    #expect(current.reports.first?.accountID == ConnectorRedactor.localAccountID(provider: .google, stableID: "google-antigravity-default"))
     #expect(current.reports.first?.status == .healthy)
-    #expect(current.snapshot.limits.first?.configuredAccountID == "gemini-code-assist-default")
+    #expect(current.snapshot.limits.first?.configuredAccountID == "google-antigravity-default")
+    #expect(current.snapshot.limits.first?.accountID == ConnectorRedactor.localAccountID(provider: .google, stableID: "google-antigravity-default"))
     #expect(current.snapshot.limits.first?.used == 7)
+}
+
+@Test func snapshotRefreshServiceCollapsesLegacyAndMigratedGoogleAntigravityWhenBackgroundSkipsGoogle() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let previousAt = Date(timeIntervalSince1970: 240)
+    let legacyAccountID = ConnectorRedactor.localAccountID(provider: .google, stableID: "gemini-code-assist-default")
+    let migratedAccountID = ConnectorRedactor.localAccountID(provider: .google, stableID: "google-antigravity-default")
+    try primary.save(StoredUsageSnapshot(savedAt: previousAt, refreshResult: ConnectorRefreshResult(
+        generatedAt: previousAt,
+        reports: [
+            ProviderConnectorReport(
+                provider: .google,
+                accountID: legacyAccountID,
+                configuredAccountID: "gemini-code-assist-default",
+                accountName: "Gemini",
+                generatedAt: previousAt,
+                limits: [UsageLimit(
+                    provider: .google,
+                    accountID: legacyAccountID,
+                    configuredAccountID: "gemini-code-assist-default",
+                    accountName: "Gemini",
+                    label: "Legacy Gemini Weekly",
+                    windowLabel: "Weekly",
+                    unit: .percent,
+                    used: 7,
+                    limit: 100,
+                    resetsAt: previousAt.addingTimeInterval(3_600)
+                )]
+            ),
+            ProviderConnectorReport(
+                provider: .google,
+                accountID: migratedAccountID,
+                configuredAccountID: "google-antigravity-default",
+                accountName: "Antigravity",
+                generatedAt: previousAt,
+                limits: [UsageLimit(
+                    provider: .google,
+                    accountID: migratedAccountID,
+                    configuredAccountID: "google-antigravity-default",
+                    accountName: "Antigravity",
+                    label: "Migrated Gemini Weekly",
+                    windowLabel: "Weekly",
+                    unit: .percent,
+                    used: 5,
+                    limit: 100,
+                    resetsAt: previousAt.addingTimeInterval(3_600)
+                )]
+            ),
+        ]
+    )))
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary),
+        allowsExternalGoogleKeychain: false,
+        promptCacheTelemetryReader: { _ in [] }
+    )
+    let savedAt = Date(timeIntervalSince1970: 300)
+    try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
+        updatedAt: savedAt,
+        accounts: [LocalProviderAccountConfiguration(
+            id: "google-antigravity-default",
+            provider: .google,
+            connectorKind: .googleAntigravityQuota,
+            displayName: "Antigravity"
+        )]
+    ))
+
+    _ = try await service.refresh(now: savedAt)
+    let current = try #require(primary.loadCurrent().snapshot)
+
+    #expect(current.reports.filter { $0.provider == .google }.count == 1)
+    #expect(current.reports.first?.configuredAccountID == "google-antigravity-default")
+    #expect(current.reports.first?.accountID == migratedAccountID)
+    #expect(current.snapshot.limits.map(\.configuredAccountID) == ["google-antigravity-default"])
+    #expect(current.snapshot.limits.map(\.accountID) == [migratedAccountID])
+    #expect(current.snapshot.limits.map(\.label) == ["Migrated Gemini Weekly"])
 }
 
 @Test func snapshotRefreshServicePreservesFailureOnlyGoogleAntigravityReportWhenBackgroundSkipsGoogle() async throws {

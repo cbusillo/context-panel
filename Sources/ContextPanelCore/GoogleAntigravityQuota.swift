@@ -145,6 +145,22 @@ public enum GoogleAntigravityQuotaParser {
             observedAt: observedAt
         )
     }
+
+    public static func summaryLimits(
+        from data: Data,
+        accountID: String,
+        configuredAccountID: String?,
+        accountName: String,
+        observedAt: Date
+    ) throws -> [UsageLimit] {
+        let payload = try JSONDecoder.contextPanelISO8601.decode(GoogleAntigravityQuotaSummaryPayload.self, from: data)
+        return payload.limits(
+            accountID: accountID,
+            configuredAccountID: configuredAccountID,
+            accountName: accountName,
+            observedAt: observedAt
+        )
+    }
 }
 
 public struct GoogleAntigravityQuotaConnector: ProviderConnector {
@@ -221,6 +237,40 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
         localAccountID: String
     ) async throws -> ProviderConnectorReport {
         let projectID = try await projectID(accessToken: accessToken, account: account)
+        let summaryResponse = try await httpClient.data(for: ConnectorHTTPRequest(
+            url: codeAssistURL(path: "v1internal:retrieveUserQuotaSummary", baseURL: account.codeAssistBaseURL),
+            method: "POST",
+            headers: requestHeaders(accessToken: accessToken, account: account),
+            body: try JSONSerialization.data(withJSONObject: RequestMetadata.quotaBody(projectID: projectID), options: [.sortedKeys])
+        ))
+        googleAntigravityLogger.notice("quota summary response status=\(summaryResponse.statusCode, privacy: .public)")
+        if (200..<300).contains(summaryResponse.statusCode) {
+            do {
+                let limits = try GoogleAntigravityQuotaParser.summaryLimits(
+                    from: summaryResponse.data,
+                    accountID: localAccountID,
+                    configuredAccountID: account.accountID,
+                    accountName: account.accountName,
+                    observedAt: now
+                )
+                if !limits.isEmpty {
+                    return ProviderConnectorReport(
+                        provider: provider,
+                        accountID: localAccountID,
+                        configuredAccountID: account.accountID,
+                        accountName: account.accountName,
+                        generatedAt: now,
+                        limits: limits
+                    )
+                }
+                googleAntigravityLogger.notice("quota summary returned no usable limits; falling back to raw quota")
+            } catch {
+                googleAntigravityLogger.error("quota summary decode failed; falling back to raw quota")
+            }
+        } else {
+            logCodeAssistFailure(operation: "quota summary", statusCode: summaryResponse.statusCode, data: summaryResponse.data)
+        }
+
         let response = try await httpClient.data(for: ConnectorHTTPRequest(
             url: codeAssistURL(path: "v1internal:retrieveUserQuota", baseURL: account.codeAssistBaseURL),
             method: "POST",
@@ -248,7 +298,7 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
             generatedAt: now,
             limits: limits,
             status: limits.isEmpty ? .unknown : nil,
-            errorMessage: limits.isEmpty ? "Google Antigravity did not report quota buckets." : nil
+            errorMessage: limits.isEmpty ? "Google Antigravity did not report quota limits." : nil
         )
     }
 
@@ -274,7 +324,7 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
 
     private func loadCredentials(account: GoogleAntigravityAccountConfiguration) throws -> GoogleAntigravityLocalCredentials {
         guard let data = try loadCredentialData(accountID: account.credentialAccountID) else {
-            throw ConnectorError.missingAuth("Google Antigravity local login was not found. Open Antigravity and sign in, then refresh Google in Context Panel. If macOS asks for Keychain access, choose Always Allow.")
+            throw ConnectorError.missingAuth("Google Antigravity local login was not found. Open Antigravity and sign in, then refresh Google in Context Panel.")
         }
         return try GoogleAntigravityLocalCredentials.decode(from: data)
     }
@@ -401,6 +451,194 @@ private struct GoogleAntigravityUserQuotaPayload: Decodable {
     }
 }
 
+private struct GoogleAntigravityQuotaSummaryPayload: Decodable {
+    let groups: [GoogleAntigravityQuotaSummaryGroup]
+    let buckets: [GoogleAntigravityQuotaSummaryBucket]
+
+    enum CodingKeys: String, CodingKey {
+        case groups
+        case buckets
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        groups = try container.decodeIfPresent([GoogleAntigravityQuotaSummaryGroup].self, forKey: .groups) ?? []
+        buckets = try container.decodeIfPresent([GoogleAntigravityQuotaSummaryBucket].self, forKey: .buckets) ?? []
+    }
+
+    func limits(
+        accountID: String,
+        configuredAccountID: String?,
+        accountName: String,
+        observedAt: Date
+    ) -> [UsageLimit] {
+        let groupedLimits = groups.flatMap { group in
+            group.limits(
+                accountID: accountID,
+                configuredAccountID: configuredAccountID,
+                accountName: accountName,
+                observedAt: observedAt
+            )
+        }
+        let flatLimits = buckets.compactMap { bucket in
+            bucket.usageLimit(
+                groupName: nil,
+                groupDescription: nil,
+                accountID: accountID,
+                configuredAccountID: configuredAccountID,
+                accountName: accountName,
+                observedAt: observedAt
+            )
+        }
+        let allLimits = groupedLimits + flatLimits
+        let geminiLimits = allLimits.filter { limit in
+            let haystack = [limit.label, limit.modelLabel, limit.note]
+                .compactMap { $0 }
+                .joined(separator: " ")
+                .lowercased()
+            return haystack.contains("gemini")
+        }
+        return geminiLimits.isEmpty ? allLimits : geminiLimits
+    }
+}
+
+private struct GoogleAntigravityQuotaSummaryGroup: Decodable {
+    let displayName: String?
+    let description: String?
+    let buckets: [GoogleAntigravityQuotaSummaryBucket]
+
+    enum CodingKeys: String, CodingKey {
+        case displayName
+        case displayNameSnake = "display_name"
+        case description
+        case buckets
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        displayName = try container.decodeFirstPresent(String.self, forKeys: [.displayName, .displayNameSnake])
+        description = try container.decodeIfPresent(String.self, forKey: .description)
+        buckets = try container.decodeIfPresent([GoogleAntigravityQuotaSummaryBucket].self, forKey: .buckets) ?? []
+    }
+
+    func limits(
+        accountID: String,
+        configuredAccountID: String?,
+        accountName: String,
+        observedAt: Date
+    ) -> [UsageLimit] {
+        buckets.compactMap { bucket in
+            bucket.usageLimit(
+                groupName: displayName,
+                groupDescription: description,
+                accountID: accountID,
+                configuredAccountID: configuredAccountID,
+                accountName: accountName,
+                observedAt: observedAt
+            )
+        }
+    }
+}
+
+private struct GoogleAntigravityQuotaSummaryBucket: Decodable {
+    let bucketID: String?
+    let displayName: String?
+    let description: String?
+    let window: String?
+    let remainingFraction: Double?
+    let remainingAmount: Int?
+    let resetTime: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case bucketID = "bucketId"
+        case bucketIDSnake = "bucket_id"
+        case displayName
+        case displayNameSnake = "display_name"
+        case description
+        case window
+        case remainingFraction
+        case remainingFractionSnake = "remaining_fraction"
+        case remainingAmount
+        case remainingAmountSnake = "remaining_amount"
+        case resetTime
+        case resetTimeSnake = "reset_time"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        bucketID = try container.decodeFirstPresent(String.self, forKeys: [.bucketID, .bucketIDSnake])
+        displayName = try container.decodeFirstPresent(String.self, forKeys: [.displayName, .displayNameSnake])
+        description = try container.decodeIfPresent(String.self, forKey: .description)
+        window = try container.decodeIfPresent(String.self, forKey: .window)
+        remainingFraction = try GoogleAntigravityQuotaBucket.decodeFlexibleDouble(container: container, keys: [.remainingFraction, .remainingFractionSnake])
+        remainingAmount = try GoogleAntigravityQuotaBucket.decodeFlexibleInt(container: container, keys: [.remainingAmount, .remainingAmountSnake])
+        resetTime = try container.decodeFirstPresent(Date.self, forKeys: [.resetTime, .resetTimeSnake])
+    }
+
+    func usageLimit(
+        groupName: String?,
+        groupDescription: String?,
+        accountID: String,
+        configuredAccountID: String?,
+        accountName: String,
+        observedAt: Date
+    ) -> UsageLimit? {
+        let normalizedLimit: (used: Int?, limit: Int, unit: UsageUnit)?
+        if let remainingFraction {
+            let clamped = max(0, min(remainingFraction, 1))
+            normalizedLimit = (Int(((1 - clamped) * 100).rounded()), 100, .percent)
+        } else if let remainingAmount {
+            normalizedLimit = remainingAmount <= 0 ? (1, 1, .requests) : (nil, remainingAmount, .requests)
+        } else {
+            return nil
+        }
+        guard let normalizedLimit else { return nil }
+
+        let bucketName = normalized(displayName) ?? windowLabel(from: window) ?? normalized(bucketID) ?? "Quota"
+        let modelLabel = normalized(groupName)
+        let noteParts = [
+            "source: Google Antigravity quota summary",
+            normalized(groupDescription),
+            normalized(description),
+        ]
+        return UsageLimit(
+            provider: .google,
+            accountID: accountID,
+            configuredAccountID: configuredAccountID,
+            accountName: accountName,
+            label: modelLabel.map { "\($0) \(bucketName)" } ?? bucketName,
+            windowLabel: windowLabel(from: window) ?? bucketName,
+            modelLabel: modelLabel,
+            unit: normalizedLimit.unit,
+            used: normalizedLimit.used,
+            limit: normalizedLimit.limit,
+            resetsAt: resetTime,
+            lastUpdatedAt: observedAt,
+            confidence: .observed,
+            note: noteParts.compactMap { $0 }.joined(separator: "; ")
+        )
+    }
+
+    private func normalized(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
+        return trimmed
+    }
+
+    private func windowLabel(from value: String?) -> String? {
+        guard let normalized = normalized(value) else { return nil }
+        switch normalized.lowercased() {
+        case "5h", "5-hour", "five-hour", "five hour":
+            return "5-hour"
+        case "week", "weekly":
+            return "Weekly"
+        case "day", "daily":
+            return "Daily"
+        default:
+            return normalized
+        }
+    }
+}
+
 private struct GoogleAntigravityQuotaBucket: Decodable {
     let bucketID: String?
     let displayName: String?
@@ -485,10 +723,11 @@ private struct GoogleAntigravityQuotaBucket: Decodable {
         }
         guard let normalizedLimit else { return nil }
 
-        let inferredWindow = inferredWindow(observedAt: observedAt)
+        let inferredWindow = shouldInferMainWindow ? inferredWindow(observedAt: observedAt) : nil
         let bucketName = normalized(displayName)
             ?? normalized(window)
             ?? inferredWindow?.displayName
+            ?? rawModelBucketWindowLabel(observedAt: observedAt)
             ?? normalized(tokenType).map { "\($0) quota" }
             ?? "Quota"
         let modelLabel = normalized(modelName) ?? normalized(model) ?? normalized(modelID).map(Self.displayModelName(from:))
@@ -514,11 +753,11 @@ private struct GoogleAntigravityQuotaBucket: Decodable {
         )
     }
 
-    private static func decodeFlexibleDouble<Key: CodingKey>(container: KeyedDecodingContainer<Key>, keys: [Key]) throws -> Double? {
+    fileprivate static func decodeFlexibleDouble<Key: CodingKey>(container: KeyedDecodingContainer<Key>, keys: [Key]) throws -> Double? {
         try container.decodeFirstPresent(FlexibleDouble.self, forKeys: keys)?.value
     }
 
-    private static func decodeFlexibleInt<Key: CodingKey>(container: KeyedDecodingContainer<Key>, keys: [Key]) throws -> Int? {
+    fileprivate static func decodeFlexibleInt<Key: CodingKey>(container: KeyedDecodingContainer<Key>, keys: [Key]) throws -> Int? {
         try container.decodeFirstPresent(FlexibleInt.self, forKeys: keys)?.value
     }
 
@@ -535,6 +774,16 @@ private struct GoogleAntigravityQuotaBucket: Decodable {
         if interval <= 36 * 60 * 60 { return .daily }
         if interval <= 9 * 24 * 60 * 60 { return .weekly }
         return nil
+    }
+
+    private var shouldInferMainWindow: Bool {
+        normalized(window) != nil || normalized(displayName) != nil || normalized(bucketID) != nil
+    }
+
+    private func rawModelBucketWindowLabel(observedAt: Date) -> String? {
+        guard normalized(modelID) != nil, normalized(window) == nil, normalized(displayName) == nil else { return nil }
+        guard inferredWindow(observedAt: observedAt) != nil else { return nil }
+        return "Model quota"
     }
 
     private static func displayModelName(from rawValue: String) -> String {

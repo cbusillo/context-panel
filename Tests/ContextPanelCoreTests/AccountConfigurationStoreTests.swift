@@ -376,7 +376,7 @@ import Testing
     #expect(result.reports.contains { report in
         report.provider == .google
             && report.status == .failure
-            && report.errorMessage == "Google Antigravity local login was not found. Open Antigravity and sign in, then refresh Google in Context Panel. If macOS asks for Keychain access, choose Always Allow."
+            && report.errorMessage == "Google Antigravity local login was not found. Open Antigravity and sign in, then refresh Google in Context Panel."
     })
 }
 
