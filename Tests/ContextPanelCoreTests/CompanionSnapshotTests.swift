@@ -253,6 +253,34 @@ import Testing
     #expect(result.status == .stale)
 }
 
+@Test func companionSyncStoreReplacesExistingDocumentThroughTemporarySibling() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let documentURL = root.appending(path: "Companion/context-panel-companion.json")
+    let store = CompanionSyncStore(documentURL: documentURL)
+    let oldDate = Date(timeIntervalSince1970: 3_060)
+    let newDate = Date(timeIntervalSince1970: 3_120)
+    let oldDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: oldDate),
+        publishedAt: oldDate
+    )
+    let newDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: newDate),
+        publishedAt: newDate
+    )
+
+    try store.save(oldDocument)
+    try store.save(newDocument)
+
+    let result = store.load(policy: SnapshotStoreStalenessPolicy(maximumAge: 60), now: newDate)
+    let directoryContents = try FileManager.default.contentsOfDirectory(
+        at: documentURL.deletingLastPathComponent(),
+        includingPropertiesForKeys: nil
+    )
+    #expect(result.document == newDocument)
+    #expect(directoryContents.map(\.lastPathComponent) == ["context-panel-companion.json"])
+}
+
 @Test func companionSyncStoreStatusIncludesProviderFailuresWithoutLimits() throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
