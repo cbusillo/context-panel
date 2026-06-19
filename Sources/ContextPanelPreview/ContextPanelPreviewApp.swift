@@ -1524,7 +1524,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         case .claudeOAuthUsage:
             return "Connected"
         case .googleAntigravityQuota:
-            return "Local login"
+            return "Keychain login"
         case .codexRateLimits:
             return "File saved"
         }
@@ -1829,7 +1829,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
             }
             return "Select the OpenAI CLI auth JSON file"
         case .googleAntigravityQuota:
-            return "Uses Antigravity local sign-in for quota refresh"
+            return "Uses Antigravity's Keychain password for quota refresh. If macOS asks after Refresh, choose Always Allow"
         case .claudeOAuthUsage:
             return "Connect Claude with OAuth for automatic background refresh"
         }
