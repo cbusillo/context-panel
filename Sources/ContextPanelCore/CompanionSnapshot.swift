@@ -145,9 +145,18 @@ public struct CompanionSyncSaveResult: Equatable, Sendable {
 
 public struct CompanionSyncStore: Sendable {
     public let documentURL: URL
+    private let readCoordinator: @Sendable (URL, @Sendable (URL) throws -> Data) throws -> Data?
 
     public init(documentURL: URL) {
+        self.init(documentURL: documentURL, readCoordinator: Self.readWithFileCoordinator)
+    }
+
+    init(
+        documentURL: URL,
+        readCoordinator: @escaping @Sendable (URL, @Sendable (URL) throws -> Data) throws -> Data?
+    ) {
         self.documentURL = documentURL
+        self.readCoordinator = readCoordinator
     }
 
     public func save(_ document: CompanionSyncDocument) throws {
@@ -205,6 +214,18 @@ public struct CompanionSyncStore: Sendable {
     }
 
     private func coordinatedRead() throws -> Data {
+        guard let data = try readCoordinator(documentURL, { coordinatedURL in
+            try Data(contentsOf: coordinatedURL)
+        }) else {
+            throw SnapshotStoreError.corruptStore("Companion sync document could not be read through file coordination.")
+        }
+        return data
+    }
+
+    private static func readWithFileCoordinator(
+        documentURL: URL,
+        read: @Sendable (URL) throws -> Data
+    ) throws -> Data? {
         var readData: Data?
         var readError: Error?
         var coordinatorError: NSError?
@@ -214,7 +235,7 @@ public struct CompanionSyncStore: Sendable {
             error: &coordinatorError
         ) { coordinatedURL in
             do {
-                readData = try Data(contentsOf: coordinatedURL)
+                readData = try read(coordinatedURL)
             } catch {
                 readError = error
             }
@@ -222,7 +243,7 @@ public struct CompanionSyncStore: Sendable {
 
         if let readError { throw readError }
         if let coordinatorError { throw coordinatorError }
-        return try readData ?? Data(contentsOf: documentURL)
+        return readData
     }
 
     private func coordinatedWrite(data: Data) throws {
