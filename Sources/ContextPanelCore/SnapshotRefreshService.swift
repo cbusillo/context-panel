@@ -615,13 +615,17 @@ public struct SnapshotRefreshService: Sendable {
         let preservedReports = current.reports.compactMap { storedReport -> ProviderConnectorReport? in
             guard storedReport.provider == .google,
                   let configuredAccountID = storedReport.configuredAccountID,
-                  skippedAccountIDs.contains(configuredAccountID)
+                  isSkippedGoogleAntigravityAccount(configuredAccountID, skippedAccountIDs: skippedAccountIDs)
             else { return nil }
 
             let preservedLimits = current.snapshot.limits.filter { limit in
-                limit.provider == .google && limit.configuredAccountID == configuredAccountID
+                guard limit.provider == .google else { return false }
+                if limit.configuredAccountID == configuredAccountID { return true }
+                return isSkippedGoogleAntigravityAccount(
+                    limit.configuredAccountID,
+                    skippedAccountIDs: skippedAccountIDs
+                )
             }
-            guard !preservedLimits.isEmpty else { return nil }
 
             return ProviderConnectorReport(
                 provider: storedReport.provider,
@@ -641,6 +645,16 @@ public struct SnapshotRefreshService: Sendable {
             reports: refreshResult.reports + preservedReports,
             promptCacheObservations: refreshResult.promptCacheObservations
         )
+    }
+
+    private func isSkippedGoogleAntigravityAccount(
+        _ configuredAccountID: String?,
+        skippedAccountIDs: Set<String>
+    ) -> Bool {
+        guard let configuredAccountID else { return false }
+        if skippedAccountIDs.contains(configuredAccountID) { return true }
+        return configuredAccountID == GoogleAccountMigration.oldAccountID
+            && skippedAccountIDs.contains(GoogleAccountMigration.newAccountID)
     }
 
     public func saveMerged(

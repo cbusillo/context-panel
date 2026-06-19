@@ -1201,6 +1201,106 @@ import Testing
     #expect(current.snapshot.limits.first?.used == 7)
 }
 
+@Test func snapshotRefreshServicePreservesLegacyGoogleAntigravityDefaultsWhenBackgroundSkipsGoogle() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let previousAt = Date(timeIntervalSince1970: 240)
+    let legacyAccountID = ConnectorRedactor.localAccountID(provider: .google, stableID: "gemini-code-assist-default")
+    try primary.save(StoredUsageSnapshot(savedAt: previousAt, refreshResult: ConnectorRefreshResult(
+        generatedAt: previousAt,
+        reports: [ProviderConnectorReport(
+            provider: .google,
+            accountID: legacyAccountID,
+            configuredAccountID: "gemini-code-assist-default",
+            accountName: "Gemini",
+            generatedAt: previousAt,
+            limits: [UsageLimit(
+                provider: .google,
+                accountID: legacyAccountID,
+                configuredAccountID: "gemini-code-assist-default",
+                accountName: "Gemini",
+                label: "Gemini 3.1 Pro High 5-hour",
+                windowLabel: "5-hour",
+                unit: .percent,
+                used: 7,
+                limit: 100,
+                resetsAt: previousAt.addingTimeInterval(3_600)
+            )]
+        )]
+    )))
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary),
+        allowsExternalGoogleKeychain: false,
+        promptCacheTelemetryReader: { _ in [] }
+    )
+    let savedAt = Date(timeIntervalSince1970: 300)
+    try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
+        updatedAt: savedAt,
+        accounts: [LocalProviderAccountConfiguration(
+            id: "google-antigravity-default",
+            provider: .google,
+            connectorKind: .googleAntigravityQuota,
+            displayName: "Antigravity"
+        )]
+    ))
+
+    _ = try await service.refresh(now: savedAt)
+    let current = try #require(primary.loadCurrent().snapshot)
+
+    #expect(current.reports.first?.configuredAccountID == "gemini-code-assist-default")
+    #expect(current.reports.first?.status == .healthy)
+    #expect(current.snapshot.limits.first?.configuredAccountID == "gemini-code-assist-default")
+    #expect(current.snapshot.limits.first?.used == 7)
+}
+
+@Test func snapshotRefreshServicePreservesFailureOnlyGoogleAntigravityReportWhenBackgroundSkipsGoogle() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let previousAt = Date(timeIntervalSince1970: 240)
+    let googleAccountID = ConnectorRedactor.localAccountID(provider: .google, stableID: "google-antigravity-default")
+    try primary.save(StoredUsageSnapshot(savedAt: previousAt, refreshResult: ConnectorRefreshResult(
+        generatedAt: previousAt,
+        reports: [ProviderConnectorReport(
+            provider: .google,
+            accountID: googleAccountID,
+            configuredAccountID: "google-antigravity-default",
+            accountName: "Antigravity",
+            generatedAt: previousAt,
+            limits: [],
+            status: .failure,
+            errorMessage: "Google Antigravity quota needs macOS Keychain approval."
+        )]
+    )))
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary),
+        allowsExternalGoogleKeychain: false,
+        promptCacheTelemetryReader: { _ in [] }
+    )
+    let savedAt = Date(timeIntervalSince1970: 300)
+    try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
+        updatedAt: savedAt,
+        accounts: [LocalProviderAccountConfiguration(
+            id: "google-antigravity-default",
+            provider: .google,
+            connectorKind: .googleAntigravityQuota,
+            displayName: "Antigravity"
+        )]
+    ))
+
+    let outcome = try await service.refresh(now: savedAt)
+    let current = try #require(primary.loadCurrent().snapshot)
+
+    #expect(outcome.refreshResult.reports.first?.provider == .google)
+    #expect(outcome.refreshResult.reports.first?.status == .failure)
+    #expect(outcome.refreshResult.reports.first?.errorMessage?.contains("Keychain approval") == true)
+    #expect(current.reports.first?.provider == .google)
+    #expect(current.reports.first?.status == .failure)
+    #expect(current.reports.first?.errorMessage?.contains("Keychain approval") == true)
+    #expect(current.snapshot.limits.isEmpty)
+}
+
 @Test func snapshotRefreshServiceDoesNotOverwriteExistingMigratedGoogleCredentials() throws {
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let oldCredentials = Data(#"{"accessToken":"old-google-access","refreshToken":"old-refresh","expiresAt":"2099-01-01T00:00:00Z","scopes":["https://www.googleapis.com/auth/cloud-platform"]}"#.utf8)
