@@ -100,9 +100,15 @@ public struct CompanionSyncStoreFailure: Equatable, Sendable {
 
     public init(documentURL: URL, error: Error) {
         let nsError = error as NSError
+        let storeRole = Self.storeRole(for: documentURL)
         self.init(
             documentURL: documentURL,
-            errorMessage: error.localizedDescription,
+            errorMessage: Self.diagnosticErrorMessage(
+                storeRole: storeRole,
+                operation: "write",
+                errorDomain: nsError.domain,
+                errorCode: nsError.code
+            ),
             errorDomain: nsError.domain,
             errorCode: nsError.code
         )
@@ -116,14 +122,43 @@ public struct CompanionSyncStoreFailure: Equatable, Sendable {
     }
 
     public var storeRole: String {
+        Self.storeRole(for: documentURL)
+    }
+
+    public static func storeRole(for documentURL: URL) -> String {
         let path = documentURL.path
         if path.contains("Mobile Documents") || path.contains(".icloud") {
             return "icloud"
         }
-        if path.contains(ContextPanelLocations.appGroupID) {
+        if path.contains(ContextPanelLocations.appGroupID)
+            || path.contains(ContextPanelLocations.companionAppGroupID)
+        {
             return "app-group"
         }
         return "custom"
+    }
+
+    public static func diagnosticErrorMessage(
+        storeRole: String,
+        operation: String,
+        errorDomain: String,
+        errorCode: Int
+    ) -> String {
+        "\(storeDisplayName(storeRole)) sync store \(operation) failed (\(ConnectorRedactor.redact(errorDomain)) \(errorCode))."
+    }
+
+    public static func diagnosticErrorMessage(storeRole: String, operation: String, error: Error) -> String {
+        let nsError = error as NSError
+        return diagnosticErrorMessage(
+            storeRole: storeRole,
+            operation: operation,
+            errorDomain: nsError.domain,
+            errorCode: nsError.code
+        )
+    }
+
+    public static func storeDisplayName(_ storeRole: String) -> String {
+        storeRole == "icloud" ? "iCloud" : storeRole
     }
 }
 
@@ -131,15 +166,107 @@ public struct CompanionSyncSaveResult: Equatable, Sendable {
     public let attemptedStoreCount: Int
     public let successfulStoreCount: Int
     public let failures: [CompanionSyncStoreFailure]
+    public let storeOutcomes: [CompanionSyncStoreOutcome]
 
-    public init(attemptedStoreCount: Int, successfulStoreCount: Int, failures: [CompanionSyncStoreFailure]) {
+    public init(
+        attemptedStoreCount: Int,
+        successfulStoreCount: Int,
+        failures: [CompanionSyncStoreFailure],
+        storeOutcomes: [CompanionSyncStoreOutcome] = []
+    ) {
         self.attemptedStoreCount = attemptedStoreCount
         self.successfulStoreCount = successfulStoreCount
         self.failures = failures
+        self.storeOutcomes = storeOutcomes
     }
 
     public var succeeded: Bool {
         successfulStoreCount > 0
+    }
+
+    public func diagnosticsRecord(at attemptedAt: Date) -> CompanionSyncDiagnosticsRecord {
+        let appGroupOutcomes = storeOutcomes.filter { $0.storeRole == "app-group" }
+        let iCloudOutcomes = storeOutcomes.filter { $0.storeRole == "icloud" }
+        let appGroupSucceeded = appGroupOutcomes.isEmpty ? nil : appGroupOutcomes.contains { $0.succeeded }
+        let iCloudSucceeded = iCloudOutcomes.isEmpty ? nil : iCloudOutcomes.contains { $0.succeeded }
+        let iCloudAvailable = iCloudOutcomes.isEmpty ? nil : iCloudOutcomes.contains { $0.isAvailable }
+        let hasOutcomeFailure = storeOutcomes.contains { !$0.succeeded }
+        let outcome: CompanionSyncDiagnosticsOutcome
+        if !hasOutcomeFailure, successfulStoreCount == attemptedStoreCount, attemptedStoreCount > 0 {
+            outcome = .healthy
+        } else if successfulStoreCount > 0 {
+            outcome = .partial
+        } else {
+            outcome = .failed
+        }
+        return CompanionSyncDiagnosticsRecord(
+            operation: .publish,
+            outcome: outcome,
+            attemptedAt: attemptedAt,
+            appGroupSucceeded: appGroupSucceeded,
+            iCloudSucceeded: iCloudSucceeded,
+            iCloudAvailable: iCloudAvailable,
+            errorMessage: failures.first?.errorMessage ?? storeOutcomes.first(where: { !$0.succeeded })?.errorMessage
+        )
+    }
+}
+
+public struct CompanionSyncLoadDiagnosticsResult: Equatable, Sendable {
+    public let result: CompanionSyncLoadResult
+    public let storeOutcomes: [CompanionSyncStoreOutcome]
+
+    public init(result: CompanionSyncLoadResult, storeOutcomes: [CompanionSyncStoreOutcome]) {
+        self.result = result
+        self.storeOutcomes = storeOutcomes
+    }
+
+    public func diagnosticsRecord(at attemptedAt: Date) -> CompanionSyncDiagnosticsRecord {
+        let appGroupOutcomes = storeOutcomes.filter { $0.storeRole == "app-group" }
+        let iCloudOutcomes = storeOutcomes.filter { $0.storeRole == "icloud" }
+        let appGroupSucceeded = appGroupOutcomes.isEmpty ? nil : appGroupOutcomes.contains { $0.succeeded }
+        let iCloudSucceeded = iCloudOutcomes.isEmpty ? nil : iCloudOutcomes.contains { $0.succeeded }
+        let iCloudAvailable = iCloudOutcomes.isEmpty ? nil : iCloudOutcomes.contains { $0.isAvailable }
+        let loadedDocument = result.document != nil
+        let hasOutcomeFailure = storeOutcomes.contains { !$0.succeeded }
+        let outcome: CompanionSyncDiagnosticsOutcome
+        if result.status == .stale {
+            outcome = .stale
+        } else if result.status == .failure {
+            outcome = loadedDocument ? .partial : .failed
+        } else if loadedDocument, !hasOutcomeFailure {
+            outcome = .healthy
+        } else if loadedDocument {
+            outcome = .partial
+        } else if iCloudAvailable == false || storeOutcomes.isEmpty {
+            outcome = .unavailable
+        } else {
+            outcome = .failed
+        }
+        return CompanionSyncDiagnosticsRecord(
+            operation: .load,
+            outcome: outcome,
+            attemptedAt: attemptedAt,
+            appGroupSucceeded: appGroupSucceeded,
+            iCloudSucceeded: iCloudSucceeded,
+            iCloudAvailable: iCloudAvailable,
+            loadedDocument: loadedDocument,
+            stale: result.status == .stale,
+            errorMessage: result.errorMessage ?? storeOutcomes.first(where: { !$0.succeeded })?.errorMessage
+        )
+    }
+}
+
+public struct CompanionSyncStoreOutcome: Equatable, Sendable {
+    public let storeRole: String
+    public let isAvailable: Bool
+    public let succeeded: Bool
+    public let errorMessage: String?
+
+    public init(storeRole: String, isAvailable: Bool = true, succeeded: Bool, errorMessage: String? = nil) {
+        self.storeRole = ConnectorRedactor.redact(storeRole)
+        self.isAvailable = isAvailable
+        self.succeeded = succeeded
+        self.errorMessage = errorMessage.map { ConnectorRedactor.redact($0) }
     }
 }
 
@@ -173,7 +300,15 @@ public struct CompanionSyncStore: Sendable {
             let document = try loadDocument()
             return CompanionSyncLoadResult(document: document, status: document.companionStatus)
         } catch {
-            return CompanionSyncLoadResult(document: nil, status: .failure, errorMessage: error.localizedDescription)
+            return CompanionSyncLoadResult(
+                document: nil,
+                status: .failure,
+                errorMessage: CompanionSyncStoreFailure.diagnosticErrorMessage(
+                    storeRole: CompanionSyncStoreFailure.storeRole(for: documentURL),
+                    operation: "read",
+                    error: error
+                )
+            )
         }
     }
 
@@ -189,12 +324,26 @@ public struct CompanionSyncStore: Sendable {
     public func saveResult(_ document: CompanionSyncDocument) -> CompanionSyncSaveResult {
         do {
             try save(document)
-            return CompanionSyncSaveResult(attemptedStoreCount: 1, successfulStoreCount: 1, failures: [])
+            return CompanionSyncSaveResult(
+                attemptedStoreCount: 1,
+                successfulStoreCount: 1,
+                failures: [],
+                storeOutcomes: [CompanionSyncStoreOutcome(
+                    storeRole: CompanionSyncStoreFailure.storeRole(for: documentURL),
+                    succeeded: true
+                )]
+            )
         } catch {
+            let failure = CompanionSyncStoreFailure(documentURL: documentURL, error: error)
             return CompanionSyncSaveResult(
                 attemptedStoreCount: 1,
                 successfulStoreCount: 0,
-                failures: [CompanionSyncStoreFailure(documentURL: documentURL, error: error)]
+                failures: [failure],
+                storeOutcomes: [CompanionSyncStoreOutcome(
+                    storeRole: failure.storeRole,
+                    succeeded: false,
+                    errorMessage: failure.errorMessage
+                )]
             )
         }
     }
@@ -313,9 +462,11 @@ public struct CompanionSyncStore: Sendable {
 }
 
 public struct CompanionSyncStoreResolver: Sendable {
+    public let storeRole: String
     private let resolveStore: @Sendable () -> CompanionSyncStore?
 
-    public init(_ resolveStore: @escaping @Sendable () -> CompanionSyncStore?) {
+    public init(storeRole: String = "custom", _ resolveStore: @escaping @Sendable () -> CompanionSyncStore?) {
+        self.storeRole = ConnectorRedactor.redact(storeRole)
         self.resolveStore = resolveStore
     }
 
@@ -336,25 +487,54 @@ public struct CompanionSyncStoreSet: Sendable {
     @discardableResult
     public func save(_ document: CompanionSyncDocument) -> CompanionSyncSaveResult {
         var successfulStoreCount = 0
+        var attemptedStoreCount = 0
         var failures: [CompanionSyncStoreFailure] = []
-        let stores = resolvedStores()
+        var storeOutcomes: [CompanionSyncStoreOutcome] = []
         for store in stores {
+            attemptedStoreCount += 1
             let result = store.saveResult(document)
             successfulStoreCount += result.successfulStoreCount
             failures.append(contentsOf: result.failures)
+            storeOutcomes.append(contentsOf: result.storeOutcomes)
+        }
+        for resolver in lazyStores {
+            guard let store = resolver.resolve() else {
+                storeOutcomes.append(CompanionSyncStoreOutcome(
+                    storeRole: resolver.storeRole,
+                    isAvailable: false,
+                    succeeded: false,
+                    errorMessage: "Context Panel companion \(CompanionSyncStoreFailure.storeDisplayName(resolver.storeRole)) sync store is unavailable."
+                ))
+                continue
+            }
+            attemptedStoreCount += 1
+            let result = store.saveResult(document)
+            successfulStoreCount += result.successfulStoreCount
+            failures.append(contentsOf: result.failures)
+            storeOutcomes.append(contentsOf: result.storeOutcomes)
         }
         return CompanionSyncSaveResult(
-            attemptedStoreCount: stores.count,
+            attemptedStoreCount: attemptedStoreCount,
             successfulStoreCount: successfulStoreCount,
-            failures: failures
+            failures: failures,
+            storeOutcomes: storeOutcomes
         )
     }
 
     public func load(policy: SnapshotStoreStalenessPolicy, now: Date = Date()) -> CompanionSyncLoadResult {
+        loadWithDiagnostics(policy: policy, now: now).result
+    }
+
+    public func loadWithDiagnostics(
+        policy: SnapshotStoreStalenessPolicy,
+        now: Date = Date()
+    ) -> CompanionSyncLoadDiagnosticsResult {
         var bestResult: CompanionSyncLoadResult?
         var firstFailure: CompanionSyncLoadResult?
-        for store in resolvedStores() {
+        var storeOutcomes: [CompanionSyncStoreOutcome] = []
+        for store in stores {
             let result = store.load(policy: policy, now: now)
+            storeOutcomes.append(Self.loadOutcome(storeRole: CompanionSyncStoreFailure.storeRole(for: store.documentURL), result: result))
             if result.document != nil {
                 bestResult = Self.preferredResult(lhs: bestResult, rhs: result)
                 continue
@@ -363,11 +543,42 @@ public struct CompanionSyncStoreSet: Sendable {
                 firstFailure = result
             }
         }
-        return bestResult ?? firstFailure ?? CompanionSyncLoadResult(document: nil, status: .unknown)
+        for resolver in lazyStores {
+            guard let store = resolver.resolve() else {
+                storeOutcomes.append(CompanionSyncStoreOutcome(
+                    storeRole: resolver.storeRole,
+                    isAvailable: false,
+                    succeeded: false,
+                    errorMessage: "Context Panel companion \(CompanionSyncStoreFailure.storeDisplayName(resolver.storeRole)) sync store is unavailable."
+                ))
+                continue
+            }
+            let result = store.load(policy: policy, now: now)
+            storeOutcomes.append(Self.loadOutcome(storeRole: CompanionSyncStoreFailure.storeRole(for: store.documentURL), result: result))
+            if result.document != nil {
+                bestResult = Self.preferredResult(lhs: bestResult, rhs: result)
+                continue
+            }
+            if result.status == .failure, firstFailure == nil {
+                firstFailure = result
+            }
+        }
+        return CompanionSyncLoadDiagnosticsResult(
+            result: bestResult ?? firstFailure ?? CompanionSyncLoadResult(document: nil, status: .unknown),
+            storeOutcomes: storeOutcomes
+        )
     }
 
     private func resolvedStores() -> [CompanionSyncStore] {
         stores + lazyStores.compactMap { $0.resolve() }
+    }
+
+    private static func loadOutcome(storeRole: String, result: CompanionSyncLoadResult) -> CompanionSyncStoreOutcome {
+        CompanionSyncStoreOutcome(
+            storeRole: storeRole,
+            succeeded: result.document != nil && result.status != .failure,
+            errorMessage: result.errorMessage
+        )
     }
 
     private static func preferredResult(

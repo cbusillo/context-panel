@@ -140,7 +140,7 @@ public enum ContextPanelLocations {
         let localStore = CompanionSyncStore(documentURL: companionSyncDocumentURL(appGroupID: appGroupID))
         let iCloudStores: [CompanionSyncStoreResolver]
         if let iCloudContainerID {
-            iCloudStores = [CompanionSyncStoreResolver {
+            iCloudStores = [CompanionSyncStoreResolver(storeRole: "icloud") {
                 companionUbiquitySyncDocumentURL(containerID: iCloudContainerID).map(CompanionSyncStore.init(documentURL:))
             }]
         } else {

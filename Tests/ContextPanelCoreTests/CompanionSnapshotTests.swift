@@ -462,7 +462,7 @@ import Testing
     #expect(readAttempts.value == 1)
     #expect(result.document == nil)
     #expect(result.status == .failure)
-    #expect(result.errorMessage == "Companion sync document could not be read through file coordination.")
+    #expect(result.errorMessage == "custom sync store read failed (ContextPanelCore.SnapshotStoreError 1).")
 }
 
 @Test func companionSyncStoreSetFallsBackPastFailedMirror() throws {
@@ -561,12 +561,45 @@ import Testing
     #expect(partial.failures.first?.errorDomain.isEmpty == false)
     #expect(partial.failures.first?.errorCode != 0)
     #expect(partial.failures.first?.errorMessage.isEmpty == false)
+    #expect(partial.storeOutcomes.count == 2)
+    #expect(partial.diagnosticsRecord(at: now).outcome == .partial)
+    #expect(partial.diagnosticsRecord(at: now).appGroupSucceeded == nil)
 
     let complete = CompanionSyncStoreSet(stores: [failingStore]).save(document)
     #expect(complete.attemptedStoreCount == 1)
     #expect(complete.successfulStoreCount == 0)
     #expect(complete.succeeded == false)
     #expect(complete.failures.count == 1)
+}
+
+@Test func companionSyncStoreSetReportsUnavailableICloudMirror() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 3_510)
+    let localURL = root
+        .appending(path: ContextPanelLocations.appGroupID)
+        .appending(path: "companion.json")
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    )
+    let storeSet = CompanionSyncStoreSet(
+        stores: [CompanionSyncStore(documentURL: localURL)],
+        lazyStores: [CompanionSyncStoreResolver(storeRole: "icloud") { nil }]
+    )
+
+    let result = storeSet.save(document)
+    let diagnostics = result.diagnosticsRecord(at: now)
+
+    #expect(result.attemptedStoreCount == 1)
+    #expect(result.successfulStoreCount == 1)
+    #expect(result.succeeded)
+    #expect(result.failures.isEmpty)
+    #expect(diagnostics.outcome == .partial)
+    #expect(diagnostics.appGroupSucceeded == true)
+    #expect(diagnostics.iCloudAvailable == false)
+    #expect(diagnostics.iCloudSucceeded == false)
+    #expect(diagnostics.errorMessage?.contains("iCloud") == true)
 }
 
 @Test func companionSyncStoreSetResolvesLazyMirrorsOnlyDuringOperations() throws {
@@ -756,6 +789,48 @@ import Testing
     #expect(result.errorMessage?.contains("app group mirror could not be updated") == true)
 }
 
+@Test func companionSyncLoaderRecordsDownloadFailureDiagnostics() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 3_555)
+    let localURL = root.appending(path: "local/companion.json")
+    let iCloudURL = root.appending(path: "Mobile Documents/companion.json")
+    let diagnosticsStore = RefreshDiagnosticsStateStore(
+        stateURL: root.appending(path: "refresh-diagnostics-state.json")
+    )
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    )
+    try CompanionSyncStore(documentURL: localURL).save(document)
+    let downloadError = NSError(
+        domain: NSCocoaErrorDomain,
+        code: CocoaError.ubiquitousFileUnavailable.rawValue,
+        userInfo: [NSLocalizedDescriptionKey: "download failed for user@example.com with token=secret-value"]
+    )
+
+    let result = CompanionSyncLoader.load(
+        localMirrorURL: localURL,
+        iCloudDocumentURL: iCloudURL,
+        diagnosticsStore: diagnosticsStore,
+        downloadUbiquitousItem: { _ in throw downloadError },
+        now: now
+    )
+    let diagnostics = diagnosticsStore.load().lastCompanionLoad
+
+    #expect(result.document == document)
+    #expect(result.status == .close)
+    #expect(diagnostics?.outcome == .partial)
+    #expect(diagnostics?.appGroupSucceeded == true)
+    #expect(diagnostics?.iCloudAvailable == true)
+    #expect(diagnostics?.iCloudSucceeded == false)
+    #expect(diagnostics?.loadedDocument == true)
+    #expect(diagnostics?.mirroredDocument == true)
+    #expect(diagnostics?.errorMessage?.contains("user@example.com") == false)
+    #expect(diagnostics?.errorMessage?.contains("secret-value") == false)
+    #expect(diagnostics?.errorMessage?.contains("Mobile Documents") == false)
+}
+
 @Test func companionSyncLoaderRequiresResolvedAppGroupMirror() {
     let now = Date(timeIntervalSince1970: 3_560)
 
@@ -907,6 +982,9 @@ import Testing
     let savedAt = Date(timeIntervalSince1970: 3_500)
     let primary = JSONSnapshotStore(rootDirectory: root.appending(path: "snapshots", directoryHint: .isDirectory))
     let companionURL = root.appending(path: "companion.json")
+    let diagnosticsStore = RefreshDiagnosticsStateStore(
+        stateURL: root.appending(path: "refresh-diagnostics-state.json")
+    )
     let publisher = CompanionSyncPublisher(
         stores: CompanionSyncStoreSet(stores: [CompanionSyncStore(documentURL: companionURL)]),
         widgetPreferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "preferences.json")),
@@ -916,6 +994,7 @@ import Testing
         accountStore: AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json")),
         stores: SnapshotRefreshStores(primary: primary),
         companionSyncPublisher: publisher,
+        refreshDiagnosticsStore: diagnosticsStore,
         promptCacheTelemetryReader: { _ in [] }
     )
     let report = ProviderConnectorReport(
@@ -945,10 +1024,14 @@ import Testing
     )
 
     let result = CompanionSyncStore(documentURL: companionURL).load()
+    let diagnostics = diagnosticsStore.load()
     #expect(primary.loadCurrent().snapshot?.snapshot.limits.first?.accountID == "raw-openai")
     #expect(result.document?.snapshot.publishedAt == savedAt)
     #expect(result.document?.snapshot.limits.first?.accountName == "Work OpenAI")
     #expect(result.document?.snapshot.limits.first?.companionAccountID != "raw-openai")
+    #expect(diagnostics.lastCompanionPublish?.outcome == .healthy)
+    #expect(diagnostics.lastCompanionLoad?.outcome == .healthy)
+    #expect(diagnostics.lastCompanionLoad?.loadedDocument == true)
 }
 
 private func companionStoredSnapshot(generatedAt: Date) -> StoredUsageSnapshot {

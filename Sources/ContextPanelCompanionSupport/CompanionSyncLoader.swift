@@ -5,10 +5,14 @@ import Foundation
 public enum CompanionSyncLoader {
     public static func load(now: Date = Date()) -> CompanionSyncLoadResult {
         let iCloudDocumentURL = ContextPanelLocations.cachedCompanionUbiquitySyncDocumentURL()
+            ?? ContextPanelLocations.refreshCachedCompanionUbiquitySyncDocumentURL()
         return load(
             localMirrorURL: ContextPanelLocations.companionAppGroupSyncDocumentURL(),
             iCloudDocumentURL: iCloudDocumentURL,
             mirrorLoadedDocument: iCloudDocumentURL != nil,
+            diagnosticsStore: RefreshDiagnosticsStateStore(
+                stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.companionAppGroupID)
+            ),
             now: now
         )
     }
@@ -17,40 +21,107 @@ public enum CompanionSyncLoader {
         localMirrorURL: URL?,
         iCloudDocumentURL: URL?,
         mirrorLoadedDocument: Bool = true,
+        diagnosticsStore: RefreshDiagnosticsStateStore? = nil,
+        downloadUbiquitousItem: @escaping @Sendable (URL) throws -> Void = { url in
+            try FileManager.default.startDownloadingUbiquitousItem(at: url)
+        },
         now: Date = Date()
     ) -> CompanionSyncLoadResult {
         guard let localMirrorURL else {
-            return CompanionSyncLoadResult(
+            let result = CompanionSyncLoadResult(
                 document: nil,
                 status: .failure,
                 errorMessage: "Context Panel iOS app group is unavailable."
             )
+            recordDiagnostics(
+                CompanionSyncDiagnosticsRecord(
+                    operation: .load,
+                    outcome: .failed,
+                    attemptedAt: now,
+                    appGroupSucceeded: false,
+                    iCloudAvailable: iCloudDocumentURL != nil,
+                    loadedDocument: false,
+                    mirroredDocument: false,
+                    errorMessage: result.errorMessage
+                ),
+                in: diagnosticsStore
+            )
+            return result
         }
 
         let localStore = CompanionSyncStore(documentURL: localMirrorURL)
         let storeSet = CompanionSyncStoreSet(
             stores: [localStore],
-            lazyStores: [CompanionSyncStoreResolver {
+            lazyStores: [CompanionSyncStoreResolver(storeRole: "icloud") {
                 iCloudDocumentURL.map(CompanionSyncStore.init(documentURL:))
             }]
         )
+        var downloadErrorMessage: String?
         if let iCloudDocumentURL {
-            try? FileManager.default.startDownloadingUbiquitousItem(at: iCloudDocumentURL)
+            do {
+                try downloadUbiquitousItem(iCloudDocumentURL)
+            } catch {
+                downloadErrorMessage = CompanionSyncStoreFailure.diagnosticErrorMessage(
+                    storeRole: "icloud",
+                    operation: "download",
+                    error: error
+                )
+            }
         }
-        let result = storeSet.load(
+        let loadDiagnostics = storeSet.loadWithDiagnostics(
             policy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge),
             now: now
         )
+        let result = loadDiagnostics.result
+        var mirrorSucceeded: Bool?
+        var diagnosticRecord = loadDiagnostics.diagnosticsRecord(at: now)
+        if let downloadErrorMessage {
+            diagnosticRecord.iCloudAvailable = iCloudDocumentURL != nil
+            diagnosticRecord.iCloudSucceeded = false
+            diagnosticRecord.errorMessage = diagnosticRecord.errorMessage ?? downloadErrorMessage
+            if diagnosticRecord.outcome == .healthy {
+                diagnosticRecord.outcome = diagnosticRecord.loadedDocument == true ? .partial : .failed
+            }
+        }
         if mirrorLoadedDocument, let document = result.document {
             let saveResult = localStore.saveResult(document)
             if !saveResult.succeeded {
-                return CompanionSyncLoadResult(
+                mirrorSucceeded = false
+                let failedResult = CompanionSyncLoadResult(
                     document: document,
                     status: .failure,
                     errorMessage: Self.mirrorFailureMessage(saveResult)
                 )
+                diagnosticRecord.outcome = .partial
+                diagnosticRecord.appGroupSucceeded = false
+                diagnosticRecord.loadedDocument = true
+                diagnosticRecord.mirroredDocument = false
+                diagnosticRecord.errorMessage = failedResult.errorMessage
+                recordDiagnostics(
+                    diagnosticRecord,
+                    in: diagnosticsStore
+                )
+                return failedResult
+            }
+            mirrorSucceeded = true
+        } else if mirrorLoadedDocument {
+            mirrorSucceeded = false
+        }
+        if let mirrorSucceeded {
+            diagnosticRecord.mirroredDocument = mirrorSucceeded
+            if mirrorSucceeded {
+                diagnosticRecord.appGroupSucceeded = true
+            } else if mirrorLoadedDocument {
+                diagnosticRecord.appGroupSucceeded = false
+                if diagnosticRecord.outcome == .healthy {
+                    diagnosticRecord.outcome = .partial
+                }
             }
         }
+        recordDiagnostics(
+            diagnosticRecord,
+            in: diagnosticsStore
+        )
         return result
     }
 
@@ -79,6 +150,15 @@ public enum CompanionSyncLoader {
             return "Context Panel iOS app group mirror could not be updated."
         }
         return "Context Panel iOS app group mirror could not be updated: \(failure.errorMessage)"
+    }
+
+    private static func recordDiagnostics(
+        _ record: CompanionSyncDiagnosticsRecord,
+        in store: RefreshDiagnosticsStateStore?
+    ) {
+        try? store?.update { state in
+            state.recordCompanionSync(record)
+        }
     }
 }
 

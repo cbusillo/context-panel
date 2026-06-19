@@ -842,6 +842,23 @@ private extension RefreshDiagnosticsDecision {
     }
 }
 
+private extension CompanionSyncDiagnosticsOutcome {
+    var displayText: String {
+        switch self {
+        case .healthy:
+            "healthy"
+        case .partial:
+            "partial"
+        case .unavailable:
+            "unavailable"
+        case .stale:
+            "stale"
+        case .failed:
+            "failed"
+        }
+    }
+}
+
 @MainActor
 final class SettingsPaneModel: NSObject, ObservableObject {
     @Published private(set) var accounts: [LocalProviderAccountConfiguration] = []
@@ -1012,6 +1029,18 @@ final class SettingsPaneModel: NSObject, ObservableObject {
                 value: diagnosticSuccessText(successfulRun, now: now)
             ))
         }
+        rows.append(RefreshDiagnosticRow(
+            id: "last-companion-publish",
+            label: "Companion publish",
+            value: state.lastCompanionPublish.map { diagnosticCompanionSyncText($0, now: now) }
+                ?? "No companion publish recorded"
+        ))
+        rows.append(RefreshDiagnosticRow(
+            id: "last-companion-load",
+            label: "Companion load",
+            value: state.lastCompanionLoad.map { diagnosticCompanionSyncText($0, now: now) }
+                ?? "No companion load recorded"
+        ))
         if let evaluatedAt = state.lastAlertEvaluationAt {
             let eventCount = state.lastAlertEvaluationEventCount ?? 0
             rows.append(RefreshDiagnosticRow(
@@ -1067,6 +1096,31 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         parts.append("\(limitCount) limits")
         if failureCount > 0 {
             parts.append("\(failureCount) failure\(failureCount == 1 ? "" : "s")")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func diagnosticCompanionSyncText(_ record: CompanionSyncDiagnosticsRecord, now: Date) -> String {
+        var parts = [relativeDiagnosticTime(record.attemptedAt, now: now), record.outcome.displayText]
+        if let appGroupSucceeded = record.appGroupSucceeded {
+            parts.append(appGroupSucceeded ? "app group ok" : "app group failed")
+        }
+        if let iCloudAvailable = record.iCloudAvailable, !iCloudAvailable {
+            parts.append("iCloud unavailable")
+        } else if let iCloudSucceeded = record.iCloudSucceeded {
+            parts.append(iCloudSucceeded ? "iCloud ok" : "iCloud failed")
+        }
+        if let loadedDocument = record.loadedDocument {
+            parts.append(loadedDocument ? "loaded" : "not loaded")
+        }
+        if let mirroredDocument = record.mirroredDocument {
+            parts.append(mirroredDocument ? "mirrored" : "mirror failed")
+        }
+        if record.stale == true {
+            parts.append("stale mirror")
+        }
+        if let error = record.errorMessage, !error.isEmpty {
+            parts.append(error)
         }
         return parts.joined(separator: " · ")
     }
@@ -3369,7 +3423,10 @@ final class ContextPanelAppModel: ObservableObject {
         stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.appGroupID)
     )
     private let limitWarningNotificationService = AppLimitWarningNotificationService.appDefault()
-    private let refreshAttentionPolicy = SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.appMaximumAge)
+
+    private var refreshAttentionPolicy: SnapshotStoreStalenessPolicy {
+        SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.appMaximumAge)
+    }
 
     var currentSnapshot: UsageSnapshot {
         storedSnapshot?.snapshot ?? UsageSnapshot(generatedAt: Date(), limits: [])
