@@ -1633,6 +1633,41 @@ import Testing
     #expect(policy.status(for: stored, now: resetAt.addingTimeInterval(10)) == .stale)
 }
 
+@Test func refreshAttentionSummaryNamesSingleExpiredResetProvider() throws {
+    let savedAt = Date(timeIntervalSince1970: 1_000)
+    let resetAt = savedAt.addingTimeInterval(60)
+    let stored = StoredUsageSnapshot(savedAt: savedAt, snapshot: UsageSnapshot(
+        generatedAt: savedAt,
+        limits: [usageLimit(provider: .google, accountID: "Antigravity", used: 0, savedAt: savedAt, resetsAt: resetAt)]
+    ))
+    let policy = SnapshotStoreStalenessPolicy(maximumAge: 5 * 60)
+
+    let summary = try #require(policy.refreshAttentionSummary(for: stored, now: resetAt.addingTimeInterval(10)))
+
+    #expect(summary.singleProvider == .google)
+    #expect(summary.refreshNeededTitle == "Google refresh needed")
+    #expect(summary.refreshNeededDetail.contains("Google · Antigravity"))
+    #expect(summary.refreshNeededDetail.contains("expired"))
+}
+
+@Test func refreshAttentionSummaryOmitsSuppressedExpiredResetProvider() throws {
+    let savedAt = Date(timeIntervalSince1970: 1_000)
+    let resetAt = savedAt.addingTimeInterval(60)
+    let staleSnapshot = UsageSnapshot(generatedAt: savedAt, limits: [
+        usageLimit(provider: .google, accountID: "Antigravity", used: 0, savedAt: savedAt, resetsAt: resetAt),
+    ])
+    var state = ResetExpiryRefreshState()
+    state.recordAttempt(
+        previousSnapshot: staleSnapshot,
+        refreshedSnapshot: staleSnapshot,
+        attemptedAt: resetAt.addingTimeInterval(10)
+    )
+    let stored = StoredUsageSnapshot(savedAt: resetAt.addingTimeInterval(10), snapshot: staleSnapshot)
+    let policy = SnapshotStoreStalenessPolicy(maximumAge: 5 * 60, resetExpiryRefreshState: state)
+
+    #expect(policy.refreshAttentionSummary(for: stored, now: resetAt.addingTimeInterval(20)) == nil)
+}
+
 @Test func snapshotRefreshRunnerRefreshesWhenResetExpired() async throws {
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())

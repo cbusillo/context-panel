@@ -3402,7 +3402,7 @@ final class ContextPanelAppModel: ObservableObject {
         case .failure:
             "Reconnect account"
         case .stale:
-            hasProviderReconnectIssue ? "Reconnect account" : "Refresh needed"
+            hasProviderReconnectIssue ? "Reconnect account" : refreshAttentionSummary?.refreshNeededTitle ?? "Refresh needed"
         case .unknown:
             "Awaiting data; see Settings"
         default:
@@ -3424,7 +3424,7 @@ final class ContextPanelAppModel: ObservableObject {
         if storeStatus == .failure || hasProviderReconnectIssue {
             return "Reconnect account"
         }
-        return "Refresh needed"
+        return refreshAttentionSummary?.refreshNeededTitle ?? "Refresh needed"
     }
 
     var reconnectSummaryText: String {
@@ -3441,6 +3441,9 @@ final class ContextPanelAppModel: ObservableObject {
             }
             return "\(target) needs attention. Refresh now, then check the provider status if it persists."
         }
+        if let refreshAttentionSummary, storeStatus == .stale {
+            return refreshAttentionSummary.refreshNeededDetail
+        }
         if storeStatus == .stale {
             if hasProviderReconnectIssue {
                 return "The widget is showing old percentages. Reconnect the affected account, then refresh."
@@ -3454,6 +3457,11 @@ final class ContextPanelAppModel: ObservableObject {
             return "One or more provider refreshes need attention. Reconnect the affected account, then refresh."
         }
         return "Refresh is healthy right now."
+    }
+
+    var refreshAttentionSummary: RefreshAttentionSummary? {
+        SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.appMaximumAge)
+            .refreshAttentionSummary(for: storedSnapshot, now: Date())
     }
 
     var providerReportsNeedingAttention: [StoredProviderReport] {
@@ -3518,7 +3526,7 @@ final class ContextPanelAppModel: ObservableObject {
         let accounts = refreshService.loadConfiguredAccounts().document.accounts
         configuredAccounts = accounts
         let result = refreshService.loadCurrent(
-            policy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.appMaximumAge),
+            policy: SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.appMaximumAge),
             now: Date()
         )
         storedSnapshot = result.snapshot

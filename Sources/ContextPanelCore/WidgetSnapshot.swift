@@ -25,6 +25,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     public let fastModeForecastSettings: FastModeForecastSettings
     public let status: UsageStatus
     public let message: String
+    public let refreshAttentionSummary: RefreshAttentionSummary?
 
     public init(
         state: WidgetSnapshotState,
@@ -36,7 +37,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         observedBurnRates: [String: ObservedBurnRate] = [:],
         fastModeForecastSettings: FastModeForecastSettings = .defaultSettings,
         status: UsageStatus,
-        message: String
+        message: String,
+        refreshAttentionSummary: RefreshAttentionSummary? = nil
     ) {
         self.state = state
         self.generatedAt = generatedAt
@@ -48,6 +50,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         self.fastModeForecastSettings = fastModeForecastSettings
         self.status = status
         self.message = message
+        self.refreshAttentionSummary = refreshAttentionSummary
     }
 
     public var usageSnapshot: UsageSnapshot {
@@ -92,7 +95,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         now: Date = Date(),
         history: [StoredUsageSnapshot] = [],
         fastModeForecastSettings: FastModeForecastSettings = .defaultSettings,
-        promptCacheWidgetState: PromptCacheWidgetState? = nil
+        promptCacheWidgetState: PromptCacheWidgetState? = nil,
+        stalenessPolicy: SnapshotStoreStalenessPolicy = SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge)
     ) -> WidgetSnapshot {
         guard let stored = result.snapshot else {
             return WidgetSnapshot(
@@ -115,6 +119,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         }
 
         let status = widgetStatus(for: stored.snapshot, fallback: result.status)
+        let refreshAttentionSummary = stalenessPolicy.refreshAttentionSummary(for: stored, now: now)
 
         let recentPromptCacheObservations = PromptCacheTelemetryReader.filteredRecentObservations(
             stored.promptCacheObservations,
@@ -140,7 +145,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             ),
             fastModeForecastSettings: fastModeForecastSettings,
             status: status,
-            message: message(state: state, stored: stored)
+            message: message(state: state, stored: stored, refreshAttentionSummary: refreshAttentionSummary),
+            refreshAttentionSummary: refreshAttentionSummary
         )
     }
 
@@ -178,6 +184,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             promptCacheObservations: promptCacheObservations
         )
         let status = widgetStatus(for: stored.snapshot, fallback: result.status)
+        let refreshAttentionSummary = SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge)
+            .refreshAttentionSummary(for: stored, now: now)
         let promptCacheState: PromptCacheWidgetState = promptCacheObservations.isEmpty
             ? .unavailable
             : (result.status == .stale || result.status == .failure ? .stale : .available)
@@ -191,7 +199,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             promptCacheWidgetState: promptCacheState,
             fastModeForecastSettings: document.fastModeForecastSettings,
             status: status,
-            message: message(state: state, stored: stored)
+            message: message(state: state, stored: stored, refreshAttentionSummary: refreshAttentionSummary),
+            refreshAttentionSummary: refreshAttentionSummary
         )
     }
 
@@ -224,7 +233,11 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         return hasMissingBookmark ? .needsAuthorization : nil
     }
 
-    private static func message(state: WidgetSnapshotState, stored: StoredUsageSnapshot) -> String {
+    private static func message(
+        state: WidgetSnapshotState,
+        stored: StoredUsageSnapshot,
+        refreshAttentionSummary: RefreshAttentionSummary?
+    ) -> String {
         switch state {
         case .ready:
             if stored.snapshot.mainLimitSummaries.isEmpty, stored.reports.contains(where: { $0.status == .failure }) {
@@ -241,7 +254,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         case .stale:
             return stored.reports.hasReconnectBlockingFailure
                 ? "Reconnect account to update data."
-                : "Refresh Context Panel to update data."
+                : refreshAttentionSummary?.refreshNeededDetail ?? "Refresh Context Panel to update data."
         case .failure:
             return "Reconnect account to update data."
         }

@@ -78,10 +78,11 @@ struct ContextPanelTimelineProvider: TimelineProvider {
             bookmarkStore: bookmarkStore,
             now: date
         )
-        let result = store.loadCurrent(policy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge), now: date)
+        let policy = SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
+        let result = store.loadCurrent(policy: policy, now: date)
         if result.snapshot == nil || result.status == .failure {
             let fallback = containerFallbackStore.loadCurrent(
-                policy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge),
+                policy: policy,
                 now: date
             )
             if fallback.snapshot != nil {
@@ -92,7 +93,8 @@ struct ContextPanelTimelineProvider: TimelineProvider {
                         now: date,
                         history: containerFallbackStore.loadHistory(),
                         fastModeForecastSettings: forecastSettings,
-                        promptCacheWidgetState: promptCacheWidgetState
+                        promptCacheWidgetState: promptCacheWidgetState,
+                        stalenessPolicy: policy
                     ),
                     displayPreferences: displayPreferences
                 )
@@ -105,7 +107,8 @@ struct ContextPanelTimelineProvider: TimelineProvider {
                 now: date,
                 history: store.loadHistory(),
                 fastModeForecastSettings: forecastSettings,
-                promptCacheWidgetState: promptCacheWidgetState
+                promptCacheWidgetState: promptCacheWidgetState,
+                stalenessPolicy: policy
             ),
             displayPreferences: displayPreferences
         )

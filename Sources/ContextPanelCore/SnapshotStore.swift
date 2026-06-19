@@ -196,6 +196,67 @@ public struct SnapshotStoreLoadResult: Equatable, Sendable {
     }
 }
 
+public struct RefreshAttentionSummary: Codable, Equatable, Sendable {
+    public let providers: [Provider]
+    public let reports: [StoredProviderReport]
+    public let expiredResetLimits: [UsageLimit]
+    public let isSnapshotAgeStale: Bool
+
+    public init(
+        providers: [Provider],
+        reports: [StoredProviderReport],
+        expiredResetLimits: [UsageLimit],
+        isSnapshotAgeStale: Bool
+    ) {
+        self.providers = providers
+        self.reports = reports
+        self.expiredResetLimits = expiredResetLimits
+        self.isSnapshotAgeStale = isSnapshotAgeStale
+    }
+
+    public var singleProvider: Provider? {
+        providers.count == 1 ? providers.first : nil
+    }
+
+    public var refreshNeededTitle: String {
+        if let singleProvider {
+            return "\(singleProvider.displayName) refresh needed"
+        }
+        if providers.count > 1 {
+            return "Provider refresh needed"
+        }
+        return "Refresh needed"
+    }
+
+    public var refreshNeededDetail: String {
+        if let report = reports.first {
+            let target = "\(report.provider.displayName) · \(report.accountName)"
+            switch report.status {
+            case .stale:
+                return "\(target) returned stale data. Refresh now, then check that provider if it persists."
+            case .unknown:
+                return "\(target) did not return a complete refresh report. Refresh now, then check that provider if it persists."
+            case .failure:
+                return "\(target) needs attention. Reconnect this account, then refresh."
+            case .healthy, .close, .limited, .loading:
+                break
+            }
+        }
+
+        if let limit = expiredResetLimits.first {
+            let target = "\(limit.provider.displayName) · \(limit.accountName)"
+            let window = limit.windowLabel ?? limit.label
+            return "\(target) still reports an expired \(window) reset window. Refresh now, then check that provider if it persists."
+        }
+
+        if isSnapshotAgeStale {
+            return "The latest snapshot is old. Refresh Context Panel to update provider data."
+        }
+
+        return "Refresh Context Panel to update provider data."
+    }
+}
+
 public struct SnapshotStoreQuery: Equatable, Sendable {
     public let provider: Provider?
     public let accountID: String?
@@ -223,6 +284,13 @@ public struct SnapshotStoreStalenessPolicy: Equatable, Sendable {
         self.resetExpiryRefreshState = resetExpiryRefreshState
     }
 
+    public static func appDefault(maximumAge: TimeInterval) -> SnapshotStoreStalenessPolicy {
+        SnapshotStoreStalenessPolicy(
+            maximumAge: maximumAge,
+            resetExpiryRefreshState: ResetExpiryRefreshStateStore.appDefault().load()
+        )
+    }
+
     public func status(for storedSnapshot: StoredUsageSnapshot?, now: Date) -> UsageStatus {
         guard let storedSnapshot else { return .unknown }
         if now.timeIntervalSince(storedSnapshot.snapshot.generatedAt) > maximumAge {
@@ -234,14 +302,70 @@ public struct SnapshotStoreStalenessPolicy: Equatable, Sendable {
         return storedSnapshot.snapshot.aggregateStatus
     }
 
+    public func refreshAttentionSummary(for storedSnapshot: StoredUsageSnapshot?, now: Date) -> RefreshAttentionSummary? {
+        guard let storedSnapshot else { return nil }
+        let ageIsStale = now.timeIntervalSince(storedSnapshot.snapshot.generatedAt) > maximumAge
+        let expiredResetLimits = resetRefreshDueLimits(in: storedSnapshot.snapshot, now: now)
+        let reports = storedSnapshot.reports.filter { report in
+            report.status == .failure || report.status == .stale || (report.status == .unknown && report.errorMessage != nil)
+        }
+
+        guard ageIsStale || !expiredResetLimits.isEmpty || !reports.isEmpty else { return nil }
+        let providerSet = Set(reports.map(\.provider) + expiredResetLimits.map(\.provider))
+        let providers = Provider.allCases.filter { providerSet.contains($0) }
+        return RefreshAttentionSummary(
+            providers: providers,
+            reports: reports.sortedByRefreshAttention,
+            expiredResetLimits: expiredResetLimits.sortedByRefreshAttention,
+            isSnapshotAgeStale: ageIsStale
+        )
+    }
+
     private func hasDueResetExpiry(in snapshot: UsageSnapshot, now: Date) -> Bool {
-        let dueKeys = snapshot.resetRefreshDueKeys(now: now)
-        guard !dueKeys.isEmpty else { return false }
-        guard let resetExpiryRefreshState else { return true }
-        return dueKeys.contains { key in
+        !resetRefreshDueLimits(in: snapshot, now: now).isEmpty
+    }
+
+    private func resetRefreshDueLimits(in snapshot: UsageSnapshot, now: Date) -> [UsageLimit] {
+        let dueLimits = snapshot.limits.filter { $0.isResetRefreshDue(now: now) }
+        guard !dueLimits.isEmpty else { return [] }
+        guard let resetExpiryRefreshState else { return dueLimits }
+        return dueLimits.filter { limit in
+            guard let key = ResetExpiryRefreshKey(limit: limit) else { return false }
             guard let record = resetExpiryRefreshState.record(for: key) else { return true }
             guard let nextRetryAt = record.nextRetryAt else { return false }
             return nextRetryAt <= now
+        }
+    }
+}
+
+private extension Array where Element == StoredProviderReport {
+    var sortedByRefreshAttention: [StoredProviderReport] {
+        sorted { lhs, rhs in
+            if lhs.status != rhs.status { return lhs.status.refreshAttentionSortRank > rhs.status.refreshAttentionSortRank }
+            if lhs.provider != rhs.provider { return lhs.provider.displayName < rhs.provider.displayName }
+            return lhs.accountName < rhs.accountName
+        }
+    }
+}
+
+private extension Array where Element == UsageLimit {
+    var sortedByRefreshAttention: [UsageLimit] {
+        sorted { lhs, rhs in
+            if lhs.provider != rhs.provider { return lhs.provider.displayName < rhs.provider.displayName }
+            if lhs.accountName != rhs.accountName { return lhs.accountName < rhs.accountName }
+            if lhs.resetsAt != rhs.resetsAt { return (lhs.resetsAt ?? .distantFuture) < (rhs.resetsAt ?? .distantFuture) }
+            return lhs.label < rhs.label
+        }
+    }
+}
+
+private extension UsageStatus {
+    var refreshAttentionSortRank: Int {
+        switch self {
+        case .failure: 3
+        case .unknown: 2
+        case .stale: 1
+        case .healthy, .close, .limited, .loading: 0
         }
     }
 }
