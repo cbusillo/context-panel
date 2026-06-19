@@ -7,5 +7,5 @@
 - [Local Limit Probe Design](local-limit-probe.md)
 - [Provider Usage Access Research](provider-usage-access.md)
 - [TODO](todo.md)
-- [macOS Release Path](release.md)
+- [Release Path](release.md)
 - [Repository Settings](repo-settings.md)

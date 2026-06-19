@@ -1,6 +1,6 @@
-# macOS Release Path
+# macOS And Companion Release Path
 
-Last verified: 2026-06-11.
+Last verified: 2026-06-19.
 
 Context Panel's normal beta release path is the GitHub Actions `Ship` workflow.
 It coordinates selected release channels from one commit and one marketing
@@ -9,6 +9,10 @@ version:
 - GitHub Release zip artifact, signed and notarized by default
 - App Store Connect build upload, signed with Mac App Store profiles
 - TestFlight beta distribution for the uploaded build
+
+Companion iOS/iPadOS and visionOS distribution uses the same App Store Connect
+and TestFlight building blocks, but it is deliberately opt-in from `Ship` until
+the companion device path is proven on signed devices.
 
 App Store Review submission is intentionally separate from `Ship`. Run it only
 after the TestFlight build has been validated and the App Store release decision
@@ -23,6 +27,10 @@ The lower-level workflows remain callable for recovery and validation:
   Xcode app, widget extension, and refresh-agent login item with App Store
   provisioning profiles, then exports or uploads the package to App Store
   Connect
+- a GitHub Actions App Store Connect Companion Build Upload workflow that
+  archives the companion app and embedded companion WidgetKit extension for iOS
+  or visionOS with their App Store provisioning profiles, then exports or
+  uploads the signed IPA to App Store Connect
 - a GitHub Actions TestFlight Beta Distribution workflow that waits for an
   uploaded build to finish App Store Connect processing, then assigns it to
   TestFlight beta groups
@@ -201,6 +209,126 @@ scripts/distribute-testflight-beta.py \
 App Store Connect build upload is a shared prerequisite. TestFlight beta
 distribution and App Store Review submission are sibling consumers of that
 uploaded build; neither should secretly invoke the other.
+
+## Companion TestFlight Validation
+
+Use this path for issue #174 and companion device dogfood. It is separate from
+the normal Mac TestFlight cut unless `Ship` is explicitly configured to use the
+companion channel.
+
+### Required Signing Material
+
+The companion upload path requires the same App Store Connect API key used by
+the Mac upload path plus companion-specific Apple Distribution signing assets:
+
+- `MACOS_APP_STORE_DISTRIBUTION_CERTIFICATE_P12`
+- `MACOS_APP_STORE_CERTIFICATE_PASSWORD` or `MACOS_CERTIFICATE_PASSWORD`
+- `APP_STORE_CONNECT_KEY_ID`
+- `APP_STORE_CONNECT_ISSUER_ID`
+- `APP_STORE_CONNECT_API_KEY_P8_BASE64`
+- `APPLE_TEAM_ID`
+- `COMPANION_APP_STORE_APP_PROVISIONING_PROFILE_BASE64`
+- `COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64`
+
+The companion app profile must authorize:
+
+- bundle ID `com.shinycomputers.contextpanel`
+- App Group `group.com.shinycomputers.contextpanel`
+- iCloud container `iCloud.com.shinycomputers.contextpanel`
+- iCloud Documents and ubiquity container access
+- the selected platform: iOS for iPhone/iPad, or visionOS/xrOS for visionOS
+
+The companion widget profile must authorize the same App Group, iCloud
+container, iCloud Documents, ubiquity container, and selected platform for bundle
+ID `com.shinycomputers.contextpanel.widget`.
+
+Do not remove older App IDs, profiles, or profile secrets while validating the
+new companion path. Keep them available until a signed device/TestFlight install
+has proven that Mac publish, iCloud propagation, companion app load, and
+companion widget rendering all work.
+
+### Export-Only Canary
+
+Before uploading a companion build, run the companion upload workflow with
+`upload=false` or run the script locally with real profiles and API credentials:
+
+```sh
+scripts/upload-app-store-connect-companion-app.sh \
+  --platform ios \
+  --version 1.0.32 \
+  --build-number 202606191900 \
+  --export-only
+```
+
+That canary should archive `ContextPanelCompanion`, embed
+`ContextPanelCompanionWidgetExtension`, validate both provisioning profiles for
+the selected platform, App Group, iCloud Documents, and ubiquity entitlements,
+then export a signed IPA under `.build/app-store-connect-companion/`.
+
+Use `--platform visionos` only after the iOS/iPadOS path is healthy or when the
+validation target is specifically visionOS. The visionOS profile must support
+`visionOS` or `xrOS`.
+
+### Upload And Distribution
+
+The lower-level companion upload workflow is:
+
+```text
+App Store Connect Companion Build Upload
+```
+
+Use inputs:
+
+- `version`: the App Store marketing version.
+- `build_number`: optional; blank uses a UTC timestamp.
+- `platform`: `ios` or `visionos`.
+- `upload`: `true` to upload, `false` for export-only.
+
+After a successful upload, distribute that build with `TestFlight Beta
+Distribution` using:
+
+- `platform=IOS` for iPhone/iPad companion builds.
+- `platform=VISION_OS` for visionOS companion builds.
+- the same `version` and resolved `build_number` from the upload summary.
+
+For a coordinated one-shot run through `Ship`, select:
+
+- `companion_app_store_channel=upload`
+- `companion_platform=ios` or `visionos`
+- `testflight_beta=true`
+- `testflight_beta_source=companion`
+- `app_store_channel=skip` unless the same run should also upload a Mac build
+
+Do not set `testflight_beta_source=macos` when the intent is companion device
+validation; that distributes the Mac App Store build instead of the companion
+build.
+
+### Signed Device Smoke Test
+
+Before treating a companion TestFlight build as release evidence, validate this
+sequence from signed runtimes:
+
+1. Install and launch the canonical Mac app from `/Applications/Context
+Panel.app`.
+2. Run `scripts/context-panel-runtime-baseline.sh install --launch` or
+   `scripts/context-panel-runtime-baseline.sh check` and require `baseline=OK`.
+3. Trigger a Mac refresh that publishes `context-panel-companion.json`.
+4. Open the app Diagnostics view and confirm `Companion publish` is healthy or,
+   if degraded, names the failing store without raw paths or account data.
+5. Install the companion build from TestFlight on iPhone or iPad.
+6. Launch the companion app and confirm it renders current lanes from the Mac
+   companion document rather than setup-only, stale, or no-Mac copy.
+7. Add the companion widget and confirm the small/medium/large widget layouts
+   render current lanes and preserve useful degraded states.
+8. Reopen the Mac Diagnostics view and confirm companion load/readback state is
+   explainable: healthy, stale, unavailable, partial, or failed.
+9. Exercise degraded cases when practical: iCloud disabled/unavailable, stale
+   local mirror, missing Mac publish, and app group mirror failure.
+
+If the companion app or widget is stale but diagnostics show healthy Mac publish
+and readable iCloud state, pull #217 forward and evaluate active iCloud document
+observation. Keep #217 Later while the signed device path works with the current
+publish/read/local-mirror model.
 
 ## App Store Review Submission
 
