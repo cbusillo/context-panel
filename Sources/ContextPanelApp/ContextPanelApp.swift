@@ -114,7 +114,7 @@ private enum RefreshAgentRegistration {
 }
 
 @main
-struct ContextPanelPreviewApp: App {
+struct ContextPanelApp: App {
     @NSApplicationDelegateAdaptor(ContextPanelAppDelegate.self) private var appDelegate
 
     var body: some Scene {

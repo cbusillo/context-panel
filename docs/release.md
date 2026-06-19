@@ -452,7 +452,7 @@ scripts/package-native-macos-app.sh \
 scripts/package-macos-app.sh --output dist --identity auto
 ```
 
-The script builds `ContextPanelPreview` in release mode, wraps it as
+The script builds `ContextPanelApp` in release mode, wraps it as
 `dist/Context Panel.app`, writes app metadata, signs the bundle, verifies the
 signature, and runs a local Gatekeeper assessment.
 
