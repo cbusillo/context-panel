@@ -96,7 +96,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         history: [StoredUsageSnapshot] = [],
         fastModeForecastSettings: FastModeForecastSettings = .defaultSettings,
         promptCacheWidgetState: PromptCacheWidgetState? = nil,
-        stalenessPolicy: SnapshotStoreStalenessPolicy = SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge)
+        stalenessPolicy: SnapshotStoreStalenessPolicy = SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
     ) -> WidgetSnapshot {
         guard let stored = result.snapshot else {
             return WidgetSnapshot(
@@ -152,7 +152,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
 
     public static func fromCompanionSync(
         _ result: CompanionSyncLoadResult,
-        now: Date = Date()
+        now: Date = Date(),
+        stalenessPolicy: SnapshotStoreStalenessPolicy = SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
     ) -> WidgetSnapshot {
         guard let document = result.document else {
             return WidgetSnapshot(
@@ -184,8 +185,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             promptCacheObservations: promptCacheObservations
         )
         let status = widgetStatus(for: stored.snapshot, fallback: result.status)
-        let refreshAttentionSummary = SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge)
-            .refreshAttentionSummary(for: stored, now: now)
+        let refreshAttentionSummary = stalenessPolicy.refreshAttentionSummary(for: stored, now: now)
         let promptCacheState: PromptCacheWidgetState = promptCacheObservations.isEmpty
             ? .unavailable
             : (result.status == .stale || result.status == .failure ? .stale : .available)

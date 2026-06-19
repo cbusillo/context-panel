@@ -32,7 +32,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
 
     let widget = WidgetSnapshot.fromStore(
         SnapshotStoreLoadResult(snapshot: stored, status: .stale),
-        now: Date(timeIntervalSince1970: 1_000)
+        now: savedAt.addingTimeInterval(60)
     )
 
     #expect(widget.state == .stale)
@@ -40,6 +40,22 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(widget.limits.count == 1)
     #expect(widget.message == "Refresh Context Panel to update data.")
     #expect(widget.hasProviderReconnectIssue == false)
+}
+
+@Test func widgetSnapshotNamesSingleProviderForAgeOnlyStaleness() {
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let stored = StoredUsageSnapshot(savedAt: savedAt, snapshot: UsageSnapshot(
+        generatedAt: savedAt,
+        limits: [UsageLimit(provider: .openAI, label: "Codex", used: 20, limit: 100)]
+    ))
+
+    let widget = WidgetSnapshot.fromStore(
+        SnapshotStoreLoadResult(snapshot: stored, status: .stale),
+        now: savedAt.addingTimeInterval(SnapshotFreshness.widgetMaximumAge + 1)
+    )
+
+    #expect(widget.refreshAttentionSummary?.singleProvider == .openAI)
+    #expect(widget.widgetProblemText == "OpenAI refresh needed")
 }
 
 @Test func widgetSnapshotProblemTextNamesSingleExpiredResetProvider() {
