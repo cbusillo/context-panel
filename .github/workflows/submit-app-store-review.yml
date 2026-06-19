@@ -86,7 +86,7 @@ concurrency:
 jobs:
   submit:
     name: Submit App Store Review
-    runs-on: macos-latest
+    runs-on: macos-26
 
     env:
       APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
