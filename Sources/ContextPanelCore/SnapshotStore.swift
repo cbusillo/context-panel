@@ -311,7 +311,10 @@ public struct SnapshotStoreStalenessPolicy: Equatable, Sendable {
         }
 
         guard ageIsStale || !expiredResetLimits.isEmpty || !reports.isEmpty else { return nil }
-        let providerSet = Set(reports.map(\.provider) + expiredResetLimits.map(\.provider))
+        var providerSet = Set(reports.map(\.provider) + expiredResetLimits.map(\.provider))
+        if providerSet.isEmpty, ageIsStale {
+            providerSet = Set(storedSnapshot.snapshot.limits.map(\.provider))
+        }
         let providers = Provider.allCases.filter { providerSet.contains($0) }
         return RefreshAttentionSummary(
             providers: providers,

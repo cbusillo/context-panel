@@ -660,6 +660,51 @@ import Testing
     #expect(widget.message == "You're good to keep working.")
 }
 
+@Test func widgetSnapshotFromCompanionSyncUsesProvidedStalenessPolicy() throws {
+    let savedAt = Date(timeIntervalSince1970: 3_200)
+    let expiredAt = savedAt.addingTimeInterval(60)
+    let expiredLimit = UsageLimit(
+        provider: .openAI,
+        accountID: "openai",
+        configuredAccountID: "openai",
+        accountName: "OpenAI",
+        label: "Weekly",
+        unit: .percent,
+        used: 100,
+        limit: 100,
+        resetsAt: expiredAt,
+        lastUpdatedAt: savedAt,
+        confidence: .observed
+    )
+    let snapshot = UsageSnapshot(generatedAt: savedAt, limits: [expiredLimit])
+    let document = CompanionSyncDocument(
+        storedSnapshot: StoredUsageSnapshot(savedAt: savedAt, snapshot: snapshot),
+        publishedAt: savedAt
+    )
+    let companionSnapshot = UsageSnapshot(
+        generatedAt: document.snapshot.generatedAt,
+        limits: document.snapshot.limits.map(\.usageLimit)
+    )
+    var resetState = ResetExpiryRefreshState()
+    resetState.recordAttempt(
+        previousSnapshot: companionSnapshot,
+        refreshedSnapshot: companionSnapshot,
+        attemptedAt: expiredAt.addingTimeInterval(10)
+    )
+
+    let widget = WidgetSnapshot.fromCompanionSync(
+        CompanionSyncLoadResult(document: document, status: .stale),
+        now: expiredAt.addingTimeInterval(20),
+        stalenessPolicy: SnapshotStoreStalenessPolicy(
+            maximumAge: SnapshotFreshness.widgetMaximumAge,
+            resetExpiryRefreshState: resetState
+        )
+    )
+
+    #expect(widget.refreshAttentionSummary == nil)
+    #expect(widget.message == "Refresh Context Panel to update data.")
+}
+
 @Test func widgetSnapshotFromMissingCompanionSyncAsksForMacSync() {
     let now = Date(timeIntervalSince1970: 3_300)
 
