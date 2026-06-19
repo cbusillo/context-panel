@@ -550,6 +550,45 @@ import Testing
     #expect(resolveCount.value == 2)
 }
 
+@Test func companionUbiquityCacheComposesAndCachesDocumentURL() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let containerRoot = root.appending(path: "ubiquity", directoryHint: .isDirectory)
+    let resolveCount = LockedCounter()
+    let cache = CompanionUbiquityContainerURLCache { containerID in
+        resolveCount.increment()
+        return containerID == "iCloud.test.context-panel" ? containerRoot : nil
+    }
+    let expectedURL = containerRoot
+        .appending(path: "Data", directoryHint: .isDirectory)
+        .appending(path: "Context Panel", directoryHint: .isDirectory)
+        .appending(path: "Companion", directoryHint: .isDirectory)
+        .appending(path: ContextPanelLocations.companionSyncDocumentFileName)
+
+    #expect(cache.cachedDocumentURL(containerID: "iCloud.test.context-panel") == nil)
+
+    let firstResolution = cache.resolveNow(containerID: "iCloud.test.context-panel")
+    let secondResolution = cache.resolveNow(containerID: "iCloud.test.context-panel")
+
+    #expect(firstResolution == expectedURL)
+    #expect(secondResolution == expectedURL)
+    #expect(cache.cachedDocumentURL(containerID: "iCloud.test.context-panel") == expectedURL)
+    #expect(resolveCount.value == 1)
+}
+
+@Test func companionUbiquityDocumentURLMissingContainerDoesNotCache() throws {
+    let resolveCount = LockedCounter()
+    let cache = CompanionUbiquityContainerURLCache { _ in
+        resolveCount.increment()
+        return nil
+    }
+
+    #expect(cache.resolveNow(containerID: "iCloud.missing") == nil)
+    #expect(cache.cachedDocumentURL(containerID: "iCloud.missing") == nil)
+    #expect(cache.resolveNow(containerID: "iCloud.missing") == nil)
+    #expect(resolveCount.value == 2)
+}
+
 @Test func companionSyncLoaderMirrorsICloudDocumentIntoLocalAppGroupStore() throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -607,6 +646,39 @@ import Testing
     #expect(result.status == .close)
     #expect(mirrored.document == freshDocument)
     #expect(mirrored.status == .close)
+}
+
+@Test func companionWidgetLoaderDefaultReadsLocalMirrorOnly() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 3_546)
+    let staleGeneratedAt = now.addingTimeInterval(-SnapshotFreshness.widgetMaximumAge - 30)
+    let localURL = root.appending(path: "local/companion.json")
+    let iCloudURL = root.appending(path: "icloud/companion.json")
+    let staleDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: staleGeneratedAt),
+        publishedAt: staleGeneratedAt
+    )
+    let freshDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    )
+    try CompanionSyncStore(documentURL: localURL).save(staleDocument)
+    try CompanionSyncStore(documentURL: iCloudURL).save(freshDocument)
+    let originalModifiedAt = Date(timeIntervalSince1970: 1_000)
+    try FileManager.default.setAttributes(
+        [.modificationDate: originalModifiedAt],
+        ofItemAtPath: localURL.path
+    )
+
+    let result = CompanionSyncLoader.loadWidgetMirror(localMirrorURL: localURL, now: now)
+    let modifiedAt = try #require(
+        FileManager.default.attributesOfItem(atPath: localURL.path)[.modificationDate] as? Date
+    )
+
+    #expect(result.document == staleDocument)
+    #expect(result.status == .stale)
+    #expect(modifiedAt == originalModifiedAt)
 }
 
 @Test func companionSyncLoaderReportsMirrorWriteFailures() throws {
