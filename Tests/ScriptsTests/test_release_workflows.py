@@ -141,6 +141,116 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("assert_profile_platform_any \"$app_profile\" \"companion app\"", script)
         self.assertIn("assert_profile_platform_any \"$widget_profile\" \"companion widget\"", script)
 
+    def test_companion_upload_blocks_visionos_without_layered_icon(self):
+        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
+
+        self.assertIn("assert_visionos_packaging_ready()", script)
+        self.assertIn("Resources/Assets.xcassets/AppIcon.solidimagestack/Contents.json", script)
+        self.assertIn("visionOS companion packaging is blocked", script)
+
+    def test_companion_upload_ios_does_not_require_visionos_layered_icon(self):
+        result = subprocess.run(
+            [
+                "bash",
+                "scripts/upload-app-store-connect-companion-app.sh",
+                "--platform",
+                "ios",
+                "--version",
+                "1.0.99",
+                "--build-number",
+                "168002",
+                "--export-only",
+                "--app-profile",
+                ".build/missing-ios-app.provisionprofile",
+                "--widget-profile",
+                ".build/missing-ios-widget.provisionprofile",
+            ],
+            cwd=REPO_ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("companion app provisioning profile not found", result.stdout)
+        self.assertNotIn("visionOS companion packaging is blocked", result.stdout)
+        self.assertNotIn("AppIcon.solidimagestack", result.stdout)
+
+    def test_companion_upload_fails_visionos_before_profiles_without_layered_icon(self):
+        result = subprocess.run(
+            [
+                "bash",
+                "scripts/upload-app-store-connect-companion-app.sh",
+                "--platform",
+                "visionos",
+                "--version",
+                "1.0.99",
+                "--build-number",
+                "168001",
+                "--export-only",
+            ],
+            cwd=REPO_ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("no visionOS layered app icon is present", result.stdout)
+        self.assertIn("AppIcon.solidimagestack", result.stdout)
+        self.assertNotIn("provisioning profile not found", result.stdout)
+        self.assertNotIn("App Store Connect API credentials are required", result.stdout)
+
+    def test_companion_upload_visionos_with_layered_icon_continues_to_profile_preflight(self):
+        icon_stack = REPO_ROOT / "Resources/Assets.xcassets/AppIcon.solidimagestack/Contents.json"
+        created_icon_stack = False
+        if not icon_stack.exists():
+            icon_stack.parent.mkdir(parents=True, exist_ok=True)
+            icon_stack.write_text("{}\n")
+            created_icon_stack = True
+
+        try:
+            result = subprocess.run(
+                [
+                    "bash",
+                    "scripts/upload-app-store-connect-companion-app.sh",
+                    "--platform",
+                    "visionos",
+                    "--version",
+                    "1.0.99",
+                    "--build-number",
+                    "168003",
+                    "--export-only",
+                    "--app-profile",
+                    ".build/missing-visionos-app.provisionprofile",
+                    "--widget-profile",
+                    ".build/missing-visionos-widget.provisionprofile",
+                ],
+                cwd=REPO_ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+        finally:
+            if created_icon_stack:
+                icon_stack.unlink(missing_ok=True)
+                try:
+                    icon_stack.parent.rmdir()
+                except OSError:
+                    pass
+                try:
+                    icon_stack.parent.parent.rmdir()
+                except OSError:
+                    pass
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("companion app provisioning profile not found", result.stdout)
+        self.assertNotIn("visionOS companion packaging is blocked", result.stdout)
+        self.assertNotIn("no visionOS layered app icon is present", result.stdout)
+
     def test_companion_upload_preflights_widget_icloud_documents_profile(self):
         script = self.read("scripts/upload-app-store-connect-companion-app.sh")
 
