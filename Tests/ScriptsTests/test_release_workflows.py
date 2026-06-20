@@ -508,6 +508,76 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("provisioning profile not found", result.stdout)
         self.assertNotIn("App Store Connect API credentials are required", result.stdout)
 
+    def test_companion_upload_allows_leading_dash_visionos_icon_filenames(self):
+        with tempfile.TemporaryDirectory() as working_dir:
+            working_root = Path(working_dir)
+            icon_stack = working_root / "Resources/Assets.xcassets/AppIcon.solidimagestack"
+            icon_stack.mkdir(parents=True)
+            (icon_stack / "Contents.json").write_text(
+                """{
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  },
+  "layers" : [
+    { "filename" : "-Front.solidimagestacklayer" },
+    { "filename" : "-Back.solidimagestacklayer" }
+  ]
+}
+"""
+            )
+            for layer_name in ("-Front", "-Back"):
+                layer_dir = icon_stack / f"{layer_name}.solidimagestacklayer"
+                image_set = layer_dir / "Content.imageset"
+                image_set.mkdir(parents=True)
+                (layer_dir / "Contents.json").write_text(
+                    """{
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}
+"""
+                )
+                (image_set / "Contents.json").write_text(
+                    f"""{{
+  "images" : [
+    {{
+      "filename" : "{layer_name}.png",
+      "idiom" : "vision",
+      "scale" : "2x"
+    }}
+  ],
+  "info" : {{
+    "author" : "xcode",
+    "version" : 1
+  }}
+}}
+"""
+                )
+                (image_set / f"{layer_name}.png").write_bytes(b"not-a-real-png")
+
+            result = self.run_companion_upload_script(
+                [
+                    "--platform",
+                    "visionos",
+                    "--version",
+                    "1.0.99",
+                    "--build-number",
+                    "168010",
+                    "--export-only",
+                    "--app-profile",
+                    ".build/missing-visionos-app.provisionprofile",
+                    "--widget-profile",
+                    ".build/missing-visionos-widget.provisionprofile",
+                ],
+                cwd=working_root,
+            )
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("companion app provisioning profile not found", result.stdout)
+        self.assertNotIn("visionOS companion packaging is blocked", result.stdout)
+
     def test_companion_upload_visionos_with_layered_icon_continues_to_profile_preflight(self):
         with tempfile.TemporaryDirectory() as working_dir:
             working_root = Path(working_dir)
