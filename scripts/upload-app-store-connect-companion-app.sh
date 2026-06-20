@@ -151,6 +151,11 @@ array_contains_value() {
 	return 1
 }
 
+path_basename() {
+	local path="$1"
+	printf '%s' "${path##*/}"
+}
+
 profile_uuid() {
 	local profile="$1"
 	local plist
@@ -337,11 +342,11 @@ MSG
 		exit 1
 	fi
 	for layer_dir in "${layer_dirs[@]}"; do
-		layer_basenames+=("$(basename "$layer_dir")")
+		layer_basenames+=("$(path_basename "$layer_dir")")
 	done
 	for ((layer_index = 0; layer_index < declared_layer_count; layer_index++)); do
 		declared_layer_filename="$(plutil -extract "layers.$layer_index.filename" raw -o - "$icon_stack_contents" 2>/dev/null || true)"
-		if [[ -z "$declared_layer_filename" || "$declared_layer_filename" != *.solidimagestacklayer || "$declared_layer_filename" != "$(basename "$declared_layer_filename")" ]]; then
+		if [[ -z "$declared_layer_filename" || "$declared_layer_filename" != *.solidimagestacklayer || "$declared_layer_filename" != "$(path_basename "$declared_layer_filename")" ]]; then
 			cat >&2 <<MSG
 visionOS companion packaging is blocked because AppIcon.solidimagestack/Contents.json declares an invalid layer filename.
 Every root layer filename must be a .solidimagestacklayer basename before using --platform visionos as signed release evidence.
@@ -365,7 +370,7 @@ MSG
 		declared_layer_filenames+=("$declared_layer_filename")
 	done
 	for layer_dir in "${layer_dirs[@]}"; do
-		if ! array_contains_value "$(basename "$layer_dir")" "${declared_layer_filenames[@]}"; then
+		if ! array_contains_value "$(path_basename "$layer_dir")" "${declared_layer_filenames[@]}"; then
 			cat >&2 <<MSG
 visionOS companion packaging is blocked because AppIcon.solidimagestack contains an undeclared layer directory.
 Every .solidimagestacklayer directory must be declared in the root layers array before using --platform visionos as signed release evidence.
@@ -376,7 +381,7 @@ MSG
 	for layer_dir in "${layer_dirs[@]}"; do
 		if [[ ! -f "$layer_dir/Contents.json" || ! -f "$layer_dir/Content.imageset/Contents.json" ]]; then
 			cat >&2 <<MSG
-visionOS companion packaging is blocked because $(basename "$layer_dir") is incomplete.
+visionOS companion packaging is blocked because $(path_basename "$layer_dir") is incomplete.
 Each .solidimagestacklayer must include Contents.json and Content.imageset/Contents.json before using --platform visionos as signed release evidence.
 MSG
 			exit 1
@@ -384,14 +389,14 @@ MSG
 		image_set="$layer_dir/Content.imageset"
 		if ! image_count="$(json_array_count "$image_set/Contents.json" 'images')"; then
 			cat >&2 <<MSG
-visionOS companion packaging is blocked because $(basename "$layer_dir")/Content.imageset/Contents.json does not contain a readable images array.
+visionOS companion packaging is blocked because $(path_basename "$layer_dir")/Content.imageset/Contents.json does not contain a readable images array.
 Each layer image set must reference at least one image file before using --platform visionos as signed release evidence.
 MSG
 			exit 1
 		fi
 		if ((image_count < 1)); then
 			cat >&2 <<MSG
-visionOS companion packaging is blocked because $(basename "$layer_dir") has no image entries.
+visionOS companion packaging is blocked because $(path_basename "$layer_dir") has no image entries.
 Each layer image set must reference at least one image file before using --platform visionos as signed release evidence.
 MSG
 			exit 1
@@ -399,23 +404,23 @@ MSG
 		image_filenames=()
 		for ((image_index = 0; image_index < image_count; image_index++)); do
 			image_filename="$(plutil -extract "images.$image_index.filename" raw -o - "$image_set/Contents.json" 2>/dev/null || true)"
-			if [[ -z "$image_filename" || "$image_filename" != "$(basename "$image_filename")" ]]; then
+			if [[ -z "$image_filename" || "$image_filename" != "$(path_basename "$image_filename")" ]]; then
 				cat >&2 <<MSG
-visionOS companion packaging is blocked because $(basename "$layer_dir") has an invalid image filename.
+visionOS companion packaging is blocked because $(path_basename "$layer_dir") has an invalid image filename.
 Every image entry must name a file basename beside Content.imageset/Contents.json before using --platform visionos as signed release evidence.
 MSG
 				exit 1
 			fi
 			if array_contains_value "$image_filename" "${image_filenames[@]}"; then
 				cat >&2 <<MSG
-visionOS companion packaging is blocked because $(basename "$layer_dir") declares a duplicate image filename.
+visionOS companion packaging is blocked because $(path_basename "$layer_dir") declares a duplicate image filename.
 Every image filename must be unique within its layer before using --platform visionos as signed release evidence.
 MSG
 				exit 1
 			fi
 			if [[ ! -f "$image_set/$image_filename" ]]; then
 				cat >&2 <<MSG
-visionOS companion packaging is blocked because $(basename "$layer_dir") has a missing image file.
+visionOS companion packaging is blocked because $(path_basename "$layer_dir") has a missing image file.
 Every image entry must name a file that exists beside Content.imageset/Contents.json before using --platform visionos as signed release evidence.
 MSG
 				exit 1
