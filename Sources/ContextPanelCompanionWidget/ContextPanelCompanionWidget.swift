@@ -79,7 +79,6 @@ struct ContextPanelCompanionWidgetView: View {
             displayPreferences: entry.displayPreferences,
             links: CompanionDeepLinks.links
         )
-        .containerBackground(CPWTheme.surface, for: .widget)
     }
 }
 
@@ -90,10 +89,19 @@ struct ContextPanelCompanionWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: ContextPanelCompanionTimelineProvider()) { entry in
             ContextPanelCompanionWidgetView(entry: entry)
+                .containerBackground(companionWidgetBackground, for: .widget)
         }
         .configurationDisplayName("Context Panel")
         .description("View AI usage limits synced from your Mac.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge, .systemExtraLarge])
         .contentMarginsDisabled()
+    }
+
+    private var companionWidgetBackground: Color {
+        #if os(visionOS)
+        Color.clear
+        #else
+        CPWTheme.surface
+        #endif
     }
 }
