@@ -243,7 +243,11 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("Content.imageset/Contents.json", script)
         self.assertIn("json_array_count()", script)
         self.assertIn("does not declare the same number of layers", script)
+        self.assertIn("declares a duplicate layer", script)
+        self.assertIn("declares an invalid layer filename", script)
         self.assertIn("Every image entry must name a file", script)
+        self.assertIn("has an invalid image filename", script)
+        self.assertIn("declares a duplicate image filename", script)
         self.assertIn("visionOS companion packaging is blocked", script)
 
     def test_companion_upload_ios_does_not_require_visionos_layered_icon(self):
@@ -338,6 +342,169 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("has a missing image file", result.stdout)
+        self.assertNotIn("provisioning profile not found", result.stdout)
+        self.assertNotIn("App Store Connect API credentials are required", result.stdout)
+
+    def test_companion_upload_rejects_duplicate_visionos_layers(self):
+        with tempfile.TemporaryDirectory() as working_dir:
+            working_root = Path(working_dir)
+            self.write_minimal_visionos_icon_stack(working_root)
+            icon_stack = working_root / "Resources/Assets.xcassets/AppIcon.solidimagestack"
+            (icon_stack / "Contents.json").write_text(
+                """{
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  },
+  "layers" : [
+    { "filename" : "Front.solidimagestacklayer" },
+    { "filename" : "Front.solidimagestacklayer" },
+    { "filename" : "Back.solidimagestacklayer" }
+  ]
+}
+"""
+            )
+            result = self.run_companion_upload_script(
+                [
+                    "--platform",
+                    "visionos",
+                    "--version",
+                    "1.0.99",
+                    "--build-number",
+                    "168006",
+                    "--export-only",
+                ],
+                cwd=working_root,
+            )
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("declares a duplicate layer", result.stdout)
+        self.assertNotIn("provisioning profile not found", result.stdout)
+        self.assertNotIn("App Store Connect API credentials are required", result.stdout)
+
+    def test_companion_upload_rejects_path_warped_visionos_layer_filename(self):
+        with tempfile.TemporaryDirectory() as working_dir:
+            working_root = Path(working_dir)
+            self.write_minimal_visionos_icon_stack(working_root)
+            icon_stack = working_root / "Resources/Assets.xcassets/AppIcon.solidimagestack"
+            (icon_stack / "Contents.json").write_text(
+                """{
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  },
+  "layers" : [
+    { "filename" : "Front.solidimagestacklayer" },
+    { "filename" : "../Back.solidimagestacklayer" },
+    { "filename" : "Middle.solidimagestacklayer" }
+  ]
+}
+"""
+            )
+            result = self.run_companion_upload_script(
+                [
+                    "--platform",
+                    "visionos",
+                    "--version",
+                    "1.0.99",
+                    "--build-number",
+                    "168007",
+                    "--export-only",
+                ],
+                cwd=working_root,
+            )
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("declares an invalid layer filename", result.stdout)
+        self.assertNotIn("provisioning profile not found", result.stdout)
+        self.assertNotIn("App Store Connect API credentials are required", result.stdout)
+
+    def test_companion_upload_rejects_path_warped_visionos_image_filename(self):
+        with tempfile.TemporaryDirectory() as working_dir:
+            working_root = Path(working_dir)
+            self.write_minimal_visionos_icon_stack(working_root)
+            front_images = (
+                working_root
+                / "Resources/Assets.xcassets/AppIcon.solidimagestack/Front.solidimagestacklayer/Content.imageset"
+            )
+            (front_images / "Contents.json").write_text(
+                """{
+  "images" : [
+    {
+      "filename" : "../Front.png",
+      "idiom" : "vision",
+      "scale" : "2x"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}
+"""
+            )
+            result = self.run_companion_upload_script(
+                [
+                    "--platform",
+                    "visionos",
+                    "--version",
+                    "1.0.99",
+                    "--build-number",
+                    "168008",
+                    "--export-only",
+                ],
+                cwd=working_root,
+            )
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("has an invalid image filename", result.stdout)
+        self.assertNotIn("provisioning profile not found", result.stdout)
+        self.assertNotIn("App Store Connect API credentials are required", result.stdout)
+
+    def test_companion_upload_rejects_duplicate_visionos_image_filenames(self):
+        with tempfile.TemporaryDirectory() as working_dir:
+            working_root = Path(working_dir)
+            self.write_minimal_visionos_icon_stack(working_root)
+            front_images = (
+                working_root
+                / "Resources/Assets.xcassets/AppIcon.solidimagestack/Front.solidimagestacklayer/Content.imageset"
+            )
+            (front_images / "Contents.json").write_text(
+                """{
+  "images" : [
+    {
+      "filename" : "Front.png",
+      "idiom" : "vision",
+      "scale" : "2x"
+    },
+    {
+      "filename" : "Front.png",
+      "idiom" : "vision",
+      "scale" : "2x"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}
+"""
+            )
+            result = self.run_companion_upload_script(
+                [
+                    "--platform",
+                    "visionos",
+                    "--version",
+                    "1.0.99",
+                    "--build-number",
+                    "168009",
+                    "--export-only",
+                ],
+                cwd=working_root,
+            )
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("declares a duplicate image filename", result.stdout)
         self.assertNotIn("provisioning profile not found", result.stdout)
         self.assertNotIn("App Store Connect API credentials are required", result.stdout)
 
