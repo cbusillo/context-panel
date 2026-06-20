@@ -2,6 +2,7 @@ import unittest
 from pathlib import Path
 import subprocess
 import re
+import tempfile
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -10,6 +11,64 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 class ReleaseWorkflowTests(unittest.TestCase):
     def read(self, relative_path: str) -> str:
         return (REPO_ROOT / relative_path).read_text()
+
+    def run_companion_upload_script(self, args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", str(REPO_ROOT / "scripts/upload-app-store-connect-companion-app.sh"), *args],
+            cwd=cwd or REPO_ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+
+    def write_minimal_visionos_icon_stack(self, root: Path) -> None:
+        icon_stack = root / "Resources/Assets.xcassets/AppIcon.solidimagestack"
+        icon_stack.mkdir(parents=True, exist_ok=True)
+        (icon_stack / "Contents.json").write_text(
+            """{
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  },
+  "layers" : [
+    { "filename" : "Front.solidimagestacklayer" },
+    { "filename" : "Middle.solidimagestacklayer" },
+    { "filename" : "Back.solidimagestacklayer" }
+  ]
+}
+"""
+        )
+        for layer_name in ("Front", "Middle", "Back"):
+            layer_dir = icon_stack / f"{layer_name}.solidimagestacklayer"
+            image_set = layer_dir / "Content.imageset"
+            image_set.mkdir(parents=True)
+            (layer_dir / "Contents.json").write_text(
+                """{
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}
+"""
+            )
+            (image_set / "Contents.json").write_text(
+                f"""{{
+  "images" : [
+    {{
+      "filename" : "{layer_name}.png",
+      "idiom" : "vision",
+      "scale" : "2x"
+    }}
+  ],
+  "info" : {{
+    "author" : "xcode",
+    "version" : 1
+  }}
+}}
+"""
+            )
+            (image_set / f"{layer_name}.png").write_bytes(b"not-a-real-png")
 
     def run_runtime_preflight_fixture(self, profile: str, entitlements: str = "app-entitlements.plist") -> subprocess.CompletedProcess[str]:
         fixture_dir = REPO_ROOT / "Tests/ScriptsTests/fixtures/runtime-preflight"
@@ -178,14 +237,18 @@ class ReleaseWorkflowTests(unittest.TestCase):
         script = self.read("scripts/upload-app-store-connect-companion-app.sh")
 
         self.assertIn("assert_visionos_packaging_ready()", script)
-        self.assertIn("Resources/Assets.xcassets/AppIcon.solidimagestack/Contents.json", script)
+        self.assertIn("Resources/Assets.xcassets/AppIcon.solidimagestack", script)
+        self.assertIn('icon_stack_contents="$icon_stack/Contents.json"', script)
+        self.assertIn(".solidimagestacklayer", script)
+        self.assertIn("Content.imageset/Contents.json", script)
+        self.assertIn("json_array_count()", script)
+        self.assertIn("does not declare the same number of layers", script)
+        self.assertIn("Every image entry must name a file", script)
         self.assertIn("visionOS companion packaging is blocked", script)
 
     def test_companion_upload_ios_does_not_require_visionos_layered_icon(self):
-        result = subprocess.run(
+        result = self.run_companion_upload_script(
             [
-                "bash",
-                "scripts/upload-app-store-connect-companion-app.sh",
                 "--platform",
                 "ios",
                 "--version",
@@ -197,12 +260,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 ".build/missing-ios-app.provisionprofile",
                 "--widget-profile",
                 ".build/missing-ios-widget.provisionprofile",
-            ],
-            cwd=REPO_ROOT,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            check=False,
+            ]
         )
 
         self.assertEqual(result.returncode, 1, result.stdout)
@@ -211,24 +269,19 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("AppIcon.solidimagestack", result.stdout)
 
     def test_companion_upload_fails_visionos_before_profiles_without_layered_icon(self):
-        result = subprocess.run(
-            [
-                "bash",
-                "scripts/upload-app-store-connect-companion-app.sh",
-                "--platform",
-                "visionos",
-                "--version",
-                "1.0.99",
-                "--build-number",
-                "168001",
-                "--export-only",
-            ],
-            cwd=REPO_ROOT,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            check=False,
-        )
+        with tempfile.TemporaryDirectory() as working_dir:
+            result = self.run_companion_upload_script(
+                [
+                    "--platform",
+                    "visionos",
+                    "--version",
+                    "1.0.99",
+                    "--build-number",
+                    "168001",
+                    "--export-only",
+                ],
+                cwd=Path(working_dir),
+            )
 
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("no visionOS layered app icon is present", result.stdout)
@@ -236,19 +289,64 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("provisioning profile not found", result.stdout)
         self.assertNotIn("App Store Connect API credentials are required", result.stdout)
 
-    def test_companion_upload_visionos_with_layered_icon_continues_to_profile_preflight(self):
-        icon_stack = REPO_ROOT / "Resources/Assets.xcassets/AppIcon.solidimagestack/Contents.json"
-        created_icon_stack = False
-        if not icon_stack.exists():
-            icon_stack.parent.mkdir(parents=True, exist_ok=True)
-            icon_stack.write_text("{}\n")
-            created_icon_stack = True
+    def test_companion_upload_rejects_placeholder_visionos_icon_stack(self):
+        with tempfile.TemporaryDirectory() as working_dir:
+            working_root = Path(working_dir)
+            icon_stack = working_root / "Resources/Assets.xcassets/AppIcon.solidimagestack"
+            icon_stack.mkdir(parents=True)
+            (icon_stack / "Contents.json").write_text("{}\n")
 
-        try:
-            result = subprocess.run(
+            result = self.run_companion_upload_script(
                 [
-                    "bash",
-                    "scripts/upload-app-store-connect-companion-app.sh",
+                    "--platform",
+                    "visionos",
+                    "--version",
+                    "1.0.99",
+                    "--build-number",
+                    "168004",
+                    "--export-only",
+                ],
+                cwd=working_root,
+            )
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("must contain two or three solid image stack layers", result.stdout)
+        self.assertNotIn("provisioning profile not found", result.stdout)
+        self.assertNotIn("App Store Connect API credentials are required", result.stdout)
+
+    def test_companion_upload_rejects_visionos_icon_stack_without_image_files(self):
+        with tempfile.TemporaryDirectory() as working_dir:
+            working_root = Path(working_dir)
+            self.write_minimal_visionos_icon_stack(working_root)
+            for image_file in working_root.glob(
+                "Resources/Assets.xcassets/AppIcon.solidimagestack/*.solidimagestacklayer/Content.imageset/*.png"
+            ):
+                image_file.unlink()
+
+            result = self.run_companion_upload_script(
+                [
+                    "--platform",
+                    "visionos",
+                    "--version",
+                    "1.0.99",
+                    "--build-number",
+                    "168005",
+                    "--export-only",
+                ],
+                cwd=working_root,
+            )
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("has a missing image file", result.stdout)
+        self.assertNotIn("provisioning profile not found", result.stdout)
+        self.assertNotIn("App Store Connect API credentials are required", result.stdout)
+
+    def test_companion_upload_visionos_with_layered_icon_continues_to_profile_preflight(self):
+        with tempfile.TemporaryDirectory() as working_dir:
+            working_root = Path(working_dir)
+            self.write_minimal_visionos_icon_stack(working_root)
+            result = self.run_companion_upload_script(
+                [
                     "--platform",
                     "visionos",
                     "--version",
@@ -261,23 +359,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
                     "--widget-profile",
                     ".build/missing-visionos-widget.provisionprofile",
                 ],
-                cwd=REPO_ROOT,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                check=False,
+                cwd=working_root,
             )
-        finally:
-            if created_icon_stack:
-                icon_stack.unlink(missing_ok=True)
-                try:
-                    icon_stack.parent.rmdir()
-                except OSError:
-                    pass
-                try:
-                    icon_stack.parent.parent.rmdir()
-                except OSError:
-                    pass
 
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("companion app provisioning profile not found", result.stdout)
