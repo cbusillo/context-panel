@@ -131,6 +131,39 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("ContextPanelCompanion", script)
         self.assertIn("PATH=\"$(xcodebuild_system_path)\" /usr/bin/xcodebuild", script)
 
+    def test_visionos_dogfood_script_uses_development_signing_and_devicectl(self):
+        script = self.read("scripts/dogfood-visionos-companion.sh")
+
+        self.assertIn("ContextPanelCompanion", script)
+        self.assertIn("generic/platform=visionOS", script)
+        self.assertIn('build_destination="platform=visionOS,id=$resolved_device_id"', script)
+        self.assertIn('-destination "$build_destination"', script)
+        self.assertIn("-allowProvisioningUpdates", script)
+        self.assertIn("-allowProvisioningDeviceRegistration", script)
+        self.assertIn("CODE_SIGN_STYLE=Automatic", script)
+        self.assertIn("DEVELOPMENT_TEAM=\"$team_id\"", script)
+        self.assertIn("xcrun devicectl list devices --json-output", script)
+        self.assertIn("xcrun devicectl device install app", script)
+        self.assertIn("xcrun devicectl \"${launch_args[@]}\"", script)
+        self.assertIn("com.shinycomputers.contextpanel", script)
+        self.assertIn('if [[ "$2" == /* ]]; then', script)
+        self.assertIn('derived_data_path="$repo_root/${2#./}"', script)
+        self.assertIn("if ! ((build_only)); then", script)
+        self.assertIn('if [[ "$launch_identifier" == "unknown" ]]; then', script)
+        self.assertIn('launch_identifier=""', script)
+        self.assertNotIn("require_command python3", script)
+
+    def test_visionos_dogfood_script_requires_available_physical_avp_for_install(self):
+        script = self.read("scripts/dogfood-visionos-companion.sh")
+
+        self.assertIn('.hardwareProperties.platform == "visionOS"', script)
+        self.assertIn('.hardwareProperties.reality == "physical"', script)
+        self.assertIn('.connectionProperties.pairingState == "paired"', script)
+        self.assertIn("Developer Mode is not enabled", script)
+        self.assertIn("Apple Vision Pro is paired but unavailable to CoreDevice", script)
+        self.assertIn("Wake and unlock the headset", script)
+        self.assertIn("This is not App Store Connect, TestFlight, or App Review release evidence", script)
+
     def test_companion_upload_preflights_profile_platforms(self):
         script = self.read("scripts/upload-app-store-connect-companion-app.sh")
 
@@ -264,6 +297,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         build_function = re.search(r"build_checkout_app\(\) \{(?P<body>.*?)\n\}", script, re.S)
 
         self.assertIsNotNone(build_function)
+        assert build_function is not None
         body = build_function.group("body")
         self.assertIn("xcodebuild \\", body)
         self.assertNotIn("CONTEXT_PANEL_GOOGLE_", script)
@@ -287,6 +321,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         build_function = re.search(r"build_checkout_app\(\) \{(?P<body>.*?)\n\}", script, re.S)
 
         self.assertIsNotNone(build_function)
+        assert build_function is not None
         self.assertIn("-allowProvisioningUpdates", build_function.group("body"))
         self.assertNotIn("CODE_SIGNING_ALLOWED=NO", build_function.group("body"))
 
@@ -297,6 +332,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
         self.assertIsNotNone(install_runtime)
         self.assertIsNotNone(reset_runtime)
+        assert install_runtime is not None
+        assert reset_runtime is not None
         for function in (install_runtime, reset_runtime):
             body = function.group("body")
             self.assertLess(body.index("preflight_built_runtime_profiles"), body.index("install_checkout_app"))
@@ -308,6 +345,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
         self.assertIsNotNone(install_runtime)
         self.assertIsNotNone(reset_runtime)
+        assert install_runtime is not None
+        assert reset_runtime is not None
         self.assertIn("quarantine_stale_runtime_bundles", install_runtime.group("body"))
         self.assertIn("quarantine_stale_runtime_bundles", reset_runtime.group("body"))
         self.assertNotIn("done < <(discoverable_bundles)", reset_runtime.group("body"))

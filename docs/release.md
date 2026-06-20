@@ -308,6 +308,33 @@ before calling it TestFlight or release validated. A visionOS simulator run can
 be useful for pre-release UI smoke, but it does not validate TestFlight
 installability, App Store provisioning, or physical device runtime behavior.
 
+### Local Apple Vision Pro Dogfood
+
+Use the local dogfood helper when the goal is to install the Debug companion app
+on a paired Apple Vision Pro before TestFlight:
+
+```sh
+scripts/dogfood-visionos-companion.sh
+```
+
+The helper builds `ContextPanelCompanion` for visionOS with Debug automatic
+development signing, installs the app with `devicectl`, then launches bundle ID
+`com.shinycomputers.contextpanel`. It requires a paired physical visionOS device
+whose CoreDevice tunnel is available; if the Vision Pro is asleep, locked, or
+offline, the helper stops before install and asks the operator to wake/unlock the
+headset.
+
+For a signing-only check that does not require a paired headset or available
+CoreDevice tunnel, run:
+
+```sh
+scripts/dogfood-visionos-companion.sh --build-only
+```
+
+This path is for local dogfood only. It does not satisfy the `--platform
+visionos` release-upload guard, App Store Connect/TestFlight upload, final
+visionOS layered icon, or App Review metadata requirements.
+
 ### Upload And Distribution
 
 The lower-level companion upload workflow is:
