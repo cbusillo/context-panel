@@ -300,11 +300,13 @@ then export a signed IPA under `.build/app-store-connect-companion/`.
 Use `--platform visionos` only after #168 has an explicit visionOS surface and
 packaging decision. A passing generic no-sign visionOS build is not enough to
 run this as release evidence. The visionOS profiles must support `visionOS` or
-`xrOS`, and the archive must be followed by a signed Apple Vision Pro device
-smoke test before calling it TestFlight or release validated. A visionOS
-simulator run can be useful for pre-release UI smoke, but it does not validate
-TestFlight installability, App Store provisioning, or physical device runtime
-behavior.
+`xrOS`. The upload script also blocks `--platform visionos` until
+`Resources/Assets.xcassets/AppIcon.solidimagestack/Contents.json` exists, so a
+missing layered visionOS icon cannot become accidental signed release evidence.
+The archive must be followed by a signed Apple Vision Pro device smoke test
+before calling it TestFlight or release validated. A visionOS simulator run can
+be useful for pre-release UI smoke, but it does not validate TestFlight
+installability, App Store provisioning, or physical device runtime behavior.
 
 ### Upload And Distribution
 

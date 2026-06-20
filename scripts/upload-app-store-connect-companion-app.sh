@@ -266,21 +266,33 @@ validate_marketing_version() {
 	fi
 }
 
+assert_visionos_packaging_ready() {
+	local icon_stack="Resources/Assets.xcassets/AppIcon.solidimagestack/Contents.json"
+	if [[ ! -f "$icon_stack" ]]; then
+		cat >&2 <<MSG
+visionOS companion packaging is blocked because no visionOS layered app icon is present.
+Add Resources/Assets.xcassets/AppIcon.solidimagestack before using --platform visionos as signed release evidence.
+MSG
+		exit 1
+	fi
+}
+
 case "$platform" in
-	ios)
-		xcode_destination="generic/platform=iOS"
-		platform_label="iOS"
-		profile_platforms=(iOS)
-		;;
-	visionos)
-		xcode_destination="generic/platform=visionOS"
-		platform_label="visionOS"
-		profile_platforms=(visionOS xrOS)
-		;;
-	*)
-		echo "unsupported companion platform: $platform" >&2
-		exit 2
-		;;
+ios)
+	xcode_destination="generic/platform=iOS"
+	platform_label="iOS"
+	profile_platforms=(iOS)
+	;;
+visionos)
+	xcode_destination="generic/platform=visionOS"
+	platform_label="visionOS"
+	profile_platforms=(visionOS xrOS)
+	assert_visionos_packaging_ready
+	;;
+*)
+	echo "unsupported companion platform: $platform" >&2
+	exit 2
+	;;
 esac
 
 archive_path="${archive_path:-.build/app-store-connect-companion/ContextPanelCompanion-$platform_label.xcarchive}"
