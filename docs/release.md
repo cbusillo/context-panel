@@ -227,26 +227,54 @@ That is a compiler/project compatibility gate only. It does not prove that
 Context Panel has a designed, signed, uploaded, installed, or user-validated
 visionOS app or widget.
 
-For issue #168, the first visionOS deliverable is app-first: a read-only
-companion app that reads the Mac-published iCloud companion document and shows
-current, stale, no-Mac, and degraded sync states. Widget-first validation should
-wait until the app surface, packaging, and signing path are understood.
+For issue #168, the first visionOS deliverable is app-first: a native visionOS
+read-only companion app that reads the Mac-published iCloud companion document
+and shows current, stale, no-Mac, and degraded sync states. Do not use the
+compatible iPhone/iPad-on-Apple-Vision-Pro App Store fallback as #231 release
+evidence unless that becomes an explicit product decision.
 
-Before using `--platform visionos` as release evidence, complete the #168
-packaging audit:
+Before using `--platform visionos` as release evidence, complete #230 under
+parent plan #168:
 
-- confirm the selected App Store Connect platform state and whether the build
-  is a native visionOS app or only compatible iPhone/iPad availability on Apple
-  Vision Pro;
-- provide provisioning profiles whose platform includes `visionOS` or `xrOS`
-  and whose entitlements match the companion App Group and iCloud Documents
-  container;
-- add or verify visionOS-specific icon assets. Apple treats visionOS app icons
+- configure App Store Connect for the native visionOS platform for Context
+  Panel, not only compatible iPhone/iPad availability on Apple Vision Pro;
+- provide Apple Distribution provisioning profiles whose platform includes
+  `visionOS` or `xrOS` and whose entitlements match the companion App Group and
+  iCloud Documents container;
+- provide separate profiles for both bundle IDs because the current signed
+  package embeds `ContextPanelCompanionWidgetExtension`:
+  `com.shinycomputers.contextpanel` and
+  `com.shinycomputers.contextpanel.widget`;
+- add real visionOS-specific icon assets. Apple treats native visionOS app icons
   as layered circular 3D assets, not the same flat iPhone/iPad icon set;
-- decide whether the embedded companion widget extension is in scope for the
-  first visionOS build, then verify supported widget families on visionOS;
-- prepare App Store Connect visionOS metadata, including any required privacy
-  and motion information, before App Review submission.
+- keep first-pass validation app-first. The widget extension may remain embedded
+  in the signed package, but do not call the visionOS widget surface validated
+  until #231 smoke-tests adding and rendering it on Apple Vision Pro;
+- prepare App Store Connect visionOS product-page metadata, including screenshots
+  or app previews, privacy nutrition details, age rating, review notes for the
+  Mac-to-companion iCloud dependency, and required Apple Vision Pro app motion
+  information before App Review submission.
+
+The required visionOS app icon asset should live under:
+
+```text
+Resources/Assets.xcassets/AppIcon.solidimagestack/
+  Contents.json
+  Back.solidimagestacklayer/
+    Contents.json
+    Content.imageset/Contents.json
+  Middle.solidimagestacklayer/
+    Contents.json
+    Content.imageset/Contents.json
+  Front.solidimagestacklayer/
+    Contents.json
+    Content.imageset/Contents.json
+```
+
+Use two or three `.solidimagestacklayer` entries. The background layer must be
+opaque, and each layer image should be a full-bleed square image sized for the
+visionOS App Store icon. The upload script rejects a root-only placeholder icon
+stack so `--platform visionos` cannot become accidental signed release evidence.
 
 ### Required Signing Material
 
@@ -297,12 +325,24 @@ That canary should archive `ContextPanelCompanion`, embed
 the selected platform, App Group, iCloud Documents, and ubiquity entitlements,
 then export a signed IPA under `.build/app-store-connect-companion/`.
 
-Use `--platform visionos` only after #168 has an explicit visionOS surface and
+Use `--platform visionos` only after #230 has an explicit native visionOS
 packaging decision. A passing generic no-sign visionOS build is not enough to
 run this as release evidence. The visionOS profiles must support `visionOS` or
-`xrOS`. The upload script also blocks `--platform visionos` until
-`Resources/Assets.xcassets/AppIcon.solidimagestack/Contents.json` exists, so a
-missing layered visionOS icon cannot become accidental signed release evidence.
+`xrOS`. The upload script also blocks `--platform visionos` until a complete
+`Resources/Assets.xcassets/AppIcon.solidimagestack` with solid image stack
+layers exists, so a missing or placeholder layered visionOS icon cannot become
+accidental signed release evidence.
+
+The next signed canary for #231 is:
+
+```sh
+scripts/upload-app-store-connect-companion-app.sh \
+  --platform visionos \
+  --version <next-app-store-version> \
+  --build-number <yyyymmddHHMM> \
+  --export-only
+```
+
 The archive must be followed by a signed Apple Vision Pro device smoke test
 before calling it TestFlight or release validated. A visionOS simulator run can
 be useful for pre-release UI smoke, but it does not validate TestFlight
@@ -365,8 +405,8 @@ For a coordinated one-shot run through `Ship`, select:
 - `testflight_beta_source=companion`
 - `app_store_channel=skip` unless the same run should also upload a Mac build
 
-Use `companion_platform=visionos` only for the #168 visionOS validation path,
-after the packaging audit has confirmed profile, icon, metadata, and App Store
+Use `companion_platform=visionos` only for the #168/#231 native visionOS
+validation path, after #230 has confirmed profile, icon, metadata, and App Store
 Connect requirements. The normal companion dogfood path remains `ios` for
 iPhone/iPad.
 

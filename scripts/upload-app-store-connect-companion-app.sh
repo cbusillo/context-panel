@@ -126,6 +126,19 @@ require_command() {
 	fi
 }
 
+json_array_count() {
+	local file="$1"
+	local key="$2"
+	local count
+	if ! count="$(plutil -extract "$key" raw -o - "$file" 2>/dev/null)"; then
+		return 1
+	fi
+	if [[ -z "$count" || "$count" == *[!0-9]* ]]; then
+		return 1
+	fi
+	printf '%s' "$count"
+}
+
 profile_uuid() {
 	local profile="$1"
 	local plist
@@ -267,14 +280,91 @@ validate_marketing_version() {
 }
 
 assert_visionos_packaging_ready() {
-	local icon_stack="Resources/Assets.xcassets/AppIcon.solidimagestack/Contents.json"
-	if [[ ! -f "$icon_stack" ]]; then
+	local icon_stack="Resources/Assets.xcassets/AppIcon.solidimagestack"
+	local icon_stack_contents="$icon_stack/Contents.json"
+	local layer_dirs=()
+	local layer_dir
+	local layer_count
+	local declared_layer_count
+	local declared_layer_filename
+	local image_count
+	local image_filename
+	local image_index
+	local image_set
+	local layer_index
+	if [[ ! -f "$icon_stack_contents" ]]; then
 		cat >&2 <<MSG
 visionOS companion packaging is blocked because no visionOS layered app icon is present.
 Add Resources/Assets.xcassets/AppIcon.solidimagestack before using --platform visionos as signed release evidence.
 MSG
 		exit 1
 	fi
+	shopt -s nullglob
+	layer_dirs=("$icon_stack"/*.solidimagestacklayer)
+	shopt -u nullglob
+	layer_count="${#layer_dirs[@]}"
+	if ((layer_count < 2 || layer_count > 3)); then
+		cat >&2 <<MSG
+visionOS companion packaging is blocked because AppIcon.solidimagestack must contain two or three solid image stack layers.
+Add background and foreground .solidimagestacklayer entries before using --platform visionos as signed release evidence.
+MSG
+		exit 1
+	fi
+	if ! declared_layer_count="$(json_array_count "$icon_stack_contents" 'layers')"; then
+		echo "visionOS companion packaging is blocked because AppIcon.solidimagestack/Contents.json does not contain a readable layers array." >&2
+		exit 1
+	fi
+	if [[ "$declared_layer_count" != "$layer_count" ]]; then
+		cat >&2 <<MSG
+visionOS companion packaging is blocked because AppIcon.solidimagestack/Contents.json does not declare the same number of layers present on disk.
+Declare each .solidimagestacklayer in the root layers array before using --platform visionos as signed release evidence.
+MSG
+		exit 1
+	fi
+	for ((layer_index = 0; layer_index < declared_layer_count; layer_index++)); do
+		declared_layer_filename="$(plutil -extract "layers.$layer_index.filename" raw -o - "$icon_stack_contents" 2>/dev/null || true)"
+		if [[ -z "$declared_layer_filename" || ! -d "$icon_stack/$declared_layer_filename" ]]; then
+			cat >&2 <<MSG
+visionOS companion packaging is blocked because AppIcon.solidimagestack/Contents.json declares a missing layer.
+Every root layer filename must match a .solidimagestacklayer directory before using --platform visionos as signed release evidence.
+MSG
+			exit 1
+		fi
+	done
+	for layer_dir in "${layer_dirs[@]}"; do
+		if [[ ! -f "$layer_dir/Contents.json" || ! -f "$layer_dir/Content.imageset/Contents.json" ]]; then
+			cat >&2 <<MSG
+visionOS companion packaging is blocked because $(basename "$layer_dir") is incomplete.
+Each .solidimagestacklayer must include Contents.json and Content.imageset/Contents.json before using --platform visionos as signed release evidence.
+MSG
+			exit 1
+		fi
+		image_set="$layer_dir/Content.imageset"
+		if ! image_count="$(json_array_count "$image_set/Contents.json" 'images')"; then
+			cat >&2 <<MSG
+visionOS companion packaging is blocked because $(basename "$layer_dir")/Content.imageset/Contents.json does not contain a readable images array.
+Each layer image set must reference at least one image file before using --platform visionos as signed release evidence.
+MSG
+			exit 1
+		fi
+		if ((image_count < 1)); then
+			cat >&2 <<MSG
+visionOS companion packaging is blocked because $(basename "$layer_dir") has no image entries.
+Each layer image set must reference at least one image file before using --platform visionos as signed release evidence.
+MSG
+			exit 1
+		fi
+		for ((image_index = 0; image_index < image_count; image_index++)); do
+			image_filename="$(plutil -extract "images.$image_index.filename" raw -o - "$image_set/Contents.json" 2>/dev/null || true)"
+			if [[ -z "$image_filename" || ! -f "$image_set/$image_filename" ]]; then
+				cat >&2 <<MSG
+visionOS companion packaging is blocked because $(basename "$layer_dir") has a missing image file.
+Every image entry must name a file that exists beside Content.imageset/Contents.json before using --platform visionos as signed release evidence.
+MSG
+				exit 1
+			fi
+		done
+	done
 }
 
 case "$platform" in
