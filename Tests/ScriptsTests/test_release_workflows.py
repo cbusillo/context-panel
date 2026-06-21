@@ -14,7 +14,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
     def run_companion_upload_script(self, args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            ["bash", str(REPO_ROOT / "scripts/upload-app-store-connect-companion-app.sh"), *args],
+            ["/bin/bash", str(REPO_ROOT / "scripts/upload-app-store-connect-companion-app.sh"), *args],
             cwd=cwd or REPO_ROOT,
             text=True,
             stdout=subprocess.PIPE,
