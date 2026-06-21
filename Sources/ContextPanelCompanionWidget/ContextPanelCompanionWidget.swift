@@ -98,10 +98,6 @@ struct ContextPanelCompanionWidget: Widget {
     }
 
     private var companionWidgetBackground: Color {
-        #if os(visionOS)
-        Color.clear
-        #else
         CPWTheme.surface
-        #endif
     }
 }
