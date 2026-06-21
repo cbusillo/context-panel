@@ -90,6 +90,7 @@ struct ContextPanelCompanionWidget: Widget {
         StaticConfiguration(kind: kind, provider: ContextPanelCompanionTimelineProvider()) { entry in
             ContextPanelCompanionWidgetView(entry: entry)
                 .containerBackground(companionWidgetBackground, for: .widget)
+                .visionOSWidgetAppearance()
         }
         .configurationDisplayName("Context Panel")
         .description("View AI usage limits synced from your Mac.")
@@ -99,5 +100,16 @@ struct ContextPanelCompanionWidget: Widget {
 
     private var companionWidgetBackground: Color {
         CPWTheme.surface
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func visionOSWidgetAppearance() -> some View {
+        #if os(visionOS)
+        environment(\.colorScheme, .dark)
+        #else
+        self
+        #endif
     }
 }
