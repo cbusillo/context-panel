@@ -801,9 +801,13 @@ public enum CPWTheme {
     }
     #elseif canImport(UIKit)
     private static func adaptiveColor(light: UIColor, dark: UIColor) -> Color {
+        #if os(visionOS)
+        Color(uiColor: dark)
+        #else
         Color(uiColor: UIColor { traits in
             traits.userInterfaceStyle == .dark ? dark : light
         })
+        #endif
     }
     #else
     private static func adaptiveColor(light: Color, dark: Color) -> Color {
