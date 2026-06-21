@@ -19,6 +19,14 @@ private struct CompanionRootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var model = CompanionSyncModel()
 
+    private var previewThemeVariant: CPWThemeVariant {
+        #if os(visionOS)
+        model.appearanceSettings.resolvedVisionOSWidgetAppearance.cpwThemeVariant
+        #else
+        .adaptive
+        #endif
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -30,7 +38,12 @@ private struct CompanionRootView: View {
                         links: CompanionDeepLinks.links
                     )
                     .frame(maxWidth: .infinity, minHeight: 360)
-                    .background(CPWTheme.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .cpwThemeVariant(previewThemeVariant)
+                    .companionVisionOSWidgetAppearance(model.appearanceSettings)
+                    .background(
+                        CPWTheme.surface(variant: previewThemeVariant),
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    )
 
                     CompanionSyncStatusView(result: model.result)
 
@@ -39,6 +52,15 @@ private struct CompanionRootView: View {
                         errorMessage: model.settingsErrorMessage,
                         onIntervalChange: model.updateRefreshInterval(minutes:)
                     )
+
+                    #if os(visionOS)
+                    CompanionAppearanceSettingsView(
+                        settings: model.appearanceSettings,
+                        errorMessage: model.appearanceErrorMessage,
+                        onAppAppearanceChange: model.updateVisionOSAppAppearance(_:),
+                        onWidgetAppearanceChange: model.updateVisionOSWidgetAppearance(_:)
+                    )
+                    #endif
                 }
                 .padding()
             }
@@ -65,6 +87,7 @@ private struct CompanionRootView: View {
                 }
             }
         }
+        .companionVisionOSAppearance(model.appearanceSettings)
     }
 }
 
@@ -72,6 +95,7 @@ private struct CompanionRootView: View {
 @Observable
 private final class CompanionSyncModel {
     private let refreshSettingsStore: CompanionRefreshSettingsStore?
+    private let appearanceSettingsStore: CompanionAppearanceSettingsStore?
 
     private(set) var result = CompanionSyncLoadResult(document: nil, status: .unknown)
     private(set) var snapshot = WidgetSnapshot.fromCompanionSync(
@@ -79,7 +103,9 @@ private final class CompanionSyncModel {
     )
     private(set) var displayPreferences = WidgetDisplayPreferences.defaultPreferences
     private(set) var refreshSettings: CompanionRefreshSettings
+    private(set) var appearanceSettings: CompanionAppearanceSettings
     private(set) var settingsErrorMessage: String?
+    private(set) var appearanceErrorMessage: String?
     private var reloadTask: Task<Void, Never>?
     private var iCloudCacheRefreshTask: Task<Void, Never>?
     private var needsReloadAfterCurrentTask = false
@@ -93,6 +119,16 @@ private final class CompanionSyncModel {
             refreshSettingsStore = nil
             refreshSettings = .defaultSettings
             settingsErrorMessage = "Auto-update settings are using defaults because shared app storage is unavailable."
+        }
+
+        if let appearanceSettingsURL = ContextPanelLocations.companionAppearanceSettingsURL() {
+            let store = CompanionAppearanceSettingsStore(settingsURL: appearanceSettingsURL)
+            appearanceSettingsStore = store
+            appearanceSettings = store.load()
+        } else {
+            appearanceSettingsStore = nil
+            appearanceSettings = .defaultSettings
+            appearanceErrorMessage = "Appearance settings are using defaults because shared app storage is unavailable."
         }
     }
 
@@ -175,6 +211,33 @@ private final class CompanionSyncModel {
             settingsErrorMessage = "Auto-update settings could not be saved."
         }
     }
+
+    func updateVisionOSAppAppearance(_ appearance: CompanionVisionOSAppAppearance) {
+        var updated = appearanceSettings
+        updated.visionOSAppAppearance = appearance
+        saveAppearanceSettings(updated)
+    }
+
+    func updateVisionOSWidgetAppearance(_ appearance: CompanionVisionOSWidgetAppearance) {
+        var updated = appearanceSettings
+        updated.visionOSWidgetAppearance = appearance
+        saveAppearanceSettings(updated)
+    }
+
+    private func saveAppearanceSettings(_ updated: CompanionAppearanceSettings) {
+        guard let appearanceSettingsStore else {
+            appearanceErrorMessage = "Appearance settings could not be saved because shared app storage is unavailable."
+            return
+        }
+        do {
+            try appearanceSettingsStore.save(updated)
+            appearanceSettings = updated
+            appearanceErrorMessage = nil
+            WidgetCenter.shared.reloadAllTimelines()
+        } catch {
+            appearanceErrorMessage = "Appearance settings could not be saved."
+        }
+    }
 }
 
 private struct CompanionRefreshSettingsView: View {
@@ -221,6 +284,104 @@ private struct CompanionRefreshSettingsView: View {
     }
 }
 
+#if os(visionOS)
+private struct CompanionAppearanceSettingsView: View {
+    let settings: CompanionAppearanceSettings
+    let errorMessage: String?
+    let onAppAppearanceChange: (CompanionVisionOSAppAppearance) -> Void
+    let onWidgetAppearanceChange: (CompanionVisionOSWidgetAppearance) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Appearance", systemImage: "circle.lefthalf.filled")
+                .font(.subheadline.weight(.semibold))
+
+            VStack(alignment: .leading, spacing: 10) {
+                appearanceRow("App") {
+                    Picker("App", selection: Binding(
+                        get: { settings.visionOSAppAppearance },
+                        set: { appearance in
+                            MainActor.assumeIsolated {
+                                onAppAppearanceChange(appearance)
+                            }
+                        }
+                    )) {
+                        ForEach(CompanionVisionOSAppAppearance.allCases, id: \.self) { appearance in
+                            Text(appearance.label).tag(appearance)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+
+                appearanceRow("Widget") {
+                    Picker("Widget", selection: Binding(
+                        get: { settings.visionOSWidgetAppearance },
+                        set: { appearance in
+                            MainActor.assumeIsolated {
+                                onWidgetAppearanceChange(appearance)
+                            }
+                        }
+                    )) {
+                        ForEach(CompanionVisionOSWidgetAppearance.allCases, id: \.self) { appearance in
+                            Text(appearance.label).tag(appearance)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+            }
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color(uiColor: .secondarySystemGroupedBackground),
+            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+        )
+    }
+
+    private func appearanceRow<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+            content()
+        }
+    }
+}
+
+private extension CompanionVisionOSAppAppearance {
+    var label: String {
+        switch self {
+        case .dark:
+            "Dark"
+        case .light:
+            "Light"
+        }
+    }
+}
+
+private extension CompanionVisionOSWidgetAppearance {
+    var label: String {
+        switch self {
+        case .matchApp:
+            "Match App"
+        case .dark:
+            "Dark"
+        case .light:
+            "Light"
+        }
+    }
+}
+#endif
+
 private struct CompanionSyncStatusView: View {
     let result: CompanionSyncLoadResult
 
@@ -256,5 +417,45 @@ private struct CompanionSyncStatusView: View {
             Color(uiColor: .secondarySystemGroupedBackground),
             in: RoundedRectangle(cornerRadius: 8, style: .continuous)
         )
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func companionVisionOSAppearance(_ settings: CompanionAppearanceSettings) -> some View {
+        #if os(visionOS)
+        preferredColorScheme(settings.visionOSAppAppearance.colorScheme)
+        #else
+        self
+        #endif
+    }
+
+    @ViewBuilder
+    func companionVisionOSWidgetAppearance(_ settings: CompanionAppearanceSettings) -> some View {
+        #if os(visionOS)
+        environment(\.colorScheme, settings.resolvedVisionOSWidgetAppearance.colorScheme)
+        #else
+        self
+        #endif
+    }
+}
+
+private extension CompanionVisionOSAppAppearance {
+    var cpwThemeVariant: CPWThemeVariant {
+        switch self {
+        case .dark:
+            .dark
+        case .light:
+            .light
+        }
+    }
+
+    var colorScheme: ColorScheme {
+        switch self {
+        case .dark:
+            .dark
+        case .light:
+            .light
+        }
     }
 }
