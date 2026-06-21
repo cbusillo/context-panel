@@ -305,9 +305,11 @@ assert_visionos_packaging_ready() {
 	local layer_count
 	local declared_layer_count
 	local declared_layer_filename
+	local declared_layer_filename_count=0
 	local declared_layer_filenames=()
 	local image_count
 	local image_filename
+	local image_filename_count
 	local image_filenames=()
 	local image_index
 	local image_set
@@ -353,7 +355,7 @@ Every root layer filename must be a .solidimagestacklayer basename before using 
 MSG
 			exit 1
 		fi
-		if array_contains_value "$declared_layer_filename" "${declared_layer_filenames[@]}"; then
+		if ((declared_layer_filename_count > 0)) && array_contains_value "$declared_layer_filename" "${declared_layer_filenames[@]}"; then
 			cat >&2 <<MSG
 visionOS companion packaging is blocked because AppIcon.solidimagestack/Contents.json declares a duplicate layer.
 Every root layer filename must be unique before using --platform visionos as signed release evidence.
@@ -368,6 +370,7 @@ MSG
 			exit 1
 		fi
 		declared_layer_filenames+=("$declared_layer_filename")
+		declared_layer_filename_count=$((declared_layer_filename_count + 1))
 	done
 	for layer_dir in "${layer_dirs[@]}"; do
 		if ! array_contains_value "$(path_basename "$layer_dir")" "${declared_layer_filenames[@]}"; then
@@ -402,6 +405,7 @@ MSG
 			exit 1
 		fi
 		image_filenames=()
+		image_filename_count=0
 		for ((image_index = 0; image_index < image_count; image_index++)); do
 			image_filename="$(plutil -extract "images.$image_index.filename" raw -o - "$image_set/Contents.json" 2>/dev/null || true)"
 			if [[ -z "$image_filename" || "$image_filename" != "$(path_basename "$image_filename")" ]]; then
@@ -411,7 +415,7 @@ Every image entry must name a file basename beside Content.imageset/Contents.jso
 MSG
 				exit 1
 			fi
-			if array_contains_value "$image_filename" "${image_filenames[@]}"; then
+			if ((image_filename_count > 0)) && array_contains_value "$image_filename" "${image_filenames[@]}"; then
 				cat >&2 <<MSG
 visionOS companion packaging is blocked because $(path_basename "$layer_dir") declares a duplicate image filename.
 Every image filename must be unique within its layer before using --platform visionos as signed release evidence.
@@ -426,6 +430,7 @@ MSG
 				exit 1
 			fi
 			image_filenames+=("$image_filename")
+			image_filename_count=$((image_filename_count + 1))
 		done
 	done
 }
