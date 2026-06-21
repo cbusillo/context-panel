@@ -27,6 +27,14 @@ private struct CompanionRootView: View {
         #endif
     }
 
+    private var surfacePalette: CompanionSurfacePalette {
+        #if os(visionOS)
+        .visionOS(appearance: model.appearanceSettings.visionOSAppAppearance)
+        #else
+        .adaptive
+        #endif
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -64,7 +72,7 @@ private struct CompanionRootView: View {
                 }
                 .padding()
             }
-            .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
+            .background(surfacePalette.pageBackground.ignoresSafeArea())
             .navigationTitle("Context Panel")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
@@ -87,6 +95,7 @@ private struct CompanionRootView: View {
                 }
             }
         }
+        .environment(\.companionSurfacePalette, surfacePalette)
         .companionVisionOSAppearance(model.appearanceSettings)
     }
 }
@@ -240,7 +249,85 @@ private final class CompanionSyncModel {
     }
 }
 
+private struct CompanionSurfacePalette {
+    let pageBackground: Color
+    let cardBackground: Color
+    let primaryText: Color
+    let secondaryText: Color
+    let tertiaryText: Color
+    let errorText: Color
+    let border: Color
+    let segmentBackground: Color
+    let selectedSegmentBackground: Color
+    let selectedSegmentText: Color
+    let unselectedSegmentText: Color
+
+    static var adaptive: CompanionSurfacePalette {
+        CompanionSurfacePalette(
+            pageBackground: Color(uiColor: .systemGroupedBackground),
+            cardBackground: Color(uiColor: .secondarySystemGroupedBackground),
+            primaryText: .primary,
+            secondaryText: .secondary,
+            tertiaryText: Color(uiColor: .tertiaryLabel),
+            errorText: .red,
+            border: .clear,
+            segmentBackground: Color(uiColor: .tertiarySystemFill),
+            selectedSegmentBackground: Color.accentColor,
+            selectedSegmentText: .white,
+            unselectedSegmentText: .secondary
+        )
+    }
+
+    #if os(visionOS)
+    static func visionOS(appearance: CompanionVisionOSAppAppearance) -> CompanionSurfacePalette {
+        switch appearance {
+        case .dark:
+            CompanionSurfacePalette(
+                pageBackground: Color(red: 20 / 255, green: 21 / 255, blue: 24 / 255),
+                cardBackground: Color(red: 32 / 255, green: 33 / 255, blue: 36 / 255),
+                primaryText: Color(red: 239 / 255, green: 240 / 255, blue: 242 / 255),
+                secondaryText: Color(red: 178 / 255, green: 180 / 255, blue: 186 / 255),
+                tertiaryText: Color(red: 128 / 255, green: 131 / 255, blue: 139 / 255),
+                errorText: Color(red: 232 / 255, green: 139 / 255, blue: 139 / 255),
+                border: Color.white.opacity(0.11),
+                segmentBackground: Color.white.opacity(0.08),
+                selectedSegmentBackground: Color(red: 95 / 255, green: 116 / 255, blue: 154 / 255),
+                selectedSegmentText: Color.white,
+                unselectedSegmentText: Color(red: 205 / 255, green: 208 / 255, blue: 214 / 255)
+            )
+        case .light:
+            CompanionSurfacePalette(
+                pageBackground: Color(red: 242 / 255, green: 243 / 255, blue: 245 / 255),
+                cardBackground: Color(red: 250 / 255, green: 250 / 255, blue: 250 / 255),
+                primaryText: Color(red: 10 / 255, green: 10 / 255, blue: 11 / 255),
+                secondaryText: Color(red: 87 / 255, green: 87 / 255, blue: 92 / 255),
+                tertiaryText: Color(red: 130 / 255, green: 130 / 255, blue: 136 / 255),
+                errorText: Color(red: 172 / 255, green: 64 / 255, blue: 64 / 255),
+                border: Color.black.opacity(0.08),
+                segmentBackground: Color.black.opacity(0.06),
+                selectedSegmentBackground: Color(red: 74 / 255, green: 91 / 255, blue: 122 / 255),
+                selectedSegmentText: Color.white,
+                unselectedSegmentText: Color(red: 60 / 255, green: 61 / 255, blue: 66 / 255)
+            )
+        }
+    }
+    #endif
+}
+
+private struct CompanionSurfacePaletteKey: EnvironmentKey {
+    static let defaultValue = CompanionSurfacePalette.adaptive
+}
+
+private extension EnvironmentValues {
+    var companionSurfacePalette: CompanionSurfacePalette {
+        get { self[CompanionSurfacePaletteKey.self] }
+        set { self[CompanionSurfacePaletteKey.self] = newValue }
+    }
+}
+
 private struct CompanionRefreshSettingsView: View {
+    @Environment(\.companionSurfacePalette) private var palette
+
     let settings: CompanionRefreshSettings
     let errorMessage: String?
     let onIntervalChange: (Int) -> Void
@@ -250,6 +337,7 @@ private struct CompanionRefreshSettingsView: View {
             HStack(spacing: 12) {
                 Label("Auto-update", systemImage: "arrow.triangle.2.circlepath")
                     .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(palette.primaryText)
                 Spacer(minLength: 12)
                 Picker("Auto-update", selection: Binding(
                     get: { settings.intervalMinutes },
@@ -265,27 +353,34 @@ private struct CompanionRefreshSettingsView: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
+                .foregroundStyle(palette.primaryText)
             }
             Text("Widgets may update less often when iOS limits background refreshes.")
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(palette.secondaryText)
             if let errorMessage {
                 Text(errorMessage)
                     .font(.footnote)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(palette.errorText)
             }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            Color(uiColor: .secondarySystemGroupedBackground),
+            palette.cardBackground,
             in: RoundedRectangle(cornerRadius: 8, style: .continuous)
         )
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(palette.border, lineWidth: 1)
+        }
     }
 }
 
 #if os(visionOS)
 private struct CompanionAppearanceSettingsView: View {
+    @Environment(\.companionSurfacePalette) private var palette
+
     let settings: CompanionAppearanceSettings
     let errorMessage: String?
     let onAppAppearanceChange: (CompanionVisionOSAppAppearance) -> Void
@@ -295,53 +390,52 @@ private struct CompanionAppearanceSettingsView: View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Appearance", systemImage: "circle.lefthalf.filled")
                 .font(.subheadline.weight(.semibold))
+                .foregroundStyle(palette.primaryText)
 
             VStack(alignment: .leading, spacing: 10) {
                 appearanceRow("App") {
-                    Picker("App", selection: Binding(
-                        get: { settings.visionOSAppAppearance },
-                        set: { appearance in
+                    CompanionAppearanceSegmentedControl(
+                        values: CompanionVisionOSAppAppearance.allCases,
+                        selection: settings.visionOSAppAppearance,
+                        label: { $0.label },
+                        onSelect: { appearance in
                             MainActor.assumeIsolated {
                                 onAppAppearanceChange(appearance)
                             }
                         }
-                    )) {
-                        ForEach(CompanionVisionOSAppAppearance.allCases, id: \.self) { appearance in
-                            Text(appearance.label).tag(appearance)
-                        }
-                    }
-                    .pickerStyle(.segmented)
+                    )
                 }
 
                 appearanceRow("Widget") {
-                    Picker("Widget", selection: Binding(
-                        get: { settings.visionOSWidgetAppearance },
-                        set: { appearance in
+                    CompanionAppearanceSegmentedControl(
+                        values: CompanionVisionOSWidgetAppearance.allCases,
+                        selection: settings.visionOSWidgetAppearance,
+                        label: { $0.label },
+                        onSelect: { appearance in
                             MainActor.assumeIsolated {
                                 onWidgetAppearanceChange(appearance)
                             }
                         }
-                    )) {
-                        ForEach(CompanionVisionOSWidgetAppearance.allCases, id: \.self) { appearance in
-                            Text(appearance.label).tag(appearance)
-                        }
-                    }
-                    .pickerStyle(.segmented)
+                    )
                 }
             }
 
             if let errorMessage {
                 Text(errorMessage)
                     .font(.footnote)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(palette.errorText)
             }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            Color(uiColor: .secondarySystemGroupedBackground),
+            palette.cardBackground,
             in: RoundedRectangle(cornerRadius: 8, style: .continuous)
         )
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(palette.border, lineWidth: 1)
+        }
     }
 
     private func appearanceRow<Content: View>(
@@ -351,8 +445,64 @@ private struct CompanionAppearanceSettingsView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(.footnote.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(palette.secondaryText)
             content()
+        }
+    }
+}
+
+private struct CompanionAppearanceSegmentedControl<Value: Hashable>: View {
+    @Environment(\.companionSurfacePalette) private var palette
+
+    let values: [Value]
+    let selection: Value
+    let label: (Value) -> String
+    let onSelect: (Value) -> Void
+
+    init(
+        values: [Value],
+        selection: Value,
+        label: @escaping (Value) -> String,
+        onSelect: @escaping (Value) -> Void
+    ) {
+        self.values = values
+        self.selection = selection
+        self.label = label
+        self.onSelect = onSelect
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(values, id: \.self) { value in
+                let isSelected = value == selection
+                Button {
+                    onSelect(value)
+                } label: {
+                    Text(label(value))
+                        .font(.footnote.weight(.semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
+                        .foregroundStyle(isSelected ? palette.selectedSegmentText : palette.unselectedSegmentText)
+                        .frame(maxWidth: .infinity, minHeight: 34)
+                        .padding(.horizontal, 8)
+                        .background(
+                            isSelected ? palette.selectedSegmentBackground : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(label(value))
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
+            }
+        }
+        .padding(4)
+        .background(
+            palette.segmentBackground,
+            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(palette.border, lineWidth: 1)
         }
     }
 }
@@ -383,6 +533,8 @@ private extension CompanionVisionOSWidgetAppearance {
 #endif
 
 private struct CompanionSyncStatusView: View {
+    @Environment(\.companionSurfacePalette) private var palette
+
     let result: CompanionSyncLoadResult
 
     private var presentation: CompanionSyncPresentation {
@@ -393,30 +545,34 @@ private struct CompanionSyncStatusView: View {
         VStack(alignment: .leading, spacing: 8) {
             Label(presentation.title, systemImage: presentation.symbol)
                 .font(.headline)
-                .foregroundStyle(.primary)
+                .foregroundStyle(palette.primaryText)
 
             Text(presentation.detail)
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(palette.secondaryText)
 
             if let usageSummary = presentation.usageSummary {
                 Label(usageSummary, systemImage: "gauge.medium")
                     .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(palette.secondaryText)
             }
 
             if let generatedAt = result.document?.snapshot.generatedAt {
                 Text("Last synced " + generatedAt.formatted(date: .abbreviated, time: .shortened))
                     .font(.footnote)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(palette.tertiaryText)
             }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            Color(uiColor: .secondarySystemGroupedBackground),
+            palette.cardBackground,
             in: RoundedRectangle(cornerRadius: 8, style: .continuous)
         )
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(palette.border, lineWidth: 1)
+        }
     }
 }
 
@@ -424,7 +580,8 @@ private extension View {
     @ViewBuilder
     func companionVisionOSAppearance(_ settings: CompanionAppearanceSettings) -> some View {
         #if os(visionOS)
-        preferredColorScheme(settings.visionOSAppAppearance.colorScheme)
+        environment(\.colorScheme, settings.visionOSAppAppearance.colorScheme)
+            .preferredColorScheme(settings.visionOSAppAppearance.colorScheme)
         #else
         self
         #endif
