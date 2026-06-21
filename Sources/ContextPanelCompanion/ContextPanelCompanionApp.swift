@@ -21,7 +21,7 @@ private struct CompanionRootView: View {
 
     private var previewThemeVariant: CPWThemeVariant {
         #if os(visionOS)
-        model.appearanceSettings.resolvedVisionOSWidgetAppearance.cpwThemeVariant
+        model.appearanceSettings.visionOSAppAppearance.cpwThemeVariant
         #else
         .adaptive
         #endif
@@ -47,7 +47,6 @@ private struct CompanionRootView: View {
                     )
                     .frame(maxWidth: .infinity, minHeight: 360)
                     .cpwThemeVariant(previewThemeVariant)
-                    .companionVisionOSWidgetAppearance(model.appearanceSettings)
                     .background(
                         CPWTheme.surface(variant: previewThemeVariant),
                         in: RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -582,15 +581,6 @@ private extension View {
         #if os(visionOS)
         environment(\.colorScheme, settings.visionOSAppAppearance.colorScheme)
             .preferredColorScheme(settings.visionOSAppAppearance.colorScheme)
-        #else
-        self
-        #endif
-    }
-
-    @ViewBuilder
-    func companionVisionOSWidgetAppearance(_ settings: CompanionAppearanceSettings) -> some View {
-        #if os(visionOS)
-        environment(\.colorScheme, settings.resolvedVisionOSWidgetAppearance.colorScheme)
         #else
         self
         #endif
