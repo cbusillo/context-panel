@@ -9,6 +9,7 @@ struct ContextPanelCompanionWidgetEntry: TimelineEntry {
     let date: Date
     let snapshot: WidgetSnapshot
     let displayPreferences: WidgetDisplayPreferences
+    let appearanceSettings: CompanionAppearanceSettings
 }
 
 struct ContextPanelCompanionTimelineProvider: TimelineProvider {
@@ -16,7 +17,8 @@ struct ContextPanelCompanionTimelineProvider: TimelineProvider {
         ContextPanelCompanionWidgetEntry(
             date: Date(),
             snapshot: WidgetSnapshot.fromCompanionSync(CompanionSyncLoadResult(document: nil, status: .unknown)),
-            displayPreferences: .defaultPreferences
+            displayPreferences: .defaultPreferences,
+            appearanceSettings: .defaultSettings
         )
     }
 
@@ -56,6 +58,9 @@ private enum CompanionWidgetLoadQueue {
 
     private static func entry(date: Date) -> ContextPanelCompanionWidgetEntry {
         let result = CompanionSyncLoader.loadWidgetMirror(now: date)
+        let appearanceSettings = ContextPanelLocations.companionAppearanceSettingsURL()
+            .map { CompanionAppearanceSettingsStore(settingsURL: $0).load() }
+            ?? .defaultSettings
         return ContextPanelCompanionWidgetEntry(
             date: date,
             snapshot: WidgetSnapshot.fromCompanionSync(
@@ -63,7 +68,8 @@ private enum CompanionWidgetLoadQueue {
                 now: date,
                 stalenessPolicy: SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
             ),
-            displayPreferences: result.document?.widgetDisplayPreferences ?? .defaultPreferences
+            displayPreferences: result.document?.widgetDisplayPreferences ?? .defaultPreferences,
+            appearanceSettings: appearanceSettings
         )
     }
 }
@@ -79,6 +85,7 @@ struct ContextPanelCompanionWidgetView: View {
             displayPreferences: entry.displayPreferences,
             links: CompanionDeepLinks.links
         )
+        .visionOSWidgetAppearance(entry.appearanceSettings)
     }
 }
 
@@ -89,8 +96,7 @@ struct ContextPanelCompanionWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: ContextPanelCompanionTimelineProvider()) { entry in
             ContextPanelCompanionWidgetView(entry: entry)
-                .containerBackground(companionWidgetBackground, for: .widget)
-                .visionOSWidgetAppearance()
+                .containerBackground(companionWidgetBackground(entry.appearanceSettings), for: .widget)
         }
         .configurationDisplayName("Context Panel")
         .description("View AI usage limits synced from your Mac.")
@@ -98,18 +104,45 @@ struct ContextPanelCompanionWidget: Widget {
         .contentMarginsDisabled()
     }
 
-    private var companionWidgetBackground: Color {
+    private func companionWidgetBackground(_ settings: CompanionAppearanceSettings) -> Color {
+        #if os(visionOS)
+        CPWTheme.surface(variant: settings.resolvedVisionOSWidgetAppearance.cpwThemeVariant)
+        #else
         CPWTheme.surface
+        #endif
     }
 }
 
 private extension View {
     @ViewBuilder
-    func visionOSWidgetAppearance() -> some View {
+    func visionOSWidgetAppearance(_ settings: CompanionAppearanceSettings) -> some View {
         #if os(visionOS)
-        environment(\.colorScheme, .dark)
+        let appearance = settings.resolvedVisionOSWidgetAppearance
+        cpwThemeVariant(appearance.cpwThemeVariant)
+            .environment(\.colorScheme, appearance.colorScheme)
+            .preferredColorScheme(appearance.colorScheme)
         #else
         self
         #endif
+    }
+}
+
+private extension CompanionVisionOSAppAppearance {
+    var cpwThemeVariant: CPWThemeVariant {
+        switch self {
+        case .dark:
+            .dark
+        case .light:
+            .light
+        }
+    }
+
+    var colorScheme: ColorScheme {
+        switch self {
+        case .dark:
+            .dark
+        case .light:
+            .light
+        }
     }
 }

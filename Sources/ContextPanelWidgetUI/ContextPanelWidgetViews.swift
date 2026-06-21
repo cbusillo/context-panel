@@ -10,6 +10,29 @@ import UIKit
 private typealias CPWPlatformColor = UIColor
 #endif
 
+public enum CPWThemeVariant: Sendable {
+    case adaptive
+    case light
+    case dark
+}
+
+private struct CPWThemeVariantKey: EnvironmentKey {
+    static let defaultValue: CPWThemeVariant = .adaptive
+}
+
+public extension EnvironmentValues {
+    var cpwThemeVariant: CPWThemeVariant {
+        get { self[CPWThemeVariantKey.self] }
+        set { self[CPWThemeVariantKey.self] = newValue }
+    }
+}
+
+public extension View {
+    func cpwThemeVariant(_ variant: CPWThemeVariant) -> some View {
+        environment(\.cpwThemeVariant, variant)
+    }
+}
+
 public struct ContextPanelWidgetLinks: Sendable {
     public let overview: URL
     public let reconnect: URL
@@ -71,6 +94,7 @@ public struct ContextPanelWidgetContentView: View {
 }
 
 struct CPWSetupPlaceholderWidget: View {
+    @Environment(\.cpwThemeVariant) private var themeVariant
     let family: WidgetFamily
 
     private var isSmall: Bool {
@@ -86,7 +110,7 @@ struct CPWSetupPlaceholderWidget: View {
                     .frame(width: isSmall ? 22 : 26, height: isSmall ? 22 : 26)
                 Text("Context Panel")
                     .font(.system(size: isSmall ? 11 : 12, weight: .semibold))
-                    .foregroundStyle(CPWTheme.tertiaryText)
+                    .foregroundStyle(CPWTheme.tertiaryText(variant: themeVariant))
                     .lineLimit(1)
             }
 
@@ -94,13 +118,13 @@ struct CPWSetupPlaceholderWidget: View {
 
             Text("Set up Context Panel")
                 .font(.system(size: isSmall ? 19 : 23, weight: .semibold))
-                .foregroundStyle(CPWTheme.primaryText)
+                .foregroundStyle(CPWTheme.primaryText(variant: themeVariant))
                 .lineLimit(2)
                 .minimumScaleFactor(0.82)
 
             Text("Open the app to add your first account.")
                 .font(.system(size: isSmall ? 11 : 13, weight: .medium))
-                .foregroundStyle(CPWTheme.secondaryText)
+                .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
                 .lineLimit(isSmall ? 2 : 1)
                 .minimumScaleFactor(0.88)
 
@@ -109,10 +133,10 @@ struct CPWSetupPlaceholderWidget: View {
             HStack(spacing: 6) {
                 Text("Open app")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(CPWTheme.primaryText)
+                    .foregroundStyle(CPWTheme.primaryText(variant: themeVariant))
                 Image(systemName: "arrow.up.forward")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(CPWTheme.secondaryText)
+                    .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
             }
             .accessibilityHidden(true)
         }
@@ -122,6 +146,7 @@ struct CPWSetupPlaceholderWidget: View {
 }
 
 struct ContextPanelSmallWidget: View {
+    @Environment(\.cpwThemeVariant) private var themeVariant
     let snapshot: WidgetSnapshot
 
     var body: some View {
@@ -133,29 +158,29 @@ struct ContextPanelSmallWidget: View {
             if let tightest = snapshot.tightestMainLimitSummary {
                 Text(tightest.widgetRemainingHeadline)
                     .font(.system(size: 30, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(CPWTheme.primaryText)
+                    .foregroundStyle(CPWTheme.primaryText(variant: themeVariant))
                     .minimumScaleFactor(0.7)
                     .lineLimit(1)
                 Text(tightest.widgetSmallWindowLine)
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(CPWTheme.primaryText)
+                    .foregroundStyle(CPWTheme.primaryText(variant: themeVariant))
                     .minimumScaleFactor(0.85)
                     .lineLimit(2)
                 if let resetText = tightest.widgetResetConfidenceText {
                     Text(resetText)
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(CPWTheme.secondaryText)
+                        .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
                         .lineLimit(2)
                 }
                 CPWCapacityBar(value: tightest.usageRatio ?? 0, status: tightest.status, height: 6)
             } else {
                 Text("Set up accounts")
                     .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(CPWTheme.primaryText)
+                    .foregroundStyle(CPWTheme.primaryText(variant: themeVariant))
                     .lineLimit(2)
                 Text(snapshot.message)
                     .font(.system(size: 11))
-                    .foregroundStyle(CPWTheme.secondaryText)
+                    .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
                     .lineLimit(2)
             }
             Spacer(minLength: 4)
@@ -167,6 +192,7 @@ struct ContextPanelSmallWidget: View {
 }
 
 struct ContextPanelMediumWidget: View {
+    @Environment(\.cpwThemeVariant) private var themeVariant
     let snapshot: WidgetSnapshot
     let displayPreferences: WidgetDisplayPreferences
     let links: ContextPanelWidgetLinks
@@ -181,15 +207,15 @@ struct ContextPanelMediumWidget: View {
                 CPWGlanceNumber(snapshot: snapshot)
                 Text(snapshot.fastModeVerdict)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(CPWTheme.primaryText)
+                    .foregroundStyle(CPWTheme.primaryText(variant: themeVariant))
                     .lineLimit(2)
                 Text(snapshot.fastModeDetail)
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(CPWTheme.secondaryText)
+                    .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
                     .lineLimit(2)
                 Text(snapshot.fastModeResetDetail)
                     .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(CPWTheme.tertiaryText)
+                    .foregroundStyle(CPWTheme.tertiaryText(variant: themeVariant))
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
                 Spacer(minLength: 0)
@@ -226,6 +252,7 @@ struct ContextPanelMediumWidget: View {
 }
 
 struct ContextPanelLargeWidget: View {
+    @Environment(\.cpwThemeVariant) private var themeVariant
     let snapshot: WidgetSnapshot
     let displayPreferences: WidgetDisplayPreferences
     let links: ContextPanelWidgetLinks
@@ -239,16 +266,16 @@ struct ContextPanelLargeWidget: View {
                     }
                     Text(snapshot.fastModeVerdict)
                         .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(CPWTheme.primaryText)
+                        .foregroundStyle(CPWTheme.primaryText(variant: themeVariant))
                         .lineLimit(2)
                         .minimumScaleFactor(0.75)
                     Text(snapshot.fastModeDetail)
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(CPWTheme.secondaryText)
+                        .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
                         .lineLimit(1)
                     Text(snapshot.fastModeResetDetail)
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(CPWTheme.tertiaryText)
+                        .foregroundStyle(CPWTheme.tertiaryText(variant: themeVariant))
                         .lineLimit(1)
                         .minimumScaleFactor(0.82)
                 }
@@ -287,6 +314,7 @@ struct ContextPanelLargeWidget: View {
 }
 
 struct CPWPromptCacheInlineStat: View {
+    @Environment(\.cpwThemeVariant) private var themeVariant
     let state: PromptCacheWidgetState
     let summary: PromptCacheSummary
     let cacheStatsSettingsURL: URL
@@ -317,7 +345,7 @@ struct CPWPromptCacheInlineStat: View {
                 .padding(.trailing, 5)
 
                 Rectangle()
-                    .fill(CPWTheme.line.opacity(0.85))
+                    .fill(CPWTheme.line(variant: themeVariant).opacity(0.85))
                     .frame(width: 1, height: 11)
 
                 HStack(spacing: 3) {
@@ -328,13 +356,13 @@ struct CPWPromptCacheInlineStat: View {
                     Text(averageRate.map(Self.percentText) ?? "--")
                         .font(.system(size: 10, weight: .semibold, design: .monospaced))
                 }
-                .foregroundStyle(CPWTheme.tertiaryText)
+                .foregroundStyle(CPWTheme.tertiaryText(variant: themeVariant))
                 .padding(.leading, 5)
                 .padding(.trailing, 6)
             }
             .lineLimit(1)
             .padding(.vertical, 2)
-            .background(CPWTheme.line.opacity(0.45))
+            .background(CPWTheme.line(variant: themeVariant).opacity(0.45))
             .clipShape(Capsule(style: .continuous))
             .fixedSize(horizontal: true, vertical: false)
             .accessibilityLabel(accessibilityLabel)
@@ -411,18 +439,19 @@ struct CPWProblemLabel: View {
 }
 
 struct CPWGlanceNumber: View {
+    @Environment(\.cpwThemeVariant) private var themeVariant
     let snapshot: WidgetSnapshot
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(snapshot.tightestHeadline)
                 .font(.system(size: 28, weight: .semibold, design: .monospaced))
-                .foregroundStyle(CPWTheme.primaryText)
+                .foregroundStyle(CPWTheme.primaryText(variant: themeVariant))
                 .minimumScaleFactor(0.65)
                 .lineLimit(1)
             Text(snapshot.tightestSubheadline)
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(CPWTheme.secondaryText)
+                .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
                 .lineLimit(2)
             CPWBurnPaceBar(forecast: snapshot.fastModeForecast)
         }
@@ -431,6 +460,7 @@ struct CPWGlanceNumber: View {
 }
 
 struct CPWMainLimitRow: View {
+    @Environment(\.cpwThemeVariant) private var themeVariant
     let summary: MainLimitSummary?
     let fallbackProvider: Provider
     let fallbackWindow: MainLimitWindow
@@ -461,18 +491,18 @@ struct CPWMainLimitRow: View {
                 CPWProviderBadge(provider: provider, compact: true)
                 Text(summary?.widgetWindowLine ?? fallbackWindow.placeholderWidgetLine(provider: fallbackProvider))
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(CPWTheme.primaryText)
+                    .foregroundStyle(CPWTheme.primaryText(variant: themeVariant))
                     .lineLimit(1)
                 Spacer(minLength: 6)
                 Text(summary?.widgetUsageText ?? "No data yet")
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundStyle(CPWTheme.secondaryText)
+                    .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
             }
             HStack(spacing: 6) {
                 CPWCapacityBar(value: summary?.usageRatio ?? 0, status: status)
                 Text(summary?.widgetResetConfidenceText ?? "")
                     .font(.system(size: 9))
-                    .foregroundStyle(CPWTheme.tertiaryText)
+                    .foregroundStyle(CPWTheme.tertiaryText(variant: themeVariant))
                     .lineLimit(1)
                     .frame(minWidth: 72, alignment: .trailing)
             }
@@ -481,6 +511,7 @@ struct CPWMainLimitRow: View {
 }
 
 struct CPWProviderSummaryGrid: View {
+    @Environment(\.cpwThemeVariant) private var themeVariant
     let snapshot: WidgetSnapshot
     var compact = false
 
@@ -513,7 +544,7 @@ struct CPWProviderSummaryGrid: View {
                     }
                     Text(snapshot.widgetProviderSummaryText(provider: provider))
                         .font(.system(size: compact ? 10 : 11, weight: .medium))
-                        .foregroundStyle(CPWTheme.secondaryText)
+                        .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
                         .lineLimit(compact ? 1 : 2)
                     CPWCapacityBar(value: summaries.map { $0.usageRatio ?? 0 }.max() ?? 0, status: displayStatus, height: 5)
                 }
@@ -525,6 +556,7 @@ struct CPWProviderSummaryGrid: View {
 }
 
 struct CPWProviderMiniStatus: View {
+    @Environment(\.cpwThemeVariant) private var themeVariant
     let snapshot: WidgetSnapshot
 
     var body: some View {
@@ -533,7 +565,7 @@ struct CPWProviderMiniStatus: View {
                 let isConnected = snapshot.limits.contains { $0.provider == provider }
                 Text(provider.shortName)
                     .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(isConnected ? CPWTheme.providerColor(provider) : CPWTheme.tertiaryText)
+                    .foregroundStyle(isConnected ? CPWTheme.providerColor(provider) : CPWTheme.tertiaryText(variant: themeVariant))
                     .lineLimit(1)
                     .opacity(isConnected ? 1 : 0.35)
             }
@@ -542,6 +574,7 @@ struct CPWProviderMiniStatus: View {
 }
 
 struct CPWEmptyRow: View {
+    @Environment(\.cpwThemeVariant) private var themeVariant
     let message: String
 
     var body: some View {
@@ -549,13 +582,14 @@ struct CPWEmptyRow: View {
             CPWStatusMark(status: .unknown, size: 9)
             Text(message)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(CPWTheme.secondaryText)
+                .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
                 .lineLimit(2)
         }
     }
 }
 
 struct CPWFastModeCard: View {
+    @Environment(\.cpwThemeVariant) private var themeVariant
     let snapshot: WidgetSnapshot
 
     var body: some View {
@@ -567,23 +601,24 @@ struct CPWFastModeCard: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(snapshot.fastModeVerdict)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(CPWTheme.primaryText)
+                    .foregroundStyle(CPWTheme.primaryText(variant: themeVariant))
                     .lineLimit(1)
                 Text(snapshot.fastModeDetail)
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(CPWTheme.secondaryText)
+                    .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
         }
         .padding(.vertical, 8)
         .padding(.horizontal, 10)
-        .background(CPWTheme.line.opacity(0.65))
+        .background(CPWTheme.line(variant: themeVariant).opacity(0.65))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 
 struct CPWCapacityBar: View {
+    @Environment(\.cpwThemeVariant) private var themeVariant
     let value: Double
     let status: UsageStatus
     var height: CGFloat = 4
@@ -591,7 +626,7 @@ struct CPWCapacityBar: View {
     var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
-                Capsule().fill(CPWTheme.line)
+                Capsule().fill(CPWTheme.line(variant: themeVariant))
                 Capsule()
                     .fill(CPWTheme.statusColor(status))
                     .frame(width: proxy.size.width * min(max(value, 0), 1))
@@ -602,6 +637,7 @@ struct CPWCapacityBar: View {
 }
 
 struct CPWBurnPaceBar: View {
+    @Environment(\.cpwThemeVariant) private var themeVariant
     let forecast: FastModeCapacityForecast?
 
     private var markerPosition: Double? {
@@ -617,7 +653,7 @@ struct CPWBurnPaceBar: View {
             GeometryReader { proxy in
                 let width = proxy.size.width
                 ZStack(alignment: .leading) {
-                    Capsule().fill(CPWTheme.line)
+                    Capsule().fill(CPWTheme.line(variant: themeVariant))
                     Capsule()
                         .fill(CPWTheme.statusColor(.healthy).opacity(0.85))
                         .frame(width: width * 0.5)
@@ -626,12 +662,12 @@ struct CPWBurnPaceBar: View {
                         .frame(width: width * 0.5)
                         .offset(x: width * 0.5)
                     Rectangle()
-                        .fill(CPWTheme.primaryText.opacity(0.72))
+                        .fill(CPWTheme.primaryText(variant: themeVariant).opacity(0.72))
                         .frame(width: 1, height: 8)
                         .offset(x: width * 0.5)
                     if let markerPosition {
                         Circle()
-                            .fill(CPWTheme.primaryText)
+                            .fill(CPWTheme.primaryText(variant: themeVariant))
                             .frame(width: 7, height: 7)
                             .shadow(color: .black.opacity(0.35), radius: 1, y: 1)
                             .offset(x: max(min(width * markerPosition - 3.5, width - 7), 0))
@@ -642,7 +678,7 @@ struct CPWBurnPaceBar: View {
 
             Text(forecast?.burnPaceCopy ?? "calibrating")
                 .font(.system(size: 8, weight: .medium))
-                .foregroundStyle(CPWTheme.tertiaryText)
+                .foregroundStyle(CPWTheme.tertiaryText(variant: themeVariant))
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
         }
@@ -689,6 +725,7 @@ struct CPWStatusMark: View {
 }
 
 struct CPWSectionHeader: View {
+    @Environment(\.cpwThemeVariant) private var themeVariant
     let title: String
     var trailing: String? = nil
     var accessory: CPWPromptCacheInlineStat? = nil
@@ -699,7 +736,7 @@ struct CPWSectionHeader: View {
                 .font(.system(size: 10, weight: .semibold))
                 .tracking(0.8)
                 .textCase(.uppercase)
-                .foregroundStyle(CPWTheme.tertiaryText)
+                .foregroundStyle(CPWTheme.tertiaryText(variant: themeVariant))
             Spacer()
             if let accessory {
                 accessory
@@ -707,13 +744,14 @@ struct CPWSectionHeader: View {
             if let trailing {
                 Text(trailing)
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(CPWTheme.tertiaryText)
+                    .foregroundStyle(CPWTheme.tertiaryText(variant: themeVariant))
             }
         }
     }
 }
 
 struct CPWLabel: View {
+    @Environment(\.cpwThemeVariant) private var themeVariant
     let text: String
 
     init(_ text: String) {
@@ -725,33 +763,58 @@ struct CPWLabel: View {
             .font(.system(size: 10, weight: .semibold))
             .tracking(0.8)
             .textCase(.uppercase)
-            .foregroundStyle(CPWTheme.tertiaryText)
+            .foregroundStyle(CPWTheme.tertiaryText(variant: themeVariant))
     }
 }
 
 public enum CPWTheme {
     // Exposed so platform widget targets can apply the shared surface behind the rendered content.
-    public static let surface = adaptiveColor(
-        light: CPWPlatformColor(red: 250 / 255, green: 250 / 255, blue: 250 / 255, alpha: 1),
-        dark: CPWPlatformColor(red: 32 / 255, green: 33 / 255, blue: 36 / 255, alpha: 1)
-    )
-    static let line = adaptiveColor(
-        light: CPWPlatformColor.black.withAlphaComponent(0.08),
-        dark: CPWPlatformColor.white.withAlphaComponent(0.11)
-    )
-    static let primaryText = adaptiveColor(
-        light: CPWPlatformColor(red: 10 / 255, green: 10 / 255, blue: 11 / 255, alpha: 1),
-        dark: CPWPlatformColor(red: 239 / 255, green: 240 / 255, blue: 242 / 255, alpha: 1)
-    )
-    static let secondaryText = adaptiveColor(
-        light: CPWPlatformColor(red: 87 / 255, green: 87 / 255, blue: 92 / 255, alpha: 1),
-        dark: CPWPlatformColor(red: 178 / 255, green: 180 / 255, blue: 186 / 255, alpha: 1)
-    )
-    static let tertiaryText = adaptiveColor(
-        light: CPWPlatformColor(red: 130 / 255, green: 130 / 255, blue: 136 / 255, alpha: 1),
-        dark: CPWPlatformColor(red: 128 / 255, green: 131 / 255, blue: 139 / 255, alpha: 1)
-    )
+    public static let surface = surface(variant: .adaptive)
+    static let line = line(variant: .adaptive)
+    static let primaryText = primaryText(variant: .adaptive)
+    static let secondaryText = secondaryText(variant: .adaptive)
+    static let tertiaryText = tertiaryText(variant: .adaptive)
     static let accent = Color(red: 74 / 255, green: 91 / 255, blue: 122 / 255)
+
+    public static func surface(variant: CPWThemeVariant) -> Color {
+        themedColor(
+            light: CPWPlatformColor(red: 250 / 255, green: 250 / 255, blue: 250 / 255, alpha: 1),
+            dark: CPWPlatformColor(red: 32 / 255, green: 33 / 255, blue: 36 / 255, alpha: 1),
+            variant: variant
+        )
+    }
+
+    static func line(variant: CPWThemeVariant) -> Color {
+        themedColor(
+            light: CPWPlatformColor.black.withAlphaComponent(0.08),
+            dark: CPWPlatformColor.white.withAlphaComponent(0.11),
+            variant: variant
+        )
+    }
+
+    static func primaryText(variant: CPWThemeVariant) -> Color {
+        themedColor(
+            light: CPWPlatformColor(red: 10 / 255, green: 10 / 255, blue: 11 / 255, alpha: 1),
+            dark: CPWPlatformColor(red: 239 / 255, green: 240 / 255, blue: 242 / 255, alpha: 1),
+            variant: variant
+        )
+    }
+
+    static func secondaryText(variant: CPWThemeVariant) -> Color {
+        themedColor(
+            light: CPWPlatformColor(red: 87 / 255, green: 87 / 255, blue: 92 / 255, alpha: 1),
+            dark: CPWPlatformColor(red: 178 / 255, green: 180 / 255, blue: 186 / 255, alpha: 1),
+            variant: variant
+        )
+    }
+
+    static func tertiaryText(variant: CPWThemeVariant) -> Color {
+        themedColor(
+            light: CPWPlatformColor(red: 130 / 255, green: 130 / 255, blue: 136 / 255, alpha: 1),
+            dark: CPWPlatformColor(red: 128 / 255, green: 131 / 255, blue: 139 / 255, alpha: 1),
+            variant: variant
+        )
+    }
 
     static func providerColor(_ provider: Provider) -> Color {
         switch provider {
@@ -792,7 +855,26 @@ public enum CPWTheme {
         }
     }
 
+    private static func themedColor(
+        light: CPWPlatformColor,
+        dark: CPWPlatformColor,
+        variant: CPWThemeVariant
+    ) -> Color {
+        switch variant {
+        case .adaptive:
+            adaptiveColor(light: light, dark: dark)
+        case .light:
+            fixedColor(light)
+        case .dark:
+            fixedColor(dark)
+        }
+    }
+
     #if canImport(AppKit)
+    private static func fixedColor(_ color: NSColor) -> Color {
+        Color(nsColor: color)
+    }
+
     private static func adaptiveColor(light: NSColor, dark: NSColor) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
             let best = appearance.bestMatch(from: [.darkAqua, .aqua])
@@ -800,12 +882,20 @@ public enum CPWTheme {
         })
     }
     #elseif canImport(UIKit)
+    private static func fixedColor(_ color: UIColor) -> Color {
+        Color(uiColor: color)
+    }
+
     private static func adaptiveColor(light: UIColor, dark: UIColor) -> Color {
         Color(uiColor: UIColor { traits in
             traits.userInterfaceStyle == .dark ? dark : light
         })
     }
     #else
+    private static func fixedColor(_ color: Color) -> Color {
+        color
+    }
+
     private static func adaptiveColor(light: Color, dark: Color) -> Color {
         light
     }
