@@ -21,8 +21,11 @@ if [[ -n "$swiftpm_scratch_path" ]]; then
 	mkdir -p "$swiftpm_scratch_path"
 	swift_args+=(--scratch-path "$swiftpm_scratch_path")
 else
-	swift_args+=(--scratch-path "$repo_root/.build")
+	swiftpm_scratch_path="$repo_root/.build"
+	swift_args+=(--scratch-path "$swiftpm_scratch_path")
 fi
+
+echo "commit gate SwiftPM scratch path: $swiftpm_scratch_path"
 
 swift build "${swift_args[@]}"
 swift test "${swift_args[@]}"
