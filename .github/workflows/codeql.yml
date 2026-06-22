@@ -49,16 +49,12 @@ jobs:
 
       - name: Build
         env:
-          CONTEXT_PANEL_ARTIFACT_CACHE_ROOT: >-
-            /Volumes/Developer-Artifacts/github-actions/cache/cbusillo/context-panel
           GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: |
           swift_args=()
-          artifact_cache_parent="$(dirname \
-            "$(dirname "$CONTEXT_PANEL_ARTIFACT_CACHE_ROOT")")"
 
           if [[ "$GITHUB_EVENT_NAME" != "pull_request" && \
-            -d "$artifact_cache_parent" ]]; then
+            -n "${CONTEXT_PANEL_ARTIFACT_CACHE_ROOT:-}" ]]; then
             swiftpm_scratch_path="$CONTEXT_PANEL_ARTIFACT_CACHE_ROOT/codeql-swiftpm"
             mkdir -p "$swiftpm_scratch_path"
             swift_args+=(--scratch-path "$swiftpm_scratch_path")

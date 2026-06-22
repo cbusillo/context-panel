@@ -3,15 +3,14 @@ set -euo pipefail
 
 scheme="ContextPanelCompanion"
 configuration="Debug"
-artifact_cache_root="${CONTEXT_PANEL_ARTIFACT_CACHE_ROOT:-/Volumes/Developer-Artifacts/github-actions/cache/cbusillo/context-panel}"
-artifact_cache_parent="$(dirname "$(dirname "$artifact_cache_root")")"
+artifact_cache_root="${CONTEXT_PANEL_ARTIFACT_CACHE_ROOT:-}"
 derived_data_root=""
 platforms=()
 
 default_derived_data_root() {
 	if [[ -n "${CONTEXT_PANEL_COMPANION_DERIVED_DATA_ROOT:-}" ]]; then
 		printf '%s' "$CONTEXT_PANEL_COMPANION_DERIVED_DATA_ROOT"
-	elif [[ -d "$artifact_cache_parent" ]]; then
+	elif [[ -n "$artifact_cache_root" ]]; then
 		printf '%s' "$artifact_cache_root/derived-data/companion-build-validation"
 	else
 		printf '%s' ".build/companion-build-validation"
