@@ -118,6 +118,7 @@ require_command xcodegen
 require_command xcodebuild
 
 xcodegen generate --spec project.yml
+echo "companion validation DerivedData root: $derived_data_root"
 
 for platform in "${platforms[@]}"; do
 	destination="$(destination_for_platform "$platform")"
