@@ -10,7 +10,7 @@ platforms=()
 default_derived_data_root() {
 	if [[ -n "${CONTEXT_PANEL_COMPANION_DERIVED_DATA_ROOT:-}" ]]; then
 		printf '%s' "$CONTEXT_PANEL_COMPANION_DERIVED_DATA_ROOT"
-	elif [[ -n "$artifact_cache_root" ]]; then
+	elif [[ -n "$artifact_cache_root" && -d "$(dirname "$artifact_cache_root")" ]]; then
 		printf '%s' "$artifact_cache_root/derived-data/companion-build-validation"
 	else
 		printf '%s' ".build/companion-build-validation"
