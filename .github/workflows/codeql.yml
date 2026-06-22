@@ -54,7 +54,8 @@ jobs:
           swift_args=()
 
           if [[ "$GITHUB_EVENT_NAME" != "pull_request" && \
-            -n "${CONTEXT_PANEL_ARTIFACT_CACHE_ROOT:-}" ]]; then
+            -n "${CONTEXT_PANEL_ARTIFACT_CACHE_ROOT:-}" && \
+            -d "$(dirname "$CONTEXT_PANEL_ARTIFACT_CACHE_ROOT")" ]]; then
             swiftpm_scratch_path="$CONTEXT_PANEL_ARTIFACT_CACHE_ROOT/codeql-swiftpm"
             mkdir -p "$swiftpm_scratch_path"
             swift_args+=(--scratch-path "$swiftpm_scratch_path")
