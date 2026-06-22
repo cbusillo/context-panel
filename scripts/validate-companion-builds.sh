@@ -7,10 +7,17 @@ artifact_cache_root="${CONTEXT_PANEL_ARTIFACT_CACHE_ROOT:-}"
 derived_data_root=""
 platforms=()
 
+artifact_cache_root_is_available() {
+	local cache_parent cache_namespace
+	cache_parent="$(dirname "$artifact_cache_root")"
+	cache_namespace="$(dirname "$cache_parent")"
+	[[ -d "$artifact_cache_root" || -d "$cache_namespace" ]]
+}
+
 default_derived_data_root() {
 	if [[ -n "${CONTEXT_PANEL_COMPANION_DERIVED_DATA_ROOT:-}" ]]; then
 		printf '%s' "$CONTEXT_PANEL_COMPANION_DERIVED_DATA_ROOT"
-	elif [[ -n "$artifact_cache_root" && -d "$(dirname "$artifact_cache_root")" ]]; then
+	elif [[ -n "$artifact_cache_root" ]] && artifact_cache_root_is_available; then
 		printf '%s' "$artifact_cache_root/derived-data/companion-build-validation"
 	else
 		printf '%s' ".build/companion-build-validation"
