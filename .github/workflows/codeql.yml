@@ -19,8 +19,9 @@ jobs:
   analyze:
     name: Analyze Swift
     runs-on: >-
-      ${{ fromJSON(github.event_name == 'pull_request' && '["macos-26"]' ||
-      '["self-hosted", "macOS", "ARM64", "context-panel"]') }}
+      ${{ fromJSON(github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name != github.repository &&
+      '["macos-26"]' || '["self-hosted", "macOS", "ARM64", "context-panel"]') }}
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -33,7 +34,9 @@ jobs:
         run: xcodebuild -version
 
       - name: Prepare trusted CodeQL database path
-        if: github.event_name != 'pull_request'
+        if: >-
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
         run: |
           trusted_codeql_root="/tmp/context-panel-codeql/$GITHUB_RUN_ID"
           rm -rf "$trusted_codeql_root"
@@ -49,11 +52,15 @@ jobs:
 
       - name: Build
         env:
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          TRUSTED_RUN: >-
+            ${{
+              github.event_name != 'pull_request' ||
+              github.event.pull_request.head.repo.full_name == github.repository
+            }}
         run: |
           swift_args=()
 
-          if [[ "$GITHUB_EVENT_NAME" != "pull_request" && \
+          if [[ "$TRUSTED_RUN" == "true" && \
             -n "${CONTEXT_PANEL_ARTIFACT_CACHE_ROOT:-}" ]]; then
             cache_parent="$(dirname "$CONTEXT_PANEL_ARTIFACT_CACHE_ROOT")"
             cache_namespace="$(dirname "$cache_parent")"
@@ -61,7 +68,7 @@ jobs:
             cache_namespace=""
           fi
 
-          if [[ "$GITHUB_EVENT_NAME" != "pull_request" && \
+          if [[ "$TRUSTED_RUN" == "true" && \
             -n "${CONTEXT_PANEL_ARTIFACT_CACHE_ROOT:-}" && \
             ( -d "$CONTEXT_PANEL_ARTIFACT_CACHE_ROOT" || \
               -d "$cache_namespace" ) ]]; then
@@ -78,7 +85,9 @@ jobs:
   cleanup-trusted-codeql:
     name: Clean Trusted CodeQL Temp
     needs: analyze
-    if: always() && github.event_name != 'pull_request'
+    if: >-
+      always() && (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, macOS, ARM64, context-panel]
     steps:
       - name: Clean trusted CodeQL database path
