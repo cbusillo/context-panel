@@ -1,106 +1,165 @@
 # Design Direction
 
-Last updated: 2026-05-27.
+Last updated: 2026-06-22.
 
 ## Accepted Direction
 
-Use **Quiet Instrument** as the default Context Panel visual direction.
-
-The widget should feel like a calm Mac status instrument, not a billing
+Context Panel should use **Quiet Instrument** as its default visual direction.
+The product should feel like a calm Mac status instrument rather than a billing
 dashboard. It should answer the user's immediate question first: can I keep
-working, and which account is most constrained?
+working, which account or limit is most constrained, and when will that pressure
+change?
 
-Adopt **Concept A - Instrument** as the primary widget direction:
+The widget is the glance surface. It should be dense, calm, and answer-first:
+remaining capacity, tightest provider/account/model lane, reset timing, refresh
+health, stale state, and compact prompt-cache telemetry where available.
 
-- Small widget: answer-first verdict, tightest account/model, capacity indicator,
-  provider mini-status, and nearest reset.
-- Medium widget: overall verdict/dial plus three or four most constrained rows.
-- Large widget: provider groups, six to eight account/model rows, compact trend,
-  refresh/stale state, and reset summary.
+The app is the setup, detail, and troubleshooting surface. It can use denser
+ledger treatments, diagnostics, history, account management, refresh controls,
+forecast settings, webhook settings, and provider-specific setup flows without
+trying to turn the widget into a dashboard.
 
-Use **Concept B - Ledger** as the dense-list treatment inside the app and as a
-fallback large-widget direction if the Instrument layout cannot fit realistic
-multi-account data.
+## Widget Layout Direction
+
+Use an instrument-first widget hierarchy:
+
+- Small widget: answer-first verdict, tightest main limit, provider/window label,
+  compact capacity bar, reset confidence, and stale or setup problem copy when
+  that is the most important state.
+- Medium widget: overall/tightest status plus the most constrained provider or
+  account rows, nearest reset, prompt-cache summary when enabled, and compact
+  sync/refresh state.
+- Large widget: provider groups, several constrained account/model rows, compact
+  capacity bars, reset summary, prompt-cache comparison, and refresh/stale state.
+
+The large widget may use a dense ledger-like treatment when realistic
+multi-account data does not fit a dial-led composition. The design preference is
+still instrument-first: clear pressure, reset timing, and state hierarchy before
+raw completeness.
+
+## App Layout Direction
+
+The native macOS app should stay a work-focused `NavigationSplitView`:
+
+- Sidebar: provider/account groups, account status, and setup entry points.
+- Detail: selected provider/account limits, capacity, reset timing, prompt-cache
+  telemetry, fast-mode forecast, refresh status, and history.
+- Settings and diagnostics: credential management, provider setup, account
+  naming, widget lane preferences, refresh cadence, warning/webhook settings,
+  and troubleshooting.
+
+Mutation belongs in the app, not the widget: adding logins, reconnecting,
+naming accounts, disabling or removing accounts, saving bookmarks, choosing
+visible widget lanes, refreshing, calibration, warning configuration, and
+privacy/credential messaging.
 
 ## Visual System
 
-- True neutral gray surfaces, tuned separately for light and dark appearances.
-- One swappable accent color; default accent is a restrained slate blue.
-- Subtle status tints. Avoid alarm-heavy red as the dominant state language.
-- Provider identity should use short text badges plus labels, not abstract
-  shapes or provider logos as the only hierarchy.
-- Status must be communicated by color plus nearby text for color-vision safety.
-- Widgets are read-only and deep-link into the app for setup and detail.
-- Failure and stale states isolate to the affected account or provider; never
-  blank the whole widget when neighboring data is still valid.
+- Use native macOS surfaces and system typography. Prefer quiet neutral grays,
+  subtle materials, and tabular numeric data over decorative panels.
+- Keep one restrained accent family for selected states and primary controls;
+  avoid letting one hue dominate the entire app or widget.
+- Use status tints sparingly. Red should communicate genuinely limited or failed
+  states, not become the baseline visual mood.
+- Status must be readable from text and structure, not color alone.
+- Provider identity should use short text badges plus labels. Logos or abstract
+  marks must not be the only provider hierarchy.
+- Layouts should be stable under dynamic data: changing reset text, account
+  names, loading states, hover states, or stale messages must not resize fixed
+  widget structures unpredictably.
+- The widget should preserve last-good values through refresh and loading states
+  whenever possible.
 
-## Native App Shape
+## Component Vocabulary
 
-The first app window should use a native macOS split-view structure:
+The durable native vocabulary lives in SwiftUI, not in a web export. Current
+implementation uses shared app/widget ideas including:
 
-- Sidebar: provider/account groups, account status, and setup entry points.
-- Detail: selected account/provider limits, reset timing, trend, forecast, and
-  refresh history.
-- Inspector: normalized raw limits, confidence, provider connection state, and
-  troubleshooting.
+- `CapacityDial`: circular pressure indicator for app detail and summary views.
+- `CapacityBar` / `CPWCapacityBar`: compact pressure bar for rows and widgets.
+- `ProviderBadge` / `CPWProviderBadge`: short provider badge with nearby label
+  context.
+- `StatusMark` / `CPWStatusMark`: compact state marker paired with text.
+- account and limit rows: reusable row treatments for constrained lanes,
+  reconnect actions, additional limits, and provider summaries.
+- `ContextPanelWidgetUI`: shared WidgetKit-sized presentation used by macOS and
+  companion widget targets.
+- `ContextPanelWidget`: WidgetKit timeline, family mapping, widget URL wiring,
+  app-group reads, and sandbox-local fallback behavior.
 
-The app is where mutation lives: adding logins, naming accounts, disabling or
-removing accounts, refreshing, calibration, and credential/privacy messaging.
-
-## Component Map
-
-Translate the design artifact into native SwiftUI/WidgetKit components instead
-of copying the React implementation:
-
-- `CapacityDial`: ring/dial for overall or account capacity.
-- `CapacityBar`: compact account/model capacity bar.
-- `ProviderBadge`: provider short-name text badge.
-- `StatusMark`: compact status marker paired with text.
-- `AccountRow`: reusable account/model row for widgets and app detail.
-- `ContextWidget`: WidgetKit configuration for small, medium, and large layouts.
-- `WidgetTimelineProvider`: timeline backed by cached local snapshots and
-  last-good stale state.
-- `AppRoot`: SwiftUI app shell with `NavigationSplitView`.
-
-Keep colors, spacing, radius, typography, material, and status semantics in a
-native theme layer rather than scattering raw values through views.
+Keep colors, spacing, radius, typography, material, and status semantics in
+native theme helpers instead of scattering raw values through views.
 
 ## State Coverage
 
-Required states for design and implementation:
+Design and implementation must handle these states deliberately:
 
 - Healthy/default.
 - Close to limit.
 - Limited or exceeded.
-- Stale data with last-good timestamp.
 - Unknown limit without implying zero capacity.
-- Provider or account refresh failure.
+- Stale data with last-good timestamp.
+- Provider/account refresh failure.
+- Reconnect or setup-needed state.
 - Loading/refreshing with last-known values preserved.
-- Empty/first run setup state.
-- Dense multi-account data.
+- Empty first-run state.
+- Dense multi-account/provider data.
+- Prompt-cache unavailable, enabled, healthy, and sharply degraded states.
+- Companion sync unavailable, stale, partial, and healthy states.
 
-## Implementation Notes
+Failure and stale states should isolate to the affected account, provider, or
+transport when neighboring data is still valid. Do not blank the whole widget or
+app detail surface because one provider cannot refresh.
 
-- Use native `.system` typography and SF Mono for numeric/tabular data. Web fonts
-  in the design artifact are preview stand-ins only.
-- Tune dark-mode contrast in SwiftUI; do not blindly trust exported CSS values.
-- Verify large-widget row density with realistic data before committing to six to
-  eight visible rows.
-- Prefer answer-first widget copy, with the tightest account as supporting
-  text. For fast-mode forecasts, use instrument-style language such as
-  `Fast mode limited`, `1.4%/h active`, `fast lasts ~2d`, and
-  `reset Sat 4:12 PM (2d 21h)` instead of advisory sentences.
-- Prompt-cache telemetry should stay lightweight in the widget: pair the most
-  recent cache percentage with the token-weighted rolling average, using status
-  color only for the current-vs-average comparison rather than adding another
-  capacity bar.
-- Default provider ordering can be by constraint/tightness for the widget, while
-  the app can support stable user/provider grouping.
+## Copy And Forecast Language
 
-## Design Artifact
+Prefer plain status language:
 
-An external design export was delivered separately from the repository. It
-includes React/HTML files for review only. The local browser export did not
-render under the current helper because the CDN-backed local HTML stayed blank,
-so visual implementation should use the handoff notes and source structure, then
-be validated again once native SwiftUI/WidgetKit views exist.
+- `available`
+- `close to limit`
+- `limited`
+- `unknown`
+- `stale`
+- `refreshing`
+- `setup needed`
+- `reconnect`
+
+Widget copy should stay short and answer-first. For fast-mode forecasts, use
+instrument-style copy such as `Fast mode limited`, `1.4%/h active`,
+`fast lasts ~2d`, and `reset Sat 4:12 PM (2d 21h)` instead of advisory
+sentences.
+
+Prompt-cache telemetry should stay lightweight in the widget: pair the most
+recent cache percentage with the token-weighted rolling average, using status
+color only for the current-vs-average comparison rather than adding another
+capacity bar.
+
+## Ordering And Density
+
+Widget ordering should default to constraint/tightness so the most important
+lane appears first. The app can support stable user/provider grouping and richer
+detail because users have room to compare and act.
+
+When space is tight, prefer:
+
+1. current limit pressure
+2. reset timing and confidence
+3. provider/account identity
+4. stale, setup, or refresh problem
+5. prompt-cache or forecast detail
+
+Large-widget density should be tested with realistic multi-account snapshots
+before committing to a visible row count. Six to eight rows is a target, not a
+promise when names, reset text, or provider states are long.
+
+## Source Of Truth
+
+This file is the durable design direction for repo work. External mockups,
+React/HTML exports, screenshots, and design-tool artifacts are review aids only
+unless their decisions are copied into tracked docs, GitHub planning issues, or
+native SwiftUI code.
+
+Do not reference local download paths, private machine paths, or temporary
+handoff files from tracked design docs. Active design discussion belongs in the
+canonical GitHub planning issue or PR; stable product and implementation policy
+belongs here.
