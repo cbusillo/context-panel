@@ -99,8 +99,8 @@ Required states for design and implementation:
 
 ## Design Artifact
 
-The external design export was delivered as `/Users/cbusillo/Downloads/Context Panel.zip`.
-It includes React/HTML files for review only. The local browser export did not
+An external design export was delivered separately from the repository. It
+includes React/HTML files for review only. The local browser export did not
 render under the current helper because the CDN-backed local HTML stayed blank,
 so visual implementation should use the handoff notes and source structure, then
 be validated again once native SwiftUI/WidgetKit views exist.
