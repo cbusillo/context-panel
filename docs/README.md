@@ -9,3 +9,4 @@
 - [TODO](todo.md)
 - [Release Path](release.md)
 - [Repository Settings](repo-settings.md)
+- [Developer Artifacts Handoff](developer-artifacts.md)
