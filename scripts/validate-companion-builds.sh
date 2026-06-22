@@ -3,8 +3,22 @@ set -euo pipefail
 
 scheme="ContextPanelCompanion"
 configuration="Debug"
-derived_data_root=".build/companion-build-validation"
+artifact_cache_root="${CONTEXT_PANEL_ARTIFACT_CACHE_ROOT:-/Volumes/Developer-Artifacts/github-actions/cache/cbusillo/context-panel}"
+artifact_cache_parent="$(dirname "$(dirname "$artifact_cache_root")")"
+derived_data_root=""
 platforms=()
+
+default_derived_data_root() {
+	if [[ -n "${CONTEXT_PANEL_COMPANION_DERIVED_DATA_ROOT:-}" ]]; then
+		printf '%s' "$CONTEXT_PANEL_COMPANION_DERIVED_DATA_ROOT"
+	elif [[ -d "$artifact_cache_parent" ]]; then
+		printf '%s' "$artifact_cache_root/derived-data/companion-build-validation"
+	else
+		printf '%s' ".build/companion-build-validation"
+	fi
+}
+
+derived_data_root="$(default_derived_data_root)"
 
 usage() {
 	cat <<'USAGE'
@@ -20,7 +34,8 @@ Platforms:
 
 Options:
   --configuration VALUE       Xcode configuration. Default: Debug.
-  --derived-data-root PATH    DerivedData root. Default: .build/companion-build-validation.
+  --derived-data-root PATH    DerivedData root. Default: artifact cache when mounted,
+                              otherwise .build/companion-build-validation.
   -h, --help                  Show this help.
 USAGE
 }
