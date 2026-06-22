@@ -32,10 +32,20 @@ jobs:
       - name: Show Xcode
         run: xcodebuild -version
 
+      - name: Prepare trusted CodeQL database path
+        if: github.event_name != 'pull_request'
+        run: |
+          trusted_codeql_root="/tmp/context-panel-codeql/$GITHUB_RUN_ID"
+          rm -rf "$trusted_codeql_root"
+          mkdir -p "$trusted_codeql_root/db"
+          printf 'CONTEXT_PANEL_CODEQL_DB_LOCATION=%s\n' \
+            "$trusted_codeql_root/db" >> "$GITHUB_ENV"
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
           languages: swift
+          db-location: ${{ env.CONTEXT_PANEL_CODEQL_DB_LOCATION }}
 
       - name: Build
         env:
