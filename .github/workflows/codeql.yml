@@ -69,6 +69,11 @@ jobs:
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
 
+  cleanup-trusted-codeql:
+    name: Clean Trusted CodeQL Temp
+    needs: analyze
+    if: always() && github.event_name != 'pull_request'
+    runs-on: [self-hosted, macOS, ARM64, context-panel]
+    steps:
       - name: Clean trusted CodeQL database path
-        if: always() && github.event_name != 'pull_request'
         run: rm -rf "/tmp/context-panel-codeql/$GITHUB_RUN_ID"
