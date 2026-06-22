@@ -56,8 +56,13 @@ failures arrive late during export/upload instead of before signing starts.
 Routine Swift build/test validation jobs should use the repository self-hosted
 runner labels `[self-hosted, macOS, ARM64, context-panel]`. That runner is
 intended for fast compile/test feedback on the primary local development host.
-CodeQL should stay on an explicit GitHub-hosted macOS image unless its temp-file
-cleanup is proven stable on the self-hosted runner.
+Pull request CodeQL should stay on an explicit GitHub-hosted macOS image so
+untrusted PR code does not run on the persistent self-hosted machine. Trusted
+CodeQL runs for pushes to `main`, scheduled scans, and manual dispatches may use
+the self-hosted runner after confirming its temporary database cleanup remains
+healthy. Persistent SwiftPM and DerivedData cache roots belong in runner-local
+environment configuration, not in tracked workflows or scripts; tracked jobs must
+fall back cleanly when that cache root is unavailable.
 
 Release, App Store Connect upload, and companion upload jobs should use explicit
 GitHub-hosted `macos-26` while App Store Connect accepts the Xcode 26 train. The
