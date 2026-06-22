@@ -565,6 +565,55 @@ import Testing
     #expect(summary.nextReset(after: soonerReset) == laterReset)
 }
 
+@Test func accountResetRecommendationIDsKeepSharedConfiguredAccountsDistinct() {
+    let resetAt = Date(timeIntervalSinceReferenceDate: 900_000_000)
+    let sharedConfiguredAccountID = "configured-openai-shared"
+    let firstLimit = UsageLimit(
+        provider: .openAI,
+        accountID: "raw-openai-a",
+        configuredAccountID: sharedConfiguredAccountID,
+        accountName: "Work A",
+        label: "OpenAI Weekly",
+        windowLabel: "Weekly",
+        unit: .percent,
+        used: 10,
+        limit: 100,
+        resetsAt: resetAt
+    )
+    let secondLimit = UsageLimit(
+        provider: .openAI,
+        accountID: "raw-openai-b",
+        configuredAccountID: sharedConfiguredAccountID,
+        accountName: "Work B",
+        label: "OpenAI Weekly",
+        windowLabel: "Weekly",
+        unit: .percent,
+        used: 20,
+        limit: 100,
+        resetsAt: resetAt
+    )
+    let firstRecommendation = AccountResetRecommendation(
+        provider: .openAI,
+        accountID: firstLimit.accountID,
+        configuredAccountID: firstLimit.configuredAccountID,
+        accountName: firstLimit.accountName,
+        window: .weekly,
+        resetsAt: resetAt,
+        limit: firstLimit
+    )
+    let secondRecommendation = AccountResetRecommendation(
+        provider: .openAI,
+        accountID: secondLimit.accountID,
+        configuredAccountID: secondLimit.configuredAccountID,
+        accountName: secondLimit.accountName,
+        window: .weekly,
+        resetsAt: resetAt,
+        limit: secondLimit
+    )
+
+    #expect(firstRecommendation.id != secondRecommendation.id)
+}
+
 @Test func widgetDisplayPreferencesUseOrderedVisiblePrefixes() {
     let snapshot = UsageSnapshot(
         generatedAt: Date(),

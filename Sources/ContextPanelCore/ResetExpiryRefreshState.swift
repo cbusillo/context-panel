@@ -343,7 +343,11 @@ public extension UsageLimit {
 private extension ResetExpiryRefreshKey {
     var identity: String {
         let resetIdentity = String(Int(resetsAt.timeIntervalSince1970))
-        return [provider.rawValue, configuredAccountID ?? accountID, limitID, resetIdentity]
+        let accountIdentity = ProviderAccountIdentity.unique(
+            accountID: accountID,
+            configuredAccountID: configuredAccountID
+        )
+        return [provider.rawValue, accountIdentity, limitID, resetIdentity]
             .joined(separator: "|")
     }
 }

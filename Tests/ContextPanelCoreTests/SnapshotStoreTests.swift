@@ -1736,6 +1736,65 @@ import Testing
     #expect(state.nextRefreshCheckDate(for: staleSnapshot, now: resetAt.addingTimeInterval(20)) == resetAt.addingTimeInterval(40))
 }
 
+@Test func resetExpiryRefreshStateKeepsSharedConfiguredAccountsDistinct() throws {
+    let savedAt = Date(timeIntervalSince1970: 1_000)
+    let resetAt = savedAt.addingTimeInterval(60)
+    let sharedConfiguredAccountID = "configured-openai-shared"
+    let firstAccount = UsageLimit(
+        id: "openai:weekly",
+        provider: .openAI,
+        accountID: "raw-openai-a",
+        configuredAccountID: sharedConfiguredAccountID,
+        accountName: "Work A",
+        label: "Weekly",
+        windowLabel: "Weekly",
+        unit: .percent,
+        used: 100,
+        limit: 100,
+        resetsAt: resetAt,
+        lastUpdatedAt: savedAt,
+        confidence: .observed
+    )
+    let secondAccount = UsageLimit(
+        id: "openai:weekly",
+        provider: .openAI,
+        accountID: "raw-openai-b",
+        configuredAccountID: sharedConfiguredAccountID,
+        accountName: "Work B",
+        label: "Weekly",
+        windowLabel: "Weekly",
+        unit: .percent,
+        used: 100,
+        limit: 100,
+        resetsAt: resetAt,
+        lastUpdatedAt: savedAt,
+        confidence: .observed
+    )
+    let staleSnapshot = UsageSnapshot(generatedAt: savedAt, limits: [firstAccount, secondAccount])
+    var state = ResetExpiryRefreshState()
+
+    state.recordAttempt(
+        previousSnapshot: staleSnapshot,
+        refreshedSnapshot: staleSnapshot,
+        attemptedAt: resetAt.addingTimeInterval(10)
+    )
+    state.recordAttempt(
+        previousSnapshot: staleSnapshot,
+        refreshedSnapshot: staleSnapshot,
+        attemptedAt: resetAt.addingTimeInterval(20)
+    )
+
+    let firstKey = try #require(ResetExpiryRefreshKey(limit: firstAccount))
+    let secondKey = try #require(ResetExpiryRefreshKey(limit: secondAccount))
+    let firstRecord = try #require(state.record(for: firstKey))
+    let secondRecord = try #require(state.record(for: secondKey))
+    #expect(state.records.count == 2)
+    #expect(firstRecord.retryCount == 2)
+    #expect(secondRecord.retryCount == 2)
+    #expect(firstRecord.key.accountID == "raw-openai-a")
+    #expect(secondRecord.key.accountID == "raw-openai-b")
+}
+
 @Test func resetExpiryRefreshStateDoesNotConsumeRetryForUnattemptedAccount() throws {
     let savedAt = Date(timeIntervalSince1970: 1_000)
     let resetAt = savedAt.addingTimeInterval(60)

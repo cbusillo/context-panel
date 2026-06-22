@@ -982,9 +982,14 @@ private struct ProviderAccountKey: Hashable, Sendable {
 
 private enum CompanionAccountIdentity {
     static func id(provider: Provider, accountID: String, configuredAccountID: String?) -> String {
-        ConnectorRedactor.localAccountID(
+        let stableID = "companion:" + ProviderAccountIdentity.unique(
+            accountID: accountID,
+            configuredAccountID: configuredAccountID
+        )
+
+        return ConnectorRedactor.localAccountID(
             provider: provider,
-            stableID: "companion:\(configuredAccountID ?? accountID)"
+            stableID: stableID
         )
     }
 
