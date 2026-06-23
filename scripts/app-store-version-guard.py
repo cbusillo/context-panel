@@ -8,6 +8,7 @@ import base64
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import tempfile
@@ -24,6 +25,10 @@ from typing import Any
 API_BASE = "https://api.appstoreconnect.apple.com/v1"
 DEFAULT_BUNDLE_ID = "com.shinycomputers.contextpanel"
 VERSION_PATTERN = re.compile(r"^[0-9]+(?:\.[0-9]+)*$")
+REQUEST_TIMEOUT_SECONDS = 60
+TRANSIENT_ATTEMPTS = 4
+TRANSIENT_BACKOFF_SECONDS = 5
+RETRYABLE_HTTP_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
 class AppStoreConnectError(RuntimeError):
@@ -124,28 +129,58 @@ class ASCClient:
         if body is not None:
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(url, data=data, method=method, headers=headers)
+        attempt = 1
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:
-                raw = response.read()
-                payload = json.loads(raw) if raw else None
-                if response.status not in allowed:
+            while True:
+                try:
+                    with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+                        raw = response.read()
+                        payload = json.loads(raw) if raw else None
+                        if response.status not in allowed:
+                            raise AppStoreConnectError(
+                                f"unexpected App Store Connect status {response.status}",
+                                response.status,
+                                payload,
+                            )
+                        return payload or {}
+                except urllib.error.HTTPError as error:
+                    try:
+                        raw = error.read().decode("utf-8", errors="replace")
+                    finally:
+                        error.close()
+                    try:
+                        payload = json.loads(raw)
+                    except json.JSONDecodeError:
+                        payload = {"raw": raw}
+                    if error.code in RETRYABLE_HTTP_STATUS_CODES and attempt < TRANSIENT_ATTEMPTS:
+                        self.wait_before_retry(method, path, attempt, f"HTTP {error.code}")
+                        attempt += 1
+                        continue
                     raise AppStoreConnectError(
-                        f"unexpected App Store Connect status {response.status}",
-                        response.status,
+                        f"App Store Connect request failed: {method} {path}",
+                        error.code,
                         payload,
-                    )
-                return payload or {}
-        except urllib.error.HTTPError as error:
-            raw = error.read().decode("utf-8", errors="replace")
-            try:
-                payload = json.loads(raw)
-            except json.JSONDecodeError:
-                payload = {"raw": raw}
-            raise AppStoreConnectError(
-                f"App Store Connect request failed: {method} {path}",
-                error.code,
-                payload,
-            ) from error
+                    ) from error
+                except (TimeoutError, socket.timeout, urllib.error.URLError) as error:
+                    if attempt < TRANSIENT_ATTEMPTS:
+                        self.wait_before_retry(method, path, attempt, str(error))
+                        attempt += 1
+                        continue
+                    raise AppStoreConnectError(
+                        f"App Store Connect request failed: {method} {path}: {error}"
+                    ) from error
+
+        except json.JSONDecodeError as error:
+            raise AppStoreConnectError(f"App Store Connect returned malformed JSON: {method} {path}") from error
+
+    def wait_before_retry(self, method: str, path: str, attempt: int, reason: str) -> None:
+        delay = TRANSIENT_BACKOFF_SECONDS * attempt
+        print(
+            f"Transient App Store Connect failure for {method} {path} "
+            f"(attempt {attempt}/{TRANSIENT_ATTEMPTS}): {reason}; retrying in {delay}s.",
+            file=sys.stderr,
+        )
+        time.sleep(delay)
 
 
 def paginated_get(
