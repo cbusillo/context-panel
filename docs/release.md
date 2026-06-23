@@ -329,7 +329,7 @@ Before uploading a companion build, run the companion upload workflow with
 ```sh
 scripts/upload-app-store-connect-companion-app.sh \
   --platform ios \
-  --version <next-app-store-version> \
+  --version <active-companion-app-store-version> \
   --build-number <yyyymmddHHMM> \
   --export-only
 ```
@@ -353,7 +353,7 @@ The next signed canary for #231 is:
 ```sh
 scripts/upload-app-store-connect-companion-app.sh \
   --platform visionos \
-  --version <next-app-store-version> \
+  --version <active-companion-app-store-version> \
   --build-number <yyyymmddHHMM> \
   --export-only
 ```
