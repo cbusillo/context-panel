@@ -494,9 +494,71 @@ import Testing
     #expect(presentation.title == "Synced from Mac")
     #expect(presentation.detail == "Latest Mac snapshot received through iCloud.")
     #expect(presentation.symbol == "checkmark.icloud")
-    #expect(presentation.usageSummary == "1 usage lane needs attention.")
+    #expect(presentation.usageSummary == nil)
     #expect(presentation.title.contains("Limited") == false)
-    #expect(presentation.usageSummary?.contains("Limited") == false)
+}
+
+@Test func companionSyncPresentationPrioritizesProviderFailuresOverLimitedLanes() throws {
+    let now = Date(timeIntervalSince1970: 3_082)
+    let stored = StoredUsageSnapshot(
+        savedAt: now,
+        snapshot: UsageSnapshot(generatedAt: now, limits: [
+            companionUsageLimit(status: .limited, accountID: "openai-weekly"),
+            companionUsageLimit(status: .limited, accountID: "openai-weekly-alt"),
+        ]),
+        reports: [StoredProviderReport(
+            provider: .openAI,
+            accountID: "raw-openai",
+            configuredAccountID: "configured-openai",
+            accountName: "Work OpenAI",
+            generatedAt: now,
+            status: .failure,
+            errorMessage: "Provider read failed"
+        )]
+    )
+    let document = CompanionSyncDocument(storedSnapshot: stored, publishedAt: now)
+
+    let presentation = CompanionSyncPresentation(
+        result: CompanionSyncLoadResult(document: document, status: .limited)
+    )
+
+    #expect(presentation.usageSummary == "1 provider needs attention on your Mac.")
+}
+
+@Test func companionSyncPresentationOmitsMultipleLimitedLanesFromStatusSummary() throws {
+    let now = Date(timeIntervalSince1970: 3_083)
+    let stored = StoredUsageSnapshot(
+        savedAt: now,
+        snapshot: UsageSnapshot(generatedAt: now, limits: [
+            companionUsageLimit(status: .limited, accountID: "openai-weekly"),
+            companionUsageLimit(status: .limited, accountID: "openai-weekly-alt"),
+        ])
+    )
+    let document = CompanionSyncDocument(storedSnapshot: stored, publishedAt: now)
+
+    let presentation = CompanionSyncPresentation(
+        result: CompanionSyncLoadResult(document: document, status: .limited)
+    )
+
+    #expect(presentation.usageSummary == nil)
+}
+
+@Test func companionSyncPresentationOmitsCloseLanesFromStatusSummary() throws {
+    let now = Date(timeIntervalSince1970: 3_084)
+    let stored = StoredUsageSnapshot(
+        savedAt: now,
+        snapshot: UsageSnapshot(generatedAt: now, limits: [
+            companionUsageLimit(status: .close, accountID: "openai-five-hour"),
+        ])
+    )
+    let document = CompanionSyncDocument(storedSnapshot: stored, publishedAt: now)
+
+    let presentation = CompanionSyncPresentation(
+        result: CompanionSyncLoadResult(document: document, status: .close)
+    )
+
+    #expect(presentation.title == "Synced from Mac")
+    #expect(presentation.usageSummary == nil)
 }
 
 @Test func companionSyncPresentationSeparatesSyncHealthFromProviderFailures() throws {
@@ -524,6 +586,41 @@ import Testing
     #expect(presentation.detail == "Latest Mac snapshot received through iCloud.")
     #expect(presentation.symbol == "checkmark.icloud")
     #expect(presentation.usageSummary == "1 provider needs attention on your Mac.")
+}
+
+@Test func companionSyncPresentationPluralizesProviderFailures() throws {
+    let now = Date(timeIntervalSince1970: 3_086)
+    let stored = StoredUsageSnapshot(
+        savedAt: now,
+        snapshot: UsageSnapshot(generatedAt: now, limits: []),
+        reports: [
+            StoredProviderReport(
+                provider: .openAI,
+                accountID: "raw-openai",
+                configuredAccountID: "configured-openai",
+                accountName: "Work OpenAI",
+                generatedAt: now,
+                status: .failure,
+                errorMessage: "Provider read failed"
+            ),
+            StoredProviderReport(
+                provider: .anthropic,
+                accountID: "raw-anthropic",
+                configuredAccountID: "configured-anthropic",
+                accountName: "Work Anthropic",
+                generatedAt: now,
+                status: .failure,
+                errorMessage: "Provider read failed"
+            ),
+        ]
+    )
+    let document = CompanionSyncDocument(storedSnapshot: stored, publishedAt: now)
+
+    let presentation = CompanionSyncPresentation(
+        result: CompanionSyncLoadResult(document: document, status: .failure)
+    )
+
+    #expect(presentation.usageSummary == "2 providers need attention on your Mac.")
 }
 
 @Test func companionSyncPresentationKeepsTransportFailuresSeparate() throws {
@@ -1181,7 +1278,7 @@ import Testing
     #expect(widget.promptCacheObservations.first?.accountID == widget.limits.first?.accountID)
     #expect(widget.promptCacheWidgetState == .available)
     #expect(widget.promptCacheSummary.latestHitRate == 0.9)
-    #expect(widget.message == "You're good to keep working.")
+    #expect(widget.message == "Usage data is current.")
 }
 
 @Test func widgetSnapshotFromCompanionSyncUsesProvidedStalenessPolicy() throws {

@@ -55,14 +55,6 @@ public struct CompanionSyncPresentation: Equatable, Sendable {
         guard let document else { return nil }
         let snapshot = document.snapshot
 
-        let limitedCount = snapshot.limits.filter { $0.status == .limited }.count
-        if limitedCount == 1 { return "1 usage lane needs attention." }
-        if limitedCount > 1 { return "\(limitedCount) usage lanes need attention." }
-
-        let closeCount = snapshot.limits.filter { $0.status == .close }.count
-        if closeCount == 1 { return "1 usage lane is close to its limit." }
-        if closeCount > 1 { return "\(closeCount) usage lanes are close to their limits." }
-
         let failedCount = snapshot.providerStatuses.filter { $0.status == .failure }.count
         if failedCount == 1 { return "1 provider needs attention on your Mac." }
         if failedCount > 1 { return "\(failedCount) providers need attention on your Mac." }

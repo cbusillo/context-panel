@@ -447,7 +447,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(widget.mainLimitSummaries.map(\.provider) == [.openAI])
     #expect(widget.needsProviderConnection == false)
     #expect(widget.shouldShowMainLimitEmptyRow == false)
-    #expect(widget.message == "You're good to keep working.")
+    #expect(widget.message == "Usage data is current.")
     #expect(widget.tightestHeadline == "80% left")
     #expect(widget.widgetDeepLinkURL(links: testWidgetLinks) == testWidgetLinks.overview)
     #expect(widget.widgetProviderSummaryText(provider: .openAI) == "1w 80% left")
@@ -746,7 +746,35 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
 
     #expect(widget.status == .limited)
     #expect(openAI?.status == .limited)
-    #expect(widget.message == "1 limit needs attention.")
+    #expect(widget.message == "Usage data is current.")
+}
+
+@Test func widgetMessageOmitsCloseLimitPressure() {
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let stored = StoredUsageSnapshot(savedAt: savedAt, snapshot: UsageSnapshot(
+        generatedAt: savedAt,
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "close",
+                accountName: "Close OpenAI",
+                label: "Codex Weekly",
+                windowLabel: "Weekly",
+                modelLabel: "Codex",
+                unit: .percent,
+                used: 82,
+                limit: 100,
+                statusOverride: .close
+            ),
+        ]
+    ))
+
+    let widget = WidgetSnapshot.fromStore(SnapshotStoreLoadResult(snapshot: stored, status: stored.snapshot.aggregateStatus), now: savedAt)
+    let openAI = widget.providerSummaries.first { $0.provider == .openAI }
+
+    #expect(widget.status == .close)
+    #expect(openAI?.status == .close)
+    #expect(widget.message == "Usage data is current.")
 }
 
 @Test func anthropicProviderSummaryUsesMainSummaryWhenNonMainLimitIsUnknown() {

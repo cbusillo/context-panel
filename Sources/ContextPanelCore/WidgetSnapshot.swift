@@ -243,12 +243,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             if stored.snapshot.mainLimitSummaries.isEmpty, stored.reports.contains(where: { $0.status == .failure }) {
                 return "Connect an account to show limits."
             }
-            let limitedCount = stored.snapshot.mainLimitSummaries.filter { $0.status == .limited }.count
-                + stored.snapshot.limits.filter { !$0.isMainLimit && $0.status == .limited }.count
-            if limitedCount > 0 {
-                return "\(limitedCount) limit needs attention."
-            }
-            return "You're good to keep working."
+            return "Usage data is current."
         case .setupNeeded:
             return "Set up Context Panel in the app."
         case .stale:
