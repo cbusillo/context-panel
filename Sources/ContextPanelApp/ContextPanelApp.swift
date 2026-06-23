@@ -1,4 +1,5 @@
 import ContextPanelCore
+import ContextPanelCloudKitSync
 import AppKit
 import os
 import ServiceManagement
@@ -3574,7 +3575,7 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     init() {
-        refreshService = .appDefault()
+        refreshService = .appDefault(companionRemoteStore: CompanionCloudKitSyncStoreFactory.make())
         refreshRunner = SnapshotRefreshRunner(service: refreshService)
     }
 

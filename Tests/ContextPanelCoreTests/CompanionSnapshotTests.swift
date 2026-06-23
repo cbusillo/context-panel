@@ -963,7 +963,7 @@ import Testing
     #expect(mirrored.status == .close)
 }
 
-@Test func companionWidgetLoaderRefreshesStaleMirrorFromICloudDocument() throws {
+@Test func companionAppLoaderRefreshesStaleMirrorFromICloudDocument() throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
     let now = Date(timeIntervalSince1970: 3_545)
@@ -990,9 +990,9 @@ import Testing
         policy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge),
         now: now
     )
-    let result = CompanionSyncLoader.loadWidgetMirror(
+    let result = CompanionSyncLoader.load(
         localMirrorURL: localURL,
-        resolveICloudDocumentURL: { iCloudURL },
+        iCloudDocumentURL: iCloudURL,
         now: now
     )
     let mirrored = CompanionSyncStore(documentURL: localURL).load(
@@ -1011,7 +1011,7 @@ import Testing
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
     let now = Date(timeIntervalSince1970: 3_546)
-    let staleGeneratedAt = now.addingTimeInterval(-SnapshotFreshness.widgetMaximumAge - 30)
+    let staleGeneratedAt = now.addingTimeInterval(-SnapshotFreshness.companionMirrorMaximumAge - 30)
     let localURL = root.appending(path: "local/companion.json")
     let staleDocument = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: staleGeneratedAt),
@@ -1038,11 +1038,11 @@ import Testing
     #expect(modifiedAt == originalModifiedAt)
 }
 
-@Test func companionWidgetLoaderFallbackRefreshesStaleMirrorFromICloudDocument() throws {
+@Test func companionWidgetLoaderDoesNotRefreshStaleMirrorFromICloudDocument() throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
     let now = Date(timeIntervalSince1970: 3_546)
-    let staleGeneratedAt = now.addingTimeInterval(-SnapshotFreshness.widgetMaximumAge - 30)
+    let staleGeneratedAt = now.addingTimeInterval(-SnapshotFreshness.companionMirrorMaximumAge - 30)
     let localURL = root.appending(path: "local/companion.json")
     let iCloudURL = root.appending(path: "icloud/companion.json")
     let staleDocument = CompanionSyncDocument(
@@ -1070,9 +1070,9 @@ import Testing
         FileManager.default.attributesOfItem(atPath: localURL.path)[.modificationDate] as? Date
     )
 
-    #expect(result.document == freshDocument)
-    #expect(result.status == .close)
-    #expect(modifiedAt != originalModifiedAt)
+    #expect(result.document == staleDocument)
+    #expect(result.status == .stale)
+    #expect(modifiedAt == originalModifiedAt)
 }
 
 @Test func companionWidgetLoaderDoesNotRewriteLocalMirrorWhenLocalDocumentWins() throws {
@@ -1217,7 +1217,7 @@ import Testing
     #expect(result.document == document)
     #expect(result.status == .close)
     #expect(diagnostics?.outcome == .partial)
-    #expect(diagnostics?.appGroupSucceeded == nil)
+    #expect(diagnostics?.appGroupSucceeded == true)
     #expect(diagnostics?.iCloudAvailable == true)
     #expect(diagnostics?.iCloudSucceeded == false)
     #expect(diagnostics?.loadedDocument == true)
@@ -1337,6 +1337,194 @@ import Testing
     #expect(widget.state == .setupNeeded)
     #expect(widget.generatedAt == now)
     #expect(widget.message == "Sync Context Panel from your Mac.")
+}
+
+@Test func companionPayloadCodecRoundTripsSanitizedDocument() throws {
+    let generatedAt = Date(timeIntervalSince1970: 3_333)
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: generatedAt),
+        publishedAt: generatedAt.addingTimeInterval(5)
+    )
+
+    let data = try CompanionSyncPayloadCodec.encode(document)
+    let json = String(decoding: data, as: UTF8.self)
+    let roundTrip = try CompanionSyncPayloadCodec.decode(data)
+
+    #expect(roundTrip == document)
+    #expect(json.contains("raw-openai") == false)
+    #expect(json.contains("configured-openai") == false)
+    #expect(json.contains("secret") == false)
+}
+
+@Test func companionWidgetMirrorLoaderDoesNotResolveICloudFallback() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 3_334)
+    let mirrorURL = root.appending(path: "missing-companion.json")
+    var resolvedICloud = false
+
+    let result = CompanionSyncLoader.loadWidgetMirror(
+        localMirrorURL: mirrorURL,
+        resolveICloudDocumentURL: {
+            resolvedICloud = true
+            return root.appending(path: "icloud-companion.json")
+        },
+        now: now
+    )
+
+    #expect(result.document == nil)
+    #expect(result.status == .unknown)
+    #expect(resolvedICloud == false)
+}
+
+@Test func companionLoaderMirrorsFreshRemoteCloudKitDocument() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 3_335)
+    let localURL = root.appending(path: "local-companion.json")
+    let remoteDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now.addingTimeInterval(1)
+    )
+    let remoteLoad = CompanionRemoteSyncLoadResult(
+        result: CompanionSyncLoadResult(document: remoteDocument, status: .healthy),
+        outcome: CompanionRemoteSyncOutcome(succeeded: true)
+    )
+
+    let result = CompanionSyncLoader.load(
+        localMirrorURL: localURL,
+        iCloudDocumentURL: nil,
+        remoteLoad: remoteLoad,
+        now: now
+    )
+
+    let mirrored = CompanionSyncStore(documentURL: localURL).load()
+    #expect(result.document == remoteDocument)
+    #expect(result.transportMetadata?.source == .cloudKit)
+    #expect(result.transportMetadata?.mirroredAt == now)
+    #expect(mirrored.document == remoteDocument)
+}
+
+@Test func companionLoaderDiagnosticsReportHealthyRemoteCloudKitMirror() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 3_335.5)
+    let localURL = root.appending(path: "local-companion.json")
+    let diagnosticsStore = RefreshDiagnosticsStateStore(
+        stateURL: root.appending(path: "refresh-diagnostics-state.json")
+    )
+    let remoteDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now.addingTimeInterval(1)
+    )
+
+    let result = CompanionSyncLoader.load(
+        localMirrorURL: localURL,
+        iCloudDocumentURL: nil,
+        remoteLoad: CompanionRemoteSyncLoadResult(
+            result: CompanionSyncLoadResult(document: remoteDocument, status: .healthy),
+            outcome: CompanionRemoteSyncOutcome(succeeded: true)
+        ),
+        diagnosticsStore: diagnosticsStore,
+        now: now
+    )
+
+    let diagnostics = diagnosticsStore.load().lastCompanionLoad
+    #expect(result.document == remoteDocument)
+    #expect(diagnostics?.outcome == .healthy)
+    #expect(diagnostics?.appGroupSucceeded == true)
+    #expect(diagnostics?.cloudKitAvailable == true)
+    #expect(diagnostics?.cloudKitSucceeded == true)
+    #expect(diagnostics?.loadedDocument == true)
+    #expect(diagnostics?.mirroredDocument == true)
+    #expect(diagnostics?.stale == false)
+    #expect(diagnostics?.errorMessage == nil)
+}
+
+@Test func companionLoaderKeepsNewerLocalMirrorOverOlderCloudKitDocument() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 3_336)
+    let localURL = root.appending(path: "local-companion.json")
+    let localDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now.addingTimeInterval(2)
+    )
+    let olderRemoteDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now.addingTimeInterval(-60)),
+        publishedAt: now.addingTimeInterval(-30)
+    )
+    try CompanionSyncStore(documentURL: localURL).save(localDocument)
+
+    let result = CompanionSyncLoader.load(
+        localMirrorURL: localURL,
+        iCloudDocumentURL: nil,
+        remoteLoad: CompanionRemoteSyncLoadResult(
+            result: CompanionSyncLoadResult(document: olderRemoteDocument, status: .healthy),
+            outcome: CompanionRemoteSyncOutcome(succeeded: true)
+        ),
+        now: now
+    )
+
+    #expect(result.document == localDocument)
+    #expect(CompanionSyncStore(documentURL: localURL).load().document == localDocument)
+}
+
+@Test func companionWidgetSnapshotTreatsMirrorDelayAsSyncDelayNotProviderRefresh() {
+    let generatedAt = Date(timeIntervalSince1970: 3_337)
+    let now = generatedAt.addingTimeInterval(SnapshotFreshness.widgetMaximumAge + 30)
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: generatedAt),
+        publishedAt: generatedAt
+    )
+
+    let widget = WidgetSnapshot.fromCompanionSync(
+        CompanionSyncLoadResult(
+            document: document,
+            status: .healthy,
+            transportMetadata: CompanionSyncTransportMetadata(
+                source: .appGroup,
+                receivedAt: generatedAt,
+                mirroredAt: generatedAt,
+                deliveryStatus: .delayed
+            )
+        ),
+        now: now,
+        stalenessPolicy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.companionMirrorMaximumAge)
+    )
+
+    #expect(widget.state == .ready)
+    #expect(widget.status == .close)
+    #expect(widget.refreshAttentionSummary == nil)
+    #expect(widget.message == "Usage data is current.")
+}
+
+@Test func companionWidgetSnapshotKeepsProviderStaleEvenWhenTransportIsDelayed() {
+    let generatedAt = Date(timeIntervalSince1970: 3_338)
+    let now = generatedAt.addingTimeInterval(SnapshotFreshness.companionProviderMaximumAge + 30)
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: generatedAt),
+        publishedAt: generatedAt
+    )
+
+    let widget = WidgetSnapshot.fromCompanionSync(
+        CompanionSyncLoadResult(
+            document: document,
+            status: .stale,
+            transportMetadata: CompanionSyncTransportMetadata(
+                source: .cloudKit,
+                receivedAt: generatedAt,
+                mirroredAt: generatedAt,
+                deliveryStatus: .delayed
+            )
+        ),
+        now: now,
+        stalenessPolicy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.companionProviderMaximumAge)
+    )
+
+    #expect(widget.state == .stale)
+    #expect(widget.promptCacheWidgetState == .stale)
+    #expect(widget.refreshAttentionSummary != nil)
 }
 
 @Test func companionSyncPublisherIncludesCurrentPreferencesAndForecastSettings() throws {

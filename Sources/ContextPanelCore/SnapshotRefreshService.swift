@@ -331,7 +331,7 @@ public struct SnapshotRefreshRunner: Sendable {
         let previousSnapshot = service.loadCurrent().snapshot?.snapshot
         if let lock {
             guard let outcome = try await lock.withLock(now: savedAt, {
-                try service.saveMerged(
+                try await service.saveMergedAsync(
                     refreshResult: refreshResult,
                     savedAt: savedAt,
                     preservesUnreportedAccounts: preservesUnreportedAccounts
@@ -346,7 +346,7 @@ public struct SnapshotRefreshRunner: Sendable {
             return .refreshed(outcome)
         }
 
-        let outcome = try service.saveMerged(
+        let outcome = try await service.saveMergedAsync(
             refreshResult: refreshResult,
             savedAt: savedAt,
             preservesUnreportedAccounts: preservesUnreportedAccounts
@@ -480,7 +480,10 @@ public struct SnapshotRefreshService: Sendable {
         self.allowsExternalGoogleKeychain = allowsExternalGoogleKeychain
     }
 
-    public static func appDefault(allowsExternalGoogleKeychain: Bool = true) -> SnapshotRefreshService {
+    public static func appDefault(
+        allowsExternalGoogleKeychain: Bool = true,
+        companionRemoteStore: CompanionRemoteSyncStore? = nil
+    ) -> SnapshotRefreshService {
         SnapshotRefreshService(
             accountStore: AccountConfigurationStore(
                 configurationURL: ContextPanelLocations.accountConfigurationURL(),
@@ -489,7 +492,7 @@ public struct SnapshotRefreshService: Sendable {
             stores: .appDefault(),
             bookmarkStore: SecureFileBookmarkStore(storeURL: ContextPanelLocations.bookmarkStoreURL()),
             credentialStore: ProviderCredentialStore(),
-            companionSyncPublisher: .appDefault(),
+            companionSyncPublisher: .appDefault(remoteStore: companionRemoteStore),
             refreshDiagnosticsStore: RefreshDiagnosticsStateStore(
                 stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.appGroupID)
             ),
@@ -589,7 +592,38 @@ public struct SnapshotRefreshService: Sendable {
             RefreshDiagnostics.logRefreshSkippedNoPayload(reportCount: refreshResult.reports.count)
             return SnapshotRefreshOutcome(savedAt: now, refreshResult: refreshResult)
         }
-        return try saveMerged(refreshResult: refreshResult, savedAt: now)
+        return try await saveMergedAsync(refreshResult: refreshResult, savedAt: now)
+    }
+
+    public func saveMergedAsync(
+        refreshResult: ConnectorRefreshResult,
+        savedAt: Date = Date(),
+        preservesUnreportedAccounts: Bool = false
+    ) async throws -> SnapshotRefreshOutcome {
+        try stores.primary.saveMerged(
+            refreshResult: refreshResult,
+            savedAt: savedAt,
+            preservesUnreportedAccounts: preservesUnreportedAccounts
+        )
+        if let storedSnapshot = stores.primary.loadCurrent().snapshot {
+            let companionResult = await companionSyncPublisher?.publishAll(
+                storedSnapshot: storedSnapshot,
+                publishedAt: savedAt
+            )
+            if let companionResult {
+                let companionLoadRecord = companionSyncPublisher?.stores.loadWithDiagnostics(
+                    policy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.companionProviderMaximumAge),
+                    now: savedAt
+                ).diagnosticsRecord(at: savedAt)
+                try? refreshDiagnosticsStore?.update { state in
+                    state.recordCompanionSync(companionResult.diagnosticsRecord(at: savedAt))
+                    if let companionLoadRecord {
+                        state.recordCompanionSync(companionLoadRecord)
+                    }
+                }
+            }
+        }
+        return SnapshotRefreshOutcome(savedAt: savedAt, refreshResult: refreshResult)
     }
 
     private func accountDocumentForRefresh(_ document: AccountConfigurationDocument) -> AccountConfigurationDocument {
@@ -763,7 +797,7 @@ public struct SnapshotRefreshService: Sendable {
             let companionResult = companionSyncPublisher?.publish(storedSnapshot: storedSnapshot, publishedAt: savedAt)
             if let companionResult {
                 let companionLoadRecord = companionSyncPublisher?.stores.loadWithDiagnostics(
-                    policy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge),
+                    policy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.companionProviderMaximumAge),
                     now: savedAt
                 ).diagnosticsRecord(at: savedAt)
                 try? refreshDiagnosticsStore?.update { state in

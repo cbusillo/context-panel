@@ -1948,8 +1948,7 @@ import Testing
         status: .healthy
     )
 
-    Task {
-        try? await Task.sleep(for: .milliseconds(100))
+    DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + .milliseconds(100)) {
         try? FileManager.default.removeItem(at: lockURL)
     }
 

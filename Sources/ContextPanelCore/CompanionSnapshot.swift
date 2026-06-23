@@ -80,11 +80,18 @@ public struct CompanionSyncLoadResult: Equatable, Sendable {
     public let document: CompanionSyncDocument?
     public let status: UsageStatus
     public let errorMessage: String?
+    public let transportMetadata: CompanionSyncTransportMetadata?
 
-    public init(document: CompanionSyncDocument?, status: UsageStatus, errorMessage: String? = nil) {
+    public init(
+        document: CompanionSyncDocument?,
+        status: UsageStatus,
+        errorMessage: String? = nil,
+        transportMetadata: CompanionSyncTransportMetadata? = nil
+    ) {
         self.document = document
         self.status = status
         self.errorMessage = errorMessage.map(ConnectorRedactor.redact)
+        self.transportMetadata = transportMetadata
     }
 }
 
@@ -187,9 +194,12 @@ public struct CompanionSyncSaveResult: Equatable, Sendable {
     public func diagnosticsRecord(at attemptedAt: Date) -> CompanionSyncDiagnosticsRecord {
         let appGroupOutcomes = storeOutcomes.filter { $0.storeRole == "app-group" }
         let iCloudOutcomes = storeOutcomes.filter { $0.storeRole == "icloud" }
+        let cloudKitOutcomes = storeOutcomes.filter { $0.storeRole == CompanionRemoteSync.cloudKitStoreRole }
         let appGroupSucceeded = appGroupOutcomes.isEmpty ? nil : appGroupOutcomes.contains { $0.succeeded }
         let iCloudSucceeded = iCloudOutcomes.isEmpty ? nil : iCloudOutcomes.contains { $0.succeeded }
         let iCloudAvailable = iCloudOutcomes.isEmpty ? nil : iCloudOutcomes.contains { $0.isAvailable }
+        let cloudKitSucceeded = cloudKitOutcomes.isEmpty ? nil : cloudKitOutcomes.contains { $0.succeeded }
+        let cloudKitAvailable = cloudKitOutcomes.isEmpty ? nil : cloudKitOutcomes.contains { $0.isAvailable }
         let hasOutcomeFailure = storeOutcomes.contains { !$0.succeeded }
         let outcome: CompanionSyncDiagnosticsOutcome
         if !hasOutcomeFailure, successfulStoreCount == attemptedStoreCount, attemptedStoreCount > 0 {
@@ -206,6 +216,8 @@ public struct CompanionSyncSaveResult: Equatable, Sendable {
             appGroupSucceeded: appGroupSucceeded,
             iCloudSucceeded: iCloudSucceeded,
             iCloudAvailable: iCloudAvailable,
+            cloudKitSucceeded: cloudKitSucceeded,
+            cloudKitAvailable: cloudKitAvailable,
             errorMessage: failures.first?.errorMessage ?? storeOutcomes.first(where: { !$0.succeeded })?.errorMessage
         )
     }
@@ -237,9 +249,12 @@ public struct CompanionSyncLoadDiagnosticsResult: Equatable, Sendable {
     public func diagnosticsRecord(at attemptedAt: Date) -> CompanionSyncDiagnosticsRecord {
         let appGroupOutcomes = storeOutcomes.filter { $0.storeRole == "app-group" }
         let iCloudOutcomes = storeOutcomes.filter { $0.storeRole == "icloud" }
+        let cloudKitOutcomes = storeOutcomes.filter { $0.storeRole == CompanionRemoteSync.cloudKitStoreRole }
         let appGroupSucceeded = appGroupOutcomes.isEmpty ? nil : appGroupOutcomes.contains { $0.succeeded }
         let iCloudSucceeded = iCloudOutcomes.isEmpty ? nil : iCloudOutcomes.contains { $0.succeeded }
         let iCloudAvailable = iCloudOutcomes.isEmpty ? nil : iCloudOutcomes.contains { $0.isAvailable }
+        let cloudKitSucceeded = cloudKitOutcomes.isEmpty ? nil : cloudKitOutcomes.contains { $0.succeeded }
+        let cloudKitAvailable = cloudKitOutcomes.isEmpty ? nil : cloudKitOutcomes.contains { $0.isAvailable }
         let loadedDocument = result.document != nil
         let hasOutcomeFailure = storeOutcomes.contains { !$0.succeeded }
         let outcome: CompanionSyncDiagnosticsOutcome
@@ -263,6 +278,8 @@ public struct CompanionSyncLoadDiagnosticsResult: Equatable, Sendable {
             appGroupSucceeded: appGroupSucceeded,
             iCloudSucceeded: iCloudSucceeded,
             iCloudAvailable: iCloudAvailable,
+            cloudKitSucceeded: cloudKitSucceeded,
+            cloudKitAvailable: cloudKitAvailable,
             loadedDocument: loadedDocument,
             stale: result.status == .stale,
             errorMessage: result.errorMessage ?? storeOutcomes.first(where: { !$0.succeeded })?.errorMessage
@@ -312,7 +329,16 @@ public struct CompanionSyncStore: Sendable {
 
         do {
             let document = try loadDocument()
-            return CompanionSyncLoadResult(document: document, status: document.companionStatus)
+            return CompanionSyncLoadResult(
+                document: document,
+                status: document.companionStatus,
+                transportMetadata: CompanionSyncTransportMetadata(
+                    source: .storeRole(CompanionSyncStoreFailure.storeRole(for: documentURL)),
+                    receivedAt: nil,
+                    mirroredAt: nil,
+                    deliveryStatus: .healthy
+                )
+            )
         } catch {
             return CompanionSyncLoadResult(
                 document: nil,
@@ -332,7 +358,12 @@ public struct CompanionSyncStore: Sendable {
         let status = now.timeIntervalSince(document.snapshot.generatedAt) > policy.maximumAge
             ? .stale
             : document.companionStatus
-        return CompanionSyncLoadResult(document: document, status: status, errorMessage: result.errorMessage)
+        return CompanionSyncLoadResult(
+            document: document,
+            status: status,
+            errorMessage: result.errorMessage,
+            transportMetadata: result.transportMetadata
+        )
     }
 
     public func saveResult(_ document: CompanionSyncDocument) -> CompanionSyncSaveResult {
@@ -395,7 +426,16 @@ public struct CompanionSyncStore: Sendable {
             let status = now.timeIntervalSince(document.snapshot.generatedAt) > policy.maximumAge
                 ? .stale
                 : document.companionStatus
-            return CompanionSyncLoadResult(document: document, status: status)
+            return CompanionSyncLoadResult(
+                document: document,
+                status: status,
+                transportMetadata: CompanionSyncTransportMetadata(
+                    source: .storeRole(CompanionSyncStoreFailure.storeRole(for: documentURL)),
+                    receivedAt: nil,
+                    mirroredAt: nil,
+                    deliveryStatus: .healthy
+                )
+            )
         } catch {
             return CompanionSyncLoadResult(
                 document: nil,
@@ -722,22 +762,26 @@ private struct CompanionSyncLoadCandidate: Equatable, Sendable {
 
 public struct CompanionSyncPublisher: Sendable {
     public let stores: CompanionSyncStoreSet
+    public let remoteStore: CompanionRemoteSyncStore?
     public let widgetPreferencesStore: WidgetDisplayPreferencesStore
     public let fastModeForecastSettingsStore: FastModeForecastSettingsStore
 
     public init(
         stores: CompanionSyncStoreSet,
+        remoteStore: CompanionRemoteSyncStore? = nil,
         widgetPreferencesStore: WidgetDisplayPreferencesStore,
         fastModeForecastSettingsStore: FastModeForecastSettingsStore
     ) {
         self.stores = stores
+        self.remoteStore = remoteStore
         self.widgetPreferencesStore = widgetPreferencesStore
         self.fastModeForecastSettingsStore = fastModeForecastSettingsStore
     }
 
-    public static func appDefault() -> CompanionSyncPublisher {
+    public static func appDefault(remoteStore: CompanionRemoteSyncStore? = nil) -> CompanionSyncPublisher {
         CompanionSyncPublisher(
             stores: ContextPanelLocations.companionSyncStoreSet(),
+            remoteStore: remoteStore,
             widgetPreferencesStore: WidgetDisplayPreferencesStore(
                 preferencesURL: ContextPanelLocations.widgetDisplayPreferencesURL(appGroupID: ContextPanelLocations.appGroupID)
             ),
@@ -749,13 +793,37 @@ public struct CompanionSyncPublisher: Sendable {
 
     @discardableResult
     public func publish(storedSnapshot: StoredUsageSnapshot, publishedAt: Date = Date()) -> CompanionSyncSaveResult {
-        let document = CompanionSyncDocument(
+        publish(document: makeDocument(storedSnapshot: storedSnapshot, publishedAt: publishedAt))
+    }
+
+    @discardableResult
+    public func publish(document: CompanionSyncDocument) -> CompanionSyncSaveResult {
+        let result = stores.save(document)
+        logPublishResult(result)
+        return result
+    }
+
+    @discardableResult
+    public func publishAll(storedSnapshot: StoredUsageSnapshot, publishedAt: Date = Date()) async -> CompanionSyncSaveResult {
+        let document = makeDocument(storedSnapshot: storedSnapshot, publishedAt: publishedAt)
+        var result = publish(document: document)
+        if let remoteStore {
+            let remoteOutcome = await remoteStore.save(document)
+            result = result.appending(storeOutcome: remoteOutcome.storeOutcome)
+        }
+        return result
+    }
+
+    private func makeDocument(storedSnapshot: StoredUsageSnapshot, publishedAt: Date) -> CompanionSyncDocument {
+        CompanionSyncDocument(
             storedSnapshot: storedSnapshot,
             publishedAt: publishedAt,
             widgetDisplayPreferences: widgetPreferencesStore.load(),
             fastModeForecastSettings: fastModeForecastSettingsStore.load()
         )
-        let result = stores.save(document)
+    }
+
+    private func logPublishResult(_ result: CompanionSyncSaveResult) {
         if !result.succeeded {
             companionSyncLogger.error("companion sync publish failed stores=\(result.attemptedStoreCount, privacy: .public)")
         } else if !result.failures.isEmpty {
@@ -766,7 +834,17 @@ public struct CompanionSyncPublisher: Sendable {
                 "companion sync publish store failed store=\(failure.storeRole, privacy: .public) domain=\(failure.errorDomain, privacy: .public) code=\(failure.errorCode, privacy: .public) error=\(failure.errorMessage, privacy: .public)"
             )
         }
-        return result
+    }
+}
+
+private extension CompanionSyncSaveResult {
+    func appending(storeOutcome: CompanionSyncStoreOutcome) -> CompanionSyncSaveResult {
+        CompanionSyncSaveResult(
+            attemptedStoreCount: attemptedStoreCount + 1,
+            successfulStoreCount: successfulStoreCount + (storeOutcome.succeeded ? 1 : 0),
+            failures: failures,
+            storeOutcomes: storeOutcomes + [storeOutcome]
+        )
     }
 }
 
@@ -920,7 +998,7 @@ private extension Array where Element == CompanionLimit {
     }
 }
 
-private extension CompanionSyncDocument {
+public extension CompanionSyncDocument {
     var companionStatus: UsageStatus {
         let limitStatuses = snapshot.limits.map(\.status)
         let providerStatuses = snapshot.providerStatuses.map(\.status)
