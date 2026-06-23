@@ -132,6 +132,175 @@ import Testing
     #expect(Set(companion.promptCacheSummaries.map(\.companionAccountID)).count == 2)
 }
 
+@Test func companionSnapshotKeepsSharedConfiguredAccountsDistinctWithSafeIDs() throws {
+    let generatedAt = Date(timeIntervalSince1970: 1_550)
+    let sharedConfiguredAccountID = "configured-openai-shared"
+    let stored = StoredUsageSnapshot(
+        savedAt: generatedAt,
+        snapshot: UsageSnapshot(generatedAt: generatedAt, limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "raw-openai-a",
+                configuredAccountID: sharedConfiguredAccountID,
+                accountName: "Work A",
+                label: "Weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 10,
+                limit: 100
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "raw-openai-b",
+                configuredAccountID: sharedConfiguredAccountID,
+                accountName: "Work B",
+                label: "Weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 20,
+                limit: 100
+            ),
+        ]),
+        reports: [
+            StoredProviderReport(
+                provider: .openAI,
+                accountID: "raw-openai-a",
+                configuredAccountID: sharedConfiguredAccountID,
+                accountName: "Work A",
+                generatedAt: generatedAt,
+                status: .healthy,
+                errorMessage: nil
+            ),
+            StoredProviderReport(
+                provider: .openAI,
+                accountID: "raw-openai-b",
+                configuredAccountID: sharedConfiguredAccountID,
+                accountName: "Work B",
+                generatedAt: generatedAt,
+                status: .healthy,
+                errorMessage: nil
+            ),
+        ],
+        promptCacheObservations: [
+            PromptCacheObservation(
+                provider: .openAI,
+                accountID: "raw-openai-a",
+                accountName: "Work A",
+                observedAt: generatedAt,
+                windowLabel: "Last hour",
+                tokens: PromptCacheTokenSet(inputTokens: 1_000, cachedInputTokens: 900)
+            ),
+            PromptCacheObservation(
+                provider: .openAI,
+                accountID: "raw-openai-b",
+                accountName: "Work B",
+                observedAt: generatedAt.addingTimeInterval(1),
+                windowLabel: "Last hour",
+                tokens: PromptCacheTokenSet(inputTokens: 1_000, cachedInputTokens: 300)
+            ),
+        ]
+    )
+    let document = CompanionSyncDocument(storedSnapshot: stored, publishedAt: generatedAt)
+    let companion = document.snapshot
+    let data = try JSONEncoder.contextPanelCompanionEncoder.encode(companion)
+    let json = String(decoding: data, as: UTF8.self)
+    let widget = WidgetSnapshot.fromCompanionSync(
+        CompanionSyncLoadResult(document: document, status: .healthy),
+        now: generatedAt
+    )
+    let openAISummary = try #require(widget.usageSnapshot.mainLimitSummaries.first { $0.provider == Provider.openAI })
+    let limitIDsByName: [String: String] = Dictionary(uniqueKeysWithValues: companion.limits.map { limit in
+        (limit.accountName, limit.companionAccountID)
+    })
+    let statusIDsByName: [String: String] = Dictionary(uniqueKeysWithValues: companion.providerStatuses.map { status in
+        (status.accountName, status.companionAccountID)
+    })
+    let cacheIDsByName: [String: String] = Dictionary(uniqueKeysWithValues: companion.promptCacheSummaries.map { summary in
+        (summary.accountName, summary.companionAccountID)
+    })
+
+    #expect(Set(companion.limits.map { $0.companionAccountID }).count == 2)
+    #expect(Set(companion.providerStatuses.map { $0.companionAccountID }).count == 2)
+    #expect(Set(companion.promptCacheSummaries.map { $0.companionAccountID }).count == 2)
+    #expect(statusIDsByName == limitIDsByName)
+    #expect(cacheIDsByName == limitIDsByName)
+    #expect(openAISummary.accountCount == 2)
+    #expect(openAISummary.used == 30)
+    #expect(openAISummary.limit == 200)
+    #expect(json.contains("raw-openai-a") == false)
+    #expect(json.contains("raw-openai-b") == false)
+    #expect(json.contains(sharedConfiguredAccountID) == false)
+}
+
+@Test func companionSnapshotKeepsLongerWindowExhaustionScopedToRawAccount() throws {
+    let generatedAt = Date(timeIntervalSince1970: 1_575)
+    let sharedConfiguredAccountID = "configured-openai-shared"
+    let document = CompanionSyncDocument(storedSnapshot: StoredUsageSnapshot(
+        savedAt: generatedAt,
+        snapshot: UsageSnapshot(generatedAt: generatedAt, limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "raw-openai-full",
+                configuredAccountID: sharedConfiguredAccountID,
+                accountName: "Full weekly",
+                label: "Codex 5-hour",
+                windowLabel: "5-hour",
+                unit: .percent,
+                used: 60,
+                limit: 100
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "raw-openai-full",
+                configuredAccountID: sharedConfiguredAccountID,
+                accountName: "Full weekly",
+                label: "Codex Weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 100,
+                limit: 100
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "raw-openai-available",
+                configuredAccountID: sharedConfiguredAccountID,
+                accountName: "Available weekly",
+                label: "Codex 5-hour",
+                windowLabel: "5-hour",
+                unit: .percent,
+                used: 5,
+                limit: 100
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "raw-openai-available",
+                configuredAccountID: sharedConfiguredAccountID,
+                accountName: "Available weekly",
+                label: "Codex Weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 22,
+                limit: 100
+            ),
+        ])
+    ), publishedAt: generatedAt)
+    let widget = WidgetSnapshot.fromCompanionSync(
+        CompanionSyncLoadResult(document: document, status: .healthy),
+        now: generatedAt
+    )
+    let summaries = Dictionary(uniqueKeysWithValues: widget.usageSnapshot.mainLimitSummaries.map { ($0.id, $0) })
+    let fiveHour = try #require(summaries["openai:fiveHour"])
+    let weekly = try #require(summaries["openai:weekly"])
+
+    #expect(fiveHour.accountCount == 2)
+    #expect(fiveHour.liveLimits.map(\.accountName) == ["Available weekly"])
+    #expect(fiveHour.used == 5)
+    #expect(fiveHour.limit == 100)
+    #expect(weekly.accountCount == 2)
+    #expect(weekly.used == 122)
+    #expect(weekly.limit == 200)
+}
+
 @Test func companionSnapshotSanitizesPathAndEmailDisplayNames() throws {
     let generatedAt = Date(timeIntervalSince1970: 1_600)
     let stored = StoredUsageSnapshot(

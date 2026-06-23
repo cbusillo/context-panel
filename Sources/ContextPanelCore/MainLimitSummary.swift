@@ -325,7 +325,11 @@ public struct AccountResetRecommendation: Equatable, Identifiable, Sendable {
     public let limit: UsageLimit
 
     public var id: String {
-        "\(provider.rawValue):\(configuredAccountID ?? accountID):\(window.rawValue):\(Int(resetsAt.timeIntervalSince1970))"
+        let accountIdentity = ProviderAccountIdentity.unique(
+            accountID: accountID,
+            configuredAccountID: configuredAccountID
+        )
+        return "\(provider.rawValue):\(accountIdentity):\(window.rawValue):\(Int(resetsAt.timeIntervalSince1970))"
     }
 }
 

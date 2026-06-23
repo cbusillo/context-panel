@@ -194,6 +194,10 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
         configuredAccountID ?? accountID
     }
 
+    var uniqueAccountIdentity: String {
+        ProviderAccountIdentity.unique(accountID: accountID, configuredAccountID: configuredAccountID)
+    }
+
     public var usageRatio: Double? {
         guard let used, let limit else { return nil }
         return min(Double(used) / Double(limit), 1)
@@ -226,6 +230,20 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
             return .close
         }
         return .healthy
+    }
+}
+
+enum ProviderAccountIdentity {
+    static func unique(accountID: String, configuredAccountID: String?) -> String {
+        if let configuredAccountID, !configuredAccountID.isEmpty {
+            return [component("configured", configuredAccountID), component("account", accountID)]
+                .joined()
+        }
+        return component("account", accountID)
+    }
+
+    static func component(_ name: String, _ value: String) -> String {
+        "\(name)#\(value.utf8.count):\(value)"
     }
 }
 
