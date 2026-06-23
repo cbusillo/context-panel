@@ -1,4 +1,5 @@
 import ContextPanelCore
+import ContextPanelCloudKitSync
 import ContextPanelCompanionSupport
 import ContextPanelWidgetUI
 import SwiftUI
@@ -7,9 +8,48 @@ import WidgetKit
 
 @main
 struct ContextPanelCompanionApp: App {
+    @UIApplicationDelegateAdaptor(CompanionAppDelegate.self) private var appDelegate
+
     var body: some Scene {
         WindowGroup {
             CompanionRootView()
+        }
+    }
+}
+
+private final class CompanionAppDelegate: NSObject, UIApplicationDelegate {
+    private let remoteStore = CompanionCloudKitSyncStoreFactory.make()
+
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        application.registerForRemoteNotifications()
+        Task { [remoteStore] in
+            _ = await remoteStore.registerSubscription()
+        }
+        return true
+    }
+
+    func application(
+        _ application: UIApplication,
+        didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+        fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+    ) {
+        Task { [remoteStore] in
+            let loaded = await Task.detached(priority: .userInitiated) {
+                await CompanionSyncLoader.load(remoteStore: remoteStore)
+            }.value
+            await MainActor.run {
+                if loaded.document != nil {
+                    WidgetCenter.shared.reloadAllTimelines()
+                    completionHandler(.newData)
+                } else if loaded.status == .failure {
+                    completionHandler(.failed)
+                } else {
+                    completionHandler(.noData)
+                }
+            }
         }
     }
 }
@@ -83,6 +123,7 @@ private struct CompanionRootView: View {
                 }
             }
             .task {
+                model.registerCloudKitSubscription()
                 model.reload()
             }
             .task(id: model.refreshSettings.intervalMinutes) {
@@ -104,6 +145,7 @@ private struct CompanionRootView: View {
 private final class CompanionSyncModel {
     private let refreshSettingsStore: CompanionRefreshSettingsStore?
     private let appearanceSettingsStore: CompanionAppearanceSettingsStore?
+    private let remoteStore = CompanionCloudKitSyncStoreFactory.make()
 
     private(set) var result = CompanionSyncLoadResult(document: nil, status: .unknown)
     private(set) var snapshot = WidgetSnapshot.fromCompanionSync(
@@ -156,8 +198,9 @@ private final class CompanionSyncModel {
                 }
             }
             let previousDocument = self?.result.document
+            let remoteStore = self?.remoteStore
             let loaded = await Task.detached(priority: .userInitiated) {
-                CompanionSyncLoader.load(now: now)
+                await CompanionSyncLoader.load(remoteStore: remoteStore, now: now)
             }.value
             guard !Task.isCancelled else { return }
             guard let self else { return }
@@ -172,6 +215,12 @@ private final class CompanionSyncModel {
                 WidgetCenter.shared.reloadAllTimelines()
             }
             refreshICloudCacheIfNeeded()
+        }
+    }
+
+    func registerCloudKitSubscription() {
+        Task { [remoteStore] in
+            _ = await remoteStore.registerSubscription()
         }
     }
 

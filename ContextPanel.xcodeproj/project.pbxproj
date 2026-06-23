@@ -14,6 +14,7 @@
 		0C3D1DA4C86DB8BD95BDE3D1 /* CompanionAppearanceSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 696876833ECD43AEF639C9B2 /* CompanionAppearanceSettings.swift */; };
 		0FF2EE405686EB21167A520B /* SnapshotRefreshService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45E8D3C3E45C1B6B3FACE828 /* SnapshotRefreshService.swift */; };
 		15F3A62CFA13DDC406C99EA5 /* libContextPanelCoreCompanion.a in Frameworks */ = {isa = PBXBuildFile; fileRef = DBD0BD51B5F5AD8D24CA217D /* libContextPanelCoreCompanion.a */; };
+		1695D451B4BF8B580643EE2E /* libContextPanelCloudKitSync.a in Frameworks */ = {isa = PBXBuildFile; fileRef = F7E0CE227A384064BE08DD1D /* libContextPanelCloudKitSync.a */; };
 		170EC1421ABCDAF9C4612460 /* ClaudeOAuthUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 895A979571D5E5C14830B41D /* ClaudeOAuthUsage.swift */; };
 		188E64070A38D747957C4332 /* ContextPanelCompanionWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 97822BE5E66CA9D319A09950 /* ContextPanelCompanionWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		198493F605C07AB87B0BDFA9 /* CapacityPool.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8862B929FE544FCB2C3D06B /* CapacityPool.swift */; };
@@ -51,10 +52,13 @@
 		5E2DAB0CB4FC93483B6C0E8D /* CompanionAppearanceSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 696876833ECD43AEF639C9B2 /* CompanionAppearanceSettings.swift */; };
 		6234444D0DD8D8136CB59A1F /* ClaudeAccountMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BBC1080557704B2EF023A7B /* ClaudeAccountMigration.swift */; };
 		652E3352E67082CBC13D4064 /* UsageLimit.swift in Sources */ = {isa = PBXBuildFile; fileRef = D459054C90410A784EBD308B /* UsageLimit.swift */; };
+		66A9008C342403F14896E0DB /* CompanionCloudKitSyncStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F188796FF19C3A0564D5EEAB /* CompanionCloudKitSyncStore.swift */; };
+		6E1A0333F84CA8A43597430C /* CompanionCloudKitSyncStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F188796FF19C3A0564D5EEAB /* CompanionCloudKitSyncStore.swift */; };
 		73FCB559A49D7474E51023C4 /* CompanionSyncPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47DB9468EE997E9DAD1CE6D3 /* CompanionSyncPresentation.swift */; };
 		762B3AD1D74922F681D202DF /* RefreshDiagnosticsState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DAF08B3CB69404A37DECA39 /* RefreshDiagnosticsState.swift */; };
 		764E6B79575AA8EC460441E3 /* CodexRateLimits.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FA8FE4CC9BE058D8F46FBA2 /* CodexRateLimits.swift */; };
 		7C2FC7CB5590C95244023520 /* ContextPanelDateFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9909074D7E80648BC2A01C51 /* ContextPanelDateFormatting.swift */; };
+		7C6664EA7FABECBBFC8F71A1 /* libContextPanelCloudKitSyncCompanion.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 4EF1C31059DCFA7FFC3969EC /* libContextPanelCloudKitSyncCompanion.a */; };
 		7D389D52287E9778C1742B44 /* ResetExpiryRefreshState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58B71A183966EEC56B955CD3 /* ResetExpiryRefreshState.swift */; };
 		7FD021610CC3841DE13AD70E /* ContextPanelCompanionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E29EEFA73267A8346212E7A /* ContextPanelCompanionApp.swift */; };
 		85EBA57F3F1633F2D6E54103 /* ContextPanelWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 07D959D621E594C0CFC2CEF5 /* ContextPanelWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -64,6 +68,7 @@
 		946EAC2BE4ADB856D8BC9921 /* libContextPanelCoreCompanion.a in Frameworks */ = {isa = PBXBuildFile; fileRef = DBD0BD51B5F5AD8D24CA217D /* libContextPanelCoreCompanion.a */; };
 		964443706CF70969DD20BD54 /* BackgroundRefreshSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15DC14CB07B8BA4756DAB731 /* BackgroundRefreshSettings.swift */; };
 		96B17A7F4844C6A4B3AE59FA /* BackgroundRefreshSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15DC14CB07B8BA4756DAB731 /* BackgroundRefreshSettings.swift */; };
+		9B00126ECF11C774D1B0290E /* CompanionRemoteSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = E97D64E1F32386FD74AA335F /* CompanionRemoteSync.swift */; };
 		9C74713AEFFAC6D85E7ACF3F /* FastModeForecast.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BD985B0213AB5987D3B3170 /* FastModeForecast.swift */; };
 		9D39D9C75B6CB1F4255FB1EF /* BurnRateEstimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FB4BEA57ACE8B84CAE71E75 /* BurnRateEstimator.swift */; };
 		A1E12E6C1FA3E1356F93519B /* PromptCacheTelemetryMirrorService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3B93DAA06AE42D89A02C5EE /* PromptCacheTelemetryMirrorService.swift */; };
@@ -96,10 +101,19 @@
 		EE22EBA64F60246CD4EFE93C /* ResetExpiryRefreshState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58B71A183966EEC56B955CD3 /* ResetExpiryRefreshState.swift */; };
 		F4B9B4FB75A285E38AE52B1D /* ProviderConnector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 350ED5589FB23C42ED32704A /* ProviderConnector.swift */; };
 		F565AD4A356528D70BB11EF5 /* MainLimitSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FC2DAEDD38483FC3A5D4880 /* MainLimitSummary.swift */; };
+		F697EDAA2739E3F27FDC885B /* CompanionRemoteSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = E97D64E1F32386FD74AA335F /* CompanionRemoteSync.swift */; };
+		FD57113FA34F28EE0EE9CAF0 /* libContextPanelCloudKitSync.a in Frameworks */ = {isa = PBXBuildFile; fileRef = F7E0CE227A384064BE08DD1D /* libContextPanelCloudKitSync.a */; };
 		FE093A1996BA546A10A800DA /* ContextPanelWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = E195C6E906DA9C0BF082622F /* ContextPanelWidget.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		1D3DD2018D533BC2972DC942 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 194387DBD3D0F10E17F284F9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 3AAFE3C855763E715F13EA76;
+			remoteInfo = ContextPanelCloudKitSync;
+		};
 		2E8E7B14DF611414CE4DA556 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 194387DBD3D0F10E17F284F9 /* Project object */;
@@ -107,12 +121,26 @@
 			remoteGlobalIDString = EE4B8035BB7A9BD03B668BB8;
 			remoteInfo = ContextPanelCore;
 		};
+		303ED284433E5791335DB175 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 194387DBD3D0F10E17F284F9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 3AAFE3C855763E715F13EA76;
+			remoteInfo = ContextPanelCloudKitSync;
+		};
 		32954FE71C65F1FD1E590272 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 194387DBD3D0F10E17F284F9 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = EE4B8035BB7A9BD03B668BB8;
 			remoteInfo = ContextPanelCore;
+		};
+		3585DA808A08A69F1C0C6D8F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 194387DBD3D0F10E17F284F9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 851EF311136775452D9B3941;
+			remoteInfo = ContextPanelCloudKitSyncCompanion;
 		};
 		3C3392E33451B979623C2996 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -156,6 +184,13 @@
 			remoteGlobalIDString = 2C827A90E9B1D569F5781EE2;
 			remoteInfo = ContextPanelCoreCompanion;
 		};
+		9381DEC33C640651280F0AE9 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 194387DBD3D0F10E17F284F9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = EE4B8035BB7A9BD03B668BB8;
+			remoteInfo = ContextPanelCore;
+		};
 		9C78E40974AF58F0D3B9326C /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 194387DBD3D0F10E17F284F9 /* Project object */;
@@ -176,6 +211,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = CEF7EF05412AE471BA15813A;
 			remoteInfo = ContextPanelCompanionWidgetExtension;
+		};
+		B1CAC4FC8C75B72F07319119 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 194387DBD3D0F10E17F284F9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 2C827A90E9B1D569F5781EE2;
+			remoteInfo = ContextPanelCoreCompanion;
 		};
 		BEE12CE04FFAF1DB97EFBF98 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -278,6 +320,7 @@
 		4CDAD640E6A641A427B87752 /* libContextPanelWidgetUI.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libContextPanelWidgetUI.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		4DF7B37FFD557C030E4D4960 /* libContextPanelCompanionSupport.a */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = archive.ar; path = libContextPanelCompanionSupport.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		4E12E941B0706B6DA759F0C8 /* CompanionSyncLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionSyncLoader.swift; sourceTree = "<group>"; };
+		4EF1C31059DCFA7FFC3969EC /* libContextPanelCloudKitSyncCompanion.a */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = archive.ar; path = libContextPanelCloudKitSyncCompanion.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		5233BBC86AE8057D749F71CD /* WidgetSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSnapshot.swift; sourceTree = "<group>"; };
 		53708C425CC9029A9300FA79 /* CompanionRefreshSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionRefreshSettings.swift; sourceTree = "<group>"; };
 		58B71A183966EEC56B955CD3 /* ResetExpiryRefreshState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResetExpiryRefreshState.swift; sourceTree = "<group>"; };
@@ -305,8 +348,11 @@
 		D459054C90410A784EBD308B /* UsageLimit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageLimit.swift; sourceTree = "<group>"; };
 		DBD0BD51B5F5AD8D24CA217D /* libContextPanelCoreCompanion.a */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = archive.ar; path = libContextPanelCoreCompanion.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		E195C6E906DA9C0BF082622F /* ContextPanelWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelWidget.swift; sourceTree = "<group>"; };
+		E97D64E1F32386FD74AA335F /* CompanionRemoteSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionRemoteSync.swift; sourceTree = "<group>"; };
 		F09182E1FD96DAEEC38F3909 /* libContextPanelCore.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libContextPanelCore.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		F188796FF19C3A0564D5EEAB /* CompanionCloudKitSyncStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionCloudKitSyncStore.swift; sourceTree = "<group>"; };
 		F3B93DAA06AE42D89A02C5EE /* PromptCacheTelemetryMirrorService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptCacheTelemetryMirrorService.swift; sourceTree = "<group>"; };
+		F7E0CE227A384064BE08DD1D /* libContextPanelCloudKitSync.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libContextPanelCloudKitSync.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		F8211A4CCCDD1AA6113F22D1 /* CompanionSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionSnapshot.swift; sourceTree = "<group>"; };
 		FB0E4D0FF6DD744B87D215B9 /* OAuthPKCE.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OAuthPKCE.swift; sourceTree = "<group>"; };
 		FBDCF9F49A90CA3576BF2792 /* WidgetDisplayPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetDisplayPreferences.swift; sourceTree = "<group>"; };
@@ -318,6 +364,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				36A035769881D4A450BA3BD8 /* libContextPanelCore.a in Frameworks */,
+				FD57113FA34F28EE0EE9CAF0 /* libContextPanelCloudKitSync.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -345,6 +392,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A83D074D710D28DEF7375292 /* libContextPanelCore.a in Frameworks */,
+				1695D451B4BF8B580643EE2E /* libContextPanelCloudKitSync.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -355,6 +403,7 @@
 				15F3A62CFA13DDC406C99EA5 /* libContextPanelCoreCompanion.a in Frameworks */,
 				41FFD8CABE8E04612544A607 /* libContextPanelWidgetUICompanion.a in Frameworks */,
 				326D113966D8B3E0B174E98F /* libContextPanelCompanionSupport.a in Frameworks */,
+				7C6664EA7FABECBBFC8F71A1 /* libContextPanelCloudKitSyncCompanion.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -369,6 +418,8 @@
 				97822BE5E66CA9D319A09950 /* ContextPanelCompanionWidgetExtension.appex */,
 				086B12021073A6F2A49850A1 /* ContextPanelRefreshAgent.app */,
 				07D959D621E594C0CFC2CEF5 /* ContextPanelWidgetExtension.appex */,
+				F7E0CE227A384064BE08DD1D /* libContextPanelCloudKitSync.a */,
+				4EF1C31059DCFA7FFC3969EC /* libContextPanelCloudKitSyncCompanion.a */,
 				4DF7B37FFD557C030E4D4960 /* libContextPanelCompanionSupport.a */,
 				F09182E1FD96DAEEC38F3909 /* libContextPanelCore.a */,
 				DBD0BD51B5F5AD8D24CA217D /* libContextPanelCoreCompanion.a */,
@@ -390,6 +441,7 @@
 				9FA8FE4CC9BE058D8F46FBA2 /* CodexRateLimits.swift */,
 				696876833ECD43AEF639C9B2 /* CompanionAppearanceSettings.swift */,
 				53708C425CC9029A9300FA79 /* CompanionRefreshSettings.swift */,
+				E97D64E1F32386FD74AA335F /* CompanionRemoteSync.swift */,
 				F8211A4CCCDD1AA6113F22D1 /* CompanionSnapshot.swift */,
 				9909074D7E80648BC2A01C51 /* ContextPanelDateFormatting.swift */,
 				23E9C71457F4E1F101132FCF /* ContextPanelLocations.swift */,
@@ -431,6 +483,7 @@
 			isa = PBXGroup;
 			children = (
 				F5E7F431DF2D59C7DA7B6D1F /* ContextPanelApp */,
+				E3FBDB8CBE78B10EB188C214 /* ContextPanelCloudKitSync */,
 				8DF11E8686B8998368D1DEB1 /* ContextPanelCompanion */,
 				9DECDAB445D24794281BA92D /* ContextPanelCompanionSupport */,
 				7A7EF4EE264F20FE13F919D6 /* ContextPanelCompanionWidget */,
@@ -496,6 +549,15 @@
 			);
 			name = ContextPanelRefreshAgent;
 			path = Sources/ContextPanelRefreshAgent;
+			sourceTree = "<group>";
+		};
+		E3FBDB8CBE78B10EB188C214 /* ContextPanelCloudKitSync */ = {
+			isa = PBXGroup;
+			children = (
+				F188796FF19C3A0564D5EEAB /* CompanionCloudKitSyncStore.swift */,
+			);
+			name = ContextPanelCloudKitSync;
+			path = Sources/ContextPanelCloudKitSync;
 			sourceTree = "<group>";
 		};
 		F5E7F431DF2D59C7DA7B6D1F /* ContextPanelApp */ = {
@@ -564,6 +626,7 @@
 				C8599721D60A58D9F4BB12CD /* PBXTargetDependency */,
 				0B1B3BA2DB52DFE2B334CC13 /* PBXTargetDependency */,
 				218291ADC59CC07755C48F05 /* PBXTargetDependency */,
+				02C2B602F54B758CB062ADDD /* PBXTargetDependency */,
 				596C3B111C1F319FE87F3B0D /* PBXTargetDependency */,
 			);
 			name = ContextPanelCompanion;
@@ -602,6 +665,7 @@
 			);
 			dependencies = (
 				608EA68F5BD8816B4B843293 /* PBXTargetDependency */,
+				6B58171FBF0C9A3348B842D5 /* PBXTargetDependency */,
 			);
 			name = ContextPanelRefreshAgent;
 			packageProductDependencies = (
@@ -609,6 +673,44 @@
 			productName = ContextPanelRefreshAgent;
 			productReference = 086B12021073A6F2A49850A1 /* ContextPanelRefreshAgent.app */;
 			productType = "com.apple.product-type.application";
+		};
+		3AAFE3C855763E715F13EA76 /* ContextPanelCloudKitSync */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 23028041EA59C1D567DE2AD7 /* Build configuration list for PBXNativeTarget "ContextPanelCloudKitSync" */;
+			buildPhases = (
+				3A627971B5D13DFB53912A6F /* Sources */,
+				F9AF955DA1F0631FA5F843B0 /* Copy Swift Objective-C Interface Header */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B3EC2C9EBC480F9FABE823C9 /* PBXTargetDependency */,
+			);
+			name = ContextPanelCloudKitSync;
+			packageProductDependencies = (
+			);
+			productName = ContextPanelCloudKitSync;
+			productReference = F7E0CE227A384064BE08DD1D /* libContextPanelCloudKitSync.a */;
+			productType = "com.apple.product-type.library.static";
+		};
+		851EF311136775452D9B3941 /* ContextPanelCloudKitSyncCompanion */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D394F6A152ADD01F991FB50A /* Build configuration list for PBXNativeTarget "ContextPanelCloudKitSyncCompanion" */;
+			buildPhases = (
+				080F2E0ECCFA845DD8CF666D /* Sources */,
+				0F5778657FE29327552C0FC7 /* Copy Swift Objective-C Interface Header */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				876DD9D648FC2B8956291582 /* PBXTargetDependency */,
+			);
+			name = ContextPanelCloudKitSyncCompanion;
+			packageProductDependencies = (
+			);
+			productName = ContextPanelCloudKitSyncCompanion;
+			productReference = 4EF1C31059DCFA7FFC3969EC /* libContextPanelCloudKitSyncCompanion.a */;
+			productType = "com.apple.product-type.library.static";
 		};
 		92EF616FEBA46FCB02E887BE /* ContextPanelWidgetExtension */ = {
 			isa = PBXNativeTarget;
@@ -702,6 +804,7 @@
 			);
 			dependencies = (
 				D29DE5B6DB7D5B324359BCA0 /* PBXTargetDependency */,
+				CED4AFAF1AD98AA0AE2FD954 /* PBXTargetDependency */,
 				4A468DA4B7F0B61AAE457FF9 /* PBXTargetDependency */,
 				95EF038F28306DBE4F1E8B06 /* PBXTargetDependency */,
 			);
@@ -738,6 +841,14 @@
 						ProvisioningStyle = Automatic;
 					};
 					2CBF2D7A344180F87098B384 = {
+						DevelopmentTeam = MM5YXC7T6E;
+						ProvisioningStyle = Automatic;
+					};
+					3AAFE3C855763E715F13EA76 = {
+						DevelopmentTeam = MM5YXC7T6E;
+						ProvisioningStyle = Automatic;
+					};
+					851EF311136775452D9B3941 = {
 						DevelopmentTeam = MM5YXC7T6E;
 						ProvisioningStyle = Automatic;
 					};
@@ -778,6 +889,8 @@
 			projectRoot = "";
 			targets = (
 				FF80548BA14604BB9B1E9115 /* ContextPanel */,
+				3AAFE3C855763E715F13EA76 /* ContextPanelCloudKitSync */,
+				851EF311136775452D9B3941 /* ContextPanelCloudKitSyncCompanion */,
 				20771DDAD71627223C7B66F6 /* ContextPanelCompanion */,
 				0F86F19C8080D71C24F120A7 /* ContextPanelCompanionSupport */,
 				CEF7EF05412AE471BA15813A /* ContextPanelCompanionWidgetExtension */,
@@ -812,6 +925,22 @@
 
 /* Begin PBXShellScriptBuildPhase section */
 		0C8E201B850E07E4C579CD21 /* Copy Swift Objective-C Interface Header */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(DERIVED_SOURCES_DIR)/$(SWIFT_OBJC_INTERFACE_HEADER_NAME)",
+			);
+			name = "Copy Swift Objective-C Interface Header";
+			outputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/include/$(PRODUCT_MODULE_NAME)/$(SWIFT_OBJC_INTERFACE_HEADER_NAME)",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "ditto \"${SCRIPT_INPUT_FILE_0}\" \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+		};
+		0F5778657FE29327552C0FC7 /* Copy Swift Objective-C Interface Header */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -875,6 +1004,22 @@
 			shellPath = /bin/sh;
 			shellScript = "ditto \"${SCRIPT_INPUT_FILE_0}\" \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 		};
+		F9AF955DA1F0631FA5F843B0 /* Copy Swift Objective-C Interface Header */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(DERIVED_SOURCES_DIR)/$(SWIFT_OBJC_INTERFACE_HEADER_NAME)",
+			);
+			name = "Copy Swift Objective-C Interface Header";
+			outputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/include/$(PRODUCT_MODULE_NAME)/$(SWIFT_OBJC_INTERFACE_HEADER_NAME)",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "ditto \"${SCRIPT_INPUT_FILE_0}\" \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+		};
 		FF5D5F618CF6F5EB7D28C0BF /* Copy Swift Objective-C Interface Header */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
@@ -894,6 +1039,14 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		080F2E0ECCFA845DD8CF666D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6E1A0333F84CA8A43597430C /* CompanionCloudKitSyncStore.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		255CF9DC3E13CC5E897143A3 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -915,6 +1068,7 @@
 				764E6B79575AA8EC460441E3 /* CodexRateLimits.swift in Sources */,
 				0C3D1DA4C86DB8BD95BDE3D1 /* CompanionAppearanceSettings.swift in Sources */,
 				51AC31C7F9A105761C8CBD7E /* CompanionRefreshSettings.swift in Sources */,
+				F697EDAA2739E3F27FDC885B /* CompanionRemoteSync.swift in Sources */,
 				3D2C7B99452A5EF3021D7E79 /* CompanionSnapshot.swift in Sources */,
 				7C2FC7CB5590C95244023520 /* ContextPanelDateFormatting.swift in Sources */,
 				0008638B08072E2E1DA6A3AF /* ContextPanelLocations.swift in Sources */,
@@ -939,6 +1093,14 @@
 				652E3352E67082CBC13D4064 /* UsageLimit.swift in Sources */,
 				DCB0158E13E48709027C8AB8 /* WidgetDisplayPreferences.swift in Sources */,
 				057A71BA0CD90371C675C014 /* WidgetSnapshot.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		3A627971B5D13DFB53912A6F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				66A9008C342403F14896E0DB /* CompanionCloudKitSyncStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -972,6 +1134,7 @@
 				47414B1A42BE473BF1644296 /* CodexRateLimits.swift in Sources */,
 				5E2DAB0CB4FC93483B6C0E8D /* CompanionAppearanceSettings.swift in Sources */,
 				28472AFC21F0DC6A5A6D40AB /* CompanionRefreshSettings.swift in Sources */,
+				9B00126ECF11C774D1B0290E /* CompanionRemoteSync.swift in Sources */,
 				206D119AB834D38BBB5B4D0E /* CompanionSnapshot.swift in Sources */,
 				B7244849824A8A58FDFBD181 /* ContextPanelDateFormatting.swift in Sources */,
 				C1DF7B59257060AC0A6AF44D /* ContextPanelLocations.swift in Sources */,
@@ -1042,6 +1205,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		02C2B602F54B758CB062ADDD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 851EF311136775452D9B3941 /* ContextPanelCloudKitSyncCompanion */;
+			targetProxy = 3585DA808A08A69F1C0C6D8F /* PBXContainerItemProxy */;
+		};
 		0B1B3BA2DB52DFE2B334CC13 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 11E92F21B1B7CA7C10A7408E /* ContextPanelWidgetUICompanion */;
@@ -1082,10 +1250,20 @@
 			target = EE4B8035BB7A9BD03B668BB8 /* ContextPanelCore */;
 			targetProxy = 414DF92795D70A46FF7F1240 /* PBXContainerItemProxy */;
 		};
+		6B58171FBF0C9A3348B842D5 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 3AAFE3C855763E715F13EA76 /* ContextPanelCloudKitSync */;
+			targetProxy = 1D3DD2018D533BC2972DC942 /* PBXContainerItemProxy */;
+		};
 		8361FD30418655D673073A5A /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = EE4B8035BB7A9BD03B668BB8 /* ContextPanelCore */;
 			targetProxy = 32954FE71C65F1FD1E590272 /* PBXContainerItemProxy */;
+		};
+		876DD9D648FC2B8956291582 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 2C827A90E9B1D569F5781EE2 /* ContextPanelCoreCompanion */;
+			targetProxy = B1CAC4FC8C75B72F07319119 /* PBXContainerItemProxy */;
 		};
 		95EF038F28306DBE4F1E8B06 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -1097,6 +1275,11 @@
 			target = 2C827A90E9B1D569F5781EE2 /* ContextPanelCoreCompanion */;
 			targetProxy = 835DD18332B995C01E24E68F /* PBXContainerItemProxy */;
 		};
+		B3EC2C9EBC480F9FABE823C9 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = EE4B8035BB7A9BD03B668BB8 /* ContextPanelCore */;
+			targetProxy = 9381DEC33C640651280F0AE9 /* PBXContainerItemProxy */;
+		};
 		B9C0F3E96EECADACAB416208 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 11E92F21B1B7CA7C10A7408E /* ContextPanelWidgetUICompanion */;
@@ -1106,6 +1289,11 @@
 			isa = PBXTargetDependency;
 			target = 2C827A90E9B1D569F5781EE2 /* ContextPanelCoreCompanion */;
 			targetProxy = E347D3E85415ED9B0656133C /* PBXContainerItemProxy */;
+		};
+		CED4AFAF1AD98AA0AE2FD954 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 3AAFE3C855763E715F13EA76 /* ContextPanelCloudKitSync */;
+			targetProxy = 303ED284433E5791335DB175 /* PBXContainerItemProxy */;
 		};
 		D29DE5B6DB7D5B324359BCA0 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -1199,6 +1387,60 @@
 			};
 			name = Release;
 		};
+		197FDE45AEDA3E525600320D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.shinycomputers.ContextPanelCloudKitSync;
+				PRODUCT_NAME = ContextPanelCloudKitSync;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
+		362B1C55C1A1D5269AAA14EF /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.shinycomputers.ContextPanelCloudKitSync;
+				PRODUCT_NAME = ContextPanelCloudKitSync;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Release;
+		};
+		3A25C5933E7EA8E969B1D598 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.shinycomputers.ContextPanelCloudKitSyncCompanion;
+				PRODUCT_MODULE_NAME = ContextPanelCloudKitSync;
+				PRODUCT_NAME = ContextPanelCloudKitSyncCompanion;
+				SDKROOT = auto;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator xros xrsimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				XROS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Release;
+		};
 		3BEE0E25DC012120EE1D30A6 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -1266,6 +1508,28 @@
 				PRODUCT_NAME = ContextPanelCore;
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
+		648D61703D0E23CFF725B569 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.shinycomputers.ContextPanelCloudKitSyncCompanion;
+				PRODUCT_MODULE_NAME = ContextPanelCloudKitSync;
+				PRODUCT_NAME = ContextPanelCloudKitSyncCompanion;
+				SDKROOT = auto;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator xros xrsimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				XROS_DEPLOYMENT_TARGET = 26.0;
 			};
 			name = Debug;
 		};
@@ -1531,6 +1795,7 @@
 		D1B131267011478A02666B8C /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APS_ENVIRONMENT = production;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Config/ContextPanelCompanion.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Distribution";
@@ -1713,6 +1978,7 @@
 		F73C5399003395E4600AEC1D /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APS_ENVIRONMENT = development;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Config/ContextPanelCompanion.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
@@ -1751,6 +2017,15 @@
 			buildConfigurations = (
 				688CEAAC195C0A85D094BF88 /* Debug */,
 				3BEE0E25DC012120EE1D30A6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		23028041EA59C1D567DE2AD7 /* Build configuration list for PBXNativeTarget "ContextPanelCloudKitSync" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				197FDE45AEDA3E525600320D /* Debug */,
+				362B1C55C1A1D5269AAA14EF /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
@@ -1832,6 +2107,15 @@
 			buildConfigurations = (
 				58ADB2EF94022C1803CA1F30 /* Debug */,
 				8A5FA37DF23FC4E3C4201B12 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		D394F6A152ADD01F991FB50A /* Build configuration list for PBXNativeTarget "ContextPanelCloudKitSyncCompanion" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				648D61703D0E23CFF725B569 /* Debug */,
+				3A25C5933E7EA8E969B1D598 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

@@ -59,13 +59,17 @@ let package = Package(
             name: "ContextPanelCompanionSupport",
             dependencies: ["ContextPanelCore", "ContextPanelWidgetUI"]
         ),
-        .executableTarget(
-            name: "ContextPanelApp",
+        .target(
+            name: "ContextPanelCloudKitSync",
             dependencies: ["ContextPanelCore"]
         ),
         .executableTarget(
+            name: "ContextPanelApp",
+            dependencies: ["ContextPanelCore", "ContextPanelCloudKitSync"]
+        ),
+        .executableTarget(
             name: "ContextPanelRefreshAgent",
-            dependencies: ["ContextPanelCore"]
+            dependencies: ["ContextPanelCore", "ContextPanelCloudKitSync"]
         ),
         .executableTarget(
             name: "OpenAILimitProbe",

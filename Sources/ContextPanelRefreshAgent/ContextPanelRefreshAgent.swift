@@ -1,4 +1,5 @@
 import ContextPanelCore
+import ContextPanelCloudKitSync
 @preconcurrency import AppKit
 import Foundation
 import WidgetKit
@@ -20,7 +21,10 @@ struct ContextPanelRefreshAgent {
             checkWebhookCredentials()
         }
 
-        let runner = SnapshotRefreshRunner(service: .appDefault(allowsExternalGoogleKeychain: false))
+        let runner = SnapshotRefreshRunner(service: .appDefault(
+            allowsExternalGoogleKeychain: false,
+            companionRemoteStore: CompanionCloudKitSyncStoreFactory.make()
+        ))
         let warningService = LimitWarningNotificationService.appDefault()
         let diagnosticsStore = RefreshDiagnosticsStateStore(
             stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.appGroupID)

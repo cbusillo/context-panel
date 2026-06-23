@@ -9,7 +9,24 @@ public enum CompanionSyncLoader {
         return load(
             localMirrorURL: ContextPanelLocations.companionAppGroupSyncDocumentURL(),
             iCloudDocumentURL: iCloudDocumentURL,
+            remoteLoad: nil,
             mirrorLoadedDocument: iCloudDocumentURL != nil,
+            diagnosticsStore: RefreshDiagnosticsStateStore(
+                stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.companionAppGroupID)
+            ),
+            now: now
+        )
+    }
+
+    public static func load(remoteStore: CompanionRemoteSyncStore?, now: Date = Date()) async -> CompanionSyncLoadResult {
+        let remoteLoad = await remoteStore?.load(now: now)
+        let iCloudDocumentURL = ContextPanelLocations.cachedCompanionUbiquitySyncDocumentURL()
+            ?? ContextPanelLocations.refreshCachedCompanionUbiquitySyncDocumentURL()
+        return load(
+            localMirrorURL: ContextPanelLocations.companionAppGroupSyncDocumentURL(),
+            iCloudDocumentURL: iCloudDocumentURL,
+            remoteLoad: remoteLoad,
+            mirrorLoadedDocument: remoteLoad?.result.document != nil || iCloudDocumentURL != nil,
             diagnosticsStore: RefreshDiagnosticsStateStore(
                 stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.companionAppGroupID)
             ),
@@ -20,6 +37,7 @@ public enum CompanionSyncLoader {
     static func load(
         localMirrorURL: URL?,
         iCloudDocumentURL: URL?,
+        remoteLoad: CompanionRemoteSyncLoadResult? = nil,
         mirrorLoadedDocument: Bool = true,
         diagnosticsStore: RefreshDiagnosticsStateStore? = nil,
         downloadUbiquitousItem: @escaping @Sendable (URL) throws -> Void = { url in
@@ -51,6 +69,32 @@ public enum CompanionSyncLoader {
         }
 
         let localStore = CompanionSyncStore(documentURL: localMirrorURL)
+        var remoteOutcome: CompanionRemoteSyncOutcome?
+        var remoteCandidate: CompanionSyncLoadCandidate?
+        if let remoteLoad {
+            remoteOutcome = remoteLoad.outcome
+            if let document = remoteLoad.result.document {
+                let status = providerStatus(
+                    for: document,
+                    policy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.companionProviderMaximumAge),
+                    now: now
+                )
+                remoteCandidate = CompanionSyncLoadCandidate(
+                    result: CompanionSyncLoadResult(
+                        document: document,
+                        status: status,
+                        errorMessage: remoteLoad.result.errorMessage,
+                        transportMetadata: CompanionSyncTransportMetadata(
+                            source: .cloudKit,
+                            receivedAt: now,
+                            mirroredAt: nil,
+                            deliveryStatus: .healthy
+                        )
+                    ),
+                    storeRole: CompanionRemoteSync.cloudKitStoreRole
+                )
+            }
+        }
         let storeSet = CompanionSyncStoreSet(
             stores: [localStore],
             lazyStores: [CompanionSyncStoreResolver(storeRole: "icloud") {
@@ -69,14 +113,40 @@ public enum CompanionSyncLoader {
                 )
             }
         }
-        let stalenessPolicy = SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge)
+        let stalenessPolicy = SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.companionProviderMaximumAge)
         let loadDiagnostics = storeSet.loadWithDiagnostics(
             policy: stalenessPolicy,
             now: now
         )
-        var result = loadDiagnostics.result
+        let selectedCandidate = preferredCandidate(
+            lhs: remoteCandidate,
+            rhs: CompanionSyncLoadCandidate(
+                result: loadDiagnostics.result,
+                storeRole: loadDiagnostics.selectedStoreRole ?? "custom"
+            )
+        )
+        var result = selectedCandidate?.result ?? loadDiagnostics.result
         var mirrorSucceeded: Bool?
         var diagnosticRecord = loadDiagnostics.diagnosticsRecord(at: now)
+        if let remoteOutcome {
+            diagnosticRecord.cloudKitAvailable = remoteOutcome.isAvailable
+            diagnosticRecord.cloudKitSucceeded = remoteOutcome.succeeded
+            if !remoteOutcome.succeeded {
+                diagnosticRecord.errorMessage = diagnosticRecord.errorMessage ?? remoteOutcome.errorMessage
+                if diagnosticRecord.outcome == .healthy {
+                    diagnosticRecord.outcome = diagnosticRecord.loadedDocument == true ? .partial : .failed
+                }
+            } else if let remoteCandidate, remoteCandidate.result.document != nil {
+                diagnosticRecord.loadedDocument = selectedCandidate?.result.document != nil
+                diagnosticRecord.stale = selectedCandidate?.result.status == .stale
+                if selectedCandidate?.storeRole == CompanionRemoteSync.cloudKitStoreRole {
+                    diagnosticRecord.outcome = remoteCandidate.result.status == .stale ? .stale : .healthy
+                    diagnosticRecord.errorMessage = nil
+                } else if diagnosticRecord.outcome == .failed || diagnosticRecord.outcome == .unavailable {
+                    diagnosticRecord.outcome = .partial
+                }
+            }
+        }
         if let downloadErrorMessage {
             diagnosticRecord.iCloudAvailable = iCloudDocumentURL != nil
             diagnosticRecord.iCloudSucceeded = false
@@ -86,7 +156,7 @@ public enum CompanionSyncLoader {
             }
         }
         let shouldMirrorLoadedDocument = mirrorLoadedDocument
-            && loadDiagnostics.selectedStoreIsICloud
+            && selectedCandidate?.storeRole != "app-group"
         if shouldMirrorLoadedDocument, let document = result.document {
             beforeMirrorLoadedDocument()
             let selectedResult = result
@@ -113,7 +183,8 @@ public enum CompanionSyncLoader {
                     let failedResult = CompanionSyncLoadResult(
                         document: document,
                         status: .failure,
-                        errorMessage: Self.mirrorFailureMessage(saveResult)
+                        errorMessage: Self.mirrorFailureMessage(saveResult),
+                        transportMetadata: result.transportMetadata
                     )
                     diagnosticRecord.outcome = .partial
                     diagnosticRecord.appGroupSucceeded = false
@@ -127,6 +198,19 @@ public enum CompanionSyncLoader {
                     return failedResult
                 }
                 mirrorSucceeded = true
+                result = CompanionSyncLoadResult(
+                    document: document,
+                    status: result.status,
+                    errorMessage: result.errorMessage,
+                    transportMetadata: result.transportMetadata.map { metadata in
+                        CompanionSyncTransportMetadata(
+                            source: metadata.source,
+                            receivedAt: metadata.receivedAt,
+                            mirroredAt: now,
+                            deliveryStatus: metadata.deliveryStatus
+                        )
+                    }
+                )
             }
         } else if shouldMirrorLoadedDocument {
             mirrorSucceeded = false
@@ -135,6 +219,11 @@ public enum CompanionSyncLoader {
             diagnosticRecord.mirroredDocument = mirrorSucceeded
             if mirrorSucceeded {
                 diagnosticRecord.appGroupSucceeded = true
+                diagnosticRecord.loadedDocument = result.document != nil
+                diagnosticRecord.stale = result.status == .stale
+                if diagnosticRecord.outcome != .partial {
+                    diagnosticRecord.outcome = result.status == .stale ? .stale : .healthy
+                }
             } else if mirrorLoadedDocument {
                 diagnosticRecord.appGroupSucceeded = false
                 if diagnosticRecord.outcome == .healthy {
@@ -150,14 +239,7 @@ public enum CompanionSyncLoader {
     }
 
     public static func loadWidgetMirror(now: Date = Date()) -> CompanionSyncLoadResult {
-        loadWidgetMirror(
-            localMirrorURL: ContextPanelLocations.companionAppGroupSyncDocumentURL(),
-            resolveICloudDocumentURL: {
-                ContextPanelLocations.cachedCompanionUbiquitySyncDocumentURL()
-                    ?? ContextPanelLocations.refreshCachedCompanionUbiquitySyncDocumentURL()
-            },
-            now: now
-        )
+        loadWidgetMirror(localMirrorURL: ContextPanelLocations.companionAppGroupSyncDocumentURL(), now: now)
     }
 
     static func loadWidgetMirror(
@@ -165,12 +247,7 @@ public enum CompanionSyncLoader {
         resolveICloudDocumentURL: () -> URL?,
         now: Date = Date()
     ) -> CompanionSyncLoadResult {
-        let iCloudDocumentURL = resolveICloudDocumentURL()
-        return loadWidgetMirror(
-            localMirrorURL: localMirrorURL,
-            iCloudDocumentURL: iCloudDocumentURL,
-            now: now
-        )
+        loadWidgetMirror(localMirrorURL: localMirrorURL, now: now)
     }
 
     static func loadWidgetMirror(
@@ -178,12 +255,15 @@ public enum CompanionSyncLoader {
         iCloudDocumentURL: URL? = nil,
         now: Date = Date()
     ) -> CompanionSyncLoadResult {
-        load(
-            localMirrorURL: localMirrorURL,
-            iCloudDocumentURL: iCloudDocumentURL,
-            mirrorLoadedDocument: iCloudDocumentURL != nil,
-            now: now
-        )
+        guard let localMirrorURL else {
+            return CompanionSyncLoadResult(
+                document: nil,
+                status: .failure,
+                errorMessage: "Context Panel iOS app group is unavailable."
+            )
+        }
+        let policy = SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.companionMirrorMaximumAge)
+        return CompanionSyncStore(documentURL: localMirrorURL).load(policy: policy, now: now)
     }
 
     private static func mirrorFailureMessage(_ saveResult: CompanionSyncSaveResult) -> String {
@@ -217,6 +297,37 @@ public enum CompanionSyncLoader {
             state.recordCompanionSync(record)
         }
     }
+
+    private static func providerStatus(
+        for document: CompanionSyncDocument,
+        policy: SnapshotStoreStalenessPolicy,
+        now: Date
+    ) -> UsageStatus {
+        now.timeIntervalSince(document.snapshot.generatedAt) > policy.maximumAge
+            ? .stale
+            : document.companionStatus
+    }
+
+    private static func preferredCandidate(
+        lhs: CompanionSyncLoadCandidate?,
+        rhs: CompanionSyncLoadCandidate?
+    ) -> CompanionSyncLoadCandidate? {
+        guard let lhs else { return rhs }
+        guard let rhs else { return lhs }
+        guard let lhsDocument = lhs.result.document, let rhsDocument = rhs.result.document else { return lhs }
+
+        if lhs.result.status == .stale, rhs.result.status != .stale { return rhs }
+        if lhs.result.status != .stale, rhs.result.status == .stale { return lhs }
+        if lhsDocument.snapshot.generatedAt != rhsDocument.snapshot.generatedAt {
+            return lhsDocument.snapshot.generatedAt < rhsDocument.snapshot.generatedAt ? rhs : lhs
+        }
+        return lhsDocument.snapshot.publishedAt < rhsDocument.snapshot.publishedAt ? rhs : lhs
+    }
+}
+
+private struct CompanionSyncLoadCandidate: Equatable, Sendable {
+    let result: CompanionSyncLoadResult
+    let storeRole: String
 }
 
 public enum CompanionDeepLinks {

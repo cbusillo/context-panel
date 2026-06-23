@@ -186,12 +186,14 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         )
         let status = widgetStatus(for: stored.snapshot, fallback: result.status)
         let refreshAttentionSummary = stalenessPolicy.refreshAttentionSummary(for: stored, now: now)
+        let syncDeliveryDelayed = result.transportMetadata?.deliveryStatus == .delayed && result.status != .stale
+        let providerDataStale = result.status == .stale
         let promptCacheState: PromptCacheWidgetState = promptCacheObservations.isEmpty
             ? .unavailable
-            : (result.status == .stale || result.status == .failure ? .stale : .available)
+            : (providerDataStale || result.status == .failure ? .stale : .available)
 
         return WidgetSnapshot(
-            state: state,
+            state: syncDeliveryDelayed && result.status != .failure ? .ready : state,
             generatedAt: companion.generatedAt,
             limits: limits,
             reports: reports,
@@ -199,8 +201,12 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             promptCacheWidgetState: promptCacheState,
             fastModeForecastSettings: document.fastModeForecastSettings,
             status: status,
-            message: message(state: state, stored: stored, refreshAttentionSummary: refreshAttentionSummary),
-            refreshAttentionSummary: refreshAttentionSummary
+            message: message(
+                state: syncDeliveryDelayed && result.status != .failure ? .ready : state,
+                stored: stored,
+                refreshAttentionSummary: syncDeliveryDelayed ? nil : refreshAttentionSummary
+            ),
+            refreshAttentionSummary: syncDeliveryDelayed ? nil : refreshAttentionSummary
         )
     }
 
