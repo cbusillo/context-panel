@@ -18,20 +18,77 @@ permissions:
 jobs:
   analyze:
     name: Analyze Swift
-    runs-on: macos-26
+    runs-on: >-
+      ${{ fromJSON(github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name != github.repository &&
+      '["macos-26"]' || '["self-hosted", "macOS", "ARM64", "context-panel"]') }}
     timeout-minutes: 45
-
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Show Xcode
+        run: xcodebuild -version
+
+      - name: Prepare trusted CodeQL database path
+        if: >-
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          trusted_codeql_root="/tmp/context-panel-codeql/$GITHUB_RUN_ID"
+          rm -rf "$trusted_codeql_root"
+          mkdir -p "$trusted_codeql_root/db"
+          printf 'CONTEXT_PANEL_CODEQL_DB_LOCATION=%s\n' \
+            "$trusted_codeql_root/db" >> "$GITHUB_ENV"
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
           languages: swift
+          db-location: ${{ env.CONTEXT_PANEL_CODEQL_DB_LOCATION }}
 
       - name: Build
-        run: swift build --target ContextPanelCore
+        env:
+          TRUSTED_RUN: >-
+            ${{
+              github.event_name != 'pull_request' ||
+              github.event.pull_request.head.repo.full_name == github.repository
+            }}
+        run: |
+          swift_args=()
+
+          if [[ "$TRUSTED_RUN" == "true" && \
+            -n "${CONTEXT_PANEL_ARTIFACT_CACHE_ROOT:-}" ]]; then
+            cache_parent="$(dirname "$CONTEXT_PANEL_ARTIFACT_CACHE_ROOT")"
+            cache_namespace="$(dirname "$cache_parent")"
+          else
+            cache_namespace=""
+          fi
+
+          if [[ "$TRUSTED_RUN" == "true" && \
+            -n "${CONTEXT_PANEL_ARTIFACT_CACHE_ROOT:-}" && \
+            ( -d "$CONTEXT_PANEL_ARTIFACT_CACHE_ROOT" || \
+              -d "$cache_namespace" ) ]]; then
+            swiftpm_scratch_path="$CONTEXT_PANEL_ARTIFACT_CACHE_ROOT/codeql-swiftpm"
+            mkdir -p "$swiftpm_scratch_path"
+            swift_args+=(--scratch-path "$swiftpm_scratch_path")
+          fi
+
+          swift build --target ContextPanelCore "${swift_args[@]}"
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
+
+  cleanup-trusted-codeql:
+    name: Clean Trusted CodeQL Temp
+    needs: analyze
+    if: >-
+      always() && (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, macOS, ARM64, context-panel]
+    steps:
+      - name: Clean trusted CodeQL database path
+        run: rm -rf "/tmp/context-panel-codeql/$GITHUB_RUN_ID"

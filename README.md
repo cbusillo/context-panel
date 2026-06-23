@@ -1,8 +1,8 @@
 # Context Panel
 
-Context Panel is a planned macOS app and widget for seeing AI usage limits
-across providers at a glance. The first target providers are OpenAI, Anthropic,
-and Google.
+Context Panel is a native macOS app and WidgetKit extension for seeing AI usage
+limits across providers at a glance. The first target providers are OpenAI,
+Anthropic, and Google.
 
 The product goal is a small, native Mac utility that can answer the everyday
 question before you prompt: which accounts and models are still available,
@@ -10,10 +10,11 @@ which limits are close, and when each allowance resets.
 
 ## Current Status
 
-This repository is a native starter shell. It currently includes a Swift package
-for shared provider and usage-limit domain types, CI, Dependabot, and repository
-workflow metadata. The macOS app and widget targets will be added once the first
-data and UI contracts settle.
+This repository now includes the native macOS app, WidgetKit extension,
+background refresh agent, companion targets, shared provider/usage-limit domain
+modules, CI, release workflows, and repository workflow metadata. Active work is
+focused on provider connectors, account setup, widget/app polish, release
+validation, and production-quality diagnostics.
 
 ## Product Direction
 
