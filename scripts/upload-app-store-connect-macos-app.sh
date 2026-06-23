@@ -215,6 +215,7 @@ validate_marketing_version() {
 require_command xcodegen
 require_command xcodebuild
 require_command security
+require_command python3
 
 xcodebuild_system_path() {
 	local developer_dir
@@ -267,6 +268,16 @@ fi
 if [[ ! -f "$api_key_path" ]]; then
 	echo "App Store Connect API key not found: $api_key_path" >&2
 	exit 1
+fi
+
+if [[ "$upload" == "true" ]]; then
+	python3 scripts/app-store-version-guard.py \
+		--bundle-id com.shinycomputers.contextpanel \
+		--platform MAC_OS \
+		--version "$marketing_version" \
+		--api-key "$api_key_path" \
+		--api-key-id "$api_key_id" \
+		--api-issuer-id "$api_issuer_id"
 fi
 
 app_profile_uuid="$(profile_uuid "$app_profile")"

@@ -165,6 +165,30 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
         self.assertNotIn("manageAppVersionAndBuildNumber", upload_script)
 
+    def test_upload_scripts_guard_against_app_store_marketing_version_regression(self):
+        for script_path, expected_platform in (
+            ("scripts/upload-app-store-connect-macos-app.sh", "--platform MAC_OS"),
+            ("scripts/upload-app-store-connect-companion-app.sh", '--platform "$app_store_platform"'),
+        ):
+            with self.subTest(script_path=script_path):
+                script = self.read(script_path)
+                guard_index = script.index("scripts/app-store-version-guard.py")
+                xcodegen_index = script.index("xcodegen generate --spec project.yml")
+
+                self.assertLess(guard_index, xcodegen_index)
+                self.assertIn("require_command python3", script)
+                self.assertIn('if [[ "$upload" == "true" ]]; then', script)
+                self.assertIn("--bundle-id com.shinycomputers.contextpanel", script)
+                self.assertIn(expected_platform, script)
+                self.assertIn('--version "$marketing_version"', script)
+                self.assertIn('--api-key "$api_key_path"', script)
+
+    def test_companion_upload_maps_release_platform_to_app_store_connect_platform(self):
+        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
+
+        self.assertIn('app_store_platform="IOS"', script)
+        self.assertIn('app_store_platform="VISION_OS"', script)
+
     def test_app_store_upload_scripts_prefer_system_xcode_tools(self):
         for script_path in (
             "scripts/upload-app-store-connect-macos-app.sh",
