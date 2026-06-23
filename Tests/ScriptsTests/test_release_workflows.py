@@ -202,6 +202,13 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('app_store_platform="IOS"', script)
         self.assertIn('app_store_platform="VISION_OS"', script)
 
+    def test_companion_upload_does_not_hard_code_closed_initial_marketing_version(self):
+        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
+
+        self.assertIn("scripts/app-store-version-guard.py", script)
+        self.assertNotIn('marketing_version" == "1.0"', script)
+        self.assertNotIn("App Store marketing version 1.0 is closed", script)
+
     def test_app_store_upload_scripts_prefer_system_xcode_tools(self):
         for script_path in (
             "scripts/upload-app-store-connect-macos-app.sh",
@@ -661,7 +668,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("Use this path for issue #274", release_docs)
         self.assertIn("`testflight_beta_source=companion`", release_docs)
         self.assertIn("--platform MAC_OS", release_docs)
-        self.assertIn("--version <next-app-store-version>", release_docs)
+        self.assertIn("--version <active-companion-app-store-version>", release_docs)
         self.assertIn("--build-number <yyyymmddHHMM>", release_docs)
         self.assertIn("Mac-to-companion CloudKit dependency", release_docs)
         self.assertIn("CloudKit-backed companion snapshot", release_docs)
