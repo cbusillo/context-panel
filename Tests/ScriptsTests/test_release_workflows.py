@@ -628,12 +628,19 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("visionOS companion packaging is blocked", result.stdout)
         self.assertNotIn("no visionOS layered app icon is present", result.stdout)
 
-    def test_companion_upload_preflights_widget_icloud_documents_profile(self):
+    def test_companion_upload_preflights_cloudkit_app_and_local_mirror_widget_profiles(self):
         script = self.read("scripts/upload-app-store-connect-companion-app.sh")
 
-        self.assertIn("assert_profile_icloud_documents()", script)
-        self.assertIn("assert_profile_icloud_documents \"$app_profile\" \"companion app\"", script)
-        self.assertIn("assert_profile_icloud_documents \"$widget_profile\" \"companion widget\"", script)
+        self.assertIn("assert_profile_icloud_service()", script)
+        self.assertIn("assert_profile_ubiquity_container()", script)
+        self.assertIn("assert_profile_push_notifications()", script)
+        self.assertIn("assert_profile_icloud_service \"$app_profile\" \"companion app\" \"CloudDocuments\"", script)
+        self.assertIn("assert_profile_icloud_service \"$app_profile\" \"companion app\" \"CloudKit\"", script)
+        self.assertIn("assert_profile_ubiquity_container \"$app_profile\" \"companion app\"", script)
+        self.assertIn("assert_profile_push_notifications \"$app_profile\" \"companion app\" \"production\"", script)
+        self.assertNotIn("assert_profile_icloud_service \"$widget_profile\"", script)
+        self.assertNotIn("assert_profile_ubiquity_container \"$widget_profile\"", script)
+        self.assertNotIn("assert_profile_push_notifications \"$widget_profile\"", script)
 
     def test_runtime_baseline_does_not_require_google_oauth_build_settings(self):
         script = self.read("scripts/context-panel-runtime-baseline.sh")

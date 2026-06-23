@@ -300,16 +300,18 @@ The companion app profile must authorize:
 - bundle ID `com.shinycomputers.contextpanel`
 - App Group `group.com.shinycomputers.contextpanel`
 - iCloud container `iCloud.com.shinycomputers.contextpanel`
-- iCloud Documents and ubiquity container access
+- iCloud Documents, CloudKit, ubiquity container access, and APNs background notifications
 - the selected platform: iOS for iPhone/iPad, or visionOS/xrOS for visionOS
 
-The companion widget profile must authorize the same App Group, iCloud
-container, iCloud Documents, ubiquity container, and selected platform for bundle
-ID `com.shinycomputers.contextpanel.widget`.
+The companion widget profile must authorize App Group
+`group.com.shinycomputers.contextpanel` and the selected platform for bundle ID
+`com.shinycomputers.contextpanel.widget`. The widget must not require iCloud,
+CloudKit, or APNs entitlements; it reads only the app-group mirror written by the
+companion app.
 
 Do not remove older App IDs, profiles, or profile secrets while validating the
 new companion path. Keep them available until a signed device/TestFlight install
-has proven that Mac publish, iCloud propagation, companion app load, and
+has proven that Mac publish, CloudKit delivery, companion app load, and
 companion widget rendering all work.
 
 ### Export-Only Canary
@@ -327,8 +329,9 @@ scripts/upload-app-store-connect-companion-app.sh \
 
 That canary should archive `ContextPanelCompanion`, embed
 `ContextPanelCompanionWidgetExtension`, validate both provisioning profiles for
-the selected platform, App Group, iCloud Documents, and ubiquity entitlements,
-then export a signed IPA under `.build/app-store-connect-companion/`.
+the selected platform and App Group, validate the companion app profile for
+iCloud Documents, CloudKit, ubiquity, and production APNs entitlements, then
+export a signed IPA under `.build/app-store-connect-companion/`.
 
 Use `--platform visionos` only after #230 has an explicit native visionOS
 packaging decision. A passing generic no-sign visionOS build is not enough to

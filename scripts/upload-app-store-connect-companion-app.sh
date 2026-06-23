@@ -250,9 +250,10 @@ assert_profile_app_group() {
 	rm -f "$plist"
 }
 
-assert_profile_icloud_documents() {
+assert_profile_icloud_service() {
 	local profile="$1"
 	local label="$2"
+	local service="$3"
 	local container="iCloud.com.shinycomputers.contextpanel"
 	local plist
 	plist="$(mktemp)"
@@ -262,19 +263,45 @@ assert_profile_icloud_documents() {
 		echo "$label provisioning profile does not authorize iCloud container: $container" >&2
 		exit 1
 	fi
-	if ! plist_array_contains_value "$plist" 'Entitlements:com.apple.developer.icloud-services' 'CloudDocuments'; then
+	if ! plist_array_contains_value "$plist" 'Entitlements:com.apple.developer.icloud-services' "$service"; then
 		if ! plist_array_contains_value "$plist" 'Entitlements:com.apple.developer.icloud-services' '*'; then
 			rm -f "$plist"
-			echo "$label provisioning profile does not authorize CloudDocuments" >&2
+			echo "$label provisioning profile does not authorize $service" >&2
 			exit 1
 		fi
 	fi
+	rm -f "$plist"
+}
+
+assert_profile_ubiquity_container() {
+	local profile="$1"
+	local label="$2"
+	local container="iCloud.com.shinycomputers.contextpanel"
+	local plist
+	plist="$(mktemp)"
+	security cms -D -i "$profile" -o "$plist"
 	if ! plist_array_contains_value "$plist" 'Entitlements:com.apple.developer.ubiquity-container-identifiers' "$container"; then
 		rm -f "$plist"
 		echo "$label provisioning profile does not authorize ubiquity container: $container" >&2
 		exit 1
 	fi
 	rm -f "$plist"
+}
+
+assert_profile_push_notifications() {
+	local profile="$1"
+	local label="$2"
+	local expected_environment="$3"
+	local plist
+	local environment
+	plist="$(mktemp)"
+	security cms -D -i "$profile" -o "$plist"
+	environment="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:aps-environment' "$plist" 2>/dev/null || true)"
+	rm -f "$plist"
+	if [[ "$environment" != "$expected_environment" ]]; then
+		echo "$label provisioning profile has APNs environment '$environment', expected '$expected_environment'" >&2
+		exit 1
+	fi
 }
 
 install_profile() {
@@ -531,8 +558,10 @@ assert_profile_platform_any "$app_profile" "companion app" "${profile_platforms[
 assert_profile_platform_any "$widget_profile" "companion widget" "${profile_platforms[@]}"
 assert_profile_app_group "$app_profile" "companion app"
 assert_profile_app_group "$widget_profile" "companion widget"
-assert_profile_icloud_documents "$app_profile" "companion app"
-assert_profile_icloud_documents "$widget_profile" "companion widget"
+assert_profile_icloud_service "$app_profile" "companion app" "CloudDocuments"
+assert_profile_icloud_service "$app_profile" "companion app" "CloudKit"
+assert_profile_ubiquity_container "$app_profile" "companion app"
+assert_profile_push_notifications "$app_profile" "companion app" "production"
 install_profile "$app_profile" "$app_profile_uuid"
 install_profile "$widget_profile" "$widget_profile_uuid"
 
