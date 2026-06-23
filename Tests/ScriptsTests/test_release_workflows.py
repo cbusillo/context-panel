@@ -102,8 +102,17 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("testflight_beta_source:", workflow)
         self.assertIn("uses: ./.github/workflows/app-store-connect-companion-upload.yml", workflow)
         self.assertIn("needs.companion-app-store-upload.outputs.app_store_platform", workflow)
+        self.assertIn("default: macos", workflow)
         self.assertIn("testflight_beta_source=companion requires companion_app_store_channel=upload", workflow)
         self.assertIn("testflight_beta_source=macos requires app_store_channel=upload", workflow)
+        self.assertIn(
+            "companion_app_store_channel=upload with testflight_beta=true requires testflight_beta_source=companion",
+            workflow,
+        )
+        self.assertIn(
+            "inputs.testflight_beta_source == 'companion' && needs.companion-app-store-upload.outputs.app_store_platform || 'MAC_OS'",
+            workflow,
+        )
         self.assertIn("Ship does not submit App Store Review.", workflow)
         self.assertIn("run Submit App Store Review separately; use dry_run=true first", workflow)
         self.assertNotIn("submit_app_review", workflow)
@@ -140,8 +149,12 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/distribute-testflight-beta.py", workflow)
         self.assertIn("--platform", workflow)
         self.assertIn("required: true", workflow)
+        self.assertIn("group: testflight-beta-${{ inputs.version }}-${{ inputs.build_number }}-${{ inputs.platform }}", workflow)
+        self.assertIn('args+=(--platform "${INPUT_PLATFORM}")', workflow)
+        self.assertNotIn("${INPUT_PLATFORM:-any}", workflow)
         self.assertIn("/betaGroups/{group_id}/relationships/builds", script)
         self.assertIn("processingState", script)
+        self.assertIn('required=True,\n        choices=("IOS", "MAC_OS", "TV_OS", "VISION_OS")', script)
 
     def test_ship_concurrency_does_not_block_reusable_release_workflow(self):
         ship_workflow = self.read(".github/workflows/ship.yml")
@@ -641,6 +654,24 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("assert_profile_icloud_service \"$widget_profile\"", script)
         self.assertNotIn("assert_profile_ubiquity_container \"$widget_profile\"", script)
         self.assertNotIn("assert_profile_push_notifications \"$widget_profile\"", script)
+
+    def test_release_docs_describe_cloudkit_companion_testflight_validation(self):
+        release_docs = self.read("docs/release.md")
+
+        self.assertIn("Use this path for issue #274", release_docs)
+        self.assertIn("`testflight_beta_source=companion`", release_docs)
+        self.assertIn("--platform MAC_OS", release_docs)
+        self.assertIn("--version <next-app-store-version>", release_docs)
+        self.assertIn("--build-number <yyyymmddHHMM>", release_docs)
+        self.assertIn("Mac-to-companion CloudKit dependency", release_docs)
+        self.assertIn("CloudKit-backed companion snapshot", release_docs)
+        self.assertIn("run that as separate `Ship` dispatches", release_docs)
+        self.assertIn("widget reads the companion app's app-group mirror", release_docs)
+        self.assertNotIn("issue #174", release_docs)
+        self.assertNotIn("Mac-published iCloud companion document", release_docs)
+        self.assertNotIn("companion app and widget profiles to authorize the Context Panel iCloud", release_docs)
+        self.assertNotIn("read-only companion surfaces can sync fresh snapshots", release_docs)
+        self.assertNotIn("--version 1.0.32", release_docs)
 
     def test_runtime_baseline_does_not_require_google_oauth_build_settings(self):
         script = self.read("scripts/context-panel-runtime-baseline.sh")

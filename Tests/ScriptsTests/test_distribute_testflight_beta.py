@@ -231,6 +231,24 @@ class TestFlightDistributionTests(unittest.TestCase):
 
         self.assertEqual(build["id"], "build-1")
 
+    def test_ensure_build_selects_requested_visionos_platform(self):
+        client = FakeASCClient()
+        client.platform = "VISION_OS"
+
+        build = distribute_testflight_beta.ensure_build(
+            client,
+            "app-1",
+            "1.0.22",
+            "202606111944",
+            "VISION_OS",
+            False,
+            False,
+            wait_timeout_seconds=0,
+            poll_seconds=1,
+        )
+
+        self.assertEqual(build["id"], "build-1")
+
     def test_ensure_build_rejects_missing_requested_platform(self):
         client = FakeASCClient()
 
@@ -248,6 +266,21 @@ class TestFlightDistributionTests(unittest.TestCase):
             )
 
         self.assertIn("missing build 202606111944 for platform IOS", str(context.exception))
+
+    def test_parse_args_requires_platform(self):
+        with mock.patch(
+            "sys.argv",
+            [
+                "distribute-testflight-beta.py",
+                "--version",
+                "1.0.22",
+                "--build-number",
+                "202606111944",
+            ],
+        ):
+            with mock.patch("sys.stderr", new_callable=io.StringIO):
+                with self.assertRaises(SystemExit):
+                    distribute_testflight_beta.parse_args()
 
     def test_request_retries_transient_http_failures(self):
         client = distribute_testflight_beta.ASCClient("token")
