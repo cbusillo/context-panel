@@ -169,7 +169,22 @@ public enum CompanionSyncLoader {
             }
             switch conditionalSaveResult {
             case let .keptCurrent(keptCurrentResult):
-                result = keptCurrentResult
+                if selectedResult.document == keptCurrentResult.document,
+                   let metadata = selectedResult.transportMetadata {
+                    result = CompanionSyncLoadResult(
+                        document: keptCurrentResult.document,
+                        status: keptCurrentResult.status,
+                        errorMessage: selectedResult.errorMessage ?? keptCurrentResult.errorMessage,
+                        transportMetadata: CompanionSyncTransportMetadata(
+                            source: metadata.source,
+                            receivedAt: metadata.receivedAt,
+                            mirroredAt: metadata.mirroredAt ?? now,
+                            deliveryStatus: metadata.deliveryStatus
+                        )
+                    )
+                } else {
+                    result = keptCurrentResult
+                }
                 diagnosticRecord.outcome = downloadErrorMessage == nil
                     ? (keptCurrentResult.status == .stale ? .stale : .healthy)
                     : .partial

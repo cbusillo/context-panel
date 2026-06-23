@@ -589,6 +589,12 @@ private struct CompanionSyncStatusView: View {
         CompanionSyncPresentation(result: result)
     }
 
+    private var lastSyncedAt: Date? {
+        result.transportMetadata?.receivedAt
+            ?? result.transportMetadata?.mirroredAt
+            ?? result.document?.snapshot.publishedAt
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label(presentation.title, systemImage: presentation.symbol)
@@ -605,8 +611,8 @@ private struct CompanionSyncStatusView: View {
                     .foregroundStyle(palette.secondaryText)
             }
 
-            if let generatedAt = result.document?.snapshot.generatedAt {
-                Text("Last synced " + generatedAt.formatted(date: .abbreviated, time: .shortened))
+            if let lastSyncedAt {
+                Text("Last synced " + lastSyncedAt.formatted(date: .abbreviated, time: .shortened))
                     .font(.footnote)
                     .foregroundStyle(palette.tertiaryText)
             }
