@@ -40,7 +40,6 @@ class FakeASCClient:
                 ]
             }
         if method == "GET" and path.endswith("/preReleaseVersions"):
-            platform = (params or {}).get("filter[platform]")
             return {
                 "data": [
                     {
@@ -48,7 +47,8 @@ class FakeASCClient:
                         "type": "preReleaseVersions",
                         "attributes": {"version": version, "platform": platform},
                     }
-                    for version in self.pre_release_versions.get(platform, [])
+                    for platform, versions in self.pre_release_versions.items()
+                    for version in versions
                 ]
             }
         raise AssertionError(f"unexpected request: {method} {path}")
@@ -124,6 +124,17 @@ class VersionGuardTests(unittest.TestCase):
         latest = app_store_version_guard.assert_not_version_regression(client, "app-1", "IOS", "1.0.29")
 
         self.assertIsNone(latest)
+
+    def test_pre_release_versions_filters_platform_locally(self):
+        client = FakeASCClient()
+        client.pre_release_versions["IOS"] = ["1.0.32"]
+        client.pre_release_versions["VISION_OS"] = ["2.0.0"]
+
+        versions = app_store_version_guard.pre_release_versions(client, "app-1", "IOS")
+
+        self.assertEqual([version.version for version in versions], ["1.0.32"])
+        self.assertNotIn("filter[platform]", client.requests[-1][2])
+        self.assertIn("platform", client.requests[-1][2]["fields[preReleaseVersions]"])
 
     def test_considers_app_store_versions_and_pre_release_versions(self):
         client = FakeASCClient()

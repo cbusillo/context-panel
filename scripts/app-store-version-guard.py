@@ -275,14 +275,13 @@ def pre_release_versions(client: ASCClient, app_id: str, platform: str) -> list[
     payload = paginated_get(
         client,
         f"/apps/{app_id}/preReleaseVersions",
-        {
-            "filter[platform]": platform,
-            "fields[preReleaseVersions]": "version,platform",
-        },
+        {"fields[preReleaseVersions]": "version,platform"},
     )
     versions: list[KnownVersion] = []
     for item in payload.get("data") or []:
         attributes = item.get("attributes") or {}
+        if attributes.get("platform") != platform:
+            continue
         version = attributes.get("version")
         if isinstance(version, str) and version:
             versions.append(KnownVersion(version=version, source="TestFlight pre-release version"))
