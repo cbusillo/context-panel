@@ -1,8 +1,12 @@
 import importlib.util
+import io
+import socket
 import unittest
+import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest import mock
 
 
 MODULE_PATH = Path(__file__).resolve().parents[2] / "scripts" / "distribute-testflight-beta.py"
@@ -100,6 +104,29 @@ class FakeASCClient:
             self.group_builds.setdefault(group_id, []).append(build_id)
             return {}
         raise AssertionError(f"unexpected request: {method} {path}")
+
+
+class FakeResponse:
+    status = 200
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def read(self):
+        return b'{"data": []}'
+
+
+def http_error(status_code: int, body: bytes = b'{"errors": []}') -> urllib.error.HTTPError:
+    return urllib.error.HTTPError(
+        url="https://api.appstoreconnect.apple.com/v1/apps/app-1/betaGroups",
+        code=status_code,
+        msg="error",
+        hdrs={},
+        fp=io.BytesIO(body),
+    )
 
 
 class TestFlightDistributionTests(unittest.TestCase):
@@ -221,6 +248,69 @@ class TestFlightDistributionTests(unittest.TestCase):
             )
 
         self.assertIn("missing build 202606111944 for platform IOS", str(context.exception))
+
+    def test_request_retries_transient_http_failures(self):
+        client = distribute_testflight_beta.ASCClient("token")
+
+        with mock.patch.object(distribute_testflight_beta.time, "sleep") as sleep:
+            with mock.patch.object(
+                distribute_testflight_beta.urllib.request,
+                "urlopen",
+                side_effect=[http_error(500, b'{"errors":[{"status":"500"}]}'), FakeResponse()],
+            ) as urlopen:
+                payload = client.request("GET", "/apps/app-1/betaGroups")
+
+        self.assertEqual(payload, {"data": []})
+        self.assertEqual(urlopen.call_count, 2)
+        sleep.assert_called_once_with(distribute_testflight_beta.TRANSIENT_BACKOFF_SECONDS)
+
+    def test_request_retries_transient_http_failures_before_failing_closed(self):
+        client = distribute_testflight_beta.ASCClient("token")
+
+        with mock.patch.object(distribute_testflight_beta.time, "sleep") as sleep:
+            with mock.patch.object(
+                distribute_testflight_beta.urllib.request,
+                "urlopen",
+                side_effect=[http_error(500) for _ in range(distribute_testflight_beta.TRANSIENT_ATTEMPTS)],
+            ) as urlopen:
+                with self.assertRaises(distribute_testflight_beta.AppStoreConnectError) as context:
+                    client.request("GET", "/apps/app-1/betaGroups")
+
+        self.assertEqual(context.exception.status, 500)
+        self.assertEqual(urlopen.call_count, distribute_testflight_beta.TRANSIENT_ATTEMPTS)
+        self.assertEqual(sleep.call_count, distribute_testflight_beta.TRANSIENT_ATTEMPTS - 1)
+
+    def test_request_does_not_retry_non_transient_http_failures(self):
+        client = distribute_testflight_beta.ASCClient("token")
+
+        with mock.patch.object(distribute_testflight_beta.time, "sleep") as sleep:
+            with mock.patch.object(
+                distribute_testflight_beta.urllib.request,
+                "urlopen",
+                side_effect=http_error(401),
+            ) as urlopen:
+                with self.assertRaises(distribute_testflight_beta.AppStoreConnectError) as context:
+                    client.request("GET", "/apps/app-1/betaGroups")
+
+        self.assertEqual(context.exception.status, 401)
+        self.assertEqual(urlopen.call_count, 1)
+        sleep.assert_not_called()
+
+    def test_request_retries_timeouts_before_failing_closed(self):
+        client = distribute_testflight_beta.ASCClient("token")
+
+        with mock.patch.object(distribute_testflight_beta.time, "sleep") as sleep:
+            with mock.patch.object(
+                distribute_testflight_beta.urllib.request,
+                "urlopen",
+                side_effect=socket.timeout("timed out"),
+            ) as urlopen:
+                with self.assertRaises(distribute_testflight_beta.AppStoreConnectError) as context:
+                    client.request("GET", "/apps/app-1/betaGroups")
+
+        self.assertIn("timed out", str(context.exception))
+        self.assertEqual(urlopen.call_count, distribute_testflight_beta.TRANSIENT_ATTEMPTS)
+        self.assertEqual(sleep.call_count, distribute_testflight_beta.TRANSIENT_ATTEMPTS - 1)
 
 
 if __name__ == "__main__":
