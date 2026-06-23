@@ -26,6 +26,8 @@ class FakeASCClient:
         self.requests.append((method, path, params))
         if method == "GET" and path.endswith("/appStoreVersions"):
             platform = (params or {}).get("filter[platform]")
+            if not isinstance(platform, str):
+                platform = ""
             return {
                 "data": [
                     {
@@ -133,8 +135,9 @@ class VersionGuardTests(unittest.TestCase):
         versions = app_store_version_guard.pre_release_versions(client, "app-1", "IOS")
 
         self.assertEqual([version.version for version in versions], ["1.0.32"])
-        self.assertNotIn("filter[platform]", client.requests[-1][2])
-        self.assertIn("platform", client.requests[-1][2]["fields[preReleaseVersions]"])
+        request_params = client.requests[-1][2] or {}
+        self.assertNotIn("filter[platform]", request_params)
+        self.assertIn("platform", request_params["fields[preReleaseVersions]"])
 
     def test_considers_app_store_versions_and_pre_release_versions(self):
         client = FakeASCClient()

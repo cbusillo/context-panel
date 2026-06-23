@@ -87,6 +87,10 @@ Use `Ship` for normal releases. It accepts:
 - `notarize_github_release`: notarize the GitHub zip; default is true.
 - `app_store_channel`: `upload`, `export-only`, or `skip`.
 - `testflight_beta`: distribute the uploaded build through TestFlight.
+- `testflight_beta_source`: `macos` distributes the Mac App Store build;
+  `companion` distributes the companion iOS/visionOS build. If
+  `companion_app_store_channel=upload` and `testflight_beta=true`, `Ship`
+  requires `testflight_beta_source=companion`.
 - `testflight_beta_groups`: optional comma-separated TestFlight beta group
   names; internal groups are included by default.
 - `include_internal_testflight_groups`: include internal TestFlight beta groups.
@@ -210,7 +214,8 @@ variables:
 ```sh
 scripts/distribute-testflight-beta.py \
   --version 1.0.22 \
-  --build-number 202606111944
+  --build-number 202606111944 \
+  --platform MAC_OS
 ```
 
 App Store Connect build upload is a shared prerequisite. TestFlight beta
@@ -219,7 +224,7 @@ uploaded build; neither should secretly invoke the other.
 
 ## Companion TestFlight Validation
 
-Use this path for issue #174 and companion device dogfood. It is separate from
+Use this path for issue #274 and companion device dogfood. It is separate from
 the normal Mac TestFlight cut unless `Ship` is explicitly configured to use the
 companion channel.
 
@@ -233,10 +238,11 @@ Context Panel has a designed, signed, uploaded, installed, or user-validated
 visionOS app or widget.
 
 For issue #168, the first visionOS deliverable is app-first: a native visionOS
-read-only companion app that reads the Mac-published iCloud companion document
-and shows current, stale, no-Mac, and degraded sync states. Do not use the
-compatible iPhone/iPad-on-Apple-Vision-Pro App Store fallback as #231 release
-evidence unless that becomes an explicit product decision.
+read-only companion app that receives the Mac-published CloudKit companion
+snapshot, mirrors it into the app group, and shows current, stale, no-Mac, and
+degraded sync states. Do not use the compatible iPhone/iPad-on-Apple-Vision-Pro
+App Store fallback as #231 release evidence unless that becomes an explicit
+product decision.
 
 Before using `--platform visionos` as release evidence, complete #230 under
 parent plan #168:
@@ -244,8 +250,9 @@ parent plan #168:
 - configure App Store Connect for the native visionOS platform for Context
   Panel, not only compatible iPhone/iPad availability on Apple Vision Pro;
 - provide Apple Distribution provisioning profiles whose platform includes
-  `visionOS` or `xrOS` and whose entitlements match the companion App Group and
-  iCloud Documents container;
+  `visionOS` or `xrOS` and whose entitlements match the companion app/widget
+  split: app profile with App Group, iCloud Documents, CloudKit, ubiquity, and
+  production APNs; widget profile with App Group only;
 - provide separate profiles for both bundle IDs because the current signed
   package embeds `ContextPanelCompanionWidgetExtension`:
   `com.shinycomputers.contextpanel` and
@@ -257,7 +264,7 @@ parent plan #168:
   until #231 smoke-tests adding and rendering it on Apple Vision Pro;
 - prepare App Store Connect visionOS product-page metadata, including screenshots
   or app previews, privacy nutrition details, age rating, review notes for the
-  Mac-to-companion iCloud dependency, and required Apple Vision Pro app motion
+  Mac-to-companion CloudKit dependency, and required Apple Vision Pro app motion
   information before App Review submission.
 
 The required visionOS app icon asset should live under:
@@ -322,8 +329,8 @@ Before uploading a companion build, run the companion upload workflow with
 ```sh
 scripts/upload-app-store-connect-companion-app.sh \
   --platform ios \
-  --version 1.0.32 \
-  --build-number 202606191900 \
+  --version <next-app-store-version> \
+  --build-number <yyyymmddHHMM> \
   --export-only
 ```
 
@@ -413,6 +420,12 @@ For a coordinated one-shot run through `Ship`, select:
 - `testflight_beta_source=companion`
 - `app_store_channel=skip` unless the same run should also upload a Mac build
 
+`Ship` intentionally rejects `companion_app_store_channel=upload` together with
+`testflight_beta=true` unless `testflight_beta_source=companion`. If a future
+release needs to upload both Mac and companion builds while distributing only the
+Mac build to TestFlight, run that as separate `Ship` dispatches so the TestFlight
+source remains unambiguous.
+
 Use `companion_platform=visionos` only for the #168/#231 native visionOS
 validation path, after #230 has confirmed profile, icon, metadata, and App Store
 Connect requirements. The normal companion dogfood path remains `ios` for
@@ -431,7 +444,8 @@ sequence from signed runtimes:
 Panel.app`.
 2. Run `scripts/context-panel-runtime-baseline.sh install --launch` or
    `scripts/context-panel-runtime-baseline.sh check` and require `baseline=OK`.
-3. Trigger a Mac refresh that publishes `context-panel-companion.json`.
+3. Trigger a Mac refresh that publishes the sanitized companion snapshot to
+   CloudKit and preserves the staged local/iCloud Drive fallback.
 4. Open the app Diagnostics view and confirm `Companion publish` is healthy or,
    if degraded, names the failing store without raw paths or account data.
 5. Install the companion build from TestFlight on the target device. For the
@@ -439,19 +453,20 @@ Panel.app`.
    visionOS lane, release evidence requires Apple Vision Pro after #168
    packaging requirements are satisfied. A visionOS simulator can be used for a
    separate pre-release UI smoke check, but not as TestFlight/device validation.
-6. Launch the companion app and confirm it renders current lanes from the Mac
-   companion document rather than setup-only, stale, or no-Mac copy.
+6. Launch the companion app and confirm it renders current lanes from the
+   CloudKit-backed companion snapshot rather than setup-only, stale, or no-Mac
+   copy.
 7. Add the companion widget and confirm the small/medium/large widget layouts
    render current lanes and preserve useful degraded states.
 8. Reopen the Mac Diagnostics view and confirm companion load/readback state is
    explainable: healthy, stale, unavailable, partial, or failed.
-9. Exercise degraded cases when practical: iCloud disabled/unavailable, stale
-   local mirror, missing Mac publish, and app group mirror failure.
+9. Exercise degraded cases when practical: iCloud/CloudKit disabled or
+   unavailable, stale local mirror, missing Mac publish, delayed notification,
+   and app group mirror failure.
 
 If the companion app or widget is stale but diagnostics show healthy Mac publish
-and readable iCloud state, pull #217 forward and evaluate active iCloud document
-observation. Keep #217 Later while the signed device path works with the current
-publish/read/local-mirror model.
+and readable CloudKit state, investigate the companion receive/mirror/reload path
+under #274 before treating provider refresh as the cause.
 
 ## App Store Review Submission
 
@@ -504,10 +519,11 @@ app-scope bookmark permissions. The macOS widget should keep only the sandbox
 and App Group entitlements. The App Store Connect upload script fails early when
 any supplied provisioning profile does not authorize the Context Panel App
 Group; App Store profiles may express that authorization as either the exact app
-group or a same-team wildcard. Companion iOS and visionOS uploads also require
-the companion app and widget profiles to authorize the Context Panel iCloud
-Documents container so the read-only companion surfaces can sync fresh snapshots
-through iCloud.
+group or a same-team wildcard. Companion iOS and visionOS uploads require the
+companion app profile to authorize the Context Panel iCloud container,
+CloudDocuments, CloudKit, ubiquity, and production APNs. The companion widget
+profile should authorize only the App Group and selected platform because the
+widget reads the companion app's app-group mirror.
 
 ## Build The Native App And Widget
 

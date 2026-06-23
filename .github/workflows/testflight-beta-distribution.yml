@@ -14,7 +14,7 @@ name: TestFlight Beta Distribution
         type: string
       platform:
         description: App Store Connect platform to distribute.
-        required: false
+        required: true
         type: string
       beta_groups:
         description: Optional comma-separated TestFlight beta group names. Internal groups are included by default.
@@ -67,7 +67,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: testflight-beta-${{ inputs.version }}-${{ inputs.build_number }}
+  group: testflight-beta-${{ inputs.version }}-${{ inputs.build_number }}-${{ inputs.platform }}
   cancel-in-progress: false
 
 jobs:
@@ -106,9 +106,7 @@ jobs:
             --version "${INPUT_VERSION}"
             --build-number "${INPUT_BUILD_NUMBER}"
           )
-          if [[ -n "${INPUT_PLATFORM}" ]]; then
-            args+=(--platform "${INPUT_PLATFORM}")
-          fi
+          args+=(--platform "${INPUT_PLATFORM}")
           if [[ -n "${INPUT_BETA_GROUPS}" ]]; then
             args+=(--beta-group "${INPUT_BETA_GROUPS}")
           fi
@@ -127,7 +125,7 @@ jobs:
             echo "- Version: ${INPUT_VERSION}"
             echo "- Build number: ${INPUT_BUILD_NUMBER}"
             echo "- Commit: ${GITHUB_SHA}"
-            echo "- Platform: ${INPUT_PLATFORM:-any}"
+            echo "- Platform: ${INPUT_PLATFORM}"
             echo "- Beta groups: ${INPUT_BETA_GROUPS:-internal groups}"
             echo "- Include internal groups: ${INPUT_INCLUDE_INTERNAL_BETA_GROUPS}"
             echo "- Dry run: ${INPUT_DRY_RUN}"

@@ -418,8 +418,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--build-number", required=True, help="CFBundleVersion uploaded to App Store Connect")
     parser.add_argument(
         "--platform",
+        required=True,
         choices=("IOS", "MAC_OS", "TV_OS", "VISION_OS"),
-        help="Only distribute a build for the selected App Store Connect platform.",
+        help="Distribute only the uploaded build for this App Store Connect platform.",
     )
     parser.add_argument(
         "--beta-group",

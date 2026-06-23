@@ -110,6 +110,10 @@ jobs:
             fi
           fi
           if [[ "${testflight_beta_selected}" == "true" ]]; then
+            if [[ "${companion_app_store_channel}" == "upload" && "${testflight_beta_source}" != "companion" ]]; then
+              echo "companion_app_store_channel=upload with testflight_beta=true requires testflight_beta_source=companion" >&2
+              exit 1
+            fi
             case "${testflight_beta_source}" in
               macos)
                 if [[ "${app_store_channel}" != "upload" ]]; then
