@@ -203,11 +203,11 @@ install_profile() {
 
 validate_marketing_version() {
 	if [[ -z "$marketing_version" ]]; then
-		echo "App Store marketing version is required; pass --version, for example --version 1.0.18" >&2
+		echo "App Store marketing version is required; pass --version <next-app-store-version>" >&2
 		exit 1
 	fi
 	if [[ "$marketing_version" == "1.0" ]]; then
-		echo "App Store marketing version 1.0 is closed; pass the next App Store version, for example --version 1.0.18" >&2
+		echo "App Store marketing version 1.0 is closed; pass --version <next-app-store-version>" >&2
 		exit 1
 	fi
 }
