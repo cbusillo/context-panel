@@ -53,6 +53,7 @@ public struct CompanionSyncTransportStatus: Equatable, Sendable {
     public let isAvailable: Bool
     public let succeeded: Bool
     public let loadedDocument: Bool?
+    public let missingRecord: Bool
     public let errorMessage: String?
 
     public init(
@@ -60,12 +61,14 @@ public struct CompanionSyncTransportStatus: Equatable, Sendable {
         isAvailable: Bool,
         succeeded: Bool,
         loadedDocument: Bool? = nil,
+        missingRecord: Bool = false,
         errorMessage: String? = nil
     ) {
         self.source = source
         self.isAvailable = isAvailable
         self.succeeded = succeeded
         self.loadedDocument = loadedDocument
+        self.missingRecord = missingRecord
         self.errorMessage = errorMessage.map(ConnectorRedactor.redact)
     }
 }
@@ -74,17 +77,20 @@ public struct CompanionRemoteSyncOutcome: Equatable, Sendable {
     public let storeRole: String
     public let isAvailable: Bool
     public let succeeded: Bool
+    public let missingRecord: Bool
     public let errorMessage: String?
 
     public init(
         storeRole: String = CompanionRemoteSync.cloudKitStoreRole,
         isAvailable: Bool = true,
         succeeded: Bool,
+        missingRecord: Bool = false,
         errorMessage: String? = nil
     ) {
         self.storeRole = ConnectorRedactor.redact(storeRole)
         self.isAvailable = isAvailable
         self.succeeded = succeeded
+        self.missingRecord = missingRecord
         self.errorMessage = errorMessage.map(ConnectorRedactor.redact)
     }
 

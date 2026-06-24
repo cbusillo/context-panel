@@ -62,7 +62,10 @@ private actor CompanionCloudKitClient {
         } catch let error as CKError where error.code == .unknownItem {
             return CompanionRemoteSyncLoadResult(
                 result: CompanionSyncLoadResult(document: nil, status: .unknown),
-                outcome: CompanionRemoteSyncOutcome(succeeded: true)
+                outcome: CompanionRemoteSyncOutcome(
+                    succeeded: true,
+                    missingRecord: true
+                )
             )
         } catch {
             return CompanionRemoteSyncLoadResult(

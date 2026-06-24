@@ -1114,6 +1114,9 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         if let loadedDocument = record.loadedDocument {
             parts.append(loadedDocument ? "loaded" : "not loaded")
         }
+        if record.cloudKitMissingRecord == true {
+            parts.append("CloudKit record missing")
+        }
         if let mirroredDocument = record.mirroredDocument {
             parts.append(mirroredDocument ? "mirrored" : "mirror failed")
         }
