@@ -1057,6 +1057,33 @@ import Testing
     #expect(mirrored.status == .close)
 }
 
+@Test func companionAppGroupMirrorKeepsExplicitRoleForUUIDContainerPaths() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 3_545)
+    let localURL = root
+        .appending(path: "private/var/mobile/Containers/Shared/AppGroup/BC8B9EFF-DF31-4AF0-9392-249B53C55CE9")
+        .appending(path: "Context Panel")
+        .appending(path: "Companion")
+        .appending(path: "context-panel-companion.json")
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    )
+    try CompanionSyncStore(documentURL: localURL).save(document)
+
+    let result = CompanionSyncLoader.load(
+        localMirrorURL: localURL,
+        iCloudDocumentURL: nil,
+        now: now
+    )
+
+    #expect(result.document?.snapshot.generatedAt == document.snapshot.generatedAt)
+    #expect(result.status == .close)
+    #expect(result.transportMetadata?.source == .appGroup)
+    #expect(CompanionSyncPresentation(result: result).detail == "Latest Mac snapshot loaded from the local mirror.")
+}
+
 @Test func companionWidgetLoaderFallsBackToLocalMirrorWithoutRewritingWhenICloudUnavailable() throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }

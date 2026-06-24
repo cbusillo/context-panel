@@ -14,6 +14,7 @@ import Testing
     let keychainGroups = try #require(appEntitlements["keychain-access-groups"] as? [String])
     #expect(keychainGroups == ["MM5YXC7T6E.com.shinycomputers.contextpanel.provider-credentials"])
     try expectICloudDocumentAndCloudKitEntitlements(appEntitlements)
+    expectProductionCloudKitEnvironment(appEntitlements)
 
     let refreshAgentEntitlements = try loadEntitlements("Config/ContextPanelRefreshAgentAppStore.entitlements")
     #expect(refreshAgentEntitlements["com.apple.security.app-sandbox"] as? Bool == true)
@@ -27,16 +28,19 @@ import Testing
     let refreshAgentKeychainGroups = try #require(refreshAgentEntitlements["keychain-access-groups"] as? [String])
     #expect(refreshAgentKeychainGroups == ["MM5YXC7T6E.com.shinycomputers.contextpanel.provider-credentials"])
     try expectICloudDocumentAndCloudKitEntitlements(refreshAgentEntitlements)
+    expectProductionCloudKitEnvironment(refreshAgentEntitlements)
 }
 
 @Test func debugAppEntitlementsDoNotRequireOAuthCallbackServer() throws {
     let entitlements = try loadEntitlements("Config/ContextPanel.entitlements")
     #expect(entitlements["com.apple.security.network.server"] == nil)
     try expectICloudDocumentAndCloudKitEntitlements(entitlements)
+    expectProductionCloudKitEnvironment(entitlements)
 
     let refreshAgentEntitlements = try loadEntitlements("Config/ContextPanelRefreshAgent.entitlements")
     #expect(refreshAgentEntitlements["com.apple.security.network.server"] == nil)
     try expectICloudDocumentAndCloudKitEntitlements(refreshAgentEntitlements)
+    expectProductionCloudKitEnvironment(refreshAgentEntitlements)
 }
 
 @Test func mainAppInfoPlistRegistersOnlyContextPanelURLScheme() throws {
@@ -62,6 +66,7 @@ import Testing
         let keychainGroups = try #require(entitlements["keychain-access-groups"] as? [String])
         #expect(keychainGroups == ["MM5YXC7T6E.com.shinycomputers.contextpanel.provider-credentials"])
         try expectICloudDocumentAndCloudKitEntitlements(entitlements)
+        expectProductionCloudKitEnvironment(entitlements)
     }
 }
 
@@ -236,6 +241,10 @@ private func expectICloudDocumentAndCloudKitEntitlements(_ entitlements: [String
     let services = try #require(entitlements["com.apple.developer.icloud-services"] as? [String])
     #expect(services == ["CloudDocuments", "CloudKit"])
     #expect(entitlements["com.apple.developer.ubiquity-kvstore-identifier"] == nil)
+}
+
+private func expectProductionCloudKitEnvironment(_ entitlements: [String: Any]) {
+    #expect(entitlements["com.apple.developer.icloud-container-environment"] as? String == "Production")
 }
 
 private func loadInfoPlist(_ path: String) throws -> [String: Any] {
