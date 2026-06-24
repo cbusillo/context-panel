@@ -45,17 +45,7 @@ private actor CompanionCloudKitClient {
             )
         }
 
-        do {
-            let record = try await privateDatabase.record(for: recordID)
-            try verifyReadableRecord(record, expectedDocument: document, expectedPayload: payload)
-            return CompanionRemoteSyncOutcome(succeeded: true)
-        } catch {
-            return CompanionRemoteSyncOutcome(
-                isAvailable: isCloudKitAvailable(error),
-                succeeded: false,
-                errorMessage: diagnosticMessage(operation: "verify publish", error: error)
-            )
-        }
+        return CompanionRemoteSyncOutcome(succeeded: true)
     }
 
     func load(now: Date) async -> CompanionRemoteSyncLoadResult {
@@ -160,28 +150,6 @@ private actor CompanionCloudKitClient {
             throw SnapshotStoreError.corruptStore("CloudKit companion sync publish returned a different payload.")
         }
         _ = try CompanionSyncPayloadCodec.decode(payload)
-    }
-
-    private func verifyReadableRecord(
-        _ record: CKRecord,
-        expectedDocument: CompanionSyncDocument,
-        expectedPayload: Data
-    ) throws {
-        guard let payload = record[CompanionRemoteSync.payloadFieldName] as? Data else {
-            throw SnapshotStoreError.corruptStore("CloudKit companion sync record is missing payload data.")
-        }
-        guard payload != expectedPayload else {
-            _ = try CompanionSyncPayloadCodec.decode(payload)
-            return
-        }
-
-        let document = try CompanionSyncPayloadCodec.decode(payload)
-        guard document.snapshot.generatedAt > expectedDocument.snapshot.generatedAt
-            || (document.snapshot.generatedAt == expectedDocument.snapshot.generatedAt
-                && document.snapshot.publishedAt > expectedDocument.snapshot.publishedAt)
-        else {
-            throw SnapshotStoreError.corruptStore("CloudKit companion sync record is older than the published document.")
-        }
     }
 
     private func diagnosticMessage(operation: String, error: Error) -> String {
