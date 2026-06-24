@@ -705,8 +705,11 @@ public struct CompanionSyncStoreSet: Sendable {
                 ))
                 continue
             }
-            let result = store.load(policy: policy, now: now)
             let storeRole = resolver.storeRole
+            let result = Self.loadResultWithExplicitStoreRole(
+                store.load(policy: policy, now: now),
+                storeRole: storeRole
+            )
             storeOutcomes.append(Self.loadOutcome(storeRole: storeRole, result: result))
             if result.document != nil {
                 bestCandidate = Self.preferredCandidate(
@@ -736,6 +739,24 @@ public struct CompanionSyncStoreSet: Sendable {
             storeRole: storeRole,
             succeeded: result.document != nil && result.status != .failure,
             errorMessage: result.errorMessage
+        )
+    }
+
+    private static func loadResultWithExplicitStoreRole(
+        _ result: CompanionSyncLoadResult,
+        storeRole: String
+    ) -> CompanionSyncLoadResult {
+        guard result.document != nil else { return result }
+        return CompanionSyncLoadResult(
+            document: result.document,
+            status: result.status,
+            errorMessage: result.errorMessage,
+            transportMetadata: CompanionSyncTransportMetadata(
+                source: .storeRole(storeRole),
+                receivedAt: result.transportMetadata?.receivedAt,
+                mirroredAt: result.transportMetadata?.mirroredAt,
+                deliveryStatus: result.transportMetadata?.deliveryStatus ?? .healthy
+            )
         )
     }
 

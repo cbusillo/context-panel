@@ -96,10 +96,15 @@ public enum CompanionSyncLoader {
             }
         }
         let storeSet = CompanionSyncStoreSet(
-            stores: [localStore],
-            lazyStores: [CompanionSyncStoreResolver(storeRole: "icloud") {
-                iCloudDocumentURL.map(CompanionSyncStore.init(documentURL:))
-            }]
+            stores: [],
+            lazyStores: [
+                CompanionSyncStoreResolver(storeRole: "app-group") {
+                    localStore
+                },
+                CompanionSyncStoreResolver(storeRole: "icloud") {
+                    iCloudDocumentURL.map(CompanionSyncStore.init(documentURL:))
+                },
+            ]
         )
         var downloadErrorMessage: String?
         if let iCloudDocumentURL {
