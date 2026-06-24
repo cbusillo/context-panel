@@ -73,6 +73,7 @@ derived_data_path="$repo_root/.build/runtime-baseline-derived-data"
 built_app_path="$derived_data_path/Build/Products/Debug/Context Panel.app"
 built_widget_path="$built_app_path/Contents/PlugIns/ContextPanelWidgetExtension.appex"
 built_refresh_agent_path="$built_app_path/Contents/Library/LoginItems/ContextPanelRefreshAgent.app"
+artifact_cache_root="${CONTEXT_PANEL_ARTIFACT_CACHE_ROOT:-}"
 app_path="/Applications/Context Panel.app"
 widget_path="$app_path/Contents/PlugIns/ContextPanelWidgetExtension.appex"
 refresh_agent_path="$app_path/Contents/Library/LoginItems/ContextPanelRefreshAgent.app"
@@ -314,6 +315,28 @@ discoverable_bundles() {
 
 local_build_bundles() {
 	find_context_panel_bundles "$repo_root/.build"
+	artifact_cache_companion_build_validation_bundles
+}
+
+artifact_cache_companion_build_validation_root() {
+	local roots=()
+	if [[ -n "$artifact_cache_root" ]]; then
+		roots+=("$artifact_cache_root")
+	fi
+	roots+=("/Volumes/Developer-Artifacts/github-actions/cache/cbusillo/context-panel")
+	printf '%s\n' "${roots[@]}" |
+		awk 'NF && !seen[$0]++' |
+		while IFS= read -r root; do
+			printf '%s\n' "$root/derived-data/companion-build-validation"
+		done
+}
+
+artifact_cache_companion_build_validation_bundles() {
+	local path
+	while IFS= read -r path; do
+		[[ -n "$path" ]] || continue
+		find_context_panel_bundles "$path"
+	done < <(artifact_cache_companion_build_validation_root)
 }
 
 find_context_panel_bundles() {
@@ -997,6 +1020,16 @@ quarantine_stale_runtime_bundles() {
 			quarantine_path "$bundle" "$quarantine"
 		fi
 	done < <(find_context_panel_bundles "/tmp")
+	while IFS= read -r path; do
+		[[ -n "$path" ]] || continue
+		while IFS= read -r bundle; do
+			if is_runtime_or_build_artifact "$bundle"; then
+				:
+			else
+				quarantine_path "$bundle" "$quarantine"
+			fi
+		done < <(find_context_panel_bundles "$path")
+	done < <(artifact_cache_companion_build_validation_root)
 
 	unregister_bundle_tree "$quarantine"
 	unregister_stale_plugin_paths
