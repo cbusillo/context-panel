@@ -3,6 +3,8 @@ from pathlib import Path
 import subprocess
 import re
 import tempfile
+import os
+import json
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -88,6 +90,178 @@ class ReleaseWorkflowTests(unittest.TestCase):
             check=False,
         )
 
+    def run_package_script_preflight(self, args: list[str], profiles: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            tool_dir = root / "tools"
+            tool_dir.mkdir()
+            self.write_fake_release_tools(tool_dir)
+            profile_paths: dict[str, Path] = {}
+            for name, contents in (profiles or {}).items():
+                path = root / name
+                path.write_text(contents)
+                profile_paths[name] = path
+            expanded_args = [str(profile_paths.get(arg, arg)) for arg in args]
+            env = os.environ.copy()
+            env["PATH"] = f"{tool_dir}:{env['PATH']}"
+            return subprocess.run(
+                ["/bin/bash", str(REPO_ROOT / "scripts/package-native-macos-app.sh"), *expanded_args],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+
+    def write_fake_release_tools(self, tool_dir: Path) -> None:
+        fake_security = """#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "cms" && "${2:-}" == "-D" && "${3:-}" == "-i" ]]; then
+  cat "${4:?profile path required}"
+  exit 0
+fi
+if [[ "${1:-}" == "find-identity" ]]; then
+  exit 0
+fi
+echo "unexpected fake security invocation: $*" >&2
+exit 42
+"""
+        (tool_dir / "security").write_text(fake_security)
+        for name in ("xcodegen", "xcodebuild", "codesign", "ditto", "xcrun"):
+            (tool_dir / name).write_text(
+                f"#!/usr/bin/env bash\necho 'unexpected fake {name} invocation' >&2\nexit 42\n"
+            )
+        for path in tool_dir.iterdir():
+            path.chmod(0o755)
+
+    def cloudkit_profile_plist(
+        self,
+        bundle_id: str,
+        services: list[str] | None = None,
+        cloudkit_environment: str = "Production",
+    ) -> str:
+        team_id = "MM5YXC7T6E"
+        service_items = "\n".join(
+            f"        <string>{service}</string>" for service in (services or ["CloudDocuments", "CloudKit"])
+        )
+        return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Name</key>
+  <string>Test Profile {bundle_id}</string>
+  <key>TeamIdentifier</key>
+  <array>
+    <string>{team_id}</string>
+  </array>
+  <key>Entitlements</key>
+  <dict>
+    <key>application-identifier</key>
+    <string>{team_id}.{bundle_id}</string>
+    <key>com.apple.application-identifier</key>
+    <string>{team_id}.{bundle_id}</string>
+    <key>com.apple.developer.team-identifier</key>
+    <string>{team_id}</string>
+    <key>com.apple.developer.icloud-container-identifiers</key>
+    <array>
+      <string>iCloud.com.shinycomputers.contextpanel</string>
+    </array>
+    <key>com.apple.developer.icloud-services</key>
+    <array>
+{service_items}
+    </array>
+    <key>com.apple.developer.icloud-container-environment</key>
+    <string>{cloudkit_environment}</string>
+    <key>com.apple.developer.ubiquity-container-identifiers</key>
+    <array>
+      <string>iCloud.com.shinycomputers.contextpanel</string>
+    </array>
+    <key>com.apple.security.application-groups</key>
+    <array>
+      <string>{team_id}.group.com.shinycomputers.contextpanel</string>
+    </array>
+    <key>keychain-access-groups</key>
+    <array>
+      <string>{team_id}.com.shinycomputers.contextpanel.provider-credentials</string>
+    </array>
+  </dict>
+</dict>
+</plist>
+"""
+
+    def run_cloudkit_schema_validator_with_fake_cktool(
+        self,
+        live_schema: str,
+        *,
+        management_token: str | None = None,
+        require_token: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            tool_dir = root / "tools"
+            tool_dir.mkdir()
+            live_schema_path = root / "live.ckdb"
+            live_schema_path.write_text(live_schema)
+            fake_xcrun = """#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" != "cktool" || "${2:-}" != "export-schema" ]]; then
+  echo "unexpected fake xcrun invocation: $*" >&2
+  exit 42
+fi
+output_file=""
+token=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --output-file)
+      output_file="${2:?--output-file requires a value}"
+      shift 2
+      ;;
+    --token)
+      token="${2:?--token requires a value}"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+if [[ -z "$output_file" ]]; then
+  echo "missing --output-file" >&2
+  exit 42
+fi
+if [[ "${FAKE_REQUIRE_TOKEN:-}" == "1" && "$token" != "${FAKE_EXPECTED_TOKEN:-}" ]]; then
+  echo "missing expected --token" >&2
+  exit 42
+fi
+cp "$FAKE_CKDB_SCHEMA" "$output_file"
+"""
+            (tool_dir / "xcrun").write_text(fake_xcrun)
+            (tool_dir / "xcrun").chmod(0o755)
+            env = os.environ.copy()
+            env["PATH"] = f"{tool_dir}:{env['PATH']}"
+            env["FAKE_CKDB_SCHEMA"] = str(live_schema_path)
+            if management_token is not None:
+                env["CLOUDKIT_MANAGEMENT_TOKEN"] = management_token
+            if require_token:
+                env["FAKE_REQUIRE_TOKEN"] = "1"
+                env["FAKE_EXPECTED_TOKEN"] = management_token or ""
+            return subprocess.run(
+                [
+                    "/bin/bash",
+                    str(REPO_ROOT / "scripts/validate-cloudkit-companion-schema.sh"),
+                    "--live",
+                    "--environment",
+                    "production",
+                ],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+
     def test_ship_forwards_resolved_build_number_to_github_release(self):
         workflow = self.read(".github/workflows/ship.yml")
 
@@ -172,6 +346,224 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('--build-number "${{ steps.build.outputs.build_number }}"', workflow)
         self.assertIn('MARKETING_VERSION="$version"', package_script)
         self.assertIn('CURRENT_PROJECT_VERSION="$build_number"', package_script)
+
+    def test_release_package_signing_preserves_profile_application_identifier(self):
+        package_script = self.read("scripts/package-native-macos-app.sh")
+
+        self.assertIn("merge_profile_application_entitlements()", package_script)
+        self.assertIn("profile_entitlement_value \"$profile_plist\" com.apple.application-identifier", package_script)
+        self.assertIn("Add :com.apple.application-identifier string $application_identifier", package_script)
+        self.assertIn("Add :com.apple.developer.team-identifier string $team_identifier", package_script)
+        self.assertIn("require_profile_for_cloudkit_entitlements", package_script)
+        self.assertIn("uses CloudKit entitlements and requires an embedded provisioning profile", package_script)
+        self.assertIn("require_command security", package_script)
+        self.assertIn("prepared_entitlements()", package_script)
+        self.assertIn('prepared_entitlements "$app_entitlements" "$app_provisioning_profile"', package_script)
+        self.assertIn('prepared_entitlements "$refresh_agent_entitlements" "$refresh_agent_provisioning_profile"', package_script)
+        self.assertIn('assert_entitlement_present "$app_path" "Context Panel app" "com.apple.application-identifier"', package_script)
+        self.assertIn('assert_entitlement_present "$refresh_agent_path" "Context Panel refresh agent" "com.apple.application-identifier"', package_script)
+
+    def test_release_package_rejects_cloudkit_without_profiles_before_building(self):
+        result = self.run_package_script_preflight([
+            "--identity",
+            "Apple Development: Test",
+        ])
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Context Panel app uses CloudKit entitlements and requires an embedded provisioning profile", result.stdout)
+        self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
+
+    def test_release_package_allows_ad_hoc_validation_without_cloudkit_profiles(self):
+        result = self.run_package_script_preflight([
+            "--identity",
+            "-",
+        ])
+
+        self.assertEqual(result.returncode, 42)
+        self.assertIn("unexpected fake xcodegen invocation", result.stdout)
+        self.assertNotIn("uses CloudKit entitlements and requires an embedded provisioning profile", result.stdout)
+
+    def test_release_package_rejects_ad_hoc_cloudkit_profiles_before_building(self):
+        result = self.run_package_script_preflight(
+            [
+                "--identity",
+                "-",
+                "--app-provisioning-profile",
+                "app.plist",
+                "--refresh-agent-provisioning-profile",
+                "refresh.plist",
+            ],
+            profiles={
+                "app.plist": self.cloudkit_profile_plist("com.shinycomputers.contextpanel"),
+                "refresh.plist": self.cloudkit_profile_plist("com.shinycomputers.contextpanel.refresh-agent"),
+            },
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("requires a non-ad-hoc signing identity", result.stdout)
+        self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
+
+    def test_release_package_rejects_swapped_cloudkit_profile_before_building(self):
+        result = self.run_package_script_preflight(
+            [
+                "--identity",
+                "Apple Development: Test",
+                "--app-provisioning-profile",
+                "app.plist",
+                "--refresh-agent-provisioning-profile",
+                "app.plist",
+            ],
+            profiles={
+                "app.plist": self.cloudkit_profile_plist("com.shinycomputers.contextpanel"),
+            },
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "Context Panel refresh agent provisioning profile does not authorize application identifier: "
+            "MM5YXC7T6E.com.shinycomputers.contextpanel.refresh-agent",
+            result.stdout,
+        )
+        self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
+
+    def test_release_package_rejects_profile_without_cloudkit_service_before_building(self):
+        result = self.run_package_script_preflight(
+            [
+                "--identity",
+                "Apple Development: Test",
+                "--app-provisioning-profile",
+                "app.plist",
+                "--refresh-agent-provisioning-profile",
+                "refresh.plist",
+            ],
+            profiles={
+                "app.plist": self.cloudkit_profile_plist(
+                    "com.shinycomputers.contextpanel",
+                    services=["CloudDocuments"],
+                ),
+                "refresh.plist": self.cloudkit_profile_plist("com.shinycomputers.contextpanel.refresh-agent"),
+            },
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "Context Panel app provisioning profile does not authorize com.apple.developer.icloud-services: CloudKit",
+            result.stdout,
+        )
+        self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
+
+    def test_release_package_rejects_wrong_cloudkit_environment_before_building(self):
+        result = self.run_package_script_preflight(
+            [
+                "--identity",
+                "Apple Development: Test",
+                "--app-provisioning-profile",
+                "app.plist",
+                "--refresh-agent-provisioning-profile",
+                "refresh.plist",
+            ],
+            profiles={
+                "app.plist": self.cloudkit_profile_plist(
+                    "com.shinycomputers.contextpanel",
+                    cloudkit_environment="Development",
+                ),
+                "refresh.plist": self.cloudkit_profile_plist("com.shinycomputers.contextpanel.refresh-agent"),
+            },
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "Context Panel app provisioning profile does not authorize "
+            "com.apple.developer.icloud-container-environment: Production",
+            result.stdout,
+        )
+        self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
+
+    def test_cloudkit_companion_schema_contract_matches_app_constants(self):
+        schema = json.loads(self.read("CloudKit/companion-sync.schema.json"))
+        remote_sync = self.read("Sources/ContextPanelCore/CompanionRemoteSync.swift")
+
+        self.assertEqual(schema["containerIdentifier"], "iCloud.com.shinycomputers.contextpanel")
+        self.assertEqual(schema["database"], "private")
+        record_types = {record["name"]: record for record in schema["recordTypes"]}
+        record = record_types["CompanionSyncDocument"]
+        self.assertEqual(record["recordName"], "current")
+        fields = {field["name"]: field["type"] for field in record["fields"]}
+        self.assertEqual(fields["payload"], "BYTES")
+        self.assertEqual(fields["schemaVersion"], "INT64")
+        self.assertEqual(fields["documentSchemaVersion"], "INT64")
+        self.assertEqual(fields["snapshotSchemaVersion"], "INT64")
+        self.assertEqual(fields["generatedAt"], "TIMESTAMP")
+        self.assertEqual(fields["publishedAt"], "TIMESTAMP")
+        self.assertEqual(fields["payloadByteCount"], "INT64")
+        for field_name in fields:
+            self.assertIn(f'= "{field_name}"', remote_sync)
+
+    def test_cloudkit_companion_schema_validator_documents_live_cktool_gate(self):
+        script = self.read("scripts/validate-cloudkit-companion-schema.sh")
+        release_docs = self.read("docs/release.md")
+
+        self.assertIn("cktool export-schema", script)
+        self.assertIn("CLOUDKIT_MANAGEMENT_TOKEN", script)
+        self.assertIn("live_schema_has_field_type", script)
+        self.assertIn("CompanionSyncDocument", script)
+        self.assertIn("iCloud.com.shinycomputers.contextpanel", script)
+        self.assertIn("CloudKit Production Schema Gate", release_docs)
+        self.assertIn("scripts/validate-cloudkit-companion-schema.sh --live --environment production", release_docs)
+        self.assertIn("CompanionSyncDocumentV2", release_docs)
+
+    def test_cloudkit_companion_schema_validator_accepts_ckdb_export(self):
+        result = self.run_cloudkit_schema_validator_with_fake_cktool(
+            """RECORD TYPE CompanionSyncDocument {
+  payload BYTES;
+  schemaVersion INT64;
+  documentSchemaVersion INT64;
+  snapshotSchemaVersion INT64;
+  generatedAt TIMESTAMP;
+  publishedAt TIMESTAMP;
+  payloadByteCount INT64;
+}
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("required field types in production", result.stdout)
+
+    def test_cloudkit_companion_schema_validator_forwards_management_token(self):
+        result = self.run_cloudkit_schema_validator_with_fake_cktool(
+            """RECORD TYPE CompanionSyncDocument {
+  payload BYTES;
+  schemaVersion INT64;
+  documentSchemaVersion INT64;
+  snapshotSchemaVersion INT64;
+  generatedAt TIMESTAMP;
+  publishedAt TIMESTAMP;
+  payloadByteCount INT64;
+}
+""",
+            management_token="test-management-token",
+            require_token=True,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn("test-management-token", result.stdout)
+
+    def test_cloudkit_companion_schema_validator_rejects_wrong_ckdb_field_type(self):
+        result = self.run_cloudkit_schema_validator_with_fake_cktool(
+            """RECORD TYPE CompanionSyncDocument {
+  payload STRING;
+  schemaVersion INT64;
+  documentSchemaVersion INT64;
+  snapshotSchemaVersion INT64;
+  generatedAt TIMESTAMP;
+  publishedAt TIMESTAMP;
+  payloadByteCount INT64;
+}
+"""
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("CompanionSyncDocument.payload BYTES", result.stdout)
 
     def test_app_store_export_preserves_archived_build_number(self):
         upload_script = self.read("scripts/upload-app-store-connect-macos-app.sh")

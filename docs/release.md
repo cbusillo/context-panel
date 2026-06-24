@@ -145,12 +145,13 @@ To produce a signed build, configure:
   export.
 - `MACOS_CERTIFICATE_PASSWORD`: password for the `.p12` export.
 - `MACOS_KEYCHAIN_PASSWORD`: optional temporary CI keychain password.
-- `MACOS_APP_PROVISIONING_PROFILE_BASE64`: optional base64 app provisioning
-  profile when the signing identity requires one for entitlements.
+- `MACOS_APP_PROVISIONING_PROFILE_BASE64`: required base64 app provisioning
+  profile for signed Release builds with CloudKit entitlements.
 - `MACOS_WIDGET_PROVISIONING_PROFILE_BASE64`: optional base64 widget extension
   provisioning profile.
-- `MACOS_REFRESH_AGENT_PROVISIONING_PROFILE_BASE64`: optional base64 refresh
-  agent provisioning profile.
+- `MACOS_REFRESH_AGENT_PROVISIONING_PROFILE_BASE64`: required base64 refresh
+  agent provisioning profile for signed Release builds with CloudKit
+  entitlements.
 
 To notarize, also configure:
 
@@ -320,6 +321,44 @@ Do not remove older App IDs, profiles, or profile secrets while validating the
 new companion path. Keep them available until a signed device/TestFlight install
 has proven that Mac publish, CloudKit delivery, companion app load, and
 companion widget rendering all work.
+
+### CloudKit Production Schema Gate
+
+The companion TestFlight and App Store builds use the Production CloudKit
+environment for `iCloud.com.shinycomputers.contextpanel`. Private database
+records still depend on the container's Production schema, so a production-
+entitled Mac build cannot rely on runtime schema creation.
+
+Before companion TestFlight distribution or App Store Review, validate that
+Production contains the CloudKit-backed companion snapshot record contract:
+
+- private database record type `CompanionSyncDocument`
+- fixed record name `current`
+- `payload` as CloudKit bytes/data
+- `schemaVersion`, `documentSchemaVersion`, `snapshotSchemaVersion`, and
+  `payloadByteCount` as integer/number fields
+- `generatedAt` and `publishedAt` as date/time fields
+
+Run the offline repo contract check before packaging:
+
+```sh
+scripts/validate-cloudkit-companion-schema.sh
+```
+
+When a CloudKit management token is available, also validate the live Production
+schema with `cktool`:
+
+```sh
+xcrun cktool save-token
+scripts/validate-cloudkit-companion-schema.sh --live --environment production
+```
+
+If the live gate reports a missing record type or field, create and verify the
+schema in Development, then deploy the CloudKit schema to Production before
+re-running Mac publish and companion TestFlight validation. If Production already
+contains an incompatible field type, do not try to patch the existing field in
+place; add a forward-compatible `CompanionSyncDocumentV2` record type or new
+field names and update the app constants and schema contract together.
 
 ### Export-Only Canary
 
@@ -558,7 +597,7 @@ extension Info.plist, and passed `codesign --verify --deep --strict`.
 ## Build A Native App Artifact Locally
 
 ```sh
-scripts/package-native-macos-app.sh --version 1.0.0 --output dist --identity auto
+scripts/package-native-macos-app.sh --version 1.0.0 --output dist --identity -
 ```
 
 The native packaging script regenerates `ContextPanel.xcodeproj`, builds the
@@ -568,7 +607,10 @@ verifies the resulting bundle, optionally notarizes, and writes a zip artifact.
 
 Use `--identity -` for ad-hoc local validation. With `--identity auto`, the
 script prefers the local Developer ID Application certificate, signs with
-hardened runtime and timestamp options, and verifies the bundle.
+hardened runtime and timestamp options, and verifies the bundle. Signed Release
+packaging with CloudKit entitlements also requires explicit provisioning profiles
+for the app and refresh agent so the packaged entitlements match the production
+CloudKit container.
 
 Use `--notarize` only with a Developer ID identity and either Apple notarization
 environment variables, App Store Connect API credentials, or a stored notarytool
@@ -579,6 +621,8 @@ scripts/package-native-macos-app.sh \
   --version 1.0.0 \
   --output dist \
   --identity auto \
+  --app-provisioning-profile path/to/ContextPanel.provisionprofile \
+  --refresh-agent-provisioning-profile path/to/ContextPanelRefreshAgent.provisionprofile \
   --notarize \
   --notary-key ~/.appstoreconnect/private_keys/AuthKey_EXAMPLE.p8 \
   --notary-key-id EXAMPLE \

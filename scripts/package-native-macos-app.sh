@@ -163,6 +163,212 @@ copy_profile_if_present() {
 	fi
 }
 
+plist_scalar_value() {
+	local plist="$1"
+	local key_path="$2"
+	/usr/libexec/PlistBuddy -c "Print :$key_path" "$plist" 2>/dev/null || true
+}
+
+plist_array_values() {
+	local plist="$1"
+	local key_path="$2"
+	/usr/libexec/PlistBuddy -c "Print :$key_path" "$plist" 2>/dev/null |
+		awk '/^[[:space:]]+[^{}[:space:]][^{}]*$/ { gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print }' || true
+}
+
+profile_entitlement_value() {
+	local profile_plist="$1"
+	local entitlement="$2"
+	plist_scalar_value "$profile_plist" "Entitlements:$entitlement"
+}
+
+profile_entitlement_authorizes_value() {
+	local profile_plist="$1"
+	local entitlement="$2"
+	local expected="$3"
+	local profile_value value wildcard_prefix
+	profile_value="$(profile_entitlement_value "$profile_plist" "$entitlement")"
+	if [[ "$profile_value" == "$expected" || "$profile_value" == "*" ]]; then
+		return 0
+	fi
+	while IFS= read -r value; do
+		[[ -n "$value" ]] || continue
+		if [[ "$value" == "$expected" || "$value" == "*" ]]; then
+			return 0
+		fi
+		if [[ "$value" == *"*" ]]; then
+			wildcard_prefix="${value%\*}"
+			if [[ -n "$wildcard_prefix" && "$expected" == "$wildcard_prefix"* ]]; then
+				return 0
+			fi
+		fi
+	done < <(plist_array_values "$profile_plist" "Entitlements:$entitlement")
+	return 1
+}
+
+decode_provisioning_profile() {
+	local profile="$1"
+	local output="$2"
+	if ! security cms -D -i "$profile" >"$output" 2>/dev/null; then
+		echo "could not decode provisioning profile: $profile" >&2
+		exit 1
+	fi
+}
+
+merge_profile_application_entitlements() {
+	local entitlements="$1"
+	local profile="$2"
+	if [[ -z "$profile" ]]; then
+		return
+	fi
+
+	local profile_plist application_identifier team_identifier
+	profile_plist=$(mktemp)
+	decode_provisioning_profile "$profile" "$profile_plist"
+
+	application_identifier="$(profile_entitlement_value "$profile_plist" com.apple.application-identifier)"
+	if [[ -z "$application_identifier" ]]; then
+		application_identifier="$(profile_entitlement_value "$profile_plist" application-identifier)"
+	fi
+	team_identifier="$(profile_entitlement_value "$profile_plist" com.apple.developer.team-identifier)"
+	if [[ -z "$team_identifier" ]]; then
+		team_identifier="$(plist_array_values "$profile_plist" TeamIdentifier | head -n 1)"
+	fi
+	rm -f "$profile_plist"
+
+	if [[ -z "$application_identifier" ]]; then
+		echo "provisioning profile is missing application identifier: $profile" >&2
+		exit 1
+	fi
+	if [[ -z "$team_identifier" ]]; then
+		echo "provisioning profile is missing team identifier: $profile" >&2
+		exit 1
+	fi
+
+	/usr/libexec/PlistBuddy -c "Delete :com.apple.application-identifier" "$entitlements" >/dev/null 2>&1 || true
+	/usr/libexec/PlistBuddy -c "Add :com.apple.application-identifier string $application_identifier" "$entitlements"
+	/usr/libexec/PlistBuddy -c "Delete :com.apple.developer.team-identifier" "$entitlements" >/dev/null 2>&1 || true
+	/usr/libexec/PlistBuddy -c "Add :com.apple.developer.team-identifier string $team_identifier" "$entitlements"
+}
+
+requires_cloudkit_profile() {
+	local entitlements="$1"
+	/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.icloud-services' "$entitlements" 2>/dev/null |
+		grep -Fq CloudKit
+}
+
+require_profile_for_cloudkit_entitlements() {
+	local entitlements="$1"
+	local profile="$2"
+	local label="$3"
+	if [[ "$resolved_identity" == "-" ]]; then
+		return
+	fi
+	if requires_cloudkit_profile "$entitlements" && [[ -z "$profile" ]]; then
+		echo "$label uses CloudKit entitlements and requires an embedded provisioning profile" >&2
+		exit 1
+	fi
+}
+
+require_non_ad_hoc_for_cloudkit_entitlements() {
+	local entitlements="$1"
+	local label="$2"
+	if requires_cloudkit_profile "$entitlements" && [[ "$resolved_identity" == "-" && -n "$app_provisioning_profile$refresh_agent_provisioning_profile" ]]; then
+		echo "$label uses CloudKit entitlements and requires a non-ad-hoc signing identity" >&2
+		exit 1
+	fi
+}
+
+check_profile_authorizes_array_entitlement() {
+	local profile_plist="$1"
+	local entitlements_plist="$2"
+	local label="$3"
+	local entitlement="$4"
+	local value
+	while IFS= read -r value; do
+		[[ -n "$value" ]] || continue
+		if ! profile_entitlement_authorizes_value "$profile_plist" "$entitlement" "$value"; then
+			echo "$label provisioning profile does not authorize $entitlement: $value" >&2
+			exit 1
+		fi
+	done < <(plist_array_values "$entitlements_plist" "$entitlement")
+}
+
+check_profile_authorizes_scalar_entitlement() {
+	local profile_plist="$1"
+	local entitlements_plist="$2"
+	local label="$3"
+	local entitlement="$4"
+	local expected profile_value
+	expected="$(plist_scalar_value "$entitlements_plist" "$entitlement")"
+	[[ -n "$expected" ]] || return 0
+	if profile_entitlement_authorizes_value "$profile_plist" "$entitlement" "$expected"; then
+		return 0
+	fi
+	echo "$label provisioning profile does not authorize $entitlement: $expected" >&2
+	exit 1
+}
+
+validate_profile_covers_entitlements() {
+	local profile="$1"
+	local entitlements="$2"
+	local label="$3"
+	local bundle_identifier="$4"
+	[[ -n "$profile" ]] || return 0
+
+	local profile_plist profile_name profile_team entitlements_team profile_app_id expected_app_id
+	profile_plist=$(mktemp)
+	decode_provisioning_profile "$profile" "$profile_plist"
+
+	profile_name="$(plist_scalar_value "$profile_plist" Name)"
+	profile_team="$(plist_array_values "$profile_plist" TeamIdentifier | head -n 1)"
+	entitlements_team="$(profile_entitlement_value "$profile_plist" com.apple.developer.team-identifier)"
+	[[ -n "$profile_team" ]] || profile_team="$entitlements_team"
+	profile_app_id="$(profile_entitlement_value "$profile_plist" com.apple.application-identifier)"
+	[[ -n "$profile_app_id" ]] || profile_app_id="$(profile_entitlement_value "$profile_plist" application-identifier)"
+	expected_app_id="${profile_team}.${bundle_identifier}"
+
+	if [[ -z "$profile_name" ]]; then
+		rm -f "$profile_plist"
+		echo "$label provisioning profile has no Name" >&2
+		exit 1
+	fi
+	if [[ -z "$profile_team" ]]; then
+		rm -f "$profile_plist"
+		echo "$label provisioning profile is missing team identifier" >&2
+		exit 1
+	fi
+	if [[ "$profile_app_id" == *"*" ]]; then
+		rm -f "$profile_plist"
+		echo "$label provisioning profile must use an explicit application identifier for CloudKit packaging" >&2
+		exit 1
+	fi
+	if [[ "$profile_app_id" != "$expected_app_id" ]]; then
+		rm -f "$profile_plist"
+		echo "$label provisioning profile does not authorize application identifier: $expected_app_id" >&2
+		exit 1
+	fi
+
+	check_profile_authorizes_array_entitlement "$profile_plist" "$entitlements" "$label" "com.apple.security.application-groups"
+	check_profile_authorizes_array_entitlement "$profile_plist" "$entitlements" "$label" "keychain-access-groups"
+	check_profile_authorizes_array_entitlement "$profile_plist" "$entitlements" "$label" "com.apple.developer.icloud-container-identifiers"
+	check_profile_authorizes_array_entitlement "$profile_plist" "$entitlements" "$label" "com.apple.developer.icloud-services"
+	check_profile_authorizes_array_entitlement "$profile_plist" "$entitlements" "$label" "com.apple.developer.ubiquity-container-identifiers"
+	check_profile_authorizes_scalar_entitlement "$profile_plist" "$entitlements" "$label" "com.apple.developer.icloud-container-environment"
+	check_profile_authorizes_scalar_entitlement "$profile_plist" "$entitlements" "$label" "com.apple.developer.team-identifier"
+	rm -f "$profile_plist"
+}
+
+prepared_entitlements() {
+	local source="$1"
+	local profile="$2"
+	local destination
+	destination=$(mktemp)
+	cp "$source" "$destination"
+	merge_profile_application_entitlements "$destination" "$profile"
+	printf '%s\n' "$destination"
+}
+
 assert_app_group_entitlement() {
 	local bundle_path="$1"
 	local label="$2"
@@ -220,10 +426,33 @@ assert_entitlement_absent() {
 	rm -f "$plist"
 }
 
+assert_entitlement_present() {
+	local bundle_path="$1"
+	local label="$2"
+	local entitlement="$3"
+	if [[ "$resolved_identity" == "-" ]]; then
+		return
+	fi
+	local plist
+	plist=$(mktemp)
+	if ! codesign -d --entitlements :- "$bundle_path" >"$plist" 2>/dev/null; then
+		rm -f "$plist"
+		echo "could not read signed entitlements for $label: $bundle_path" >&2
+		exit 1
+	fi
+	if ! /usr/libexec/PlistBuddy -c "Print :$entitlement" "$plist" >/dev/null 2>&1; then
+		rm -f "$plist"
+		echo "$label is missing entitlement: $entitlement" >&2
+		exit 1
+	fi
+	rm -f "$plist"
+}
+
 require_command xcodegen
 require_command xcodebuild
 require_command codesign
 require_command ditto
+require_command security
 require_command xcrun
 
 resolved_identity=$(resolve_identity)
@@ -239,6 +468,12 @@ if [[ "$configuration" == "Release" ]]; then
 	app_entitlements="Config/ContextPanelAppStore.entitlements"
 	refresh_agent_entitlements="Config/ContextPanelRefreshAgentAppStore.entitlements"
 fi
+require_profile_for_cloudkit_entitlements "$app_entitlements" "$app_provisioning_profile" "Context Panel app"
+require_profile_for_cloudkit_entitlements "$refresh_agent_entitlements" "$refresh_agent_provisioning_profile" "Context Panel refresh agent"
+require_non_ad_hoc_for_cloudkit_entitlements "$app_entitlements" "Context Panel app"
+require_non_ad_hoc_for_cloudkit_entitlements "$refresh_agent_entitlements" "Context Panel refresh agent"
+validate_profile_covers_entitlements "$app_provisioning_profile" "$app_entitlements" "Context Panel app" "com.shinycomputers.contextpanel"
+validate_profile_covers_entitlements "$refresh_agent_provisioning_profile" "$refresh_agent_entitlements" "Context Panel refresh agent" "com.shinycomputers.contextpanel.refresh-agent"
 
 xcodegen generate --spec project.yml
 
@@ -280,6 +515,11 @@ copy_profile_if_present "$widget_provisioning_profile" "$widget_path/Contents/em
 copy_profile_if_present "$refresh_agent_provisioning_profile" "$refresh_agent_path/Contents/embedded.provisionprofile"
 copy_profile_if_present "$app_provisioning_profile" "$app_path/Contents/embedded.provisionprofile"
 
+widget_signing_entitlements="$(prepared_entitlements Config/ContextPanelWidget.entitlements "$widget_provisioning_profile")"
+refresh_agent_signing_entitlements="$(prepared_entitlements "$refresh_agent_entitlements" "$refresh_agent_provisioning_profile")"
+app_signing_entitlements="$(prepared_entitlements "$app_entitlements" "$app_provisioning_profile")"
+trap 'rm -f "$widget_signing_entitlements" "$refresh_agent_signing_entitlements" "$app_signing_entitlements"' EXIT
+
 codesign_options=(--force --sign "$resolved_identity")
 hardened_runtime="false"
 if [[ "$resolved_identity" != "-" ]]; then
@@ -288,18 +528,20 @@ if [[ "$resolved_identity" != "-" ]]; then
 fi
 
 codesign "${codesign_options[@]}" \
-	--entitlements Config/ContextPanelWidget.entitlements \
+	--entitlements "$widget_signing_entitlements" \
 	"$widget_path"
 codesign "${codesign_options[@]}" \
-	--entitlements "$refresh_agent_entitlements" \
+	--entitlements "$refresh_agent_signing_entitlements" \
 	"$refresh_agent_path"
 codesign "${codesign_options[@]}" \
-	--entitlements "$app_entitlements" \
+	--entitlements "$app_signing_entitlements" \
 	"$app_path"
 codesign --verify --deep --strict --verbose=2 "$app_path"
 assert_app_group_entitlement "$app_path" "Context Panel app"
 assert_app_group_entitlement "$widget_path" "Context Panel widget"
 assert_app_group_entitlement "$refresh_agent_path" "Context Panel refresh agent"
+assert_entitlement_present "$app_path" "Context Panel app" "com.apple.application-identifier"
+assert_entitlement_present "$refresh_agent_path" "Context Panel refresh agent" "com.apple.application-identifier"
 assert_entitlement_enabled "$app_path" "Context Panel app" "com.apple.security.app-sandbox"
 assert_entitlement_enabled "$app_path" "Context Panel app" "com.apple.security.network.client"
 assert_entitlement_absent "$app_path" "Context Panel app" "com.apple.security.network.server"
