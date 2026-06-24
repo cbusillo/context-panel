@@ -48,6 +48,28 @@ public struct CompanionSyncTransportMetadata: Codable, Equatable, Sendable {
     }
 }
 
+public struct CompanionSyncTransportStatus: Equatable, Sendable {
+    public let source: CompanionSyncSource
+    public let isAvailable: Bool
+    public let succeeded: Bool
+    public let loadedDocument: Bool?
+    public let errorMessage: String?
+
+    public init(
+        source: CompanionSyncSource,
+        isAvailable: Bool,
+        succeeded: Bool,
+        loadedDocument: Bool? = nil,
+        errorMessage: String? = nil
+    ) {
+        self.source = source
+        self.isAvailable = isAvailable
+        self.succeeded = succeeded
+        self.loadedDocument = loadedDocument
+        self.errorMessage = errorMessage.map(ConnectorRedactor.redact)
+    }
+}
+
 public struct CompanionRemoteSyncOutcome: Equatable, Sendable {
     public let storeRole: String
     public let isAvailable: Bool

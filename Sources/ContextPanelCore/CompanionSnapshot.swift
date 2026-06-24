@@ -81,17 +81,20 @@ public struct CompanionSyncLoadResult: Equatable, Sendable {
     public let status: UsageStatus
     public let errorMessage: String?
     public let transportMetadata: CompanionSyncTransportMetadata?
+    public let transportStatuses: [CompanionSyncTransportStatus]
 
     public init(
         document: CompanionSyncDocument?,
         status: UsageStatus,
         errorMessage: String? = nil,
-        transportMetadata: CompanionSyncTransportMetadata? = nil
+        transportMetadata: CompanionSyncTransportMetadata? = nil,
+        transportStatuses: [CompanionSyncTransportStatus] = []
     ) {
         self.document = document
         self.status = status
         self.errorMessage = errorMessage.map(ConnectorRedactor.redact)
         self.transportMetadata = transportMetadata
+        self.transportStatuses = transportStatuses
     }
 }
 
@@ -362,7 +365,8 @@ public struct CompanionSyncStore: Sendable {
             document: document,
             status: status,
             errorMessage: result.errorMessage,
-            transportMetadata: result.transportMetadata
+            transportMetadata: result.transportMetadata,
+            transportStatuses: result.transportStatuses
         )
     }
 
@@ -756,7 +760,8 @@ public struct CompanionSyncStoreSet: Sendable {
                 receivedAt: result.transportMetadata?.receivedAt,
                 mirroredAt: result.transportMetadata?.mirroredAt,
                 deliveryStatus: result.transportMetadata?.deliveryStatus ?? .healthy
-            )
+            ),
+            transportStatuses: result.transportStatuses
         )
     }
 

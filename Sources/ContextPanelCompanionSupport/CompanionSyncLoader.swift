@@ -46,11 +46,13 @@ public enum CompanionSyncLoader {
         beforeMirrorLoadedDocument: () -> Void = {},
         now: Date = Date()
     ) -> CompanionSyncLoadResult {
+        let transportStatuses = transportStatuses(remoteLoad: remoteLoad)
         guard let localMirrorURL else {
             let result = CompanionSyncLoadResult(
                 document: nil,
                 status: .failure,
-                errorMessage: "Context Panel iOS app group is unavailable."
+                errorMessage: "Context Panel iOS app group is unavailable.",
+                transportStatuses: transportStatuses
             )
             recordDiagnostics(
                 CompanionSyncDiagnosticsRecord(
@@ -89,7 +91,8 @@ public enum CompanionSyncLoader {
                             receivedAt: now,
                             mirroredAt: nil,
                             deliveryStatus: .healthy
-                        )
+                        ),
+                        transportStatuses: transportStatuses
                     ),
                     storeRole: CompanionRemoteSync.cloudKitStoreRole
                 )
@@ -130,7 +133,10 @@ public enum CompanionSyncLoader {
                 storeRole: loadDiagnostics.selectedStoreRole ?? "custom"
             )
         )
-        var result = selectedCandidate?.result ?? loadDiagnostics.result
+        var result = withTransportStatuses(
+            selectedCandidate?.result ?? loadDiagnostics.result,
+            transportStatuses
+        )
         var mirrorSucceeded: Bool?
         var diagnosticRecord = loadDiagnostics.diagnosticsRecord(at: now)
         if let remoteOutcome {
@@ -185,10 +191,11 @@ public enum CompanionSyncLoader {
                             receivedAt: metadata.receivedAt,
                             mirroredAt: metadata.mirroredAt ?? now,
                             deliveryStatus: metadata.deliveryStatus
-                        )
+                        ),
+                        transportStatuses: transportStatuses
                     )
                 } else {
-                    result = keptCurrentResult
+                    result = withTransportStatuses(keptCurrentResult, transportStatuses)
                 }
                 diagnosticRecord.outcome = downloadErrorMessage == nil
                     ? (keptCurrentResult.status == .stale ? .stale : .healthy)
@@ -204,7 +211,8 @@ public enum CompanionSyncLoader {
                         document: document,
                         status: .failure,
                         errorMessage: Self.mirrorFailureMessage(saveResult),
-                        transportMetadata: result.transportMetadata
+                        transportMetadata: result.transportMetadata,
+                        transportStatuses: transportStatuses
                     )
                     diagnosticRecord.outcome = .partial
                     diagnosticRecord.appGroupSucceeded = false
@@ -229,7 +237,8 @@ public enum CompanionSyncLoader {
                             mirroredAt: now,
                             deliveryStatus: metadata.deliveryStatus
                         )
-                    }
+                    },
+                    transportStatuses: transportStatuses
                 )
             }
         } else if shouldMirrorLoadedDocument {
@@ -326,6 +335,33 @@ public enum CompanionSyncLoader {
         now.timeIntervalSince(document.snapshot.generatedAt) > policy.maximumAge
             ? .stale
             : document.companionStatus
+    }
+
+    private static func transportStatuses(remoteLoad: CompanionRemoteSyncLoadResult?) -> [CompanionSyncTransportStatus] {
+        guard let remoteLoad else { return [] }
+        return [
+            CompanionSyncTransportStatus(
+                source: .cloudKit,
+                isAvailable: remoteLoad.outcome.isAvailable,
+                succeeded: remoteLoad.outcome.succeeded,
+                loadedDocument: remoteLoad.result.document != nil,
+                errorMessage: remoteLoad.outcome.errorMessage ?? remoteLoad.result.errorMessage
+            ),
+        ]
+    }
+
+    private static func withTransportStatuses(
+        _ result: CompanionSyncLoadResult,
+        _ transportStatuses: [CompanionSyncTransportStatus]
+    ) -> CompanionSyncLoadResult {
+        guard !transportStatuses.isEmpty else { return result }
+        return CompanionSyncLoadResult(
+            document: result.document,
+            status: result.status,
+            errorMessage: result.errorMessage,
+            transportMetadata: result.transportMetadata,
+            transportStatuses: transportStatuses
+        )
     }
 
     private static func preferredCandidate(
