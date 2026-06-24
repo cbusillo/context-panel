@@ -81,6 +81,9 @@ public struct CompanionSyncPresentation: Equatable, Sendable {
         if cloudKit.succeeded, cloudKit.loadedDocument == true {
             return "\(detail) CloudKit healthy."
         }
+        if cloudKit.missingRecord {
+            return "\(detail) CloudKit record not found."
+        }
         if cloudKit.succeeded {
             return "\(detail) CloudKit connected."
         }

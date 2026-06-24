@@ -142,6 +142,7 @@ public enum CompanionSyncLoader {
         if let remoteOutcome {
             diagnosticRecord.cloudKitAvailable = remoteOutcome.isAvailable
             diagnosticRecord.cloudKitSucceeded = remoteOutcome.succeeded
+            diagnosticRecord.cloudKitMissingRecord = remoteOutcome.missingRecord ? true : nil
             if !remoteOutcome.succeeded {
                 diagnosticRecord.errorMessage = diagnosticRecord.errorMessage ?? remoteOutcome.errorMessage
                 if diagnosticRecord.outcome == .healthy {
@@ -345,6 +346,7 @@ public enum CompanionSyncLoader {
                 isAvailable: remoteLoad.outcome.isAvailable,
                 succeeded: remoteLoad.outcome.succeeded,
                 loadedDocument: remoteLoad.result.document != nil,
+                missingRecord: remoteLoad.outcome.missingRecord,
                 errorMessage: remoteLoad.outcome.errorMessage ?? remoteLoad.result.errorMessage
             ),
         ]

@@ -113,6 +113,7 @@ public struct CompanionSyncDiagnosticsRecord: Codable, Equatable, Sendable {
     public var iCloudAvailable: Bool?
     public var cloudKitSucceeded: Bool?
     public var cloudKitAvailable: Bool?
+    public var cloudKitMissingRecord: Bool?
     public var loadedDocument: Bool?
     public var mirroredDocument: Bool?
     public var stale: Bool?
@@ -127,6 +128,7 @@ public struct CompanionSyncDiagnosticsRecord: Codable, Equatable, Sendable {
         iCloudAvailable: Bool? = nil,
         cloudKitSucceeded: Bool? = nil,
         cloudKitAvailable: Bool? = nil,
+        cloudKitMissingRecord: Bool? = nil,
         loadedDocument: Bool? = nil,
         mirroredDocument: Bool? = nil,
         stale: Bool? = nil,
@@ -140,6 +142,7 @@ public struct CompanionSyncDiagnosticsRecord: Codable, Equatable, Sendable {
         self.iCloudAvailable = iCloudAvailable
         self.cloudKitSucceeded = cloudKitSucceeded
         self.cloudKitAvailable = cloudKitAvailable
+        self.cloudKitMissingRecord = cloudKitMissingRecord
         self.loadedDocument = loadedDocument
         self.mirroredDocument = mirroredDocument
         self.stale = stale
