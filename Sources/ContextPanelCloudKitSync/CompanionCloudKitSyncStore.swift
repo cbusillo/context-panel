@@ -21,19 +21,39 @@ private actor CompanionCloudKitClient {
     }
 
     func save(_ document: CompanionSyncDocument) async -> CompanionRemoteSyncOutcome {
+        let payload: Data
+
         do {
-            let record = try makeRecord(document: document)
-            _ = try await privateDatabase.modifyRecords(
+            payload = try CompanionSyncPayloadCodec.encode(document)
+            let record = makeRecord(document: document, payload: payload)
+            let saveResult = try await privateDatabase.modifyRecords(
                 saving: [record],
                 deleting: [],
                 savePolicy: .allKeys
             )
-            return CompanionRemoteSyncOutcome(succeeded: true)
+
+            guard let savedRecordResult = saveResult.saveResults[recordID] else {
+                throw SnapshotStoreError.corruptStore("CloudKit companion sync publish did not return the saved record.")
+            }
+            let savedRecord = try savedRecordResult.get()
+            try verifyPublishedRecord(savedRecord, expectedPayload: payload)
         } catch {
             return CompanionRemoteSyncOutcome(
                 isAvailable: isCloudKitAvailable(error),
                 succeeded: false,
                 errorMessage: diagnosticMessage(operation: "publish", error: error)
+            )
+        }
+
+        do {
+            let record = try await privateDatabase.record(for: recordID)
+            try verifyReadableRecord(record, expectedDocument: document, expectedPayload: payload)
+            return CompanionRemoteSyncOutcome(succeeded: true)
+        } catch {
+            return CompanionRemoteSyncOutcome(
+                isAvailable: isCloudKitAvailable(error),
+                succeeded: false,
+                errorMessage: diagnosticMessage(operation: "verify publish", error: error)
             )
         }
     }
@@ -113,9 +133,8 @@ private actor CompanionCloudKitClient {
         CKRecord.ID(recordName: CompanionRemoteSync.cloudKitRecordName)
     }
 
-    private func makeRecord(document: CompanionSyncDocument) throws -> CKRecord {
+    private func makeRecord(document: CompanionSyncDocument, payload: Data) -> CKRecord {
         let record = CKRecord(recordType: CompanionRemoteSync.cloudKitRecordType, recordID: recordID)
-        let payload = try CompanionSyncPayloadCodec.encode(document)
         record[CompanionRemoteSync.payloadFieldName] = payload as CKRecordValue
         record[CompanionRemoteSync.schemaVersionFieldName] = 1 as CKRecordValue
         record[CompanionRemoteSync.documentSchemaVersionFieldName] = document.schemaVersion as CKRecordValue
@@ -131,6 +150,38 @@ private actor CompanionCloudKitClient {
             throw SnapshotStoreError.corruptStore("CloudKit companion sync record is missing payload data.")
         }
         return try CompanionSyncPayloadCodec.decode(payload)
+    }
+
+    private func verifyPublishedRecord(_ record: CKRecord, expectedPayload: Data) throws {
+        guard let payload = record[CompanionRemoteSync.payloadFieldName] as? Data else {
+            throw SnapshotStoreError.corruptStore("CloudKit companion sync record is missing payload data.")
+        }
+        guard payload == expectedPayload else {
+            throw SnapshotStoreError.corruptStore("CloudKit companion sync publish returned a different payload.")
+        }
+        _ = try CompanionSyncPayloadCodec.decode(payload)
+    }
+
+    private func verifyReadableRecord(
+        _ record: CKRecord,
+        expectedDocument: CompanionSyncDocument,
+        expectedPayload: Data
+    ) throws {
+        guard let payload = record[CompanionRemoteSync.payloadFieldName] as? Data else {
+            throw SnapshotStoreError.corruptStore("CloudKit companion sync record is missing payload data.")
+        }
+        guard payload != expectedPayload else {
+            _ = try CompanionSyncPayloadCodec.decode(payload)
+            return
+        }
+
+        let document = try CompanionSyncPayloadCodec.decode(payload)
+        guard document.snapshot.generatedAt > expectedDocument.snapshot.generatedAt
+            || (document.snapshot.generatedAt == expectedDocument.snapshot.generatedAt
+                && document.snapshot.publishedAt > expectedDocument.snapshot.publishedAt)
+        else {
+            throw SnapshotStoreError.corruptStore("CloudKit companion sync record is older than the published document.")
+        }
     }
 
     private func diagnosticMessage(operation: String, error: Error) -> String {
