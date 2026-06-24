@@ -1,0 +1,40 @@
+{
+  "containerIdentifier": "iCloud.com.shinycomputers.contextpanel",
+  "database": "private",
+  "recordTypes": [
+    {
+      "name": "CompanionSyncDocument",
+      "recordName": "current",
+      "fields": [
+        {
+          "name": "payload",
+          "type": "BYTES"
+        },
+        {
+          "name": "schemaVersion",
+          "type": "INT64"
+        },
+        {
+          "name": "documentSchemaVersion",
+          "type": "INT64"
+        },
+        {
+          "name": "snapshotSchemaVersion",
+          "type": "INT64"
+        },
+        {
+          "name": "generatedAt",
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "publishedAt",
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "payloadByteCount",
+          "type": "INT64"
+        }
+      ]
+    }
+  ]
+}

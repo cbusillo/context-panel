@@ -154,7 +154,120 @@ private actor CompanionCloudKitClient {
 
     private func diagnosticMessage(operation: String, error: Error) -> String {
         let nsError = error as NSError
-        return "CloudKit companion sync \(operation) failed (\(ConnectorRedactor.redact(nsError.domain)) \(nsError.code))."
+        var parts = ["\(ConnectorRedactor.redact(nsError.domain)) \(nsError.code)"]
+        if let ckError = error as? CKError {
+            parts.append("code \(cloudKitCodeName(ckError.code))")
+            parts.append(contentsOf: cloudKitDiagnosticDetails(for: ckError))
+        }
+        return "CloudKit companion sync \(operation) failed (\(parts.joined(separator: "; ")))."
+    }
+
+    private func cloudKitDiagnosticDetails(for error: CKError) -> [String] {
+        var details: [String] = []
+        let nsError = error as NSError
+        if let retryAfter = nsError.userInfo[CKErrorRetryAfterKey] as? TimeInterval {
+            details.append("retryAfter \(Int(retryAfter.rounded()))s")
+        }
+        if let partialErrors = nsError.userInfo[CKPartialErrorsByItemIDKey] as? [AnyHashable: Error],
+           !partialErrors.isEmpty {
+            let summaries = partialErrors.prefix(3).map { key, partialError in
+                "\(safeDiagnosticFragment(String(describing: key))): \(errorSummary(partialError))"
+            }
+            details.append("partialErrors \(summaries.joined(separator: ", "))")
+        }
+        details.append(contentsOf: cloudKitUserInfoSummaries(from: nsError))
+        return details
+    }
+
+    private func cloudKitUserInfoSummaries(from error: NSError) -> [String] {
+        let ignoredKeys: Set<String> = [
+            CKErrorRetryAfterKey,
+            CKPartialErrorsByItemIDKey,
+            NSUnderlyingErrorKey,
+        ]
+        let summaries = error.userInfo.compactMap { key, value -> String? in
+            let keyString = String(describing: key)
+            guard !ignoredKeys.contains(keyString),
+                  let summary = diagnosticUserInfoValue(value) else {
+                return nil
+            }
+            return "\(safeDiagnosticKey(keyString)) \(summary)"
+        }
+        return Array(summaries.sorted().prefix(3))
+    }
+
+    private func diagnosticUserInfoValue(_ value: Any) -> String? {
+        switch value {
+        case let number as NSNumber:
+            return number.stringValue
+        default:
+            return nil
+        }
+    }
+
+    private func safeDiagnosticKey(_ value: String) -> String {
+        value.filter { character in
+            character.isASCII && (character.isLetter || character.isNumber || character == "." || character == "_" || character == "-")
+        }
+    }
+
+    private func errorSummary(_ error: Error) -> String {
+        let nsError = error as NSError
+        if let ckError = error as? CKError {
+            return "\(ConnectorRedactor.redact(nsError.domain)) \(nsError.code) code \(cloudKitCodeName(ckError.code))"
+        }
+        return "\(ConnectorRedactor.redact(nsError.domain)) \(nsError.code)"
+    }
+
+    private func safeDiagnosticFragment(_ value: String) -> String {
+        let redacted = ConnectorRedactor.redact(value.replacingOccurrences(of: "\n", with: " "))
+        if redacted.count <= 180 {
+            return redacted
+        }
+        return String(redacted.prefix(177)) + "..."
+    }
+
+    private func cloudKitCodeName(_ code: CKError.Code) -> String {
+        switch code {
+        case .internalError: return "internalError"
+        case .partialFailure: return "partialFailure"
+        case .networkUnavailable: return "networkUnavailable"
+        case .networkFailure: return "networkFailure"
+        case .badContainer: return "badContainer"
+        case .serviceUnavailable: return "serviceUnavailable"
+        case .requestRateLimited: return "requestRateLimited"
+        case .missingEntitlement: return "missingEntitlement"
+        case .notAuthenticated: return "notAuthenticated"
+        case .permissionFailure: return "permissionFailure"
+        case .unknownItem: return "unknownItem"
+        case .invalidArguments: return "invalidArguments"
+        case .resultsTruncated: return "resultsTruncated"
+        case .serverRecordChanged: return "serverRecordChanged"
+        case .serverRejectedRequest: return "serverRejectedRequest"
+        case .assetFileNotFound: return "assetFileNotFound"
+        case .assetFileModified: return "assetFileModified"
+        case .incompatibleVersion: return "incompatibleVersion"
+        case .constraintViolation: return "constraintViolation"
+        case .operationCancelled: return "operationCancelled"
+        case .changeTokenExpired: return "changeTokenExpired"
+        case .batchRequestFailed: return "batchRequestFailed"
+        case .zoneBusy: return "zoneBusy"
+        case .badDatabase: return "badDatabase"
+        case .quotaExceeded: return "quotaExceeded"
+        case .zoneNotFound: return "zoneNotFound"
+        case .limitExceeded: return "limitExceeded"
+        case .userDeletedZone: return "userDeletedZone"
+        case .tooManyParticipants: return "tooManyParticipants"
+        case .alreadyShared: return "alreadyShared"
+        case .participantAlreadyInvited: return "participantAlreadyInvited"
+        case .referenceViolation: return "referenceViolation"
+        case .managedAccountRestricted: return "managedAccountRestricted"
+        case .participantMayNeedVerification: return "participantMayNeedVerification"
+        case .serverResponseLost: return "serverResponseLost"
+        case .assetNotAvailable: return "assetNotAvailable"
+        case .accountTemporarilyUnavailable: return "accountTemporarilyUnavailable"
+        @unknown default: return String(describing: code)
+        }
     }
 
     private func isCloudKitAvailable(_ error: Error) -> Bool {
