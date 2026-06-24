@@ -56,12 +56,38 @@ public struct CompanionSyncPresentation: Equatable, Sendable {
         case .cloudKit:
             "Latest Mac snapshot received through CloudKit."
         case .appGroup:
-            "Latest Mac snapshot loaded from the local mirror."
+            appendCloudKitStatus(
+                "Latest Mac snapshot loaded from the local mirror.",
+                result: result
+            )
         case .iCloud:
-            "Latest Mac snapshot received through iCloud."
+            appendCloudKitStatus(
+                "Latest Mac snapshot received through iCloud.",
+                result: result
+            )
         case .custom, .none:
-            "Latest Mac snapshot received."
+            appendCloudKitStatus(
+                "Latest Mac snapshot received.",
+                result: result
+            )
         }
+    }
+
+    private static func appendCloudKitStatus(_ detail: String, result: CompanionSyncLoadResult) -> String {
+        guard result.transportMetadata?.source != .cloudKit else { return detail }
+        guard let cloudKit = result.transportStatuses.first(where: { $0.source == .cloudKit }) else {
+            return detail
+        }
+        if cloudKit.succeeded, cloudKit.loadedDocument == true {
+            return "\(detail) CloudKit healthy."
+        }
+        if cloudKit.succeeded {
+            return "\(detail) CloudKit connected."
+        }
+        if !cloudKit.isAvailable {
+            return "\(detail) CloudKit unavailable."
+        }
+        return "\(detail) CloudKit retrying."
     }
 
     private static func syncedSymbol(for result: CompanionSyncLoadResult) -> String {

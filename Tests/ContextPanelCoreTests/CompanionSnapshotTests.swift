@@ -523,6 +523,39 @@ import Testing
     #expect(presentation.symbol == "checkmark.icloud")
 }
 
+@Test func companionSyncPresentationShowsCloudKitHealthWhenICloudSnapshotWins() throws {
+    let now = Date(timeIntervalSince1970: 3_081.25)
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now.addingTimeInterval(60)
+    )
+
+    let presentation = CompanionSyncPresentation(
+        result: CompanionSyncLoadResult(
+            document: document,
+            status: .close,
+            transportMetadata: CompanionSyncTransportMetadata(
+                source: .iCloud,
+                receivedAt: now.addingTimeInterval(65),
+                mirroredAt: now.addingTimeInterval(65),
+                deliveryStatus: .healthy
+            ),
+            transportStatuses: [
+                CompanionSyncTransportStatus(
+                    source: .cloudKit,
+                    isAvailable: true,
+                    succeeded: true,
+                    loadedDocument: true
+                ),
+            ]
+        )
+    )
+
+    #expect(presentation.title == "Synced from Mac")
+    #expect(presentation.detail == "Latest Mac snapshot received through iCloud. CloudKit healthy.")
+    #expect(presentation.symbol == "checkmark.icloud")
+}
+
 @Test func companionSyncPresentationNamesLocalMirrorDeliverySource() throws {
     let now = Date(timeIntervalSince1970: 3_081.5)
     let document = CompanionSyncDocument(
@@ -1572,7 +1605,57 @@ import Testing
     )
 
     #expect(result.document == localDocument)
+    #expect(result.transportStatuses == [
+        CompanionSyncTransportStatus(
+            source: .cloudKit,
+            isAvailable: true,
+            succeeded: true,
+            loadedDocument: true
+        ),
+    ])
+    #expect(CompanionSyncPresentation(result: result).detail == "Latest Mac snapshot loaded from the local mirror. CloudKit healthy.")
     #expect(CompanionSyncStore(documentURL: localURL).load().document == localDocument)
+}
+
+@Test func companionLoaderShowsCloudKitHealthWhenICloudDocumentIsSelected() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 3_336)
+    let localURL = root.appending(path: "local-companion.json")
+    let iCloudURL = root
+        .appending(path: "Mobile Documents", directoryHint: .isDirectory)
+        .appending(path: "companion.json")
+    let remoteDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now.addingTimeInterval(1)
+    )
+    let iCloudDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now.addingTimeInterval(5)),
+        publishedAt: now.addingTimeInterval(6)
+    )
+    try CompanionSyncStore(documentURL: iCloudURL).save(iCloudDocument)
+
+    let result = CompanionSyncLoader.load(
+        localMirrorURL: localURL,
+        iCloudDocumentURL: iCloudURL,
+        remoteLoad: CompanionRemoteSyncLoadResult(
+            result: CompanionSyncLoadResult(document: remoteDocument, status: .healthy),
+            outcome: CompanionRemoteSyncOutcome(succeeded: true)
+        ),
+        now: now
+    )
+
+    #expect(result.document == iCloudDocument)
+    #expect(result.transportMetadata?.source == .iCloud)
+    #expect(result.transportStatuses == [
+        CompanionSyncTransportStatus(
+            source: .cloudKit,
+            isAvailable: true,
+            succeeded: true,
+            loadedDocument: true
+        ),
+    ])
+    #expect(CompanionSyncPresentation(result: result).detail == "Latest Mac snapshot received through iCloud. CloudKit healthy.")
 }
 
 @Test func companionWidgetSnapshotTreatsMirrorDelayAsSyncDelayNotProviderRefresh() {
