@@ -19,8 +19,8 @@ public struct CompanionSyncPresentation: Equatable, Sendable {
         case .healthy, .close, .limited:
             usageSummary = Self.usageSummary(for: result.document)
             title = "Synced from Mac"
-            detail = "Latest Mac snapshot received through iCloud."
-            symbol = "checkmark.icloud"
+            detail = Self.syncedDetail(for: result)
+            symbol = Self.syncedSymbol(for: result)
         case .stale:
             usageSummary = Self.usageSummary(for: result.document)
             title = "Mac sync is stale"
@@ -30,8 +30,8 @@ public struct CompanionSyncPresentation: Equatable, Sendable {
             if result.document != nil {
                 usageSummary = Self.usageSummary(for: result.document)
                 title = "Synced from Mac"
-                detail = "Latest Mac snapshot received through iCloud."
-                symbol = "checkmark.icloud"
+                detail = Self.syncedDetail(for: result)
+                symbol = Self.syncedSymbol(for: result)
             } else {
                 usageSummary = nil
                 title = "Sync failed"
@@ -48,6 +48,28 @@ public struct CompanionSyncPresentation: Equatable, Sendable {
             title = "Waiting for Mac sync"
             detail = "Open Context Panel on your Mac to publish usage lanes through iCloud."
             symbol = "icloud.and.arrow.down"
+        }
+    }
+
+    private static func syncedDetail(for result: CompanionSyncLoadResult) -> String {
+        switch result.transportMetadata?.source {
+        case .cloudKit:
+            "Latest Mac snapshot received through CloudKit."
+        case .appGroup:
+            "Latest Mac snapshot loaded from the local mirror."
+        case .iCloud:
+            "Latest Mac snapshot received through iCloud."
+        case .custom, .none:
+            "Latest Mac snapshot received."
+        }
+    }
+
+    private static func syncedSymbol(for result: CompanionSyncLoadResult) -> String {
+        switch result.transportMetadata?.source {
+        case .appGroup:
+            "checkmark.circle"
+        default:
+            "checkmark.icloud"
         }
     }
 

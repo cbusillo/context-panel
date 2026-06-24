@@ -492,10 +492,60 @@ import Testing
     )
 
     #expect(presentation.title == "Synced from Mac")
-    #expect(presentation.detail == "Latest Mac snapshot received through iCloud.")
+    #expect(presentation.detail == "Latest Mac snapshot received.")
     #expect(presentation.symbol == "checkmark.icloud")
     #expect(presentation.usageSummary == nil)
     #expect(presentation.title.contains("Limited") == false)
+}
+
+@Test func companionSyncPresentationNamesCloudKitDeliverySource() throws {
+    let now = Date(timeIntervalSince1970: 3_081)
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now.addingTimeInterval(60)
+    )
+
+    let presentation = CompanionSyncPresentation(
+        result: CompanionSyncLoadResult(
+            document: document,
+            status: .close,
+            transportMetadata: CompanionSyncTransportMetadata(
+                source: .cloudKit,
+                receivedAt: now.addingTimeInterval(65),
+                mirroredAt: now.addingTimeInterval(65),
+                deliveryStatus: .healthy
+            )
+        )
+    )
+
+    #expect(presentation.title == "Synced from Mac")
+    #expect(presentation.detail == "Latest Mac snapshot received through CloudKit.")
+    #expect(presentation.symbol == "checkmark.icloud")
+}
+
+@Test func companionSyncPresentationNamesLocalMirrorDeliverySource() throws {
+    let now = Date(timeIntervalSince1970: 3_081.5)
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    )
+
+    let presentation = CompanionSyncPresentation(
+        result: CompanionSyncLoadResult(
+            document: document,
+            status: .close,
+            transportMetadata: CompanionSyncTransportMetadata(
+                source: .appGroup,
+                receivedAt: nil,
+                mirroredAt: now,
+                deliveryStatus: .healthy
+            )
+        )
+    )
+
+    #expect(presentation.title == "Synced from Mac")
+    #expect(presentation.detail == "Latest Mac snapshot loaded from the local mirror.")
+    #expect(presentation.symbol == "checkmark.circle")
 }
 
 @Test func companionSyncPresentationPrioritizesProviderFailuresOverLimitedLanes() throws {
@@ -583,7 +633,7 @@ import Testing
     )
 
     #expect(presentation.title == "Synced from Mac")
-    #expect(presentation.detail == "Latest Mac snapshot received through iCloud.")
+    #expect(presentation.detail == "Latest Mac snapshot received.")
     #expect(presentation.symbol == "checkmark.icloud")
     #expect(presentation.usageSummary == "1 provider needs attention on your Mac.")
 }
@@ -1439,6 +1489,34 @@ import Testing
     #expect(diagnostics?.mirroredDocument == true)
     #expect(diagnostics?.stale == false)
     #expect(diagnostics?.errorMessage == nil)
+}
+
+@Test func companionLoaderPreservesCloudKitMetadataWhenLocalMirrorAlreadyMatches() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 3_335.75)
+    let localURL = root.appending(path: "local-companion.json")
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now.addingTimeInterval(60)
+    )
+    try CompanionSyncStore(documentURL: localURL).save(document)
+    let receivedAt = now.addingTimeInterval(90)
+
+    let result = CompanionSyncLoader.load(
+        localMirrorURL: localURL,
+        iCloudDocumentURL: nil,
+        remoteLoad: CompanionRemoteSyncLoadResult(
+            result: CompanionSyncLoadResult(document: document, status: .healthy),
+            outcome: CompanionRemoteSyncOutcome(succeeded: true)
+        ),
+        now: receivedAt
+    )
+
+    #expect(result.document == document)
+    #expect(result.transportMetadata?.source == .cloudKit)
+    #expect(result.transportMetadata?.receivedAt == receivedAt)
+    #expect(result.transportMetadata?.mirroredAt == receivedAt)
 }
 
 @Test func companionLoaderKeepsNewerLocalMirrorOverOlderCloudKitDocument() throws {
