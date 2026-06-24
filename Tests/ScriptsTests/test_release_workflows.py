@@ -743,6 +743,27 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('find_context_panel_bundles "${TMPDIR:-/tmp}"', script)
         self.assertIn('find_context_panel_bundles "/tmp"', script)
 
+    def test_runtime_baseline_scans_and_cleans_companion_validation_artifact_cache(self):
+        script = self.read("scripts/context-panel-runtime-baseline.sh")
+        companion_validator = self.read("scripts/validate-companion-builds.sh")
+        cleanup_function = re.search(r"quarantine_stale_runtime_bundles\(\) \{(?P<body>.*?)\n\}", script, re.S)
+        local_builds_function = re.search(r"local_build_bundles\(\) \{(?P<body>.*?)\n\}", script, re.S)
+        check_function = re.search(r"check_runtime\(\) \{(?P<body>.*?)\n\}", script, re.S)
+
+        self.assertIsNotNone(cleanup_function)
+        self.assertIsNotNone(local_builds_function)
+        self.assertIsNotNone(check_function)
+        assert cleanup_function is not None
+        assert local_builds_function is not None
+        assert check_function is not None
+        self.assertIn("CONTEXT_PANEL_ARTIFACT_CACHE_ROOT", script)
+        self.assertIn("/Volumes/Developer-Artifacts/github-actions/cache/cbusillo/context-panel", script)
+        self.assertIn("artifact_cache_companion_build_validation_bundles", local_builds_function.group("body"))
+        self.assertIn("artifact_cache_companion_build_validation_root", cleanup_function.group("body"))
+        self.assertIn("derived-data/companion-build-validation", script)
+        self.assertIn("derived-data/companion-build-validation", companion_validator)
+        self.assertNotIn("quarantine_stale_runtime_bundles", check_function.group("body"))
+
     def test_runtime_baseline_omits_historical_local_cleanup_paths(self):
         script = self.read("scripts/context-panel-runtime-baseline.sh")
 
