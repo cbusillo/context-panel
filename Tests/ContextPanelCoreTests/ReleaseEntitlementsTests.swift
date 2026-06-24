@@ -35,12 +35,12 @@ import Testing
     let entitlements = try loadEntitlements("Config/ContextPanel.entitlements")
     #expect(entitlements["com.apple.security.network.server"] == nil)
     try expectICloudDocumentAndCloudKitEntitlements(entitlements)
-    expectProductionCloudKitEnvironment(entitlements)
+    expectDevelopmentCloudKitEnvironment(entitlements)
 
     let refreshAgentEntitlements = try loadEntitlements("Config/ContextPanelRefreshAgent.entitlements")
     #expect(refreshAgentEntitlements["com.apple.security.network.server"] == nil)
     try expectICloudDocumentAndCloudKitEntitlements(refreshAgentEntitlements)
-    expectProductionCloudKitEnvironment(refreshAgentEntitlements)
+    expectDevelopmentCloudKitEnvironment(refreshAgentEntitlements)
 }
 
 @Test func mainAppInfoPlistRegistersOnlyContextPanelURLScheme() throws {
@@ -245,6 +245,10 @@ private func expectICloudDocumentAndCloudKitEntitlements(_ entitlements: [String
 
 private func expectProductionCloudKitEnvironment(_ entitlements: [String: Any]) {
     #expect(entitlements["com.apple.developer.icloud-container-environment"] as? String == "Production")
+}
+
+private func expectDevelopmentCloudKitEnvironment(_ entitlements: [String: Any]) {
+    #expect(entitlements["com.apple.developer.icloud-container-environment"] as? String == "Development")
 }
 
 private func loadInfoPlist(_ path: String) throws -> [String: Any] {
