@@ -512,22 +512,31 @@ under #274 before treating provider refresh as the cause.
 After the uploaded build is processed, run the `Submit App Store Review` workflow
 with the App Store marketing version, uploaded build number, and App Store
 release notes. The workflow calls `scripts/submit-app-store-review.py`, which
-creates or reuses the Mac App Store version, attaches the validated build,
-copies localization and review-contact metadata from an existing version, updates
-`What's New`, and submits the review submission. Use `dry_run: true` to validate
-the metadata source, uploaded build, blocked-version recovery path, and target
-version path without creating, updating, or submitting App Store review objects.
+creates or reuses the App Store version for the selected platform, attaches the
+validated platform-matching build, copies localization and review-contact
+metadata from an existing version, updates `What's New`, and submits the review
+submission. Use `dry_run: true` to validate the metadata source, uploaded build,
+blocked-version recovery path, and target version path without creating,
+updating, or submitting App Store review objects.
 
 Preferred operator flow:
 
 1. Validate and dogfood the build through TestFlight first.
 2. Run `Submit App Store Review` with `dry_run: true` using the exact marketing
-   version, build number, and release notes intended for review.
+   version, platform, build number, and release notes intended for review.
 3. If the dry run reports that an older App Store version blocks creating the
    target version, rerun the dry run with `remove_active_review_version` set to
    that blocking version.
 4. After the dry run succeeds, rerun the same inputs with `dry_run: false` to
    submit review.
+
+Use `platform: MAC_OS` for the native macOS app. For companion review, first run
+the companion App Store Connect upload for `platform=ios` or `platform=visionos`,
+then run `Submit App Store Review` with `platform: IOS` or `platform: VISION_OS`
+and the companion build number. If App Store Connect says the app needs an
+approved iOS version or an iOS version in the current review submission, do not
+retry the macOS submit as the fix; upload and submit the companion iOS review
+path.
 
 Cancel-only recovery is available through `Submit App Store Review` by setting
 `cancel_review_only: true` and `remove_active_review_version` to the version
@@ -546,6 +555,7 @@ App Store Connect environment variables:
 
 ```sh
 scripts/submit-app-store-review.py \
+  --platform MAC_OS \
   --version 1.0.12 \
   --build-number 202605290049 \
   --copy-from-version 1.0.2 \

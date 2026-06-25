@@ -16,16 +16,33 @@ submit_app_store_review = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(submit_app_store_review)
 
 
-def assert_review_submission_targets_version(test_case, patch_body, version_id):
+def assert_review_submission_submit_body(test_case, patch_body):
     test_case.assertEqual(patch_body["data"]["attributes"], {"submitted": True})
-    test_case.assertEqual(
-        patch_body["data"]["relationships"],
-        {
-            "appStoreVersionForReview": {
-                "data": {"type": "appStoreVersions", "id": version_id}
+    test_case.assertNotIn("relationships", patch_body["data"])
+
+
+def valid_build(build_id="build-1", state="VALID", uses_non_exempt_encryption=None, platform="MAC_OS"):
+    return {
+        "data": [
+            {
+                "id": build_id,
+                "attributes": {
+                    "processingState": state,
+                    "usesNonExemptEncryption": uses_non_exempt_encryption,
+                },
+                "relationships": {
+                    "preReleaseVersion": {"data": {"type": "preReleaseVersions", "id": "prerelease-1"}}
+                },
             }
-        },
-    )
+        ],
+        "included": [
+            {
+                "id": "prerelease-1",
+                "type": "preReleaseVersions",
+                "attributes": {"platform": platform},
+            }
+        ],
+    }
 
 
 class FakeASCClient:
@@ -238,17 +255,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             def request(self, method, path, params=None, body=None, allowed=(200,)):
                 self.requests.append((method, path, params, body, allowed))
                 if method == "GET" and path == "/builds":
-                    return {
-                        "data": [
-                            {
-                                "id": "build-1",
-                                "attributes": {
-                                    "processingState": "VALID",
-                                    "usesNonExemptEncryption": None,
-                                },
-                            }
-                        ]
-                    }
+                    return valid_build(uses_non_exempt_encryption=None)
                 raise AssertionError(f"unexpected request: {method} {path}")
 
         client = BuildClient()
@@ -271,28 +278,8 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
                     if call_count == 1:
                         return {"data": []}
                     if call_count == 2:
-                        return {
-                            "data": [
-                                {
-                                    "id": "build-1",
-                                    "attributes": {
-                                        "processingState": "PROCESSING",
-                                        "usesNonExemptEncryption": False,
-                                    },
-                                }
-                            ]
-                        }
-                    return {
-                        "data": [
-                            {
-                                "id": "build-1",
-                                "attributes": {
-                                    "processingState": "VALID",
-                                    "usesNonExemptEncryption": False,
-                                },
-                            }
-                        ]
-                    }
+                        return valid_build(state="PROCESSING")
+                    return valid_build(uses_non_exempt_encryption=False)
                 raise AssertionError(f"unexpected request: {method} {path}")
 
         client = PollingBuildClient()
@@ -329,7 +316,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
                 poll_seconds=1,
             )
 
-        self.assertIn("missing build 202606071340", str(context.exception))
+        self.assertIn("missing MAC_OS build 202606071340", str(context.exception))
 
     def test_reuses_removed_version_when_replacement_creation_is_blocked(self):
         class ReplacementClient:
@@ -861,6 +848,9 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
                                 "id": "old-submission",
                                 "attributes": {"state": self.state},
                                 "relationships": {
+                                    "appStoreVersionForReview": {
+                                        "data": {"type": "appStoreVersions", "id": "version-1-0-13"}
+                                    },
                                     "items": {"data": [{"type": "reviewSubmissionItems", "id": "old-item"}]}
                                 },
                             }
@@ -901,7 +891,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         patch_paths = [request[1] for request in client.requests if request[0] == "PATCH"]
         self.assertEqual(patch_paths, ["/reviewSubmissions/old-submission"])
         patch_body = next(request[3] for request in client.requests if request[0] == "PATCH")
-        assert_review_submission_targets_version(self, patch_body, "version-1-0-13")
+        assert_review_submission_submit_body(self, patch_body)
 
     def test_ensure_review_submission_returns_submitted_existing_submission(self):
         class ReviewSubmissionClient:
@@ -917,6 +907,9 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
                                 "id": "old-submission",
                                 "attributes": {"state": "WAITING_FOR_REVIEW"},
                                 "relationships": {
+                                    "appStoreVersionForReview": {
+                                        "data": {"type": "appStoreVersions", "id": "version-1-0-13"}
+                                    },
                                     "items": {"data": [{"type": "reviewSubmissionItems", "id": "old-item"}]}
                                 },
                             }
@@ -990,14 +983,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
                         ],
                     }
                 if method == "GET" and path == "/builds":
-                    return {
-                        "data": [
-                            {
-                                "id": "build-1",
-                                "attributes": {"processingState": "VALID", "usesNonExemptEncryption": False},
-                            }
-                        ]
-                    }
+                    return valid_build()
                 raise AssertionError(f"unexpected request: {method} {path}")
 
         client = MainClient()
@@ -1044,10 +1030,12 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
                             }
                         ]
                     }
+                if method == "POST" and path == "/reviewSubmissions":
+                    return {"data": {"id": "new-submission", "attributes": {"state": "READY_FOR_REVIEW"}}}
                 if method == "POST" and path == "/reviewSubmissionItems":
                     return {"data": {"id": "item-1"}}
-                if method == "PATCH" and path == "/reviewSubmissions/empty-submission":
-                    return {"data": {"id": "empty-submission", "attributes": {"state": "WAITING_FOR_REVIEW"}}}
+                if method == "PATCH" and path == "/reviewSubmissions/new-submission":
+                    return {"data": {"id": "new-submission", "attributes": {"state": "WAITING_FOR_REVIEW"}}}
                 raise AssertionError(f"unexpected request: {method} {path}")
 
         client = EmptyReviewSubmissionClient()
@@ -1060,13 +1048,13 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             args,
         )
 
-        self.assertEqual(submission["id"], "empty-submission")
+        self.assertEqual(submission["id"], "new-submission")
         post_paths = [request[1] for request in client.requests if request[0] == "POST"]
-        self.assertEqual(post_paths, ["/reviewSubmissionItems"])
+        self.assertEqual(post_paths, ["/reviewSubmissions", "/reviewSubmissionItems"])
         patch_paths = [request[1] for request in client.requests if request[0] == "PATCH"]
-        self.assertEqual(patch_paths, ["/reviewSubmissions/empty-submission"])
+        self.assertEqual(patch_paths, ["/reviewSubmissions/new-submission"])
         patch_body = next(request[3] for request in client.requests if request[0] == "PATCH")
-        assert_review_submission_targets_version(self, patch_body, "version-1-0-14")
+        assert_review_submission_submit_body(self, patch_body)
 
     def test_ensure_review_submission_ignores_ready_submission_for_other_version(self):
         class StaleReadyReviewSubmissionClient:
@@ -1143,6 +1131,9 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
                                 "id": "ready-submission",
                                 "attributes": {"state": "READY_FOR_REVIEW"},
                                 "relationships": {
+                                    "appStoreVersionForReview": {
+                                        "data": {"type": "appStoreVersions", "id": "version-1-0-14"}
+                                    },
                                     "items": {"data": [{"type": "reviewSubmissionItems", "id": "item-1"}]}
                                 },
                             }
@@ -1181,7 +1172,70 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         patch_paths = [request[1] for request in client.requests if request[0] == "PATCH"]
         self.assertEqual(patch_paths, ["/reviewSubmissions/ready-submission"])
         patch_body = next(request[3] for request in client.requests if request[0] == "PATCH")
-        assert_review_submission_targets_version(self, patch_body, "version-1-0-14")
+        assert_review_submission_submit_body(self, patch_body)
+
+    def test_ensure_review_submission_adds_additional_platform_versions(self):
+        class MultiPlatformReviewSubmissionClient:
+            def __init__(self):
+                self.requests: list[tuple[Any, ...]] = []
+
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                self.requests.append((method, path, params, body, allowed))
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {
+                        "data": [
+                            {
+                                "id": "ready-submission",
+                                "attributes": {"state": "READY_FOR_REVIEW"},
+                                "relationships": {
+                                    "appStoreVersionForReview": {
+                                        "data": {"type": "appStoreVersions", "id": "mac-version"}
+                                    },
+                                    "items": {"data": [{"type": "reviewSubmissionItems", "id": "mac-item"}]}
+                                },
+                            }
+                        ],
+                        "included": [
+                            {
+                                "id": "mac-item",
+                                "type": "reviewSubmissionItems",
+                                "relationships": {
+                                    "appStoreVersion": {
+                                        "data": {"type": "appStoreVersions", "id": "mac-version"}
+                                    }
+                                },
+                            }
+                        ],
+                    }
+                if method == "POST" and path == "/reviewSubmissionItems":
+                    assert body is not None
+                    version_id = body["data"]["relationships"]["appStoreVersion"]["data"]["id"]
+                    if version_id == "mac-version":
+                        raise submit_app_store_review.AppStoreConnectError(
+                            "already exists", status=409, payload={}
+                        )
+                    return {"data": {"id": f"item-{version_id}"}}
+                if method == "PATCH" and path == "/reviewSubmissions/ready-submission":
+                    return {"data": {"id": "ready-submission", "attributes": {"state": "WAITING_FOR_REVIEW"}}}
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        client = MultiPlatformReviewSubmissionClient()
+        args = SimpleNamespace(dry_run=False, additional_review_version=["ios-version", "mac-version"])
+
+        submission = submit_app_store_review.ensure_review_submission(
+            client,
+            "app-id",
+            "mac-version",
+            args,
+        )
+
+        self.assertEqual(submission["id"], "ready-submission")
+        posted_version_ids = [
+            request[3]["data"]["relationships"]["appStoreVersion"]["data"]["id"]
+            for request in client.requests
+            if request[0] == "POST" and request[1] == "/reviewSubmissionItems"
+        ]
+        self.assertEqual(posted_version_ids, ["mac-version", "ios-version"])
 
 
 if __name__ == "__main__":
