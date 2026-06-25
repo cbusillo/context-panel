@@ -441,6 +441,17 @@ def is_locked_whats_new_error(error: AppStoreConnectError) -> bool:
     return "whatsnew" in text and "cannot be edited" in text
 
 
+def is_review_version_create_relationship_not_allowed(error: AppStoreConnectError) -> bool:
+    if error.status != 409:
+        return False
+    text = json.dumps(error.payload or {}, sort_keys=True).lower()
+    return (
+        "appstoreversionforreview" in text
+        and "not_allowed" in text
+        and "create" in text
+    )
+
+
 def create_app_store_version(client: ASCClient, app_id: str, args: argparse.Namespace) -> dict[str, Any]:
     return client.request(
         "POST",
@@ -841,6 +852,36 @@ def ensure_metadata(client: ASCClient, version_id: str, source_localization: dic
         print(f"Updated review detail: {review_detail_id}")
 
 
+def create_review_submission(
+    client: ASCClient,
+    app_id: str,
+    app_store_version_relationship: dict[str, Any],
+) -> dict[str, Any]:
+    body = {
+        "data": {
+            "type": "reviewSubmissions",
+            "relationships": {
+                "app": {"data": {"type": "apps", "id": app_id}},
+                "appStoreVersionForReview": app_store_version_relationship,
+            },
+        }
+    }
+    try:
+        return client.request("POST", "/reviewSubmissions", body=body, allowed=(201,))["data"]
+    except AppStoreConnectError as error:
+        if not is_review_version_create_relationship_not_allowed(error):
+            raise
+        fallback_body = {
+            "data": {
+                "type": "reviewSubmissions",
+                "relationships": {"app": {"data": {"type": "apps", "id": app_id}}},
+            }
+        }
+        submission = client.request("POST", "/reviewSubmissions", body=fallback_body, allowed=(201,))["data"]
+        print("Created review submission without appStoreVersionForReview because App Store Connect rejected it")
+        return submission
+
+
 def ensure_review_submission(
     client: ASCClient,
     app_id: str,
@@ -905,20 +946,7 @@ def ensure_review_submission(
         print(f"Using existing review submission: {existing['id']} ({state})")
         submission = existing
     else:
-        submission = client.request(
-            "POST",
-            "/reviewSubmissions",
-            body={
-                "data": {
-                    "type": "reviewSubmissions",
-                    "relationships": {
-                        "app": {"data": {"type": "apps", "id": app_id}},
-                        "appStoreVersionForReview": app_store_version_relationship,
-                    },
-                }
-            },
-            allowed=(201,),
-        )["data"]
+        submission = create_review_submission(client, app_id, app_store_version_relationship)
         print(f"Created review submission: {submission['id']}")
     for review_version_id in review_version_ids:
         try:
