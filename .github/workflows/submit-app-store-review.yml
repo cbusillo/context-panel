@@ -8,6 +8,11 @@ name: Submit App Store Review
         description: App Store marketing version.
         required: true
         type: string
+      platform:
+        description: App Store platform.
+        required: false
+        default: MAC_OS
+        type: string
       build_number:
         description: Uploaded CFBundleVersion/build number.
         required: false
@@ -26,8 +31,15 @@ name: Submit App Store Review
           Connect blocks creating the target version.
         required: false
         type: string
+      additional_review_versions:
+        description: >-
+          Comma-separated App Store version IDs to include in the review
+          submission.
+        required: false
+        type: string
       dry_run:
-        description: Validate metadata, build, and review path without submitting.
+        description: >-
+          Validate metadata, build, and review path without submitting.
         required: false
         default: false
         type: boolean
@@ -42,6 +54,15 @@ name: Submit App Store Review
         description: App Store marketing version.
         required: true
         type: string
+      platform:
+        description: App Store platform.
+        required: true
+        default: MAC_OS
+        type: choice
+        options:
+          - MAC_OS
+          - IOS
+          - VISION_OS
       build_number:
         description: Uploaded CFBundleVersion/build number.
         required: false
@@ -58,6 +79,12 @@ name: Submit App Store Review
         description: >-
           Existing App Store version to remove/reuse first when App Store
           Connect blocks creating the target version.
+        required: false
+        type: string
+      additional_review_versions:
+        description: >-
+          Comma-separated App Store version IDs to include in the review
+          submission.
         required: false
         type: string
       dry_run:
@@ -80,7 +107,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: submit-app-store-review-${{ inputs.version }}
+  group: submit-app-store-review-${{ inputs.platform }}-${{ inputs.version }}
   cancel-in-progress: false
 
 jobs:
@@ -108,16 +135,20 @@ jobs:
         shell: bash
         env:
           INPUT_VERSION: ${{ inputs.version }}
+          INPUT_PLATFORM: ${{ inputs.platform }}
           INPUT_BUILD_NUMBER: ${{ inputs.build_number }}
           INPUT_WHATS_NEW: ${{ inputs.whats_new }}
           INPUT_COPY_FROM_VERSION: ${{ inputs.copy_from_version }}
           INPUT_REMOVE_ACTIVE_REVIEW_VERSION: >-
             ${{ inputs.remove_active_review_version }}
+          INPUT_ADDITIONAL_REVIEW_VERSIONS: >-
+            ${{ inputs.additional_review_versions }}
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
           INPUT_CANCEL_REVIEW_ONLY: ${{ inputs.cancel_review_only }}
         run: |
           set -euo pipefail
           args=(
+            --platform "${INPUT_PLATFORM}"
             --version "${INPUT_VERSION}"
           )
           if [[ "${INPUT_CANCEL_REVIEW_ONLY}" != "true" ]]; then
@@ -144,6 +175,21 @@ jobs:
               "${INPUT_REMOVE_ACTIVE_REVIEW_VERSION}"
             )
           fi
+          if [[ -n "${INPUT_ADDITIONAL_REVIEW_VERSIONS}" ]]; then
+            IFS=',' read -r -a additional_review_versions \
+              <<<"${INPUT_ADDITIONAL_REVIEW_VERSIONS}"
+            for review_version in "${additional_review_versions[@]}"; do
+              additional_review_version="$(
+                printf '%s' "${review_version}" | awk '{$1=$1};1'
+              )"
+              if [[ -n "${additional_review_version}" ]]; then
+                args+=(
+                  --additional-review-version
+                  "${additional_review_version}"
+                )
+              fi
+            done
+          fi
           if [[ "${INPUT_DRY_RUN}" == "true" ]]; then
             args+=(--dry-run)
           fi
@@ -158,6 +204,7 @@ jobs:
           {
             echo "### App Store Review Submission"
             echo
+            echo "- Platform: ${INPUT_PLATFORM}"
             echo "- Version: ${INPUT_VERSION}"
             if [[ -n "${INPUT_BUILD_NUMBER}" ]]; then
               echo "- Build number: ${INPUT_BUILD_NUMBER}"

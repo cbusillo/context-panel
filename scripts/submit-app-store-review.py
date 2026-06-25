@@ -173,6 +173,14 @@ def relationship_id(resource: dict[str, Any], name: str) -> str | None:
     return None
 
 
+def namespace_platform(args: argparse.Namespace) -> str:
+    return getattr(args, "platform", "MAC_OS")
+
+
+def namespace_additional_review_versions(args: argparse.Namespace) -> list[str]:
+    return list(getattr(args, "additional_review_version", []))
+
+
 def version_state(resource: dict[str, Any]) -> str | None:
     attributes = resource.get("attributes", {})
     return attributes.get("appStoreState") or attributes.get("appVersionState")
@@ -193,12 +201,17 @@ def expanded_key_path(args: argparse.Namespace) -> tuple[Path, Path | None]:
     return key_path, key_path
 
 
-def latest_source_metadata(client: ASCClient, app_id: str, prefer_version: str | None) -> tuple[dict[str, Any], dict[str, Any]]:
+def latest_source_metadata(
+    client: ASCClient,
+    app_id: str,
+    prefer_version: str | None,
+    platform: str = "MAC_OS",
+) -> tuple[dict[str, Any], dict[str, Any]]:
     payload = paginated_get(
         client,
         f"/apps/{app_id}/appStoreVersions",
         {
-            "filter[platform]": "MAC_OS",
+            "filter[platform]": platform,
             "include": "appStoreVersionLocalizations,appStoreReviewDetail",
             "fields[appStoreVersions]": "versionString,appStoreState,appVersionState,appStoreVersionLocalizations,appStoreReviewDetail",
             "fields[appStoreVersionLocalizations]": "locale,description,keywords,marketingUrl,promotionalText,supportUrl,whatsNew",
@@ -226,12 +239,17 @@ def latest_source_metadata(client: ASCClient, app_id: str, prefer_version: str |
     return localization, review_detail
 
 
-def app_store_version(client: ASCClient, app_id: str, version_string: str) -> dict[str, Any] | None:
+def app_store_version(
+    client: ASCClient,
+    app_id: str,
+    version_string: str,
+    platform: str = "MAC_OS",
+) -> dict[str, Any] | None:
     payload = client.request(
         "GET",
         f"/apps/{app_id}/appStoreVersions",
         {
-            "filter[platform]": "MAC_OS",
+            "filter[platform]": platform,
             "filter[versionString]": version_string,
             "fields[appStoreVersions]": "versionString,appStoreState,appVersionState",
             "limit": 1,
@@ -241,18 +259,23 @@ def app_store_version(client: ASCClient, app_id: str, version_string: str) -> di
     return versions[0] if versions else None
 
 
-def app_store_version_id(client: ASCClient, app_id: str, version_string: str) -> str | None:
-    version = app_store_version(client, app_id, version_string)
+def app_store_version_id(
+    client: ASCClient,
+    app_id: str,
+    version_string: str,
+    platform: str = "MAC_OS",
+) -> str | None:
+    version = app_store_version(client, app_id, version_string, platform)
     return version["id"] if version else None
 
 
-def active_review_version_ids(client: ASCClient, app_id: str) -> set[str]:
+def active_review_version_ids(client: ASCClient, app_id: str, platform: str = "MAC_OS") -> set[str]:
     submissions = paginated_get(
         client,
         "/reviewSubmissions",
         {
             "filter[app]": app_id,
-            "filter[platform]": "MAC_OS",
+            "filter[platform]": platform,
             "include": "items,appStoreVersionForReview",
             "fields[reviewSubmissions]": "platform,state,items,appStoreVersionForReview",
             "fields[reviewSubmissionItems]": "state,appStoreVersion",
@@ -276,12 +299,16 @@ def active_review_version_ids(client: ASCClient, app_id: str) -> set[str]:
     return version_ids
 
 
-def version_creation_blocking_app_store_versions(client: ASCClient, app_id: str) -> list[dict[str, Any]]:
+def version_creation_blocking_app_store_versions(
+    client: ASCClient,
+    app_id: str,
+    platform: str = "MAC_OS",
+) -> list[dict[str, Any]]:
     payload = paginated_get(
         client,
         f"/apps/{app_id}/appStoreVersions",
         {
-            "filter[platform]": "MAC_OS",
+            "filter[platform]": platform,
             "fields[appStoreVersions]": "versionString,appStoreState,appVersionState",
         },
     )
@@ -311,8 +338,14 @@ def replacement_version_guidance(version: dict[str, Any]) -> str:
     )
 
 
-def remove_active_review_version(client: ASCClient, app_id: str, version_string: str, dry_run: bool = False) -> None:
-    version = app_store_version(client, app_id, version_string)
+def remove_active_review_version(
+    client: ASCClient,
+    app_id: str,
+    version_string: str,
+    platform: str = "MAC_OS",
+    dry_run: bool = False,
+) -> None:
+    version = app_store_version(client, app_id, version_string, platform)
     if version is None:
         print(f"No App Store version {version_string} found to remove from review")
         return
@@ -323,7 +356,7 @@ def remove_active_review_version(client: ASCClient, app_id: str, version_string:
         "/reviewSubmissions",
         {
             "filter[app]": app_id,
-            "filter[platform]": "MAC_OS",
+            "filter[platform]": platform,
             "include": "items,appStoreVersionForReview",
             "fields[reviewSubmissions]": "platform,state,items,appStoreVersionForReview",
             "fields[reviewSubmissionItems]": "state,appStoreVersion",
@@ -409,7 +442,7 @@ def create_app_store_version(client: ASCClient, app_id: str, args: argparse.Name
             "data": {
                 "type": "appStoreVersions",
                 "attributes": {
-                    "platform": "MAC_OS",
+                    "platform": namespace_platform(args),
                     "versionString": args.version,
                     "releaseType": args.release_type,
                     "copyright": args.copyright,
@@ -444,7 +477,7 @@ def ensure_version(client: ASCClient, app_id: str, args: argparse.Namespace) -> 
         "GET",
         f"/apps/{app_id}/appStoreVersions",
         {
-            "filter[platform]": "MAC_OS",
+            "filter[platform]": namespace_platform(args),
             "filter[versionString]": args.version,
             "include": "build,appStoreVersionLocalizations,appStoreReviewDetail",
             "fields[appStoreVersions]": "versionString,appStoreState,appVersionState,copyright,releaseType,usesIdfa,build,appStoreVersionLocalizations,appStoreReviewDetail",
@@ -477,7 +510,7 @@ def ensure_version(client: ASCClient, app_id: str, args: argparse.Namespace) -> 
 def reuse_removed_app_store_version(
     client: ASCClient, app_id: str, source_version_string: str, args: argparse.Namespace
 ) -> dict[str, Any]:
-    version = app_store_version(client, app_id, source_version_string)
+    version = app_store_version(client, app_id, source_version_string, namespace_platform(args))
     if version is None:
         raise AppStoreConnectError(f"App Store version {source_version_string} is not available to reuse")
     state = version_state(version)
@@ -527,15 +560,16 @@ def dry_run_version_path(
     args: argparse.Namespace,
     removable_review_version: str | None = None,
 ) -> None:
-    existing = app_store_version(client, app_id, args.version)
+    platform = namespace_platform(args)
+    existing = app_store_version(client, app_id, args.version, platform)
     target_version_id = existing["id"] if existing else None
     removable_version_id = None
     source = None
     if args.remove_active_review_version:
-        source = app_store_version(client, app_id, args.remove_active_review_version)
+        source = app_store_version(client, app_id, args.remove_active_review_version, platform)
         removable_version_id = source["id"] if source else None
 
-    active_ids = active_review_version_ids(client, app_id)
+    active_ids = active_review_version_ids(client, app_id, platform)
     allowed_active_ids = {version_id for version_id in (target_version_id, removable_version_id) if version_id}
     blocking_ids = active_ids - allowed_active_ids
     if blocking_ids:
@@ -546,7 +580,7 @@ def dry_run_version_path(
 
     blocking_versions = [
         version
-        for version in version_creation_blocking_app_store_versions(client, app_id)
+        for version in version_creation_blocking_app_store_versions(client, app_id, platform)
         if version["id"] not in allowed_active_ids
     ]
     if blocking_versions:
@@ -630,6 +664,7 @@ def ensure_build(
     deadline = time.monotonic() + max(0, wait_timeout)
     last_payload: dict[str, Any] | None = None
     last_build: dict[str, Any] | None = None
+    platform = namespace_platform(args)
     while True:
         payload = client.request(
             "GET",
@@ -640,11 +675,17 @@ def ensure_build(
                 "include": "preReleaseVersion,appStoreVersion",
                 "fields[builds]": "version,processingState,uploadedDate,expired,usesNonExemptEncryption,appStoreVersion,preReleaseVersion",
                 "fields[preReleaseVersions]": "version,platform",
-                "limit": 1,
+                "limit": 20,
             },
         )
         last_payload = payload
-        builds = payload.get("data") or []
+        included = included_by_id(payload)
+        builds = [
+            build
+            for build in payload.get("data") or []
+            if included.get(relationship_id(build, "preReleaseVersion") or "", {}).get("attributes", {}).get("platform")
+            == platform
+        ]
         if builds:
             last_build = builds[0]
             attributes = last_build["attributes"]
@@ -662,9 +703,11 @@ def ensure_build(
             )
         else:
             if time.monotonic() >= deadline:
-                raise AppStoreConnectError(f"missing build {args.build_number}", payload=last_payload)
+                raise AppStoreConnectError(
+                    f"missing {platform} build {args.build_number}", payload=last_payload
+                )
             print(
-                f"Build {args.build_number} is not visible yet; "
+                f"{platform} build {args.build_number} is not visible yet; "
                 f"waiting {poll_interval}s for App Store Connect processing"
             )
         time.sleep(max(1, poll_interval))
@@ -779,6 +822,10 @@ def ensure_review_submission(
     version_id: str,
     args: argparse.Namespace,
 ) -> dict[str, Any]:
+    review_version_ids = [version_id]
+    for additional_version_id in namespace_additional_review_versions(args):
+        if additional_version_id not in review_version_ids:
+            review_version_ids.append(additional_version_id)
     app_store_version_relationship = {
         "data": {"type": "appStoreVersions", "id": version_id}
     }
@@ -787,7 +834,7 @@ def ensure_review_submission(
         "/reviewSubmissions",
         {
             "filter[app]": app_id,
-            "filter[platform]": "MAC_OS",
+            "filter[platform]": namespace_platform(args),
             "include": "items,appStoreVersionForReview",
             "fields[reviewSubmissions]": "platform,state,submittedDate,items,appStoreVersionForReview",
             "fields[reviewSubmissionItems]": "state,appStoreVersion",
@@ -803,10 +850,28 @@ def ensure_review_submission(
         submission_version_id = relationship_id(submission, "appStoreVersionForReview")
         item_ids = [item["id"] for item in submission.get("relationships", {}).get("items", {}).get("data", [])]
         item_version_ids = {relationship_id(included.get(item_id, {}), "appStoreVersion") for item_id in item_ids}
-        empty_ready_submission = state == "READY_FOR_REVIEW" and submission_version_id is None and not item_ids
-        if submission_version_id == version_id or version_id in item_version_ids or empty_ready_submission:
+        if submission_version_id == version_id:
             existing = submission
             break
+        if version_id in item_version_ids and submission_version_id is None:
+            stale_item_ids = [
+                item_id
+                for item_id in item_ids
+                if relationship_id(included.get(item_id, {}), "appStoreVersion") == version_id
+            ]
+            if state != "READY_FOR_REVIEW":
+                item_names = ", ".join(stale_item_ids) or "unknown item"
+                raise AppStoreConnectError(
+                    "found an unbound submitted review item for the target App Store version; "
+                    f"remove review submission item(s) {item_names} in App Store Connect, then rerun submission",
+                    payload=submission,
+                )
+            for stale_item_id in stale_item_ids:
+                if args.dry_run:
+                    print(f"Dry run: would remove stale unbound review submission item: {stale_item_id}")
+                else:
+                    client.request("DELETE", f"/reviewSubmissionItems/{stale_item_id}", allowed=(204,))
+                    print(f"Removed stale unbound review submission item: {stale_item_id}")
     if existing:
         state = existing["attributes"].get("state")
         if state in {"WAITING_FOR_REVIEW", "IN_REVIEW"}:
@@ -830,26 +895,27 @@ def ensure_review_submission(
             allowed=(201,),
         )["data"]
         print(f"Created review submission: {submission['id']}")
-    try:
-        item = client.request(
-            "POST",
-            "/reviewSubmissionItems",
-            body={
-                "data": {
-                    "type": "reviewSubmissionItems",
-                    "relationships": {
-                        "reviewSubmission": {"data": {"type": "reviewSubmissions", "id": submission["id"]}},
-                        "appStoreVersion": {"data": {"type": "appStoreVersions", "id": version_id}},
-                    },
-                }
-            },
-            allowed=(201,),
-        )
-        print(f"Created review submission item: {item['data']['id']}")
-    except AppStoreConnectError as error:
-        if error.status != 409:
-            raise
-        print("Review submission item already exists")
+    for review_version_id in review_version_ids:
+        try:
+            item = client.request(
+                "POST",
+                "/reviewSubmissionItems",
+                body={
+                    "data": {
+                        "type": "reviewSubmissionItems",
+                        "relationships": {
+                            "reviewSubmission": {"data": {"type": "reviewSubmissions", "id": submission["id"]}},
+                            "appStoreVersion": {"data": {"type": "appStoreVersions", "id": review_version_id}},
+                        },
+                    }
+                },
+                allowed=(201,),
+            )
+            print(f"Created review submission item: {item['data']['id']}")
+        except AppStoreConnectError as error:
+            if error.status != 409:
+                raise
+            print(f"Review submission item already exists for App Store version: {review_version_id}")
     if args.dry_run:
         print("Dry run: would submit the prepared review submission")
         return submission
@@ -865,7 +931,6 @@ def ensure_review_submission(
                 "type": "reviewSubmissions",
                 "id": submission["id"],
                 "attributes": {"submitted": True},
-                "relationships": {"appStoreVersionForReview": app_store_version_relationship},
             }
         },
     )["data"]
@@ -885,6 +950,12 @@ def parse_bool(value: str) -> bool:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bundle-id", default=DEFAULT_BUNDLE_ID)
+    parser.add_argument(
+        "--platform",
+        default="MAC_OS",
+        choices=("IOS", "MAC_OS", "VISION_OS"),
+        help="App Store platform to submit for review",
+    )
     parser.add_argument("--version", required=True, help="App Store marketing version, for example 1.0.12")
     parser.add_argument("--build-number", help="CFBundleVersion uploaded to App Store Connect")
     parser.add_argument("--whats-new")
@@ -892,6 +963,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--remove-active-review-version",
         help="Existing App Store version to remove from active review before creating the target version",
+    )
+    parser.add_argument(
+        "--additional-review-version",
+        action="append",
+        default=[],
+        help="Additional App Store version ID to include in the review submission; repeat for multi-platform submissions",
     )
     parser.add_argument(
         "--cancel-review-only",
@@ -946,13 +1023,24 @@ def main() -> int:
         app_id = app["id"]
         print(f"Using app {app['attributes'].get('name')}: {app_id}")
         if args.cancel_review_only:
-            remove_active_review_version(client, app_id, args.remove_active_review_version, dry_run=args.dry_run)
+            remove_active_review_version(
+                client,
+                app_id,
+                args.remove_active_review_version,
+                args.platform,
+                dry_run=args.dry_run,
+            )
             if args.dry_run:
                 print("Dry run: review cancellation was validated; no App Store Connect changes were made")
             else:
                 print(f"Canceled active review for App Store version {args.remove_active_review_version}")
             return 0
-        source_localization, source_review_detail = latest_source_metadata(client, app_id, args.copy_from_version)
+        source_localization, source_review_detail = latest_source_metadata(
+            client,
+            app_id,
+            args.copy_from_version,
+            args.platform,
+        )
         build = ensure_build(client, app_id, args, allow_updates=not args.dry_run)
         removable_review_version = None
         if args.remove_active_review_version:
@@ -960,7 +1048,13 @@ def main() -> int:
             # version is actively in review. Validate the source metadata and uploaded
             # build first, then remove the old review item immediately before creating
             # and submitting the replacement.
-            remove_active_review_version(client, app_id, args.remove_active_review_version, dry_run=args.dry_run)
+            remove_active_review_version(
+                client,
+                app_id,
+                args.remove_active_review_version,
+                args.platform,
+                dry_run=args.dry_run,
+            )
             if args.dry_run:
                 removable_review_version = args.remove_active_review_version
         if args.dry_run:
