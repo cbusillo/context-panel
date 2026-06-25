@@ -1186,6 +1186,70 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             {"data": {"type": "appStoreVersions", "id": "version-1-0-14"}},
         )
 
+    def test_ensure_review_submission_retries_create_without_rejected_version_relationship(self):
+        class CreateFallbackReviewSubmissionClient:
+            def __init__(self):
+                self.requests: list[tuple[Any, ...]] = []
+
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                self.requests.append((method, path, params, body, allowed))
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {"data": []}
+                if method == "POST" and path == "/reviewSubmissions":
+                    assert body is not None
+                    relationships = body["data"]["relationships"]
+                    if "appStoreVersionForReview" in relationships:
+                        raise submit_app_store_review.AppStoreConnectError(
+                            "App Store Connect request failed: POST /reviewSubmissions",
+                            status=409,
+                            payload={
+                                "errors": [
+                                    {
+                                        "code": "ENTITY_ERROR.RELATIONSHIP.NOT_ALLOWED",
+                                        "detail": "The relationship 'appStoreVersionForReview' can not be included in a 'CREATE' operation",
+                                        "source": {"pointer": "/data/relationships/appStoreVersionForReview"},
+                                    }
+                                ]
+                            },
+                        )
+                    return {"data": {"id": "fallback-submission", "attributes": {"state": "READY_FOR_REVIEW"}}}
+                if method == "POST" and path == "/reviewSubmissionItems":
+                    return {"data": {"id": "fallback-item"}}
+                if method == "PATCH" and path == "/reviewSubmissions/fallback-submission":
+                    return {"data": {"id": "fallback-submission", "attributes": {"state": "WAITING_FOR_REVIEW"}}}
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        client = CreateFallbackReviewSubmissionClient()
+        args = SimpleNamespace(dry_run=False)
+
+        submission = submit_app_store_review.ensure_review_submission(
+            client,
+            "app-id",
+            "version-1-0-35",
+            args,
+        )
+
+        self.assertEqual(submission["id"], "fallback-submission")
+        submission_posts = [
+            request[3]
+            for request in client.requests
+            if request[0] == "POST" and request[1] == "/reviewSubmissions"
+        ]
+        self.assertEqual(len(submission_posts), 2)
+        assert submission_posts[0] is not None
+        assert submission_posts[1] is not None
+        self.assertIn("appStoreVersionForReview", submission_posts[0]["data"]["relationships"])
+        self.assertNotIn("appStoreVersionForReview", submission_posts[1]["data"]["relationships"])
+        review_item_posts = [
+            request[3]
+            for request in client.requests
+            if request[0] == "POST" and request[1] == "/reviewSubmissionItems"
+        ]
+        self.assertEqual(
+            review_item_posts[0]["data"]["relationships"]["appStoreVersion"]["data"]["id"],
+            "version-1-0-35",
+        )
+
     def test_ensure_review_submission_submits_matching_ready_submission(self):
         class ReadyReviewSubmissionClient:
             def __init__(self):
