@@ -1013,6 +1013,75 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         mutation_methods = [request[0] for request in client.requests if request[0] != "GET"]
         self.assertEqual(mutation_methods, [])
 
+    def test_ensure_metadata_retries_without_locked_whats_new(self):
+        class MetadataClient:
+            def __init__(self):
+                self.requests: list[tuple[Any, ...]] = []
+
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                self.requests.append((method, path, params, body, allowed))
+                if method == "GET" and path == "/appStoreVersions/version-1-0-35":
+                    return {
+                        "data": {
+                            "id": "version-1-0-35",
+                            "attributes": {"appStoreState": "PREPARE_FOR_SUBMISSION"},
+                            "relationships": {
+                                "appStoreVersionLocalizations": {
+                                    "data": [{"type": "appStoreVersionLocalizations", "id": "loc-1"}]
+                                },
+                                "appStoreReviewDetail": {
+                                    "data": {"type": "appStoreReviewDetails", "id": "detail-1"}
+                                },
+                            },
+                        }
+                    }
+                if method == "PATCH" and path == "/appStoreVersionLocalizations/loc-1":
+                    assert body is not None
+                    attributes = body["data"]["attributes"]
+                    if "whatsNew" in attributes:
+                        raise submit_app_store_review.AppStoreConnectError(
+                            "App Store Connect request failed: PATCH /appStoreVersionLocalizations/loc-1",
+                            status=409,
+                            payload={
+                                "errors": [
+                                    {
+                                        "code": "STATE_ERROR",
+                                        "detail": "Attribute 'whatsNew' cannot be edited at this time",
+                                    }
+                                ]
+                            },
+                        )
+                    return {"data": {"id": "loc-1"}}
+                if method == "PATCH" and path == "/appStoreReviewDetails/detail-1":
+                    return {"data": {"id": "detail-1"}}
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        client = MetadataClient()
+        args = SimpleNamespace(
+            locale=None,
+            support_url=None,
+            whats_new="Adds CloudKit companion sync.",
+        )
+
+        submit_app_store_review.ensure_metadata(
+            client,
+            "version-1-0-35",
+            {"locale": "en-US", "description": "desc", "keywords": "usage", "supportUrl": "https://example.com"},
+            {"contactEmail": "review@example.com"},
+            args,
+        )
+
+        localization_updates = []
+        for request in client.requests:
+            if request[0] != "PATCH" or request[1] != "/appStoreVersionLocalizations/loc-1":
+                continue
+            body = request[3]
+            assert body is not None
+            localization_updates.append(body["data"]["attributes"])
+        self.assertIn("whatsNew", localization_updates[0])
+        self.assertNotIn("whatsNew", localization_updates[1])
+        self.assertEqual(localization_updates[1]["description"], "desc")
+
     def test_ensure_review_submission_reuses_empty_ready_submission(self):
         class EmptyReviewSubmissionClient:
             def __init__(self):

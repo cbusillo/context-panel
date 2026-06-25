@@ -434,6 +434,13 @@ def is_submitted_review_item_conflict(error: AppStoreConnectError) -> bool:
     return "item was already submitted" in text
 
 
+def is_locked_whats_new_error(error: AppStoreConnectError) -> bool:
+    if error.status != 409:
+        return False
+    text = json.dumps(error.payload or {}, sort_keys=True).lower()
+    return "whatsnew" in text and "cannot be edited" in text
+
+
 def create_app_store_version(client: ASCClient, app_id: str, args: argparse.Namespace) -> dict[str, Any]:
     return client.request(
         "POST",
@@ -762,17 +769,35 @@ def ensure_metadata(client: ASCClient, version_id: str, source_localization: dic
     localization = {key: value for key, value in localization.items() if value is not None}
     if localization_id:
         update = {key: value for key, value in localization.items() if key != "locale"}
-        client.request(
-            "PATCH",
-            f"/appStoreVersionLocalizations/{localization_id}",
-            body={
-                "data": {
-                    "type": "appStoreVersionLocalizations",
-                    "id": localization_id,
-                    "attributes": update,
-                }
-            },
-        )
+        try:
+            client.request(
+                "PATCH",
+                f"/appStoreVersionLocalizations/{localization_id}",
+                body={
+                    "data": {
+                        "type": "appStoreVersionLocalizations",
+                        "id": localization_id,
+                        "attributes": update,
+                    }
+                },
+            )
+        except AppStoreConnectError as error:
+            if "whatsNew" not in update or not is_locked_whats_new_error(error):
+                raise
+            update_without_whats_new = {key: value for key, value in update.items() if key != "whatsNew"}
+            if update_without_whats_new:
+                client.request(
+                    "PATCH",
+                    f"/appStoreVersionLocalizations/{localization_id}",
+                    body={
+                        "data": {
+                            "type": "appStoreVersionLocalizations",
+                            "id": localization_id,
+                            "attributes": update_without_whats_new,
+                        }
+                    },
+                )
+            print(f"Skipped What's New update because App Store Connect locked it: {localization_id}")
         print(f"Updated localization: {localization_id}")
     else:
         created = client.request(
