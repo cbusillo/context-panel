@@ -779,6 +779,9 @@ def ensure_review_submission(
     version_id: str,
     args: argparse.Namespace,
 ) -> dict[str, Any]:
+    app_store_version_relationship = {
+        "data": {"type": "appStoreVersions", "id": version_id}
+    }
     submissions = paginated_get(
         client,
         "/reviewSubmissions",
@@ -815,7 +818,15 @@ def ensure_review_submission(
         submission = client.request(
             "POST",
             "/reviewSubmissions",
-            body={"data": {"type": "reviewSubmissions", "relationships": {"app": {"data": {"type": "apps", "id": app_id}}}}},
+            body={
+                "data": {
+                    "type": "reviewSubmissions",
+                    "relationships": {
+                        "app": {"data": {"type": "apps", "id": app_id}},
+                        "appStoreVersionForReview": app_store_version_relationship,
+                    },
+                }
+            },
             allowed=(201,),
         )["data"]
         print(f"Created review submission: {submission['id']}")
@@ -854,6 +865,7 @@ def ensure_review_submission(
                 "type": "reviewSubmissions",
                 "id": submission["id"],
                 "attributes": {"submitted": True},
+                "relationships": {"appStoreVersionForReview": app_store_version_relationship},
             }
         },
     )["data"]

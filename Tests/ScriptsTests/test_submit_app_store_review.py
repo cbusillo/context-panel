@@ -16,6 +16,18 @@ submit_app_store_review = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(submit_app_store_review)
 
 
+def assert_review_submission_targets_version(test_case, patch_body, version_id):
+    test_case.assertEqual(patch_body["data"]["attributes"], {"submitted": True})
+    test_case.assertEqual(
+        patch_body["data"]["relationships"],
+        {
+            "appStoreVersionForReview": {
+                "data": {"type": "appStoreVersions", "id": version_id}
+            }
+        },
+    )
+
+
 class FakeASCClient:
     def __init__(
         self,
@@ -889,8 +901,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         patch_paths = [request[1] for request in client.requests if request[0] == "PATCH"]
         self.assertEqual(patch_paths, ["/reviewSubmissions/old-submission"])
         patch_body = next(request[3] for request in client.requests if request[0] == "PATCH")
-        self.assertEqual(patch_body["data"]["attributes"], {"submitted": True})
-        self.assertNotIn("relationships", patch_body["data"])
+        assert_review_submission_targets_version(self, patch_body, "version-1-0-13")
 
     def test_ensure_review_submission_returns_submitted_existing_submission(self):
         class ReviewSubmissionClient:
@@ -1055,8 +1066,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         patch_paths = [request[1] for request in client.requests if request[0] == "PATCH"]
         self.assertEqual(patch_paths, ["/reviewSubmissions/empty-submission"])
         patch_body = next(request[3] for request in client.requests if request[0] == "PATCH")
-        self.assertEqual(patch_body["data"]["attributes"], {"submitted": True})
-        self.assertNotIn("relationships", patch_body["data"])
+        assert_review_submission_targets_version(self, patch_body, "version-1-0-14")
 
     def test_ensure_review_submission_ignores_ready_submission_for_other_version(self):
         class StaleReadyReviewSubmissionClient:
@@ -1109,6 +1119,15 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         self.assertEqual(submission["id"], "new-submission")
         post_paths = [request[1] for request in client.requests if request[0] == "POST"]
         self.assertEqual(post_paths, ["/reviewSubmissions", "/reviewSubmissionItems"])
+        submission_post_body = next(
+            request[3]
+            for request in client.requests
+            if request[0] == "POST" and request[1] == "/reviewSubmissions"
+        )
+        self.assertEqual(
+            submission_post_body["data"]["relationships"]["appStoreVersionForReview"],
+            {"data": {"type": "appStoreVersions", "id": "version-1-0-14"}},
+        )
 
     def test_ensure_review_submission_submits_matching_ready_submission(self):
         class ReadyReviewSubmissionClient:
@@ -1162,8 +1181,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         patch_paths = [request[1] for request in client.requests if request[0] == "PATCH"]
         self.assertEqual(patch_paths, ["/reviewSubmissions/ready-submission"])
         patch_body = next(request[3] for request in client.requests if request[0] == "PATCH")
-        self.assertEqual(patch_body["data"]["attributes"], {"submitted": True})
-        self.assertNotIn("relationships", patch_body["data"])
+        assert_review_submission_targets_version(self, patch_body, "version-1-0-14")
 
 
 if __name__ == "__main__":
