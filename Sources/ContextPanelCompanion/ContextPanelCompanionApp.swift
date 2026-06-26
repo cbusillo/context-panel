@@ -11,18 +11,52 @@ private func reloadContextPanelCompanionWidgetTimeline() {
 }
 
 private struct CompanionWidgetRenderSignature: Equatable {
-    let snapshot: WidgetSnapshot
+    let state: WidgetSnapshotState
+    let generatedAt: Date?
+    let limits: [UsageLimit]
+    let reports: [StoredProviderReport]
+    let promptCacheObservations: [PromptCacheObservation]
+    let promptCacheWidgetState: PromptCacheWidgetState
+    let fastModeForecastSettings: FastModeForecastSettings
+    let status: UsageStatus
+    let message: String
+    let refreshAttentionSummary: RefreshAttentionSummary?
     let displayPreferences: WidgetDisplayPreferences
     let deliveryStatus: CompanionSyncDeliveryStatus?
 
     init(result: CompanionSyncLoadResult, now: Date) {
-        snapshot = WidgetSnapshot.fromCompanionSync(
+        let snapshot = WidgetSnapshot.fromCompanionSync(
             result,
             now: now,
             stalenessPolicy: SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
         )
+        state = snapshot.state
+        generatedAt = result.document == nil ? nil : snapshot.generatedAt
+        limits = snapshot.limits
+        reports = snapshot.reports
+        promptCacheObservations = snapshot.promptCacheObservations
+        promptCacheWidgetState = snapshot.promptCacheWidgetState
+        fastModeForecastSettings = snapshot.fastModeForecastSettings
+        status = snapshot.status
+        message = snapshot.message
+        refreshAttentionSummary = snapshot.refreshAttentionSummary
         displayPreferences = result.document?.widgetDisplayPreferences ?? .defaultPreferences
         deliveryStatus = result.transportMetadata?.deliveryStatus
+    }
+
+    var snapshot: WidgetSnapshot {
+        WidgetSnapshot(
+            state: state,
+            generatedAt: generatedAt ?? .distantPast,
+            limits: limits,
+            reports: reports,
+            promptCacheObservations: promptCacheObservations,
+            promptCacheWidgetState: promptCacheWidgetState,
+            fastModeForecastSettings: fastModeForecastSettings,
+            status: status,
+            message: message,
+            refreshAttentionSummary: refreshAttentionSummary
+        )
     }
 }
 

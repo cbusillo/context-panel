@@ -17,6 +17,7 @@ private enum RefreshAgentRegistration {
     private static let reconciledBuildKey = "ContextPanelRefreshAgentReconciledBuild"
     private static let repairedBuildKey = "ContextPanelRefreshAgentRepairedBuild"
     private static let repairGraceSeconds: UInt64 = 8
+    @MainActor private static var pendingRepairTask: Task<Void, Never>?
 
     static func reconcile(settings: BackgroundRefreshSettings) throws {
         let service = SMAppService.loginItem(identifier: ContextPanelLocations.refreshAgentBundleID)
@@ -28,13 +29,16 @@ private enum RefreshAgentRegistration {
     }
 
     @MainActor
-    static func repairIfEnabledAgentDoesNotLaunch(settingsStore: BackgroundRefreshSettingsStore) -> Task<Void, Never>? {
-        guard settingsStore.load().isEnabled else { return nil }
+    static func repairIfEnabledAgentDoesNotLaunch(settingsStore: BackgroundRefreshSettingsStore) {
+        pendingRepairTask?.cancel()
+        pendingRepairTask = nil
+        guard settingsStore.load().isEnabled else { return }
         let currentBuild = currentBuild()
-        guard UserDefaults.standard.string(forKey: repairedBuildKey) != currentBuild else { return nil }
+        guard UserDefaults.standard.string(forKey: repairedBuildKey) != currentBuild else { return }
 
         contextPanelLogger.notice("refresh agent repair scheduled build=\(currentBuild, privacy: .public)")
-        return Task { @MainActor in
+        pendingRepairTask = Task { @MainActor in
+            defer { pendingRepairTask = nil }
             try? await Task.sleep(nanoseconds: repairGraceSeconds * 1_000_000_000)
             guard !Task.isCancelled else { return }
             guard settingsStore.load().isEnabled else { return }
@@ -72,6 +76,12 @@ private enum RefreshAgentRegistration {
                 contextPanelLogger.error("refresh agent registration repair failed error=\(error.localizedDescription, privacy: .public)")
             }
         }
+    }
+
+    @MainActor
+    static func cancelPendingRepair() {
+        pendingRepairTask?.cancel()
+        pendingRepairTask = nil
     }
 
     private static func register(service: SMAppService) throws {
@@ -193,7 +203,6 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
     private var screensDidWakeObserver: NSObjectProtocol?
     private var becomeActiveObserver: NSObjectProtocol?
     private var lastWidgetTimelineRecoveryAt: Date?
-    private var refreshAgentRepairTask: Task<Void, Never>?
     private let backgroundRefreshSettingsStore = BackgroundRefreshSettingsStore(
         settingsURL: ContextPanelLocations.backgroundRefreshSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
     )
@@ -228,7 +237,7 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
         if let becomeActiveObserver {
             NotificationCenter.default.removeObserver(becomeActiveObserver)
         }
-        refreshAgentRepairTask?.cancel()
+        RefreshAgentRegistration.cancelPendingRepair()
         NSAppleEventManager.shared().removeEventHandler(
             forEventClass: AEEventClass(kInternetEventClass),
             andEventID: AEEventID(kAEGetURL)
@@ -346,9 +355,7 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
         let settings = backgroundRefreshSettingsStore.load()
         do {
             try RefreshAgentRegistration.reconcile(settings: settings)
-            refreshAgentRepairTask = RefreshAgentRegistration.repairIfEnabledAgentDoesNotLaunch(
-                settingsStore: backgroundRefreshSettingsStore
-            )
+            RefreshAgentRegistration.repairIfEnabledAgentDoesNotLaunch(settingsStore: backgroundRefreshSettingsStore)
         } catch {
             model.setError("Background refresh could not be updated: \(error.localizedDescription)")
         }
@@ -1333,7 +1340,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         if saveBackgroundRefreshSettings(updated) {
             reconcileRefreshAgentRegistration(settings: updated)
             if updated.isEnabled {
-                _ = RefreshAgentRegistration.repairIfEnabledAgentDoesNotLaunch(settingsStore: backgroundRefreshSettingsStore)
+                RefreshAgentRegistration.repairIfEnabledAgentDoesNotLaunch(settingsStore: backgroundRefreshSettingsStore)
             }
         }
     }
