@@ -45,6 +45,8 @@ CREATE_VERSION_MAX_ATTEMPTS = 6
 CREATE_VERSION_RETRY_SECONDS = 10
 DEFAULT_BUILD_WAIT_TIMEOUT_SECONDS = 10 * 60
 DEFAULT_BUILD_POLL_SECONDS = 20
+DEFAULT_VERSION_UNLOCK_WAIT_TIMEOUT_SECONDS = 2 * 60
+DEFAULT_VERSION_UNLOCK_POLL_SECONDS = 5
 
 
 class AppStoreConnectError(RuntimeError):
@@ -418,6 +420,33 @@ def cancel_app_store_version_submission(
         return
     client.request("DELETE", f"/appStoreVersionSubmissions/{submission_id}", allowed=(204,))
     print(f"Canceled submitted App Store version {version_string} review: {submission_id}")
+
+
+def wait_for_editable_version(
+    client: ASCClient,
+    app_id: str,
+    version_string: str,
+    platform: str,
+    timeout_seconds: int = DEFAULT_VERSION_UNLOCK_WAIT_TIMEOUT_SECONDS,
+    poll_seconds: int = DEFAULT_VERSION_UNLOCK_POLL_SECONDS,
+) -> None:
+    deadline = time.monotonic() + max(0, timeout_seconds)
+    while True:
+        version = app_store_version(client, app_id, version_string, platform)
+        if version is None:
+            return
+        state = version_state(version)
+        if state not in LOCKED_VERSION_STATES:
+            print(f"App Store version {version_string} is editable: {state}")
+            return
+        if time.monotonic() >= deadline:
+            print(f"App Store version {version_string} is still {state}; continuing")
+            return
+        print(
+            f"App Store version {version_string} is still {state}; "
+            f"waiting {poll_seconds}s for App Store Connect to unlock it"
+        )
+        time.sleep(max(1, poll_seconds))
 
 
 def is_version_creation_state_conflict(error: AppStoreConnectError) -> bool:
@@ -882,6 +911,39 @@ def create_review_submission(
         return submission
 
 
+def active_submission_for_version(
+    client: ASCClient,
+    app_id: str,
+    platform: str,
+    version_id: str,
+) -> dict[str, Any] | None:
+    submissions = paginated_get(
+        client,
+        "/reviewSubmissions",
+        {
+            "filter[app]": app_id,
+            "filter[platform]": platform,
+            "include": "items,appStoreVersionForReview",
+            "fields[reviewSubmissions]": "platform,state,submittedDate,items,appStoreVersionForReview",
+            "fields[reviewSubmissionItems]": "state,appStoreVersion",
+        },
+        limit=20,
+    )
+    included = included_by_id(submissions)
+    for submission in submissions.get("data", []):
+        state = submission["attributes"].get("state")
+        if state not in ACTIVE_REVIEW_SUBMISSION_STATES:
+            continue
+        if relationship_id(submission, "appStoreVersionForReview") == version_id:
+            return submission
+        item_ids = [item["id"] for item in submission.get("relationships", {}).get("items", {}).get("data", [])]
+        for item_id in item_ids:
+            item = included.get(item_id, {})
+            if relationship_id(item, "appStoreVersion") == version_id:
+                return submission
+    return None
+
+
 def ensure_review_submission(
     client: ASCClient,
     app_id: str,
@@ -920,24 +982,8 @@ def ensure_review_submission(
             existing = submission
             break
         if version_id in item_version_ids and submission_version_id is None:
-            stale_item_ids = [
-                item_id
-                for item_id in item_ids
-                if relationship_id(included.get(item_id, {}), "appStoreVersion") == version_id
-            ]
-            if state != "READY_FOR_REVIEW":
-                item_names = ", ".join(stale_item_ids) or "unknown item"
-                raise AppStoreConnectError(
-                    "found an unbound submitted review item for the target App Store version; "
-                    f"remove review submission item(s) {item_names} in App Store Connect, then rerun submission",
-                    payload=submission,
-                )
-            for stale_item_id in stale_item_ids:
-                if args.dry_run:
-                    print(f"Dry run: would remove stale unbound review submission item: {stale_item_id}")
-                else:
-                    client.request("DELETE", f"/reviewSubmissionItems/{stale_item_id}", allowed=(204,))
-                    print(f"Removed stale unbound review submission item: {stale_item_id}")
+            existing = submission
+            break
     if existing:
         state = existing["attributes"].get("state")
         if state in {"WAITING_FOR_REVIEW", "IN_REVIEW"}:
@@ -969,6 +1015,14 @@ def ensure_review_submission(
             if error.status != 409:
                 raise
             print(f"Review submission item already exists for App Store version: {review_version_id}")
+            existing_submission = active_submission_for_version(
+                client,
+                app_id,
+                namespace_platform(args),
+                review_version_id,
+            )
+            if existing_submission is not None:
+                submission = existing_submission
     if args.dry_run:
         print("Dry run: would submit the prepared review submission")
         return submission
@@ -1110,6 +1164,13 @@ def main() -> int:
             )
             if args.dry_run:
                 removable_review_version = args.remove_active_review_version
+            else:
+                wait_for_editable_version(
+                    client,
+                    app_id,
+                    args.remove_active_review_version,
+                    args.platform,
+                )
         if args.dry_run:
             dry_run_version_path(client, app_id, args, removable_review_version=removable_review_version)
             print("Dry run: metadata, build, and version path validated; no App Store Connect changes were made")
