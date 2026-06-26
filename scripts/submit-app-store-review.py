@@ -396,8 +396,7 @@ def remove_active_review_version(
             except AppStoreConnectError as error:
                 if not is_submitted_review_item_conflict(error):
                     raise
-                print(f"Review item {item_id} was already submitted; canceling submitted version review instead")
-                cancel_app_store_version_submission(client, version_id, version_string, dry_run=False)
+                print(f"Review item {item_id} was already submitted; leaving review submission unchanged")
                 return
     state = version_state(version)
     if state in BLOCKING_REVIEW_VERSION_STATES:
