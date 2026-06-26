@@ -895,8 +895,9 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
 
     def test_ensure_review_submission_returns_submitted_existing_submission(self):
         class ReviewSubmissionClient:
-            def __init__(self):
+            def __init__(self, state="WAITING_FOR_REVIEW"):
                 self.requests: list[tuple[Any, ...]] = []
+                self.state = state
 
             def request(self, method, path, params=None, body=None, allowed=(200,)):
                 self.requests.append((method, path, params, body, allowed))
@@ -905,7 +906,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
                         "data": [
                             {
                                 "id": "old-submission",
-                                "attributes": {"state": "WAITING_FOR_REVIEW"},
+                                "attributes": {"state": self.state},
                                 "relationships": {
                                     "appStoreVersionForReview": {
                                         "data": {"type": "appStoreVersions", "id": "version-1-0-13"}
@@ -931,6 +932,18 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         client = ReviewSubmissionClient()
         args = SimpleNamespace(dry_run=False)
 
+        submission = submit_app_store_review.ensure_review_submission(
+            client,
+            "app-id",
+            "version-1-0-13",
+            args,
+        )
+
+        self.assertEqual(submission["id"], "old-submission")
+        mutation_methods = [request[0] for request in client.requests if request[0] in {"POST", "PATCH"}]
+        self.assertEqual(mutation_methods, [])
+
+        client = ReviewSubmissionClient(state="UNRESOLVED_ISSUES")
         submission = submit_app_store_review.ensure_review_submission(
             client,
             "app-id",

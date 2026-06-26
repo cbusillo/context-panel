@@ -31,7 +31,12 @@ LOCKED_VERSION_STATES = {
     "PENDING_DEVELOPER_RELEASE",
     "READY_FOR_SALE",
 }
-ACTIVE_REVIEW_SUBMISSION_STATES = {"READY_FOR_REVIEW", "WAITING_FOR_REVIEW", "IN_REVIEW"}
+ACTIVE_REVIEW_SUBMISSION_STATES = {
+    "READY_FOR_REVIEW",
+    "WAITING_FOR_REVIEW",
+    "IN_REVIEW",
+    "UNRESOLVED_ISSUES",
+}
 BLOCKING_REVIEW_VERSION_STATES = {"WAITING_FOR_REVIEW", "IN_REVIEW", "PENDING_DEVELOPER_RELEASE"}
 REMOVABLE_REVIEW_VERSION_STATES = {"WAITING_FOR_REVIEW", "IN_REVIEW"}
 VERSION_CREATION_BLOCKING_STATES = BLOCKING_REVIEW_VERSION_STATES | {
@@ -1019,7 +1024,7 @@ def ensure_review_submission(
         existing = reusable_empty_submission
     if existing:
         state = existing["attributes"].get("state")
-        if state in {"WAITING_FOR_REVIEW", "IN_REVIEW"}:
+        if state in {"WAITING_FOR_REVIEW", "IN_REVIEW", "UNRESOLVED_ISSUES"}:
             print(f"Review submission is already submitted: {existing['id']} ({state})")
             return existing
         print(f"Using existing review submission: {existing['id']} ({state})")
@@ -1064,7 +1069,7 @@ def ensure_review_submission(
         print("Dry run: would submit the prepared review submission")
         return submission
     state = submission["attributes"].get("state") if submission.get("attributes") else None
-    if state in {"WAITING_FOR_REVIEW", "IN_REVIEW"}:
+    if state in {"WAITING_FOR_REVIEW", "IN_REVIEW", "UNRESOLVED_ISSUES"}:
         print(f"Review submission is already submitted: {submission['id']} ({state})")
         return submission
     submitted = client.request(
