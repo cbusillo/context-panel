@@ -237,6 +237,18 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         with self.assertRaises(submit_app_store_review.AppStoreConnectError):
             submit_app_store_review.remove_active_review_version(client, "app-id", "1.0.13")
 
+    def test_raises_when_unresolved_version_has_no_matching_submission_item(self):
+        client = FakeASCClient(
+            include_submission_version=False,
+            include_item_version=False,
+            app_store_state="UNRESOLVED_ISSUES",
+        )
+
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+            submit_app_store_review.remove_active_review_version(client, "app-id", "1.0.13")
+
+        self.assertIn("UNRESOLVED_ISSUES", str(context.exception))
+
     def test_raises_when_only_app_version_state_is_blocking(self):
         client = FakeASCClient(
             include_submission_version=False,
