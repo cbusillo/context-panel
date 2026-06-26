@@ -158,7 +158,7 @@ enum ContextPanelWidgetURL {
 
 @main
 struct ContextPanelWidget: Widget {
-    let kind = "ContextPanelWidget"
+    let kind = ContextPanelWidgetIdentity.kind
 
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: ContextPanelTimelineProvider()) { entry in

@@ -112,10 +112,6 @@ class FakeASCClient:
 
 
 class SubmittedReviewItemClient(FakeASCClient):
-    def __init__(self):
-        super().__init__()
-        self.canceled_paths: list[str] = []
-
     def request(self, method, path, params=None, body=None, allowed=(200,)):
         if method == "DELETE" and path == "/reviewSubmissionItems/item-1":
             raise submit_app_store_review.AppStoreConnectError(
@@ -123,13 +119,15 @@ class SubmittedReviewItemClient(FakeASCClient):
                 status=409,
                 payload={"errors": [{"detail": "Item was already submitted"}]},
             )
-        if method == "GET" and path == "/appStoreVersions/version-1-0-13/relationships/appStoreVersionSubmission":
+        if method == "PATCH" and path == "/reviewSubmissions/submission-1":
             self.requests.append((method, path, params, body, allowed))
-            return {"data": {"type": "appStoreVersionSubmissions", "id": "submitted-version-review-1"}}
-        if method == "DELETE" and path == "/appStoreVersionSubmissions/submitted-version-review-1":
-            self.requests.append((method, path, params, body, allowed))
-            self.canceled_paths.append(path)
-            return {}
+            return {
+                "data": {
+                    "id": "submission-1",
+                    "type": "reviewSubmissions",
+                    "attributes": {"state": "CANCELED"},
+                }
+            }
         return super().request(method, path, params, body, allowed)
 
 
@@ -209,12 +207,15 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
 
         self.assertEqual(client.deleted_paths, ["/reviewSubmissionItems/item-1"])
 
-    def test_cancels_submitted_version_review_when_review_item_is_already_submitted(self):
+    def test_cancels_submitted_review_item_owner(self):
         client = SubmittedReviewItemClient()
 
         submit_app_store_review.remove_active_review_version(client, "app-id", "1.0.13")
 
-        self.assertEqual(client.canceled_paths, ["/appStoreVersionSubmissions/submitted-version-review-1"])
+        mutation_paths = [request[1] for request in client.requests if request[0] in {"DELETE", "PATCH"}]
+        self.assertEqual(mutation_paths, ["/reviewSubmissions/submission-1"])
+        patch_body = client.requests[-1][3]
+        self.assertEqual(patch_body["data"]["attributes"], {"canceled": True})
 
     def test_dry_run_does_not_delete(self):
         client = FakeASCClient()
@@ -895,8 +896,9 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
 
     def test_ensure_review_submission_returns_submitted_existing_submission(self):
         class ReviewSubmissionClient:
-            def __init__(self):
+            def __init__(self, state="WAITING_FOR_REVIEW"):
                 self.requests: list[tuple[Any, ...]] = []
+                self.state = state
 
             def request(self, method, path, params=None, body=None, allowed=(200,)):
                 self.requests.append((method, path, params, body, allowed))
@@ -905,7 +907,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
                         "data": [
                             {
                                 "id": "old-submission",
-                                "attributes": {"state": "WAITING_FOR_REVIEW"},
+                                "attributes": {"state": self.state},
                                 "relationships": {
                                     "appStoreVersionForReview": {
                                         "data": {"type": "appStoreVersions", "id": "version-1-0-13"}
@@ -931,6 +933,18 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         client = ReviewSubmissionClient()
         args = SimpleNamespace(dry_run=False)
 
+        submission = submit_app_store_review.ensure_review_submission(
+            client,
+            "app-id",
+            "version-1-0-13",
+            args,
+        )
+
+        self.assertEqual(submission["id"], "old-submission")
+        mutation_methods = [request[0] for request in client.requests if request[0] in {"POST", "PATCH"}]
+        self.assertEqual(mutation_methods, [])
+
+        client = ReviewSubmissionClient(state="UNRESOLVED_ISSUES")
         submission = submit_app_store_review.ensure_review_submission(
             client,
             "app-id",
@@ -1099,12 +1113,10 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
                             }
                         ]
                     }
-                if method == "POST" and path == "/reviewSubmissions":
-                    return {"data": {"id": "new-submission", "attributes": {"state": "READY_FOR_REVIEW"}}}
                 if method == "POST" and path == "/reviewSubmissionItems":
                     return {"data": {"id": "item-1"}}
-                if method == "PATCH" and path == "/reviewSubmissions/new-submission":
-                    return {"data": {"id": "new-submission", "attributes": {"state": "WAITING_FOR_REVIEW"}}}
+                if method == "PATCH" and path == "/reviewSubmissions/empty-submission":
+                    return {"data": {"id": "empty-submission", "attributes": {"state": "WAITING_FOR_REVIEW"}}}
                 raise AssertionError(f"unexpected request: {method} {path}")
 
         client = EmptyReviewSubmissionClient()
@@ -1117,11 +1129,11 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             args,
         )
 
-        self.assertEqual(submission["id"], "new-submission")
+        self.assertEqual(submission["id"], "empty-submission")
         post_paths = [request[1] for request in client.requests if request[0] == "POST"]
-        self.assertEqual(post_paths, ["/reviewSubmissions", "/reviewSubmissionItems"])
+        self.assertEqual(post_paths, ["/reviewSubmissionItems"])
         patch_paths = [request[1] for request in client.requests if request[0] == "PATCH"]
-        self.assertEqual(patch_paths, ["/reviewSubmissions/new-submission"])
+        self.assertEqual(patch_paths, ["/reviewSubmissions/empty-submission"])
         patch_body = next(request[3] for request in client.requests if request[0] == "PATCH")
         assert_review_submission_submit_body(self, patch_body)
 

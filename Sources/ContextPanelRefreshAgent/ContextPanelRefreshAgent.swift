@@ -7,6 +7,7 @@ import WidgetKit
 @main
 struct ContextPanelRefreshAgent {
     static func main() async {
+        var lastWidgetTimelineReloadAt: Date?
         let arguments = ProcessInfo.processInfo.arguments
         if arguments.contains("--clear-provider-credentials") {
             clearProviderCredentials()
@@ -38,9 +39,13 @@ struct ContextPanelRefreshAgent {
             do {
                 let decision = try await runner.refresh()
                 recordRefreshFinished(diagnosticsStore, runID: runID, decision: decision, finishedAt: Date())
+                reloadContextPanelWidgetTimeline(
+                    force: decision.wasRefreshed,
+                    lastReloadAt: &lastWidgetTimelineReloadAt
+                )
                 if decision.wasRefreshed {
+                    notifyContextPanelWidgetSnapshotUpdated()
                     await warningService.notifyIfNeeded(decision: decision)
-                    WidgetCenter.shared.reloadAllTimelines()
                 }
             } catch {
                 recordRefreshFailed(diagnosticsStore, runID: runID, finishedAt: Date(), error: error)
@@ -63,9 +68,13 @@ struct ContextPanelRefreshAgent {
             do {
                 let decision = try await runner.refreshIfNeeded()
                 recordRefreshFinished(diagnosticsStore, runID: runID, decision: decision, finishedAt: Date())
+                reloadContextPanelWidgetTimeline(
+                    force: decision.wasRefreshed,
+                    lastReloadAt: &lastWidgetTimelineReloadAt
+                )
                 if decision.wasRefreshed {
+                    notifyContextPanelWidgetSnapshotUpdated()
                     await warningService.notifyIfNeeded(decision: decision)
-                    WidgetCenter.shared.reloadAllTimelines()
                 }
             } catch {
                 recordRefreshFailed(diagnosticsStore, runID: runID, finishedAt: Date(), error: error)
@@ -97,6 +106,29 @@ struct ContextPanelRefreshAgent {
             state.recordRunStarted(id: runID, source: source, at: startedAt, intervalSeconds: intervalSeconds)
         }
         return runID
+    }
+
+    private static func reloadContextPanelWidgetTimeline(
+        force: Bool,
+        lastReloadAt: inout Date?,
+        now: Date = Date()
+    ) {
+        if !force,
+           let lastReloadAt,
+           now.timeIntervalSince(lastReloadAt) < SnapshotFreshness.widgetTimelineInterval {
+            return
+        }
+        lastReloadAt = now
+        WidgetCenter.shared.reloadTimelines(ofKind: ContextPanelWidgetIdentity.kind)
+    }
+
+    private static func notifyContextPanelWidgetSnapshotUpdated() {
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name(ContextPanelWidgetRefreshWakeup.distributedNotificationName),
+            object: nil,
+            userInfo: nil,
+            deliverImmediately: true
+        )
     }
 
     private static func recordRefreshFinished(

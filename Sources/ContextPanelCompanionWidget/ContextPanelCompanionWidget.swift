@@ -91,7 +91,7 @@ struct ContextPanelCompanionWidgetView: View {
 
 @main
 struct ContextPanelCompanionWidget: Widget {
-    let kind = "ContextPanelCompanionWidget"
+    let kind = ContextPanelCompanionWidgetIdentity.kind
 
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: ContextPanelCompanionTimelineProvider()) { entry in

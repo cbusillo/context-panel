@@ -9,10 +9,15 @@ import WidgetKit
 
 private let contextPanelLogger = Logger(subsystem: "com.shinycomputers.contextpanel", category: "app")
 
+private func reloadContextPanelWidgetTimeline() {
+    WidgetCenter.shared.reloadTimelines(ofKind: ContextPanelWidgetIdentity.kind)
+}
+
 private enum RefreshAgentRegistration {
     private static let reconciledBuildKey = "ContextPanelRefreshAgentReconciledBuild"
     private static let repairedBuildKey = "ContextPanelRefreshAgentRepairedBuild"
     private static let repairGraceSeconds: UInt64 = 8
+    @MainActor private static var pendingRepairTask: Task<Void, Never>?
 
     static func reconcile(settings: BackgroundRefreshSettings) throws {
         let service = SMAppService.loginItem(identifier: ContextPanelLocations.refreshAgentBundleID)
@@ -25,12 +30,17 @@ private enum RefreshAgentRegistration {
 
     @MainActor
     static func repairIfEnabledAgentDoesNotLaunch(settingsStore: BackgroundRefreshSettingsStore) {
+        pendingRepairTask?.cancel()
+        pendingRepairTask = nil
         guard settingsStore.load().isEnabled else { return }
         let currentBuild = currentBuild()
         guard UserDefaults.standard.string(forKey: repairedBuildKey) != currentBuild else { return }
 
-        Task { @MainActor in
+        contextPanelLogger.notice("refresh agent repair scheduled build=\(currentBuild, privacy: .public)")
+        pendingRepairTask = Task { @MainActor in
+            defer { pendingRepairTask = nil }
             try? await Task.sleep(nanoseconds: repairGraceSeconds * 1_000_000_000)
+            guard !Task.isCancelled else { return }
             guard settingsStore.load().isEnabled else { return }
             let service = SMAppService.loginItem(identifier: ContextPanelLocations.refreshAgentBundleID)
             guard service.status == .enabled else {
@@ -66,6 +76,12 @@ private enum RefreshAgentRegistration {
                 contextPanelLogger.error("refresh agent registration repair failed error=\(error.localizedDescription, privacy: .public)")
             }
         }
+    }
+
+    @MainActor
+    static func cancelPendingRepair() {
+        pendingRepairTask?.cancel()
+        pendingRepairTask = nil
     }
 
     private static func register(service: SMAppService) throws {
@@ -106,7 +122,17 @@ private enum RefreshAgentRegistration {
     }
 
     private static func currentBuild() -> String {
-        Bundle.main.object(forInfoDictionaryKey: kCFBundleVersionKey as String) as? String ?? "unknown"
+        if let fingerprintURL = Bundle.main.url(
+            forResource: "ContextPanelBuildFingerprint",
+            withExtension: "txt"
+        ),
+           let fingerprint = try? String(contentsOf: fingerprintURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !fingerprint.isEmpty {
+            return fingerprint
+        }
+
+        return Bundle.main.object(forInfoDictionaryKey: kCFBundleVersionKey as String) as? String ?? "unknown"
     }
 
     private static func isRefreshAgentRunning() -> Bool {
@@ -166,10 +192,17 @@ final class SettingsNavigationModel: ObservableObject {
 
 @MainActor
 final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
+    private static let widgetTimelineRecoveryThrottle: TimeInterval = 30
+
     let model = ContextPanelAppModel()
     let settingsNavigation = SettingsNavigationModel()
     private var settingsWindow: NSWindow?
     private var pendingLimitWarningObserver: NSObjectProtocol?
+    private var widgetSnapshotUpdateObserver: NSObjectProtocol?
+    private var wakeObserver: NSObjectProtocol?
+    private var screensDidWakeObserver: NSObjectProtocol?
+    private var becomeActiveObserver: NSObjectProtocol?
+    private var lastWidgetTimelineRecoveryAt: Date?
     private let backgroundRefreshSettingsStore = BackgroundRefreshSettingsStore(
         settingsURL: ContextPanelLocations.backgroundRefreshSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
     )
@@ -180,16 +213,31 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
         }
         registerOpenURLAppleEventHandler()
         registerPendingLimitWarningObserver()
+        registerWidgetSnapshotUpdateObserver()
+        registerWidgetTimelineRecoveryObservers()
         reconcileRefreshAgentRegistration()
         model.loadSnapshot()
         Task { await model.deliverPendingLimitWarnings() }
-        WidgetCenter.shared.reloadAllTimelines()
+        reloadContextPanelWidgetTimeline()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         if let pendingLimitWarningObserver {
             DistributedNotificationCenter.default().removeObserver(pendingLimitWarningObserver)
         }
+        if let widgetSnapshotUpdateObserver {
+            DistributedNotificationCenter.default().removeObserver(widgetSnapshotUpdateObserver)
+        }
+        if let wakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
+        }
+        if let screensDidWakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(screensDidWakeObserver)
+        }
+        if let becomeActiveObserver {
+            NotificationCenter.default.removeObserver(becomeActiveObserver)
+        }
+        RefreshAgentRegistration.cancelPendingRepair()
         NSAppleEventManager.shared().removeEventHandler(
             forEventClass: AEEventClass(kInternetEventClass),
             andEventID: AEEventID(kAEGetURL)
@@ -224,6 +272,60 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             Task { await self?.model.deliverPendingLimitWarnings() }
         }
+    }
+
+    private func registerWidgetSnapshotUpdateObserver() {
+        widgetSnapshotUpdateObserver = DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name(ContextPanelWidgetRefreshWakeup.distributedNotificationName),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.model.loadSnapshot(reloadWidgetTimelines: false)
+                reloadContextPanelWidgetTimeline()
+            }
+        }
+    }
+
+    private func registerWidgetTimelineRecoveryObservers() {
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.recoverWidgetTimelineAfterWakeOrActivation()
+            }
+        }
+        screensDidWakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.screensDidWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.recoverWidgetTimelineAfterWakeOrActivation()
+            }
+        }
+        becomeActiveObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.recoverWidgetTimelineAfterWakeOrActivation()
+            }
+        }
+    }
+
+    private func recoverWidgetTimelineAfterWakeOrActivation() {
+        let now = Date()
+        if let lastWidgetTimelineRecoveryAt,
+           now.timeIntervalSince(lastWidgetTimelineRecoveryAt) < Self.widgetTimelineRecoveryThrottle {
+            return
+        }
+        lastWidgetTimelineRecoveryAt = now
+        model.loadSnapshot(reloadWidgetTimelines: false)
+        reloadContextPanelWidgetTimeline()
     }
 
     private func handleCommandLineUtilityMode() -> Bool {
@@ -1510,7 +1612,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         do {
             try widgetPreferenceStores.save(updated)
             widgetPreferences = updated
-            WidgetCenter.shared.reloadAllTimelines()
+            reloadContextPanelWidgetTimeline()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -1519,7 +1621,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     private func saveAccounts() {
         do {
             try store.save(AccountConfigurationDocument(updatedAt: Date(), accounts: accounts))
-            WidgetCenter.shared.reloadAllTimelines()
+            reloadContextPanelWidgetTimeline()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -1599,7 +1701,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
             }
             errorMessage = nil
             load()
-            WidgetCenter.shared.reloadAllTimelines()
+            reloadContextPanelWidgetTimeline()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -3600,7 +3702,7 @@ final class ContextPanelAppModel: ObservableObject {
         }
         historyCount = refreshService.loadHistory().count
         if reloadWidgetTimelines {
-            WidgetCenter.shared.reloadAllTimelines()
+            reloadContextPanelWidgetTimeline()
         }
     }
 

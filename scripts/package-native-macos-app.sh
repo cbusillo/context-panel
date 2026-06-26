@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 scheme="ContextPanel"
 configuration="Release"
 output_dir="dist"
@@ -499,6 +500,7 @@ fi
 rm -rf "$app_path" "$zip_path"
 mkdir -p "$output_dir"
 ditto "$built_app_path" "$app_path"
+"$repo_root/scripts/stamp-context-panel-build.sh" "$app_path"
 
 widget_path="$app_path/Contents/PlugIns/ContextPanelWidgetExtension.appex"
 if [[ ! -d "$widget_path" ]]; then

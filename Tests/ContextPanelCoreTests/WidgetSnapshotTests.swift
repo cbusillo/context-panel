@@ -11,6 +11,14 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     cacheStatsSettings: URL(string: "contextpanel://settings/cache-stats")!
 )
 
+@Test func widgetKindMatchesSharedReloadIdentity() {
+    #expect(ContextPanelWidgetIdentity.kind == "ContextPanelWidget")
+}
+
+@Test func companionWidgetKindMatchesSharedReloadIdentity() {
+    #expect(ContextPanelCompanionWidgetIdentity.kind == "ContextPanelCompanionWidget")
+}
+
 @Test func widgetSnapshotUsesSetupNeededForMissingStore() {
     let widget = WidgetSnapshot.fromStore(
         SnapshotStoreLoadResult(snapshot: nil, status: .unknown),

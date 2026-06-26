@@ -80,6 +80,7 @@
 		B59F4707B276A4C93680E7F6 /* SnapshotFreshness.swift in Sources */ = {isa = PBXBuildFile; fileRef = D03C19BEA1C610711A048EB7 /* SnapshotFreshness.swift */; };
 		B6C35EBBE9327327BDCA324F /* SnapshotStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32D8515D047F5A8117DB762C /* SnapshotStore.swift */; };
 		B7244849824A8A58FDFBD181 /* ContextPanelDateFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9909074D7E80648BC2A01C51 /* ContextPanelDateFormatting.swift */; };
+		B7C08D980388FB103F96CF80 /* ContextPanelWidgetIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 735462CA7931BEFE526B5B51 /* ContextPanelWidgetIdentity.swift */; };
 		B83302BDC1EAC3EE45DBE8B8 /* WidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5233BBC86AE8057D749F71CD /* WidgetSnapshot.swift */; };
 		B929FCB2C981C6CCCFC72B7C /* SecureFileBookmark.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FA0C66F95091A96B8F7CBF4 /* SecureFileBookmark.swift */; };
 		BE7F8E276624C8E6D93BC329 /* libContextPanelCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = F09182E1FD96DAEEC38F3909 /* libContextPanelCore.a */; };
@@ -99,6 +100,7 @@
 		E755DFF9AC42460A40C2102E /* SecureFileBookmark.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FA0C66F95091A96B8F7CBF4 /* SecureFileBookmark.swift */; };
 		E77C3B3D8985239A004E8CDC /* AccountConfigurationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 186D607FE2EEFDFFE2E70446 /* AccountConfigurationStore.swift */; };
 		EE22EBA64F60246CD4EFE93C /* ResetExpiryRefreshState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58B71A183966EEC56B955CD3 /* ResetExpiryRefreshState.swift */; };
+		F0F6D1465CCA4AA21D72A68B /* ContextPanelWidgetIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 735462CA7931BEFE526B5B51 /* ContextPanelWidgetIdentity.swift */; };
 		F4B9B4FB75A285E38AE52B1D /* ProviderConnector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 350ED5589FB23C42ED32704A /* ProviderConnector.swift */; };
 		F565AD4A356528D70BB11EF5 /* MainLimitSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FC2DAEDD38483FC3A5D4880 /* MainLimitSummary.swift */; };
 		F697EDAA2739E3F27FDC885B /* CompanionRemoteSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = E97D64E1F32386FD74AA335F /* CompanionRemoteSync.swift */; };
@@ -326,6 +328,7 @@
 		58B71A183966EEC56B955CD3 /* ResetExpiryRefreshState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResetExpiryRefreshState.swift; sourceTree = "<group>"; };
 		60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LimitProbe.swift; sourceTree = "<group>"; };
 		696876833ECD43AEF639C9B2 /* CompanionAppearanceSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionAppearanceSettings.swift; sourceTree = "<group>"; };
+		735462CA7931BEFE526B5B51 /* ContextPanelWidgetIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelWidgetIdentity.swift; sourceTree = "<group>"; };
 		7BD985B0213AB5987D3B3170 /* FastModeForecast.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FastModeForecast.swift; sourceTree = "<group>"; };
 		895A979571D5E5C14830B41D /* ClaudeOAuthUsage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeOAuthUsage.swift; sourceTree = "<group>"; };
 		8BBC1080557704B2EF023A7B /* ClaudeAccountMigration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeAccountMigration.swift; sourceTree = "<group>"; };
@@ -445,6 +448,7 @@
 				F8211A4CCCDD1AA6113F22D1 /* CompanionSnapshot.swift */,
 				9909074D7E80648BC2A01C51 /* ContextPanelDateFormatting.swift */,
 				23E9C71457F4E1F101132FCF /* ContextPanelLocations.swift */,
+				735462CA7931BEFE526B5B51 /* ContextPanelWidgetIdentity.swift */,
 				7BD985B0213AB5987D3B3170 /* FastModeForecast.swift */,
 				25E82B6087974E01B972918C /* GoogleAccountMigration.swift */,
 				8C29BEF2E36108729A8B4EC4 /* GoogleAntigravityQuota.swift */,
@@ -1072,6 +1076,7 @@
 				3D2C7B99452A5EF3021D7E79 /* CompanionSnapshot.swift in Sources */,
 				7C2FC7CB5590C95244023520 /* ContextPanelDateFormatting.swift in Sources */,
 				0008638B08072E2E1DA6A3AF /* ContextPanelLocations.swift in Sources */,
+				B7C08D980388FB103F96CF80 /* ContextPanelWidgetIdentity.swift in Sources */,
 				8D1A72D53AC6BE2FB14449E4 /* FastModeForecast.swift in Sources */,
 				4ED761C343B83F3202C3618B /* GoogleAccountMigration.swift in Sources */,
 				C39E8B2F5A737793415839A8 /* GoogleAntigravityQuota.swift in Sources */,
@@ -1138,6 +1143,7 @@
 				206D119AB834D38BBB5B4D0E /* CompanionSnapshot.swift in Sources */,
 				B7244849824A8A58FDFBD181 /* ContextPanelDateFormatting.swift in Sources */,
 				C1DF7B59257060AC0A6AF44D /* ContextPanelLocations.swift in Sources */,
+				F0F6D1465CCA4AA21D72A68B /* ContextPanelWidgetIdentity.swift in Sources */,
 				9C74713AEFFAC6D85E7ACF3F /* FastModeForecast.swift in Sources */,
 				4C21A68400F35036382C1798 /* GoogleAccountMigration.swift in Sources */,
 				5A0D8445C6C8B0CB88F4D643 /* GoogleAntigravityQuota.swift in Sources */,
