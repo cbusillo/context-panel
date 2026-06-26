@@ -6,6 +6,26 @@ import SwiftUI
 import UIKit
 import WidgetKit
 
+private func reloadContextPanelCompanionWidgetTimeline() {
+    WidgetCenter.shared.reloadTimelines(ofKind: ContextPanelCompanionWidgetIdentity.kind)
+}
+
+private struct CompanionWidgetRenderSignature: Equatable {
+    let snapshot: WidgetSnapshot
+    let displayPreferences: WidgetDisplayPreferences
+    let deliveryStatus: CompanionSyncDeliveryStatus?
+
+    init(result: CompanionSyncLoadResult, now: Date) {
+        snapshot = WidgetSnapshot.fromCompanionSync(
+            result,
+            now: now,
+            stalenessPolicy: SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
+        )
+        displayPreferences = result.document?.widgetDisplayPreferences ?? .defaultPreferences
+        deliveryStatus = result.transportMetadata?.deliveryStatus
+    }
+}
+
 @main
 struct ContextPanelCompanionApp: App {
     @UIApplicationDelegateAdaptor(CompanionAppDelegate.self) private var appDelegate
@@ -42,7 +62,7 @@ private final class CompanionAppDelegate: NSObject, UIApplicationDelegate {
             }.value
             await MainActor.run {
                 if loaded.document != nil {
-                    WidgetCenter.shared.reloadAllTimelines()
+                    reloadContextPanelCompanionWidgetTimeline()
                     completionHandler(.newData)
                 } else if loaded.status == .failure {
                     completionHandler(.failed)
@@ -159,6 +179,8 @@ private final class CompanionSyncModel {
     private var reloadTask: Task<Void, Never>?
     private var iCloudCacheRefreshTask: Task<Void, Never>?
     private var needsReloadAfterCurrentTask = false
+    private var lastWidgetTimelineReloadAt: Date?
+    private var lastWidgetRenderSignature: CompanionWidgetRenderSignature?
 
     init() {
         if let settingsURL = ContextPanelLocations.companionRefreshSettingsURL() {
@@ -197,25 +219,33 @@ private final class CompanionSyncModel {
                     }
                 }
             }
-            let previousDocument = self?.result.document
             let remoteStore = self?.remoteStore
             let loaded = await Task.detached(priority: .userInitiated) {
                 await CompanionSyncLoader.load(remoteStore: remoteStore, now: now)
             }.value
             guard !Task.isCancelled else { return }
             guard let self else { return }
+            let loadedSignature = CompanionWidgetRenderSignature(result: loaded, now: now)
             result = loaded
-            snapshot = WidgetSnapshot.fromCompanionSync(
-                loaded,
-                now: now,
-                stalenessPolicy: SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
+            snapshot = loadedSignature.snapshot
+            displayPreferences = loadedSignature.displayPreferences
+            reloadWidgetTimelineIfNeeded(
+                force: loadedSignature != lastWidgetRenderSignature,
+                now: now
             )
-            displayPreferences = loaded.document?.widgetDisplayPreferences ?? .defaultPreferences
-            if loaded.document != previousDocument {
-                WidgetCenter.shared.reloadAllTimelines()
-            }
+            lastWidgetRenderSignature = loadedSignature
             refreshICloudCacheIfNeeded()
         }
+    }
+
+    private func reloadWidgetTimelineIfNeeded(force: Bool, now: Date = Date()) {
+        if !force,
+           let lastWidgetTimelineReloadAt,
+           now.timeIntervalSince(lastWidgetTimelineReloadAt) < refreshSettings.widgetInterval {
+            return
+        }
+        lastWidgetTimelineReloadAt = now
+        reloadContextPanelCompanionWidgetTimeline()
     }
 
     func registerCloudKitSubscription() {
@@ -262,7 +292,7 @@ private final class CompanionSyncModel {
             try refreshSettingsStore.save(updated)
             refreshSettings = updated
             settingsErrorMessage = nil
-            WidgetCenter.shared.reloadAllTimelines()
+            reloadContextPanelCompanionWidgetTimeline()
             reload()
         } catch {
             settingsErrorMessage = "Auto-update settings could not be saved."
@@ -290,7 +320,7 @@ private final class CompanionSyncModel {
             try appearanceSettingsStore.save(updated)
             appearanceSettings = updated
             appearanceErrorMessage = nil
-            WidgetCenter.shared.reloadAllTimelines()
+            reloadContextPanelCompanionWidgetTimeline()
         } catch {
             appearanceErrorMessage = "Appearance settings could not be saved."
         }
