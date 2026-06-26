@@ -1061,9 +1061,11 @@ def ensure_review_submission(
             if existing_submission is not None:
                 submission = existing_submission
             else:
-                raise AppStoreConnectError(
-                    "review submission item already exists, but no active owning review submission was found"
+                print(
+                    "Review submission item already exists, but no active owning review submission was found; "
+                    "leaving review submission unchanged"
                 )
+                return submission
     if args.dry_run:
         print("Dry run: would submit the prepared review submission")
         return submission
