@@ -396,8 +396,8 @@ def remove_active_review_version(
             except AppStoreConnectError as error:
                 if not is_submitted_review_item_conflict(error):
                     raise
-                print(f"Review item {item_id} was already submitted; canceling review submission instead")
-                cancel_review_submission(client, submission["id"], version_string, dry_run=False)
+                print(f"Review item {item_id} was already submitted; removing submitted review item instead")
+                remove_submitted_review_item(client, item_id, version_string, dry_run=False)
                 return
     state = version_state(version)
     if state in BLOCKING_REVIEW_VERSION_STATES:
@@ -405,6 +405,26 @@ def remove_active_review_version(
             f"App Store version {version_string} is {state}, but no active review submission item was found to remove"
         )
     print(f"No active review submission item found for App Store version {version_string}")
+
+
+def remove_submitted_review_item(
+    client: ASCClient, item_id: str, version_string: str, dry_run: bool = False
+) -> None:
+    if dry_run:
+        print(f"Dry run: would remove submitted App Store version {version_string} review item: {item_id}")
+        return
+    client.request(
+        "PATCH",
+        f"/reviewSubmissionItems/{item_id}",
+        body={
+            "data": {
+                "type": "reviewSubmissionItems",
+                "id": item_id,
+                "attributes": {"removed": True},
+            }
+        },
+    )
+    print(f"Removed submitted App Store version {version_string} review item: {item_id}")
 
 
 def cancel_review_submission(

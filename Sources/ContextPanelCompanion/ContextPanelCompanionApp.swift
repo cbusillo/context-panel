@@ -12,7 +12,8 @@ private func reloadContextPanelCompanionWidgetTimeline() {
 
 private struct CompanionWidgetRenderSignature: Equatable {
     let state: WidgetSnapshotState
-    let generatedAt: Date?
+    let generatedAt: Date
+    let comparesGeneratedAt: Bool
     let limits: [UsageLimit]
     let reports: [StoredProviderReport]
     let promptCacheObservations: [PromptCacheObservation]
@@ -31,7 +32,8 @@ private struct CompanionWidgetRenderSignature: Equatable {
             stalenessPolicy: SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
         )
         state = snapshot.state
-        generatedAt = result.document == nil ? nil : snapshot.generatedAt
+        generatedAt = snapshot.generatedAt
+        comparesGeneratedAt = result.document != nil
         limits = snapshot.limits
         reports = snapshot.reports
         promptCacheObservations = snapshot.promptCacheObservations
@@ -47,7 +49,7 @@ private struct CompanionWidgetRenderSignature: Equatable {
     var snapshot: WidgetSnapshot {
         WidgetSnapshot(
             state: state,
-            generatedAt: generatedAt ?? .distantPast,
+            generatedAt: generatedAt,
             limits: limits,
             reports: reports,
             promptCacheObservations: promptCacheObservations,
@@ -57,6 +59,22 @@ private struct CompanionWidgetRenderSignature: Equatable {
             message: message,
             refreshAttentionSummary: refreshAttentionSummary
         )
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.state == rhs.state
+            && lhs.comparesGeneratedAt == rhs.comparesGeneratedAt
+            && (!lhs.comparesGeneratedAt || !rhs.comparesGeneratedAt || lhs.generatedAt == rhs.generatedAt)
+            && lhs.limits == rhs.limits
+            && lhs.reports == rhs.reports
+            && lhs.promptCacheObservations == rhs.promptCacheObservations
+            && lhs.promptCacheWidgetState == rhs.promptCacheWidgetState
+            && lhs.fastModeForecastSettings == rhs.fastModeForecastSettings
+            && lhs.status == rhs.status
+            && lhs.message == rhs.message
+            && lhs.refreshAttentionSummary == rhs.refreshAttentionSummary
+            && lhs.displayPreferences == rhs.displayPreferences
+            && lhs.deliveryStatus == rhs.deliveryStatus
     }
 }
 
