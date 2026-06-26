@@ -931,6 +931,7 @@ def active_submission_for_version(
     queries.append(base_params)
 
     seen_submission_ids: set[str] = set()
+    inspected: list[str] = []
     for params in queries:
         submissions = paginated_get(
             client,
@@ -946,15 +947,28 @@ def active_submission_for_version(
             if submission_id is not None:
                 seen_submission_ids.add(submission_id)
             state = submission["attributes"].get("state")
+            submission_version_id = relationship_id(submission, "appStoreVersionForReview")
+            item_ids = [item["id"] for item in submission.get("relationships", {}).get("items", {}).get("data", [])]
+            item_version_ids = [
+                relationship_id(included.get(item_id, {}), "appStoreVersion")
+                for item_id in item_ids
+            ]
+            inspected.append(
+                f"{submission_id or '<unknown>'} state={state or '<unknown>'} "
+                f"primary={submission_version_id or '<none>'} "
+                f"items={','.join(item_version_id or '<unknown>' for item_version_id in item_version_ids) or '<none>'}"
+            )
             if state not in ACTIVE_REVIEW_SUBMISSION_STATES:
                 continue
-            if relationship_id(submission, "appStoreVersionForReview") == version_id:
+            if submission_version_id == version_id:
                 return submission
-            item_ids = [item["id"] for item in submission.get("relationships", {}).get("items", {}).get("data", [])]
-            for item_id in item_ids:
-                item = included.get(item_id, {})
-                if relationship_id(item, "appStoreVersion") == version_id:
+            for item_version_id in item_version_ids:
+                if item_version_id == version_id:
                     return submission
+    if inspected:
+        print("Inspected review submissions:")
+        for inspected_submission in inspected:
+            print(f"- {inspected_submission}")
     return None
 
 
