@@ -970,6 +970,7 @@ def ensure_review_submission(
         limit=20,
     )
     existing = None
+    reusable_empty_submission = None
     included = included_by_id(submissions)
     for submission in submissions.get("data", []):
         state = submission["attributes"].get("state")
@@ -978,12 +979,16 @@ def ensure_review_submission(
         submission_version_id = relationship_id(submission, "appStoreVersionForReview")
         item_ids = [item["id"] for item in submission.get("relationships", {}).get("items", {}).get("data", [])]
         item_version_ids = {relationship_id(included.get(item_id, {}), "appStoreVersion") for item_id in item_ids}
+        if state == "READY_FOR_REVIEW" and submission_version_id is None and not item_ids:
+            reusable_empty_submission = reusable_empty_submission or submission
         if submission_version_id == version_id:
             existing = submission
             break
         if version_id in item_version_ids and submission_version_id is None:
             existing = submission
             break
+    if existing is None and reusable_empty_submission is not None:
+        existing = reusable_empty_submission
     if existing:
         state = existing["attributes"].get("state")
         if state in {"WAITING_FOR_REVIEW", "IN_REVIEW"}:

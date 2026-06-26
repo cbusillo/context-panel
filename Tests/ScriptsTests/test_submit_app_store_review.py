@@ -1099,12 +1099,10 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
                             }
                         ]
                     }
-                if method == "POST" and path == "/reviewSubmissions":
-                    return {"data": {"id": "new-submission", "attributes": {"state": "READY_FOR_REVIEW"}}}
                 if method == "POST" and path == "/reviewSubmissionItems":
                     return {"data": {"id": "item-1"}}
-                if method == "PATCH" and path == "/reviewSubmissions/new-submission":
-                    return {"data": {"id": "new-submission", "attributes": {"state": "WAITING_FOR_REVIEW"}}}
+                if method == "PATCH" and path == "/reviewSubmissions/empty-submission":
+                    return {"data": {"id": "empty-submission", "attributes": {"state": "WAITING_FOR_REVIEW"}}}
                 raise AssertionError(f"unexpected request: {method} {path}")
 
         client = EmptyReviewSubmissionClient()
@@ -1117,11 +1115,11 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             args,
         )
 
-        self.assertEqual(submission["id"], "new-submission")
+        self.assertEqual(submission["id"], "empty-submission")
         post_paths = [request[1] for request in client.requests if request[0] == "POST"]
-        self.assertEqual(post_paths, ["/reviewSubmissions", "/reviewSubmissionItems"])
+        self.assertEqual(post_paths, ["/reviewSubmissionItems"])
         patch_paths = [request[1] for request in client.requests if request[0] == "PATCH"]
-        self.assertEqual(patch_paths, ["/reviewSubmissions/new-submission"])
+        self.assertEqual(patch_paths, ["/reviewSubmissions/empty-submission"])
         patch_body = next(request[3] for request in client.requests if request[0] == "PATCH")
         assert_review_submission_submit_body(self, patch_body)
 
