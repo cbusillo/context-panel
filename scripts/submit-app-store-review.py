@@ -914,33 +914,47 @@ def create_review_submission(
 def active_submission_for_version(
     client: ASCClient,
     app_id: str,
-    platform: str,
+    platform: str | None,
     version_id: str,
 ) -> dict[str, Any] | None:
-    submissions = paginated_get(
-        client,
-        "/reviewSubmissions",
-        {
+    base_params = {
             "filter[app]": app_id,
-            "filter[platform]": platform,
             "include": "items,appStoreVersionForReview",
             "fields[reviewSubmissions]": "platform,state,submittedDate,items,appStoreVersionForReview",
             "fields[reviewSubmissionItems]": "state,appStoreVersion",
-        },
-        limit=20,
-    )
-    included = included_by_id(submissions)
-    for submission in submissions.get("data", []):
-        state = submission["attributes"].get("state")
-        if state not in ACTIVE_REVIEW_SUBMISSION_STATES:
-            continue
-        if relationship_id(submission, "appStoreVersionForReview") == version_id:
-            return submission
-        item_ids = [item["id"] for item in submission.get("relationships", {}).get("items", {}).get("data", [])]
-        for item_id in item_ids:
-            item = included.get(item_id, {})
-            if relationship_id(item, "appStoreVersion") == version_id:
+    }
+    queries: list[dict[str, str]] = []
+    if platform is not None:
+        platform_params = dict(base_params)
+        platform_params["filter[platform]"] = platform
+        queries.append(platform_params)
+    queries.append(base_params)
+
+    seen_submission_ids: set[str] = set()
+    for params in queries:
+        submissions = paginated_get(
+            client,
+            "/reviewSubmissions",
+            params,
+            limit=20,
+        )
+        included = included_by_id(submissions)
+        for submission in submissions.get("data", []):
+            submission_id = submission.get("id")
+            if submission_id in seen_submission_ids:
+                continue
+            if submission_id is not None:
+                seen_submission_ids.add(submission_id)
+            state = submission["attributes"].get("state")
+            if state not in ACTIVE_REVIEW_SUBMISSION_STATES:
+                continue
+            if relationship_id(submission, "appStoreVersionForReview") == version_id:
                 return submission
+            item_ids = [item["id"] for item in submission.get("relationships", {}).get("items", {}).get("data", [])]
+            for item_id in item_ids:
+                item = included.get(item_id, {})
+                if relationship_id(item, "appStoreVersion") == version_id:
+                    return submission
     return None
 
 
@@ -1028,6 +1042,10 @@ def ensure_review_submission(
             )
             if existing_submission is not None:
                 submission = existing_submission
+            else:
+                raise AppStoreConnectError(
+                    "review submission item already exists, but no active owning review submission was found"
+                )
     if args.dry_run:
         print("Dry run: would submit the prepared review submission")
         return submission
