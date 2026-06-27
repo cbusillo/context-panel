@@ -1675,6 +1675,18 @@ import Testing
     #expect(path.hasSuffix("Library/Application Support/Context Panel/Snapshots"))
 }
 
+@Test func snapshotRefreshStoresAppDefaultKeepsWidgetFallbackMirrorInSandbox() {
+    let stores = SnapshotRefreshStores.appDefault(
+        appGroupID: "invalid.test.app-group",
+        isRunningInAppSandbox: true
+    )
+
+    #expect(stores.mirrors.count == 1)
+    #expect(stores.mirrors.first?.currentSnapshotURL.path.contains(
+        "Library/Containers/com.shinycomputers.contextpanel.widget/Data"
+    ) == true)
+}
+
 @Test func snapshotRefreshRunnerSkipsFreshSnapshots() async throws {
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())

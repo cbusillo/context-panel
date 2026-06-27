@@ -13,13 +13,14 @@ public struct SnapshotRefreshStores: Sendable {
         self.mirrors = mirrors
     }
 
-    public static func appDefault(appGroupID: String = ContextPanelLocations.appGroupID) -> SnapshotRefreshStores {
-        let mirrors = ContextPanelLocations.isRunningInAppSandbox
-            ? []
-            : [JSONSnapshotStore(rootDirectory: ContextPanelLocations.widgetContainerLocalSnapshotDirectory())]
+    public static func appDefault(
+        appGroupID: String = ContextPanelLocations.appGroupID,
+        isRunningInAppSandbox: Bool = ContextPanelLocations.isRunningInAppSandbox
+    ) -> SnapshotRefreshStores {
+        _ = isRunningInAppSandbox
         return SnapshotRefreshStores(
             primary: JSONSnapshotStore(rootDirectory: ContextPanelLocations.snapshotDirectory(appGroupID: appGroupID)),
-            mirrors: mirrors
+            mirrors: [JSONSnapshotStore(rootDirectory: ContextPanelLocations.widgetContainerLocalSnapshotDirectory())]
         )
     }
 }
