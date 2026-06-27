@@ -147,6 +147,28 @@ public extension Collection where Element == StoredProviderReport {
     }
 }
 
+public extension StoredProviderReport {
+    var userFacingErrorMessage: String? {
+        guard let errorMessage else { return nil }
+        if provider == .google, errorMessage.isGoogleKeychainApprovalError {
+            return "Google Antigravity quota needs macOS Keychain approval. Click Refresh, then choose Always Allow for the \"gemini\" keychain item."
+        }
+        return errorMessage
+    }
+}
+
+private extension String {
+    var isGoogleKeychainApprovalError: Bool {
+        let lowercasedMessage = lowercased()
+        guard lowercasedMessage.contains("keychain") else { return false }
+        return lowercasedMessage.contains("status -128")
+            || lowercasedMessage.contains("status -25308")
+            || lowercasedMessage.contains("interaction is not allowed")
+            || lowercasedMessage.contains("user interaction")
+            || lowercasedMessage.contains("always allow")
+    }
+}
+
 private extension StoredProviderReport {
     var reconnectGroupKey: ProviderReportReconnectGroupKey {
         ProviderReportReconnectGroupKey(

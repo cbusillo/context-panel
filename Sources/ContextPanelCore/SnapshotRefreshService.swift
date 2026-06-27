@@ -6,14 +6,20 @@ private let refreshDiagnosticsLogger = Logger(subsystem: "com.shinycomputers.con
 
 public struct SnapshotRefreshStores: Sendable {
     public let primary: JSONSnapshotStore
+    public let mirrors: [JSONSnapshotStore]
 
-    public init(primary: JSONSnapshotStore) {
+    public init(primary: JSONSnapshotStore, mirrors: [JSONSnapshotStore] = []) {
         self.primary = primary
+        self.mirrors = mirrors
     }
 
     public static func appDefault(appGroupID: String = ContextPanelLocations.appGroupID) -> SnapshotRefreshStores {
+        let mirrors = ContextPanelLocations.isRunningInAppSandbox
+            ? []
+            : [JSONSnapshotStore(rootDirectory: ContextPanelLocations.widgetContainerLocalSnapshotDirectory())]
         return SnapshotRefreshStores(
-            primary: JSONSnapshotStore(rootDirectory: ContextPanelLocations.snapshotDirectory(appGroupID: appGroupID))
+            primary: JSONSnapshotStore(rootDirectory: ContextPanelLocations.snapshotDirectory(appGroupID: appGroupID)),
+            mirrors: mirrors
         )
     }
 }
@@ -606,6 +612,7 @@ public struct SnapshotRefreshService: Sendable {
             preservesUnreportedAccounts: preservesUnreportedAccounts
         )
         if let storedSnapshot = stores.primary.loadCurrent().snapshot {
+            mirrorSnapshotToFallbackStores(storedSnapshot)
             let companionResult = await companionSyncPublisher?.publishAll(
                 storedSnapshot: storedSnapshot,
                 publishedAt: savedAt
@@ -624,6 +631,12 @@ public struct SnapshotRefreshService: Sendable {
             }
         }
         return SnapshotRefreshOutcome(savedAt: savedAt, refreshResult: refreshResult)
+    }
+
+    private func mirrorSnapshotToFallbackStores(_ storedSnapshot: StoredUsageSnapshot) {
+        for mirror in stores.mirrors {
+            try? mirror.save(storedSnapshot)
+        }
     }
 
     private func accountDocumentForRefresh(_ document: AccountConfigurationDocument) -> AccountConfigurationDocument {
@@ -794,6 +807,7 @@ public struct SnapshotRefreshService: Sendable {
             preservesUnreportedAccounts: preservesUnreportedAccounts
         )
         if let storedSnapshot = stores.primary.loadCurrent().snapshot {
+            mirrorSnapshotToFallbackStores(storedSnapshot)
             let companionResult = companionSyncPublisher?.publish(storedSnapshot: storedSnapshot, publishedAt: savedAt)
             if let companionResult {
                 let companionLoadRecord = companionSyncPublisher?.stores.loadWithDiagnostics(

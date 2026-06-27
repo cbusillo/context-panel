@@ -100,6 +100,9 @@ state, or webhook credentials.
 Treat any mismatch as a blocker. Avoid repeatedly opening `contextpanel://`
 during ordinary validation; use that only for explicit widget click-through
 testing, because URL activation can change the visible app window state.
+For launched app/widget readiness, the WidgetKit cache receipt must show real
+Context Panel render snapshot or timeline files; placeholder-only Chrono cache
+files are a blocker even if WidgetKit has cache files on disk.
 
 The install gate is the normal "ready to test" path. The reset gate can make
 macOS refresh widget registrations and may still disturb placement; after a

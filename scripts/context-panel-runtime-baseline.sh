@@ -215,6 +215,44 @@ widget_timeline_files() {
 		-name '*.chrono-timeline' -print 2>/dev/null || true
 }
 
+widget_render_cache_files() {
+	local root="$HOME/Library/Containers/com.shinycomputers.contextpanel.widget/Data/SystemData/com.apple.chrono"
+	find "$root/snapshots/ContextPanelWidget" "$root/timelines/ContextPanelWidget" -maxdepth 1 \
+		-name '*.chrono-timeline' -print 2>/dev/null || true
+}
+
+widget_placeholder_cache_files() {
+	local root="$HOME/Library/Containers/com.shinycomputers.contextpanel.widget/Data/SystemData/com.apple.chrono"
+	find "$root/placeholders/ContextPanelWidget" -maxdepth 1 \
+		-name '*.chrono-timeline' -print 2>/dev/null || true
+}
+
+print_widget_cache_report() {
+	local files now path mtime age_seconds bucket family
+	files="$1"
+	[[ -n "$files" ]] || return 0
+	now="$(date +%s)"
+	while IFS= read -r path; do
+		[[ -n "$path" ]] || continue
+		mtime="$(stat -f %m "$path" 2>/dev/null || printf '0')"
+		age_seconds=$((now - mtime))
+		bucket="other"
+		case "$path" in
+		*/snapshots/ContextPanelWidget/*) bucket="snapshot" ;;
+		*/timelines/ContextPanelWidget/*) bucket="timeline" ;;
+		*/placeholders/ContextPanelWidget/*) bucket="placeholder" ;;
+		esac
+		family="$(basename "$path" | sed -E 's/^(system[A-Za-z]+).*/\1/')"
+		printf '%s age=%ss family=%s %s\n' "$bucket" "$age_seconds" "$family" "$path"
+	done <<<"$files"
+}
+
+refresh_widget_runtime() {
+	pkill -x ContextPanelWidgetExtension >/dev/null 2>&1 || true
+	xcrun widgetctl reload all >/dev/null 2>&1 || true
+	/usr/bin/swift -e 'import Foundation; DistributedNotificationCenter.default().postNotificationName(Notification.Name("com.shinycomputers.contextpanel.widget-snapshot-updated"), object: nil, userInfo: nil, deliverImmediately: true); Thread.sleep(forTimeInterval: 1)' >/dev/null 2>&1 || true
+}
+
 provider_credential_state() {
 	local executable="$refresh_agent_path/Contents/MacOS/ContextPanelRefreshAgent"
 	if [[ ! -x "$executable" ]]; then
@@ -931,12 +969,13 @@ install_runtime() {
 	pluginkit -a "$widget_path" >/dev/null 2>&1 || true
 	unregister_refresh_agent_quietly
 	bootout_refresh_agent
-	xcrun widgetctl reload all >/dev/null 2>&1 || true
+	refresh_widget_runtime
 	note "quarantine=$quarantine"
 
 	if [[ "$launch_after_reset" == "1" ]]; then
 		open "$app_path"
 		sleep 2
+		refresh_widget_runtime
 	fi
 	if [[ "$open_url_after_reset" == "1" ]]; then
 		open 'contextpanel://overview'
@@ -1112,7 +1151,7 @@ reset_runtime() {
 	pluginkit -a "$widget_path" >/dev/null 2>&1 || true
 	unregister_refresh_agent_quietly
 	bootout_refresh_agent
-	xcrun widgetctl reload all >/dev/null 2>&1 || true
+	refresh_widget_runtime
 	if [[ "$reset_widget_placement" == "1" ]]; then
 		killall chronod >/dev/null 2>&1 || true
 	fi
@@ -1121,6 +1160,7 @@ reset_runtime() {
 	if [[ "$launch_after_reset" == "1" ]]; then
 		open "$app_path"
 		sleep 2
+		refresh_widget_runtime
 	fi
 	if [[ "$open_url_after_reset" == "1" ]]; then
 		open 'contextpanel://overview'
@@ -1317,7 +1357,7 @@ check_runtime() {
 	fi
 
 	section "Storage And Widget Caches"
-	local files timelines
+	local files timelines render_cache placeholder_cache
 	files="$(context_files)"
 	local saved_at
 	saved_at="$(current_snapshot_saved_at)"
@@ -1346,12 +1386,20 @@ check_runtime() {
 	if [[ -n "$saved_at" ]]; then
 		ok "current snapshot savedAt=$saved_at"
 	fi
+	render_cache="$(widget_render_cache_files)"
+	placeholder_cache="$(widget_placeholder_cache_files)"
 	timelines="$(widget_timeline_files)"
-	if [[ -z "$timelines" ]]; then
-		ok "no WidgetKit timeline cache files are present"
-	else
+	if [[ -n "$render_cache" ]]; then
+		print_widget_cache_report "$render_cache"
+		ok "WidgetKit render cache files exist after launch"
+	elif [[ -n "$placeholder_cache" ]]; then
+		print_widget_cache_report "$placeholder_cache"
+		fail "WidgetKit only has placeholder cache files after launch"
+	elif [[ -n "$timelines" ]]; then
 		printf '%s\n' "$timelines"
-		ok "WidgetKit timeline cache files exist after launch"
+		fail "WidgetKit timeline cache files exist, but none are Context Panel render snapshots or timelines"
+	else
+		ok "no WidgetKit timeline cache files are present"
 	fi
 
 	section "Provider Credentials"

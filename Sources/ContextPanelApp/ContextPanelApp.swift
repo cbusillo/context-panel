@@ -3695,8 +3695,11 @@ final class ContextPanelAppModel: ObservableObject {
         storedSnapshot = result.snapshot
         lastRefreshAt = result.snapshot?.savedAt
         storeStatus = result.status
-        if result.status == .failure || result.errorMessage != nil {
-            errorMessage = result.errorMessage
+        if let loadErrorMessage = result.errorMessage, !loadErrorMessage.isEmpty {
+            errorMessage = loadErrorMessage
+        } else if let attentionMessage = primaryProviderReportNeedingAttention?.userFacingErrorMessage,
+                  !attentionMessage.isEmpty {
+            errorMessage = attentionMessage
         } else {
             errorMessage = nil
         }
@@ -4737,14 +4740,6 @@ extension UsageStatus {
 }
 
 private extension StoredProviderReport {
-    var userFacingErrorMessage: String? {
-        guard let errorMessage else { return nil }
-        if provider == .google, errorMessage.localizedCaseInsensitiveContains("status -128") {
-            return "Google Antigravity quota needs macOS Keychain approval. Click Refresh, then choose Always Allow for the \"gemini\" keychain item."
-        }
-        return errorMessage
-    }
-
     var needsRefreshAttention: Bool {
         status == .failure || needsNonFailureRefreshAttention
     }
