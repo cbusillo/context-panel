@@ -114,6 +114,7 @@ class FakeASCClient:
 class SubmittedReviewItemClient(FakeASCClient):
     def request(self, method, path, params=None, body=None, allowed=(200,)):
         if method == "DELETE" and path == "/reviewSubmissionItems/item-1":
+            self.requests.append((method, path, params, body, allowed))
             raise submit_app_store_review.AppStoreConnectError(
                 "App Store Connect request failed: DELETE /reviewSubmissionItems/item-1",
                 status=409,
@@ -128,6 +129,28 @@ class SubmittedReviewItemClient(FakeASCClient):
                     "attributes": {"state": "REMOVED"},
                 }
             }
+        return super().request(method, path, params, body, allowed)
+
+
+class SubmittedReviewItemRequiresSubmissionCancelClient(SubmittedReviewItemClient):
+    def request(self, method, path, params=None, body=None, allowed=(200,)):
+        if method == "PATCH" and path == "/reviewSubmissionItems/item-1":
+            self.requests.append((method, path, params, body, allowed))
+            raise submit_app_store_review.AppStoreConnectError(
+                "App Store Connect request failed: PATCH /reviewSubmissionItems/item-1",
+                status=409,
+                payload={
+                    "errors": [
+                        {
+                            "code": "STATE_ERROR.ENTITY_STATE_INVALID",
+                            "detail": "Cannot remove item because of state of reviewSubmission.",
+                        }
+                    ]
+                },
+            )
+        if method == "PATCH" and path == "/reviewSubmissions/submission-1":
+            self.requests.append((method, path, params, body, allowed))
+            return {"data": {"id": "submission-1", "type": "reviewSubmissions"}}
         return super().request(method, path, params, body, allowed)
 
 
@@ -212,10 +235,33 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
 
         submit_app_store_review.remove_active_review_version(client, "app-id", "1.0.13")
 
-        mutation_paths = [request[1] for request in client.requests if request[0] in {"DELETE", "PATCH"}]
-        self.assertEqual(mutation_paths, ["/reviewSubmissionItems/item-1"])
+        mutations = [(request[0], request[1]) for request in client.requests if request[0] in {"DELETE", "PATCH"}]
+        self.assertEqual(
+            mutations,
+            [
+                ("DELETE", "/reviewSubmissionItems/item-1"),
+                ("PATCH", "/reviewSubmissionItems/item-1"),
+            ],
+        )
         patch_body = client.requests[-1][3]
         self.assertEqual(patch_body["data"]["attributes"], {"removed": True})
+
+    def test_cancels_review_submission_when_submitted_item_cannot_be_removed(self):
+        client = SubmittedReviewItemRequiresSubmissionCancelClient()
+
+        submit_app_store_review.remove_active_review_version(client, "app-id", "1.0.13")
+
+        mutations = [(request[0], request[1]) for request in client.requests if request[0] in {"DELETE", "PATCH"}]
+        self.assertEqual(
+            mutations,
+            [
+                ("DELETE", "/reviewSubmissionItems/item-1"),
+                ("PATCH", "/reviewSubmissionItems/item-1"),
+                ("PATCH", "/reviewSubmissions/submission-1"),
+            ],
+        )
+        cancel_body = client.requests[-1][3]
+        self.assertEqual(cancel_body["data"]["attributes"], {"canceled": True})
 
     def test_dry_run_does_not_delete(self):
         client = FakeASCClient()
