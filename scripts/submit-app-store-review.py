@@ -402,7 +402,12 @@ def remove_active_review_version(
                 if not is_submitted_review_item_conflict(error):
                     raise
                 print(f"Review item {item_id} was already submitted; removing submitted review item instead")
-                remove_submitted_review_item(client, item_id, version_string, dry_run=False)
+                try:
+                    remove_submitted_review_item(client, item_id, version_string, dry_run=False)
+                except AppStoreConnectError as submitted_item_error:
+                    if not is_review_submission_state_invalid_for_item_removal(submitted_item_error):
+                        raise
+                    cancel_review_submission(client, submission["id"], version_string, dry_run=False)
                 return
     state = version_state(version)
     if state in BLOCKING_REVIEW_VERSION_STATES:
@@ -511,6 +516,13 @@ def is_submitted_review_item_conflict(error: AppStoreConnectError) -> bool:
         return False
     text = json.dumps(error.payload or {}, sort_keys=True).lower()
     return "item was already submitted" in text
+
+
+def is_review_submission_state_invalid_for_item_removal(error: AppStoreConnectError) -> bool:
+    if error.status != 409:
+        return False
+    text = json.dumps(error.payload or {}, sort_keys=True).lower()
+    return "cannot remove item" in text and "reviewsubmission" in text
 
 
 def is_locked_whats_new_error(error: AppStoreConnectError) -> bool:
