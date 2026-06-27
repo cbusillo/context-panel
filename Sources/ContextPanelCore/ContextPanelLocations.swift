@@ -48,6 +48,18 @@ public enum ContextPanelLocations {
             .appending(path: "Snapshots", directoryHint: .isDirectory)
     }
 
+    public static func widgetContainerLocalSnapshotDirectory() -> URL {
+        realUserHomeDirectory()
+            .appending(path: "Library", directoryHint: .isDirectory)
+            .appending(path: "Containers", directoryHint: .isDirectory)
+            .appending(path: widgetExtensionBundleID, directoryHint: .isDirectory)
+            .appending(path: "Data", directoryHint: .isDirectory)
+            .appending(path: "Library", directoryHint: .isDirectory)
+            .appending(path: "Application Support", directoryHint: .isDirectory)
+            .appending(path: "Context Panel", directoryHint: .isDirectory)
+            .appending(path: "Snapshots", directoryHint: .isDirectory)
+    }
+
     public static func widgetSandboxLocalDisplayPreferencesURL() -> URL {
         applicationSupportDirectory().appending(path: "widget-display-preferences.json")
     }

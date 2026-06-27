@@ -31,7 +31,8 @@
       "credential storage changes",
       "user-visible UI changes",
       "widget layout changes",
-      "release or signing changes"
+      "release or signing changes",
+      "validation gate changes"
     ]
   },
   "importantWorkflows": [

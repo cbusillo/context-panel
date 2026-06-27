@@ -54,6 +54,23 @@ import Testing
     ) == .httpFailure)
 }
 
+@Test func googleKeychainInteractionErrorsUseReconnectGuidance() {
+    let report = StoredProviderReport(
+        provider: .google,
+        accountID: "google-antigravity",
+        accountName: "Antigravity",
+        generatedAt: Date(timeIntervalSince1970: 100),
+        status: .failure,
+        errorMessage: "Google Antigravity keychain read failed: user interaction is not allowed, status -25308."
+    )
+
+    #expect(report.userFacingErrorMessage?.contains("Keychain approval") == true)
+    #expect(report.userFacingErrorMessage?.contains("Click Refresh") == true)
+    #expect(report.userFacingErrorMessage?.contains("Always Allow") == true)
+    #expect(report.userFacingErrorMessage?.contains("\"gemini\"") == true)
+    #expect(report.userFacingErrorMessage?.contains("-25308") == false)
+}
+
 @Test func reconnectFailuresAreNotCoveredByDifferentAccountsWithSharedConfiguredID() throws {
     let savedAt = Date(timeIntervalSince1970: 100)
     let reports = [
@@ -964,6 +981,62 @@ import Testing
     #expect(primary.loadHistory().isEmpty)
 }
 
+@Test func snapshotRefreshServiceMirrorsSavedSnapshotToWidgetFallbackStore() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let widgetMirror = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary, mirrors: [widgetMirror]),
+        promptCacheTelemetryReader: { _ in [] }
+    )
+    let savedAt = Date(timeIntervalSince1970: 300)
+    let refreshResult = ConnectorRefreshResult(
+        generatedAt: savedAt,
+        reports: [ProviderConnectorReport(
+            provider: .openAI,
+            accountID: "openai-primary",
+            accountName: "OpenAI",
+            generatedAt: savedAt,
+            limits: [UsageLimit(provider: .openAI, label: "Codex", used: 20, limit: 100)]
+        )]
+    )
+
+    _ = try await service.saveMergedAsync(refreshResult: refreshResult, savedAt: savedAt)
+
+    #expect(primary.loadCurrent().snapshot?.savedAt == savedAt)
+    #expect(widgetMirror.loadCurrent().snapshot?.savedAt == savedAt)
+    #expect(widgetMirror.loadCurrent().snapshot?.snapshot.limits.count == 1)
+}
+
+@Test func snapshotRefreshServiceSyncSaveMirrorsSavedSnapshotToWidgetFallbackStore() throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let widgetMirror = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary, mirrors: [widgetMirror]),
+        promptCacheTelemetryReader: { _ in [] }
+    )
+    let savedAt = Date(timeIntervalSince1970: 300)
+    let refreshResult = ConnectorRefreshResult(
+        generatedAt: savedAt,
+        reports: [ProviderConnectorReport(
+            provider: .openAI,
+            accountID: "openai-primary",
+            accountName: "OpenAI",
+            generatedAt: savedAt,
+            limits: [UsageLimit(provider: .openAI, label: "Codex", used: 20, limit: 100)]
+        )]
+    )
+
+    _ = try service.saveMerged(refreshResult: refreshResult, savedAt: savedAt)
+
+    #expect(primary.loadCurrent().snapshot?.savedAt == savedAt)
+    #expect(widgetMirror.loadCurrent().snapshot?.savedAt == savedAt)
+    #expect(widgetMirror.loadCurrent().snapshot?.snapshot.limits.count == 1)
+}
+
 @Test func snapshotRefreshServiceMirrorsPromptCacheTelemetryBeforeReadingIt() async throws {
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
@@ -1593,6 +1666,13 @@ import Testing
     #expect(ContextPanelLocations.widgetSandboxLocalSnapshotDirectory().path.hasSuffix(
         "Library/Application Support/Context Panel/Snapshots"
     ))
+}
+
+@Test func widgetContainerLocalSnapshotDirectoryTargetsWidgetExtensionContainer() {
+    let path = ContextPanelLocations.widgetContainerLocalSnapshotDirectory().path
+
+    #expect(path.contains("Library/Containers/com.shinycomputers.contextpanel.widget/Data"))
+    #expect(path.hasSuffix("Library/Application Support/Context Panel/Snapshots"))
 }
 
 @Test func snapshotRefreshRunnerSkipsFreshSnapshots() async throws {
