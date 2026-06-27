@@ -407,7 +407,11 @@ def remove_active_review_version(
                 except AppStoreConnectError as submitted_item_error:
                     if not is_review_submission_state_invalid_for_item_removal(submitted_item_error):
                         raise
-                    cancel_review_submission(client, submission["id"], version_string, dry_run=False)
+                    raise AppStoreConnectError(
+                        f"App Store version {version_string} review item could not be removed because "
+                        "the owning review submission is not in a removable state; cancel or resolve "
+                        "that review submission in App Store Connect before retrying"
+                    ) from submitted_item_error
                 return
     state = version_state(version)
     if state in BLOCKING_REVIEW_VERSION_STATES:
