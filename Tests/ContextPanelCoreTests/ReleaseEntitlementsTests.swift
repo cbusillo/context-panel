@@ -174,6 +174,9 @@ import Testing
     let plist = try loadInfoPlist("Config/ContextPanelCompanion-Info.plist")
     let backgroundModes = try #require(plist["UIBackgroundModes"] as? [String])
     #expect(backgroundModes == ["remote-notification"])
+    let sceneManifest = try #require(plist["UIApplicationSceneManifest"] as? [String: Any])
+    #expect(sceneManifest["UIApplicationPreferredDefaultSceneSessionRole"] as? String == "UIWindowSceneSessionRoleApplication")
+    #expect(sceneManifest["UIApplicationSupportsMultipleScenes"] as? Bool == true)
 }
 
 @Test func refreshAgentDoesNotReferenceRetiredGoogleCredentialPaths() throws {
