@@ -17,10 +17,12 @@ public struct SnapshotRefreshStores: Sendable {
         appGroupID: String = ContextPanelLocations.appGroupID,
         isRunningInAppSandbox: Bool = ContextPanelLocations.isRunningInAppSandbox
     ) -> SnapshotRefreshStores {
-        _ = isRunningInAppSandbox
+        let mirrors = isRunningInAppSandbox
+            ? []
+            : [JSONSnapshotStore(rootDirectory: ContextPanelLocations.widgetContainerLocalSnapshotDirectory())]
         return SnapshotRefreshStores(
             primary: JSONSnapshotStore(rootDirectory: ContextPanelLocations.snapshotDirectory(appGroupID: appGroupID)),
-            mirrors: [JSONSnapshotStore(rootDirectory: ContextPanelLocations.widgetContainerLocalSnapshotDirectory())]
+            mirrors: mirrors
         )
     }
 }

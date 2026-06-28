@@ -1675,10 +1675,19 @@ import Testing
     #expect(path.hasSuffix("Library/Application Support/Context Panel/Snapshots"))
 }
 
-@Test func snapshotRefreshStoresAppDefaultKeepsWidgetFallbackMirrorInSandbox() {
+@Test func snapshotRefreshStoresAppDefaultSkipsWidgetContainerMirrorInSandbox() {
     let stores = SnapshotRefreshStores.appDefault(
         appGroupID: "invalid.test.app-group",
         isRunningInAppSandbox: true
+    )
+
+    #expect(stores.mirrors.isEmpty)
+}
+
+@Test func snapshotRefreshStoresAppDefaultKeepsWidgetFallbackMirrorOutsideSandbox() {
+    let stores = SnapshotRefreshStores.appDefault(
+        appGroupID: "invalid.test.app-group",
+        isRunningInAppSandbox: false
     )
 
     #expect(stores.mirrors.count == 1)
