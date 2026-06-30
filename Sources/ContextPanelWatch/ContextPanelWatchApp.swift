@@ -130,19 +130,28 @@ private struct WatchStatusSection: View {
 
     var body: some View {
         Section {
-            HStack(spacing: 6) {
-                Image(systemName: presentation.symbol)
-                    .foregroundStyle(presentation.tint)
-                Text(presentation.title)
-                    .lineLimit(1)
-                Spacer(minLength: 2)
-                if let generatedText = presentation.generatedText {
-                    Text(generatedText)
-                        .foregroundStyle(.tertiary)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Image(systemName: presentation.symbol)
+                        .foregroundStyle(presentation.tint)
+                    Text(presentation.title)
                         .lineLimit(1)
+                    Spacer(minLength: 2)
+                    if let generatedText = presentation.generatedText {
+                        Text(generatedText)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    }
+                }
+                .font(.caption2.weight(.medium))
+
+                if presentation.shouldShowDetail {
+                    Text(presentation.detail)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
                 }
             }
-            .font(.caption2.weight(.medium))
             .padding(.vertical, 1)
         }
     }
@@ -264,7 +273,7 @@ private struct WatchSyncPresentation {
         generatedText = result.document.map { document in
             document.snapshot.generatedAt.formatted(.relative(presentation: .numeric))
         }
-        shouldShowDetail = false
+        shouldShowDetail = result.status == .failure || result.status == .stale || result.status == .unknown
 
         if let errorMessage = result.errorMessage ?? syncErrorMessage, result.status == .failure {
             title = "Sync failed"
