@@ -144,6 +144,13 @@ acceptable.
 - App Store/TestFlight work must not remove, hide, or narrow product UI such as
   provider setup, diagnostics, history, settings, or account management without
   an explicit product decision from Chris.
+- When Chris asks to check App Store Connect through the API, first use the
+  direct local ASC API route documented in `docs/release.md` under "Direct App
+  Store Connect API Checks." If that private operator config is unavailable,
+  say so explicitly before falling back to the GitHub workflow dry-run path.
+  Do not write host-specific paths, key IDs, issuer IDs, private key names,
+  JWTs, or live App Store Connect object IDs into public repo docs, issues, PRs,
+  or agent summaries.
 
 Minimum runtime evidence before saying a signed dogfood build is ready:
 
