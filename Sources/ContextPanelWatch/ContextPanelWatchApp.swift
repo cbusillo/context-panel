@@ -19,12 +19,6 @@ private struct WatchRootView: View {
     var body: some View {
         NavigationStack {
             List {
-                WatchStatusSection(
-                    result: model.displayResult,
-                    snapshot: model.snapshot,
-                    syncErrorMessage: model.lastSyncErrorMessage
-                )
-
                 if model.snapshot.limits.isEmpty {
                     WatchEmptySection(
                         result: model.displayResult,
@@ -37,6 +31,12 @@ private struct WatchRootView: View {
                         }
                     }
                 }
+
+                WatchStatusSection(
+                    result: model.displayResult,
+                    snapshot: model.snapshot,
+                    syncErrorMessage: model.lastSyncErrorMessage
+                )
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -130,29 +130,19 @@ private struct WatchStatusSection: View {
 
     var body: some View {
         Section {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Image(systemName: presentation.symbol)
-                        .foregroundStyle(presentation.tint)
-                    Text(presentation.title)
-                        .font(.caption.weight(.semibold))
+            HStack(spacing: 6) {
+                Image(systemName: presentation.symbol)
+                    .foregroundStyle(presentation.tint)
+                Text(presentation.title)
+                    .lineLimit(1)
+                Spacer(minLength: 2)
+                if let generatedText = presentation.generatedText {
+                    Text(generatedText)
+                        .foregroundStyle(.tertiary)
                         .lineLimit(1)
-                    Spacer(minLength: 2)
-                    if let generatedText = presentation.generatedText {
-                        Text(generatedText)
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
-                    }
-                }
-
-                if presentation.shouldShowDetail {
-                    Text(presentation.detail)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
                 }
             }
+            .font(.caption2.weight(.medium))
             .padding(.vertical, 1)
         }
     }
@@ -274,7 +264,7 @@ private struct WatchSyncPresentation {
         generatedText = result.document.map { document in
             document.snapshot.generatedAt.formatted(.relative(presentation: .numeric))
         }
-        shouldShowDetail = result.status != .healthy && result.status != .close && result.status != .limited
+        shouldShowDetail = false
 
         if let errorMessage = result.errorMessage ?? syncErrorMessage, result.status == .failure {
             title = "Sync failed"
@@ -286,10 +276,10 @@ private struct WatchSyncPresentation {
 
         switch result.status {
         case .healthy, .close, .limited:
-            title = "Synced from Mac"
+            title = "Synced"
             detail = snapshot.message
-            symbol = "checkmark.icloud"
-            tint = Self.statusColor(result.status)
+            symbol = "checkmark.circle"
+            tint = .green
         case .stale:
             title = "Mac sync is stale"
             detail = syncErrorMessage.map { "Showing saved data. Latest refresh failed: \($0)" }

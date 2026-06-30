@@ -1,0 +1,42 @@
+import ContextPanelCore
+import ContextPanelWatchSupport
+import Foundation
+import Testing
+
+@Test func watchLimitDisplayNormalizesPooledPercentMainLimits() throws {
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+        limits: [
+            openAIWeeklyPercentLimit(accountID: "primary", used: 25),
+            openAIWeeklyPercentLimit(accountID: "secondary", used: 0),
+            openAIWeeklyPercentLimit(accountID: "tertiary", used: 0),
+        ],
+        status: .healthy,
+        message: "Synced"
+    )
+
+    let rows = WatchLimitDisplay.rows(from: snapshot, maximumCount: 5)
+
+    let weekly = try #require(rows.first)
+    #expect(weekly.title == "OpenAI")
+    #expect(weekly.subtitle == "1w")
+    #expect(weekly.context == "3 accounts")
+    #expect(weekly.remainingText == "92%")
+    #expect(weekly.capacityRatio == 0.9166666666666666)
+}
+
+private func openAIWeeklyPercentLimit(accountID: String, used: Int) -> UsageLimit {
+    UsageLimit(
+        provider: .openAI,
+        accountID: accountID,
+        accountName: accountID.capitalized,
+        label: "Weekly",
+        windowLabel: "Weekly",
+        unit: .percent,
+        used: used,
+        limit: 100,
+        resetsAt: Date(timeIntervalSince1970: 1_800_604_800),
+        confidence: .observed
+    )
+}

@@ -63,6 +63,10 @@ let package = Package(
             name: "ContextPanelCloudKitSync",
             dependencies: ["ContextPanelCore"]
         ),
+        .target(
+            name: "ContextPanelWatchSupport",
+            dependencies: ["ContextPanelCore"]
+        ),
         .executableTarget(
             name: "ContextPanelApp",
             dependencies: ["ContextPanelCore", "ContextPanelCloudKitSync"]
@@ -100,6 +104,7 @@ let package = Package(
             dependencies: [
                 "ContextPanelCore",
                 "ContextPanelCompanionSupport",
+                "ContextPanelWatchSupport",
                 "ContextPanelWidget",
                 "ContextPanelWidgetUI",
             ]

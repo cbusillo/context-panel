@@ -1,18 +1,18 @@
 import ContextPanelCore
 import Foundation
 
-struct WatchLimitDisplay: Identifiable, Sendable {
-    let id: String
-    let provider: Provider
-    let title: String
-    let subtitle: String
-    let context: String
-    let remainingText: String
-    let resetText: String?
-    let capacityRatio: Double
-    let status: UsageStatus
+public struct WatchLimitDisplay: Identifiable, Sendable {
+    public let id: String
+    public let provider: Provider
+    public let title: String
+    public let subtitle: String
+    public let context: String
+    public let remainingText: String
+    public let resetText: String?
+    public let capacityRatio: Double
+    public let status: UsageStatus
 
-    static func rows(from snapshot: WidgetSnapshot, maximumCount: Int) -> [WatchLimitDisplay] {
+    public static func rows(from snapshot: WidgetSnapshot, maximumCount: Int) -> [WatchLimitDisplay] {
         let mainRows = snapshot.usageSnapshot.mostConstrainedMainLimitSummaries.compactMap { summary in
             row(from: summary)
         }
@@ -34,9 +34,14 @@ struct WatchLimitDisplay: Identifiable, Sendable {
             title: summary.provider.displayName,
             subtitle: summary.compactDisplayWindowName,
             context: accountText,
-            remainingText: remainingText(remaining: summary.remaining, unit: summary.unit),
+            remainingText: remainingText(
+                remaining: summary.remaining,
+                unit: summary.unit,
+                capacityRatio: summary.capacityRatio,
+                isPooled: true
+            ),
             resetText: summary.resetCountdownText,
-            capacityRatio: summary.capacityRatio,
+            capacityRatio: clampedCapacityRatio(summary.capacityRatio),
             status: summary.status
         )
     }
@@ -48,7 +53,7 @@ struct WatchLimitDisplay: Identifiable, Sendable {
             title: limit.provider.displayName,
             subtitle: limit.displayLabel,
             context: limit.contextLabel.isEmpty ? limit.accountName : limit.contextLabel,
-            remainingText: remainingText(remaining: limit.remaining, unit: limit.unit),
+            remainingText: remainingText(remaining: limit.remaining, unit: limit.unit, capacityRatio: capacityRatio(for: limit)),
             resetText: resetText(for: limit),
             capacityRatio: capacityRatio(for: limit),
             status: limit.status
@@ -57,12 +62,24 @@ struct WatchLimitDisplay: Identifiable, Sendable {
 
     private static func capacityRatio(for limit: UsageLimit) -> Double {
         guard let usageRatio = limit.usageRatio else { return 0 }
-        return max(1 - usageRatio, 0)
+        return clampedCapacityRatio(1 - usageRatio)
     }
 
-    private static func remainingText(remaining: Int?, unit: UsageUnit?) -> String {
+    private static func clampedCapacityRatio(_ ratio: Double) -> Double {
+        min(max(ratio, 0), 1)
+    }
+
+    private static func remainingText(
+        remaining: Int?,
+        unit: UsageUnit?,
+        capacityRatio: Double,
+        isPooled: Bool = false
+    ) -> String {
         guard let remaining else { return "?" }
-        if unit == .percent { return "\(remaining)%" }
+        if unit == .percent {
+            let normalizedRemaining = isPooled ? Int((clampedCapacityRatio(capacityRatio) * 100).rounded()) : remaining
+            return "\(min(max(normalizedRemaining, 0), 100))%"
+        }
         return "\(remaining)"
     }
 
