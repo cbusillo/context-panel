@@ -3,6 +3,7 @@ set -euo pipefail
 
 scheme="ContextPanelCompanion"
 configuration="Debug"
+archive=0
 artifact_cache_root="${CONTEXT_PANEL_ARTIFACT_CACHE_ROOT:-}"
 derived_data_root=""
 platforms=()
@@ -30,15 +31,23 @@ usage() {
 	cat <<'USAGE'
 Usage: scripts/validate-companion-builds.sh [options] [platform...]
 
-Builds the companion app for generic Apple companion platforms without code
-signing. This catches iOS/visionOS source, project, asset, and WidgetKit compile
-regressions without requiring provisioning profiles or a physical device.
+Builds the companion app surfaces for generic Apple companion platforms without
+code signing. This catches iOS/visionOS/watchOS source, project, asset, and
+WidgetKit compile regressions without requiring provisioning profiles or a
+physical device.
+
+With --archive, validates companion app archive packaging for iOS/visionOS.
+The watchOS target is embedded in the iOS companion archive and remains a
+build-only standalone validation target.
 
 Platforms:
   ios        Build generic iOS.
   visionos   Build generic visionOS.
+  watchos    Build generic watchOS.
 
 Options:
+  --archive                   Archive iOS/visionOS companion apps instead of
+                              building them. Not supported for watchOS.
   --configuration VALUE       Xcode configuration. Default: Debug.
   --derived-data-root PATH    DerivedData root. Default: artifact cache when mounted,
                               otherwise .build/companion-build-validation.
@@ -52,6 +61,10 @@ while [[ $# -gt 0 ]]; do
 		configuration="${2:?--configuration requires a value}"
 		shift 2
 		;;
+	--archive)
+		archive=1
+		shift
+		;;
 	--derived-data-root)
 		derived_data_root="${2:?--derived-data-root requires a value}"
 		shift 2
@@ -60,7 +73,7 @@ while [[ $# -gt 0 ]]; do
 		usage
 		exit 0
 		;;
-	ios | visionos)
+	ios | visionos | watchos)
 		platforms+=("$1")
 		shift
 		;;
@@ -73,7 +86,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ ${#platforms[@]} -eq 0 ]]; then
-	platforms=(ios visionos)
+	platforms=(ios visionos watchos)
 fi
 
 require_command() {
@@ -99,6 +112,34 @@ run_xcodebuild() {
 	PATH="$(xcodebuild_system_path)" /usr/bin/xcodebuild "$@"
 }
 
+validate_archive_contents() {
+	local platform archive_path app_path watch_path
+	platform="$1"
+	archive_path="$2"
+	app_path="$archive_path/Products/Applications/Context Panel.app"
+	watch_path="$app_path/Watch/Context Panel.app"
+
+	if [[ ! -d "$app_path" ]]; then
+		echo "companion archive is missing app bundle: $app_path" >&2
+		exit 1
+	fi
+
+	case "$platform" in
+	ios)
+		if [[ ! -d "$watch_path" ]]; then
+			echo "iOS companion archive is missing embedded watch app: $watch_path" >&2
+			exit 1
+		fi
+		;;
+	visionos)
+		if [[ -e "$app_path/Watch" ]]; then
+			echo "visionOS companion archive unexpectedly contains watch content: $app_path/Watch" >&2
+			exit 1
+		fi
+		;;
+	esac
+}
+
 destination_for_platform() {
 	case "$1" in
 	ios)
@@ -106,6 +147,9 @@ destination_for_platform() {
 		;;
 	visionos)
 		printf 'generic/platform=visionOS'
+		;;
+	watchos)
+		printf 'generic/platform=watchOS'
 		;;
 	*)
 		echo "unsupported companion validation platform: $1" >&2
@@ -123,13 +167,38 @@ echo "companion validation DerivedData root: $derived_data_root"
 for platform in "${platforms[@]}"; do
 	destination="$(destination_for_platform "$platform")"
 	derived_data_path="$derived_data_root/$platform"
-	echo "Validating $scheme for $destination"
-	run_xcodebuild \
-		-project ContextPanel.xcodeproj \
-		-scheme "$scheme" \
-		-configuration "$configuration" \
-		-destination "$destination" \
-		-derivedDataPath "$derived_data_path" \
-		CODE_SIGNING_ALLOWED=NO \
-		build
+	if [[ "$platform" == "watchos" ]]; then
+		if ((archive)); then
+			echo "archive validation is not supported for standalone watchOS" >&2
+			exit 2
+		fi
+		scheme="ContextPanelWatch"
+	else
+		scheme="ContextPanelCompanion"
+	fi
+	if ((archive)); then
+		archive_path="$derived_data_path/$scheme-$configuration.xcarchive"
+		echo "Validating $scheme archive for $destination"
+		rm -rf "$archive_path"
+		run_xcodebuild \
+			-project ContextPanel.xcodeproj \
+			-scheme "$scheme" \
+			-configuration "$configuration" \
+			-destination "$destination" \
+			-derivedDataPath "$derived_data_path" \
+			-archivePath "$archive_path" \
+			CODE_SIGNING_ALLOWED=NO \
+			archive
+		validate_archive_contents "$platform" "$archive_path"
+	else
+		echo "Validating $scheme build for $destination"
+		run_xcodebuild \
+			-project ContextPanel.xcodeproj \
+			-scheme "$scheme" \
+			-configuration "$configuration" \
+			-destination "$destination" \
+			-derivedDataPath "$derived_data_path" \
+			CODE_SIGNING_ALLOWED=NO \
+			build
+	fi
 done

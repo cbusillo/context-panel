@@ -302,6 +302,8 @@ the Mac upload path plus companion-specific Apple Distribution signing assets:
 - `APPLE_TEAM_ID`
 - `COMPANION_APP_STORE_APP_PROVISIONING_PROFILE_BASE64`
 - `COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64`
+- `COMPANION_APP_STORE_WATCH_PROVISIONING_PROFILE_BASE64` for iOS companion
+  uploads that embed the watchOS companion app
 
 The companion app profile must authorize:
 
@@ -316,6 +318,11 @@ The companion widget profile must authorize App Group
 `com.shinycomputers.contextpanel.widget`. The widget must not require iCloud,
 CloudKit, or APNs entitlements; it reads only the app-group mirror written by the
 companion app.
+
+For iOS companion uploads, the watch profile must authorize bundle ID
+`com.shinycomputers.contextpanel.watch`, platform `watchOS`, and the Context
+Panel CloudKit container. The watch app is embedded only in the iOS companion
+package; native visionOS companion builds deliberately exclude watchOS content.
 
 Do not remove older App IDs, profiles, or profile secrets while validating the
 new companion path. Keep them available until a signed device/TestFlight install

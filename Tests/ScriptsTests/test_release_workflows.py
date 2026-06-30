@@ -614,16 +614,29 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 self.assertIn("PATH=\"$(xcodebuild_system_path)\" /usr/bin/xcodebuild", script)
                 self.assertNotRegex(script, r"(?m)^xcodebuild \\")
 
-    def test_companion_build_validation_supports_ios_and_visionos_without_signing(self):
+    def test_companion_build_validation_supports_ios_visionos_and_watchos_without_signing(self):
         workflow = self.read(".github/workflows/ci.yml")
         script = self.read("scripts/validate-companion-builds.sh")
 
-        self.assertIn("scripts/validate-companion-builds.sh ios", workflow)
-        self.assertIn("platforms=(ios visionos)", script)
+        self.assertIn("scripts/validate-companion-builds.sh", workflow)
+        self.assertIn("--configuration Release --archive ios", workflow)
+        self.assertIn("scripts/validate-companion-builds.sh --configuration Release watchos", workflow)
+        self.assertIn("--archive", script)
+        self.assertIn("archive validation is not supported for standalone watchOS", script)
+        self.assertIn("Validating $scheme archive for $destination", script)
+        self.assertIn("-archivePath \"$archive_path\"", script)
+        self.assertIn("validate_archive_contents()", script)
+        self.assertIn("iOS companion archive is missing embedded watch app", script)
+        self.assertIn("visionOS companion archive unexpectedly contains watch content", script)
+        self.assertIn("Products/Applications/Context Panel.app", script)
+        self.assertIn("Watch/Context Panel.app", script)
+        self.assertIn("platforms=(ios visionos watchos)", script)
         self.assertIn("generic/platform=iOS", script)
         self.assertIn("generic/platform=visionOS", script)
+        self.assertIn("generic/platform=watchOS", script)
         self.assertIn("CODE_SIGNING_ALLOWED=NO", script)
         self.assertIn("ContextPanelCompanion", script)
+        self.assertIn("ContextPanelWatch", script)
         self.assertIn("PATH=\"$(xcodebuild_system_path)\" /usr/bin/xcodebuild", script)
 
     def test_visionos_dogfood_script_uses_development_signing_and_devicectl(self):
@@ -1050,6 +1063,16 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("assert_profile_icloud_service \"$app_profile\" \"companion app\" \"CloudKit\"", script)
         self.assertIn("assert_profile_ubiquity_container \"$app_profile\" \"companion app\"", script)
         self.assertIn("assert_profile_push_notifications \"$app_profile\" \"companion app\" \"production\"", script)
+        self.assertIn("--watch-profile PATH", script)
+        self.assertIn("companion watch provisioning profile not found", script)
+        self.assertIn(
+            "assert_profile_bundle_id \"$watch_profile\" \"companion watch\" \"com.shinycomputers.contextpanel.watch\"",
+            script,
+        )
+        self.assertIn("assert_profile_platform_any \"$watch_profile\" \"companion watch\" watchOS", script)
+        self.assertIn("assert_profile_icloud_service \"$watch_profile\" \"companion watch\" \"CloudKit\"", script)
+        self.assertIn("CONTEXT_PANEL_APP_STORE_WATCH_PROFILE_SPECIFIER=\"$watch_profile_uuid\"", script)
+        self.assertIn("<key>com.shinycomputers.contextpanel.watch</key>", script)
         self.assertNotIn("assert_profile_icloud_service \"$widget_profile\"", script)
         self.assertNotIn("assert_profile_ubiquity_container \"$widget_profile\"", script)
         self.assertNotIn("assert_profile_push_notifications \"$widget_profile\"", script)

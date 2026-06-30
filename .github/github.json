@@ -23,7 +23,8 @@
       "scopePreference": "changed_files"
     },
     "validate": {
-      "default": "scripts/commit-gate.sh"
+      "default": "scripts/commit-gate.sh",
+      "companionWatchBuild": "scripts/validate-companion-builds.sh watchos"
     },
     "docsRequiredWhen": [
       "provider behavior changes",
