@@ -18,7 +18,10 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
         }
         let mainIDs = Set(mainRows.map(\.id))
         let supplementalRows = snapshot.mostConstrainedLimits.compactMap { limit -> WatchLimitDisplay? in
-            guard !limit.isMainLimit else { return nil }
+            if let mainLimitWindow = limit.mainLimitWindow,
+               mainIDs.contains(summaryID(provider: limit.provider, window: mainLimitWindow)) {
+                return nil
+            }
             let row = row(from: limit)
             return mainIDs.contains(row.id) ? nil : row
         }
@@ -29,7 +32,7 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
         guard summary.pooledLimit != nil else { return nil }
         let accountText = summary.accountCount == 1 ? "1 account" : "\(summary.accountCount) accounts"
         return WatchLimitDisplay(
-            id: "summary:\(summary.id)",
+            id: summaryID(provider: summary.provider, window: summary.window),
             provider: summary.provider,
             title: summary.provider.displayName,
             subtitle: summary.compactDisplayWindowName,
@@ -44,6 +47,10 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
             capacityRatio: clampedCapacityRatio(summary.capacityRatio),
             status: summary.status
         )
+    }
+
+    private static func summaryID(provider: Provider, window: MainLimitWindow) -> String {
+        "summary:\(provider.rawValue):\(window.rawValue)"
     }
 
     private static func row(from limit: UsageLimit) -> WatchLimitDisplay {
