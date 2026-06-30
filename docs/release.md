@@ -302,6 +302,10 @@ the Mac upload path plus companion-specific Apple Distribution signing assets:
 - `APPLE_TEAM_ID`
 - `COMPANION_APP_STORE_APP_PROVISIONING_PROFILE_BASE64`
 - `COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64`
+- `COMPANION_APP_STORE_WATCH_PROVISIONING_PROFILE_BASE64` for iOS companion
+  uploads that embed the watchOS companion app
+- `COMPANION_APP_STORE_WATCH_WIDGET_PROVISIONING_PROFILE_BASE64` for iOS
+  companion uploads that embed the watchOS complication extension
 
 The companion app profile must authorize:
 
@@ -316,6 +320,11 @@ The companion widget profile must authorize App Group
 `com.shinycomputers.contextpanel.widget`. The widget must not require iCloud,
 CloudKit, or APNs entitlements; it reads only the app-group mirror written by the
 companion app.
+
+For iOS companion uploads, the watch profile must authorize bundle ID
+`com.shinycomputers.contextpanel.watch`, platform `watchOS`, and the Context
+Panel CloudKit container. The watch app is embedded only in the iOS companion
+package; native visionOS companion builds deliberately exclude watchOS content.
 
 Do not remove older App IDs, profiles, or profile secrets while validating the
 new companion path. Keep them available until a signed device/TestFlight install
@@ -562,6 +571,41 @@ scripts/submit-app-store-review.py \
   --whats-new "Improves multi-account provider identity handling."
 ```
 
+### Direct App Store Connect API Checks
+
+When asked to check App Store Connect state through the API, prefer the direct
+local API path before falling back to a GitHub workflow dispatch. The workflow is
+API-backed, but it is not the same operational evidence as a direct local API
+query.
+
+Use the private local App Store Connect operator config when present. Keep host,
+account, key ID, issuer ID, private key path, JWTs, and App Store Connect object
+IDs out of public repo docs, issues, PR descriptions, and agent summaries unless
+Chris explicitly asks for a private handoff. Document only the generic mechanism:
+
+- `APP_STORE_CONNECT_KEY_ID`
+- `APP_STORE_CONNECT_ISSUER_ID`
+- `APP_STORE_CONNECT_API_KEY_P8_BASE64`, or `--api-key <private-key-path>`
+
+For a read-only active-review check, run the submit helper in `--dry-run` mode.
+For example, this validates that a selected version is attached to an active
+review submission without changing App Store Connect:
+
+```sh
+scripts/submit-app-store-review.py \
+  --platform IOS \
+  --version <marketing-version> \
+  --remove-active-review-version <marketing-version> \
+  --cancel-review-only \
+  --dry-run \
+  --api-key <private-key-path>
+```
+
+If the direct local config is unavailable, say that explicitly and then use the
+GitHub `Submit App Store Review` workflow with `dry_run: true` as a fallback.
+When reporting results, distinguish direct local ASC API evidence from
+workflow-mediated ASC API evidence.
+
 The app and refresh-agent App Store entitlements must keep the sandbox enabled
 with App Group, outbound network, read-only user-selected file access, and
 app-scope bookmark permissions. The macOS widget should keep only the sandbox
@@ -632,7 +676,8 @@ scripts/package-native-macos-app.sh \
   --output dist \
   --identity auto \
   --app-provisioning-profile path/to/ContextPanel.provisionprofile \
-  --refresh-agent-provisioning-profile path/to/ContextPanelRefreshAgent.provisionprofile \
+  --refresh-agent-provisioning-profile \
+    path/to/ContextPanelRefreshAgent.provisionprofile \
   --notarize \
   --notary-key ~/.appstoreconnect/private_keys/AuthKey_EXAMPLE.p8 \
   --notary-key-id EXAMPLE \

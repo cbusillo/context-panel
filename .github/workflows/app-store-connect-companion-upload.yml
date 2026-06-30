@@ -79,6 +79,10 @@ jobs:
       MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
       COMPANION_APP_STORE_APP_PROVISIONING_PROFILE_BASE64: ${{ secrets.COMPANION_APP_STORE_APP_PROVISIONING_PROFILE_BASE64 }}
       COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64: ${{ secrets.COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64 }}
+      COMPANION_APP_STORE_WATCH_PROVISIONING_PROFILE_BASE64: >-
+        ${{ secrets.COMPANION_APP_STORE_WATCH_PROVISIONING_PROFILE_BASE64 }}
+      COMPANION_APP_STORE_WATCH_WIDGET_PROVISIONING_PROFILE_BASE64: >-
+        ${{ secrets.COMPANION_APP_STORE_WATCH_WIDGET_PROVISIONING_PROFILE_BASE64 }}
 
     steps:
       - name: Checkout
@@ -169,12 +173,31 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .build/provisioning-appstore
-          if [[ -z "${COMPANION_APP_STORE_APP_PROVISIONING_PROFILE_BASE64:-}" || -z "${COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64:-}" ]]; then
+          if [[ -z "${COMPANION_APP_STORE_APP_PROVISIONING_PROFILE_BASE64:-}" || \
+            -z "${COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64:-}" ]]; then
             echo "Companion app and widget App Store provisioning profile secrets are required." >&2
             exit 1
           fi
-          printf '%s' "${COMPANION_APP_STORE_APP_PROVISIONING_PROFILE_BASE64}" | base64 -D > .build/provisioning-appstore/ContextPanelCompanion.provisionprofile
-          printf '%s' "${COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64}" | base64 -D > .build/provisioning-appstore/ContextPanelCompanionWidgetExtension.provisionprofile
+          printf '%s' "${COMPANION_APP_STORE_APP_PROVISIONING_PROFILE_BASE64}" \
+            | base64 -D \
+              > .build/provisioning-appstore/ContextPanelCompanion.provisionprofile
+          printf '%s' "${COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64}" \
+            | base64 -D \
+              > .build/provisioning-appstore/ContextPanelCompanionWidgetExtension.provisionprofile
+          if [[ "${{ steps.platform.outputs.platform }}" == "ios" ]]; then
+            if [[ -z "${COMPANION_APP_STORE_WATCH_PROVISIONING_PROFILE_BASE64:-}" || \
+              -z "${COMPANION_APP_STORE_WATCH_WIDGET_PROVISIONING_PROFILE_BASE64:-}" ]]; then
+              echo "Companion watch and watch widget App Store provisioning profile secrets are" \
+                "required for iOS companion uploads." >&2
+              exit 1
+            fi
+            printf '%s' "${COMPANION_APP_STORE_WATCH_PROVISIONING_PROFILE_BASE64}" \
+              | base64 -D \
+                > .build/provisioning-appstore/ContextPanelWatch.provisionprofile
+            printf '%s' "${COMPANION_APP_STORE_WATCH_WIDGET_PROVISIONING_PROFILE_BASE64}" \
+              | base64 -D \
+                > .build/provisioning-appstore/ContextPanelWatchWidgetExtension.provisionprofile
+          fi
 
       - name: Archive and Upload
         shell: bash

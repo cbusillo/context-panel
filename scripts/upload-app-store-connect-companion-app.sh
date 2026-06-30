@@ -11,6 +11,8 @@ export_path=""
 export_options_path=""
 app_profile="${COMPANION_APP_STORE_APP_PROVISIONING_PROFILE:-.build/provisioning-appstore/ContextPanelCompanion.provisionprofile}"
 widget_profile="${COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE:-.build/provisioning-appstore/ContextPanelCompanionWidgetExtension.provisionprofile}"
+watch_profile="${COMPANION_APP_STORE_WATCH_PROVISIONING_PROFILE:-.build/provisioning-appstore/ContextPanelWatch.provisionprofile}"
+watch_widget_profile="${COMPANION_APP_STORE_WATCH_WIDGET_PROVISIONING_PROFILE:-.build/provisioning-appstore/ContextPanelWatchWidgetExtension.provisionprofile}"
 api_key_path="${APP_STORE_CONNECT_API_KEY_PATH:-}"
 api_key_id="${APP_STORE_CONNECT_KEY_ID:-}"
 api_issuer_id="${APP_STORE_CONNECT_ISSUER_ID:-}"
@@ -36,6 +38,8 @@ Options:
   --export-options-path PATH           Generated ExportOptions.plist path.
   --app-profile PATH                   Companion app provisioning profile.
   --widget-profile PATH                Companion widget provisioning profile.
+  --watch-profile PATH                 Companion watch app provisioning profile.
+  --watch-widget-profile PATH          Companion watch widget provisioning profile.
   --api-key PATH                       App Store Connect API private key path.
   --api-key-id ID                      App Store Connect API key ID.
   --api-issuer-id ID                   App Store Connect API issuer ID.
@@ -84,6 +88,14 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--widget-profile)
 		widget_profile="${2:?--widget-profile requires a value}"
+		shift 2
+		;;
+	--watch-profile)
+		watch_profile="${2:?--watch-profile requires a value}"
+		shift 2
+		;;
+	--watch-widget-profile)
+		watch_widget_profile="${2:?--watch-widget-profile requires a value}"
 		shift 2
 		;;
 	--api-key)
@@ -513,6 +525,14 @@ if [[ ! -f "$widget_profile" ]]; then
 	echo "companion widget provisioning profile not found: $widget_profile" >&2
 	exit 1
 fi
+if [[ "$platform" == "ios" && ! -f "$watch_profile" ]]; then
+	echo "companion watch provisioning profile not found: $watch_profile" >&2
+	exit 1
+fi
+if [[ "$platform" == "ios" && ! -f "$watch_widget_profile" ]]; then
+	echo "companion watch widget provisioning profile not found: $watch_widget_profile" >&2
+	exit 1
+fi
 
 tmp_api_key=""
 if [[ -z "$api_key_path" && -n "${APP_STORE_CONNECT_API_KEY_P8_BASE64:-}" ]]; then
@@ -548,10 +568,24 @@ fi
 
 app_profile_uuid="$(profile_uuid "$app_profile")"
 widget_profile_uuid="$(profile_uuid "$widget_profile")"
+watch_profile_uuid=""
+watch_widget_profile_uuid=""
+if [[ "$platform" == "ios" ]]; then
+	watch_profile_uuid="$(profile_uuid "$watch_profile")"
+	watch_widget_profile_uuid="$(profile_uuid "$watch_widget_profile")"
+fi
 assert_profile_bundle_id "$app_profile" "companion app" "com.shinycomputers.contextpanel"
 assert_profile_bundle_id "$widget_profile" "companion widget" "com.shinycomputers.contextpanel.widget"
 assert_profile_platform_any "$app_profile" "companion app" "${profile_platforms[@]}"
 assert_profile_platform_any "$widget_profile" "companion widget" "${profile_platforms[@]}"
+if [[ "$platform" == "ios" ]]; then
+	assert_profile_bundle_id "$watch_profile" "companion watch" "com.shinycomputers.contextpanel.watch"
+	assert_profile_bundle_id "$watch_widget_profile" "companion watch widget" "com.shinycomputers.contextpanel.watch.widget"
+	assert_profile_platform_any "$watch_profile" "companion watch" watchOS
+	assert_profile_platform_any "$watch_widget_profile" "companion watch widget" watchOS
+	assert_profile_icloud_service "$watch_profile" "companion watch" "CloudKit"
+	assert_profile_icloud_service "$watch_widget_profile" "companion watch widget" "CloudKit"
+fi
 assert_profile_app_group "$app_profile" "companion app"
 assert_profile_app_group "$widget_profile" "companion widget"
 assert_profile_icloud_service "$app_profile" "companion app" "CloudDocuments"
@@ -560,8 +594,20 @@ assert_profile_ubiquity_container "$app_profile" "companion app"
 assert_profile_push_notifications "$app_profile" "companion app" "production"
 install_profile "$app_profile" "$app_profile_uuid"
 install_profile "$widget_profile" "$widget_profile_uuid"
+if [[ "$platform" == "ios" ]]; then
+	install_profile "$watch_profile" "$watch_profile_uuid"
+	install_profile "$watch_widget_profile" "$watch_widget_profile_uuid"
+fi
 
 mkdir -p "$(dirname "$export_options_path")"
+watch_export_profile_plist=""
+if [[ "$platform" == "ios" ]]; then
+	watch_export_profile_plist="
+		<key>com.shinycomputers.contextpanel.watch</key>
+		<string>$watch_profile_uuid</string>
+		<key>com.shinycomputers.contextpanel.watch.widget</key>
+		<string>$watch_widget_profile_uuid</string>"
+fi
 cat >"$export_options_path" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -583,6 +629,7 @@ cat >"$export_options_path" <<PLIST
 		<string>$app_profile_uuid</string>
 		<key>com.shinycomputers.contextpanel.widget</key>
 		<string>$widget_profile_uuid</string>
+$watch_export_profile_plist
 	</dict>
 	<key>uploadSymbols</key>
 	<true/>
@@ -608,6 +655,10 @@ archive_args=(
 	CONTEXT_PANEL_APP_STORE_COMPANION_PROFILE_SPECIFIER="$app_profile_uuid"
 	CONTEXT_PANEL_APP_STORE_COMPANION_WIDGET_PROFILE_SPECIFIER="$widget_profile_uuid"
 )
+if [[ "$platform" == "ios" ]]; then
+	archive_args+=(CONTEXT_PANEL_APP_STORE_WATCH_PROFILE_SPECIFIER="$watch_profile_uuid")
+	archive_args+=(CONTEXT_PANEL_APP_STORE_WATCH_WIDGET_PROFILE_SPECIFIER="$watch_widget_profile_uuid")
+fi
 if [[ -n "$build_number" ]]; then
 	archive_args+=(CURRENT_PROJECT_VERSION="$build_number")
 fi

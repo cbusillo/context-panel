@@ -115,6 +115,25 @@ import Testing
     #expect(widgetEntitlements["com.apple.developer.ubiquity-container-identifiers"] == nil)
 }
 
+@Test func watchEntitlementsStayReadOnlyAndCloudKitOnly() throws {
+    for path in ["Config/ContextPanelWatch.entitlements", "Config/ContextPanelWatchWidget.entitlements"] {
+        let entitlements = try loadEntitlements(path)
+
+        let iCloudContainers = try #require(
+            entitlements["com.apple.developer.icloud-container-identifiers"] as? [String]
+        )
+        #expect(iCloudContainers == ["iCloud.com.shinycomputers.contextpanel"])
+        let services = try #require(entitlements["com.apple.developer.icloud-services"] as? [String])
+        #expect(services == ["CloudKit"])
+        #expect(entitlements["aps-environment"] == nil)
+        #expect(entitlements["com.apple.security.application-groups"] == nil)
+        #expect(entitlements["keychain-access-groups"] == nil)
+        #expect(entitlements["com.apple.security.app-sandbox"] == nil)
+        #expect(entitlements["com.apple.security.network.client"] == nil)
+        #expect(entitlements["com.apple.developer.ubiquity-container-identifiers"] == nil)
+    }
+}
+
 @Test func companionProjectTargetsUseSharedSyncAndWidgetModules() throws {
     let project = try loadProjectYAML()
 
@@ -164,6 +183,7 @@ import Testing
     #expect(appDependencies.contains("ContextPanelCompanionSupport"))
     #expect(appDependencies.contains("ContextPanelCloudKitSyncCompanion"))
     #expect(appDependencies.contains("ContextPanelCompanionWidgetExtension"))
+    #expect(appDependencies.contains("ContextPanelWatch"))
 
     let widgetDependencies = try #require(project.dependencies(named: "ContextPanelCompanionWidgetExtension"))
     #expect(widgetDependencies.contains("ContextPanelCoreCompanion"))
@@ -177,6 +197,89 @@ import Testing
     let sceneManifest = try #require(plist["UIApplicationSceneManifest"] as? [String: Any])
     #expect(sceneManifest["UIApplicationPreferredDefaultSceneSessionRole"] as? String == "UIWindowSceneSessionRoleApplication")
     #expect(sceneManifest["UIApplicationSupportsMultipleScenes"] as? Bool == true)
+}
+
+@Test func watchProjectTargetUsesDistinctReadOnlyCompanionSurface() throws {
+    let project = try loadProjectYAML()
+
+    let coreTarget = try #require(project.target(named: "ContextPanelCoreWatch"))
+    #expect(coreTarget["platform"] as? String == "watchOS")
+    let coreSettings = try #require(project.targetSettings(named: "ContextPanelCoreWatch"))
+    #expect(coreSettings["PRODUCT_MODULE_NAME"] as? String == "ContextPanelCore")
+    #expect(coreSettings["WATCHOS_DEPLOYMENT_TARGET"] as? String == "10.0")
+
+    let cloudKitTarget = try #require(project.target(named: "ContextPanelCloudKitSyncWatch"))
+    #expect(cloudKitTarget["platform"] as? String == "watchOS")
+    let cloudKitDependencies = try #require(project.dependencies(named: "ContextPanelCloudKitSyncWatch"))
+    #expect(cloudKitDependencies == ["ContextPanelCoreWatch"])
+
+    let appTarget = try #require(project.target(named: "ContextPanelWatch"))
+    #expect(appTarget["platform"] as? String == "watchOS")
+    #expect(appTarget["deploymentTarget"] as? String == "10.0")
+
+    let appSettings = try #require(project.targetSettings(named: "ContextPanelWatch"))
+    #expect(appSettings["PRODUCT_BUNDLE_IDENTIFIER"] as? String == "com.shinycomputers.contextpanel.watch")
+    #expect(appSettings["CODE_SIGN_ENTITLEMENTS"] as? String == "Config/ContextPanelWatch.entitlements")
+    #expect(appSettings["INFOPLIST_FILE"] as? String == "Config/ContextPanelWatch-Info.plist")
+    #expect(appSettings["WATCHOS_DEPLOYMENT_TARGET"] as? String == "10.0")
+    #expect(appSettings["ASSETCATALOG_COMPILER_APPICON_NAME"] as? String == "AppIcon")
+    #expect(appSettings["SKIP_INSTALL"] as? String == "true")
+    #expect(appSettings["TARGETED_DEVICE_FAMILY"] == nil)
+    #expect(appSettings["APS_ENVIRONMENT"] == nil)
+
+    let appReleaseSettings = try #require(project.releaseTargetSettings(named: "ContextPanelWatch"))
+    #expect(appReleaseSettings["CODE_SIGN_IDENTITY"] as? String == "Apple Distribution")
+    #expect(
+        appReleaseSettings["PROVISIONING_PROFILE_SPECIFIER"] as? String
+            == "$(CONTEXT_PANEL_APP_STORE_WATCH_PROFILE_SPECIFIER)"
+    )
+
+    let appDependencies = try #require(project.dependencies(named: "ContextPanelWatch"))
+    #expect(appDependencies == [
+        "ContextPanelCoreWatch",
+        "ContextPanelCloudKitSyncWatch",
+        "ContextPanelWatchWidgetExtension",
+    ])
+    #expect(!appDependencies.contains("ContextPanelCompanionSupport"))
+    #expect(!appDependencies.contains("ContextPanelCompanionWidgetExtension"))
+
+    let watchWidgetTarget = try #require(project.target(named: "ContextPanelWatchWidgetExtension"))
+    #expect(watchWidgetTarget["platform"] as? String == "watchOS")
+    #expect(watchWidgetTarget["type"] as? String == "app-extension")
+    let watchWidgetSettings = try #require(project.targetSettings(named: "ContextPanelWatchWidgetExtension"))
+    #expect(
+        watchWidgetSettings["PRODUCT_BUNDLE_IDENTIFIER"] as? String
+            == "com.shinycomputers.contextpanel.watch.widget"
+    )
+    #expect(
+        watchWidgetSettings["CODE_SIGN_ENTITLEMENTS"] as? String
+            == "Config/ContextPanelWatchWidget.entitlements"
+    )
+    #expect(watchWidgetSettings["WATCHOS_DEPLOYMENT_TARGET"] as? String == "10.0")
+    #expect(watchWidgetSettings["SKIP_INSTALL"] as? String == "true")
+    let watchWidgetReleaseSettings = try #require(
+        project.releaseTargetSettings(named: "ContextPanelWatchWidgetExtension")
+    )
+    #expect(watchWidgetReleaseSettings["CODE_SIGN_IDENTITY"] as? String == "Apple Distribution")
+    #expect(
+        watchWidgetReleaseSettings["PROVISIONING_PROFILE_SPECIFIER"] as? String
+            == "$(CONTEXT_PANEL_APP_STORE_WATCH_WIDGET_PROFILE_SPECIFIER)"
+    )
+    let watchWidgetDependencies = try #require(project.dependencies(named: "ContextPanelWatchWidgetExtension"))
+    #expect(watchWidgetDependencies == ["ContextPanelCoreWatch", "ContextPanelCloudKitSyncWatch"])
+
+    let watchWidgetPlist = try loadInfoPlist("Config/ContextPanelWatchWidget-Info.plist")
+    let watchWidgetExtension = try #require(watchWidgetPlist["NSExtension"] as? [String: Any])
+    #expect(
+        watchWidgetExtension["NSExtensionPointIdentifier"] as? String
+            == "com.apple.widgetkit-extension"
+    )
+
+    let plist = try loadInfoPlist("Config/ContextPanelWatch-Info.plist")
+    #expect(plist["WKApplication"] as? Bool == true)
+    #expect(plist["WKCompanionAppBundleIdentifier"] as? String == "com.shinycomputers.contextpanel")
+    #expect(plist["UIApplicationSceneManifest"] == nil)
+    #expect(plist["UIBackgroundModes"] == nil)
 }
 
 @Test func refreshAgentDoesNotReferenceRetiredGoogleCredentialPaths() throws {

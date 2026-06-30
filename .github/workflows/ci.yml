@@ -38,4 +38,10 @@ jobs:
           fi
 
       - name: Validate companion iOS build
-        run: scripts/validate-companion-builds.sh ios
+        run: >-
+          scripts/validate-companion-builds.sh
+          --configuration Release --archive ios
+
+      - name: Validate companion watchOS build
+        run: >-
+          scripts/validate-companion-builds.sh --configuration Release watchos
