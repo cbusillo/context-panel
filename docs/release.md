@@ -304,6 +304,8 @@ the Mac upload path plus companion-specific Apple Distribution signing assets:
 - `COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64`
 - `COMPANION_APP_STORE_WATCH_PROVISIONING_PROFILE_BASE64` for iOS companion
   uploads that embed the watchOS companion app
+- `COMPANION_APP_STORE_WATCH_WIDGET_PROVISIONING_PROFILE_BASE64` for iOS
+  companion uploads that embed the watchOS complication extension
 
 The companion app profile must authorize:
 

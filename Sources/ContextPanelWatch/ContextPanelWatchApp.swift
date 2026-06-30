@@ -31,23 +31,24 @@ private struct WatchRootView: View {
                         syncErrorMessage: model.lastSyncErrorMessage
                     )
                 } else {
-                    Section("Limits") {
+                    Section {
                         ForEach(model.displayLimits) { limit in
                             WatchLimitRow(limit: limit)
                         }
                     }
                 }
-
-                Section {
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         model.reload()
                     } label: {
-                        Label("Refresh", systemImage: "arrow.clockwise")
+                        Image(systemName: "arrow.clockwise")
                     }
                     .disabled(model.isLoading)
+                    .accessibilityLabel("Refresh")
                 }
             }
-            .navigationTitle("Context Panel")
             .task {
                 model.reload()
             }
@@ -75,8 +76,8 @@ private final class WatchSyncModel {
     private(set) var lastSyncErrorMessage: String?
     private(set) var isLoading = false
 
-    var displayLimits: [UsageLimit] {
-        Array(snapshot.mostConstrainedLimits.prefix(4))
+    var displayLimits: [WatchLimitDisplay] {
+        WatchLimitDisplay.rows(from: snapshot, maximumCount: 5)
     }
 
     func reload(now: Date = Date()) {
@@ -129,26 +130,30 @@ private struct WatchStatusSection: View {
 
     var body: some View {
         Section {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
                     Image(systemName: presentation.symbol)
                         .foregroundStyle(presentation.tint)
                     Text(presentation.title)
-                        .font(.headline)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                    Spacer(minLength: 2)
+                    if let generatedText = presentation.generatedText {
+                        Text(generatedText)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    }
                 }
 
-                Text(presentation.detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if let generatedText = presentation.generatedText {
-                    Text(generatedText)
+                if presentation.shouldShowDetail {
+                    Text(presentation.detail)
                         .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
                 }
             }
-            .padding(.vertical, 4)
+            .padding(.vertical, 1)
         }
     }
 }
@@ -199,29 +204,29 @@ private struct WatchEmptySection: View {
 }
 
 private struct WatchLimitRow: View {
-    let limit: UsageLimit
+    let limit: WatchLimitDisplay
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 5) {
             HStack(alignment: .firstTextBaseline) {
-                Text(limit.provider.displayName)
-                    .font(.headline)
-                Spacer(minLength: 4)
-                Text(remainingText)
+                Text(limit.title)
                     .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                Text(limit.subtitle)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Text(limit.remainingText)
+                    .font(.headline.weight(.semibold))
                     .foregroundStyle(statusColor)
             }
-
-            Text(limit.displayLabel)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
 
             ProgressView(value: capacityRatio)
                 .tint(statusColor)
 
             HStack(spacing: 6) {
-                Text(limit.contextLabel.isEmpty ? limit.accountName : limit.contextLabel)
+                Text(limit.context)
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 if let resetText {
@@ -232,24 +237,15 @@ private struct WatchLimitRow: View {
             .font(.caption2)
             .foregroundStyle(.tertiary)
         }
-        .padding(.vertical, 3)
+        .padding(.vertical, 1)
     }
 
     private var capacityRatio: Double {
-        guard let usageRatio = limit.usageRatio else { return 0 }
-        return max(1 - usageRatio, 0)
-    }
-
-    private var remainingText: String {
-        guard let remaining = limit.remaining else { return "Unknown" }
-        if limit.unit == .percent { return "\(remaining)% left" }
-        return "\(remaining) left"
+        limit.capacityRatio
     }
 
     private var resetText: String? {
-        guard let resetsAt = limit.resetsAt else { return nil }
-        if resetsAt < Date().addingTimeInterval(-60) { return "reset passed" }
-        return "reset \(resetsAt.formatted(.relative(presentation: .numeric)))"
+        limit.resetText.map { "reset \($0)" }
     }
 
     private var statusColor: Color {
@@ -272,11 +268,13 @@ private struct WatchSyncPresentation {
     let symbol: String
     let tint: Color
     let generatedText: String?
+    let shouldShowDetail: Bool
 
     init(result: CompanionSyncLoadResult, snapshot: WidgetSnapshot, syncErrorMessage: String?) {
         generatedText = result.document.map { document in
-            "Updated \(document.snapshot.generatedAt.formatted(.relative(presentation: .named)))"
+            document.snapshot.generatedAt.formatted(.relative(presentation: .numeric))
         }
+        shouldShowDetail = result.status != .healthy && result.status != .close && result.status != .limited
 
         if let errorMessage = result.errorMessage ?? syncErrorMessage, result.status == .failure {
             title = "Sync failed"

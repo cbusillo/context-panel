@@ -113,11 +113,12 @@ run_xcodebuild() {
 }
 
 validate_archive_contents() {
-	local platform archive_path app_path watch_path
+	local platform archive_path app_path watch_path watch_widget_path
 	platform="$1"
 	archive_path="$2"
 	app_path="$archive_path/Products/Applications/Context Panel.app"
 	watch_path="$app_path/Watch/Context Panel.app"
+	watch_widget_path="$watch_path/PlugIns/ContextPanelWatchWidgetExtension.appex"
 
 	if [[ ! -d "$app_path" ]]; then
 		echo "companion archive is missing app bundle: $app_path" >&2
@@ -128,6 +129,10 @@ validate_archive_contents() {
 	ios)
 		if [[ ! -d "$watch_path" ]]; then
 			echo "iOS companion archive is missing embedded watch app: $watch_path" >&2
+			exit 1
+		fi
+		if [[ ! -d "$watch_widget_path" ]]; then
+			echo "iOS companion archive is missing embedded watch widget: $watch_widget_path" >&2
 			exit 1
 		fi
 		;;

@@ -7,6 +7,7 @@
     "productGoals": "docs/product-goals.md",
     "architecture": "docs/architecture.md",
     "designDirection": "docs/design-direction.md",
+    "release": "docs/release.md",
     "localLimitProbe": "docs/local-limit-probe.md",
     "providerUsageAccess": "docs/provider-usage-access.md",
     "repoSettings": "docs/repo-settings.md"
@@ -24,7 +25,9 @@
     },
     "validate": {
       "default": "scripts/commit-gate.sh",
-      "companionWatchBuild": "scripts/validate-companion-builds.sh watchos"
+      "companionIOSArchive": "scripts/validate-companion-builds.sh --configuration Release --archive ios",
+      "companionVisionOSArchive": "scripts/validate-companion-builds.sh --configuration Release --archive visionos",
+      "companionWatchBuild": "scripts/validate-companion-builds.sh --configuration Release watchos"
     },
     "docsRequiredWhen": [
       "provider behavior changes",

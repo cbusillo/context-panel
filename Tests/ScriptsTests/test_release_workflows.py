@@ -627,9 +627,11 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("-archivePath \"$archive_path\"", script)
         self.assertIn("validate_archive_contents()", script)
         self.assertIn("iOS companion archive is missing embedded watch app", script)
+        self.assertIn("iOS companion archive is missing embedded watch widget", script)
         self.assertIn("visionOS companion archive unexpectedly contains watch content", script)
         self.assertIn("Products/Applications/Context Panel.app", script)
         self.assertIn("Watch/Context Panel.app", script)
+        self.assertIn("PlugIns/ContextPanelWatchWidgetExtension.appex", script)
         self.assertIn("platforms=(ios visionos watchos)", script)
         self.assertIn("generic/platform=iOS", script)
         self.assertIn("generic/platform=visionOS", script)
@@ -1064,15 +1066,34 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("assert_profile_ubiquity_container \"$app_profile\" \"companion app\"", script)
         self.assertIn("assert_profile_push_notifications \"$app_profile\" \"companion app\" \"production\"", script)
         self.assertIn("--watch-profile PATH", script)
+        self.assertIn("--watch-widget-profile PATH", script)
         self.assertIn("companion watch provisioning profile not found", script)
+        self.assertIn("companion watch widget provisioning profile not found", script)
         self.assertIn(
             "assert_profile_bundle_id \"$watch_profile\" \"companion watch\" \"com.shinycomputers.contextpanel.watch\"",
             script,
         )
+        self.assertIn(
+            "assert_profile_bundle_id \"$watch_widget_profile\" \"companion watch widget\" \"com.shinycomputers.contextpanel.watch.widget\"",
+            script,
+        )
         self.assertIn("assert_profile_platform_any \"$watch_profile\" \"companion watch\" watchOS", script)
+        self.assertIn(
+            "assert_profile_platform_any \"$watch_widget_profile\" \"companion watch widget\" watchOS",
+            script,
+        )
         self.assertIn("assert_profile_icloud_service \"$watch_profile\" \"companion watch\" \"CloudKit\"", script)
+        self.assertIn(
+            "assert_profile_icloud_service \"$watch_widget_profile\" \"companion watch widget\" \"CloudKit\"",
+            script,
+        )
         self.assertIn("CONTEXT_PANEL_APP_STORE_WATCH_PROFILE_SPECIFIER=\"$watch_profile_uuid\"", script)
+        self.assertIn(
+            "CONTEXT_PANEL_APP_STORE_WATCH_WIDGET_PROFILE_SPECIFIER=\"$watch_widget_profile_uuid\"",
+            script,
+        )
         self.assertIn("<key>com.shinycomputers.contextpanel.watch</key>", script)
+        self.assertIn("<key>com.shinycomputers.contextpanel.watch.widget</key>", script)
         self.assertNotIn("assert_profile_icloud_service \"$widget_profile\"", script)
         self.assertNotIn("assert_profile_ubiquity_container \"$widget_profile\"", script)
         self.assertNotIn("assert_profile_push_notifications \"$widget_profile\"", script)

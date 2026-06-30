@@ -21,6 +21,20 @@
                ReferencedContainer = "container:ContextPanel.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "CB3DAA4F3D58BB27AF5536B9"
+               BuildableName = "ContextPanelWatchWidgetExtension.appex"
+               BlueprintName = "ContextPanelWatchWidgetExtension"
+               ReferencedContainer = "container:ContextPanel.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
