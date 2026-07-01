@@ -320,8 +320,12 @@ install_profile() {
 	local profile="$1"
 	local uuid="$2"
 	local directory="$HOME/Library/MobileDevice/Provisioning Profiles"
+	local destination="$directory/$uuid.provisionprofile"
 	mkdir -p "$directory"
-	cp "$profile" "$directory/$uuid.provisionprofile"
+	if [[ "$profile" == "$destination" ]]; then
+		return 0
+	fi
+	cp "$profile" "$destination"
 }
 
 validate_marketing_version() {
@@ -581,8 +585,8 @@ assert_profile_platform_any "$widget_profile" "companion widget" "${profile_plat
 if [[ "$platform" == "ios" ]]; then
 	assert_profile_bundle_id "$watch_profile" "companion watch" "com.shinycomputers.contextpanel.watch"
 	assert_profile_bundle_id "$watch_widget_profile" "companion watch widget" "com.shinycomputers.contextpanel.watch.widget"
-	assert_profile_platform_any "$watch_profile" "companion watch" watchOS
-	assert_profile_platform_any "$watch_widget_profile" "companion watch widget" watchOS
+	assert_profile_platform_any "$watch_profile" "companion watch" iOS watchOS
+	assert_profile_platform_any "$watch_widget_profile" "companion watch widget" iOS watchOS
 	assert_profile_icloud_service "$watch_profile" "companion watch" "CloudKit"
 	assert_profile_icloud_service "$watch_widget_profile" "companion watch widget" "CloudKit"
 fi
