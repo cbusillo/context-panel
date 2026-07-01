@@ -1077,9 +1077,9 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             "assert_profile_bundle_id \"$watch_widget_profile\" \"companion watch widget\" \"com.shinycomputers.contextpanel.watch.widget\"",
             script,
         )
-        self.assertIn("assert_profile_platform_any \"$watch_profile\" \"companion watch\" watchOS", script)
+        self.assertIn("assert_profile_platform_any \"$watch_profile\" \"companion watch\" iOS watchOS", script)
         self.assertIn(
-            "assert_profile_platform_any \"$watch_widget_profile\" \"companion watch widget\" watchOS",
+            "assert_profile_platform_any \"$watch_widget_profile\" \"companion watch widget\" iOS watchOS",
             script,
         )
         self.assertIn("assert_profile_icloud_service \"$watch_profile\" \"companion watch\" \"CloudKit\"", script)
@@ -1087,6 +1087,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             "assert_profile_icloud_service \"$watch_widget_profile\" \"companion watch widget\" \"CloudKit\"",
             script,
         )
+        self.assertIn('if [[ "$profile" == "$destination" ]]; then', script)
         self.assertIn("CONTEXT_PANEL_APP_STORE_WATCH_PROFILE_SPECIFIER=\"$watch_profile_uuid\"", script)
         self.assertIn(
             "CONTEXT_PANEL_APP_STORE_WATCH_WIDGET_PROFILE_SPECIFIER=\"$watch_widget_profile_uuid\"",

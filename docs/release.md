@@ -322,9 +322,12 @@ CloudKit, or APNs entitlements; it reads only the app-group mirror written by th
 companion app.
 
 For iOS companion uploads, the watch profile must authorize bundle ID
-`com.shinycomputers.contextpanel.watch`, platform `watchOS`, and the Context
-Panel CloudKit container. The watch app is embedded only in the iOS companion
-package; native visionOS companion builds deliberately exclude watchOS content.
+`com.shinycomputers.contextpanel.watch` and the Context Panel CloudKit
+container. App Store Connect may report `iOS` platform metadata for the embedded
+watch profiles because the watch app and complication extension are exported as
+part of the iOS companion archive. The watch app is embedded only in the iOS
+companion package; native visionOS companion builds deliberately exclude watchOS
+content.
 
 Do not remove older App IDs, profiles, or profile secrets while validating the
 new companion path. Keep them available until a signed device/TestFlight install
