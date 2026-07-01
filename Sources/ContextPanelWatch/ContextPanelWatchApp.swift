@@ -19,6 +19,12 @@ private struct WatchRootView: View {
     var body: some View {
         NavigationStack {
             List {
+                WatchStatusSection(
+                    result: model.displayResult,
+                    snapshot: model.snapshot,
+                    syncErrorMessage: model.lastSyncErrorMessage
+                )
+
                 if model.snapshot.limits.isEmpty {
                     WatchEmptySection(
                         result: model.displayResult,
@@ -31,12 +37,6 @@ private struct WatchRootView: View {
                         }
                     }
                 }
-
-                WatchStatusSection(
-                    result: model.displayResult,
-                    snapshot: model.snapshot,
-                    syncErrorMessage: model.lastSyncErrorMessage
-                )
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
