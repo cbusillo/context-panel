@@ -150,29 +150,29 @@ struct ContextPanelSmallWidget: View {
     let snapshot: WidgetSnapshot
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 5) {
             if let problem = snapshot.widgetProblemText {
                 CPWProblemLabel(problem, status: snapshot.status)
             }
-            Spacer(minLength: 4)
             if let tightest = snapshot.tightestMainLimitSummary {
                 Text(tightest.widgetRemainingHeadline)
-                    .font(.system(size: 30, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 28, weight: .semibold, design: .monospaced))
                     .foregroundStyle(CPWTheme.primaryText(variant: themeVariant))
-                    .minimumScaleFactor(0.7)
+                    .minimumScaleFactor(0.68)
                     .lineLimit(1)
                 Text(tightest.widgetSmallWindowLine)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(CPWTheme.primaryText(variant: themeVariant))
-                    .minimumScaleFactor(0.85)
-                    .lineLimit(2)
+                    .minimumScaleFactor(0.75)
+                    .lineLimit(1)
                 if let resetText = tightest.widgetResetConfidenceText {
                     Text(resetText)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 9, weight: .medium))
                         .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
-                        .lineLimit(2)
+                        .minimumScaleFactor(0.8)
+                        .lineLimit(1)
                 }
-                CPWCapacityBar(value: tightest.usageRatio ?? 0, status: tightest.status, height: 6)
+                CPWCapacityBar(value: tightest.usageRatio ?? 0, status: tightest.status, height: 5)
             } else {
                 Text("Set up accounts")
                     .font(.system(size: 22, weight: .semibold))
@@ -183,10 +183,10 @@ struct ContextPanelSmallWidget: View {
                     .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
                     .lineLimit(2)
             }
-            Spacer(minLength: 4)
+            Spacer(minLength: 0)
             CPWProviderMiniStatus(snapshot: snapshot)
         }
-        .padding(14)
+        .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
@@ -560,16 +560,17 @@ struct CPWProviderMiniStatus: View {
     let snapshot: WidgetSnapshot
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 9) {
             ForEach(Provider.allCases) { provider in
                 let isConnected = snapshot.limits.contains { $0.provider == provider }
                 Text(provider.shortName)
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 8, weight: .semibold, design: .monospaced))
                     .foregroundStyle(isConnected ? CPWTheme.providerColor(provider) : CPWTheme.tertiaryText(variant: themeVariant))
                     .lineLimit(1)
                     .opacity(isConnected ? 1 : 0.35)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
