@@ -14,8 +14,15 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
 
     public static func rows(from snapshot: WidgetSnapshot, maximumCount: Int) -> [WatchLimitDisplay] {
         let limitRows = snapshot.mostConstrainedLimits.map(row(from:))
-        let summaryRows = snapshot.usageSnapshot.mostConstrainedMainLimitSummaries.compactMap { summary in
-            row(from: summary)
+        let representedMainWindows = Set(snapshot.mostConstrainedLimits.compactMap { limit -> MainLimitRowKey? in
+            guard let window = limit.mainLimitWindow else { return nil }
+            return MainLimitRowKey(provider: limit.provider, window: window)
+        })
+        let summaryRows: [WatchLimitDisplay] = snapshot.usageSnapshot.mostConstrainedMainLimitSummaries.compactMap { summary in
+            guard !representedMainWindows.contains(MainLimitRowKey(provider: summary.provider, window: summary.window)) else {
+                return nil
+            }
+            return row(from: summary)
         }
         return Array((limitRows + summaryRows).prefix(maximumCount))
     }
@@ -87,4 +94,9 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
         if resetsAt < Date().addingTimeInterval(-60) { return "passed" }
         return resetsAt.formatted(.relative(presentation: .numeric))
     }
+}
+
+private struct MainLimitRowKey: Hashable {
+    let provider: Provider
+    let window: MainLimitWindow
 }

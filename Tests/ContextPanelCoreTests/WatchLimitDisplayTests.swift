@@ -3,7 +3,7 @@ import ContextPanelWatchSupport
 import Foundation
 import Testing
 
-@Test func watchLimitDisplayPrioritizesTightestAccountBeforePooledPercentMainLimits() throws {
+@Test func watchLimitDisplayPrioritizesTightestAccountAndOmitsDuplicatePooledMainLimit() throws {
     let snapshot = WidgetSnapshot(
         state: .ready,
         generatedAt: Date(timeIntervalSince1970: 1_800_000_000),
@@ -25,12 +25,26 @@ import Testing
     #expect(tightest.remainingText == "75%")
     #expect(tightest.capacityRatio == 0.75)
 
-    let weekly = try #require(rows.first { $0.id == "summary:openai:weekly" })
-    #expect(weekly.title == "OpenAI")
-    #expect(weekly.subtitle == "1w")
-    #expect(weekly.context == "3 accounts")
-    #expect(weekly.remainingText == "92%")
-    #expect(weekly.capacityRatio == 0.9166666666666666)
+    #expect(rows.contains { $0.id == "summary:openai:weekly" } == false)
+}
+
+@Test func watchLimitDisplayDeduplicatesPooledRowsBeforeApplyingLimit() throws {
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+        limits: [
+            openAIWeeklyPercentLimit(accountID: "primary", used: 25),
+            openAIWeeklyPercentLimit(accountID: "secondary", used: 0),
+            googleWeeklyPercentLimit(accountID: "antigravity", used: 30),
+        ],
+        status: .healthy,
+        message: "Synced"
+    )
+
+    let rows = WatchLimitDisplay.rows(from: snapshot, maximumCount: 2)
+
+    #expect(rows.map(\.title) == ["Google", "OpenAI"])
+    #expect(rows.contains { $0.id == "summary:openai:weekly" } == false)
 }
 
 @Test func watchLimitDisplayFallsBackToRawMainLimitWhenPoolCannotBeBuilt() throws {
@@ -69,6 +83,21 @@ import Testing
 private func openAIWeeklyPercentLimit(accountID: String, used: Int) -> UsageLimit {
     UsageLimit(
         provider: .openAI,
+        accountID: accountID,
+        accountName: accountID.capitalized,
+        label: "Weekly",
+        windowLabel: "Weekly",
+        unit: .percent,
+        used: used,
+        limit: 100,
+        resetsAt: Date(timeIntervalSince1970: 1_800_604_800),
+        confidence: .observed
+    )
+}
+
+private func googleWeeklyPercentLimit(accountID: String, used: Int) -> UsageLimit {
+    UsageLimit(
+        provider: .google,
         accountID: accountID,
         accountName: accountID.capitalized,
         label: "Weekly",

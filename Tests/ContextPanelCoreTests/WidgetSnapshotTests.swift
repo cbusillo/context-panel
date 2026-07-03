@@ -248,7 +248,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(widget.hasProviderReconnectIssue == true)
 }
 
-@Test func widgetSnapshotUsesReconnectMessageWhenFailureHasWorkingConfiguredSiblingAccount() {
+@Test func widgetSnapshotUsesReconnectMessageWhenFailureHasDifferentWorkingConfiguredSiblingAccount() {
     let savedAt = Date(timeIntervalSince1970: 100)
     let stored = StoredUsageSnapshot(
         savedAt: savedAt,
@@ -293,8 +293,8 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
 
     #expect(widget.state == .stale)
     #expect(widget.status == .stale)
-    #expect(widget.message == "Refresh Context Panel to update data.")
-    #expect(widget.hasProviderReconnectIssue == false)
+    #expect(widget.message == "Reconnect account to update data.")
+    #expect(widget.hasProviderReconnectIssue == true)
 }
 
 @Test func widgetSnapshotUsesReconnectMessageWhenFailureHasOnlyDifferentConfiguredSibling() {

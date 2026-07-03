@@ -128,6 +128,35 @@ import Testing
     #expect([report].reconnectBlockingFailures(coveredBy: limits).isEmpty)
 }
 
+@Test func reconnectFailureIsNotCoveredByDifferentLimitAccountWithSharedConfiguredID() throws {
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let report = StoredProviderReport(
+        provider: .openAI,
+        accountID: "openai-account-failed",
+        configuredAccountID: "openai-code-default",
+        accountName: "OpenAI",
+        generatedAt: savedAt,
+        status: .failure,
+        errorMessage: "Every Code auth for this ChatGPT account is no longer authorized for Codex usage."
+    )
+    let limits = [UsageLimit(
+        provider: .openAI,
+        accountID: "openai-account-healthy",
+        configuredAccountID: "openai-code-default",
+        accountName: "OpenAI",
+        label: "Codex 5-hour",
+        windowLabel: "5-hour",
+        unit: .percent,
+        used: 12,
+        limit: 100,
+        resetsAt: savedAt.addingTimeInterval(60),
+        lastUpdatedAt: savedAt,
+        confidence: .observed
+    )]
+
+    #expect([report].reconnectBlockingFailures(coveredBy: limits).map(\.accountID) == ["openai-account-failed"])
+}
+
 @Test func storedSnapshotsDowngradeSuccessfulReportsWithoutMatchingLimits() throws {
     let root = try temporaryDirectory()
     let store = JSONSnapshotStore(rootDirectory: root)
@@ -1796,6 +1825,29 @@ import Testing
     let policy = SnapshotStoreStalenessPolicy(maximumAge: 5 * 60, resetExpiryRefreshState: state)
 
     #expect(policy.refreshAttentionSummary(for: stored, now: resetAt.addingTimeInterval(20)) == nil)
+}
+
+@Test func refreshAttentionSummaryOmitsExpiredResetAfterRetryExhaustion() throws {
+    let savedAt = Date(timeIntervalSince1970: 1_000)
+    let resetAt = savedAt.addingTimeInterval(60)
+    let staleSnapshot = UsageSnapshot(generatedAt: savedAt, limits: [
+        usageLimit(provider: .google, accountID: "Antigravity", used: 0, savedAt: savedAt, resetsAt: resetAt),
+    ])
+    var state = ResetExpiryRefreshState()
+    state.recordAttempt(
+        previousSnapshot: staleSnapshot,
+        refreshedSnapshot: staleSnapshot,
+        attemptedAt: resetAt.addingTimeInterval(10)
+    )
+    state.recordAttempt(
+        previousSnapshot: staleSnapshot,
+        refreshedSnapshot: staleSnapshot,
+        attemptedAt: resetAt.addingTimeInterval(40)
+    )
+    let stored = StoredUsageSnapshot(savedAt: resetAt.addingTimeInterval(40), snapshot: staleSnapshot)
+    let policy = SnapshotStoreStalenessPolicy(maximumAge: 5 * 60, resetExpiryRefreshState: state)
+
+    #expect(policy.refreshAttentionSummary(for: stored, now: resetAt.addingTimeInterval(70)) == nil)
 }
 
 @Test func snapshotRefreshRunnerRefreshesWhenResetExpired() async throws {
