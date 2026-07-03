@@ -99,6 +99,35 @@ import Testing
     #expect(failures.map(\.accountID) == ["openai-account-limited"])
 }
 
+@Test func reconnectFailureIsCoveredByCurrentLimitForSameConfiguredAccount() throws {
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let report = StoredProviderReport(
+        provider: .openAI,
+        accountID: "openai-account-failed",
+        configuredAccountID: "openai-code-default",
+        accountName: "OpenAI",
+        generatedAt: savedAt,
+        status: .failure,
+        errorMessage: "Every Code auth for this ChatGPT account is no longer authorized for Codex usage."
+    )
+    let limits = [UsageLimit(
+        provider: .openAI,
+        accountID: "openai-account-failed",
+        configuredAccountID: "openai-code-default",
+        accountName: "OpenAI",
+        label: "Codex 5-hour",
+        windowLabel: "5-hour",
+        unit: .percent,
+        used: 12,
+        limit: 100,
+        resetsAt: savedAt.addingTimeInterval(60),
+        lastUpdatedAt: savedAt,
+        confidence: .observed
+    )]
+
+    #expect([report].reconnectBlockingFailures(coveredBy: limits).isEmpty)
+}
+
 @Test func storedSnapshotsDowngradeSuccessfulReportsWithoutMatchingLimits() throws {
     let root = try temporaryDirectory()
     let store = JSONSnapshotStore(rootDirectory: root)

@@ -211,7 +211,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     }
 
     public var hasProviderReconnectIssue: Bool {
-        reports.hasReconnectBlockingFailure
+        reports.reconnectBlockingFailures(coveredBy: limits).isEmpty == false
     }
 
     public var needsProviderConnection: Bool {
@@ -253,7 +253,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         case .setupNeeded:
             return "Set up Context Panel in the app."
         case .stale:
-            return stored.reports.hasReconnectBlockingFailure
+            return stored.reports.reconnectBlockingFailures(coveredBy: stored.snapshot.limits).isEmpty == false
                 ? "Reconnect account to update data."
                 : refreshAttentionSummary?.refreshNeededDetail ?? "Refresh Context Panel to update data."
         case .failure:
@@ -295,7 +295,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         if resultStatus == .stale || resultStatus == .failure {
             return .stale
         }
-        if stored.reports.hasReconnectBlockingFailure {
+        if stored.reports.reconnectBlockingFailures(coveredBy: stored.snapshot.limits).isEmpty == false {
             return .stale
         }
         return .available

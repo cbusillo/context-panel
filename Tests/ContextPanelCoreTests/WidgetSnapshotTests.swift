@@ -66,6 +66,46 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(widget.widgetProblemText == "OpenAI refresh needed")
 }
 
+@Test func widgetSnapshotDoesNotRequestReconnectWhenCurrentLimitCoversFailedReport() {
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let limit = UsageLimit(
+        provider: .openAI,
+        accountID: "openai-account-failed",
+        configuredAccountID: "openai-code-default",
+        accountName: "OpenAI",
+        label: "Codex 5-hour",
+        windowLabel: "5-hour",
+        unit: .percent,
+        used: 12,
+        limit: 100,
+        resetsAt: savedAt.addingTimeInterval(60),
+        lastUpdatedAt: savedAt,
+        confidence: .observed
+    )
+    let stored = StoredUsageSnapshot(
+        savedAt: savedAt,
+        snapshot: UsageSnapshot(generatedAt: savedAt, limits: [limit]),
+        reports: [StoredProviderReport(
+            provider: .openAI,
+            accountID: "openai-account-failed",
+            configuredAccountID: "openai-code-default",
+            accountName: "OpenAI",
+            generatedAt: savedAt,
+            status: .failure,
+            errorMessage: "Every Code auth for this ChatGPT account is no longer authorized for Codex usage."
+        )]
+    )
+
+    let widget = WidgetSnapshot.fromStore(
+        SnapshotStoreLoadResult(snapshot: stored, status: .stale),
+        now: savedAt.addingTimeInterval(30)
+    )
+
+    #expect(widget.hasProviderReconnectIssue == false)
+    #expect(widget.message == "Refresh Context Panel to update data.")
+    #expect(widget.widgetProblemText != "Reconnect account")
+}
+
 @Test func widgetSnapshotProblemTextNamesSingleExpiredResetProvider() {
     let savedAt = Date(timeIntervalSince1970: 100)
     let resetAt = savedAt.addingTimeInterval(60)
@@ -253,8 +293,8 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
 
     #expect(widget.state == .stale)
     #expect(widget.status == .stale)
-    #expect(widget.message == "Reconnect account to update data.")
-    #expect(widget.hasProviderReconnectIssue == true)
+    #expect(widget.message == "Refresh Context Panel to update data.")
+    #expect(widget.hasProviderReconnectIssue == false)
 }
 
 @Test func widgetSnapshotUsesReconnectMessageWhenFailureHasOnlyDifferentConfiguredSibling() {
