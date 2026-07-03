@@ -531,6 +531,44 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(widget.promptCacheWidgetState == .available)
 }
 
+@Test func widgetSnapshotKeepsPromptCacheAvailableWhenProviderRefreshNeedsAttention() {
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let stored = StoredUsageSnapshot(
+        savedAt: savedAt,
+        snapshot: UsageSnapshot(generatedAt: savedAt, limits: [
+            UsageLimit(provider: .openAI, label: "Codex", used: 20, limit: 100),
+        ]),
+        reports: [StoredProviderReport(
+            provider: .google,
+            accountID: "google-antigravity",
+            accountName: "Antigravity",
+            generatedAt: savedAt,
+            status: .failure,
+            errorMessage: "Google refresh needs keychain approval."
+        )],
+        promptCacheObservations: [
+            PromptCacheObservation(
+                provider: .openAI,
+                accountID: "every-code",
+                accountName: "Every Code",
+                observedAt: savedAt,
+                windowLabel: "Last hour",
+                tokens: PromptCacheTokenSet(inputTokens: 1_000, cachedInputTokens: 900)
+            ),
+        ]
+    )
+
+    let widget = WidgetSnapshot.fromStore(
+        SnapshotStoreLoadResult(snapshot: stored, status: .stale),
+        now: savedAt.addingTimeInterval(60)
+    )
+
+    #expect(widget.state == .stale)
+    #expect(widget.promptCacheObservations.count == 1)
+    #expect(widget.promptCacheSummary.tokenWeightedHitRate == 0.9)
+    #expect(widget.promptCacheWidgetState == .available)
+}
+
 @Test func widgetSnapshotCanRequestPromptCacheAuthorizationForConfiguredCodexAccount() throws {
     let root = try widgetSnapshotTemporaryDirectory()
     let codeDirectory = root.appending(path: ".code-chris", directoryHint: .isDirectory)

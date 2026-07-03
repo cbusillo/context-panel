@@ -126,9 +126,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             now: now
         )
         let resolvedPromptCacheState = promptCacheWidgetState ?? Self.promptCacheWidgetState(
-            observations: recentPromptCacheObservations,
-            stored: stored,
-            resultStatus: result.status
+            observations: recentPromptCacheObservations
         )
 
         return WidgetSnapshot(
@@ -285,18 +283,10 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     }
 
     private static func promptCacheWidgetState(
-        observations: [PromptCacheObservation],
-        stored: StoredUsageSnapshot,
-        resultStatus: UsageStatus
+        observations: [PromptCacheObservation]
     ) -> PromptCacheWidgetState {
         if !PromptCacheSummary(observations: observations).isAvailable {
             return .unavailable
-        }
-        if resultStatus == .stale || resultStatus == .failure {
-            return .stale
-        }
-        if stored.reports.reconnectBlockingFailures(coveredBy: stored.snapshot.limits).isEmpty == false {
-            return .stale
         }
         return .available
     }
