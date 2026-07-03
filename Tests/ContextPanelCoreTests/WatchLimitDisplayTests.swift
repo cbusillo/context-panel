@@ -47,6 +47,27 @@ import Testing
     #expect(rows.contains { $0.id == "summary:openai:weekly" } == false)
 }
 
+@Test func watchLimitDisplayKeepsDistinctMainWindowsWhenRawRowsExceedLimit() throws {
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+        limits: [
+            openAIWeeklyPercentLimit(accountID: "primary", used: 95),
+            openAIWeeklyPercentLimit(accountID: "secondary", used: 90),
+            openAIWeeklyPercentLimit(accountID: "tertiary", used: 85),
+            googleWeeklyPercentLimit(accountID: "antigravity", used: 80),
+        ],
+        status: .healthy,
+        message: "Synced"
+    )
+
+    let rows = WatchLimitDisplay.rows(from: snapshot, maximumCount: 2)
+
+    #expect(rows.map(\.title) == ["OpenAI", "Google"])
+    #expect(rows.first?.context == "Primary")
+    #expect(rows.first?.remainingText == "5%")
+}
+
 @Test func watchLimitDisplayFallsBackToRawMainLimitWhenPoolCannotBeBuilt() throws {
     let snapshot = WidgetSnapshot(
         state: .ready,

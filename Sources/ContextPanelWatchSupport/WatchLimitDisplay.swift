@@ -13,18 +13,31 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
     public let status: UsageStatus
 
     public static func rows(from snapshot: WidgetSnapshot, maximumCount: Int) -> [WatchLimitDisplay] {
-        let limitRows = snapshot.mostConstrainedLimits.map(row(from:))
-        let representedMainWindows = Set(snapshot.mostConstrainedLimits.compactMap { limit -> MainLimitRowKey? in
-            guard let window = limit.mainLimitWindow else { return nil }
-            return MainLimitRowKey(provider: limit.provider, window: window)
-        })
-        let summaryRows: [WatchLimitDisplay] = snapshot.usageSnapshot.mostConstrainedMainLimitSummaries.compactMap { summary in
-            guard !representedMainWindows.contains(MainLimitRowKey(provider: summary.provider, window: summary.window)) else {
-                return nil
+        guard maximumCount > 0 else { return [] }
+
+        var rows: [WatchLimitDisplay] = []
+        var representedMainWindows = Set<MainLimitRowKey>()
+
+        for limit in snapshot.mostConstrainedLimits where rows.count < maximumCount {
+            if let window = limit.mainLimitWindow {
+                let key = MainLimitRowKey(provider: limit.provider, window: window)
+                guard !representedMainWindows.contains(key) else { continue }
+                representedMainWindows.insert(key)
             }
-            return row(from: summary)
+
+            rows.append(row(from: limit))
         }
-        return Array((limitRows + summaryRows).prefix(maximumCount))
+
+        for summary in snapshot.usageSnapshot.mostConstrainedMainLimitSummaries where rows.count < maximumCount {
+            let key = MainLimitRowKey(provider: summary.provider, window: summary.window)
+            guard !representedMainWindows.contains(key), let summaryRow = row(from: summary) else {
+                continue
+            }
+            rows.append(summaryRow)
+            representedMainWindows.insert(key)
+        }
+
+        return rows
     }
 
     private static func row(from summary: MainLimitSummary) -> WatchLimitDisplay? {
