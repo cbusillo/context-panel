@@ -134,11 +134,17 @@ private extension UsageStatus {
 
 public extension Collection where Element == StoredProviderReport {
     var reconnectBlockingFailures: [StoredProviderReport] {
+        reconnectBlockingFailures(coveredBy: [])
+    }
+
+    func reconnectBlockingFailures(coveredBy limits: [UsageLimit]) -> [StoredProviderReport] {
         let workingGroups = Set(
             filter(\.coversReconnectFailure).map(\.reconnectGroupKey)
         )
         return filter { report in
-            report.status == .failure && !workingGroups.contains(report.reconnectGroupKey)
+            report.status == .failure
+                && !workingGroups.contains(report.reconnectGroupKey)
+                && !limits.contains { $0.coversReconnectFailure(report) }
         }
     }
 
@@ -184,6 +190,16 @@ private extension StoredProviderReport {
         case .failure, .loading, .stale, .unknown:
             false
         }
+    }
+}
+
+private extension UsageLimit {
+    func coversReconnectFailure(_ report: StoredProviderReport) -> Bool {
+        guard provider == report.provider else { return false }
+        if let configuredAccountID = report.configuredAccountID {
+            return self.configuredAccountID == configuredAccountID || accountID == report.accountID
+        }
+        return accountID == report.accountID
     }
 }
 
@@ -328,8 +344,12 @@ public struct SnapshotStoreStalenessPolicy: Equatable, Sendable {
         guard let storedSnapshot else { return nil }
         let ageIsStale = now.timeIntervalSince(storedSnapshot.snapshot.generatedAt) > maximumAge
         let expiredResetLimits = resetRefreshDueLimits(in: storedSnapshot.snapshot, now: now)
+        let reconnectFailures = storedSnapshot.reports.reconnectBlockingFailures(coveredBy: storedSnapshot.snapshot.limits)
         let reports = storedSnapshot.reports.filter { report in
-            report.status == .failure || report.status == .stale || (report.status == .unknown && report.errorMessage != nil)
+            if report.status == .failure {
+                return reconnectFailures.contains(report)
+            }
+            return report.status == .stale || (report.status == .unknown && report.errorMessage != nil)
         }
 
         guard ageIsStale || !expiredResetLimits.isEmpty || !reports.isEmpty else { return nil }

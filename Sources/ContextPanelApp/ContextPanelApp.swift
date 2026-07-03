@@ -1732,7 +1732,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         }
 
         let refreshSubject = refreshSubjectText(for: account)
-        if reports.hasReconnectBlockingFailure {
+        if !reports.reconnectBlockingFailures(coveredBy: storedSnapshot.snapshot.limits).isEmpty {
             return SettingsAccountRefreshSummary(text: "Last \(refreshSubject) failed; see Diagnostics", status: .failure)
         }
         if reports.contains(where: { $0.status == .stale }) {
@@ -1765,7 +1765,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         guard let reports = storedSnapshot?.reports.filter({ account.matchesProviderReport($0) }), !reports.isEmpty else {
             return false
         }
-        guard reports.hasReconnectBlockingFailure else { return false }
+        guard !reports.reconnectBlockingFailures(coveredBy: storedSnapshot?.snapshot.limits ?? []).isEmpty else { return false }
         return !reports.contains(where: { $0.hasProviderConfigurationFailure })
     }
 
@@ -3628,8 +3628,9 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     var providerReportsNeedingAttention: [StoredProviderReport] {
-        guard let reports = storedSnapshot?.reports else { return [] }
-        return reports.reconnectBlockingFailures + reports.filter(\.needsNonFailureRefreshAttention)
+        guard let storedSnapshot else { return [] }
+        return storedSnapshot.reports.reconnectBlockingFailures(coveredBy: storedSnapshot.snapshot.limits)
+            + storedSnapshot.reports.filter(\.needsNonFailureRefreshAttention)
     }
 
     private var primaryProviderReportNeedingAttention: StoredProviderReport? {
@@ -3641,7 +3642,8 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     var hasProviderReconnectIssue: Bool {
-        storedSnapshot?.reports.hasReconnectBlockingFailure ?? false
+        guard let storedSnapshot else { return false }
+        return !storedSnapshot.reports.reconnectBlockingFailures(coveredBy: storedSnapshot.snapshot.limits).isEmpty
     }
 
     func reportNeedsAttention(_ account: LocalProviderAccountConfiguration) -> Bool {

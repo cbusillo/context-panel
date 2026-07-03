@@ -184,7 +184,6 @@ struct ContextPanelSmallWidget: View {
                     .lineLimit(2)
             }
             Spacer(minLength: 0)
-            CPWProviderMiniStatus(snapshot: snapshot)
         }
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -552,25 +551,6 @@ struct CPWProviderSummaryGrid: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-    }
-}
-
-struct CPWProviderMiniStatus: View {
-    @Environment(\.cpwThemeVariant) private var themeVariant
-    let snapshot: WidgetSnapshot
-
-    var body: some View {
-        HStack(spacing: 9) {
-            ForEach(Provider.allCases) { provider in
-                let isConnected = snapshot.limits.contains { $0.provider == provider }
-                Text(provider.shortName)
-                    .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(isConnected ? CPWTheme.providerColor(provider) : CPWTheme.tertiaryText(variant: themeVariant))
-                    .lineLimit(1)
-                    .opacity(isConnected ? 1 : 0.35)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
