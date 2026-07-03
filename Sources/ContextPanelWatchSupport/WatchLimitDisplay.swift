@@ -13,19 +13,11 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
     public let status: UsageStatus
 
     public static func rows(from snapshot: WidgetSnapshot, maximumCount: Int) -> [WatchLimitDisplay] {
-        let mainRows = snapshot.usageSnapshot.mostConstrainedMainLimitSummaries.compactMap { summary in
+        let limitRows = snapshot.mostConstrainedLimits.map(row(from:))
+        let summaryRows = snapshot.usageSnapshot.mostConstrainedMainLimitSummaries.compactMap { summary in
             row(from: summary)
         }
-        let mainIDs = Set(mainRows.map(\.id))
-        let supplementalRows = snapshot.mostConstrainedLimits.compactMap { limit -> WatchLimitDisplay? in
-            if let mainLimitWindow = limit.mainLimitWindow,
-               mainIDs.contains(summaryID(provider: limit.provider, window: mainLimitWindow)) {
-                return nil
-            }
-            let row = row(from: limit)
-            return mainIDs.contains(row.id) ? nil : row
-        }
-        return Array((mainRows + supplementalRows).prefix(maximumCount))
+        return Array((limitRows + summaryRows).prefix(maximumCount))
     }
 
     private static func row(from summary: MainLimitSummary) -> WatchLimitDisplay? {

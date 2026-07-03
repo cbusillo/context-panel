@@ -3,7 +3,7 @@ import ContextPanelWatchSupport
 import Foundation
 import Testing
 
-@Test func watchLimitDisplayNormalizesPooledPercentMainLimits() throws {
+@Test func watchLimitDisplayPrioritizesTightestAccountBeforePooledPercentMainLimits() throws {
     let snapshot = WidgetSnapshot(
         state: .ready,
         generatedAt: Date(timeIntervalSince1970: 1_800_000_000),
@@ -18,7 +18,14 @@ import Testing
 
     let rows = WatchLimitDisplay.rows(from: snapshot, maximumCount: 5)
 
-    let weekly = try #require(rows.first)
+    let tightest = try #require(rows.first)
+    #expect(tightest.title == "OpenAI")
+    #expect(tightest.subtitle == "Weekly")
+    #expect(tightest.context == "Primary")
+    #expect(tightest.remainingText == "75%")
+    #expect(tightest.capacityRatio == 0.75)
+
+    let weekly = try #require(rows.first { $0.id == "summary:openai:weekly" })
     #expect(weekly.title == "OpenAI")
     #expect(weekly.subtitle == "1w")
     #expect(weekly.context == "3 accounts")
