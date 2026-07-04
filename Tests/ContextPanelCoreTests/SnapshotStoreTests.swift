@@ -66,9 +66,44 @@ import Testing
 
     #expect(report.userFacingErrorMessage?.contains("Keychain approval") == true)
     #expect(report.userFacingErrorMessage?.contains("Click Refresh") == true)
+    #expect(report.userFacingErrorMessage?.contains("for Google") == true)
     #expect(report.userFacingErrorMessage?.contains("Always Allow") == true)
     #expect(report.userFacingErrorMessage?.contains("\"gemini\"") == true)
     #expect(report.userFacingErrorMessage?.contains("-25308") == false)
+}
+
+@Test func googleAntigravityAccessTokenExpiryUsesForegroundRefreshGuidance() {
+    let report = StoredProviderReport(
+        provider: .google,
+        accountID: "google-antigravity",
+        accountName: "Antigravity",
+        generatedAt: Date(timeIntervalSince1970: 100),
+        status: .failure,
+        errorMessage: "Google Antigravity access token has expired. Open Antigravity so it can refresh its Google session, then refresh Google in Context Panel."
+    )
+
+    #expect(report.userFacingErrorMessage?.contains("access token expired") == true)
+    #expect(report.userFacingErrorMessage?.contains("Open Antigravity") == true)
+    #expect(report.userFacingErrorMessage?.contains("refresh Google in Context Panel") == true)
+    #expect(report.userFacingErrorMessage?.contains("Sign in again") == false)
+    #expect(report.userFacingErrorMessage?.contains("Reconnect") == false)
+}
+
+@Test func googleCodeAssistRejectionUsesAccountCheckGuidance() {
+    let report = StoredProviderReport(
+        provider: .google,
+        accountID: "google-antigravity",
+        accountName: "Antigravity",
+        generatedAt: Date(timeIntervalSince1970: 100),
+        status: .failure,
+        errorMessage: "Google Antigravity is connected, but Google Code Assist rejected quota access for this app or account."
+    )
+
+    #expect(report.userFacingErrorMessage?.contains("Code Assist rejected quota access") == true)
+    #expect(report.userFacingErrorMessage?.contains("Antigravity or Google account") == true)
+    #expect(report.userFacingErrorMessage?.contains("refresh Google in Context Panel") == true)
+    #expect(report.userFacingErrorMessage?.contains("OAuth") == false)
+    #expect(report.userFacingErrorMessage?.contains("Reconnect") == false)
 }
 
 @Test func reconnectFailuresAreNotCoveredByDifferentAccountsWithSharedConfiguredID() throws {
