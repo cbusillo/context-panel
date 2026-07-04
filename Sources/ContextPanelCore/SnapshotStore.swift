@@ -295,6 +295,10 @@ public struct RefreshAttentionSummary: Codable, Equatable, Sendable {
             case .unknown:
                 return "\(target) did not return a complete refresh report. Refresh now, then check that provider if it persists."
             case .failure:
+                if let errorMessage = report.userFacingErrorMessage,
+                   !errorMessage.isEmpty {
+                    return "\(target) needs attention: \(errorMessage)"
+                }
                 return "\(target) needs attention. Reconnect this account, then refresh."
             case .healthy, .close, .limited, .loading:
                 break
