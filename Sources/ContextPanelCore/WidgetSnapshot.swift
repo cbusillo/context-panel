@@ -253,9 +253,12 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         case .setupNeeded:
             return "Set up Context Panel in the app."
         case .stale:
+            if let refreshNeededDetail = refreshAttentionSummary?.refreshNeededDetail {
+                return refreshNeededDetail
+            }
             return stored.reports.reconnectBlockingFailures(coveredBy: stored.snapshot.limits).isEmpty == false
                 ? "Reconnect account to update data."
-                : refreshAttentionSummary?.refreshNeededDetail ?? "Refresh Context Panel to update data."
+                : "Refresh Context Panel to update data."
         case .failure:
             return "Reconnect account to update data."
         }
