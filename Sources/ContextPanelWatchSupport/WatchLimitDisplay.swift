@@ -18,12 +18,19 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
 
         var rows: [WatchLimitDisplay] = []
         var representedMainWindows = Set<MainLimitRowKey>()
+        let summaryByKey = Dictionary(uniqueKeysWithValues: snapshot.usageSnapshot.mostConstrainedMainLimitSummaries.map { summary in
+            (MainLimitRowKey(provider: summary.provider, window: summary.window), summary)
+        })
 
         for limit in snapshot.mostConstrainedLimits where rows.count < maximumCount {
             if let window = limit.mainLimitWindow {
                 let key = MainLimitRowKey(provider: limit.provider, window: window)
                 guard !representedMainWindows.contains(key) else { continue }
                 representedMainWindows.insert(key)
+                if let summary = summaryByKey[key], let summaryRow = row(from: summary) {
+                    rows.append(summaryRow)
+                    continue
+                }
             }
 
             rows.append(row(from: limit))
