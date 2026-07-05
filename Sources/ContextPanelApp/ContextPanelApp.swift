@@ -2359,10 +2359,10 @@ struct ReconnectDashboard: View {
                     }
                 }
 
-                DetailCard(title: "Accounts") {
+                DetailCard(title: accountsNeedingAction.isEmpty ? "Next Step" : "Accounts") {
                     VStack(alignment: .leading, spacing: 10) {
                         if accountsNeedingAction.isEmpty {
-                            Text("No account action is available. Try Refresh now; if the widget stays stale, reconnect the affected provider from Settings.")
+                            Text(appModel.emptyAttentionActionText)
                                 .font(.system(size: 12, weight: .medium))
                                 .foregroundStyle(CPTheme.secondaryText)
                         } else {
@@ -3662,6 +3662,18 @@ final class ContextPanelAppModel: ObservableObject {
             return "One or more provider refreshes need attention. Reconnect the affected account, then refresh."
         }
         return "Refresh is healthy right now."
+    }
+
+    var emptyAttentionActionText: String {
+        if isRefreshing {
+            return "Refresh is running. This should clear when providers return a fresh snapshot."
+        }
+        if storeStatus == .stale,
+           refreshAttentionSummary != nil,
+           providerReportsNeedingAttention.isEmpty {
+            return "No account reconnect is needed for this state. Refresh Context Panel to update expired reset windows; if this persists, check provider diagnostics in Settings."
+        }
+        return "No account reconnect is available for this state. Try Refresh now; if this persists, check provider diagnostics in Settings."
     }
 
     var refreshAttentionSummary: RefreshAttentionSummary? {
