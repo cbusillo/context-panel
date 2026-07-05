@@ -2359,10 +2359,10 @@ struct ReconnectDashboard: View {
                     }
                 }
 
-                DetailCard(title: "Accounts") {
+                DetailCard(title: accountsNeedingAction.isEmpty ? "Next Step" : "Accounts") {
                     VStack(alignment: .leading, spacing: 10) {
                         if accountsNeedingAction.isEmpty {
-                            Text("No account action is available. Try Refresh now; if the widget stays stale, reconnect the affected provider from Settings.")
+                            Text(appModel.emptyAttentionActionText)
                                 .font(.system(size: 12, weight: .medium))
                                 .foregroundStyle(CPTheme.secondaryText)
                         } else {
@@ -2980,11 +2980,22 @@ struct SetupStatusStrip: View {
             )
             Spacer(minLength: 12)
             if let errorMessage = model.errorMessage {
-                Text(model.primaryErrorStatusText)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(CPTheme.statusColor(.failure))
-                    .lineLimit(1)
-                    .help(errorMessage)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(model.primaryErrorStatusText)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(CPTheme.statusColor(.failure))
+                        .lineLimit(1)
+                    if let detail = model.primaryErrorDetailText {
+                        Text(detail)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(CPTheme.secondaryText)
+                            .multilineTextAlignment(.trailing)
+                            .lineLimit(2)
+                    }
+                }
+                .frame(maxWidth: 420, alignment: .trailing)
+                .fixedSize(horizontal: false, vertical: true)
+                .help(errorMessage)
             }
         }
         .padding(14)
@@ -3562,7 +3573,13 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     var primaryErrorStatusText: String {
-        switch storeStatus {
+        if let report = primaryProviderReportNeedingAttention {
+            if report.hasProviderConfigurationFailure {
+                return "Fix \(report.provider.displayName) setup"
+            }
+            return "\(report.provider.displayName) needs attention"
+        }
+        return switch storeStatus {
         case .failure:
             "Reconnect account"
         case .stale:
@@ -3574,6 +3591,25 @@ final class ContextPanelAppModel: ObservableObject {
         }
     }
 
+    var primaryErrorDetailText: String? {
+        if let report = primaryProviderReportNeedingAttention {
+            if let errorMessage = report.userFacingErrorMessage, !errorMessage.isEmpty {
+                return errorMessage
+            }
+            if report.hasProviderConfigurationFailure {
+                return "Check the app configuration, then refresh."
+            }
+            if report.status == .failure {
+                return "Reconnect this account, then refresh."
+            }
+            return "Refresh now, then check the provider status if it persists."
+        }
+        if let refreshAttentionSummary, storeStatus == .stale {
+            return refreshAttentionSummary.refreshNeededDetail
+        }
+        return nil
+    }
+
     var shouldShowReconnectNavigation: Bool {
         storeStatus == .failure || storeStatus == .stale || !providerReportsNeedingAttention.isEmpty
     }
@@ -3582,6 +3618,11 @@ final class ContextPanelAppModel: ObservableObject {
         if let report = primaryProviderReportNeedingAttention, report.status == .failure {
             if report.hasProviderConfigurationFailure {
                 return "Fix \(report.provider.displayName) setup"
+            }
+            if report.provider == .google,
+               let errorMessage = report.userFacingErrorMessage,
+               !errorMessage.isEmpty {
+                return "\(report.provider.displayName) needs attention"
             }
             return "Reconnect \(report.provider.displayName)"
         }
@@ -3621,6 +3662,18 @@ final class ContextPanelAppModel: ObservableObject {
             return "One or more provider refreshes need attention. Reconnect the affected account, then refresh."
         }
         return "Refresh is healthy right now."
+    }
+
+    var emptyAttentionActionText: String {
+        if isRefreshing {
+            return "Refresh is running. This should clear when providers return a fresh snapshot."
+        }
+        if storeStatus == .stale,
+           refreshAttentionSummary != nil,
+           providerReportsNeedingAttention.isEmpty {
+            return "No account reconnect is needed for this state. Refresh Context Panel to update expired reset windows; if this persists, check provider diagnostics in Settings."
+        }
+        return "No account reconnect is available for this state. Try Refresh now; if this persists, check provider diagnostics in Settings."
     }
 
     var refreshAttentionSummary: RefreshAttentionSummary? {

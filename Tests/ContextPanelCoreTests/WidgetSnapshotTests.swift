@@ -216,7 +216,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(widget.message == "Reconnect account to update data.")
 }
 
-@Test func widgetSnapshotUsesReconnectMessageForStaleProviderFailures() {
+@Test func widgetSnapshotUsesProviderFailureDetailForStaleProviderFailures() {
     let savedAt = Date(timeIntervalSince1970: 100)
     let stored = StoredUsageSnapshot(
         savedAt: savedAt,
@@ -244,11 +244,54 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
 
     #expect(widget.state == .stale)
     #expect(widget.status == .stale)
-    #expect(widget.message == "Reconnect account to update data.")
+    #expect(widget.message == "OpenAI · OpenAI needs attention: Auth expired")
     #expect(widget.hasProviderReconnectIssue == true)
 }
 
-@Test func widgetSnapshotUsesReconnectMessageWhenFailureHasDifferentWorkingConfiguredSiblingAccount() {
+@Test func widgetSnapshotUsesGoogleAntigravityGuidanceForStaleProviderFailures() {
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let stored = StoredUsageSnapshot(
+        savedAt: savedAt,
+        snapshot: UsageSnapshot(
+            generatedAt: savedAt,
+            limits: [UsageLimit(
+                provider: .google,
+                accountID: "google-working-account",
+                configuredAccountID: "google-other-account",
+                accountName: "Antigravity",
+                label: "Gemini",
+                used: 20,
+                limit: 100
+            )]
+        ),
+        reports: [
+            StoredProviderReport(
+                provider: .google,
+                accountID: "google-antigravity-failed",
+                configuredAccountID: "google-antigravity",
+                accountName: "Antigravity",
+                generatedAt: savedAt,
+                status: .failure,
+                errorMessage: "Google Antigravity access token has expired. Open Antigravity so it can refresh its Google session, then refresh Google in Context Panel."
+            ),
+        ]
+    )
+
+    let widget = WidgetSnapshot.fromStore(
+        SnapshotStoreLoadResult(snapshot: stored, status: .stale),
+        now: Date(timeIntervalSince1970: 1_000)
+    )
+
+    #expect(widget.state == .stale)
+    #expect(widget.status == .stale)
+    #expect(widget.widgetProblemText == "Reconnect account")
+    #expect(widget.message.contains("Google · Antigravity needs attention:"))
+    #expect(widget.message.contains("Open Antigravity"))
+    #expect(widget.message.contains("refresh Google in Context Panel"))
+    #expect(widget.message.contains("Reconnect") == false)
+}
+
+@Test func widgetSnapshotUsesProviderFailureDetailWhenFailureHasDifferentWorkingConfiguredSiblingAccount() {
     let savedAt = Date(timeIntervalSince1970: 100)
     let stored = StoredUsageSnapshot(
         savedAt: savedAt,
@@ -293,11 +336,11 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
 
     #expect(widget.state == .stale)
     #expect(widget.status == .stale)
-    #expect(widget.message == "Reconnect account to update data.")
+    #expect(widget.message == "OpenAI · Expired OpenAI needs attention: Auth expired")
     #expect(widget.hasProviderReconnectIssue == true)
 }
 
-@Test func widgetSnapshotUsesReconnectMessageWhenFailureHasOnlyDifferentConfiguredSibling() {
+@Test func widgetSnapshotUsesProviderFailureDetailWhenFailureHasOnlyDifferentConfiguredSibling() {
     let savedAt = Date(timeIntervalSince1970: 100)
     let stored = StoredUsageSnapshot(
         savedAt: savedAt,
@@ -341,7 +384,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     )
 
     #expect(widget.state == .stale)
-    #expect(widget.message == "Reconnect account to update data.")
+    #expect(widget.message == "OpenAI · Expired OpenAI needs attention: Auth expired")
     #expect(widget.hasProviderReconnectIssue == true)
 }
 

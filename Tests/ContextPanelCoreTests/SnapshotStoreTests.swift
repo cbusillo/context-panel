@@ -66,9 +66,44 @@ import Testing
 
     #expect(report.userFacingErrorMessage?.contains("Keychain approval") == true)
     #expect(report.userFacingErrorMessage?.contains("Click Refresh") == true)
+    #expect(report.userFacingErrorMessage?.contains("for Google") == true)
     #expect(report.userFacingErrorMessage?.contains("Always Allow") == true)
     #expect(report.userFacingErrorMessage?.contains("\"gemini\"") == true)
     #expect(report.userFacingErrorMessage?.contains("-25308") == false)
+}
+
+@Test func googleAntigravityAccessTokenExpiryUsesForegroundRefreshGuidance() {
+    let report = StoredProviderReport(
+        provider: .google,
+        accountID: "google-antigravity",
+        accountName: "Antigravity",
+        generatedAt: Date(timeIntervalSince1970: 100),
+        status: .failure,
+        errorMessage: "Google Antigravity access token has expired. Open Antigravity so it can refresh its Google session, then refresh Google in Context Panel."
+    )
+
+    #expect(report.userFacingErrorMessage?.contains("access token expired") == true)
+    #expect(report.userFacingErrorMessage?.contains("Open Antigravity") == true)
+    #expect(report.userFacingErrorMessage?.contains("refresh Google in Context Panel") == true)
+    #expect(report.userFacingErrorMessage?.contains("Sign in again") == false)
+    #expect(report.userFacingErrorMessage?.contains("Reconnect") == false)
+}
+
+@Test func googleCodeAssistRejectionUsesAccountCheckGuidance() {
+    let report = StoredProviderReport(
+        provider: .google,
+        accountID: "google-antigravity",
+        accountName: "Antigravity",
+        generatedAt: Date(timeIntervalSince1970: 100),
+        status: .failure,
+        errorMessage: "Google Antigravity is connected, but Google Code Assist rejected quota access for this app or account."
+    )
+
+    #expect(report.userFacingErrorMessage?.contains("Code Assist rejected quota access") == true)
+    #expect(report.userFacingErrorMessage?.contains("Antigravity or Google account") == true)
+    #expect(report.userFacingErrorMessage?.contains("refresh Google in Context Panel") == true)
+    #expect(report.userFacingErrorMessage?.contains("OAuth") == false)
+    #expect(report.userFacingErrorMessage?.contains("Reconnect") == false)
 }
 
 @Test func reconnectFailuresAreNotCoveredByDifferentAccountsWithSharedConfiguredID() throws {
@@ -1807,6 +1842,123 @@ import Testing
     #expect(summary.refreshNeededTitle == "Google refresh needed")
     #expect(summary.refreshNeededDetail.contains("Google · Antigravity"))
     #expect(summary.refreshNeededDetail.contains("expired"))
+}
+
+@Test func refreshAttentionSummaryUsesGoogleKeychainGuidance() throws {
+    let savedAt = Date(timeIntervalSince1970: 1_000)
+    let stored = StoredUsageSnapshot(
+        savedAt: savedAt,
+        snapshot: UsageSnapshot(generatedAt: savedAt, limits: []),
+        reports: [StoredProviderReport(
+            provider: .google,
+            accountID: "google-antigravity",
+            accountName: "Antigravity",
+            generatedAt: savedAt,
+            status: .failure,
+            errorMessage: "Keychain access failed with status -25308. User interaction is not allowed."
+        )]
+    )
+    let policy = SnapshotStoreStalenessPolicy(maximumAge: 5 * 60)
+
+    let summary = try #require(policy.refreshAttentionSummary(for: stored, now: savedAt.addingTimeInterval(10)))
+
+    #expect(summary.refreshNeededTitle == "Google refresh needed")
+    #expect(summary.refreshNeededDetail.contains("Google · Antigravity needs attention:"))
+    #expect(summary.refreshNeededDetail.contains("Refresh for Google"))
+    #expect(summary.refreshNeededDetail.contains("Always Allow"))
+    #expect(summary.refreshNeededDetail.contains("Reconnect") == false)
+    #expect(summary.refreshNeededDetail.contains("-25308") == false)
+}
+
+@Test func refreshAttentionSummaryUsesGoogleAntigravityTokenGuidance() throws {
+    let savedAt = Date(timeIntervalSince1970: 1_000)
+    let stored = StoredUsageSnapshot(
+        savedAt: savedAt,
+        snapshot: UsageSnapshot(generatedAt: savedAt, limits: []),
+        reports: [StoredProviderReport(
+            provider: .google,
+            accountID: "google-antigravity",
+            accountName: "Antigravity",
+            generatedAt: savedAt,
+            status: .failure,
+            errorMessage: "Google Antigravity access token has expired. Open Antigravity so it can refresh its Google session, then refresh Google in Context Panel."
+        )]
+    )
+    let policy = SnapshotStoreStalenessPolicy(maximumAge: 5 * 60)
+
+    let summary = try #require(policy.refreshAttentionSummary(for: stored, now: savedAt.addingTimeInterval(10)))
+
+    #expect(summary.refreshNeededDetail.contains("Google Antigravity access token expired") == true)
+    #expect(summary.refreshNeededDetail.contains("Open Antigravity") == true)
+    #expect(summary.refreshNeededDetail.contains("refresh Google in Context Panel") == true)
+    #expect(summary.refreshNeededDetail.contains("Reconnect") == false)
+}
+
+@Test func refreshAttentionSummaryUsesGoogleCodeAssistGuidance() throws {
+    let savedAt = Date(timeIntervalSince1970: 1_000)
+    let stored = StoredUsageSnapshot(
+        savedAt: savedAt,
+        snapshot: UsageSnapshot(generatedAt: savedAt, limits: []),
+        reports: [StoredProviderReport(
+            provider: .google,
+            accountID: "google-antigravity",
+            accountName: "Antigravity",
+            generatedAt: savedAt,
+            status: .failure,
+            errorMessage: "Google Antigravity is connected, but Google Code Assist rejected quota access for this app or account."
+        )]
+    )
+    let policy = SnapshotStoreStalenessPolicy(maximumAge: 5 * 60)
+
+    let summary = try #require(policy.refreshAttentionSummary(for: stored, now: savedAt.addingTimeInterval(10)))
+
+    #expect(summary.refreshNeededDetail.contains("Code Assist rejected quota access") == true)
+    #expect(summary.refreshNeededDetail.contains("Antigravity or Google account") == true)
+    #expect(summary.refreshNeededDetail.contains("refresh Google in Context Panel") == true)
+    #expect(summary.refreshNeededDetail.contains("OAuth") == false)
+    #expect(summary.refreshNeededDetail.contains("Reconnect") == false)
+}
+
+@Test func refreshAttentionSummaryUsesFailureReportMessageWhenAvailable() throws {
+    let savedAt = Date(timeIntervalSince1970: 1_000)
+    let stored = StoredUsageSnapshot(
+        savedAt: savedAt,
+        snapshot: UsageSnapshot(generatedAt: savedAt, limits: []),
+        reports: [StoredProviderReport(
+            provider: .openAI,
+            accountID: "openai-account",
+            accountName: "OpenAI",
+            generatedAt: savedAt,
+            status: .failure,
+            errorMessage: "Every Code auth expired."
+        )]
+    )
+    let policy = SnapshotStoreStalenessPolicy(maximumAge: 5 * 60)
+
+    let summary = try #require(policy.refreshAttentionSummary(for: stored, now: savedAt.addingTimeInterval(10)))
+
+    #expect(summary.refreshNeededDetail == "OpenAI · OpenAI needs attention: Every Code auth expired.")
+}
+
+@Test func refreshAttentionSummaryUsesReconnectFallbackWhenFailureHasNoMessage() throws {
+    let savedAt = Date(timeIntervalSince1970: 1_000)
+    let stored = StoredUsageSnapshot(
+        savedAt: savedAt,
+        snapshot: UsageSnapshot(generatedAt: savedAt, limits: []),
+        reports: [StoredProviderReport(
+            provider: .openAI,
+            accountID: "openai-account",
+            accountName: "OpenAI",
+            generatedAt: savedAt,
+            status: .failure,
+            errorMessage: nil
+        )]
+    )
+    let policy = SnapshotStoreStalenessPolicy(maximumAge: 5 * 60)
+
+    let summary = try #require(policy.refreshAttentionSummary(for: stored, now: savedAt.addingTimeInterval(10)))
+
+    #expect(summary.refreshNeededDetail == "OpenAI · OpenAI needs attention. Reconnect this account, then refresh.")
 }
 
 @Test func refreshAttentionSummaryOmitsSuppressedExpiredResetProvider() throws {
