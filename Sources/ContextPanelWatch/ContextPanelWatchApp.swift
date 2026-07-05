@@ -77,7 +77,7 @@ private final class WatchSyncModel {
     private(set) var isLoading = false
 
     var displayLimits: [WatchLimitDisplay] {
-        WatchLimitDisplay.rows(from: snapshot, maximumCount: 5)
+        WatchLimitDisplay.rows(from: snapshot, maximumCount: 8)
     }
 
     func reload(now: Date = Date()) {
@@ -221,7 +221,7 @@ private struct WatchLimitRow: View {
                     .foregroundStyle(statusColor)
             }
 
-            ProgressView(value: capacityRatio)
+            ProgressView(value: pressureRatio)
                 .tint(statusColor)
 
             HStack(spacing: 6) {
@@ -239,8 +239,8 @@ private struct WatchLimitRow: View {
         .padding(.vertical, 1)
     }
 
-    private var capacityRatio: Double {
-        limit.capacityRatio
+    private var pressureRatio: Double {
+        limit.pressureRatio
     }
 
     private var resetText: String? {

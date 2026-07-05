@@ -3,12 +3,12 @@ import ContextPanelWatchSupport
 import Foundation
 import Testing
 
-@Test func watchLimitDisplayPrioritizesTightestAccountAndOmitsDuplicatePooledMainLimit() throws {
+@Test func watchLimitDisplayUsesPooledMainLimitWhenMultipleAccountsShareAWindow() throws {
     let snapshot = WidgetSnapshot(
         state: .ready,
         generatedAt: Date(timeIntervalSince1970: 1_800_000_000),
         limits: [
-            openAIWeeklyPercentLimit(accountID: "primary", used: 25),
+            openAIWeeklyPercentLimit(accountID: "primary", used: 100),
             openAIWeeklyPercentLimit(accountID: "secondary", used: 0),
             openAIWeeklyPercentLimit(accountID: "tertiary", used: 0),
         ],
@@ -20,12 +20,14 @@ import Testing
 
     let tightest = try #require(rows.first)
     #expect(tightest.title == "OpenAI")
-    #expect(tightest.subtitle == "Weekly")
-    #expect(tightest.context == "Primary")
-    #expect(tightest.remainingText == "75%")
-    #expect(tightest.capacityRatio == 0.75)
+    #expect(tightest.subtitle == "1w")
+    #expect(tightest.context == "3 accounts")
+    #expect(tightest.remainingText == "67%")
+    #expect(abs(tightest.capacityRatio - 0.6666) < 0.001)
+    #expect(abs(tightest.pressureRatio - 0.3333) < 0.001)
 
-    #expect(rows.contains { $0.id == "summary:openai:weekly" } == false)
+    #expect(tightest.id == "summary:openai:weekly")
+    #expect(rows.filter { $0.provider == .openAI && $0.subtitle == "1w" }.count == 1)
 }
 
 @Test func watchLimitDisplayDeduplicatesPooledRowsBeforeApplyingLimit() throws {
@@ -44,7 +46,7 @@ import Testing
     let rows = WatchLimitDisplay.rows(from: snapshot, maximumCount: 2)
 
     #expect(rows.map(\.title) == ["Google", "OpenAI"])
-    #expect(rows.contains { $0.id == "summary:openai:weekly" } == false)
+    #expect(rows.contains { $0.id == "summary:openai:weekly" })
 }
 
 @Test func watchLimitDisplayKeepsDistinctMainWindowsWhenRawRowsExceedLimit() throws {
@@ -64,8 +66,70 @@ import Testing
     let rows = WatchLimitDisplay.rows(from: snapshot, maximumCount: 2)
 
     #expect(rows.map(\.title) == ["OpenAI", "Google"])
-    #expect(rows.first?.context == "Primary")
-    #expect(rows.first?.remainingText == "5%")
+    #expect(rows.first?.id == "summary:openai:weekly")
+    #expect(rows.first?.context == "3 accounts")
+    #expect(rows.first?.remainingText == "10%")
+}
+
+@Test func watchLimitDisplayKeepsOpenAIWeeklyAndFiveHourLanes() throws {
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+        limits: [
+            openAIWeeklyPercentLimit(accountID: "primary", used: 60),
+            openAIFiveHourPercentLimit(accountID: "primary", used: 45),
+            googleWeeklyPercentLimit(accountID: "antigravity", used: 55),
+        ],
+        status: .healthy,
+        message: "Synced"
+    )
+
+    let rows = WatchLimitDisplay.rows(from: snapshot, maximumCount: 5)
+
+    let openAIRows = rows.filter { $0.provider == .openAI }
+    #expect(openAIRows.map(\.subtitle) == ["1w", "5h"])
+    #expect(openAIRows.map(\.remainingText) == ["40%", "55%"])
+    #expect(openAIRows.map(\.pressureRatio) == [0.6, 0.45])
+}
+
+@Test func watchLimitDisplayMainLaneRowsKeepOpenAIWeeklyAndFiveHourFirst() throws {
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+        limits: [
+            openAIWeeklyPercentLimit(accountID: "primary", used: 60),
+            openAIFiveHourPercentLimit(accountID: "primary", used: 45),
+            googleWeeklyPercentLimit(accountID: "antigravity", used: 55),
+        ],
+        status: .healthy,
+        message: "Synced"
+    )
+
+    let rows = WatchLimitDisplay.mainLaneRows(from: snapshot, maximumCount: 2)
+
+    #expect(rows.map(\.provider) == [.openAI, .openAI])
+    #expect(rows.map(\.subtitle) == ["1w", "5h"])
+    #expect(rows.map(\.remainingText) == ["40%", "55%"])
+    #expect(rows.map(\.pressureRatio) == [0.6, 0.45])
+}
+
+@Test func watchLimitDisplayUsesPressureRatioForPooledRows() throws {
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+        limits: [
+            openAIWeeklyPercentLimit(accountID: "primary", used: 60),
+            openAIWeeklyPercentLimit(accountID: "secondary", used: 20),
+        ],
+        status: .healthy,
+        message: "Synced"
+    )
+
+    let rows = WatchLimitDisplay.rows(from: snapshot, maximumCount: 2)
+
+    #expect(rows.first?.id == "summary:openai:weekly")
+    #expect(rows.first?.pressureRatio == 0.4)
+    #expect(rows.first?.capacityRatio == 0.6)
 }
 
 @Test func watchLimitDisplayFallsBackToRawMainLimitWhenPoolCannotBeBuilt() throws {
@@ -112,6 +176,21 @@ private func openAIWeeklyPercentLimit(accountID: String, used: Int) -> UsageLimi
         used: used,
         limit: 100,
         resetsAt: Date(timeIntervalSince1970: 1_800_604_800),
+        confidence: .observed
+    )
+}
+
+private func openAIFiveHourPercentLimit(accountID: String, used: Int) -> UsageLimit {
+    UsageLimit(
+        provider: .openAI,
+        accountID: accountID,
+        accountName: accountID.capitalized,
+        label: "5-hour",
+        windowLabel: "5-hour",
+        unit: .percent,
+        used: used,
+        limit: 100,
+        resetsAt: Date(timeIntervalSince1970: 1_800_018_000),
         confidence: .observed
     )
 }

@@ -73,7 +73,15 @@ struct ContextPanelWatchWidgetView: View {
     let entry: ContextPanelWatchWidgetEntry
 
     private var limit: WatchLimitDisplay? {
-        WatchLimitDisplay.rows(from: entry.snapshot, maximumCount: 1).first
+        limits(maximumCount: 1).first
+    }
+
+    private var rectangularLimits: [WatchLimitDisplay] {
+        WatchLimitDisplay.mainLaneRows(from: entry.snapshot, maximumCount: 2)
+    }
+
+    private func limits(maximumCount: Int) -> [WatchLimitDisplay] {
+        WatchLimitDisplay.rows(from: entry.snapshot, maximumCount: maximumCount)
     }
 
     var body: some View {
@@ -81,13 +89,13 @@ struct ContextPanelWatchWidgetView: View {
         case .accessoryCircular:
             WatchCircularComplication(limit: limit, snapshot: entry.snapshot)
         case .accessoryRectangular:
-            WatchRectangularComplication(limit: limit, snapshot: entry.snapshot)
+            WatchRectangularComplication(limits: rectangularLimits, snapshot: entry.snapshot)
         case .accessoryInline:
             WatchInlineComplication(limit: limit, snapshot: entry.snapshot)
         case .accessoryCorner:
             WatchCornerComplication(limit: limit, snapshot: entry.snapshot)
         default:
-            WatchRectangularComplication(limit: limit, snapshot: entry.snapshot)
+            WatchRectangularComplication(limits: rectangularLimits, snapshot: entry.snapshot)
         }
     }
 }
@@ -97,7 +105,7 @@ struct WatchCircularComplication: View {
     let snapshot: WidgetSnapshot
 
     var body: some View {
-        Gauge(value: limit?.capacityRatio ?? 0) {
+        Gauge(value: limit?.pressureRatio ?? 0) {
             Image(systemName: symbol)
         } currentValueLabel: {
             Text(limit?.remainingText ?? "--")
@@ -117,30 +125,15 @@ struct WatchCircularComplication: View {
 }
 
 struct WatchRectangularComplication: View {
-    let limit: WatchLimitDisplay?
+    let limits: [WatchLimitDisplay]
     let snapshot: WidgetSnapshot
 
     var body: some View {
-        if let limit {
+        if !limits.isEmpty {
             VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 4) {
-                    Text(limit.title)
-                    Text(limit.subtitle)
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 2)
-                    Text(limit.remainingText)
-                        .foregroundStyle(watchStatusColor(limit.status))
+                ForEach(limits) { limit in
+                    WatchRectangularLimitLine(limit: limit)
                 }
-                .font(.caption.weight(.semibold))
-                .lineLimit(1)
-
-                ProgressView(value: limit.capacityRatio)
-                    .tint(watchStatusColor(limit.status))
-
-                Text(limit.context)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
             }
         } else {
             Label(emptyText, systemImage: "icloud.and.arrow.down")
@@ -151,6 +144,43 @@ struct WatchRectangularComplication: View {
 
     private var emptyText: String {
         snapshot.state == .failure ? "Sync failed" : "Sync Mac"
+    }
+}
+
+private struct WatchRectangularLimitLine: View {
+    let limit: WatchLimitDisplay
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(limit.title)
+            Text(limit.subtitle)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 2)
+            WatchMiniPressureBar(value: limit.pressureRatio, tint: watchStatusColor(limit.status))
+                .frame(width: 26, height: 3)
+            Text(limit.remainingText)
+                .foregroundStyle(watchStatusColor(limit.status))
+        }
+        .font(.caption.weight(.semibold))
+        .lineLimit(1)
+        .minimumScaleFactor(0.75)
+    }
+}
+
+private struct WatchMiniPressureBar: View {
+    let value: Double
+    let tint: Color
+
+    var body: some View {
+        GeometryReader { proxy in
+            Capsule()
+                .fill(.tertiary)
+                .overlay(alignment: .leading) {
+                    Capsule()
+                        .fill(tint)
+                        .frame(width: proxy.size.width * min(max(value, 0), 1))
+                }
+        }
     }
 }
 
@@ -175,7 +205,7 @@ struct WatchCornerComplication: View {
         Text(limit?.remainingText ?? "--")
             .widgetCurvesContent()
             .widgetLabel {
-                Gauge(value: limit?.capacityRatio ?? 0) {
+                Gauge(value: limit?.pressureRatio ?? 0) {
                     Text(limit?.title ?? "Sync")
                 }
                 .tint(limit.map { watchStatusColor($0.status) } ?? watchStatusColor(snapshot.status))
