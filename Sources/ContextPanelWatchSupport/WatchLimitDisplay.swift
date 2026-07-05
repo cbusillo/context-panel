@@ -10,6 +10,7 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
     public let remainingText: String
     public let resetText: String?
     public let capacityRatio: Double
+    public let pressureRatio: Double
     public let status: UsageStatus
 
     public static func rows(from snapshot: WidgetSnapshot, maximumCount: Int) -> [WatchLimitDisplay] {
@@ -40,6 +41,19 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
         return rows
     }
 
+    public static func mainLaneRows(from snapshot: WidgetSnapshot, maximumCount: Int) -> [WatchLimitDisplay] {
+        guard maximumCount > 0 else { return [] }
+
+        return WidgetDisplayPreferences.defaultPreferences
+            .visibleMainLimitLanes(from: snapshot.usageSnapshot.mainLimitSummaries, maximumCount: maximumCount)
+            .compactMap { lane in
+                if let summary = lane.summary {
+                    return row(from: summary)
+                }
+                return nil
+            }
+    }
+
     private static func row(from summary: MainLimitSummary) -> WatchLimitDisplay? {
         guard summary.pooledLimit != nil else { return nil }
         let accountText = summary.accountCount == 1 ? "1 account" : "\(summary.accountCount) accounts"
@@ -57,6 +71,7 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
             ),
             resetText: summary.resetCountdownText,
             capacityRatio: clampedCapacityRatio(summary.capacityRatio),
+            pressureRatio: clampedRatio(summary.usageRatio ?? 0),
             status: summary.status
         )
     }
@@ -75,6 +90,7 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
             remainingText: remainingText(remaining: limit.remaining, unit: limit.unit, capacityRatio: capacityRatio(for: limit)),
             resetText: resetText(for: limit),
             capacityRatio: capacityRatio(for: limit),
+            pressureRatio: pressureRatio(for: limit),
             status: limit.status
         )
     }
@@ -84,7 +100,16 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
         return clampedCapacityRatio(1 - usageRatio)
     }
 
+    private static func pressureRatio(for limit: UsageLimit) -> Double {
+        guard let usageRatio = limit.usageRatio else { return 0 }
+        return clampedRatio(usageRatio)
+    }
+
     private static func clampedCapacityRatio(_ ratio: Double) -> Double {
+        clampedRatio(ratio)
+    }
+
+    private static func clampedRatio(_ ratio: Double) -> Double {
         min(max(ratio, 0), 1)
     }
 
