@@ -291,7 +291,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(widget.message.contains("Reconnect") == false)
 }
 
-@Test func widgetSnapshotUsesReconnectMessageWhenFailureHasWorkingConfiguredSiblingAccount() {
+@Test func widgetSnapshotUsesProviderFailureDetailWhenFailureHasDifferentWorkingConfiguredSiblingAccount() {
     let savedAt = Date(timeIntervalSince1970: 100)
     let stored = StoredUsageSnapshot(
         savedAt: savedAt,
@@ -336,8 +336,8 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
 
     #expect(widget.state == .stale)
     #expect(widget.status == .stale)
-    #expect(widget.message == "Refresh Context Panel to update data.")
-    #expect(widget.hasProviderReconnectIssue == false)
+    #expect(widget.message == "OpenAI · Expired OpenAI needs attention: Auth expired")
+    #expect(widget.hasProviderReconnectIssue == true)
 }
 
 @Test func widgetSnapshotUsesProviderFailureDetailWhenFailureHasOnlyDifferentConfiguredSibling() {
@@ -569,6 +569,44 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
         now: savedAt.addingTimeInterval(60)
     )
 
+    #expect(widget.promptCacheObservations.count == 1)
+    #expect(widget.promptCacheSummary.tokenWeightedHitRate == 0.9)
+    #expect(widget.promptCacheWidgetState == .available)
+}
+
+@Test func widgetSnapshotKeepsPromptCacheAvailableWhenProviderRefreshNeedsAttention() {
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let stored = StoredUsageSnapshot(
+        savedAt: savedAt,
+        snapshot: UsageSnapshot(generatedAt: savedAt, limits: [
+            UsageLimit(provider: .openAI, label: "Codex", used: 20, limit: 100),
+        ]),
+        reports: [StoredProviderReport(
+            provider: .google,
+            accountID: "google-antigravity",
+            accountName: "Antigravity",
+            generatedAt: savedAt,
+            status: .failure,
+            errorMessage: "Google refresh needs keychain approval."
+        )],
+        promptCacheObservations: [
+            PromptCacheObservation(
+                provider: .openAI,
+                accountID: "every-code",
+                accountName: "Every Code",
+                observedAt: savedAt,
+                windowLabel: "Last hour",
+                tokens: PromptCacheTokenSet(inputTokens: 1_000, cachedInputTokens: 900)
+            ),
+        ]
+    )
+
+    let widget = WidgetSnapshot.fromStore(
+        SnapshotStoreLoadResult(snapshot: stored, status: .stale),
+        now: savedAt.addingTimeInterval(60)
+    )
+
+    #expect(widget.state == .stale)
     #expect(widget.promptCacheObservations.count == 1)
     #expect(widget.promptCacheSummary.tokenWeightedHitRate == 0.9)
     #expect(widget.promptCacheWidgetState == .available)

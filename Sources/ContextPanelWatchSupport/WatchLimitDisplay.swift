@@ -13,19 +13,31 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
     public let status: UsageStatus
 
     public static func rows(from snapshot: WidgetSnapshot, maximumCount: Int) -> [WatchLimitDisplay] {
-        let mainRows = snapshot.usageSnapshot.mostConstrainedMainLimitSummaries.compactMap { summary in
-            row(from: summary)
-        }
-        let mainIDs = Set(mainRows.map(\.id))
-        let supplementalRows = snapshot.mostConstrainedLimits.compactMap { limit -> WatchLimitDisplay? in
-            if let mainLimitWindow = limit.mainLimitWindow,
-               mainIDs.contains(summaryID(provider: limit.provider, window: mainLimitWindow)) {
-                return nil
+        guard maximumCount > 0 else { return [] }
+
+        var rows: [WatchLimitDisplay] = []
+        var representedMainWindows = Set<MainLimitRowKey>()
+
+        for limit in snapshot.mostConstrainedLimits where rows.count < maximumCount {
+            if let window = limit.mainLimitWindow {
+                let key = MainLimitRowKey(provider: limit.provider, window: window)
+                guard !representedMainWindows.contains(key) else { continue }
+                representedMainWindows.insert(key)
             }
-            let row = row(from: limit)
-            return mainIDs.contains(row.id) ? nil : row
+
+            rows.append(row(from: limit))
         }
-        return Array((mainRows + supplementalRows).prefix(maximumCount))
+
+        for summary in snapshot.usageSnapshot.mostConstrainedMainLimitSummaries where rows.count < maximumCount {
+            let key = MainLimitRowKey(provider: summary.provider, window: summary.window)
+            guard !representedMainWindows.contains(key), let summaryRow = row(from: summary) else {
+                continue
+            }
+            rows.append(summaryRow)
+            representedMainWindows.insert(key)
+        }
+
+        return rows
     }
 
     private static func row(from summary: MainLimitSummary) -> WatchLimitDisplay? {
@@ -95,4 +107,9 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
         if resetsAt < Date().addingTimeInterval(-60) { return "passed" }
         return resetsAt.formatted(.relative(presentation: .numeric))
     }
+}
+
+private struct MainLimitRowKey: Hashable {
+    let provider: Provider
+    let window: MainLimitWindow
 }

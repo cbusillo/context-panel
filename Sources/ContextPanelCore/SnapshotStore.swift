@@ -216,9 +216,6 @@ private extension StoredProviderReport {
 private extension UsageLimit {
     func coversReconnectFailure(_ report: StoredProviderReport) -> Bool {
         guard provider == report.provider else { return false }
-        if let configuredAccountID = report.configuredAccountID {
-            return self.configuredAccountID == configuredAccountID || accountID == report.accountID
-        }
         return accountID == report.accountID
     }
 }
