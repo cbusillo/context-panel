@@ -590,6 +590,13 @@ Chris explicitly asks for a private handoff. Document only the generic mechanism
 - `APP_STORE_CONNECT_ISSUER_ID`
 - `APP_STORE_CONNECT_API_KEY_P8_BASE64`, or `--api-key <private-key-path>`
 
+For Chris's local operator machine, first check for a private shell env file at
+`~/.appstoreconnect/asc.env`; source it only into the current command process
+and do not print its values. If it provides the key ID and issuer ID but not the
+key material, look for the matching private key under
+`~/.appstoreconnect/private_keys/` and pass it with `--api-key`. Keep exact key
+filenames and all values out of public docs, issues, PRs, and summaries.
+
 For a read-only active-review check, run the submit helper in `--dry-run` mode.
 For example, this validates that a selected version is attached to an active
 review submission without changing App Store Connect:
