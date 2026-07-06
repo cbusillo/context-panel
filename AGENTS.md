@@ -148,9 +148,13 @@ acceptable.
   direct local ASC API route documented in `docs/release.md` under "Direct App
   Store Connect API Checks." If that private operator config is unavailable,
   say so explicitly before falling back to the GitHub workflow dry-run path.
-  Do not write host-specific paths, key IDs, issuer IDs, private key names,
-  JWTs, or live App Store Connect object IDs into public repo docs, issues, PRs,
-  or agent summaries.
+  On Chris's local operator machine, the generic discovery path starts with the
+  private shell env file `~/.appstoreconnect/asc.env` and private key directory
+  `~/.appstoreconnect/private_keys/`; source values only into the command
+  process and pass the key with `--api-key` when needed. Do not write
+  host-specific paths, key IDs, issuer IDs, private key names, JWTs, or live App
+  Store Connect object IDs into public repo docs, issues, PRs, or agent
+  summaries.
 
 Minimum runtime evidence before saying a signed dogfood build is ready:
 
