@@ -5,12 +5,15 @@ Source plan: [#299](https://github.com/cbusillo/context-panel/issues/299)
 Apple screenshot specs checked on 2026-06-27:
 [Screenshot specifications](https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications/)
 
-## Approved Mac Captures
+## Mac Captures
 
 The Mac app screenshot was recaptured from the canonical installed app,
 `/Applications/Context Panel.app`, on 2026-07-06 after Chris approval. The
-widget screenshot is the existing approved staged composition. Both files use
-App Store Connect-accepted 16:10 Mac screenshot sizes.
+widget screenshot is the existing approved staged composition. Three additional
+Mac screenshots were captured from display 2 on 2026-07-06 to fill out the Mac
+App Store set. Those three display captures have the Tesla widget address
+redacted and were approved by Chris on 2026-07-06.
+All files use App Store Connect-accepted 16:10 Mac screenshot sizes.
 
 - `final/context-panel-appstore-1-app.png`
   - Source: canonical installed Mac app window capture
@@ -24,12 +27,36 @@ App Store Connect-accepted 16:10 Mac screenshot sizes.
   - Appearance: Dark
   - State: Synced data
   - Dimensions: 2880 x 1800
+- `final/context-panel-appstore-3-app-dark-current.png`
+  - Source: display 2 screenshot crop, address redacted
+  - Surface: App with widget context
+  - Appearance: Dark
+  - State: Overview, synced data
+  - Dimensions: 1440 x 900
+  - Approval: Chris approved on 2026-07-06
+- `final/context-panel-appstore-4-widgets-live-redacted.png`
+  - Source: display 2 screenshot crop, address redacted
+  - Surface: Desktop widgets with app context
+  - Appearance: Dark
+  - State: Synced data
+  - Dimensions: 1440 x 900
+  - Approval: Chris approved on 2026-07-06
+- `final/context-panel-appstore-5-glance-detail-redacted.png`
+  - Source: display 2 screenshot crop, address redacted
+  - Surface: Desktop widgets with app detail context
+  - Appearance: Dark
+  - State: Synced data
+  - Dimensions: 1440 x 900
+  - Approval: Chris approved on 2026-07-06
 
 Mac checksums:
 
 ```text
 0d7fd6292e297aedeecac620e728f6e7730315bd3a023810d46957f02a918bec  final/context-panel-appstore-1-app.png
 5e3c9cff997e504deb4f49771f821a896acfe8790de8acc90e217f4efad11c88  final/context-panel-appstore-2-widget.png
+14ee260b8583c747dc4499cd13eba85cd0f28df86fdd5c9fbdbb1de97448d93e  final/context-panel-appstore-3-app-dark-current.png
+627597d3462b30ad6d3e4d2e049082be703d4bc60cc29b30ae7ea67fcd438d35  final/context-panel-appstore-4-widgets-live-redacted.png
+ac864aa1be373493c2e67a32f21366777f8f65da9f1969136e8f4b7712ad3431  final/context-panel-appstore-5-glance-detail-redacted.png
 ```
 
 ## Approved iPhone Captures
@@ -40,25 +67,25 @@ approval. They are unedited PNG captures at 1206 x 2622, an accepted iPhone
 upload candidates is `Resources/AppStore/Screenshots/iphone/`.
 
 - `iphone/iphone-6-3-app-light-synced.png`
-  - Original: `/Users/cbusillo/Desktop/IMG_0363.PNG`
+  - Original: `IMG_0363.PNG` from Chris's Desktop
   - Surface: App
   - Appearance: Light
   - State: Synced data
   - Dimensions: 1206 x 2622
 - `iphone/iphone-6-3-app-dark-synced.png`
-  - Original: `/Users/cbusillo/Desktop/IMG_0365.PNG`
+  - Original: `IMG_0365.PNG` from Chris's Desktop
   - Surface: App
   - Appearance: Dark
   - State: Synced data
   - Dimensions: 1206 x 2622
 - `iphone/iphone-6-3-widget-light-home.png`
-  - Original: `/Users/cbusillo/Desktop/IMG_0362.PNG`
+  - Original: `IMG_0362.PNG` from Chris's Desktop
   - Surface: Widget
   - Appearance: Light
   - State: Home Screen synced data
   - Dimensions: 1206 x 2622
 - `iphone/iphone-6-3-widget-dark-home.png`
-  - Original: `/Users/cbusillo/Desktop/IMG_0364.PNG`
+  - Original: `IMG_0364.PNG` from Chris's Desktop
   - Surface: Widget
   - Appearance: Dark
   - State: Home Screen synced data
@@ -174,14 +201,16 @@ an accepted Apple Watch Ultra / Ultra 2 screenshot size. Use the healthy state
 first in App Store ordering, followed by the limited/pressure state.
 
 - `watch/watch-ultra-healthy.png`
-  - Original: `/Users/cbusillo/Desktop/incoming-77CC0C0D-6DD3-40E3-B8C9-03694265F2DF.PNG`
+  - Original: `incoming-77CC0C0D-6DD3-40E3-B8C9-03694265F2DF.PNG` from
+    Chris's Desktop
   - Source: physical Apple Watch screenshot
   - Surface: Watch app
   - Appearance: Dark
   - State: Healthy / available limits
   - Dimensions: 410 x 502
 - `watch/watch-ultra-limited.png`
-  - Original: `/Users/cbusillo/Desktop/incoming-3ED771EC-4670-43BB-8833-DF6798C8B2CF.PNG`
+  - Original: `incoming-3ED771EC-4670-43BB-8833-DF6798C8B2CF.PNG` from
+    Chris's Desktop
   - Source: physical Apple Watch screenshot
   - Surface: Watch app
   - Appearance: Dark
@@ -207,6 +236,12 @@ Staged Mac upload candidates:
   `final/context-panel-appstore-1-app.png`.
 - Mac widget, dark mode, synced-data state:
   `final/context-panel-appstore-2-widget.png`.
+- Mac app, dark mode, current synced-data overview, address redacted:
+  `final/context-panel-appstore-3-app-dark-current.png`.
+- Mac desktop widgets with app context, dark mode, address redacted:
+  `final/context-panel-appstore-4-widgets-live-redacted.png`.
+- Mac glance-to-detail view, dark mode, address redacted:
+  `final/context-panel-appstore-5-glance-detail-redacted.png`.
 
 Staged iPhone upload candidates:
 
