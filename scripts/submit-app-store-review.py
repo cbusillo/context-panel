@@ -796,14 +796,14 @@ def ensure_build(
         builds = [
             build
             for build in payload.get("data") or []
+            if isinstance(build, dict)
             if included.get(relationship_id(build, "preReleaseVersion") or "", {}).get("attributes", {}).get("platform")
             == platform
         ]
         if builds:
             last_build = builds[0]
-            attributes = last_build["attributes"]
+            attributes = last_build.get("attributes", {})
             if attributes.get("processingState") == "VALID":
-                build = last_build
                 break
             if time.monotonic() >= deadline:
                 raise AppStoreConnectError(
@@ -824,6 +824,9 @@ def ensure_build(
                 f"waiting {poll_interval}s for App Store Connect processing"
             )
         time.sleep(max(1, poll_interval))
+    if last_build is None:
+        raise AppStoreConnectError(f"missing {platform} build {args.build_number}", payload=last_payload)
+    build = last_build
     attributes = build["attributes"]
     if args.non_exempt_encryption is not None and attributes.get("usesNonExemptEncryption") != args.non_exempt_encryption:
         if allow_updates:
@@ -1187,6 +1190,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Cancel/remove the active review for --remove-active-review-version and exit without creating a replacement",
     )
+    parser.add_argument(
+        "--prepare-only",
+        action="store_true",
+        help="Create/update the App Store version and metadata without creating or submitting review",
+    )
     parser.add_argument("--api-key", default=os.environ.get("APP_STORE_CONNECT_API_KEY_PATH"))
     parser.add_argument("--api-key-id", default=os.environ.get("APP_STORE_CONNECT_KEY_ID"))
     parser.add_argument("--api-issuer-id", default=os.environ.get("APP_STORE_CONNECT_ISSUER_ID"))
@@ -1205,12 +1213,19 @@ def parse_args() -> argparse.Namespace:
 
 
 def validate_args(args: argparse.Namespace) -> None:
+    if args.prepare_only:
+        if args.cancel_review_only:
+            raise AppStoreConnectError("--prepare-only and --cancel-review-only are mutually exclusive")
+        if args.remove_active_review_version:
+            raise AppStoreConnectError("--prepare-only cannot remove an active review version")
+        if getattr(args, "additional_review_version", []):
+            raise AppStoreConnectError("--additional-review-version is only valid when submitting review")
     if args.cancel_review_only:
         if not args.remove_active_review_version:
             raise AppStoreConnectError("--cancel-review-only requires --remove-active-review-version")
         return
-    if not args.build_number:
-        raise AppStoreConnectError("--build-number is required unless --cancel-review-only is used")
+    if not args.build_number and not args.prepare_only:
+        raise AppStoreConnectError("--build-number is required unless --cancel-review-only or --prepare-only is used")
     if not args.whats_new:
         raise AppStoreConnectError("--whats-new is required unless --cancel-review-only is used")
 
@@ -1253,7 +1268,7 @@ def main() -> int:
             args.copy_from_version,
             args.platform,
         )
-        build = ensure_build(client, app_id, args, allow_updates=not args.dry_run)
+        build = ensure_build(client, app_id, args, allow_updates=not args.dry_run) if args.build_number else None
         removable_review_version = None
         if args.remove_active_review_version:
             # App Store Connect blocks creating a replacement version while another
@@ -1281,8 +1296,26 @@ def main() -> int:
             print("Dry run: metadata, build, and version path validated; no App Store Connect changes were made")
             return 0
         version, reused_removed_version = ensure_replacement_version(client, app_id, args)
-        attach_build(client, version, build, args)
+        if build is not None:
+            attach_build(client, version, build, args)
+        elif args.prepare_only:
+            print("Prepared App Store version without build attachment")
         ensure_metadata(client, version["id"], source_localization, source_review_detail, args)
+        if args.prepare_only:
+            final = client.request(
+                "GET",
+                f"/appStoreVersions/{version['id']}",
+                {
+                    "include": "build,appStoreVersionLocalizations,appStoreReviewDetail",
+                    "fields[appStoreVersions]": "versionString,appStoreState,appVersionState,releaseType,usesIdfa,build,appStoreVersionLocalizations,appStoreReviewDetail",
+                    "fields[builds]": "version,processingState,uploadedDate,expired,usesNonExemptEncryption",
+                    "fields[appStoreVersionLocalizations]": "locale,whatsNew,supportUrl",
+                },
+            )
+            state = version_state(final["data"])
+            print(f"Prepared App Store version {args.version}: {version['id']} ({state})")
+            print("Prepare only: review submission was not created or submitted")
+            return 0
         submission = ensure_review_submission(
             client,
             app_id,
