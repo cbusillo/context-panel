@@ -350,6 +350,22 @@ class UploadAppStoreScreenshotsTests(unittest.TestCase):
         self.assertEqual(upload_app_store_screenshots.inferred_platform(["watch"], None), "IOS")
         self.assertEqual(upload_app_store_screenshots.inferred_platform(["visionpro"], None), "VISION_OS")
 
+    def test_macos_approved_set_contains_all_five_approved_screenshots(self):
+        macos_assets = upload_app_store_screenshots.APPROVED_SETS["macos"]
+
+        self.assertEqual(len(macos_assets), 5)
+        self.assertEqual({asset.display_type for asset in macos_assets}, {"APP_DESKTOP"})
+        self.assertEqual(
+            [asset.path.name for asset in macos_assets],
+            [
+                "context-panel-appstore-1-app.png",
+                "context-panel-appstore-2-widget.png",
+                "context-panel-appstore-3-app-dark-current.png",
+                "context-panel-appstore-4-widgets-live-redacted.png",
+                "context-panel-appstore-5-glance-detail-redacted.png",
+            ],
+        )
+
     def test_missing_localization_is_an_error(self):
         client = FakeASCClient()
 
