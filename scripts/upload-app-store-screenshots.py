@@ -281,15 +281,27 @@ def create_screenshot_set(client: ASCClient, localization_id: str, display_type:
     return created["data"]["id"]
 
 
-def delete_existing_screenshots(client: ASCClient, screenshot_set_id: str, dry_run: bool) -> int:
+def existing_screenshots(client: ASCClient, screenshot_set_id: str) -> list[dict[str, Any]]:
     payload = paginated_get(client, f"/appScreenshotSets/{screenshot_set_id}/appScreenshots", {"limit": 50})
-    screenshots = payload.get("data") or []
+    return [screenshot for screenshot in payload.get("data") or [] if isinstance(screenshot, dict)]
+
+
+def delete_screenshots(client: ASCClient, screenshots: list[dict[str, Any]], dry_run: bool) -> int:
     if dry_run:
         return len(screenshots)
     for screenshot in screenshots:
         client.request("DELETE", f"/appScreenshots/{screenshot['id']}", allowed=(204,))
         print(f"Deleted existing screenshot: {screenshot['id']}")
     return len(screenshots)
+
+
+def cleanup_created_screenshots(client: ASCClient, screenshot_ids: list[str]) -> None:
+    for screenshot_id in reversed(screenshot_ids):
+        try:
+            client.request("DELETE", f"/appScreenshots/{screenshot_id}", allowed=(204,))
+            print(f"Cleaned up newly-created screenshot after failure: {screenshot_id}")
+        except AppStoreConnectError as cleanup_error:
+            print(f"warning: failed to clean up newly-created screenshot {screenshot_id}: {cleanup_error}", file=sys.stderr)
 
 
 def wait_for_screenshot_processing(
@@ -344,23 +356,27 @@ def create_screenshot(
         allowed=(201,),
     )
     screenshot = created["data"]
-    operations = screenshot.get("attributes", {}).get("uploadOperations") or []
-    for operation in operations:
-        client.upload(operation, data)
-    checksum = hashlib.md5(data).hexdigest()
-    client.request(
-        "PATCH",
-        f"/appScreenshots/{screenshot['id']}",
-        body={
-            "data": {
-                "type": "appScreenshots",
-                "id": screenshot["id"],
-                "attributes": {"uploaded": True, "sourceFileChecksum": checksum},
-            }
-        },
-    )
-    if wait:
-        wait_for_screenshot_processing(client, screenshot["id"], timeout_seconds, poll_seconds)
+    try:
+        operations = screenshot.get("attributes", {}).get("uploadOperations") or []
+        for operation in operations:
+            client.upload(operation, data)
+        checksum = hashlib.md5(data).hexdigest()
+        client.request(
+            "PATCH",
+            f"/appScreenshots/{screenshot['id']}",
+            body={
+                "data": {
+                    "type": "appScreenshots",
+                    "id": screenshot["id"],
+                    "attributes": {"uploaded": True, "sourceFileChecksum": checksum},
+                }
+            },
+        )
+        if wait:
+            wait_for_screenshot_processing(client, screenshot["id"], timeout_seconds, poll_seconds)
+    except AppStoreConnectError:
+        cleanup_created_screenshots(client, [screenshot["id"]])
+        raise
     print(f"Uploaded screenshot {path.name}: {screenshot['id']}")
     return screenshot["id"]
 
@@ -402,24 +418,32 @@ def upload_screenshot_set(
             if screenshot_set
             else create_screenshot_set(client, localization_id, display_type, dry_run)
         )
-        existing_count = (
-            0
-            if screenshot_set_id.startswith("dry-run-")
-            else delete_existing_screenshots(client, screenshot_set_id, dry_run)
-        )
+        old_screenshots = [] if screenshot_set_id.startswith("dry-run-") else existing_screenshots(client, screenshot_set_id)
+        existing_count = len(old_screenshots)
         action = "would replace" if dry_run else "replaced"
         print(f"{action} {existing_count} existing {display_type} screenshots with {len(paths)} approved files")
-        for path in paths:
-            created_id = create_screenshot(
-                client,
-                screenshot_set_id,
-                path,
-                dry_run,
-                wait,
-                timeout_seconds,
-                poll_seconds,
-            )
-            print(f"{'Would upload' if dry_run else 'Committed'} {display_type}: {path} ({created_id})")
+        new_screenshot_ids: list[str] = []
+        deletion_started = False
+        try:
+            for path in paths:
+                created_id = create_screenshot(
+                    client,
+                    screenshot_set_id,
+                    path,
+                    dry_run,
+                    wait,
+                    timeout_seconds,
+                    poll_seconds,
+                )
+                new_screenshot_ids.append(created_id)
+                print(f"{'Would upload' if dry_run else 'Committed'} {display_type}: {path} ({created_id})")
+            if old_screenshots:
+                deletion_started = True
+                delete_screenshots(client, old_screenshots, dry_run)
+        except AppStoreConnectError:
+            if not dry_run and not deletion_started:
+                cleanup_created_screenshots(client, new_screenshot_ids)
+            raise
 
 
 def parse_args() -> argparse.Namespace:
