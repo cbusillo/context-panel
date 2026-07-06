@@ -267,6 +267,34 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
 
         self.assertIn("build_number: ${{ needs.validate.outputs.build_number }}", workflow)
 
+    def test_ship_preflights_app_store_versions_before_release_channels(self):
+        workflow = self.read(".github/workflows/ship.yml")
+
+        validate_index = workflow.index("Validate Inputs")
+        guard_index = workflow.index("scripts/app-store-version-guard.py")
+        github_release_index = workflow.index("github-release:")
+        app_store_upload_index = workflow.index("app-store-upload:")
+        mac_upload_condition_index = workflow.index('if [[ "${app_store_channel}" == "upload" ]]; then')
+        companion_upload_condition_index = workflow.index('if [[ "${companion_app_store_channel}" == "upload" ]]; then')
+        build_number_index = workflow.index('build_number="${{ inputs.build_number }}"')
+
+        self.assertGreater(guard_index, validate_index)
+        self.assertLess(guard_index, github_release_index)
+        self.assertLess(guard_index, app_store_upload_index)
+        self.assertLess(mac_upload_condition_index, build_number_index)
+        self.assertLess(companion_upload_condition_index, build_number_index)
+        mac_upload_block = workflow[mac_upload_condition_index:companion_upload_condition_index]
+        companion_upload_block = workflow[companion_upload_condition_index:build_number_index]
+
+        self.assertIn("preflight_app_store_version MAC_OS", workflow)
+        self.assertIn("preflight_app_store_version MAC_OS", mac_upload_block)
+        self.assertIn("preflight_app_store_version IOS", workflow)
+        self.assertIn("preflight_app_store_version VISION_OS", workflow)
+        self.assertIn("preflight_app_store_version IOS", companion_upload_block)
+        self.assertIn("preflight_app_store_version VISION_OS", companion_upload_block)
+        self.assertIn("APP_STORE_CONNECT_API_KEY_P8_BASE64", workflow)
+        self.assertIn("App Store Connect API credentials are required for Ship App Store version preflight", workflow)
+
     def test_ship_distributes_testflight_beta_without_app_review(self):
         workflow = self.read(".github/workflows/ship.yml")
 
