@@ -379,6 +379,19 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("APP_WATCH_ULTRA", script)
         self.assertIn("APP_APPLE_VISION_PRO", script)
 
+    def test_app_store_review_workflow_supports_prepare_only(self):
+        workflow = self.read(".github/workflows/submit-app-store-review.yml")
+        script = self.read("scripts/submit-app-store-review.py")
+
+        self.assertIn("prepare_only:", workflow)
+        self.assertIn("INPUT_PREPARE_ONLY", workflow)
+        self.assertIn("args+=(--prepare-only)", workflow)
+        self.assertIn("or prepare_only is true", workflow)
+        self.assertIn("- Prepare only: ${INPUT_PREPARE_ONLY}", workflow)
+        self.assertIn("--prepare-only", script)
+        self.assertIn("Prepare only: review submission was not created or submitted", script)
+        self.assertIn("--prepare-only and --cancel-review-only are mutually exclusive", script)
+
     def test_ship_concurrency_does_not_block_reusable_release_workflow(self):
         ship_workflow = self.read(".github/workflows/ship.yml")
         release_workflow = self.read(".github/workflows/release.yml")

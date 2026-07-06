@@ -48,6 +48,12 @@ name: Submit App Store Review
         required: false
         default: false
         type: boolean
+      prepare_only:
+        description: >-
+          Create/update the App Store version without submitting review.
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
     inputs:
       version:
@@ -102,6 +108,13 @@ name: Submit App Store Review
         required: true
         default: false
         type: boolean
+      prepare_only:
+        description: >-
+          Create/update the App Store version, build attachment, and metadata,
+          then exit before review submission. Useful for screenshot uploads.
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -145,6 +158,7 @@ jobs:
             ${{ inputs.additional_review_versions }}
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
           INPUT_CANCEL_REVIEW_ONLY: ${{ inputs.cancel_review_only }}
+          INPUT_PREPARE_ONLY: ${{ inputs.prepare_only }}
         run: |
           set -euo pipefail
           args=(
@@ -152,9 +166,10 @@ jobs:
             --version "${INPUT_VERSION}"
           )
           if [[ "${INPUT_CANCEL_REVIEW_ONLY}" != "true" ]]; then
-            if [[ -z "${INPUT_BUILD_NUMBER}" ]]; then
+            if [[ -z "${INPUT_BUILD_NUMBER}" && \
+              "${INPUT_PREPARE_ONLY}" != "true" ]]; then
               echo "build_number is required unless cancel_review_only" \
-                "is true" >&2
+                "or prepare_only is true" >&2
               exit 1
             fi
             if [[ -z "${INPUT_WHATS_NEW}" ]]; then
@@ -162,9 +177,11 @@ jobs:
               exit 1
             fi
             args+=(
-              --build-number "${INPUT_BUILD_NUMBER}"
               --whats-new "${INPUT_WHATS_NEW}"
             )
+            if [[ -n "${INPUT_BUILD_NUMBER}" ]]; then
+              args+=(--build-number "${INPUT_BUILD_NUMBER}")
+            fi
           fi
           if [[ -n "${INPUT_COPY_FROM_VERSION}" ]]; then
             args+=(--copy-from-version "${INPUT_COPY_FROM_VERSION}")
@@ -196,6 +213,9 @@ jobs:
           if [[ "${INPUT_CANCEL_REVIEW_ONLY}" == "true" ]]; then
             args+=(--cancel-review-only)
           fi
+          if [[ "${INPUT_PREPARE_ONLY}" == "true" ]]; then
+            args+=(--prepare-only)
+          fi
           submit=(
             .build/submit-review-venv/bin/python
             scripts/submit-app-store-review.py
@@ -212,5 +232,6 @@ jobs:
             echo "- Commit: ${GITHUB_SHA}"
             echo "- Dry run: ${INPUT_DRY_RUN}"
             echo "- Cancel review only: ${INPUT_CANCEL_REVIEW_ONLY}"
+            echo "- Prepare only: ${INPUT_PREPARE_ONLY}"
             echo "- Result: succeeded"
           } >>"${GITHUB_STEP_SUMMARY}"

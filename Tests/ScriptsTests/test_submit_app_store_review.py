@@ -190,6 +190,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             remove_active_review_version="1.0.13",
             build_number=None,
             whats_new=None,
+            prepare_only=False,
         )
 
         submit_app_store_review.validate_args(args)
@@ -200,6 +201,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             remove_active_review_version=None,
             build_number=None,
             whats_new=None,
+            prepare_only=False,
         )
 
         with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
@@ -213,12 +215,67 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             remove_active_review_version=None,
             build_number=None,
             whats_new="Fixes",
+            prepare_only=False,
         )
 
         with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
             submit_app_store_review.validate_args(args)
 
         self.assertIn("--build-number", str(context.exception))
+
+    def test_validate_args_allows_prepare_only_without_build(self):
+        args = SimpleNamespace(
+            cancel_review_only=False,
+            remove_active_review_version=None,
+            build_number=None,
+            whats_new="Fixes",
+            prepare_only=True,
+        )
+
+        submit_app_store_review.validate_args(args)
+
+    def test_validate_args_requires_release_notes_for_prepare_only(self):
+        args = SimpleNamespace(
+            cancel_review_only=False,
+            remove_active_review_version=None,
+            build_number=None,
+            whats_new=None,
+            prepare_only=True,
+        )
+
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+            submit_app_store_review.validate_args(args)
+
+        self.assertIn("--whats-new", str(context.exception))
+
+    def test_validate_args_rejects_prepare_only_with_cancel_review_only(self):
+        args = SimpleNamespace(
+            cancel_review_only=True,
+            remove_active_review_version="1.0.13",
+            build_number=None,
+            whats_new="Fixes",
+            prepare_only=True,
+        )
+
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+            submit_app_store_review.validate_args(args)
+
+        self.assertIn("mutually exclusive", str(context.exception))
+
+    def test_validate_args_rejects_prepare_only_with_additional_review_versions(self):
+        args = SimpleNamespace(
+            cancel_review_only=False,
+            remove_active_review_version=None,
+            build_number=None,
+            whats_new="Fixes",
+            prepare_only=True,
+            additional_review_version=["ios-version"],
+        )
+
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+            submit_app_store_review.validate_args(args)
+
+        self.assertIn("--additional-review-version", str(context.exception))
 
     def test_deletes_matching_item(self):
         client = FakeASCClient()
@@ -1149,6 +1206,78 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         self.assertIn("whatsNew", localization_updates[0])
         self.assertNotIn("whatsNew", localization_updates[1])
         self.assertEqual(localization_updates[1]["description"], "desc")
+
+    def test_prepare_only_path_does_not_create_or_submit_review(self):
+        class PrepareOnlyClient:
+            def __init__(self):
+                self.requests: list[tuple[Any, ...]] = []
+
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                self.requests.append((method, path, params, body, allowed))
+                if "/reviewSubmissions" in path or "/reviewSubmissionItems" in path:
+                    raise AssertionError(f"prepare-only must not call review endpoint: {method} {path}")
+                if method == "GET" and path == "/apps/app-id/appStoreVersions":
+                    return {
+                        "data": [
+                            {
+                                "id": "version-1-0-14",
+                                "attributes": {
+                                    "versionString": "1.0.14",
+                                    "appStoreState": "PREPARE_FOR_SUBMISSION",
+                                },
+                            }
+                        ]
+                    }
+                if method == "PATCH" and path == "/appStoreVersions/version-1-0-14":
+                    return {"data": {"id": "version-1-0-14"}}
+                if method == "GET" and path == "/appStoreVersions/version-1-0-14":
+                    return {
+                        "data": {
+                            "id": "version-1-0-14",
+                            "attributes": {"appStoreState": "PREPARE_FOR_SUBMISSION"},
+                            "relationships": {
+                                "appStoreVersionLocalizations": {
+                                    "data": [{"type": "appStoreVersionLocalizations", "id": "loc-1"}]
+                                },
+                                "appStoreReviewDetail": {
+                                    "data": {"type": "appStoreReviewDetails", "id": "detail-1"}
+                                },
+                            },
+                        }
+                    }
+                if method == "PATCH" and path == "/appStoreVersionLocalizations/loc-1":
+                    return {"data": {"id": "loc-1"}}
+                if method == "PATCH" and path == "/appStoreReviewDetails/detail-1":
+                    return {"data": {"id": "detail-1"}}
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        client = PrepareOnlyClient()
+        args = SimpleNamespace(
+            version="1.0.14",
+            remove_active_review_version=None,
+            release_type="AFTER_APPROVAL",
+            copyright="2026 Shiny Computers Leasing LLC",
+            uses_idfa=False,
+            locale=None,
+            support_url=None,
+            whats_new="Fixes and improvements.",
+        )
+
+        version, _ = submit_app_store_review.ensure_replacement_version(client, "app-id", args)
+        submit_app_store_review.ensure_metadata(
+            client,
+            version["id"],
+            {"locale": "en-US", "description": "desc", "supportUrl": "https://example.com"},
+            {"contactEmail": "review@example.com"},
+            args,
+        )
+
+        review_paths = [
+            request[1]
+            for request in client.requests
+            if "/reviewSubmissions" in request[1] or "/reviewSubmissionItems" in request[1]
+        ]
+        self.assertEqual(review_paths, [])
 
     def test_ensure_review_submission_reuses_empty_ready_submission(self):
         class EmptyReviewSubmissionClient:
