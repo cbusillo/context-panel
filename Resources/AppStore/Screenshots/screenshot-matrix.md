@@ -226,9 +226,11 @@ Apple Watch checksums:
 
 ## Current Upload Mapping
 
-This matrix has Chris-approved local candidates for the planned release upload.
-Final completion still requires App Store Connect upload and processing-state
-verification.
+This matrix has Chris-approved local candidates for release upload. Direct local
+App Store Connect verification on 2026-07-06 confirmed that the approved files
+below are present in ASC with matching filenames, matching dimensions, and
+`COMPLETE` processing state. This verifies image upload/processing only; it does
+not mean all platform versions are release-ready.
 
 Staged Mac upload candidates:
 
@@ -283,8 +285,27 @@ Staged Apple Watch upload candidates:
 
 ## Remaining Matrix Gaps
 
-- Upload the approved screenshot set to App Store Connect.
-- Verify App Store Connect screenshot ids, dimensions, and `COMPLETE`
-  processing state after upload.
+Verified ASC image state on 2026-07-06:
+
+- `MAC_OS` `1.0.39` is `PREPARE_FOR_SUBMISSION`; `APP_DESKTOP` has the 5
+  approved Mac screenshots, all `COMPLETE`.
+- `IOS` `1.0.38` is `REJECTED`; `APP_IPHONE_61` has the 4 approved iPhone
+  screenshots, all `COMPLETE`.
+- `IOS` `1.0.38` is `REJECTED`; `APP_WATCH_ULTRA` has the 2 approved Apple
+  Watch screenshots, all `COMPLETE`.
+- `VISION_OS` `1.0.38` is `REJECTED`; `APP_APPLE_VISION_PRO` has the 7
+  approved Vision Pro screenshots, all `COMPLETE`.
+
+Release blockers / follow-up before cutting another multi-platform release:
+
+- Do not treat the full matrix as release-ready while iOS/watch and visionOS
+  screenshots remain attached to rejected `1.0.38` versions.
+- Decide whether to prepare fresh `1.0.39` iOS/watch and visionOS versions and
+  copy/upload the approved screenshot sets there.
+- Resolve the App Review rejection cause for the companion versions before
+  submission.
+- Review the older ASC-only iOS display sets, `APP_IPHONE_65` and
+  `APP_IPAD_PRO_3GEN_129`; they are processed in ASC but are not part of this
+  repo's approved screenshot set.
 - Replace Vision Pro generated/simulator assets only if App Store Connect or App
   Review rejects the approved sources.
