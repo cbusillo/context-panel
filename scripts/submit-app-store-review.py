@@ -1250,8 +1250,6 @@ def validate_args(args: argparse.Namespace) -> None:
     if args.prepare_only:
         if args.cancel_review_only:
             raise AppStoreConnectError("--prepare-only and --cancel-review-only are mutually exclusive")
-        if args.remove_active_review_version:
-            raise AppStoreConnectError("--prepare-only cannot remove an active review version")
         if getattr(args, "additional_review_version", []):
             raise AppStoreConnectError("--additional-review-version is only valid when submitting review")
     if args.cancel_review_only:
@@ -1304,7 +1302,7 @@ def main() -> int:
         )
         build = ensure_build(client, app_id, args, allow_updates=not args.dry_run) if args.build_number else None
         removable_review_version = None
-        if args.remove_active_review_version:
+        if args.remove_active_review_version and not args.prepare_only:
             # App Store Connect blocks creating a replacement version while another
             # version is actively in review. Validate the source metadata and uploaded
             # build first, then remove the old review item immediately before creating

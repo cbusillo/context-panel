@@ -277,6 +277,18 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
 
         self.assertIn("--additional-review-version", str(context.exception))
 
+    def test_validate_args_allows_prepare_only_with_reuse_version(self):
+        args = SimpleNamespace(
+            cancel_review_only=False,
+            remove_active_review_version="1.0.13",
+            build_number=None,
+            whats_new="Fixes",
+            prepare_only=True,
+            additional_review_version=[],
+        )
+
+        submit_app_store_review.validate_args(args)
+
     def test_deletes_matching_item(self):
         client = FakeASCClient()
 
@@ -987,6 +999,70 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
 
         self.assertEqual(version["id"], "version-1-0-14")
         self.assertTrue(force_prepare)
+
+    def test_prepare_only_can_reuse_rejected_version_without_review_removal(self):
+        class RejectedReuseClient:
+            def __init__(self):
+                self.requests: list[tuple[Any, ...]] = []
+
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                self.requests.append((method, path, params, body, allowed))
+                if path.startswith("/reviewSubmission"):
+                    raise AssertionError(f"prepare-only reuse should not touch review endpoint: {method} {path}")
+                if method == "GET" and path == "/apps/app-id/appStoreVersions":
+                    version_string = params.get("filter[versionString]") if params else None
+                    if version_string == "1.0.38":
+                        return {"data": []}
+                    if version_string == "1.0.36":
+                        return {
+                            "data": [
+                                {
+                                    "id": "version-1-0-36",
+                                    "attributes": {"versionString": "1.0.36", "appStoreState": "REJECTED"},
+                                }
+                            ]
+                        }
+                    raise AssertionError(f"unexpected version query: {params}")
+                if method == "POST" and path == "/appStoreVersions":
+                    raise submit_app_store_review.AppStoreConnectError(
+                        "App Store Connect request failed: POST /appStoreVersions",
+                        status=409,
+                        payload={
+                            "errors": [
+                                {
+                                    "code": "STATE_ERROR",
+                                    "detail": "You cannot create a new version of the App in the current state.",
+                                }
+                            ]
+                        },
+                    )
+                if method == "PATCH" and path == "/appStoreVersions/version-1-0-36":
+                    assert body is not None
+                    return {
+                        "data": {
+                            "id": "version-1-0-36",
+                            "attributes": body["data"]["attributes"],
+                        }
+                    }
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        client = RejectedReuseClient()
+        args = SimpleNamespace(
+            version="1.0.38",
+            remove_active_review_version="1.0.36",
+            release_type="AFTER_APPROVAL",
+            copyright="2026 Shiny Computers Leasing LLC",
+            uses_idfa=False,
+        )
+
+        version, reused_removed_version = submit_app_store_review.ensure_replacement_version(client, "app-id", args)
+
+        self.assertEqual(version["id"], "version-1-0-36")
+        self.assertTrue(reused_removed_version)
+        patch_body = next(request[3] for request in client.requests if request[0] == "PATCH")
+        self.assertEqual(patch_body["data"]["attributes"]["versionString"], "1.0.38")
+        review_paths = [request[1] for request in client.requests if request[1].startswith("/reviewSubmission")]
+        self.assertEqual(review_paths, [])
 
     def test_ensure_review_submission_reuses_existing_matching_ready_submission(self):
         class ReviewSubmissionClient:
