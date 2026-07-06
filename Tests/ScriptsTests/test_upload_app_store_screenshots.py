@@ -20,6 +20,7 @@ class FakeASCClient:
     def __init__(self):
         self.requests: list[tuple[Any, ...]] = []
         self.uploads: list[tuple[dict[str, Any], bytes]] = []
+        self.fail_upload = False
         self.existing_screenshots = [
             {"type": "appScreenshots", "id": "old-shot-1"},
             {"type": "appScreenshots", "id": "old-shot-2"},
@@ -95,6 +96,8 @@ class FakeASCClient:
         raise AssertionError(f"unexpected request: {method} {path}")
 
     def upload(self, operation, source):
+        if self.fail_upload:
+            raise upload_app_store_screenshots.AppStoreConnectError("forced upload failure")
         self.uploads.append((operation, source))
 
 
@@ -155,6 +158,33 @@ class UploadAppStoreScreenshotsTests(unittest.TestCase):
             {"uploaded": True, "sourceFileChecksum": hashlib.md5(b"png-data").hexdigest()},
         )
         self.assertEqual(client.uploads[0][1], b"png-data")
+        post_index = next(index for index, request in enumerate(client.requests) if request[0] == "POST")
+        first_delete_index = next(index for index, request in enumerate(client.requests) if request[0] == "DELETE")
+        self.assertGreater(first_delete_index, post_index)
+
+    def test_upload_failure_preserves_existing_screenshots_and_cleans_new_asset(self):
+        client = FakeASCClient()
+        client.fail_upload = True
+        with tempfile.TemporaryDirectory() as temp_dir:
+            screenshot = Path(temp_dir) / "shot.png"
+            screenshot.write_bytes(b"png-data")
+
+            with self.assertRaises(upload_app_store_screenshots.AppStoreConnectError):
+                upload_app_store_screenshots.upload_screenshot_set(
+                    client,
+                    "app-1",
+                    "MAC_OS",
+                    "1.0.38",
+                    "en-US",
+                    [upload_app_store_screenshots.ScreenshotAsset("APP_DESKTOP", screenshot)],
+                    dry_run=False,
+                    wait=False,
+                    timeout_seconds=60,
+                    poll_seconds=1,
+                )
+
+        delete_paths = [request[1] for request in client.requests if request[0] == "DELETE"]
+        self.assertEqual(delete_paths, ["/appScreenshots/new-shot.png"])
 
     def test_waits_for_screenshot_processing_after_upload(self):
         client = FakeASCClient()
