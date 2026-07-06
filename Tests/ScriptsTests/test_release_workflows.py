@@ -358,6 +358,27 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("processingState", script)
         self.assertIn('required=True,\n        choices=("IOS", "MAC_OS", "TV_OS", "VISION_OS")', script)
 
+    def test_app_store_screenshot_upload_workflow_uses_safe_defaults(self):
+        workflow = self.read(".github/workflows/upload-app-store-screenshots.yml")
+        script = self.read("scripts/upload-app-store-screenshots.py")
+
+        self.assertIn("name: Upload App Store Screenshots", workflow)
+        self.assertIn("default: true", workflow)
+        self.assertIn("scripts/upload-app-store-screenshots.py", workflow)
+        self.assertIn("--dry-run", workflow)
+        self.assertIn("APP_STORE_CONNECT_API_KEY_P8_BASE64", workflow)
+        self.assertIn("default: \"\"", workflow)
+        self.assertIn("type: string", workflow)
+        self.assertNotIn("- MAC_OS", workflow)
+        self.assertIn("options:", workflow)
+        self.assertIn("- macos", workflow)
+        self.assertIn("- iphone", workflow)
+        self.assertIn("- watch", workflow)
+        self.assertIn("- visionpro", workflow)
+        self.assertIn('"watch": "IOS"', script)
+        self.assertIn("APP_WATCH_ULTRA", script)
+        self.assertIn("APP_APPLE_VISION_PRO", script)
+
     def test_ship_concurrency_does_not_block_reusable_release_workflow(self):
         ship_workflow = self.read(".github/workflows/ship.yml")
         release_workflow = self.read(".github/workflows/release.yml")
