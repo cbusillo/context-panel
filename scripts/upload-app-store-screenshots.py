@@ -29,11 +29,18 @@ DEFAULT_LOCALE = "en-US"
 DEFAULT_SCREENSHOT_ROOT = Path("Resources/AppStore/Screenshots")
 DEFAULT_PROCESSING_TIMEOUT_SECONDS = 10 * 60
 DEFAULT_PROCESSING_POLL_SECONDS = 10
+MAX_SCREENSHOTS_PER_DISPLAY_TYPE = 10
 
 
 @dataclass(frozen=True)
 class ScreenshotAsset:
     display_type: str
+    path: Path
+
+
+@dataclass(frozen=True)
+class StoredScreenshot:
+    id: str
     path: Path
 
 
@@ -154,6 +161,14 @@ class ASCClient:
                     raise AppStoreConnectError(f"unexpected upload status {response.status}", response.status)
         except urllib.error.HTTPError as error:
             raise AppStoreConnectError("screenshot asset upload failed", error.code) from error
+
+    def download(self, url: str) -> bytes:
+        request = urllib.request.Request(url, method="GET")
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                return response.read()
+        except urllib.error.HTTPError as error:
+            raise AppStoreConnectError("screenshot asset download failed", error.code) from error
 
 
 def expanded_key_path(args: argparse.Namespace) -> tuple[Path, Path | None]:
@@ -282,8 +297,49 @@ def create_screenshot_set(client: ASCClient, localization_id: str, display_type:
 
 
 def existing_screenshots(client: ASCClient, screenshot_set_id: str) -> list[dict[str, Any]]:
-    payload = paginated_get(client, f"/appScreenshotSets/{screenshot_set_id}/appScreenshots", {"limit": 50})
+    payload = paginated_get(
+        client,
+        f"/appScreenshotSets/{screenshot_set_id}/appScreenshots",
+        {"fields[appScreenshots]": "fileName,imageAsset", "limit": 50},
+    )
     return [screenshot for screenshot in payload.get("data") or [] if isinstance(screenshot, dict)]
+
+
+def image_asset_url(screenshot: dict[str, Any]) -> str | None:
+    image_asset = screenshot.get("attributes", {}).get("imageAsset") or {}
+    for key in ("downloadUrl", "url"):
+        value = image_asset.get(key)
+        if isinstance(value, str) and value:
+            return value
+    template_url = image_asset.get("templateUrl")
+    if not isinstance(template_url, str) or not template_url:
+        return None
+    width = image_asset.get("width")
+    height = image_asset.get("height")
+    if width and height:
+        return template_url.replace("{w}", str(width)).replace("{h}", str(height)).replace("{f}", "png")
+    return template_url.replace("{w}", "0").replace("{h}", "0").replace("{f}", "png")
+
+
+def backup_existing_screenshots(
+    client: ASCClient,
+    screenshots: list[dict[str, Any]],
+    backup_dir: Path,
+) -> list[StoredScreenshot]:
+    backups: list[StoredScreenshot] = []
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    for index, screenshot in enumerate(screenshots):
+        screenshot_id = screenshot["id"]
+        url = image_asset_url(screenshot)
+        if url is None:
+            raise AppStoreConnectError(
+                f"cannot safely replace screenshot {screenshot_id}: App Store Connect did not expose a downloadable image asset"
+            )
+        filename = screenshot.get("attributes", {}).get("fileName") or f"existing-{index}.png"
+        path = backup_dir / f"{index:02d}-{Path(filename).name}"
+        path.write_bytes(client.download(url))
+        backups.append(StoredScreenshot(screenshot_id, path))
+    return backups
 
 
 def delete_screenshots(client: ASCClient, screenshots: list[dict[str, Any]], dry_run: bool) -> int:
@@ -302,6 +358,89 @@ def cleanup_created_screenshots(client: ASCClient, screenshot_ids: list[str]) ->
             print(f"Cleaned up newly-created screenshot after failure: {screenshot_id}")
         except AppStoreConnectError as cleanup_error:
             print(f"warning: failed to clean up newly-created screenshot {screenshot_id}: {cleanup_error}", file=sys.stderr)
+
+
+def upload_paths(
+    client: ASCClient,
+    screenshot_set_id: str,
+    paths: list[Path],
+    dry_run: bool,
+    wait: bool,
+    timeout_seconds: int,
+    poll_seconds: int,
+) -> list[str]:
+    screenshot_ids: list[str] = []
+    try:
+        for path in paths:
+            created_id = create_screenshot(
+                client,
+                screenshot_set_id,
+                path,
+                dry_run,
+                wait,
+                timeout_seconds,
+                poll_seconds,
+            )
+            screenshot_ids.append(created_id)
+        return screenshot_ids
+    except AppStoreConnectError:
+        if not dry_run:
+            cleanup_created_screenshots(client, screenshot_ids)
+        raise
+
+
+def restore_screenshots(
+    client: ASCClient,
+    screenshot_set_id: str,
+    backups: list[StoredScreenshot],
+    wait: bool,
+    timeout_seconds: int,
+    poll_seconds: int,
+) -> None:
+    restored_ids: list[str] = []
+    try:
+        for backup in backups:
+            restored_ids.append(
+                create_screenshot(client, screenshot_set_id, backup.path, False, wait, timeout_seconds, poll_seconds)
+            )
+    except AppStoreConnectError:
+        cleanup_created_screenshots(client, restored_ids)
+        raise
+
+
+def replace_without_exceeding_cap(
+    client: ASCClient,
+    screenshot_set_id: str,
+    old_screenshots: list[dict[str, Any]],
+    paths: list[Path],
+    dry_run: bool,
+    wait: bool,
+    timeout_seconds: int,
+    poll_seconds: int,
+) -> list[str]:
+    if len(old_screenshots) + len(paths) <= MAX_SCREENSHOTS_PER_DISPLAY_TYPE:
+        new_ids = upload_paths(client, screenshot_set_id, paths, dry_run, wait, timeout_seconds, poll_seconds)
+        if old_screenshots:
+            delete_screenshots(client, old_screenshots, dry_run)
+        return new_ids
+
+    if dry_run:
+        return [f"dry-run-screenshot-{path.name}" for path in paths]
+
+    with tempfile.TemporaryDirectory(prefix="asc-screenshot-backup-") as backup_root:
+        backups = backup_existing_screenshots(client, old_screenshots, Path(backup_root))
+        delete_screenshots(client, old_screenshots, False)
+        try:
+            return upload_paths(client, screenshot_set_id, paths, False, wait, timeout_seconds, poll_seconds)
+        except AppStoreConnectError as upload_error:
+            try:
+                restore_screenshots(client, screenshot_set_id, backups, wait, timeout_seconds, poll_seconds)
+            except AppStoreConnectError as restore_error:
+                raise AppStoreConnectError(
+                    f"replacement failed and rollback failed: {restore_error}",
+                    payload=getattr(restore_error, "payload", None),
+                ) from upload_error
+            raise
 
 
 def wait_for_screenshot_processing(
@@ -422,28 +561,18 @@ def upload_screenshot_set(
         existing_count = len(old_screenshots)
         action = "would replace" if dry_run else "replaced"
         print(f"{action} {existing_count} existing {display_type} screenshots with {len(paths)} approved files")
-        new_screenshot_ids: list[str] = []
-        deletion_started = False
-        try:
-            for path in paths:
-                created_id = create_screenshot(
-                    client,
-                    screenshot_set_id,
-                    path,
-                    dry_run,
-                    wait,
-                    timeout_seconds,
-                    poll_seconds,
-                )
-                new_screenshot_ids.append(created_id)
-                print(f"{'Would upload' if dry_run else 'Committed'} {display_type}: {path} ({created_id})")
-            if old_screenshots:
-                deletion_started = True
-                delete_screenshots(client, old_screenshots, dry_run)
-        except AppStoreConnectError:
-            if not dry_run and not deletion_started:
-                cleanup_created_screenshots(client, new_screenshot_ids)
-            raise
+        created_ids = replace_without_exceeding_cap(
+            client,
+            screenshot_set_id,
+            old_screenshots,
+            paths,
+            dry_run,
+            wait,
+            timeout_seconds,
+            poll_seconds,
+        )
+        for path, created_id in zip(paths, created_ids):
+            print(f"{'Would upload' if dry_run else 'Committed'} {display_type}: {path} ({created_id})")
 
 
 def parse_args() -> argparse.Namespace:
