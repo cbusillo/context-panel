@@ -85,9 +85,17 @@ jobs:
     outputs:
       build_number: ${{ steps.intent.outputs.build_number }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
       - name: Validate Inputs
         id: intent
         shell: bash
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY_P8_BASE64: >-
+            ${{ secrets.APP_STORE_CONNECT_API_KEY_P8_BASE64 }}
         run: |
           set -euo pipefail
           if [[ -z "${{ inputs.version }}" ]]; then
@@ -129,6 +137,34 @@ jobs:
                 ;;
               *)
                 echo "unsupported testflight_beta_source: ${testflight_beta_source}" >&2
+                exit 2
+              ;;
+            esac
+          fi
+          preflight_app_store_version() {
+            local platform="$1"
+            if [[ -z "${APP_STORE_CONNECT_API_KEY_P8_BASE64:-}" || -z "${APP_STORE_CONNECT_KEY_ID:-}" || -z "${APP_STORE_CONNECT_ISSUER_ID:-}" ]]; then
+              echo "App Store Connect API credentials are required for Ship App Store version preflight" >&2
+              exit 1
+            fi
+            python3 scripts/app-store-version-guard.py \
+              --bundle-id com.shinycomputers.contextpanel \
+              --platform "${platform}" \
+              --version "${{ inputs.version }}"
+          }
+          if [[ "${app_store_channel}" == "upload" ]]; then
+            preflight_app_store_version MAC_OS
+          fi
+          if [[ "${companion_app_store_channel}" == "upload" ]]; then
+            case "${{ inputs.companion_platform }}" in
+              ios)
+                preflight_app_store_version IOS
+                ;;
+              visionos)
+                preflight_app_store_version VISION_OS
+                ;;
+              *)
+                echo "unsupported companion_platform: ${{ inputs.companion_platform }}" >&2
                 exit 2
                 ;;
             esac
