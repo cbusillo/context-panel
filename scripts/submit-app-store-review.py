@@ -311,6 +311,35 @@ def active_review_version_ids(client: ASCClient, app_id: str, platform: str = "M
     return version_ids
 
 
+def app_store_versions_by_id(
+    client: ASCClient,
+    app_id: str,
+    platform: str,
+) -> dict[str, dict[str, Any]]:
+    payload = paginated_get(
+        client,
+        f"/apps/{app_id}/appStoreVersions",
+        {
+            "filter[platform]": platform,
+            "fields[appStoreVersions]": "versionString,appStoreState,appVersionState",
+        },
+    )
+    return {
+        version["id"]: version
+        for version in payload.get("data", [])
+        if isinstance(version, dict) and isinstance(version.get("id"), str)
+    }
+
+
+def describe_app_store_version(version: dict[str, Any] | None, fallback_id: str) -> str:
+    if version is None:
+        return fallback_id
+    attributes = version.get("attributes", {})
+    version_string = attributes.get("versionString") or fallback_id
+    state = version_state(version)
+    return f"{version_string} ({state})" if state else version_string
+
+
 def version_creation_blocking_app_store_versions(
     client: ASCClient,
     app_id: str,
@@ -686,8 +715,13 @@ def dry_run_version_path(
     allowed_active_ids = {version_id for version_id in (target_version_id, removable_version_id) if version_id}
     blocking_ids = active_ids - allowed_active_ids
     if blocking_ids:
+        versions = app_store_versions_by_id(client, app_id, platform)
+        blocking = ", ".join(
+            describe_app_store_version(versions.get(version_id), version_id)
+            for version_id in sorted(blocking_ids)
+        )
         raise AppStoreConnectError(
-            "another App Store version is already in review; rerun with "
+            f"another App Store version is already in review: {blocking}; rerun with "
             "--remove-active-review-version for the active version before submitting a replacement"
         )
 

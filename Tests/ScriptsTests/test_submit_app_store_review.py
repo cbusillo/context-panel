@@ -601,6 +601,49 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
 
         self.assertIn("another App Store version is already in review", str(context.exception))
 
+    def test_dry_run_version_path_names_blocking_active_review_version(self):
+        class NamedBlockingReviewClient:
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                if method == "GET" and path == "/apps/app-id/appStoreVersions":
+                    version_string = params.get("filter[versionString]") if params else None
+                    if version_string == "1.0.14":
+                        return {"data": []}
+                    return {
+                        "data": [
+                            {
+                                "id": "version-1-0-13",
+                                "attributes": {
+                                    "versionString": "1.0.13",
+                                    "appStoreState": "WAITING_FOR_REVIEW",
+                                },
+                            }
+                        ]
+                    }
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {
+                        "data": [
+                            {
+                                "id": "submission-1",
+                                "attributes": {"state": "WAITING_FOR_REVIEW"},
+                                "relationships": {
+                                    "appStoreVersionForReview": {
+                                        "data": {"type": "appStoreVersions", "id": "version-1-0-13"}
+                                    },
+                                    "items": {"data": []},
+                                },
+                            }
+                        ]
+                    }
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        args = SimpleNamespace(version="1.0.14", remove_active_review_version=None)
+
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+            submit_app_store_review.dry_run_version_path(NamedBlockingReviewClient(), "app-id", args)
+
+        self.assertIn("1.0.13 (WAITING_FOR_REVIEW)", str(context.exception))
+        self.assertIn("--remove-active-review-version", str(context.exception))
+
     def test_dry_run_version_path_validates_reusable_replacement_version(self):
         class ReusableVersionClient:
             def request(self, method, path, params=None, body=None, allowed=(200,)):
