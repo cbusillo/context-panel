@@ -378,6 +378,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn('"watch": "IOS"', script)
         self.assertIn("APP_WATCH_ULTRA", script)
         self.assertIn("APP_APPLE_VISION_PRO", script)
+        self.assertIn("context-panel-appstore-5-glance-detail-redacted.png", script)
 
     def test_app_store_review_workflow_supports_prepare_only(self):
         workflow = self.read(".github/workflows/submit-app-store-review.yml")
