@@ -48,6 +48,9 @@ APPROVED_SETS: dict[str, tuple[ScreenshotAsset, ...]] = {
     "macos": (
         ScreenshotAsset("APP_DESKTOP", Path("final/context-panel-appstore-1-app.png")),
         ScreenshotAsset("APP_DESKTOP", Path("final/context-panel-appstore-2-widget.png")),
+        ScreenshotAsset("APP_DESKTOP", Path("final/context-panel-appstore-3-app-dark-current.png")),
+        ScreenshotAsset("APP_DESKTOP", Path("final/context-panel-appstore-4-widgets-live-redacted.png")),
+        ScreenshotAsset("APP_DESKTOP", Path("final/context-panel-appstore-5-glance-detail-redacted.png")),
     ),
     "iphone": (
         ScreenshotAsset("APP_IPHONE_61", Path("iphone/iphone-6-3-app-light-synced.png")),
