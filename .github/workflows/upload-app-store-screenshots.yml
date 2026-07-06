@@ -1,0 +1,95 @@
+---
+name: Upload App Store Screenshots
+
+"on":
+  workflow_dispatch:
+    inputs:
+      version:
+        description: App Store marketing version to update.
+        required: true
+        type: string
+      screenshot_set:
+        description: Approved screenshot set to upload.
+        required: true
+        type: choice
+        options:
+          - macos
+          - iphone
+          - watch
+          - visionpro
+      platform:
+        description: Optional App Store Connect platform override.
+        required: false
+        default: ""
+        type: string
+      locale:
+        description: App Store version localization locale.
+        required: true
+        default: en-US
+        type: string
+      dry_run:
+        description: Validate target sets without replacing screenshots.
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: screenshots-${{ inputs.version }}-${{ inputs.screenshot_set }}
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    name: Upload Screenshots
+    runs-on: ubuntu-latest
+
+    env:
+      APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      APP_STORE_CONNECT_API_KEY_P8_BASE64: >-
+        ${{ secrets.APP_STORE_CONNECT_API_KEY_P8_BASE64 }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Python Dependencies
+        run: |
+          python3 -m venv .build/upload-screenshots-venv
+          .build/upload-screenshots-venv/bin/python -m pip install --upgrade pip
+          .build/upload-screenshots-venv/bin/python -m pip install cryptography
+
+      - name: Upload Screenshots
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_SCREENSHOT_SET: ${{ inputs.screenshot_set }}
+          INPUT_PLATFORM: ${{ inputs.platform }}
+          INPUT_LOCALE: ${{ inputs.locale }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          args=(
+            --version "${INPUT_VERSION}"
+            --set "${INPUT_SCREENSHOT_SET}"
+            --locale "${INPUT_LOCALE}"
+          )
+          if [[ -n "${INPUT_PLATFORM}" ]]; then
+            args+=(--platform "${INPUT_PLATFORM}")
+          fi
+          if [[ "${INPUT_DRY_RUN}" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+          .build/upload-screenshots-venv/bin/python \
+            scripts/upload-app-store-screenshots.py "${args[@]}"
+          {
+            echo "### App Store Screenshot Upload"
+            echo
+            echo "- Version: ${INPUT_VERSION}"
+            echo "- Screenshot set: ${INPUT_SCREENSHOT_SET}"
+            echo "- Platform override: ${INPUT_PLATFORM:-<inferred>}"
+            echo "- Locale: ${INPUT_LOCALE}"
+            echo "- Dry run: ${INPUT_DRY_RUN}"
+          } >>"${GITHUB_STEP_SUMMARY}"
