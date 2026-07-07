@@ -100,6 +100,40 @@ Checksums:
 42f1c20e996447c25c28adc61eb7ff9729753fad6d8066b7acede287aec43fe5  iphone/iphone-6-3-widget-dark-home.png
 ```
 
+## Approved iPad Captures
+
+These screenshots were captured by Chris from a physical 12.9-inch iPad Pro and
+copied from Chris's Desktop on 2026-07-06 after visual review. They are unedited
+app-only PNG captures at 2384 x 3180, an accepted 12.9-inch iPad Pro portrait
+size. The predictable release path for these current iPad upload candidates is
+`Resources/AppStore/Screenshots/ipad/`.
+
+The older ASC-only iPad image, `context-panel-ios-ipad129.png`, is not part of
+the approved repo matrix. Replace it with these repo-tracked iPad captures when
+preparing the next editable iOS App Store version.
+
+- `ipad/ipad-12-9-app-light-synced.png`
+  - Original: `IMG_0018.PNG` from Chris's Desktop
+  - Source: physical iPad Pro screenshot
+  - Surface: App
+  - Appearance: Light
+  - State: Synced data
+  - Dimensions: 2384 x 3180
+- `ipad/ipad-12-9-app-dark-synced.png`
+  - Original: `IMG_0019.PNG` from Chris's Desktop
+  - Source: physical iPad Pro screenshot
+  - Surface: App
+  - Appearance: Dark
+  - State: Synced data
+  - Dimensions: 2384 x 3180
+
+iPad checksums:
+
+```text
+fa3132863d76252d186612f6ee9adb291df923eeca1e28a4af4a36a31ad771b0  ipad/ipad-12-9-app-light-synced.png
+ff9b58c958b1b6061971f6b22da5a5b92f9066b5487e6411cf83fb3ec79cc02b  ipad/ipad-12-9-app-dark-synced.png
+```
+
 ## Imported Vision Pro Simulator Captures
 
 These screenshots were captured from the booted `Context Panel AVP` Apple Vision
@@ -227,10 +261,13 @@ Apple Watch checksums:
 ## Current Upload Mapping
 
 This matrix has Chris-approved local candidates for release upload. Direct local
-App Store Connect verification on 2026-07-06 confirmed that the approved files
-below are present in ASC with matching filenames, matching dimensions, and
-`COMPLETE` processing state. This verifies image upload/processing only; it does
-not mean all platform versions are release-ready.
+App Store Connect verification on 2026-07-06 confirmed the prior Mac, iPhone,
+Watch, and Vision Pro approved files in ASC with matching filenames, matching
+dimensions, and `COMPLETE` processing state. The newly approved iPad files are
+repo-tracked candidates and still need to replace the older ASC-only iPad image
+on the next editable iOS App Store version. This verifies image
+upload/processing only; it does not mean all platform versions are
+release-ready.
 
 Staged Mac upload candidates:
 
@@ -255,6 +292,18 @@ Staged iPhone upload candidates:
   `iphone/iphone-6-3-widget-light-home.png`.
 - iPhone widget, dark mode, Home Screen:
   `iphone/iphone-6-3-widget-dark-home.png`.
+
+For the next editable iOS App Store version, prefer the combined uploader set
+`ios` instead of uploading individual `iphone`, `ipad`, and `watch` sets. The
+combined set replaces every approved iOS-family display type and prunes
+unapproved screenshot display types such as `APP_IPHONE_65`.
+
+Staged iPad upload candidates:
+
+- iPad app, light mode, synced-data state:
+  `ipad/ipad-12-9-app-light-synced.png`.
+- iPad app, dark mode, synced-data state:
+  `ipad/ipad-12-9-app-dark-synced.png`.
 
 Staged Vision Pro simulator app candidates:
 
@@ -291,6 +340,13 @@ Verified ASC image state on 2026-07-06:
   approved Mac screenshots, all `COMPLETE`.
 - `IOS` `1.0.38` is `REJECTED`; `APP_IPHONE_61` has the 4 approved iPhone
   screenshots, all `COMPLETE`.
+- `IOS` `1.0.38` is `REJECTED`; `APP_IPAD_PRO_3GEN_129` has 1 older ASC-only
+  iPad screenshot. It does not match the approved repo matrix anymore. Replace
+  it with the 2 approved repo-tracked iPad screenshots before the next iOS
+  submission.
+- `IOS` `1.0.38` is `REJECTED`; `APP_IPHONE_65` has 1 older ASC-only iPhone
+  screenshot. Do not carry this display set forward unless fresh repo-tracked
+  6.5-inch screenshots are intentionally approved later.
 - `IOS` `1.0.38` is `REJECTED`; `APP_WATCH_ULTRA` has the 2 approved Apple
   Watch screenshots, all `COMPLETE`.
 - `VISION_OS` `1.0.38` is `REJECTED`; `APP_APPLE_VISION_PRO` has the 7
@@ -301,11 +357,12 @@ Release blockers / follow-up before cutting another multi-platform release:
 - Do not treat the full matrix as release-ready while iOS/watch and visionOS
   screenshots remain attached to rejected `1.0.38` versions.
 - Decide whether to prepare fresh `1.0.39` iOS/watch and visionOS versions and
-  copy/upload the approved screenshot sets there.
+  upload only the approved repo-tracked screenshot sets there.
 - Resolve the App Review rejection cause for the companion versions before
   submission.
-- Review the older ASC-only iOS display sets, `APP_IPHONE_65` and
-  `APP_IPAD_PRO_3GEN_129`; they are processed in ASC but are not part of this
-  repo's approved screenshot set.
+- Remove or replace the older ASC-only iOS display sets during the next editable
+  iOS metadata pass. The approved set now includes `APP_IPHONE_61`,
+  `APP_IPAD_PRO_3GEN_129`, and `APP_WATCH_ULTRA`; it intentionally excludes
+  `APP_IPHONE_65`.
 - Replace Vision Pro generated/simulator assets only if App Store Connect or App
   Review rejects the approved sources.

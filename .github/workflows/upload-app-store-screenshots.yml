@@ -14,7 +14,9 @@ name: Upload App Store Screenshots
         type: choice
         options:
           - macos
+          - ios
           - iphone
+          - ipad
           - watch
           - visionpro
       platform:
