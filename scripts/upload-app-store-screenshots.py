@@ -58,7 +58,21 @@ APPROVED_SETS: dict[str, tuple[ScreenshotAsset, ...]] = {
         ScreenshotAsset("APP_IPHONE_61", Path("iphone/iphone-6-3-widget-light-home.png")),
         ScreenshotAsset("APP_IPHONE_61", Path("iphone/iphone-6-3-widget-dark-home.png")),
     ),
+    "ipad": (
+        ScreenshotAsset("APP_IPAD_PRO_3GEN_129", Path("ipad/ipad-12-9-app-light-synced.png")),
+        ScreenshotAsset("APP_IPAD_PRO_3GEN_129", Path("ipad/ipad-12-9-app-dark-synced.png")),
+    ),
     "watch": (
+        ScreenshotAsset("APP_WATCH_ULTRA", Path("watch/watch-ultra-healthy.png")),
+        ScreenshotAsset("APP_WATCH_ULTRA", Path("watch/watch-ultra-limited.png")),
+    ),
+    "ios": (
+        ScreenshotAsset("APP_IPHONE_61", Path("iphone/iphone-6-3-app-light-synced.png")),
+        ScreenshotAsset("APP_IPHONE_61", Path("iphone/iphone-6-3-app-dark-synced.png")),
+        ScreenshotAsset("APP_IPHONE_61", Path("iphone/iphone-6-3-widget-light-home.png")),
+        ScreenshotAsset("APP_IPHONE_61", Path("iphone/iphone-6-3-widget-dark-home.png")),
+        ScreenshotAsset("APP_IPAD_PRO_3GEN_129", Path("ipad/ipad-12-9-app-light-synced.png")),
+        ScreenshotAsset("APP_IPAD_PRO_3GEN_129", Path("ipad/ipad-12-9-app-dark-synced.png")),
         ScreenshotAsset("APP_WATCH_ULTRA", Path("watch/watch-ultra-healthy.png")),
         ScreenshotAsset("APP_WATCH_ULTRA", Path("watch/watch-ultra-limited.png")),
     ),
@@ -76,8 +90,16 @@ APPROVED_SETS: dict[str, tuple[ScreenshotAsset, ...]] = {
 PLATFORM_FOR_SET = {
     "macos": "MAC_OS",
     "iphone": "IOS",
+    "ipad": "IOS",
     "watch": "IOS",
+    "ios": "IOS",
     "visionpro": "VISION_OS",
+}
+
+FULL_PLATFORM_DISPLAY_TYPES = {
+    "MAC_OS": {"APP_DESKTOP"},
+    "IOS": {"APP_IPHONE_61", "APP_IPAD_PRO_3GEN_129", "APP_WATCH_ULTRA"},
+    "VISION_OS": {"APP_APPLE_VISION_PRO"},
 }
 
 
@@ -354,6 +376,23 @@ def delete_screenshots(client: ASCClient, screenshots: list[dict[str, Any]], dry
     return len(screenshots)
 
 
+def prune_unapproved_display_type_screenshots(
+    client: ASCClient,
+    sets: dict[str, dict[str, Any]],
+    approved_display_types: set[str],
+    dry_run: bool,
+) -> None:
+    for display_type, screenshot_set in sets.items():
+        if display_type in approved_display_types:
+            continue
+        screenshots = existing_screenshots(client, screenshot_set["id"])
+        if not screenshots:
+            continue
+        action = "Would delete" if dry_run else "Deleted"
+        deleted = delete_screenshots(client, screenshots, dry_run)
+        print(f"{action} {deleted} unapproved {display_type} screenshots")
+
+
 def cleanup_created_screenshots(client: ASCClient, screenshot_ids: list[str]) -> None:
     for screenshot_id in reversed(screenshot_ids):
         try:
@@ -576,6 +615,9 @@ def upload_screenshot_set(
         )
         for path, created_id in zip(paths, created_ids):
             print(f"{'Would upload' if dry_run else 'Committed'} {display_type}: {path} ({created_id})")
+    full_platform_display_types = FULL_PLATFORM_DISPLAY_TYPES.get(platform, set())
+    if full_platform_display_types and set(by_display) == full_platform_display_types:
+        prune_unapproved_display_type_screenshots(client, sets, full_platform_display_types, dry_run)
 
 
 def parse_args() -> argparse.Namespace:

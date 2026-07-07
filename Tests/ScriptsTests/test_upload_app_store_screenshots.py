@@ -35,6 +35,14 @@ class FakeASCClient:
                 "attributes": {"fileName": "old-2.png", "imageAsset": {"downloadUrl": "https://download.example/old-2.png"}},
             },
         ]
+        self.screenshot_sets = [
+            {
+                "type": "appScreenshotSets",
+                "id": "set-1",
+                "attributes": {"screenshotDisplayType": "APP_DESKTOP"},
+            }
+        ]
+        self.screenshots_by_set: dict[str, list[dict[str, Any]]] = {}
 
     def request(self, method, path, params=None, body=None, allowed=(200,)):
         self.requests.append((method, path, params, body, allowed))
@@ -59,17 +67,10 @@ class FakeASCClient:
                 ]
             }
         if method == "GET" and path == "/appStoreVersionLocalizations/loc-1/appScreenshotSets":
-            return {
-                "data": [
-                    {
-                        "type": "appScreenshotSets",
-                        "id": "set-1",
-                        "attributes": {"screenshotDisplayType": "APP_DESKTOP"},
-                    }
-                ]
-            }
-        if method == "GET" and path == "/appScreenshotSets/set-1/appScreenshots":
-            return {"data": self.existing_screenshots}
+            return {"data": self.screenshot_sets}
+        if method == "GET" and path.startswith("/appScreenshotSets/") and path.endswith("/appScreenshots"):
+            screenshot_set_id = path.split("/")[2]
+            return {"data": self.screenshots_by_set.get(screenshot_set_id, self.existing_screenshots)}
         if method == "DELETE" and path.startswith("/appScreenshots/"):
             return {}
         if method == "POST" and path == "/appScreenshots":
@@ -346,7 +347,9 @@ class UploadAppStoreScreenshotsTests(unittest.TestCase):
 
     def test_infers_platform_for_single_named_set(self):
         self.assertEqual(upload_app_store_screenshots.inferred_platform(["macos"], None), "MAC_OS")
+        self.assertEqual(upload_app_store_screenshots.inferred_platform(["ios"], None), "IOS")
         self.assertEqual(upload_app_store_screenshots.inferred_platform(["iphone"], None), "IOS")
+        self.assertEqual(upload_app_store_screenshots.inferred_platform(["ipad"], None), "IOS")
         self.assertEqual(upload_app_store_screenshots.inferred_platform(["watch"], None), "IOS")
         self.assertEqual(upload_app_store_screenshots.inferred_platform(["visionpro"], None), "VISION_OS")
 
@@ -365,6 +368,95 @@ class UploadAppStoreScreenshotsTests(unittest.TestCase):
                 "context-panel-appstore-5-glance-detail-redacted.png",
             ],
         )
+
+    def test_ipad_approved_set_contains_current_approved_screenshots(self):
+        ipad_assets = upload_app_store_screenshots.APPROVED_SETS["ipad"]
+
+        self.assertEqual(len(ipad_assets), 2)
+        self.assertEqual({asset.display_type for asset in ipad_assets}, {"APP_IPAD_PRO_3GEN_129"})
+        self.assertEqual(
+            [asset.path.name for asset in ipad_assets],
+            [
+                "ipad-12-9-app-light-synced.png",
+                "ipad-12-9-app-dark-synced.png",
+            ],
+        )
+
+    def test_ios_approved_set_contains_only_current_approved_display_types(self):
+        ios_assets = upload_app_store_screenshots.APPROVED_SETS["ios"]
+
+        self.assertEqual(len(ios_assets), 8)
+        self.assertEqual(
+            {asset.display_type for asset in ios_assets},
+            {"APP_IPHONE_61", "APP_IPAD_PRO_3GEN_129", "APP_WATCH_ULTRA"},
+        )
+        self.assertNotIn("APP_IPHONE_65", {asset.display_type for asset in ios_assets})
+
+    def test_full_platform_upload_prunes_unapproved_display_type_screenshots(self):
+        client = FakeASCClient()
+        client.screenshot_sets = [
+            {
+                "type": "appScreenshotSets",
+                "id": "set-iphone",
+                "attributes": {"screenshotDisplayType": "APP_IPHONE_61"},
+            },
+            {
+                "type": "appScreenshotSets",
+                "id": "set-ipad",
+                "attributes": {"screenshotDisplayType": "APP_IPAD_PRO_3GEN_129"},
+            },
+            {
+                "type": "appScreenshotSets",
+                "id": "set-watch",
+                "attributes": {"screenshotDisplayType": "APP_WATCH_ULTRA"},
+            },
+            {
+                "type": "appScreenshotSets",
+                "id": "set-iphone-65",
+                "attributes": {"screenshotDisplayType": "APP_IPHONE_65"},
+            },
+        ]
+        client.screenshots_by_set = {
+            "set-iphone": [],
+            "set-ipad": [],
+            "set-watch": [],
+            "set-iphone-65": [
+                {
+                    "type": "appScreenshots",
+                    "id": "old-iphone-65",
+                    "attributes": {"fileName": "old-iphone-65.png", "imageAsset": {}},
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            paths = {
+                "APP_IPHONE_61": temp / "iphone.png",
+                "APP_IPAD_PRO_3GEN_129": temp / "ipad.png",
+                "APP_WATCH_ULTRA": temp / "watch.png",
+            }
+            for path in paths.values():
+                path.write_bytes(b"png-data")
+
+            upload_app_store_screenshots.upload_screenshot_set(
+                client,
+                "app-1",
+                "IOS",
+                "1.0.39",
+                "en-US",
+                [
+                    upload_app_store_screenshots.ScreenshotAsset(display_type, path)
+                    for display_type, path in paths.items()
+                ],
+                dry_run=False,
+                wait=False,
+                timeout_seconds=60,
+                poll_seconds=1,
+            )
+
+        delete_paths = [request[1] for request in client.requests if request[0] == "DELETE"]
+        self.assertEqual(delete_paths, ["/appScreenshots/old-iphone-65"])
 
     def test_missing_localization_is_an_error(self):
         client = FakeASCClient()
