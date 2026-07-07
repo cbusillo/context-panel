@@ -103,10 +103,10 @@ Checksums:
 ## Approved iPad Captures
 
 These screenshots were captured by Chris from a physical 12.9-inch iPad Pro and
-copied from Chris's Desktop on 2026-07-06 after visual review. They are unedited
-app-only PNG captures at 2384 x 3180, an accepted 12.9-inch iPad Pro portrait
-size. The predictable release path for these current iPad upload candidates is
-`Resources/AppStore/Screenshots/ipad/`.
+copied from Chris's Desktop on 2026-07-06 after visual review. They are app-only
+PNG captures resized from 2384 x 3180 to 2048 x 2732, an accepted 12.9-inch iPad
+Pro portrait size. The predictable release path for these current iPad upload
+candidates is `Resources/AppStore/Screenshots/ipad/`.
 
 The older ASC-only iPad image, `context-panel-ios-ipad129.png`, is not part of
 the approved repo matrix. Replace it with these repo-tracked iPad captures when
@@ -118,20 +118,20 @@ preparing the next editable iOS App Store version.
   - Surface: App
   - Appearance: Light
   - State: Synced data
-  - Dimensions: 2384 x 3180
+  - Dimensions: 2048 x 2732
 - `ipad/ipad-12-9-app-dark-synced.png`
   - Original: `IMG_0019.PNG` from Chris's Desktop
   - Source: physical iPad Pro screenshot
   - Surface: App
   - Appearance: Dark
   - State: Synced data
-  - Dimensions: 2384 x 3180
+  - Dimensions: 2048 x 2732
 
 iPad checksums:
 
 ```text
-fa3132863d76252d186612f6ee9adb291df923eeca1e28a4af4a36a31ad771b0  ipad/ipad-12-9-app-light-synced.png
-ff9b58c958b1b6061971f6b22da5a5b92f9066b5487e6411cf83fb3ec79cc02b  ipad/ipad-12-9-app-dark-synced.png
+47abe15aaf7d88f51dc367a3e81db334cdbcac02f041921f9cd13bf048791332  ipad/ipad-12-9-app-light-synced.png
+680e33eed9c18ea5e1008d66e4de71fbf8a37d1d4acaccadbc0e2d0cc28de13e  ipad/ipad-12-9-app-dark-synced.png
 ```
 
 ## Imported Vision Pro Simulator Captures
