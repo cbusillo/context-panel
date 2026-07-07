@@ -391,6 +391,15 @@ def replacement_version_guidance(version: dict[str, Any]) -> str:
     )
 
 
+def rejected_source_reuse_message(source_version_string: str, target_version_string: str, state: str | None) -> str:
+    return (
+        f"App Store version {source_version_string} is {state}; do not reuse it as "
+        f"{target_version_string} for review submission. Run --prepare-only first to move the "
+        "approved metadata, build, and screenshots onto the next marketing version, then dry-run "
+        "and submit that prepared version."
+    )
+
+
 def remove_active_review_version(
     client: ASCClient,
     app_id: str,
@@ -675,6 +684,12 @@ def reuse_removed_app_store_version(
     if version is None:
         raise AppStoreConnectError(f"App Store version {source_version_string} is not available to reuse")
     state = version_state(version)
+    prepare_only = bool(getattr(args, "prepare_only", False))
+    if state in REJECTED_RELEASE_CANDIDATE_STATES and not prepare_only:
+        raise AppStoreConnectError(
+            rejected_source_reuse_message(source_version_string, args.version, state),
+            payload=version,
+        )
     if state in LOCKED_VERSION_STATES:
         raise AppStoreConnectError(
             f"App Store version {source_version_string} is still {state}; cannot reuse it as {args.version}",
@@ -708,6 +723,16 @@ def ensure_replacement_version(client: ASCClient, app_id: str, args: argparse.Na
         source_version = args.remove_active_review_version
         if not source_version or not is_version_creation_state_conflict(error):
             raise
+        source = app_store_version(client, app_id, source_version, namespace_platform(args))
+        if source is None:
+            raise AppStoreConnectError(f"App Store version {source_version} is not available to reuse")
+        source_state = version_state(source)
+        prepare_only = bool(getattr(args, "prepare_only", False))
+        if source_state in REJECTED_RELEASE_CANDIDATE_STATES and not prepare_only:
+            raise AppStoreConnectError(
+                rejected_source_reuse_message(source_version, args.version, source_state),
+                payload=source,
+            )
         print(
             f"App Store Connect still blocks creating {args.version}; "
             f"reusing removed version {source_version} instead"
@@ -779,6 +804,12 @@ def dry_run_version_path(
         )
     state = version_state(source)
     removal_validated = removable_review_version == args.remove_active_review_version
+    prepare_only = bool(getattr(args, "prepare_only", False))
+    if state in REJECTED_RELEASE_CANDIDATE_STATES and not prepare_only:
+        raise AppStoreConnectError(
+            rejected_source_reuse_message(args.remove_active_review_version, args.version, state),
+            payload=source,
+        )
     if state in LOCKED_VERSION_STATES and not (removal_validated and state in REMOVABLE_REVIEW_VERSION_STATES):
         raise AppStoreConnectError(
             f"App Store version {args.remove_active_review_version} is still {state}; cannot reuse it as {args.version}",

@@ -467,7 +467,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
 
         self.assertIn("missing MAC_OS build 202606071340", str(context.exception))
 
-    def test_reuses_removed_version_when_replacement_creation_is_blocked(self):
+    def test_prepare_only_reuses_removed_version_when_replacement_creation_is_blocked(self):
         class ReplacementClient:
             def __init__(self):
                 self.requests: list[tuple[Any, ...]] = []
@@ -512,6 +512,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             release_type="AFTER_APPROVAL",
             copyright="2026 Shiny Computers Leasing LLC",
             uses_idfa=False,
+            prepare_only=True,
         )
 
         version = None
@@ -681,7 +682,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         self.assertIn("1.0.13 (WAITING_FOR_REVIEW)", str(context.exception))
         self.assertIn("--remove-active-review-version", str(context.exception))
 
-    def test_dry_run_version_path_validates_reusable_replacement_version(self):
+    def test_dry_run_version_path_rejects_rejected_replacement_version_for_review_submission(self):
         class ReusableVersionClient:
             def request(self, method, path, params=None, body=None, allowed=(200,)):
                 if method == "GET" and path == "/apps/app-id/appStoreVersions":
@@ -706,7 +707,40 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
                     return {"data": []}
                 raise AssertionError(f"unexpected request: {method} {path}")
 
-        args = SimpleNamespace(version="1.0.14", remove_active_review_version="1.0.13")
+        args = SimpleNamespace(version="1.0.14", remove_active_review_version="1.0.13", prepare_only=False)
+
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+            submit_app_store_review.dry_run_version_path(ReusableVersionClient(), "app-id", args)
+
+        self.assertIn("do not reuse it as 1.0.14 for review submission", str(context.exception))
+        self.assertIn("Run --prepare-only first", str(context.exception))
+
+    def test_dry_run_version_path_allows_rejected_replacement_version_for_prepare_only(self):
+        class ReusableVersionClient:
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                if method == "GET" and path == "/apps/app-id/appStoreVersions":
+                    version_string = params.get("filter[versionString]") if params else None
+                    if version_string is None:
+                        return {"data": []}
+                    if version_string == "1.0.14":
+                        return {"data": []}
+                    if version_string == "1.0.13":
+                        return {
+                            "data": [
+                                {
+                                    "id": "version-1-0-13",
+                                    "attributes": {
+                                        "versionString": "1.0.13",
+                                        "appStoreState": "DEVELOPER_REJECTED",
+                                    },
+                                }
+                            ]
+                        }
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {"data": []}
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        args = SimpleNamespace(version="1.0.14", remove_active_review_version="1.0.13", prepare_only=True)
         output = io.StringIO()
 
         with redirect_stdout(output):
@@ -1163,6 +1197,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             release_type="AFTER_APPROVAL",
             copyright="2026 Shiny Computers Leasing LLC",
             uses_idfa=False,
+            prepare_only=True,
         )
 
         version, reused_removed_version = submit_app_store_review.ensure_replacement_version(client, "app-id", args)
@@ -1173,6 +1208,45 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         self.assertEqual(patch_body["data"]["attributes"]["versionString"], "1.0.38")
         review_paths = [request[1] for request in client.requests if request[1].startswith("/reviewSubmission")]
         self.assertEqual(review_paths, [])
+
+    def test_review_submission_cannot_reuse_rejected_version_without_prepare_only(self):
+        class RejectedReuseClient:
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                if method == "GET" and path == "/apps/app-id/appStoreVersions":
+                    version_string = params.get("filter[versionString]") if params else None
+                    if version_string == "1.0.38":
+                        return {"data": []}
+                    if version_string == "1.0.36":
+                        return {
+                            "data": [
+                                {
+                                    "id": "version-1-0-36",
+                                    "attributes": {"versionString": "1.0.36", "appStoreState": "REJECTED"},
+                                }
+                            ]
+                        }
+                    raise AssertionError(f"unexpected version query: {params}")
+                if method == "POST" and path == "/appStoreVersions":
+                    raise submit_app_store_review.AppStoreConnectError(
+                        "App Store Connect request failed: POST /appStoreVersions",
+                        status=409,
+                        payload={"errors": [{"detail": "You cannot create a new version of the App in the current state."}]},
+                    )
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        args = SimpleNamespace(
+            version="1.0.38",
+            remove_active_review_version="1.0.36",
+            release_type="AFTER_APPROVAL",
+            copyright="2026 Shiny Computers Leasing LLC",
+            uses_idfa=False,
+            prepare_only=False,
+        )
+
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+            submit_app_store_review.ensure_replacement_version(RejectedReuseClient(), "app-id", args)
+
+        self.assertIn("do not reuse it as 1.0.38 for review submission", str(context.exception))
 
     def test_ensure_review_submission_reuses_existing_matching_ready_submission(self):
         class ReviewSubmissionClient:
