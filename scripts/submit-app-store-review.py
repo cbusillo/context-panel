@@ -51,6 +51,12 @@ VERSION_CREATION_BLOCKING_STATES = BLOCKING_REVIEW_VERSION_STATES | {
     "METADATA_REJECTED",
     "INVALID_BINARY",
 }
+REJECTED_RELEASE_CANDIDATE_STATES = {
+    "DEVELOPER_REJECTED",
+    "REJECTED",
+    "METADATA_REJECTED",
+    "INVALID_BINARY",
+}
 CREATE_VERSION_MAX_ATTEMPTS = 6
 CREATE_VERSION_RETRY_SECONDS = 10
 DEFAULT_BUILD_WAIT_TIMEOUT_SECONDS = 10 * 60
@@ -373,6 +379,12 @@ def replacement_version_guidance(version: dict[str, Any]) -> str:
             f"App Store version {version_string} is {state}; rerun with "
             f"--remove-active-review-version {version_string} before submitting a replacement"
         )
+    if state in REJECTED_RELEASE_CANDIDATE_STATES:
+        return (
+            f"App Store version {version_string} is {state}; resolve the App Review rejection "
+            "cause, then prepare the next marketing version and copy the approved metadata "
+            "and screenshots there before submitting a replacement"
+        )
     return (
         f"App Store version {version_string} is {state}; rerun with "
         f"--remove-active-review-version {version_string} to reuse it as the replacement version"
@@ -638,6 +650,13 @@ def ensure_version(client: ASCClient, app_id: str, args: argparse.Namespace) -> 
         "usesIdfa": args.uses_idfa,
     }
     state = version_state(version)
+    if state in REJECTED_RELEASE_CANDIDATE_STATES:
+        raise AppStoreConnectError(
+            f"App Store version {args.version} is {state}; do not resubmit a rejected "
+            "release candidate. Prepare the next marketing version, copy the approved "
+            "metadata and screenshots there, and rerun with --version set to that next version.",
+            payload=version,
+        )
     if state in LOCKED_VERSION_STATES:
         print(f"Skipping attribute update because App Store version is {state}")
     else:
@@ -735,6 +754,13 @@ def dry_run_version_path(
 
     if existing is not None:
         state = version_state(existing)
+        if state in REJECTED_RELEASE_CANDIDATE_STATES:
+            raise AppStoreConnectError(
+                f"App Store version {args.version} is {state}; do not resubmit a rejected "
+                "release candidate. Prepare the next marketing version, copy the approved "
+                "metadata and screenshots there, and rerun with --version set to that next version.",
+                payload=existing,
+            )
         if state in LOCKED_VERSION_STATES:
             raise AppStoreConnectError(
                 f"App Store version {args.version} is {state}; cannot attach build {args.build_number}",

@@ -871,6 +871,35 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         self.assertIn("1.0.13 is PENDING_DEVELOPER_RELEASE", str(context.exception))
         self.assertIn("release or reject that version", str(context.exception))
 
+    def test_dry_run_version_path_rejects_blocking_rejected_version_without_reuse_guidance(self):
+        class RejectedBlockingClient:
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                if method == "GET" and path == "/apps/app-id/appStoreVersions":
+                    version_string = params.get("filter[versionString]") if params else None
+                    if version_string == "1.0.40":
+                        return {"data": []}
+                    if version_string is None:
+                        return {
+                            "data": [
+                                {
+                                    "id": "version-1-0-39",
+                                    "attributes": {"versionString": "1.0.39", "appStoreState": "REJECTED"},
+                                }
+                            ]
+                        }
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {"data": []}
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        args = SimpleNamespace(version="1.0.40", remove_active_review_version=None)
+
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+            submit_app_store_review.dry_run_version_path(RejectedBlockingClient(), "app-id", args)
+
+        self.assertIn("1.0.39 is REJECTED", str(context.exception))
+        self.assertIn("prepare the next marketing version", str(context.exception))
+        self.assertNotIn("reuse it as the replacement", str(context.exception))
+
     def test_dry_run_version_path_rejects_blocking_version_on_second_page(self):
         class PagedBlockingVersionClient:
             def request(self, method, path, params=None, body=None, allowed=(200,)):
@@ -966,6 +995,62 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             submit_app_store_review.dry_run_version_path(LockedTargetClient(), "app-id", args)
 
         self.assertIn("cannot attach build 202606062346", str(context.exception))
+
+    def test_dry_run_version_path_rejects_rejected_target_version(self):
+        class RejectedTargetClient:
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                if method == "GET" and path == "/apps/app-id/appStoreVersions":
+                    version_string = params.get("filter[versionString]") if params else None
+                    if version_string is None:
+                        return {"data": []}
+                    if version_string == "1.0.39":
+                        return {
+                            "data": [
+                                {
+                                    "id": "version-1-0-39",
+                                    "attributes": {
+                                        "versionString": "1.0.39",
+                                        "appStoreState": "REJECTED",
+                                    },
+                                }
+                            ]
+                        }
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {"data": []}
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        args = SimpleNamespace(version="1.0.39", build_number="202606262249", remove_active_review_version=None)
+
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+            submit_app_store_review.dry_run_version_path(RejectedTargetClient(), "app-id", args)
+
+        self.assertIn("do not resubmit a rejected release candidate", str(context.exception))
+
+    def test_ensure_version_rejects_rejected_target_version(self):
+        class RejectedVersionClient:
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                if method == "GET" and path == "/apps/app-id/appStoreVersions":
+                    return {
+                        "data": [
+                            {
+                                "id": "version-1-0-39",
+                                "attributes": {"versionString": "1.0.39", "appStoreState": "REJECTED"},
+                            }
+                        ]
+                    }
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        args = SimpleNamespace(
+            version="1.0.39",
+            release_type="AFTER_APPROVAL",
+            copyright="2026 Shiny Computers Leasing LLC",
+            uses_idfa=False,
+        )
+
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+            submit_app_store_review.ensure_version(RejectedVersionClient(), "app-id", args)
+
+        self.assertIn("Prepare the next marketing version", str(context.exception))
 
     def test_supersede_run_force_prepares_existing_replacement_version(self):
         class ExistingReplacementClient:
