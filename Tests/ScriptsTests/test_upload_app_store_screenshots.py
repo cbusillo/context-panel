@@ -385,12 +385,26 @@ class UploadAppStoreScreenshotsTests(unittest.TestCase):
     def test_ios_approved_set_contains_only_current_approved_display_types(self):
         ios_assets = upload_app_store_screenshots.APPROVED_SETS["ios"]
 
-        self.assertEqual(len(ios_assets), 8)
+        self.assertEqual(len(ios_assets), 12)
         self.assertEqual(
             {asset.display_type for asset in ios_assets},
-            {"APP_IPHONE_61", "APP_IPAD_PRO_3GEN_129", "APP_WATCH_ULTRA"},
+            {"APP_IPHONE_61", "APP_IPHONE_65", "APP_IPAD_PRO_3GEN_129", "APP_WATCH_ULTRA"},
         )
-        self.assertNotIn("APP_IPHONE_65", {asset.display_type for asset in ios_assets})
+
+    def test_iphone65_approved_set_contains_current_approved_screenshots(self):
+        iphone65_assets = upload_app_store_screenshots.APPROVED_SETS["iphone65"]
+
+        self.assertEqual(len(iphone65_assets), 4)
+        self.assertEqual({asset.display_type for asset in iphone65_assets}, {"APP_IPHONE_65"})
+        self.assertEqual(
+            [asset.path.name for asset in iphone65_assets],
+            [
+                "iphone-6-5-app-light-synced.png",
+                "iphone-6-5-app-dark-synced.png",
+                "iphone-6-5-widget-light-home.png",
+                "iphone-6-5-widget-dark-home.png",
+            ],
+        )
 
     def test_full_platform_upload_prunes_unapproved_display_type_screenshots(self):
         client = FakeASCClient()
@@ -399,6 +413,11 @@ class UploadAppStoreScreenshotsTests(unittest.TestCase):
                 "type": "appScreenshotSets",
                 "id": "set-iphone",
                 "attributes": {"screenshotDisplayType": "APP_IPHONE_61"},
+            },
+            {
+                "type": "appScreenshotSets",
+                "id": "set-iphone-65",
+                "attributes": {"screenshotDisplayType": "APP_IPHONE_65"},
             },
             {
                 "type": "appScreenshotSets",
@@ -412,19 +431,20 @@ class UploadAppStoreScreenshotsTests(unittest.TestCase):
             },
             {
                 "type": "appScreenshotSets",
-                "id": "set-iphone-65",
-                "attributes": {"screenshotDisplayType": "APP_IPHONE_65"},
+                "id": "set-iphone-58",
+                "attributes": {"screenshotDisplayType": "APP_IPHONE_58"},
             },
         ]
         client.screenshots_by_set = {
             "set-iphone": [],
+            "set-iphone-65": [],
             "set-ipad": [],
             "set-watch": [],
-            "set-iphone-65": [
+            "set-iphone-58": [
                 {
                     "type": "appScreenshots",
-                    "id": "old-iphone-65",
-                    "attributes": {"fileName": "old-iphone-65.png", "imageAsset": {}},
+                    "id": "old-iphone-58",
+                    "attributes": {"fileName": "old-iphone-58.png", "imageAsset": {}},
                 }
             ],
         }
@@ -433,6 +453,7 @@ class UploadAppStoreScreenshotsTests(unittest.TestCase):
             temp = Path(temp_dir)
             paths = {
                 "APP_IPHONE_61": temp / "iphone.png",
+                "APP_IPHONE_65": temp / "iphone65.png",
                 "APP_IPAD_PRO_3GEN_129": temp / "ipad.png",
                 "APP_WATCH_ULTRA": temp / "watch.png",
             }
@@ -456,7 +477,7 @@ class UploadAppStoreScreenshotsTests(unittest.TestCase):
             )
 
         delete_paths = [request[1] for request in client.requests if request[0] == "DELETE"]
-        self.assertEqual(delete_paths, ["/appScreenshots/old-iphone-65"])
+        self.assertEqual(delete_paths, ["/appScreenshots/old-iphone-58"])
 
     def test_missing_localization_is_an_error(self):
         client = FakeASCClient()

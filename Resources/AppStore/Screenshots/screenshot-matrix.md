@@ -100,6 +100,49 @@ Checksums:
 42f1c20e996447c25c28adc61eb7ff9729753fad6d8066b7acede287aec43fe5  iphone/iphone-6-3-widget-dark-home.png
 ```
 
+## Required iPhone 6.5-Inch Captures
+
+App Store Connect rejected the iOS 1.0.40 submission on 2026-07-07 until an
+`APP_IPHONE_65` screenshot set was present. These screenshots are derived from
+the approved iPhone 6.3-inch captures above with an aspect-preserving resize and
+center crop to 1284 x 2778, an accepted iPhone 6.5-inch portrait size. They were
+visually checked after generation and should stay in the approved iOS upload
+matrix unless Apple changes the screenshot requirements.
+
+- `iphone65/iphone-6-5-app-light-synced.png`
+  - Source: `iphone/iphone-6-3-app-light-synced.png`
+  - Surface: App
+  - Appearance: Light
+  - State: Synced data
+  - Dimensions: 1284 x 2778
+- `iphone65/iphone-6-5-app-dark-synced.png`
+  - Source: `iphone/iphone-6-3-app-dark-synced.png`
+  - Surface: App
+  - Appearance: Dark
+  - State: Synced data
+  - Dimensions: 1284 x 2778
+- `iphone65/iphone-6-5-widget-light-home.png`
+  - Source: `iphone/iphone-6-3-widget-light-home.png`
+  - Surface: Widget
+  - Appearance: Light
+  - State: Home Screen synced data
+  - Dimensions: 1284 x 2778
+- `iphone65/iphone-6-5-widget-dark-home.png`
+  - Source: `iphone/iphone-6-3-widget-dark-home.png`
+  - Surface: Widget
+  - Appearance: Dark
+  - State: Home Screen synced data
+  - Dimensions: 1284 x 2778
+
+iPhone 6.5-inch checksums:
+
+```text
+bb090ceb5a598b16e0501296b970cecde2a4ab1284410206deac583925aa79dc  iphone65/iphone-6-5-app-light-synced.png
+31b384c6f53e2c79546a76839df659dabe31eb9d8cb9f5b77e88863f9a1dde9a  iphone65/iphone-6-5-app-dark-synced.png
+e5e932615d877e89c1933b8553eea03934917dd32898e9d35afa6a49607fd618  iphone65/iphone-6-5-widget-light-home.png
+719939b9e01673782e2d761f502176838c13fc858b5389d9358a7b06875a99e4  iphone65/iphone-6-5-widget-dark-home.png
+```
+
 ## Approved iPad Captures
 
 These screenshots were captured by Chris from a physical 12.9-inch iPad Pro and
@@ -292,8 +335,8 @@ Staged iPhone upload candidates:
 
 For iOS App Store versions, prefer the combined uploader set `ios` instead of
 uploading individual `iphone`, `ipad`, and `watch` sets. The combined set
-replaces every approved iOS-family display type and prunes unapproved screenshot
-display types such as `APP_IPHONE_65`.
+replaces every approved iOS-family display type, including the ASC-required
+`APP_IPHONE_65` set, and prunes unapproved screenshot display types.
 
 Staged iPad upload candidates:
 
@@ -335,30 +378,30 @@ Verified ASC image state on 2026-07-07:
 
 - `MAC_OS` `1.0.39` is `PREPARE_FOR_SUBMISSION`; `APP_DESKTOP` has the 5
   approved Mac screenshots, all `COMPLETE`.
-- `IOS` `1.0.39` is `REJECTED`; `APP_IPHONE_61` has the 4 approved iPhone
+- `IOS` `1.0.40` is `WAITING_FOR_REVIEW`; `APP_IPHONE_61` has the 4 approved iPhone
   screenshots, all `COMPLETE`.
-- `IOS` `1.0.39` is `REJECTED`; `APP_IPAD_PRO_3GEN_129` has the 2 approved
+- `IOS` `1.0.40` is `WAITING_FOR_REVIEW`; `APP_IPHONE_65` has the 4 approved
+  derived iPhone 6.5-inch screenshots, all `COMPLETE`.
+- `IOS` `1.0.40` is `WAITING_FOR_REVIEW`; `APP_IPAD_PRO_3GEN_129` has the 2 approved
   repo-tracked iPad screenshots, all `COMPLETE`.
-- `IOS` `1.0.39` is `REJECTED`; `APP_WATCH_ULTRA` has the 2 approved Apple
+- `IOS` `1.0.40` is `WAITING_FOR_REVIEW`; `APP_WATCH_ULTRA` has the 2 approved Apple
   Watch screenshots, all `COMPLETE`.
-- `IOS` `1.0.39` has an empty `APP_IPHONE_65` display set with 0 screenshots;
-  no old 6.5-inch image remains attached.
 - `VISION_OS` `1.0.38` is `REJECTED`; `APP_APPLE_VISION_PRO` has the 7
   approved Vision Pro screenshots, all `COMPLETE`.
 
 Release blockers / follow-up before cutting another multi-platform release:
 
 - Do not treat the full matrix as release-ready while iOS/watch and visionOS
-  versions remain in `REJECTED` state.
-- Do not resubmit those rejected marketing versions as the next release
-  candidate. Prepare the next marketing version first, then copy/upload the
-  approved screenshot matrix there.
+  versions remain in `REJECTED` state. iOS `1.0.40` is already submitted and
+  should be tracked through App Review instead.
+- Do not resubmit rejected marketing versions as the next release candidate.
+  Prepare the next marketing version first, then copy/upload the approved
+  screenshot matrix there.
 - Decide whether to prepare a fresh `1.0.39` visionOS version and upload only
   the approved repo-tracked Vision Pro screenshot set there.
 - Resolve the App Review rejection cause for the companion versions before
   submission.
 - The approved iOS-family set now includes `APP_IPHONE_61`,
-  `APP_IPAD_PRO_3GEN_129`, and `APP_WATCH_ULTRA`; it intentionally excludes
-  `APP_IPHONE_65`.
+  `APP_IPHONE_65`, `APP_IPAD_PRO_3GEN_129`, and `APP_WATCH_ULTRA`.
 - Replace Vision Pro generated/simulator assets only if App Store Connect or App
   Review rejects the approved sources.

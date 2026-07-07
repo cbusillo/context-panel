@@ -58,6 +58,12 @@ APPROVED_SETS: dict[str, tuple[ScreenshotAsset, ...]] = {
         ScreenshotAsset("APP_IPHONE_61", Path("iphone/iphone-6-3-widget-light-home.png")),
         ScreenshotAsset("APP_IPHONE_61", Path("iphone/iphone-6-3-widget-dark-home.png")),
     ),
+    "iphone65": (
+        ScreenshotAsset("APP_IPHONE_65", Path("iphone65/iphone-6-5-app-light-synced.png")),
+        ScreenshotAsset("APP_IPHONE_65", Path("iphone65/iphone-6-5-app-dark-synced.png")),
+        ScreenshotAsset("APP_IPHONE_65", Path("iphone65/iphone-6-5-widget-light-home.png")),
+        ScreenshotAsset("APP_IPHONE_65", Path("iphone65/iphone-6-5-widget-dark-home.png")),
+    ),
     "ipad": (
         ScreenshotAsset("APP_IPAD_PRO_3GEN_129", Path("ipad/ipad-12-9-app-light-synced.png")),
         ScreenshotAsset("APP_IPAD_PRO_3GEN_129", Path("ipad/ipad-12-9-app-dark-synced.png")),
@@ -71,6 +77,10 @@ APPROVED_SETS: dict[str, tuple[ScreenshotAsset, ...]] = {
         ScreenshotAsset("APP_IPHONE_61", Path("iphone/iphone-6-3-app-dark-synced.png")),
         ScreenshotAsset("APP_IPHONE_61", Path("iphone/iphone-6-3-widget-light-home.png")),
         ScreenshotAsset("APP_IPHONE_61", Path("iphone/iphone-6-3-widget-dark-home.png")),
+        ScreenshotAsset("APP_IPHONE_65", Path("iphone65/iphone-6-5-app-light-synced.png")),
+        ScreenshotAsset("APP_IPHONE_65", Path("iphone65/iphone-6-5-app-dark-synced.png")),
+        ScreenshotAsset("APP_IPHONE_65", Path("iphone65/iphone-6-5-widget-light-home.png")),
+        ScreenshotAsset("APP_IPHONE_65", Path("iphone65/iphone-6-5-widget-dark-home.png")),
         ScreenshotAsset("APP_IPAD_PRO_3GEN_129", Path("ipad/ipad-12-9-app-light-synced.png")),
         ScreenshotAsset("APP_IPAD_PRO_3GEN_129", Path("ipad/ipad-12-9-app-dark-synced.png")),
         ScreenshotAsset("APP_WATCH_ULTRA", Path("watch/watch-ultra-healthy.png")),
@@ -90,6 +100,7 @@ APPROVED_SETS: dict[str, tuple[ScreenshotAsset, ...]] = {
 PLATFORM_FOR_SET = {
     "macos": "MAC_OS",
     "iphone": "IOS",
+    "iphone65": "IOS",
     "ipad": "IOS",
     "watch": "IOS",
     "ios": "IOS",
@@ -98,7 +109,7 @@ PLATFORM_FOR_SET = {
 
 FULL_PLATFORM_DISPLAY_TYPES = {
     "MAC_OS": {"APP_DESKTOP"},
-    "IOS": {"APP_IPHONE_61", "APP_IPAD_PRO_3GEN_129", "APP_WATCH_ULTRA"},
+    "IOS": {"APP_IPHONE_61", "APP_IPHONE_65", "APP_IPAD_PRO_3GEN_129", "APP_WATCH_ULTRA"},
     "VISION_OS": {"APP_APPLE_VISION_PRO"},
 }
 

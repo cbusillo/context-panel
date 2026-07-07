@@ -572,6 +572,13 @@ def is_submitted_review_item_conflict(error: AppStoreConnectError) -> bool:
     return "item was already submitted" in text
 
 
+def is_existing_review_item_conflict(error: AppStoreConnectError) -> bool:
+    if error.status != 409:
+        return False
+    text = f"{error} {json.dumps(error.payload or {}, sort_keys=True)}".lower()
+    return "already exists" in text
+
+
 def is_review_submission_state_invalid_for_item_removal(error: AppStoreConnectError) -> bool:
     if error.status != 409:
         return False
@@ -880,6 +887,16 @@ def validate_build_marketing_version(
         )
 
 
+def select_build_for_marketing_version(
+    payload: dict[str, Any], builds: list[dict[str, Any]], marketing_version: str
+) -> dict[str, Any]:
+    for build in builds:
+        found_version, _ = build_marketing_version_and_platform(payload, build)
+        if found_version == marketing_version:
+            return build
+    return builds[0]
+
+
 def ensure_build(
     client: ASCClient,
     app_id: str,
@@ -917,7 +934,7 @@ def ensure_build(
             == platform
         ]
         if builds:
-            last_build = builds[0]
+            last_build = select_build_for_marketing_version(payload, builds, args.version)
             attributes = last_build.get("attributes", {})
             if attributes.get("processingState") == "VALID":
                 validate_build_marketing_version(payload, last_build, args.version, args.build_number)
@@ -1231,7 +1248,7 @@ def ensure_review_submission(
             )
             print(f"Created review submission item: {item['data']['id']}")
         except AppStoreConnectError as error:
-            if error.status != 409:
+            if not is_existing_review_item_conflict(error):
                 raise
             print(f"Review submission item already exists for App Store version: {review_version_id}")
             existing_submission = active_submission_for_version(
@@ -1243,11 +1260,11 @@ def ensure_review_submission(
             if existing_submission is not None:
                 submission = existing_submission
             else:
-                print(
-                    "Review submission item already exists, but no active owning review submission was found; "
-                    "leaving review submission unchanged"
+                raise AppStoreConnectError(
+                    "review submission item already exists, but no active owning review submission was found; "
+                    "inspect App Store Connect review submissions before retrying",
+                    status=409,
                 )
-                return submission
     if args.dry_run:
         print("Dry run: would submit the prepared review submission")
         return submission
