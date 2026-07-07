@@ -536,6 +536,9 @@ Preferred operator flow:
 1. Validate and dogfood the build through TestFlight first.
 2. Run `Submit App Store Review` with `dry_run: true` using the exact marketing
    version, platform, build number, and release notes intended for review.
+   The selected build's pre-release marketing version must match the App Store
+   marketing version; do not attach an older companion build to a fresh App
+   Store version.
 3. If the dry run reports that an older App Store version blocks creating the
    target version, rerun the dry run with `remove_active_review_version` set to
    that blocking version.
@@ -549,6 +552,16 @@ marketing version, copy the approved metadata and screenshot matrix there, and
 submit that fresh version instead. The submit helper fails fast when the target
 version is in `DEVELOPER_REJECTED`, `REJECTED`, `METADATA_REJECTED`, or
 `INVALID_BINARY`.
+
+Companion App Review may ask for a demo video when the iOS, iPadOS, watchOS, or
+visionOS surface depends on a Mac-published CloudKit companion snapshot. For
+Guideline 2.1 information-needed responses, add an App Review Information link
+to a demo video filmed on physical hardware. Show the current companion app on a
+physical iPhone or iPad, the Mac running Context Panel as the designated
+hardware/source app, the Mac publishing a fresh snapshot, and the companion app
+or widget moving from setup/waiting-for-Mac-sync into synced usage-limit data.
+Reply to App Review with that link and summarize that no demo account is needed
+unless the build requires one.
 
 Use `platform: MAC_OS` for the native macOS app. For companion review, first run
 the companion App Store Connect upload for `platform=ios` or `platform=visionos`,

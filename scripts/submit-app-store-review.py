@@ -824,6 +824,31 @@ def attach_build(client: ASCClient, version: dict[str, Any], build: dict[str, An
     print(f"Attached build {args.build_number} to App Store version {args.version}")
 
 
+def build_marketing_version_and_platform(payload: dict[str, Any], build: dict[str, Any]) -> tuple[str | None, str | None]:
+    relationship = build.get("relationships", {}).get("preReleaseVersion", {}).get("data")
+    pre_release_id = relationship.get("id") if isinstance(relationship, dict) else None
+    included = {
+        item["id"]: item
+        for item in payload.get("included") or []
+        if item.get("type") == "preReleaseVersions"
+    }
+    pre_release = included.get(pre_release_id) if pre_release_id else None
+    found_version = pre_release.get("attributes", {}).get("version") if pre_release else None
+    found_platform = pre_release.get("attributes", {}).get("platform") if pre_release else None
+    return found_version, found_platform
+
+
+def validate_build_marketing_version(
+    payload: dict[str, Any], build: dict[str, Any], marketing_version: str, build_number: str
+) -> None:
+    found_version, _ = build_marketing_version_and_platform(payload, build)
+    if found_version != marketing_version:
+        raise AppStoreConnectError(
+            f"build {build_number} belongs to marketing version {found_version or '<unknown>'}, not {marketing_version}",
+            payload=build,
+        )
+
+
 def ensure_build(
     client: ASCClient,
     app_id: str,
@@ -864,6 +889,7 @@ def ensure_build(
             last_build = builds[0]
             attributes = last_build.get("attributes", {})
             if attributes.get("processingState") == "VALID":
+                validate_build_marketing_version(payload, last_build, args.version, args.build_number)
                 break
             if time.monotonic() >= deadline:
                 raise AppStoreConnectError(
