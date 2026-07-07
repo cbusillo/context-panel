@@ -63,6 +63,8 @@ DEFAULT_BUILD_WAIT_TIMEOUT_SECONDS = 10 * 60
 DEFAULT_BUILD_POLL_SECONDS = 20
 DEFAULT_VERSION_UNLOCK_WAIT_TIMEOUT_SECONDS = 2 * 60
 DEFAULT_VERSION_UNLOCK_POLL_SECONDS = 5
+DEFAULT_REVIEW_ITEM_OWNER_WAIT_TIMEOUT_SECONDS = 2 * 60
+DEFAULT_REVIEW_ITEM_OWNER_POLL_SECONDS = 5
 
 
 class AppStoreConnectError(RuntimeError):
@@ -1175,6 +1177,28 @@ def active_submission_for_version(
     return None
 
 
+def wait_for_active_submission_for_version(
+    client: ASCClient,
+    app_id: str,
+    platform: str | None,
+    version_id: str,
+    timeout_seconds: int = DEFAULT_REVIEW_ITEM_OWNER_WAIT_TIMEOUT_SECONDS,
+    poll_seconds: int = DEFAULT_REVIEW_ITEM_OWNER_POLL_SECONDS,
+) -> dict[str, Any] | None:
+    deadline = time.monotonic() + max(0, timeout_seconds)
+    while True:
+        submission = active_submission_for_version(client, app_id, platform, version_id)
+        if submission is not None:
+            return submission
+        if time.monotonic() >= deadline:
+            return None
+        print(
+            "Review submission item owner is not visible yet; "
+            f"waiting {poll_seconds}s for App Store Connect consistency"
+        )
+        time.sleep(max(1, poll_seconds))
+
+
 def ensure_review_submission(
     client: ASCClient,
     app_id: str,
@@ -1251,7 +1275,7 @@ def ensure_review_submission(
             if not is_existing_review_item_conflict(error):
                 raise
             print(f"Review submission item already exists for App Store version: {review_version_id}")
-            existing_submission = active_submission_for_version(
+            existing_submission = wait_for_active_submission_for_version(
                 client,
                 app_id,
                 namespace_platform(args),
