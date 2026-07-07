@@ -357,13 +357,43 @@ Run the offline repo contract check before packaging:
 scripts/validate-cloudkit-companion-schema.sh
 ```
 
-When a CloudKit management token is available, also validate the live Production
-schema with `cktool`:
+The live gate uses Apple's `cktool`, not the App Store Connect API key. `cktool`
+needs a CloudKit management token. Apple documents that management tokens are
+generated from CloudKit Console settings, are scoped to the developer team and
+user, default to a one-year lifetime, and can be revoked from CloudKit Dashboard
+settings. `cktool` can then save the token securely in the Mac Keychain.
+
+Relevant Apple references:
+
+- <https://developer.apple.com/icloud/ck-tool/>
+- <https://developer.apple.com/icloud/cloudkit/automating/>
+
+To get and save the token on the local operator machine:
+
+1. Open CloudKit Console for the app's Apple Developer team.
+2. In the user/account Settings area, create a CloudKit management token.
+3. Copy the token when CloudKit Console shows it; Apple does not show it again.
+4. Save it to Keychain with `cktool`:
 
 ```sh
-xcrun cktool save-token
+xcrun cktool save-token --type management --method keychain --force
+```
+
+1. Verify that `cktool` can use the saved token without printing it:
+
+```sh
+xcrun cktool get-teams
+```
+
+Then validate the live Production schema:
+
+```sh
 scripts/validate-cloudkit-companion-schema.sh --live --environment production
 ```
+
+If Keychain storage is unavailable, provide the token only to the command
+process with `CLOUDKIT_MANAGEMENT_TOKEN`; do not write the token into tracked
+files, shell history, GitHub issues, PRs, agent summaries, or release notes.
 
 If the live gate reports a missing record type or field, create and verify the
 schema in Development, then deploy the CloudKit schema to Production before

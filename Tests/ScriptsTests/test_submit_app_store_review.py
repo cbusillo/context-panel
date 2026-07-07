@@ -51,6 +51,37 @@ def valid_build(
     }
 
 
+def build_payload(builds):
+    data = []
+    included = []
+    for build in builds:
+        build_id = build.get("build_id", f"build-{len(data) + 1}")
+        pre_release_id = build.get("pre_release_id", f"prerelease-{len(included) + 1}")
+        data.append(
+            {
+                "id": build_id,
+                "attributes": {
+                    "processingState": build.get("state", "VALID"),
+                    "usesNonExemptEncryption": build.get("uses_non_exempt_encryption"),
+                },
+                "relationships": {
+                    "preReleaseVersion": {"data": {"type": "preReleaseVersions", "id": pre_release_id}}
+                },
+            }
+        )
+        included.append(
+            {
+                "id": pre_release_id,
+                "type": "preReleaseVersions",
+                "attributes": {
+                    "platform": build.get("platform", "MAC_OS"),
+                    "version": build.get("marketing_version", "1.0.39"),
+                },
+            }
+        )
+    return {"data": data, "included": included}
+
+
 class FakeASCClient:
     def __init__(
         self,
@@ -413,6 +444,34 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
 
         self.assertIn("build 202606262249 belongs to marketing version 1.0.36", str(context.exception))
         self.assertIn("not 1.0.39", str(context.exception))
+
+    def test_ensure_build_selects_matching_marketing_version_when_same_build_number_is_reused(self):
+        class BuildClient:
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                if method == "GET" and path == "/builds":
+                    return build_payload(
+                        [
+                            {
+                                "build_id": "stale-build",
+                                "platform": "IOS",
+                                "marketing_version": "1.0.36",
+                                "uses_non_exempt_encryption": False,
+                            },
+                            {
+                                "build_id": "target-build",
+                                "platform": "IOS",
+                                "marketing_version": "1.0.39",
+                                "uses_non_exempt_encryption": False,
+                            },
+                        ]
+                    )
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        args = SimpleNamespace(version="1.0.39", build_number="202606262249", non_exempt_encryption=False, platform="IOS")
+
+        build = submit_app_store_review.ensure_build(BuildClient(), "app-id", args, allow_updates=False)
+
+        self.assertEqual(build["id"], "target-build")
 
     @patch.object(submit_app_store_review.time, "sleep", return_value=None)
     def test_ensure_build_polls_until_uploaded_build_is_valid(self, _sleep):
@@ -1804,6 +1863,51 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         self.assertEqual(patch_paths, ["/reviewSubmissions/ready-submission"])
         patch_body = next(request[3] for request in client.requests if request[0] == "PATCH")
         assert_review_submission_submit_body(self, patch_body)
+
+    def test_ensure_review_submission_rejects_existing_item_with_invisible_owner(self):
+        class ExistingItemInvisibleOwnerClient:
+            def __init__(self):
+                self.requests: list[tuple[Any, ...]] = []
+                self.review_submission_get_count = 0
+
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                self.requests.append((method, path, params, body, allowed))
+                if method == "GET" and path == "/reviewSubmissions":
+                    self.review_submission_get_count += 1
+                    if self.review_submission_get_count == 1:
+                        return {"data": [], "included": []}
+                    return {
+                        "data": [
+                            {
+                                "id": "prepared-submission",
+                                "attributes": {"state": "READY_FOR_REVIEW"},
+                                "relationships": {"items": {"data": []}},
+                            }
+                        ],
+                        "included": [],
+                    }
+                if method == "POST" and path == "/reviewSubmissions":
+                    return {"data": {"id": "prepared-submission", "attributes": {"state": "READY_FOR_REVIEW"}}}
+                if method == "POST" and path == "/reviewSubmissionItems":
+                    raise submit_app_store_review.AppStoreConnectError(
+                        "already exists", status=409, payload={}
+                    )
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        client = ExistingItemInvisibleOwnerClient()
+        args = SimpleNamespace(dry_run=False)
+
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+            submit_app_store_review.ensure_review_submission(
+                client,
+                "app-id",
+                "version-1-0-40",
+                args,
+            )
+
+        self.assertIn("no active owning review submission was found", str(context.exception))
+        patch_paths = [request[1] for request in client.requests if request[0] == "PATCH"]
+        self.assertEqual(patch_paths, [])
 
     def test_ensure_review_submission_adds_additional_platform_versions(self):
         class MultiPlatformReviewSubmissionClient:

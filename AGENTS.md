@@ -155,6 +155,13 @@ acceptable.
   host-specific paths, key IDs, issuer IDs, private key names, JWTs, or live App
   Store Connect object IDs into public repo docs, issues, PRs, or agent
   summaries.
+- CloudKit live Production schema validation uses Apple's `cktool`, not the App
+  Store Connect API credentials. Before companion TestFlight or App Store Review
+  submission, run the live schema gate documented in `docs/release.md` under
+  "CloudKit Production Schema Gate." The local operator machine should have a
+  CloudKit management token saved by `xcrun cktool save-token --type management
+  --method keychain --force`, or a `CLOUDKIT_MANAGEMENT_TOKEN` provided only to
+  the command process. Never commit, print, or summarize the token value.
 
 Minimum runtime evidence before saying a signed dogfood build is ready:
 
