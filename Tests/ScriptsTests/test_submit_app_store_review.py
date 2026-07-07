@@ -1864,7 +1864,8 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         patch_body = next(request[3] for request in client.requests if request[0] == "PATCH")
         assert_review_submission_submit_body(self, patch_body)
 
-    def test_ensure_review_submission_rejects_existing_item_with_invisible_owner(self):
+    @patch.object(submit_app_store_review.time, "sleep", return_value=None)
+    def test_ensure_review_submission_retries_existing_item_owner_lookup(self, _sleep):
         class ExistingItemInvisibleOwnerClient:
             def __init__(self):
                 self.requests: list[tuple[Any, ...]] = []
@@ -1874,17 +1875,29 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
                 self.requests.append((method, path, params, body, allowed))
                 if method == "GET" and path == "/reviewSubmissions":
                     self.review_submission_get_count += 1
-                    if self.review_submission_get_count == 1:
+                    if self.review_submission_get_count in {1, 2}:
                         return {"data": [], "included": []}
                     return {
                         "data": [
                             {
-                                "id": "prepared-submission",
+                                "id": "ready-submission",
                                 "attributes": {"state": "READY_FOR_REVIEW"},
-                                "relationships": {"items": {"data": []}},
+                                "relationships": {
+                                    "items": {"data": [{"type": "reviewSubmissionItems", "id": "item-1"}]}
+                                },
                             }
                         ],
-                        "included": [],
+                        "included": [
+                            {
+                                "id": "item-1",
+                                "type": "reviewSubmissionItems",
+                                "relationships": {
+                                    "appStoreVersion": {
+                                        "data": {"type": "appStoreVersions", "id": "version-1-0-40"}
+                                    }
+                                },
+                            }
+                        ],
                     }
                 if method == "POST" and path == "/reviewSubmissions":
                     return {"data": {"id": "prepared-submission", "attributes": {"state": "READY_FOR_REVIEW"}}}
@@ -1892,22 +1905,45 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
                     raise submit_app_store_review.AppStoreConnectError(
                         "already exists", status=409, payload={}
                     )
+                if method == "PATCH" and path == "/reviewSubmissions/ready-submission":
+                    return {"data": {"id": "ready-submission", "attributes": {"state": "WAITING_FOR_REVIEW"}}}
                 raise AssertionError(f"unexpected request: {method} {path}")
 
         client = ExistingItemInvisibleOwnerClient()
         args = SimpleNamespace(dry_run=False)
 
-        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
-            submit_app_store_review.ensure_review_submission(
-                client,
-                "app-id",
-                "version-1-0-40",
-                args,
-            )
+        submission = submit_app_store_review.ensure_review_submission(
+            client,
+            "app-id",
+            "version-1-0-40",
+            args,
+        )
 
-        self.assertIn("no active owning review submission was found", str(context.exception))
+        self.assertEqual(submission["id"], "ready-submission")
+        self.assertGreaterEqual(client.review_submission_get_count, 3)
         patch_paths = [request[1] for request in client.requests if request[0] == "PATCH"]
-        self.assertEqual(patch_paths, [])
+        self.assertEqual(patch_paths, ["/reviewSubmissions/ready-submission"])
+
+    def test_wait_for_active_submission_for_version_returns_none_after_timeout(self):
+        class InvisibleOwnerClient:
+            def __init__(self):
+                self.requests: list[tuple[Any, ...]] = []
+
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                self.requests.append((method, path, params, body, allowed))
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {"data": [], "included": []}
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        submission = submit_app_store_review.wait_for_active_submission_for_version(
+            InvisibleOwnerClient(),
+            "app-id",
+            "IOS",
+            "version-1-0-40",
+            timeout_seconds=0,
+        )
+
+        self.assertIsNone(submission)
 
     def test_ensure_review_submission_adds_additional_platform_versions(self):
         class MultiPlatformReviewSubmissionClient:
