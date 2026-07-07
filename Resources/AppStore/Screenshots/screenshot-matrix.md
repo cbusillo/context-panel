@@ -261,13 +261,10 @@ Apple Watch checksums:
 ## Current Upload Mapping
 
 This matrix has Chris-approved local candidates for release upload. Direct local
-App Store Connect verification on 2026-07-06 confirmed the prior Mac, iPhone,
-Watch, and Vision Pro approved files in ASC with matching filenames, matching
-dimensions, and `COMPLETE` processing state. The newly approved iPad files are
-repo-tracked candidates and still need to replace the older ASC-only iPad image
-on the next editable iOS App Store version. This verifies image
-upload/processing only; it does not mean all platform versions are
-release-ready.
+App Store Connect verification on 2026-07-07 confirmed the approved Mac,
+iPhone, iPad, Watch, and Vision Pro files in ASC with matching filenames,
+matching dimensions, and `COMPLETE` processing state. This verifies image
+upload/processing only; it does not mean all platform versions are release-ready.
 
 Staged Mac upload candidates:
 
@@ -293,10 +290,10 @@ Staged iPhone upload candidates:
 - iPhone widget, dark mode, Home Screen:
   `iphone/iphone-6-3-widget-dark-home.png`.
 
-For the next editable iOS App Store version, prefer the combined uploader set
-`ios` instead of uploading individual `iphone`, `ipad`, and `watch` sets. The
-combined set replaces every approved iOS-family display type and prunes
-unapproved screenshot display types such as `APP_IPHONE_65`.
+For iOS App Store versions, prefer the combined uploader set `ios` instead of
+uploading individual `iphone`, `ipad`, and `watch` sets. The combined set
+replaces every approved iOS-family display type and prunes unapproved screenshot
+display types such as `APP_IPHONE_65`.
 
 Staged iPad upload candidates:
 
@@ -334,34 +331,30 @@ Staged Apple Watch upload candidates:
 
 ## Remaining Matrix Gaps
 
-Verified ASC image state on 2026-07-06:
+Verified ASC image state on 2026-07-07:
 
 - `MAC_OS` `1.0.39` is `PREPARE_FOR_SUBMISSION`; `APP_DESKTOP` has the 5
   approved Mac screenshots, all `COMPLETE`.
-- `IOS` `1.0.38` is `REJECTED`; `APP_IPHONE_61` has the 4 approved iPhone
+- `IOS` `1.0.39` is `REJECTED`; `APP_IPHONE_61` has the 4 approved iPhone
   screenshots, all `COMPLETE`.
-- `IOS` `1.0.38` is `REJECTED`; `APP_IPAD_PRO_3GEN_129` has 1 older ASC-only
-  iPad screenshot. It does not match the approved repo matrix anymore. Replace
-  it with the 2 approved repo-tracked iPad screenshots before the next iOS
-  submission.
-- `IOS` `1.0.38` is `REJECTED`; `APP_IPHONE_65` has 1 older ASC-only iPhone
-  screenshot. Do not carry this display set forward unless fresh repo-tracked
-  6.5-inch screenshots are intentionally approved later.
-- `IOS` `1.0.38` is `REJECTED`; `APP_WATCH_ULTRA` has the 2 approved Apple
+- `IOS` `1.0.39` is `REJECTED`; `APP_IPAD_PRO_3GEN_129` has the 2 approved
+  repo-tracked iPad screenshots, all `COMPLETE`.
+- `IOS` `1.0.39` is `REJECTED`; `APP_WATCH_ULTRA` has the 2 approved Apple
   Watch screenshots, all `COMPLETE`.
+- `IOS` `1.0.39` has an empty `APP_IPHONE_65` display set with 0 screenshots;
+  no old 6.5-inch image remains attached.
 - `VISION_OS` `1.0.38` is `REJECTED`; `APP_APPLE_VISION_PRO` has the 7
   approved Vision Pro screenshots, all `COMPLETE`.
 
 Release blockers / follow-up before cutting another multi-platform release:
 
 - Do not treat the full matrix as release-ready while iOS/watch and visionOS
-  screenshots remain attached to rejected `1.0.38` versions.
-- Decide whether to prepare fresh `1.0.39` iOS/watch and visionOS versions and
-  upload only the approved repo-tracked screenshot sets there.
+  versions remain in `REJECTED` state.
+- Decide whether to prepare a fresh `1.0.39` visionOS version and upload only
+  the approved repo-tracked Vision Pro screenshot set there.
 - Resolve the App Review rejection cause for the companion versions before
   submission.
-- Remove or replace the older ASC-only iOS display sets during the next editable
-  iOS metadata pass. The approved set now includes `APP_IPHONE_61`,
+- The approved iOS-family set now includes `APP_IPHONE_61`,
   `APP_IPAD_PRO_3GEN_129`, and `APP_WATCH_ULTRA`; it intentionally excludes
   `APP_IPHONE_65`.
 - Replace Vision Pro generated/simulator assets only if App Store Connect or App
