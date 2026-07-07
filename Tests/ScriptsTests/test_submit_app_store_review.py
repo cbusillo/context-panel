@@ -21,7 +21,13 @@ def assert_review_submission_submit_body(test_case, patch_body):
     test_case.assertNotIn("relationships", patch_body["data"])
 
 
-def valid_build(build_id="build-1", state="VALID", uses_non_exempt_encryption=None, platform="MAC_OS"):
+def valid_build(
+    build_id="build-1",
+    state="VALID",
+    uses_non_exempt_encryption=None,
+    platform="MAC_OS",
+    marketing_version="1.0.39",
+):
     return {
         "data": [
             {
@@ -39,7 +45,7 @@ def valid_build(build_id="build-1", state="VALID", uses_non_exempt_encryption=No
             {
                 "id": "prerelease-1",
                 "type": "preReleaseVersions",
-                "attributes": {"platform": platform},
+                "attributes": {"platform": platform, "version": marketing_version},
             }
         ],
     }
@@ -383,11 +389,30 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
                 raise AssertionError(f"unexpected request: {method} {path}")
 
         client = BuildClient()
-        args = SimpleNamespace(build_number="202606021931", non_exempt_encryption=False)
+        args = SimpleNamespace(version="1.0.39", build_number="202606021931", non_exempt_encryption=False)
 
         submit_app_store_review.ensure_build(client, "app-id", args, allow_updates=False)
 
         self.assertEqual([request[0] for request in client.requests], ["GET"])
+
+    def test_ensure_build_rejects_mismatched_marketing_version(self):
+        class BuildClient:
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                if method == "GET" and path == "/builds":
+                    return valid_build(
+                        uses_non_exempt_encryption=False,
+                        platform="IOS",
+                        marketing_version="1.0.36",
+                    )
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        args = SimpleNamespace(version="1.0.39", build_number="202606262249", non_exempt_encryption=False, platform="IOS")
+
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+            submit_app_store_review.ensure_build(BuildClient(), "app-id", args, allow_updates=False)
+
+        self.assertIn("build 202606262249 belongs to marketing version 1.0.36", str(context.exception))
+        self.assertIn("not 1.0.39", str(context.exception))
 
     @patch.object(submit_app_store_review.time, "sleep", return_value=None)
     def test_ensure_build_polls_until_uploaded_build_is_valid(self, _sleep):
@@ -407,7 +432,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
                 raise AssertionError(f"unexpected request: {method} {path}")
 
         client = PollingBuildClient()
-        args = SimpleNamespace(build_number="202606071340", non_exempt_encryption=False)
+        args = SimpleNamespace(version="1.0.39", build_number="202606071340", non_exempt_encryption=False)
 
         build = submit_app_store_review.ensure_build(
             client,
@@ -1312,7 +1337,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
                         ],
                     }
                 if method == "GET" and path == "/builds":
-                    return valid_build()
+                    return valid_build(marketing_version="1.0.14")
                 raise AssertionError(f"unexpected request: {method} {path}")
 
         client = MainClient()
