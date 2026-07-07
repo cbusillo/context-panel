@@ -542,6 +542,14 @@ Preferred operator flow:
 4. After the dry run succeeds, rerun the same inputs with `dry_run: false` to
    submit review.
 
+Rejected App Store versions are not release candidates. They may be useful as
+audit targets while cleaning screenshots or copying metadata, but do not submit
+or dry-run-submit the same rejected marketing version again. Prepare the next
+marketing version, copy the approved metadata and screenshot matrix there, and
+submit that fresh version instead. The submit helper fails fast when the target
+version is in `DEVELOPER_REJECTED`, `REJECTED`, `METADATA_REJECTED`, or
+`INVALID_BINARY`.
+
 Use `platform: MAC_OS` for the native macOS app. For companion review, first run
 the companion App Store Connect upload for `platform=ios` or `platform=visionos`,
 then run `Submit App Store Review` with `platform: IOS` or `platform: VISION_OS`

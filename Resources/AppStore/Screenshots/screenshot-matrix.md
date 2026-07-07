@@ -350,6 +350,9 @@ Release blockers / follow-up before cutting another multi-platform release:
 
 - Do not treat the full matrix as release-ready while iOS/watch and visionOS
   versions remain in `REJECTED` state.
+- Do not resubmit those rejected marketing versions as the next release
+  candidate. Prepare the next marketing version first, then copy/upload the
+  approved screenshot matrix there.
 - Decide whether to prepare a fresh `1.0.39` visionOS version and upload only
   the approved repo-tracked Vision Pro screenshot set there.
 - Resolve the App Review rejection cause for the companion versions before
