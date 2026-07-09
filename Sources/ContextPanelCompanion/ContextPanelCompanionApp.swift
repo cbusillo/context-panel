@@ -1,6 +1,7 @@
 import ContextPanelCore
 import ContextPanelCloudKitSync
 import ContextPanelCompanionSupport
+import ContextPanelSettingsUI
 import ContextPanelWidgetUI
 import SwiftUI
 import UIKit
@@ -25,7 +26,11 @@ private struct CompanionWidgetRenderSignature: Equatable {
     let displayPreferences: WidgetDisplayPreferences
     let deliveryStatus: CompanionSyncDeliveryStatus?
 
-    init(result: CompanionSyncLoadResult, now: Date) {
+    init(
+        result: CompanionSyncLoadResult,
+        displayPreferences: WidgetDisplayPreferences,
+        now: Date
+    ) {
         let snapshot = WidgetSnapshot.fromCompanionSync(
             result,
             now: now,
@@ -42,7 +47,7 @@ private struct CompanionWidgetRenderSignature: Equatable {
         status = snapshot.status
         message = snapshot.message
         refreshAttentionSummary = snapshot.refreshAttentionSummary
-        displayPreferences = result.document?.widgetDisplayPreferences ?? .defaultPreferences
+        self.displayPreferences = displayPreferences
         deliveryStatus = result.transportMetadata?.deliveryStatus
     }
 
@@ -166,6 +171,15 @@ private struct CompanionRootView: View {
 
                     CompanionSyncStatusView(result: model.result)
 
+                    CompanionWidgetMainLimitsSettingsView(
+                        preferences: model.displayPreferences,
+                        isLoaded: model.hasLoadedDisplayPreferences,
+                        isEditable: model.canEditDisplayPreferences,
+                        errorMessage: model.displayPreferencesErrorMessage,
+                        onVisibilityChange: model.setWidgetMainLimit(_:isVisible:),
+                        onMove: model.moveWidgetMainLimits(from:to:)
+                    )
+
                     CompanionRefreshSettingsView(
                         settings: model.refreshSettings,
                         errorMessage: model.settingsErrorMessage,
@@ -217,6 +231,7 @@ private struct CompanionRootView: View {
 private final class CompanionSyncModel {
     private let refreshSettingsStore: CompanionRefreshSettingsStore?
     private let appearanceSettingsStore: CompanionAppearanceSettingsStore?
+    private let displayPreferencesStore: WidgetDisplayPreferencesStore?
     private let remoteStore = CompanionCloudKitSyncStoreFactory.make()
 
     private(set) var result = CompanionSyncLoadResult(document: nil, status: .unknown)
@@ -228,6 +243,8 @@ private final class CompanionSyncModel {
     private(set) var appearanceSettings: CompanionAppearanceSettings
     private(set) var settingsErrorMessage: String?
     private(set) var appearanceErrorMessage: String?
+    private(set) var displayPreferencesErrorMessage: String?
+    private(set) var hasLoadedDisplayPreferences = false
     private var reloadTask: Task<Void, Never>?
     private var needsReloadAfterCurrentTask = false
     private var lastWidgetTimelineReloadAt: Date?
@@ -253,6 +270,18 @@ private final class CompanionSyncModel {
             appearanceSettings = .defaultSettings
             appearanceErrorMessage = "Appearance settings are using defaults because shared app storage is unavailable."
         }
+
+        if let displayPreferencesURL = ContextPanelLocations.companionWidgetDisplayPreferencesURL() {
+            let store = WidgetDisplayPreferencesStore(preferencesURL: displayPreferencesURL)
+            displayPreferencesStore = store
+            if let localDisplayPreferences = store.loadIfAvailable() {
+                displayPreferences = localDisplayPreferences
+                hasLoadedDisplayPreferences = true
+            }
+        } else {
+            displayPreferencesStore = nil
+            displayPreferencesErrorMessage = "Widget display settings could not be saved because shared app storage is unavailable."
+        }
     }
 
     func reload(now: Date = Date()) {
@@ -271,15 +300,26 @@ private final class CompanionSyncModel {
                 }
             }
             let remoteStore = self?.remoteStore
-            let loaded = await Task.detached(priority: .userInitiated) {
-                await CompanionSyncLoader.load(remoteStore: remoteStore, now: now)
+            let displayPreferencesStore = self?.displayPreferencesStore
+            let (loaded, localDisplayPreferences) = await Task.detached(priority: .userInitiated) {
+                let loaded = await CompanionSyncLoader.load(remoteStore: remoteStore, now: now)
+                return (loaded, displayPreferencesStore?.loadIfAvailable())
             }.value
             guard !Task.isCancelled else { return }
             guard let self else { return }
-            let loadedSignature = CompanionWidgetRenderSignature(result: loaded, now: now)
+            let effectiveDisplayPreferences = WidgetDisplayPreferences.companionEffectivePreferences(
+                localOverride: localDisplayPreferences,
+                synced: loaded.document?.widgetDisplayPreferences
+            )
+            let loadedSignature = CompanionWidgetRenderSignature(
+                result: loaded,
+                displayPreferences: effectiveDisplayPreferences,
+                now: now
+            )
             result = loaded
             snapshot = loadedSignature.snapshot
             displayPreferences = loadedSignature.displayPreferences
+            hasLoadedDisplayPreferences = true
             reloadWidgetTimelineIfNeeded(
                 force: loadedSignature != lastWidgetRenderSignature,
                 now: now
@@ -331,6 +371,41 @@ private final class CompanionSyncModel {
         } catch {
             settingsErrorMessage = "Auto-update settings could not be saved."
         }
+    }
+
+    func setWidgetMainLimit(_ preference: WidgetMainLimitPreference, isVisible: Bool) {
+        var updated = displayPreferences
+        updated.setMainLimit(
+            provider: preference.provider,
+            window: preference.window,
+            isVisible: isVisible
+        )
+        saveDisplayPreferences(updated)
+    }
+
+    func moveWidgetMainLimits(from source: IndexSet, to destination: Int) {
+        var updated = displayPreferences
+        updated.moveMainLimits(fromOffsets: source, toOffset: destination)
+        saveDisplayPreferences(updated)
+    }
+
+    private func saveDisplayPreferences(_ updated: WidgetDisplayPreferences) {
+        guard let displayPreferencesStore else {
+            displayPreferencesErrorMessage = "Widget display settings could not be saved because shared app storage is unavailable."
+            return
+        }
+        do {
+            try displayPreferencesStore.save(updated)
+            displayPreferences = updated
+            displayPreferencesErrorMessage = nil
+            reloadContextPanelCompanionWidgetTimeline()
+        } catch {
+            displayPreferencesErrorMessage = "Widget display settings could not be saved."
+        }
+    }
+
+    var canEditDisplayPreferences: Bool {
+        hasLoadedDisplayPreferences && displayPreferencesStore != nil
     }
 
     func updateVisionOSAppAppearance(_ appearance: CompanionVisionOSAppAppearance) {
@@ -445,47 +520,92 @@ private struct CompanionRefreshSettingsView: View {
     let onIntervalChange: (Int) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 12) {
-                Label("Auto-update", systemImage: "arrow.triangle.2.circlepath")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(palette.primaryText)
-                Spacer(minLength: 12)
-                Picker("Auto-update", selection: Binding(
-                    get: { settings.intervalMinutes },
-                    set: { minutes in
-                        MainActor.assumeIsolated {
-                            onIntervalChange(minutes)
+        CompanionSettingsCard {
+            CompanionRefreshSettingsControl(
+                settings: settings,
+                errorMessage: errorMessage,
+                colors: palette.settingsControlColors,
+                onIntervalChange: onIntervalChange
+            )
+        }
+    }
+}
+
+private struct CompanionWidgetMainLimitsSettingsView: View {
+    @Environment(\.companionSurfacePalette) private var palette
+    @State private var editMode: EditMode = .inactive
+    @ScaledMetric private var widgetMainLimitRowHeight: CGFloat = 48
+
+    let preferences: WidgetDisplayPreferences
+    let isLoaded: Bool
+    let isEditable: Bool
+    let errorMessage: String?
+    let onVisibilityChange: @MainActor (WidgetMainLimitPreference, Bool) -> Void
+    let onMove: @MainActor (IndexSet, Int) -> Void
+
+    var body: some View {
+        CompanionSettingsCard {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 12) {
+                    Label("Widget Main Limits", systemImage: "list.bullet.rectangle")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(palette.primaryText)
+                    Spacer(minLength: 12)
+                    Button(editMode == .active ? "Done" : "Reorder") {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            editMode = editMode == .active ? .inactive : .active
                         }
                     }
-                )) {
-                    ForEach(CompanionRefreshSettings.allowedIntervalMinutes, id: \.self) { minutes in
-                        Text("\(minutes)m").tag(minutes)
-                    }
+                    .buttonStyle(.borderless)
+                    .disabled(!isEditable)
                 }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .foregroundStyle(palette.primaryText)
-            }
-            Text("Widgets may update less often when iOS limits background refreshes.")
-                .font(.footnote)
-                .foregroundStyle(palette.secondaryText)
-            if let errorMessage {
-                Text(errorMessage)
+                Text("These choices are local to this companion and its widgets. Mac settings remain unchanged.")
                     .font(.footnote)
-                    .foregroundStyle(palette.errorText)
+                    .foregroundStyle(palette.secondaryText)
+
+                if isLoaded {
+                    List {
+                        WidgetMainLimitSettingsRows(
+                            preferences: preferences,
+                            colors: palette.settingsControlColors,
+                            showsDragIndicator: false,
+                            providerLabel: { provider in
+                                Text(provider.shortName)
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(palette.primaryText)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 3)
+                                    .background(
+                                        palette.segmentBackground,
+                                        in: Capsule()
+                                    )
+                            },
+                            onVisibilityChange: onVisibilityChange,
+                            onMove: onMove
+                        )
+                    }
+                    .environment(\.editMode, $editMode)
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .scrollDisabled(true)
+                    .frame(height: widgetMainLimitListHeight)
+                    .disabled(!isEditable)
+                } else {
+                    ProgressView("Loading display settings…")
+                        .frame(maxWidth: .infinity, minHeight: 80)
+                }
+
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.footnote)
+                        .foregroundStyle(palette.errorText)
+                }
             }
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            palette.cardBackground,
-            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(palette.border, lineWidth: 1)
-        }
+    }
+
+    private var widgetMainLimitListHeight: CGFloat {
+        CGFloat(preferences.mainLimits.count) * widgetMainLimitRowHeight + 16
     }
 }
 
@@ -495,154 +615,57 @@ private struct CompanionAppearanceSettingsView: View {
 
     let settings: CompanionAppearanceSettings
     let errorMessage: String?
-    let onAppAppearanceChange: (CompanionVisionOSAppAppearance) -> Void
-    let onWidgetAppearanceChange: (CompanionVisionOSWidgetAppearance) -> Void
+    let onAppAppearanceChange: @MainActor (CompanionVisionOSAppAppearance) -> Void
+    let onWidgetAppearanceChange: @MainActor (CompanionVisionOSWidgetAppearance) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Appearance", systemImage: "circle.lefthalf.filled")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(palette.primaryText)
-
-            VStack(alignment: .leading, spacing: 10) {
-                appearanceRow("App") {
-                    CompanionAppearanceSegmentedControl(
-                        values: CompanionVisionOSAppAppearance.allCases,
-                        selection: settings.visionOSAppAppearance,
-                        label: { $0.label },
-                        onSelect: { appearance in
-                            MainActor.assumeIsolated {
-                                onAppAppearanceChange(appearance)
-                            }
-                        }
-                    )
-                }
-
-                appearanceRow("Widget") {
-                    CompanionAppearanceSegmentedControl(
-                        values: CompanionVisionOSWidgetAppearance.allCases,
-                        selection: settings.visionOSWidgetAppearance,
-                        label: { $0.label },
-                        onSelect: { appearance in
-                            MainActor.assumeIsolated {
-                                onWidgetAppearanceChange(appearance)
-                            }
-                        }
-                    )
-                }
-            }
-
-            if let errorMessage {
-                Text(errorMessage)
-                    .font(.footnote)
-                    .foregroundStyle(palette.errorText)
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            palette.cardBackground,
-            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(palette.border, lineWidth: 1)
-        }
-    }
-
-    private func appearanceRow<Content: View>(
-        _ title: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(palette.secondaryText)
-            content()
-        }
-    }
-}
-
-private struct CompanionAppearanceSegmentedControl<Value: Hashable>: View {
-    @Environment(\.companionSurfacePalette) private var palette
-
-    let values: [Value]
-    let selection: Value
-    let label: (Value) -> String
-    let onSelect: (Value) -> Void
-
-    init(
-        values: [Value],
-        selection: Value,
-        label: @escaping (Value) -> String,
-        onSelect: @escaping (Value) -> Void
-    ) {
-        self.values = values
-        self.selection = selection
-        self.label = label
-        self.onSelect = onSelect
-    }
-
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(values, id: \.self) { value in
-                let isSelected = value == selection
-                Button {
-                    onSelect(value)
-                } label: {
-                    Text(label(value))
-                        .font(.footnote.weight(.semibold))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.82)
-                        .foregroundStyle(isSelected ? palette.selectedSegmentText : palette.unselectedSegmentText)
-                        .frame(maxWidth: .infinity, minHeight: 34)
-                        .padding(.horizontal, 8)
-                        .background(
-                            isSelected ? palette.selectedSegmentBackground : Color.clear,
-                            in: RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        )
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(label(value))
-                .accessibilityAddTraits(isSelected ? .isSelected : [])
-            }
-        }
-        .padding(4)
-        .background(
-            palette.segmentBackground,
-            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(palette.border, lineWidth: 1)
-        }
-    }
-}
-
-private extension CompanionVisionOSAppAppearance {
-    var label: String {
-        switch self {
-        case .dark:
-            "Dark"
-        case .light:
-            "Light"
-        }
-    }
-}
-
-private extension CompanionVisionOSWidgetAppearance {
-    var label: String {
-        switch self {
-        case .matchApp:
-            "Match App"
-        case .dark:
-            "Dark"
-        case .light:
-            "Light"
+        CompanionSettingsCard {
+            CompanionAppearanceSettingsControl(
+                settings: settings,
+                errorMessage: errorMessage,
+                colors: palette.settingsControlColors,
+                onAppAppearanceChange: onAppAppearanceChange,
+                onWidgetAppearanceChange: onWidgetAppearanceChange
+            )
         }
     }
 }
 #endif
+
+private struct CompanionSettingsCard<Content: View>: View {
+    @Environment(\.companionSurfacePalette) private var palette
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        content
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                palette.cardBackground,
+                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(palette.border, lineWidth: 1)
+            }
+    }
+}
+
+private extension CompanionSurfacePalette {
+    var settingsControlColors: ContextPanelSettingsControlColors {
+        ContextPanelSettingsControlColors(
+            primaryText: primaryText,
+            secondaryText: secondaryText,
+            tertiaryText: tertiaryText,
+            errorText: errorText,
+            segmentBackground: segmentBackground,
+            selectedSegmentBackground: selectedSegmentBackground,
+            selectedSegmentText: selectedSegmentText,
+            unselectedSegmentText: unselectedSegmentText,
+            border: border
+        )
+    }
+}
 
 private struct CompanionSyncStatusView: View {
     @Environment(\.companionSurfacePalette) private var palette

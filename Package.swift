@@ -44,6 +44,10 @@ let package = Package(
             name: "ContextPanelWidgetUI",
             targets: ["ContextPanelWidgetUI"]
         ),
+        .library(
+            name: "ContextPanelSettingsUI",
+            targets: ["ContextPanelSettingsUI"]
+        ),
         .executable(
             name: "ContextPanelWidget",
             targets: ["ContextPanelWidget"]
@@ -53,6 +57,10 @@ let package = Package(
         .target(name: "ContextPanelCore"),
         .target(
             name: "ContextPanelWidgetUI",
+            dependencies: ["ContextPanelCore"]
+        ),
+        .target(
+            name: "ContextPanelSettingsUI",
             dependencies: ["ContextPanelCore"]
         ),
         .target(
@@ -69,7 +77,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "ContextPanelApp",
-            dependencies: ["ContextPanelCore", "ContextPanelCloudKitSync"]
+            dependencies: ["ContextPanelCore", "ContextPanelCloudKitSync", "ContextPanelSettingsUI"]
         ),
         .executableTarget(
             name: "ContextPanelRefreshAgent",
@@ -104,6 +112,7 @@ let package = Package(
             dependencies: [
                 "ContextPanelCore",
                 "ContextPanelCompanionSupport",
+                "ContextPanelSettingsUI",
                 "ContextPanelWatchSupport",
                 "ContextPanelWidget",
                 "ContextPanelWidgetUI",

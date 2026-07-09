@@ -50,6 +50,13 @@ public struct WidgetDisplayPreferences: Codable, Equatable, Sendable {
         WidgetDisplayPreferences(mainLimits: defaultMainLimits)
     }
 
+    public static func companionEffectivePreferences(
+        localOverride: WidgetDisplayPreferences?,
+        synced: WidgetDisplayPreferences?
+    ) -> WidgetDisplayPreferences {
+        localOverride ?? synced ?? .defaultPreferences
+    }
+
     public func preference(for summary: MainLimitSummary) -> WidgetMainLimitPreference? {
         mainLimits.first { $0.provider == summary.provider && $0.window == summary.window }
     }

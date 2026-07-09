@@ -8,6 +8,11 @@ Context Panel is expected to split into a few native boundaries:
   limit summaries. It consumes normalized snapshots and display preferences but
   does not own WidgetKit timelines, local stores, provider refresh, or platform
   storage roots.
+- `ContextPanelSettingsUI`: portable, value-driven SwiftUI controls for
+  companion-safe presentation settings. It depends only on `ContextPanelCore`
+  and emits user intent through closures; app-group storage, widget reloads,
+  sync, permissions, credentials, and provider administration stay in the host
+  app models.
 - Account store: multiple logins per provider, local credential references,
   display names, and enabled/disabled state.
 - Provider adapters: small clients that retrieve or normalize usage state for
@@ -147,6 +152,14 @@ document into their local App Group store for app launch and WidgetKit timeline
 reads. The legacy iCloud Drive companion document is no longer part of the
 default companion runtime load path; recovery should come from a fresh Mac
 publish to CloudKit or the existing local app-group mirror.
+
+Widget display preferences use one-way defaults plus local companion ownership.
+The Mac continues publishing its preferences in `CompanionSyncDocument` for
+backward compatibility and as the initial companion fallback. Once a companion
+changes lane visibility or order, that app-group override becomes authoritative
+for the companion app and its widgets only. Companion edits never flow back to
+the Mac, so there is no bidirectional conflict resolution or collector/admin
+mutation path.
 
 Limit warnings are evaluated from normalized `MainLimitSummary` capacity, not
 raw provider payloads. Local macOS notifications and outbound webhooks use
