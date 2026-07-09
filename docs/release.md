@@ -196,6 +196,12 @@ The upload summary and artifact names include the App Store marketing version,
 build number, target SHA, upload/export mode, and the fact that TestFlight beta
 distribution is handled by the separate TestFlight workflow.
 
+The generated `ContextPanel` Xcode target stamps
+`ContextPanelBuildFingerprint.txt` into the app bundle before Xcode signs the
+archive. The upload script verifies that the archived fingerprint matches the
+current source tree before export, so TestFlight installs can satisfy the
+canonical runtime receipt without modifying or re-signing the exported app.
+
 ## TestFlight Beta Distribution
 
 The `TestFlight Beta Distribution` workflow is manually dispatched or called by

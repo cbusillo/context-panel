@@ -233,6 +233,26 @@ run_xcodebuild() {
 	PATH="$(xcodebuild_system_path)" /usr/bin/xcodebuild "$@"
 }
 
+verify_archived_build_fingerprint() {
+	local archived_app="$archive_path/Products/Applications/Context Panel.app"
+	local fingerprint_path="$archived_app/Contents/Resources/ContextPanelBuildFingerprint.txt"
+	local expected_fingerprint actual_fingerprint
+
+	if [[ ! -f "$fingerprint_path" ]]; then
+		echo "archived app is missing the build fingerprint: $fingerprint_path" >&2
+		exit 1
+	fi
+	expected_fingerprint="$(scripts/context-panel-build-fingerprint.sh)"
+	actual_fingerprint="$(tr -d '\r\n' <"$fingerprint_path")"
+	if [[ "$actual_fingerprint" != "$expected_fingerprint" ]]; then
+		echo "archived app build fingerprint does not match the source tree" >&2
+		echo "expected=$expected_fingerprint" >&2
+		echo "actual=$actual_fingerprint" >&2
+		exit 1
+	fi
+	printf 'Verified archived build fingerprint: %s\n' "$actual_fingerprint"
+}
+
 validate_marketing_version
 
 if [[ ! -f "$app_profile" ]]; then
@@ -354,6 +374,7 @@ fi
 
 rm -rf "$archive_path" "$derived_data_path" "$export_path"
 run_xcodebuild "${archive_args[@]}" archive
+verify_archived_build_fingerprint
 
 run_xcodebuild \
 	-exportArchive \

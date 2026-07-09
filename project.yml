@@ -168,6 +168,15 @@ targets:
         copy:
           destination: wrapper
           subpath: Contents/Library/LoginItems
+    postBuildScripts:
+      - name: Stamp Build Fingerprint
+        script: |
+          "$SRCROOT/scripts/stamp-context-panel-build.sh" \
+            "$TARGET_BUILD_DIR/$FULL_PRODUCT_NAME"
+        outputFiles:
+          - "$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/\
+            ContextPanelBuildFingerprint.txt"
+        basedOnDependencyAnalysis: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.shinycomputers.contextpanel
