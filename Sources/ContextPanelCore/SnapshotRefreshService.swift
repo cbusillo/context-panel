@@ -570,6 +570,10 @@ public struct SnapshotRefreshService: Sendable {
         stores.primary.loadHistory(query: query)
     }
 
+    public func historyCount() -> Int {
+        stores.primary.historyCount()
+    }
+
     public func refresh(now: Date = Date()) async throws -> SnapshotRefreshOutcome {
         importConfiguredAuthFiles(now: now)
         let accountResult = accountStore.load(now: now)

@@ -652,6 +652,13 @@ public struct JSONSnapshotStore: Sendable {
         )
     }
 
+    public func historyCount() -> Int {
+        guard let fileNames = try? FileManager.default.contentsOfDirectory(atPath: historyDirectoryURL.path) else {
+            return 0
+        }
+        return fileNames.lazy.filter { ($0 as NSString).pathExtension == "json" }.count
+    }
+
     public func loadHistory(query: SnapshotStoreQuery = SnapshotStoreQuery()) -> [StoredUsageSnapshot] {
         guard let urls = try? FileManager.default.contentsOfDirectory(
             at: historyDirectoryURL,
@@ -662,6 +669,12 @@ public struct JSONSnapshotStore: Sendable {
 
         let snapshots = urls
             .filter { $0.pathExtension == "json" }
+            .filter { url in
+                guard let since = query.since else { return true }
+                let fileName = url.deletingPathExtension().lastPathComponent
+                guard Self.isHistoryFileTimestamp(fileName) else { return true }
+                return fileName >= ContextPanelDateFormatting.historyFileTimestamp(from: since)
+            }
             .compactMap { try? loadSnapshot(from: $0) }
             .filter { snapshot in
                 if let since = query.since, snapshot.savedAt < since { return false }
@@ -679,6 +692,20 @@ public struct JSONSnapshotStore: Sendable {
             return Array(snapshots.prefix(max(limit, 0)))
         }
         return snapshots
+    }
+
+    private static func isHistoryFileTimestamp(_ value: String) -> Bool {
+        let bytes = Array(value.utf8)
+        guard bytes.count == 20 else { return false }
+        let separators: [Int: UInt8] = [4: 45, 7: 45, 10: 84, 13: 45, 16: 45, 19: 90]
+        for (index, byte) in bytes.enumerated() {
+            if let separator = separators[index] {
+                guard byte == separator else { return false }
+            } else if !(48 ... 57).contains(byte) {
+                return false
+            }
+        }
+        return true
     }
 
     private func ensureDirectories() throws {
