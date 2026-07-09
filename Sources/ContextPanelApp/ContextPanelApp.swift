@@ -3524,12 +3524,14 @@ final class ContextPanelAppModel: ObservableObject {
     @Published private(set) var historyCount: Int = 0
     @Published private(set) var configuredAccounts: [LocalProviderAccountConfiguration] = []
     @Published private(set) var fastModeForecastSettings: FastModeForecastSettings = .defaultSettings
+    @Published private(set) var observedBurnRates: [String: ObservedBurnRate] = [:]
     @Published private(set) var isRefreshing = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var lastRefreshAt: Date?
     @Published private(set) var navigationRequest: AppNavigationSelection?
     private var isDeliveringPendingLimitWarnings = false
     private var pendingLimitWarningDeliveryRequested = false
+    private var observedBurnRatesTask: Task<Void, Never>?
 
     private let refreshService: SnapshotRefreshService
     private let refreshRunner: SnapshotRefreshRunner
@@ -3553,14 +3555,6 @@ final class ContextPanelAppModel: ObservableObject {
         currentSnapshot.mainLimitSummaries.openAIFastModeCapacityForecast(
             observedBurnRates: observedBurnRates,
             settings: fastModeForecastSettings
-        )
-    }
-
-    var observedBurnRates: [String: ObservedBurnRate] {
-        MainLimitBurnRateEstimator.observedBurnRates(
-            current: currentSnapshot,
-            history: refreshService.loadHistory(),
-            now: Date()
         )
     }
 
@@ -3758,9 +3752,33 @@ final class ContextPanelAppModel: ObservableObject {
         } else {
             errorMessage = nil
         }
-        historyCount = refreshService.loadHistory().count
+        historyCount = refreshService.historyCount()
+        refreshObservedBurnRates()
         if reloadWidgetTimelines {
             reloadContextPanelWidgetTimeline()
+        }
+    }
+
+    private func refreshObservedBurnRates(now: Date = Date()) {
+        observedBurnRatesTask?.cancel()
+        let refreshService = refreshService
+        let currentSnapshot = currentSnapshot
+        let generatedAt = currentSnapshot.generatedAt
+        observedBurnRatesTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let history = refreshService.loadHistory(
+                query: SnapshotStoreQuery(since: now.addingTimeInterval(-24 * 3_600))
+            )
+            guard !Task.isCancelled else { return }
+            let rates = MainLimitBurnRateEstimator.observedBurnRates(
+                current: currentSnapshot,
+                history: history,
+                now: now
+            )
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard self?.currentSnapshot.generatedAt == generatedAt else { return }
+                self?.observedBurnRates = rates
+            }
         }
     }
 

@@ -292,7 +292,20 @@ import Testing
     #expect(store.loadHistory().map(\.savedAt) == [second, first])
     #expect(store.loadHistory(query: SnapshotStoreQuery(provider: .openAI)).map(\.savedAt) == [first])
     #expect(store.loadHistory(query: SnapshotStoreQuery(accountID: "b")).map(\.savedAt) == [second])
+    #expect(store.loadHistory(query: SnapshotStoreQuery(since: second)).map(\.savedAt) == [second])
     #expect(store.loadHistory(query: SnapshotStoreQuery(limit: 1)).count == 1)
+    #expect(store.historyCount() == 2)
+}
+
+@Test func jsonSnapshotStoreCountsHistoryFilesWithoutDecodingThem() throws {
+    let root = try temporaryDirectory()
+    let store = JSONSnapshotStore(rootDirectory: root)
+    try FileManager.default.createDirectory(at: store.historyDirectoryURL, withIntermediateDirectories: true)
+    try Data("not-json".utf8).write(to: store.historyDirectoryURL.appending(path: "invalid.json"))
+    try Data("ignored".utf8).write(to: store.historyDirectoryURL.appending(path: "notes.txt"))
+
+    #expect(store.historyCount() == 1)
+    #expect(store.loadHistory().isEmpty)
 }
 
 @Test func jsonSnapshotStoreMergesRefreshResultByProviderAccount() throws {
