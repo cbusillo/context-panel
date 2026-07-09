@@ -144,6 +144,12 @@ acceptable.
 - App Store/TestFlight work must not remove, hide, or narrow product UI such as
   provider setup, diagnostics, history, settings, or account management without
   an explicit product decision from Chris.
+- Before planning, uploading, or submitting an App Store/TestFlight build, read
+  the versioning flow in `docs/release.md`. Release trains use the workflow
+  `version` and `build_number` inputs, not a source-controlled bump to
+  `project.yml`; every new shippable train after an accepted or rejected App
+  Store version needs a fresh marketing version/build input, and the uploaded
+  build's pre-release marketing version must match the App Store Review version.
 - When Chris asks to check App Store Connect through the API, first use the
   direct local ASC API route documented in `docs/release.md` under "Direct App
   Store Connect API Checks." If that private operator config is unavailable,
