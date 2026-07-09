@@ -252,8 +252,9 @@ parent plan #168:
   Panel, not only compatible iPhone/iPad availability on Apple Vision Pro;
 - provide Apple Distribution provisioning profiles whose platform includes
   `visionOS` or `xrOS` and whose entitlements match the companion app/widget
-  split: app profile with App Group, CloudKit, and production APNs; widget
-  profile with App Group only;
+  split: app profile with App Group, iCloud container, iCloud Documents,
+  CloudKit, ubiquity container access, and production APNs; widget profile with
+  App Group only;
 - provide separate profiles for both bundle IDs because the current signed
   package embeds `ContextPanelCompanionWidgetExtension`:
   `com.shinycomputers.contextpanel` and
@@ -681,9 +682,9 @@ any supplied provisioning profile does not authorize the Context Panel App
 Group; App Store profiles may express that authorization as either the exact app
 group or a same-team wildcard. Companion iOS and visionOS uploads require the
 companion app profile to authorize the Context Panel iCloud container,
-CloudKit, and production APNs. The companion widget profile should authorize
-only the App Group and selected platform because the widget reads the companion
-app's app-group mirror.
+iCloud Documents, CloudKit, ubiquity container access, and production APNs. The
+companion widget profile should authorize only the App Group and selected
+platform because the widget reads the companion app's app-group mirror.
 
 ## Build The Native App And Widget
 
