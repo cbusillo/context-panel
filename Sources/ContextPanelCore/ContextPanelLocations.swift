@@ -113,53 +113,6 @@ public enum ContextPanelLocations {
             .appending(path: companionSyncDocumentFileName)
     }
 
-    public static func companionUbiquitySyncDocumentURL(containerID: String? = iCloudContainerID) -> URL? {
-        companionUbiquitySyncDocumentURL(containerID: containerID) { containerID in
-            FileManager.default.url(forUbiquityContainerIdentifier: containerID)
-        }
-    }
-
-    public static func cachedCompanionUbiquitySyncDocumentURL(containerID: String? = iCloudContainerID) -> URL? {
-        CompanionUbiquityContainerURLCache.shared.cachedDocumentURL(containerID: containerID)
-    }
-
-    @discardableResult
-    public static func refreshCachedCompanionUbiquitySyncDocumentURL(
-        containerID: String? = iCloudContainerID
-    ) -> URL? {
-        CompanionUbiquityContainerURLCache.shared.resolveNow(containerID: containerID)
-    }
-
-    static func companionUbiquitySyncDocumentURL(
-        containerID: String?,
-        containerURL: (String) -> URL?
-    ) -> URL? {
-        guard let containerID else { return nil }
-        guard let containerURL = containerURL(containerID) else {
-            return nil
-        }
-        return companionUbiquitySyncDocumentURL(containerURL: containerURL)
-    }
-
-    static func companionUbiquitySyncDocumentURL(containerURL: URL) -> URL {
-        containerURL
-            .appending(path: "Data", directoryHint: .isDirectory)
-            .appending(path: "Context Panel", directoryHint: .isDirectory)
-            .appending(path: "Companion", directoryHint: .isDirectory)
-            .appending(path: companionSyncDocumentFileName)
-    }
-
-    public static func companionSyncStores(
-        appGroupID: String? = appGroupID,
-        iCloudContainerID: String? = iCloudContainerID
-    ) -> [CompanionSyncStore] {
-        var stores = [CompanionSyncStore(documentURL: companionSyncDocumentURL(appGroupID: appGroupID))]
-        if let iCloudURL = companionUbiquitySyncDocumentURL(containerID: iCloudContainerID) {
-            stores.append(CompanionSyncStore(documentURL: iCloudURL))
-        }
-        return stores
-    }
-
     public static func companionSyncStoreSet(
         appGroupID: String? = appGroupID,
         iCloudContainerID: String? = iCloudContainerID
@@ -427,46 +380,5 @@ public enum ContextPanelLocations {
             return containerURL
         }
         return nil
-    }
-
-}
-
-final class CompanionUbiquityContainerURLCache: @unchecked Sendable {
-    static let shared = CompanionUbiquityContainerURLCache()
-
-    private let lock = NSLock()
-    private var cachedDocumentURLs: [String: URL] = [:]
-    private let containerURL: @Sendable (String) -> URL?
-
-    convenience init() {
-        self.init { containerID in
-            FileManager.default.url(forUbiquityContainerIdentifier: containerID)
-        }
-    }
-
-    init(containerURL: @escaping @Sendable (String) -> URL?) {
-        self.containerURL = containerURL
-    }
-
-    func cachedDocumentURL(containerID: String?) -> URL? {
-        guard let containerID else { return nil }
-        lock.lock()
-        let url = cachedDocumentURLs[containerID]
-        lock.unlock()
-        return url
-    }
-
-    func resolveNow(containerID: String?) -> URL? {
-        guard let containerID else { return nil }
-        if let cached = cachedDocumentURL(containerID: containerID) {
-            return cached
-        }
-        guard let documentURL = containerURL(containerID).map(ContextPanelLocations.companionUbiquitySyncDocumentURL(containerURL:)) else {
-            return nil
-        }
-        lock.lock()
-        cachedDocumentURLs[containerID] = documentURL
-        lock.unlock()
-        return documentURL
     }
 }

@@ -41,12 +41,12 @@ public struct CompanionSyncPresentation: Equatable, Sendable {
         case .loading:
             usageSummary = nil
             title = "Loading Mac sync"
-            detail = "Checking iCloud for the latest Mac snapshot."
+            detail = "Checking CloudKit for the latest Mac snapshot."
             symbol = "arrow.clockwise.icloud"
         case .unknown:
             usageSummary = nil
             title = "Waiting for Mac sync"
-            detail = "Open Context Panel on your Mac to publish usage lanes through iCloud."
+            detail = "Open Context Panel on your Mac to publish usage lanes through CloudKit."
             symbol = "icloud.and.arrow.down"
         }
     }
@@ -62,7 +62,7 @@ public struct CompanionSyncPresentation: Equatable, Sendable {
             )
         case .iCloud:
             appendCloudKitStatus(
-                "Latest Mac snapshot received through iCloud.",
+                "Latest Mac snapshot received.",
                 result: result
             )
         case .custom, .none:

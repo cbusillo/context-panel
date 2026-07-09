@@ -191,13 +191,13 @@ private struct WatchEmptySection: View {
     private var emptyDetail: String {
         switch result.status {
         case .failure:
-            syncErrorMessage.map { "The watch could not read the latest iCloud snapshot: \($0)" }
-                ?? "The watch could not read the latest iCloud snapshot."
+            syncErrorMessage.map { "The watch could not read the latest Mac sync snapshot: \($0)" }
+                ?? "The watch could not read the latest Mac sync snapshot."
         case .stale:
             syncErrorMessage.map { "Showing saved data because the latest refresh failed: \($0)" }
                 ?? "Showing saved data until your Mac publishes a fresh snapshot."
         default:
-            "Open Context Panel on your Mac to publish usage limits through iCloud."
+            "Open Context Panel on your Mac to publish usage limits through CloudKit."
         }
     }
 }
@@ -277,7 +277,7 @@ private struct WatchSyncPresentation {
 
         if let errorMessage = result.errorMessage ?? syncErrorMessage, result.status == .failure {
             title = "Sync failed"
-            detail = "The watch could not read the latest iCloud snapshot: \(errorMessage)"
+            detail = "The watch could not read the latest Mac sync snapshot: \(errorMessage)"
             symbol = "icloud.slash"
             tint = .red
             return
@@ -297,7 +297,7 @@ private struct WatchSyncPresentation {
             tint = .yellow
         case .loading:
             title = "Loading Mac sync"
-            detail = "Checking iCloud for the latest usage limits."
+            detail = "Checking CloudKit for the latest usage limits."
             symbol = "arrow.clockwise.icloud"
             tint = .secondary
         case .failure:
@@ -308,7 +308,7 @@ private struct WatchSyncPresentation {
             tint = .red
         case .unknown:
             title = "Waiting for Mac sync"
-            detail = "Open Context Panel on your Mac to publish usage limits through iCloud."
+            detail = "Open Context Panel on your Mac to publish usage limits through CloudKit."
             symbol = "icloud.and.arrow.down"
             tint = .secondary
         }
