@@ -743,8 +743,81 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("--allow-without-preserve", script)
         self.assertIn("xcrun devicectl device profile list", script)
         self.assertIn("xcrun devicectl device profile remove", script)
+        self.assertIn("matches_context_panel_bundle", script)
+        self.assertIn("application-identifier", script)
+        self.assertIn("get-task-allow", script)
         self.assertIn("iOS Team Provisioning Profile: com.shinycomputers.contextpanel", script)
         self.assertNotIn("Context Panel Companion App Store Profile", script)
+
+    def test_device_profile_cleanup_matches_renamed_development_profiles_by_bundle(self):
+        query = self.read("scripts/cleanup-context-panel-device-profiles.sh").split("jq -r --arg team_id \"$team_id\" '", 1)[1].split("' \"$profiles_json\"", 1)[0]
+        profiles = {
+            "result": {
+                "provisioningProfiles": [
+                    {
+                        "uuid": "remove-renamed-app",
+                        "name": "Chris Local Debug Profile",
+                        "teamIdentifier": "MM5YXC7T6E",
+                        "entitlements": {
+                            "application-identifier": "MM5YXC7T6E.com.shinycomputers.contextpanel",
+                            "get-task-allow": True,
+                        },
+                    },
+                    {
+                        "uuid": "keep-app-store-app",
+                        "name": "Context Panel App Store Profile",
+                        "teamIdentifier": "MM5YXC7T6E",
+                        "entitlements": {
+                            "application-identifier": "MM5YXC7T6E.com.shinycomputers.contextpanel",
+                            "get-task-allow": False,
+                        },
+                    },
+                    {
+                        "uuid": "keep-other-app",
+                        "name": "Other App Debug Profile",
+                        "teamIdentifier": "MM5YXC7T6E",
+                        "entitlements": {
+                            "application-identifier": "MM5YXC7T6E.com.example.other",
+                            "get-task-allow": True,
+                        },
+                    },
+                    {
+                        "uuid": "keep-other-team",
+                        "name": "Context Panel Debug Other Team",
+                        "teamIdentifier": "OTHERTEAM",
+                        "entitlements": {
+                            "application-identifier": "OTHERTEAM.com.shinycomputers.contextpanel",
+                            "get-task-allow": True,
+                        },
+                    },
+                    {
+                        "uuid": "remove-widget-field",
+                        "name": "Renamed Widget Debug",
+                        "teamIdentifier": "MM5YXC7T6E",
+                        "bundleIdentifier": "com.shinycomputers.contextpanel.widget",
+                        "entitlements": {"get-task-allow": True},
+                    },
+                ]
+            }
+        }
+
+        result = subprocess.run(
+            ["jq", "-r", "--arg", "team_id", "MM5YXC7T6E", query],
+            input=json.dumps(profiles),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(
+            result.stdout.splitlines(),
+            [
+                "remove-renamed-app\tChris Local Debug Profile",
+                "remove-widget-field\tRenamed Widget Debug",
+            ],
+        )
 
     def test_visionos_dogfood_script_requires_available_physical_avp_for_install(self):
         script = self.read("scripts/dogfood-visionos-companion.sh")
