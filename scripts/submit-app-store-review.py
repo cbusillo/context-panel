@@ -778,10 +778,12 @@ def dry_run_version_path(
             "--remove-active-review-version for the active version before submitting a replacement"
         )
 
+    prepare_only = bool(getattr(args, "prepare_only", False))
     blocking_versions = [
         version
         for version in version_creation_blocking_app_store_versions(client, app_id, platform)
         if version["id"] not in allowed_active_ids
+        and not (prepare_only and version_state(version) in REJECTED_RELEASE_CANDIDATE_STATES)
     ]
     if blocking_versions:
         raise AppStoreConnectError(replacement_version_guidance(blocking_versions[0]), payload=blocking_versions[0])
@@ -813,7 +815,6 @@ def dry_run_version_path(
         )
     state = version_state(source)
     removal_validated = removable_review_version == args.remove_active_review_version
-    prepare_only = bool(getattr(args, "prepare_only", False))
     if state in REJECTED_RELEASE_CANDIDATE_STATES and not prepare_only:
         raise AppStoreConnectError(
             rejected_source_reuse_message(args.remove_active_review_version, args.version, state),

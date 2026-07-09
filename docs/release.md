@@ -252,8 +252,8 @@ parent plan #168:
   Panel, not only compatible iPhone/iPad availability on Apple Vision Pro;
 - provide Apple Distribution provisioning profiles whose platform includes
   `visionOS` or `xrOS` and whose entitlements match the companion app/widget
-  split: app profile with App Group, iCloud Documents, CloudKit, ubiquity, and
-  production APNs; widget profile with App Group only;
+  split: app profile with App Group, CloudKit, and production APNs; widget
+  profile with App Group only;
 - provide separate profiles for both bundle IDs because the current signed
   package embeds `ContextPanelCompanionWidgetExtension`:
   `com.shinycomputers.contextpanel` and
@@ -526,7 +526,8 @@ Panel.app`.
 2. Run `scripts/context-panel-runtime-baseline.sh install --launch` or
    `scripts/context-panel-runtime-baseline.sh check` and require `baseline=OK`.
 3. Trigger a Mac refresh that publishes the sanitized companion snapshot to
-   CloudKit and preserves the staged local/iCloud Drive fallback.
+   CloudKit and updates the companion app-group mirror used by the app and
+   widget runtimes.
 4. Open the app Diagnostics view and confirm `Companion publish` is healthy or,
    if degraded, names the failing store without raw paths or account data.
 5. Install the companion build from TestFlight on the target device. For the
@@ -541,9 +542,9 @@ Panel.app`.
    render current lanes and preserve useful degraded states.
 8. Reopen the Mac Diagnostics view and confirm companion load/readback state is
    explainable: healthy, stale, unavailable, partial, or failed.
-9. Exercise degraded cases when practical: iCloud/CloudKit disabled or
-   unavailable, stale local mirror, missing Mac publish, delayed notification,
-   and app group mirror failure.
+9. Exercise degraded cases when practical: CloudKit disabled or unavailable,
+   missing CloudKit record, stale local mirror, missing Mac publish, delayed
+   notification, and app group mirror failure.
 
 If the companion app or widget is stale but diagnostics show healthy Mac publish
 and readable CloudKit state, investigate the companion receive/mirror/reload path
@@ -592,6 +593,11 @@ hardware/source app, the Mac publishing a fresh snapshot, and the companion app
 or widget moving from setup/waiting-for-Mac-sync into synced usage-limit data.
 Reply to App Review with that link and summarize that no demo account is needed
 unless the build requires one.
+
+After a companion platform is rejected, do not resubmit that rejected marketing
+version as the recovery candidate. Prepare the next marketing version, copy the
+approved metadata and screenshot matrix there, attach a newly validated build,
+and submit that fresh version after device validation.
 
 Use `platform: MAC_OS` for the native macOS app. For companion review, first run
 the companion App Store Connect upload for `platform=ios` or `platform=visionos`,
@@ -675,9 +681,9 @@ any supplied provisioning profile does not authorize the Context Panel App
 Group; App Store profiles may express that authorization as either the exact app
 group or a same-team wildcard. Companion iOS and visionOS uploads require the
 companion app profile to authorize the Context Panel iCloud container,
-CloudDocuments, CloudKit, ubiquity, and production APNs. The companion widget
-profile should authorize only the App Group and selected platform because the
-widget reads the companion app's app-group mirror.
+CloudKit, and production APNs. The companion widget profile should authorize
+only the App Group and selected platform because the widget reads the companion
+app's app-group mirror.
 
 ## Build The Native App And Widget
 

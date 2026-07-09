@@ -141,6 +141,13 @@ IDs, local notes, auth paths, provider error strings, webhook secrets, tokens,
 and raw provider responses. Companion sync transports must publish this safe
 projection or a stricter descendant, not `StoredUsageSnapshot`.
 
+CloudKit is the remote companion transport. Companion apps load the
+Mac-published CloudKit record when available and mirror the sanitized companion
+document into their local App Group store for app launch and WidgetKit timeline
+reads. The legacy iCloud Drive companion document is no longer part of the
+default companion runtime load path; recovery should come from a fresh Mac
+publish to CloudKit or the existing local app-group mirror.
+
 Limit warnings are evaluated from normalized `MainLimitSummary` capacity, not
 raw provider payloads. Local macOS notifications and outbound webhooks use
 separate delivery state so one channel cannot suppress the other. Webhook
