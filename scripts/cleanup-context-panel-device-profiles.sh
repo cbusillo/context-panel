@@ -158,8 +158,19 @@ done < <(
           "com.shinycomputers.contextpanel.watch.widget"
         ];
 
+        def entitlement_object:
+          (.entitlements? // .Entitlements? // {})
+          | if type == "object" then . else {} end;
+
+        def entitlement_names:
+          (.entitlements? // .Entitlements? // [])
+          | if type == "array" then . else [] end;
+
         def entitlement_value($name):
-          (.entitlements? // .Entitlements? // {})[$name]?;
+          entitlement_object[$name]?;
+
+        def has_entitlement_name($name):
+          any(entitlement_names[]?; . == $name);
 
         def profile_strings:
           [
@@ -174,15 +185,25 @@ done < <(
           ]
           | map(select(type == "string"));
 
+        def xcode_managed_profile_matches_context_panel_bundle:
+          (.name? // "") as $name
+          | any(target_bundle_ids[] as $bundle
+              | $name == ("iOS Team Provisioning Profile: " + $bundle)
+                or $name == ("Mac Team Provisioning Profile: " + $bundle)
+            );
+
         def is_development_profile:
           entitlement_value("get-task-allow") == true
           or entitlement_value("com.apple.security.get-task-allow") == true
-          or ((.name? // "") | startswith("iOS Team Provisioning Profile: com.shinycomputers.contextpanel"));
+          or has_entitlement_name("get-task-allow")
+          or has_entitlement_name("com.apple.security.get-task-allow")
+          or xcode_managed_profile_matches_context_panel_bundle;
 
         def matches_context_panel_bundle:
           profile_strings as $strings
           | [target_bundle_ids[] as $bundle | $bundle, ($team_id + "." + $bundle)] as $expected
-          | any($strings[]; . as $candidate | any($expected[]; . == $candidate));
+          | xcode_managed_profile_matches_context_panel_bundle
+            or any($strings[]; . as $candidate | any($expected[]; . == $candidate));
 
         .result.provisioningProfiles[]?
         | select(.teamIdentifier == $team_id)

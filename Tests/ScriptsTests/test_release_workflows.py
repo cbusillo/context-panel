@@ -746,7 +746,9 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("matches_context_panel_bundle", script)
         self.assertIn("application-identifier", script)
         self.assertIn("get-task-allow", script)
-        self.assertIn("iOS Team Provisioning Profile: com.shinycomputers.contextpanel", script)
+        self.assertIn("iOS Team Provisioning Profile: ", script)
+        self.assertIn("com.shinycomputers.contextpanel", script)
+        self.assertIn("Mac Team Provisioning Profile: ", script)
         self.assertNotIn("Context Panel Companion App Store Profile", script)
 
     def test_device_profile_cleanup_matches_renamed_development_profiles_by_bundle(self):
@@ -797,6 +799,27 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                         "bundleIdentifier": "com.shinycomputers.contextpanel.widget",
                         "entitlements": {"get-task-allow": True},
                     },
+                    {
+                        "uuid": "remove-live-ios-name",
+                        "name": "iOS Team Provisioning Profile: com.shinycomputers.contextpanel.widget",
+                        "teamIdentifier": "MM5YXC7T6E",
+                        "appIdentifier": "Context Panel Widget",
+                        "entitlements": ["application-identifier", "get-task-allow"],
+                    },
+                    {
+                        "uuid": "remove-mac-team-name",
+                        "name": "Mac Team Provisioning Profile: com.shinycomputers.contextpanel",
+                        "teamIdentifier": "MM5YXC7T6E",
+                        "appIdentifier": "Context Panel",
+                        "entitlements": ["application-identifier"],
+                    },
+                    {
+                        "uuid": "keep-wildcard",
+                        "name": "iOS Team Provisioning Profile: *",
+                        "teamIdentifier": "MM5YXC7T6E",
+                        "appIdentifier": "XC Wildcard",
+                        "entitlements": ["application-identifier", "get-task-allow"],
+                    },
                 ]
             }
         }
@@ -816,6 +839,8 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             [
                 "remove-renamed-app\tChris Local Debug Profile",
                 "remove-widget-field\tRenamed Widget Debug",
+                "remove-live-ios-name\tiOS Team Provisioning Profile: com.shinycomputers.contextpanel.widget",
+                "remove-mac-team-name\tMac Team Provisioning Profile: com.shinycomputers.contextpanel",
             ],
         )
 
