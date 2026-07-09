@@ -150,9 +150,44 @@ while IFS=$'\t' read -r uuid name; do
 	fi
 done < <(
 	jq -r --arg team_id "$team_id" '
+        def target_bundle_ids: [
+          "com.shinycomputers.contextpanel",
+          "com.shinycomputers.contextpanel.widget",
+          "com.shinycomputers.contextpanel.refresh-agent",
+          "com.shinycomputers.contextpanel.watch",
+          "com.shinycomputers.contextpanel.watch.widget"
+        ];
+
+        def entitlement_value($name):
+          (.entitlements? // .Entitlements? // {})[$name]?;
+
+        def profile_strings:
+          [
+            .applicationIdentifier?,
+            .applicationIdentifierEntitlement?,
+            .applicationIdentifierPrefix?,
+            .bundleIdentifier?,
+            .identifier?,
+            .profileIdentifier?,
+            entitlement_value("application-identifier"),
+            entitlement_value("com.apple.application-identifier")
+          ]
+          | map(select(type == "string"));
+
+        def is_development_profile:
+          entitlement_value("get-task-allow") == true
+          or entitlement_value("com.apple.security.get-task-allow") == true
+          or ((.name? // "") | startswith("iOS Team Provisioning Profile: com.shinycomputers.contextpanel"));
+
+        def matches_context_panel_bundle:
+          profile_strings as $strings
+          | [target_bundle_ids[] as $bundle | $bundle, ($team_id + "." + $bundle)] as $expected
+          | any($strings[]; . as $candidate | any($expected[]; . == $candidate));
+
         .result.provisioningProfiles[]?
         | select(.teamIdentifier == $team_id)
-        | select(.name | startswith("iOS Team Provisioning Profile: com.shinycomputers.contextpanel"))
+        | select(is_development_profile)
+        | select(matches_context_panel_bundle)
         | [.uuid, .name]
         | @tsv
     ' "$profiles_json"
