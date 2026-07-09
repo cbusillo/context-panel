@@ -637,6 +637,28 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
 
         self.assertNotIn("manageAppVersionAndBuildNumber", upload_script)
 
+    def test_macos_app_store_archive_stamps_and_verifies_build_fingerprint(self):
+        project = self.read("project.yml")
+        upload_script = self.read("scripts/upload-app-store-connect-macos-app.sh")
+        context_panel_start = project.index("  ContextPanel:")
+        refresh_agent_start = project.index("  ContextPanelRefreshAgent:")
+        context_panel_target = project[context_panel_start:refresh_agent_start]
+
+        self.assertIn("postBuildScripts:", context_panel_target)
+        self.assertIn("Stamp Build Fingerprint", context_panel_target)
+        self.assertIn('"$SRCROOT/scripts/stamp-context-panel-build.sh"', context_panel_target)
+        self.assertIn('"$TARGET_BUILD_DIR/$FULL_PRODUCT_NAME"', context_panel_target)
+        self.assertIn("ContextPanelBuildFingerprint.txt", context_panel_target)
+        self.assertIn("basedOnDependencyAnalysis: false", context_panel_target)
+
+        archive_index = upload_script.index('run_xcodebuild "${archive_args[@]}" archive')
+        verify_index = upload_script.index("verify_archived_build_fingerprint", archive_index)
+        export_index = upload_script.index("-exportArchive", verify_index)
+        self.assertLess(archive_index, verify_index)
+        self.assertLess(verify_index, export_index)
+        self.assertIn("archived app is missing the build fingerprint", upload_script)
+        self.assertIn("archived app build fingerprint does not match the source tree", upload_script)
+
     def test_upload_scripts_guard_against_app_store_marketing_version_regression(self):
         for script_path, expected_platform in (
             ("scripts/upload-app-store-connect-macos-app.sh", "--platform MAC_OS"),

@@ -1062,6 +1062,7 @@
 				0A536561059AF7F95E2D3FD7 /* Frameworks */,
 				09DAA1F320B84A007C14B253 /* Embed Foundation Extensions */,
 				88F350B59E49D87CBBACFFE3 /* Embed Dependencies */,
+				DBFCD8A6870887BFD25E7072 /* Stamp Build Fingerprint */,
 			);
 			buildRules = (
 			);
@@ -1326,6 +1327,26 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "ditto \"${SCRIPT_INPUT_FILE_0}\" \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+		};
+		DBFCD8A6870887BFD25E7072 /* Stamp Build Fingerprint */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Stamp Build Fingerprint";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/ContextPanelBuildFingerprint.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/scripts/stamp-context-panel-build.sh\" \\\n  \"$TARGET_BUILD_DIR/$FULL_PRODUCT_NAME\"\n";
 		};
 		F9AF955DA1F0631FA5F843B0 /* Copy Swift Objective-C Interface Header */ = {
 			isa = PBXShellScriptBuildPhase;
