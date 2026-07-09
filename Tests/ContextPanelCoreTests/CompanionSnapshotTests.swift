@@ -1151,6 +1151,42 @@ import Testing
     #expect(CompanionSyncPresentation(result: result).detail == "Latest Mac snapshot loaded from the local mirror.")
 }
 
+@Test func companionAppGroupMirrorDiagnosticsStayHealthyWithoutICloudFallback() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 3_545)
+    let localURL = root.appending(path: "local/companion.json")
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    )
+    try CompanionSyncStore(documentURL: localURL).save(document)
+    let diagnosticsStore = RefreshDiagnosticsStateStore(
+        stateURL: root.appending(path: "refresh-diagnostics-state.json")
+    )
+
+    let result = CompanionSyncLoader.load(
+        localMirrorURL: localURL,
+        iCloudDocumentURL: nil,
+        remoteLoad: nil,
+        mirrorLoadedDocument: false,
+        diagnosticsStore: diagnosticsStore,
+        now: now
+    )
+    let diagnostics = diagnosticsStore.load().lastCompanionLoad
+
+    #expect(result.document == document)
+    #expect(result.status == .close)
+    #expect(diagnostics?.outcome == .healthy)
+    #expect(diagnostics?.appGroupSucceeded == true)
+    #expect(diagnostics?.iCloudAvailable == nil)
+    #expect(diagnostics?.iCloudSucceeded == nil)
+    #expect(diagnostics?.loadedDocument == true)
+    #expect(diagnostics?.mirroredDocument == nil)
+    #expect(diagnostics?.stale == false)
+    #expect(diagnostics?.errorMessage == nil)
+}
+
 @Test func companionWidgetLoaderFallsBackToLocalMirrorWithoutRewritingWhenICloudUnavailable() throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
