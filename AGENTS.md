@@ -168,6 +168,13 @@ acceptable.
   CloudKit management token saved by `xcrun cktool save-token --type management
   --method keychain --force`, or a `CLOUDKIT_MANAGEMENT_TOKEN` provided only to
   the command process. Never commit, print, or summarize the token value.
+- Physical companion dogfood installs should clean stale Context Panel
+  development provisioning profiles from the target device while preserving the
+  profile embedded in the newly installed build and preserving App
+  Store/TestFlight profiles. Use
+  `scripts/cleanup-context-panel-device-profiles.sh --device <id>` for manual
+  hygiene; the visionOS dogfood fixture calls it by default. Use
+  `--no-profile-cleanup` only when investigating profile state itself.
 
 Minimum runtime evidence before saying a signed dogfood build is ready:
 

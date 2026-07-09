@@ -12,6 +12,7 @@ build_only=0
 install_json=""
 build_destination="generic/platform=visionOS"
 resolved_device_id=""
+cleanup_profiles=1
 
 usage() {
 	cat <<'USAGE'
@@ -34,6 +35,8 @@ Options:
                               .build/avp-dogfood/xcode-derived.
   --build-only                Build the signed visionOS app but do not install.
   --no-launch                 Install but do not launch.
+  --no-profile-cleanup        Keep stale Context Panel development provisioning
+                              profiles on the device after install.
   -h, --help                  Show this help.
 USAGE
 }
@@ -63,6 +66,10 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--no-launch)
 		launch=0
+		shift
+		;;
+	--no-profile-cleanup)
+		cleanup_profiles=0
 		shift
 		;;
 	-h | --help)
@@ -143,6 +150,16 @@ describe_device() {
         ]
         | @tsv
     ' "$device_json" | head -n 1
+}
+
+cleanup_stale_context_panel_profiles() {
+	local device="$1"
+	if ! scripts/cleanup-context-panel-device-profiles.sh \
+		--device "$device" \
+		--team-id "$team_id" \
+		--preserve-app "$app_path"; then
+		echo "warning: unable to clean stale Context Panel provisioning profiles" >&2
+	fi
 }
 
 require_available_avp() {
@@ -227,6 +244,10 @@ xcrun devicectl device install app \
 	--device "$resolved_device_id" \
 	--json-output "$install_json" \
 	"$app_path"
+
+if ((cleanup_profiles)); then
+	cleanup_stale_context_panel_profiles "$resolved_device_id"
+fi
 
 launch_identifier="$(jq -r '.. | objects | .launchServicesIdentifier? // empty' "$install_json" | head -n 1)"
 if [[ "$launch_identifier" == "unknown" ]]; then

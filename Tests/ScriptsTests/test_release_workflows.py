@@ -721,6 +721,10 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("DEVELOPMENT_TEAM=\"$team_id\"", script)
         self.assertIn("xcrun devicectl list devices --json-output", script)
         self.assertIn("xcrun devicectl device install app", script)
+        self.assertIn("cleanup_stale_context_panel_profiles", script)
+        self.assertIn("scripts/cleanup-context-panel-device-profiles.sh", script)
+        self.assertIn("--preserve-app \"$app_path\"", script)
+        self.assertIn("--no-profile-cleanup", script)
         self.assertIn("xcrun devicectl \"${launch_args[@]}\"", script)
         self.assertIn("com.shinycomputers.contextpanel", script)
         self.assertIn('if [[ "$2" == /* ]]; then', script)
@@ -729,6 +733,18 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn('if [[ "$launch_identifier" == "unknown" ]]; then', script)
         self.assertIn('launch_identifier=""', script)
         self.assertNotIn("require_command python3", script)
+
+    def test_device_profile_cleanup_preserves_current_profiles_and_skips_app_store_profiles(self):
+        script = self.read("scripts/cleanup-context-panel-device-profiles.sh")
+
+        self.assertIn("embedded_profile_uuids", script)
+        self.assertIn("find \"$app\" -name embedded.mobileprovision", script)
+        self.assertIn("uuid_is_preserved", script)
+        self.assertIn("--allow-without-preserve", script)
+        self.assertIn("xcrun devicectl device profile list", script)
+        self.assertIn("xcrun devicectl device profile remove", script)
+        self.assertIn("iOS Team Provisioning Profile: com.shinycomputers.contextpanel", script)
+        self.assertNotIn("Context Panel Companion App Store Profile", script)
 
     def test_visionos_dogfood_script_requires_available_physical_avp_for_install(self):
         script = self.read("scripts/dogfood-visionos-companion.sh")
