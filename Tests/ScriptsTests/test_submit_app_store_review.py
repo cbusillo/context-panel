@@ -807,6 +807,36 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
 
         self.assertIn("apply mode can reuse 1.0.13", output.getvalue())
 
+    def test_dry_run_version_path_allows_fresh_prepare_only_when_old_version_is_rejected(self):
+        class RejectedVersionClient:
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                if method == "GET" and path == "/apps/app-id/appStoreVersions":
+                    version_string = params.get("filter[versionString]") if params else None
+                    if version_string == "1.0.14":
+                        return {"data": []}
+                    return {
+                        "data": [
+                            {
+                                "id": "version-1-0-13",
+                                "attributes": {
+                                    "versionString": "1.0.13",
+                                    "appStoreState": "REJECTED",
+                                },
+                            }
+                        ]
+                    }
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {"data": []}
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        args = SimpleNamespace(version="1.0.14", remove_active_review_version=None, prepare_only=True)
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            submit_app_store_review.dry_run_version_path(RejectedVersionClient(), "app-id", args)
+
+        self.assertIn("would create App Store version 1.0.14", output.getvalue())
+
     def test_dry_run_version_path_rejects_locked_replacement_version(self):
         class LockedVersionClient:
             def request(self, method, path, params=None, body=None, allowed=(200,)):

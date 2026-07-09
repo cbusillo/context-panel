@@ -229,7 +229,6 @@ private final class CompanionSyncModel {
     private(set) var settingsErrorMessage: String?
     private(set) var appearanceErrorMessage: String?
     private var reloadTask: Task<Void, Never>?
-    private var iCloudCacheRefreshTask: Task<Void, Never>?
     private var needsReloadAfterCurrentTask = false
     private var lastWidgetTimelineReloadAt: Date?
     private var lastWidgetRenderSignature: CompanionWidgetRenderSignature?
@@ -286,7 +285,6 @@ private final class CompanionSyncModel {
                 now: now
             )
             lastWidgetRenderSignature = loadedSignature
-            refreshICloudCacheIfNeeded()
         }
     }
 
@@ -303,22 +301,6 @@ private final class CompanionSyncModel {
     func registerCloudKitSubscription() {
         Task { [remoteStore] in
             _ = await remoteStore.registerSubscription()
-        }
-    }
-
-    private func refreshICloudCacheIfNeeded() {
-        guard iCloudCacheRefreshTask == nil else { return }
-        guard ContextPanelLocations.cachedCompanionUbiquitySyncDocumentURL() == nil else { return }
-        iCloudCacheRefreshTask = Task { [weak self] in
-            let refreshedURL = await Task.detached(priority: .utility) {
-                ContextPanelLocations.refreshCachedCompanionUbiquitySyncDocumentURL()
-            }.value
-            guard !Task.isCancelled else { return }
-            guard let self else { return }
-            iCloudCacheRefreshTask = nil
-            if refreshedURL != nil {
-                reload()
-            }
         }
     }
 

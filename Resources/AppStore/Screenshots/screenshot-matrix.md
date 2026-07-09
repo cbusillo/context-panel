@@ -374,33 +374,35 @@ Staged Apple Watch upload candidates:
 
 ## Remaining Matrix Gaps
 
-Verified ASC image state on 2026-07-07:
+Verified ASC image state on 2026-07-08 after iOS App Review approval:
 
 - `MAC_OS` `1.0.39` is `PREPARE_FOR_SUBMISSION`; `APP_DESKTOP` has the 5
   approved Mac screenshots, all `COMPLETE`.
-- `IOS` `1.0.40` is `WAITING_FOR_REVIEW`; `APP_IPHONE_61` has the 4 approved iPhone
+- `IOS` `1.0.40` is `READY_FOR_SALE`; `APP_IPHONE_61` has the 4 approved iPhone
   screenshots, all `COMPLETE`.
-- `IOS` `1.0.40` is `WAITING_FOR_REVIEW`; `APP_IPHONE_65` has the 4 approved
+- `IOS` `1.0.40` is `READY_FOR_SALE`; `APP_IPHONE_65` has the 4 approved
   derived iPhone 6.5-inch screenshots, all `COMPLETE`.
-- `IOS` `1.0.40` is `WAITING_FOR_REVIEW`; `APP_IPAD_PRO_3GEN_129` has the 2 approved
+- `IOS` `1.0.40` is `READY_FOR_SALE`; `APP_IPAD_PRO_3GEN_129` has the 2 approved
   repo-tracked iPad screenshots, all `COMPLETE`.
-- `IOS` `1.0.40` is `WAITING_FOR_REVIEW`; `APP_WATCH_ULTRA` has the 2 approved Apple
+- `IOS` `1.0.40` is `READY_FOR_SALE`; `APP_WATCH_ULTRA` has the 2 approved Apple
   Watch screenshots, all `COMPLETE`.
 - `VISION_OS` `1.0.38` is `REJECTED`; `APP_APPLE_VISION_PRO` has the 7
   approved Vision Pro screenshots, all `COMPLETE`.
 
 Release blockers / follow-up before cutting another multi-platform release:
 
-- Do not treat the full matrix as release-ready while iOS/watch and visionOS
-  versions remain in `REJECTED` state. iOS `1.0.40` is already submitted and
-  should be tracked through App Review instead.
+- iOS `1.0.40` is accepted and live. Keep future iOS screenshot changes on a
+  fresh editable version; do not mutate the accepted release as release prep.
 - Do not resubmit rejected marketing versions as the next release candidate.
   Prepare the next marketing version first, then copy/upload the approved
   screenshot matrix there.
-- Decide whether to prepare a fresh `1.0.39` visionOS version and upload only
-  the approved repo-tracked Vision Pro screenshot set there.
-- Resolve the App Review rejection cause for the companion versions before
-  submission.
+- Fresh `VISION_OS` `1.0.39` preparation was attempted after iOS acceptance, but
+  App Store Connect rejected `POST /appStoreVersions` while rejected `1.0.38`
+  remains the active visionOS state. Do not delete rejected `1.0.38` without an
+  explicit recovery decision; use it as audit history until Apple/ASC allows the
+  next fresh visionOS version.
+- Validate visionOS CloudKit receive/mirror/widget behavior on Apple Vision Pro
+  before submitting the fresh visionOS version for review.
 - The approved iOS-family set now includes `APP_IPHONE_61`,
   `APP_IPHONE_65`, `APP_IPAD_PRO_3GEN_129`, and `APP_WATCH_ULTRA`.
 - Replace Vision Pro generated/simulator assets only if App Store Connect or App

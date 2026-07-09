@@ -4,13 +4,11 @@ import Foundation
 
 public enum CompanionSyncLoader {
     public static func load(now: Date = Date()) -> CompanionSyncLoadResult {
-        let iCloudDocumentURL = ContextPanelLocations.cachedCompanionUbiquitySyncDocumentURL()
-            ?? ContextPanelLocations.refreshCachedCompanionUbiquitySyncDocumentURL()
         return load(
             localMirrorURL: ContextPanelLocations.companionAppGroupSyncDocumentURL(),
-            iCloudDocumentURL: iCloudDocumentURL,
+            iCloudDocumentURL: nil,
             remoteLoad: nil,
-            mirrorLoadedDocument: iCloudDocumentURL != nil,
+            mirrorLoadedDocument: false,
             diagnosticsStore: RefreshDiagnosticsStateStore(
                 stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.companionAppGroupID)
             ),
@@ -20,13 +18,11 @@ public enum CompanionSyncLoader {
 
     public static func load(remoteStore: CompanionRemoteSyncStore?, now: Date = Date()) async -> CompanionSyncLoadResult {
         let remoteLoad = await remoteStore?.load(now: now)
-        let iCloudDocumentURL = ContextPanelLocations.cachedCompanionUbiquitySyncDocumentURL()
-            ?? ContextPanelLocations.refreshCachedCompanionUbiquitySyncDocumentURL()
         return load(
             localMirrorURL: ContextPanelLocations.companionAppGroupSyncDocumentURL(),
-            iCloudDocumentURL: iCloudDocumentURL,
+            iCloudDocumentURL: nil,
             remoteLoad: remoteLoad,
-            mirrorLoadedDocument: remoteLoad?.result.document != nil || iCloudDocumentURL != nil,
+            mirrorLoadedDocument: remoteLoad?.result.document != nil,
             diagnosticsStore: RefreshDiagnosticsStateStore(
                 stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.companionAppGroupID)
             ),

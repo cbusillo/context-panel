@@ -1521,6 +1521,31 @@ import Testing
     #expect(resolvedICloud == false)
 }
 
+@Test func companionLoaderDefaultsDoNotResolveICloudFallback() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 3_334.5)
+    let localURL = root.appending(path: "local-companion.json")
+    let iCloudURL = root.appending(path: "icloud-companion.json")
+    let iCloudDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    )
+    try CompanionSyncStore(documentURL: iCloudURL).save(iCloudDocument)
+
+    let result = CompanionSyncLoader.load(
+        localMirrorURL: localURL,
+        iCloudDocumentURL: nil,
+        remoteLoad: nil,
+        mirrorLoadedDocument: false,
+        now: now
+    )
+
+    #expect(result.document == nil)
+    #expect(result.status == .unknown)
+    #expect(CompanionSyncStore(documentURL: localURL).load().document == nil)
+}
+
 @Test func companionLoaderMirrorsFreshRemoteCloudKitDocument() throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
