@@ -81,6 +81,10 @@ public enum ContextPanelLocations {
         companionAppearanceSettingsURL(appGroupID: appGroupID) { appGroupContainerURL(appGroupID: $0) }
     }
 
+    public static func companionWidgetDisplayPreferencesURL(appGroupID: String = companionAppGroupID) -> URL? {
+        companionWidgetDisplayPreferencesURL(appGroupID: appGroupID) { appGroupContainerURL(appGroupID: $0) }
+    }
+
     static func companionRefreshSettingsURL(
         appGroupID: String,
         containerURL: (String) -> URL?
@@ -101,6 +105,18 @@ public enum ContextPanelLocations {
         }
         return companionSyncDirectory(containerURL: containerURL)
             .appending(path: "companion-appearance-settings.json")
+    }
+
+    static func companionWidgetDisplayPreferencesURL(
+        appGroupID: String,
+        containerURL: (String) -> URL?
+    ) -> URL? {
+        guard let containerURL = containerURL(appGroupID) else {
+            return nil
+        }
+        return containerURL
+            .appending(path: "Context Panel", directoryHint: .isDirectory)
+            .appending(path: "widget-display-preferences.json")
     }
 
     public static func companionAppGroupSyncDocumentURL(

@@ -36,6 +36,19 @@ targets:
         PRODUCT_NAME: ContextPanelWidgetUI
         SKIP_INSTALL: true
 
+  ContextPanelSettingsUI:
+    type: library.static
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/ContextPanelSettingsUI
+    dependencies:
+      - target: ContextPanelCore
+    settings:
+      base:
+        PRODUCT_NAME: ContextPanelSettingsUI
+        SKIP_INSTALL: true
+
   ContextPanelCoreCompanion:
     type: library.static
     platform: auto
@@ -68,6 +81,25 @@ targets:
       base:
         PRODUCT_NAME: ContextPanelWidgetUICompanion
         PRODUCT_MODULE_NAME: ContextPanelWidgetUI
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        XROS_DEPLOYMENT_TARGET: "26.0"
+        SKIP_INSTALL: true
+
+  ContextPanelSettingsUICompanion:
+    type: library.static
+    platform: auto
+    supportedDestinations: [iOS, visionOS]
+    deploymentTarget:
+      iOS: "17.0"
+      visionOS: "26.0"
+    sources:
+      - path: Sources/ContextPanelSettingsUI
+    dependencies:
+      - target: ContextPanelCoreCompanion
+    settings:
+      base:
+        PRODUCT_NAME: ContextPanelSettingsUICompanion
+        PRODUCT_MODULE_NAME: ContextPanelSettingsUI
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         XROS_DEPLOYMENT_TARGET: "26.0"
         SKIP_INSTALL: true
@@ -161,6 +193,7 @@ targets:
     dependencies:
       - target: ContextPanelCore
       - target: ContextPanelCloudKitSync
+      - target: ContextPanelSettingsUI
       - target: ContextPanelWidgetExtension
         embed: true
       - target: ContextPanelRefreshAgent
@@ -273,6 +306,7 @@ targets:
       - target: ContextPanelCoreCompanion
       - target: ContextPanelWidgetUICompanion
       - target: ContextPanelCompanionSupport
+      - target: ContextPanelSettingsUICompanion
       - target: ContextPanelCloudKitSyncCompanion
       - target: ContextPanelCompanionWidgetExtension
         embed: true

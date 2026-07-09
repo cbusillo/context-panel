@@ -1,5 +1,6 @@
 import ContextPanelCore
 import ContextPanelCloudKitSync
+import ContextPanelSettingsUI
 import AppKit
 import os
 import ServiceManagement
@@ -757,16 +758,19 @@ struct SettingsPane: View {
                     .foregroundStyle(CPTheme.secondaryText)
 
                 List {
-                    ForEach(model.widgetPreferences.mainLimits) { preference in
-                        WidgetMainLimitPreferenceRow(
-                            preference: preference,
-                            isVisible: Binding(
-                                get: { preference.isVisible },
-                                set: { model.setWidgetMainLimit(preference, isVisible: $0) }
-                            )
-                        )
-                    }
-                    .onMove(perform: model.moveWidgetMainLimits)
+                    WidgetMainLimitSettingsRows(
+                        preferences: model.widgetPreferences,
+                        colors: ContextPanelSettingsControlColors(
+                            primaryText: CPTheme.primaryText,
+                            secondaryText: CPTheme.secondaryText,
+                            tertiaryText: CPTheme.tertiaryText
+                        ),
+                        providerLabel: { provider in
+                            ProviderBadge(provider: provider)
+                        },
+                        onVisibilityChange: model.setWidgetMainLimit(_:isVisible:),
+                        onMove: model.moveWidgetMainLimits(from:to:)
+                    )
                 }
                 .listStyle(.inset)
                 .frame(height: widgetMainLimitListHeight)
@@ -2103,32 +2107,6 @@ private extension AccountConnectorKind {
         case .googleAntigravityQuota, .claudeOAuthUsage:
             return false
         }
-    }
-}
-
-struct WidgetMainLimitPreferenceRow: View {
-    let preference: WidgetMainLimitPreference
-    @Binding var isVisible: Bool
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "line.3.horizontal")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(CPTheme.tertiaryText)
-                .frame(width: 14)
-            Toggle(isOn: $isVisible) {
-                HStack(spacing: 8) {
-                    ProviderBadge(provider: preference.provider)
-                    Text(preference.window.settingsDisplayName)
-                    Spacer()
-                    Text(isVisible ? "Shown" : "Hidden")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(CPTheme.secondaryText)
-                }
-            }
-            .toggleStyle(.switch)
-        }
-        .padding(.vertical, 2)
     }
 }
 
@@ -4535,17 +4513,6 @@ extension MainLimitSummary {
     var detailRemainingText: String {
         guard let remaining else { return "unknown" }
         return unit == .percent ? "\(remaining)%" : "\(remaining)"
-    }
-}
-
-private extension MainLimitWindow {
-    var settingsDisplayName: String {
-        switch self {
-        case .availability:
-            "Google reset window"
-        default:
-            displayName
-        }
     }
 }
 

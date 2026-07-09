@@ -61,6 +61,8 @@ private enum CompanionWidgetLoadQueue {
         let appearanceSettings = ContextPanelLocations.companionAppearanceSettingsURL()
             .map { CompanionAppearanceSettingsStore(settingsURL: $0).load() }
             ?? .defaultSettings
+        let localDisplayPreferences = ContextPanelLocations.companionWidgetDisplayPreferencesURL()
+            .flatMap { WidgetDisplayPreferencesStore(preferencesURL: $0).loadIfAvailable() }
         return ContextPanelCompanionWidgetEntry(
             date: date,
             snapshot: WidgetSnapshot.fromCompanionSync(
@@ -68,7 +70,10 @@ private enum CompanionWidgetLoadQueue {
                 now: date,
                 stalenessPolicy: SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
             ),
-            displayPreferences: result.document?.widgetDisplayPreferences ?? .defaultPreferences,
+            displayPreferences: WidgetDisplayPreferences.companionEffectivePreferences(
+                localOverride: localDisplayPreferences,
+                synced: result.document?.widgetDisplayPreferences
+            ),
             appearanceSettings: appearanceSettings
         )
     }
