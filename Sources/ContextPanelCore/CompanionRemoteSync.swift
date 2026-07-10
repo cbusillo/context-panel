@@ -2,8 +2,10 @@ import Foundation
 
 public enum CompanionRemoteSync {
     public static let cloudKitStoreRole = "cloudkit"
+    public static let cloudKitPresentationStoreRole = "cloudkit-presentation"
     public static let cloudKitRecordType = "CompanionSyncDocument"
     public static let cloudKitRecordName = "current"
+    public static let cloudKitPresentationRecordName = "companion-presentation"
     public static let cloudKitSubscriptionID = "companion-sync-updates"
     public static let payloadFieldName = "payload"
     public static let schemaVersionFieldName = "schemaVersion"
@@ -147,6 +149,60 @@ public struct CompanionRemoteSyncStore: Sendable {
     }
 }
 
+public struct CompanionPresentationDocument: Codable, Equatable, Sendable {
+    public static let schemaVersion = 1
+
+    public let schemaVersion: Int
+    public let updatedAt: Date
+    public let widgetDisplayPreferences: WidgetDisplayPreferences
+
+    public init(
+        updatedAt: Date = Date(),
+        widgetDisplayPreferences: WidgetDisplayPreferences
+    ) {
+        schemaVersion = Self.schemaVersion
+        self.updatedAt = updatedAt
+        self.widgetDisplayPreferences = widgetDisplayPreferences
+    }
+}
+
+public struct CompanionPresentationRemoteLoadResult: Equatable, Sendable {
+    public let document: CompanionPresentationDocument?
+    public let outcome: CompanionRemoteSyncOutcome
+
+    public init(
+        document: CompanionPresentationDocument?,
+        outcome: CompanionRemoteSyncOutcome
+    ) {
+        self.document = document
+        self.outcome = outcome
+    }
+}
+
+public struct CompanionPresentationRemoteStore: Sendable {
+    public let storeRole: String
+    private let saveDocument: @Sendable (CompanionPresentationDocument) async -> CompanionRemoteSyncOutcome
+    private let loadDocument: @Sendable () async -> CompanionPresentationRemoteLoadResult
+
+    public init(
+        storeRole: String = CompanionRemoteSync.cloudKitPresentationStoreRole,
+        saveDocument: @escaping @Sendable (CompanionPresentationDocument) async -> CompanionRemoteSyncOutcome,
+        loadDocument: @escaping @Sendable () async -> CompanionPresentationRemoteLoadResult
+    ) {
+        self.storeRole = ConnectorRedactor.redact(storeRole)
+        self.saveDocument = saveDocument
+        self.loadDocument = loadDocument
+    }
+
+    public func save(_ document: CompanionPresentationDocument) async -> CompanionRemoteSyncOutcome {
+        await saveDocument(document)
+    }
+
+    public func load() async -> CompanionPresentationRemoteLoadResult {
+        await loadDocument()
+    }
+}
+
 public enum CompanionSyncPayloadCodec {
     public static func encode(_ document: CompanionSyncDocument) throws -> Data {
         try makeEncoder().encode(document)
@@ -177,12 +233,32 @@ public enum CompanionSyncPayloadCodec {
     }
 }
 
+public enum CompanionPresentationPayloadCodec {
+    public static func encode(_ document: CompanionPresentationDocument) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        encoder.dateEncodingStrategy = .iso8601
+        return try encoder.encode(document)
+    }
+
+    public static func decode(_ data: Data) throws -> CompanionPresentationDocument {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let document = try decoder.decode(CompanionPresentationDocument.self, from: data)
+        guard document.schemaVersion == CompanionPresentationDocument.schemaVersion else {
+            throw SnapshotStoreError.unsupportedSchema(version: document.schemaVersion)
+        }
+        return document
+    }
+}
+
 public extension CompanionSyncSource {
     static func storeRole(_ storeRole: String) -> CompanionSyncSource {
         switch storeRole {
         case "app-group": .appGroup
         case "icloud": .iCloud
-        case CompanionRemoteSync.cloudKitStoreRole: .cloudKit
+        case CompanionRemoteSync.cloudKitStoreRole,
+             CompanionRemoteSync.cloudKitPresentationStoreRole: .cloudKit
         default: .custom
         }
     }

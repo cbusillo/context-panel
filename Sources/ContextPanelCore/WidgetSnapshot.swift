@@ -197,6 +197,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             reports: reports,
             promptCacheObservations: promptCacheObservations,
             promptCacheWidgetState: promptCacheState,
+            observedBurnRates: document.observedBurnRates,
             fastModeForecastSettings: document.fastModeForecastSettings,
             status: status,
             message: message(

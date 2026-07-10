@@ -48,17 +48,29 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
         return rows
     }
 
-    public static func mainLaneRows(from snapshot: WidgetSnapshot, maximumCount: Int) -> [WatchLimitDisplay] {
+    public static func mainLaneRows(
+        from snapshot: WidgetSnapshot,
+        preferences: WidgetDisplayPreferences,
+        maximumCount: Int
+    ) -> [WatchLimitDisplay] {
         guard maximumCount > 0 else { return [] }
 
-        return WidgetDisplayPreferences.defaultPreferences
+        let preferredRows = preferences
             .visibleMainLimitLanes(from: snapshot.usageSnapshot.mainLimitSummaries, maximumCount: maximumCount)
             .compactMap { lane in
                 if let summary = lane.summary {
                     return row(from: summary)
                 }
-                return nil
+                return snapshot.mostConstrainedLimits
+                    .first {
+                        $0.provider == lane.preference.provider
+                            && $0.mainLimitWindow == lane.preference.window
+                    }
+                    .map(row(from:))
             }
+        return preferredRows.isEmpty
+            ? rows(from: snapshot, maximumCount: maximumCount)
+            : preferredRows
     }
 
     private static func row(from summary: MainLimitSummary) -> WatchLimitDisplay? {

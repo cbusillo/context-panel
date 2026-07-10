@@ -62,6 +62,14 @@ import Testing
         onVisibilityChange: { _, _ in },
         onMove: { _, _ in }
     )
+    _ = WidgetMainLimitSettingsStack(
+        preferences: .defaultPreferences,
+        colors: colors,
+        isReordering: true,
+        providerLabel: { provider in Text(provider.shortName) },
+        onVisibilityChange: { _, _ in },
+        onMove: { _, _ in }
+    )
 }
 
 @Test func portableSettingsUISourceHasNoAdministrativePlatformDependencies() throws {

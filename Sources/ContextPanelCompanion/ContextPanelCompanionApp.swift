@@ -19,6 +19,7 @@ private struct CompanionWidgetRenderSignature: Equatable {
     let reports: [StoredProviderReport]
     let promptCacheObservations: [PromptCacheObservation]
     let promptCacheWidgetState: PromptCacheWidgetState
+    let observedBurnRates: [String: ObservedBurnRate]
     let fastModeForecastSettings: FastModeForecastSettings
     let status: UsageStatus
     let message: String
@@ -43,6 +44,7 @@ private struct CompanionWidgetRenderSignature: Equatable {
         reports = snapshot.reports
         promptCacheObservations = snapshot.promptCacheObservations
         promptCacheWidgetState = snapshot.promptCacheWidgetState
+        observedBurnRates = snapshot.observedBurnRates
         fastModeForecastSettings = snapshot.fastModeForecastSettings
         status = snapshot.status
         message = snapshot.message
@@ -59,6 +61,7 @@ private struct CompanionWidgetRenderSignature: Equatable {
             reports: reports,
             promptCacheObservations: promptCacheObservations,
             promptCacheWidgetState: promptCacheWidgetState,
+            observedBurnRates: observedBurnRates,
             fastModeForecastSettings: fastModeForecastSettings,
             status: status,
             message: message,
@@ -74,6 +77,7 @@ private struct CompanionWidgetRenderSignature: Equatable {
             && lhs.reports == rhs.reports
             && lhs.promptCacheObservations == rhs.promptCacheObservations
             && lhs.promptCacheWidgetState == rhs.promptCacheWidgetState
+            && lhs.observedBurnRates == rhs.observedBurnRates
             && lhs.fastModeForecastSettings == rhs.fastModeForecastSettings
             && lhs.status == rhs.status
             && lhs.message == rhs.message
@@ -233,6 +237,7 @@ private final class CompanionSyncModel {
     private let appearanceSettingsStore: CompanionAppearanceSettingsStore?
     private let displayPreferencesStore: WidgetDisplayPreferencesStore?
     private let remoteStore = CompanionCloudKitSyncStoreFactory.make()
+    private let presentationPreferencesRemoteStore: CompanionPresentationRemoteStore?
 
     private(set) var result = CompanionSyncLoadResult(document: nil, status: .unknown)
     private(set) var snapshot = WidgetSnapshot.fromCompanionSync(
@@ -249,8 +254,19 @@ private final class CompanionSyncModel {
     private var needsReloadAfterCurrentTask = false
     private var lastWidgetTimelineReloadAt: Date?
     private var lastWidgetRenderSignature: CompanionWidgetRenderSignature?
+    private var presentationPreferencesSaveTask: Task<Void, Never>?
+    private var lastSyncedPresentationPreferences: WidgetDisplayPreferences?
+    private var desiredPresentationPreferences: WidgetDisplayPreferences?
 
     init() {
+        #if os(iOS)
+        presentationPreferencesRemoteStore = UIDevice.current.userInterfaceIdiom == .phone
+            ? CompanionCloudKitSyncStoreFactory.makePresentationPreferences()
+            : nil
+        #else
+        presentationPreferencesRemoteStore = nil
+        #endif
+
         if let settingsURL = ContextPanelLocations.companionRefreshSettingsURL() {
             let store = CompanionRefreshSettingsStore(settingsURL: settingsURL)
             refreshSettingsStore = store
@@ -300,16 +316,23 @@ private final class CompanionSyncModel {
                 }
             }
             let remoteStore = self?.remoteStore
+            let presentationPreferencesRemoteStore = self?.presentationPreferencesRemoteStore
             let displayPreferencesStore = self?.displayPreferencesStore
-            let (loaded, localDisplayPreferences) = await Task.detached(priority: .userInitiated) {
-                let loaded = await CompanionSyncLoader.load(remoteStore: remoteStore, now: now)
-                return (loaded, displayPreferencesStore?.loadIfAvailable())
+            let (loaded, presentationDocument, localDisplayPreferences) = await Task.detached(priority: .userInitiated) {
+                let localDisplayPreferences = displayPreferencesStore?.loadIfAvailable()
+                async let loaded = CompanionSyncLoader.load(remoteStore: remoteStore, now: now)
+                async let presentationDocument = presentationPreferencesRemoteStore?.load().document
+                return (
+                    await loaded,
+                    await presentationDocument,
+                    localDisplayPreferences
+                )
             }.value
             guard !Task.isCancelled else { return }
             guard let self else { return }
             let effectiveDisplayPreferences = WidgetDisplayPreferences.companionEffectivePreferences(
                 localOverride: localDisplayPreferences,
-                synced: loaded.document?.widgetDisplayPreferences
+                synced: presentationDocument?.widgetDisplayPreferences ?? loaded.document?.widgetDisplayPreferences
             )
             let loadedSignature = CompanionWidgetRenderSignature(
                 result: loaded,
@@ -320,6 +343,16 @@ private final class CompanionSyncModel {
             snapshot = loadedSignature.snapshot
             displayPreferences = loadedSignature.displayPreferences
             hasLoadedDisplayPreferences = true
+            if let presentationPreferences = presentationDocument?.widgetDisplayPreferences {
+                lastSyncedPresentationPreferences = presentationPreferences
+            }
+            if localDisplayPreferences == nil,
+               presentationDocument != nil {
+                try? displayPreferencesStore?.save(effectiveDisplayPreferences)
+            } else if let localDisplayPreferences,
+                      presentationDocument?.widgetDisplayPreferences != localDisplayPreferences {
+                syncDisplayPreferencesToWatch(localDisplayPreferences)
+            }
             reloadWidgetTimelineIfNeeded(
                 force: loadedSignature != lastWidgetRenderSignature,
                 now: now
@@ -399,6 +432,7 @@ private final class CompanionSyncModel {
             displayPreferences = updated
             displayPreferencesErrorMessage = nil
             reloadContextPanelCompanionWidgetTimeline()
+            syncDisplayPreferencesToWatch(updated)
         } catch {
             displayPreferencesErrorMessage = "Widget display settings could not be saved."
         }
@@ -406,6 +440,47 @@ private final class CompanionSyncModel {
 
     var canEditDisplayPreferences: Bool {
         hasLoadedDisplayPreferences && displayPreferencesStore != nil
+    }
+
+    private func syncDisplayPreferencesToWatch(_ preferences: WidgetDisplayPreferences) {
+        guard let presentationPreferencesRemoteStore else { return }
+        desiredPresentationPreferences = preferences
+        if presentationPreferencesSaveTask == nil,
+           lastSyncedPresentationPreferences == preferences {
+            desiredPresentationPreferences = nil
+            return
+        }
+        guard presentationPreferencesSaveTask == nil else { return }
+
+        presentationPreferencesSaveTask = Task { [weak self, presentationPreferencesRemoteStore] in
+            while let self, let desiredPreferences = self.desiredPresentationPreferences {
+                if self.lastSyncedPresentationPreferences == desiredPreferences {
+                    self.desiredPresentationPreferences = nil
+                    break
+                }
+
+                let outcome = await presentationPreferencesRemoteStore.save(
+                    CompanionPresentationDocument(widgetDisplayPreferences: desiredPreferences)
+                )
+                if outcome.succeeded {
+                    self.lastSyncedPresentationPreferences = desiredPreferences
+                    if self.desiredPresentationPreferences == desiredPreferences {
+                        self.desiredPresentationPreferences = nil
+                    }
+                    if self.displayPreferences == desiredPreferences {
+                        self.displayPreferencesErrorMessage = nil
+                    }
+                } else {
+                    if self.displayPreferences == desiredPreferences {
+                        self.displayPreferencesErrorMessage = "Saved on this device, but Apple Watch sync failed."
+                    }
+                    if self.desiredPresentationPreferences == desiredPreferences {
+                        break
+                    }
+                }
+            }
+            self?.presentationPreferencesSaveTask = nil
+        }
     }
 
     func updateVisionOSAppAppearance(_ appearance: CompanionVisionOSAppAppearance) {
@@ -533,8 +608,7 @@ private struct CompanionRefreshSettingsView: View {
 
 private struct CompanionWidgetMainLimitsSettingsView: View {
     @Environment(\.companionSurfacePalette) private var palette
-    @State private var editMode: EditMode = .inactive
-    @ScaledMetric private var widgetMainLimitRowHeight: CGFloat = 48
+    @State private var isReordering = false
 
     let preferences: WidgetDisplayPreferences
     let isLoaded: Bool
@@ -551,44 +625,37 @@ private struct CompanionWidgetMainLimitsSettingsView: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(palette.primaryText)
                     Spacer(minLength: 12)
-                    Button(editMode == .active ? "Done" : "Reorder") {
+                    Button(isReordering ? "Done" : "Reorder") {
                         withAnimation(.easeInOut(duration: 0.18)) {
-                            editMode = editMode == .active ? .inactive : .active
+                            isReordering.toggle()
                         }
                     }
                     .buttonStyle(.borderless)
                     .disabled(!isEditable)
                 }
-                Text("These choices are local to this companion and its widgets. Mac settings remain unchanged.")
+                Text(displayPreferencesScopeText)
                     .font(.footnote)
                     .foregroundStyle(palette.secondaryText)
 
                 if isLoaded {
-                    List {
-                        WidgetMainLimitSettingsRows(
-                            preferences: preferences,
-                            colors: palette.settingsControlColors,
-                            showsDragIndicator: false,
-                            providerLabel: { provider in
-                                Text(provider.shortName)
-                                    .font(.caption2.weight(.bold))
-                                    .foregroundStyle(palette.primaryText)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 3)
-                                    .background(
-                                        palette.segmentBackground,
-                                        in: Capsule()
-                                    )
-                            },
-                            onVisibilityChange: onVisibilityChange,
-                            onMove: onMove
-                        )
-                    }
-                    .environment(\.editMode, $editMode)
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
-                    .scrollDisabled(true)
-                    .frame(height: widgetMainLimitListHeight)
+                    WidgetMainLimitSettingsStack(
+                        preferences: preferences,
+                        colors: palette.settingsControlColors,
+                        isReordering: isReordering,
+                        providerLabel: { provider in
+                            Text(provider.shortName)
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(palette.primaryText)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(
+                                    palette.segmentBackground,
+                                    in: Capsule()
+                                )
+                        },
+                        onVisibilityChange: onVisibilityChange,
+                        onMove: onMove
+                    )
                     .disabled(!isEditable)
                 } else {
                     ProgressView("Loading display settings…")
@@ -604,9 +671,18 @@ private struct CompanionWidgetMainLimitsSettingsView: View {
         }
     }
 
-    private var widgetMainLimitListHeight: CGFloat {
-        CGFloat(preferences.mainLimits.count) * widgetMainLimitRowHeight + 16
+    private var displayPreferencesScopeText: String {
+        #if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            "These choices apply to this companion, its widgets, and Apple Watch. Mac settings remain unchanged."
+        } else {
+            "These choices apply to this companion and its widgets. Mac settings remain unchanged."
+        }
+        #else
+        "These choices apply to this companion and its widgets. Mac settings remain unchanged."
+        #endif
     }
+
 }
 
 #if os(visionOS)

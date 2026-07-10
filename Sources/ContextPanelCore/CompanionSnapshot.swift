@@ -49,16 +49,27 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
     public let schemaVersion: Int
     public let snapshot: CompanionSnapshot
     public let widgetDisplayPreferences: WidgetDisplayPreferences
+    public let observedBurnRates: [String: ObservedBurnRate]
     public let fastModeForecastSettings: FastModeForecastSettings
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case snapshot
+        case widgetDisplayPreferences
+        case observedBurnRates
+        case fastModeForecastSettings
+    }
 
     public init(
         snapshot: CompanionSnapshot,
         widgetDisplayPreferences: WidgetDisplayPreferences = .defaultPreferences,
+        observedBurnRates: [String: ObservedBurnRate] = [:],
         fastModeForecastSettings: FastModeForecastSettings = .defaultSettings
     ) {
         schemaVersion = Self.schemaVersion
         self.snapshot = snapshot
         self.widgetDisplayPreferences = widgetDisplayPreferences
+        self.observedBurnRates = observedBurnRates
         self.fastModeForecastSettings = fastModeForecastSettings
     }
 
@@ -66,13 +77,27 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         storedSnapshot: StoredUsageSnapshot,
         publishedAt: Date = Date(),
         widgetDisplayPreferences: WidgetDisplayPreferences = .defaultPreferences,
+        observedBurnRates: [String: ObservedBurnRate] = [:],
         fastModeForecastSettings: FastModeForecastSettings = .defaultSettings
     ) {
         self.init(
             snapshot: CompanionSnapshot(storedSnapshot: storedSnapshot, publishedAt: publishedAt),
             widgetDisplayPreferences: widgetDisplayPreferences,
+            observedBurnRates: observedBurnRates,
             fastModeForecastSettings: fastModeForecastSettings
         )
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        snapshot = try container.decode(CompanionSnapshot.self, forKey: .snapshot)
+        widgetDisplayPreferences = try container.decode(WidgetDisplayPreferences.self, forKey: .widgetDisplayPreferences)
+        observedBurnRates = try container.decodeIfPresent(
+            [String: ObservedBurnRate].self,
+            forKey: .observedBurnRates
+        ) ?? [:]
+        fastModeForecastSettings = try container.decode(FastModeForecastSettings.self, forKey: .fastModeForecastSettings)
     }
 }
 
@@ -818,8 +843,16 @@ public struct CompanionSyncPublisher: Sendable {
     }
 
     @discardableResult
-    public func publish(storedSnapshot: StoredUsageSnapshot, publishedAt: Date = Date()) -> CompanionSyncSaveResult {
-        publish(document: makeDocument(storedSnapshot: storedSnapshot, publishedAt: publishedAt))
+    public func publish(
+        storedSnapshot: StoredUsageSnapshot,
+        publishedAt: Date = Date(),
+        observedBurnRates: [String: ObservedBurnRate] = [:]
+    ) -> CompanionSyncSaveResult {
+        publish(document: makeDocument(
+            storedSnapshot: storedSnapshot,
+            publishedAt: publishedAt,
+            observedBurnRates: observedBurnRates
+        ))
     }
 
     @discardableResult
@@ -830,8 +863,16 @@ public struct CompanionSyncPublisher: Sendable {
     }
 
     @discardableResult
-    public func publishAll(storedSnapshot: StoredUsageSnapshot, publishedAt: Date = Date()) async -> CompanionSyncSaveResult {
-        let document = makeDocument(storedSnapshot: storedSnapshot, publishedAt: publishedAt)
+    public func publishAll(
+        storedSnapshot: StoredUsageSnapshot,
+        publishedAt: Date = Date(),
+        observedBurnRates: [String: ObservedBurnRate] = [:]
+    ) async -> CompanionSyncSaveResult {
+        let document = makeDocument(
+            storedSnapshot: storedSnapshot,
+            publishedAt: publishedAt,
+            observedBurnRates: observedBurnRates
+        )
         var result = publish(document: document)
         if let remoteStore {
             let remoteOutcome = await remoteStore.save(document)
@@ -840,11 +881,16 @@ public struct CompanionSyncPublisher: Sendable {
         return result
     }
 
-    private func makeDocument(storedSnapshot: StoredUsageSnapshot, publishedAt: Date) -> CompanionSyncDocument {
+    private func makeDocument(
+        storedSnapshot: StoredUsageSnapshot,
+        publishedAt: Date,
+        observedBurnRates: [String: ObservedBurnRate]
+    ) -> CompanionSyncDocument {
         CompanionSyncDocument(
             storedSnapshot: storedSnapshot,
             publishedAt: publishedAt,
             widgetDisplayPreferences: widgetPreferencesStore.load(),
+            observedBurnRates: observedBurnRates,
             fastModeForecastSettings: fastModeForecastSettingsStore.load()
         )
     }
