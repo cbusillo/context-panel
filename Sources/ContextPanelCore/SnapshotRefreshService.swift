@@ -620,10 +620,18 @@ public struct SnapshotRefreshService: Sendable {
         )
         if let storedSnapshot = stores.primary.loadCurrent().snapshot {
             mirrorSnapshotToFallbackStores(storedSnapshot)
-            let companionResult = await companionSyncPublisher?.publishAll(
-                storedSnapshot: storedSnapshot,
-                publishedAt: savedAt
-            )
+            let companionResult: CompanionSyncSaveResult? = if let companionSyncPublisher {
+                await companionSyncPublisher.publishAll(
+                    storedSnapshot: storedSnapshot,
+                    publishedAt: savedAt,
+                    observedBurnRates: companionObservedBurnRates(
+                        storedSnapshot: storedSnapshot,
+                        savedAt: savedAt
+                    )
+                )
+            } else {
+                nil
+            }
             if let companionResult {
                 let companionLoadRecord = companionSyncPublisher?.stores.loadWithDiagnostics(
                     policy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.companionProviderMaximumAge),
@@ -815,7 +823,14 @@ public struct SnapshotRefreshService: Sendable {
         )
         if let storedSnapshot = stores.primary.loadCurrent().snapshot {
             mirrorSnapshotToFallbackStores(storedSnapshot)
-            let companionResult = companionSyncPublisher?.publish(storedSnapshot: storedSnapshot, publishedAt: savedAt)
+            let companionResult = companionSyncPublisher?.publish(
+                storedSnapshot: storedSnapshot,
+                publishedAt: savedAt,
+                observedBurnRates: companionObservedBurnRates(
+                    storedSnapshot: storedSnapshot,
+                    savedAt: savedAt
+                )
+            )
             if let companionResult {
                 let companionLoadRecord = companionSyncPublisher?.stores.loadWithDiagnostics(
                     policy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.companionProviderMaximumAge),
@@ -830,6 +845,19 @@ public struct SnapshotRefreshService: Sendable {
             }
         }
         return SnapshotRefreshOutcome(savedAt: savedAt, refreshResult: refreshResult)
+    }
+
+    private func companionObservedBurnRates(
+        storedSnapshot: StoredUsageSnapshot,
+        savedAt: Date
+    ) -> [String: ObservedBurnRate] {
+        MainLimitBurnRateEstimator.observedBurnRates(
+            current: storedSnapshot.snapshot,
+            history: stores.primary.loadHistory(query: SnapshotStoreQuery(
+                since: savedAt.addingTimeInterval(-24 * 3_600)
+            )),
+            now: savedAt
+        )
     }
 
     private func migrateClaudeStateIfNeeded(accounts: [LocalProviderAccountConfiguration], now: Date) {

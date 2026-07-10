@@ -65,7 +65,12 @@ private struct WatchRootView: View {
 @Observable
 private final class WatchSyncModel {
     private let remoteStore = CompanionCloudKitSyncStoreFactory.make()
+    private let presentationPreferencesRemoteStore = CompanionCloudKitSyncStoreFactory.makePresentationPreferences()
+    private let presentationPreferencesStore = WidgetDisplayPreferencesStore(
+        preferencesURL: ContextPanelLocations.watchPresentationPreferencesCacheURL()
+    )
     private var reloadTask: Task<Void, Never>?
+    private var needsReloadAfterCurrentTask = false
 
     private(set) var result = CompanionSyncLoadResult(document: nil, status: .unknown)
     private(set) var displayResult = CompanionSyncLoadResult(document: nil, status: .unknown)
@@ -73,23 +78,46 @@ private final class WatchSyncModel {
         CompanionSyncLoadResult(document: nil, status: .unknown)
     )
     private var lastGoodDocument: CompanionSyncDocument?
+    private(set) var displayPreferences = WidgetDisplayPreferences.defaultPreferences
     private(set) var lastSyncErrorMessage: String?
     private(set) var isLoading = false
 
     var displayLimits: [WatchLimitDisplay] {
-        WatchLimitDisplay.rows(from: snapshot, maximumCount: 8)
+        WatchLimitDisplay.mainLaneRows(
+            from: snapshot,
+            preferences: displayPreferences,
+            maximumCount: 8
+        )
     }
 
     func reload(now: Date = Date()) {
-        guard reloadTask == nil else { return }
+        guard reloadTask == nil else {
+            needsReloadAfterCurrentTask = true
+            return
+        }
+        needsReloadAfterCurrentTask = false
         isLoading = true
         result = CompanionSyncLoadResult(document: result.document, status: .loading)
         displayResult = CompanionSyncLoadResult(document: displayResult.document, status: .loading)
         lastSyncErrorMessage = nil
+        let cachedDisplayPreferences = presentationPreferencesStore.loadIfAvailable()
 
-        reloadTask = Task { [remoteStore] in
-            let loaded = await remoteStore.load(now: now).result
+        reloadTask = Task { [weak self, remoteStore, presentationPreferencesRemoteStore, presentationPreferencesStore] in
+            defer {
+                if let self {
+                    isLoading = false
+                    reloadTask = nil
+                    if needsReloadAfterCurrentTask {
+                        reload()
+                    }
+                }
+            }
+            async let loadedSnapshot = remoteStore.load(now: now)
+            async let loadedPresentation = presentationPreferencesRemoteStore.load()
+            let loaded = await loadedSnapshot.result
+            let presentationDocument = await loadedPresentation.document
             guard !Task.isCancelled else { return }
+            guard let self else { return }
             if let document = loaded.document {
                 lastGoodDocument = document
             }
@@ -109,8 +137,13 @@ private final class WatchSyncModel {
                 now: now,
                 stalenessPolicy: SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
             )
-            isLoading = false
-            reloadTask = nil
+            if let presentationPreferences = presentationDocument?.widgetDisplayPreferences {
+                try? presentationPreferencesStore.save(presentationPreferences)
+            }
+            displayPreferences = WidgetDisplayPreferences.companionEffectivePreferences(
+                localOverride: presentationDocument?.widgetDisplayPreferences ?? cachedDisplayPreferences,
+                synced: displayResult.document?.widgetDisplayPreferences
+            )
         }
     }
 }

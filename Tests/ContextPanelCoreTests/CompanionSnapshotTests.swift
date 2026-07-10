@@ -1241,9 +1241,16 @@ import Testing
         reserveUnits: 9,
         minimumSafeHours: 1.5
     )
+    let observedBurnRate = ObservedBurnRate(
+        limitID: "openai:weekly",
+        unitsPerHour: 13,
+        observedDurationHours: 2,
+        sampleCount: 3
+    )
     let document = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: generatedAt),
         publishedAt: publishedAt,
+        observedBurnRates: [observedBurnRate.limitID: observedBurnRate],
         fastModeForecastSettings: forecastSettings
     )
 
@@ -1255,6 +1262,7 @@ import Testing
     #expect(widget.state == .ready)
     #expect(widget.status == .close)
     #expect(widget.generatedAt == generatedAt)
+    #expect(widget.observedBurnRates[observedBurnRate.limitID] == observedBurnRate)
     #expect(widget.fastModeForecastSettings == forecastSettings)
     #expect(widget.limits.count == 1)
     #expect(widget.limits.first?.accountName == "Work OpenAI")
@@ -1328,9 +1336,16 @@ import Testing
 
 @Test func companionPayloadCodecRoundTripsSanitizedDocument() throws {
     let generatedAt = Date(timeIntervalSince1970: 3_333)
+    let observedBurnRate = ObservedBurnRate(
+        limitID: "openai:weekly",
+        unitsPerHour: 13,
+        observedDurationHours: 2,
+        sampleCount: 3
+    )
     let document = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: generatedAt),
-        publishedAt: generatedAt.addingTimeInterval(5)
+        publishedAt: generatedAt.addingTimeInterval(5),
+        observedBurnRates: [observedBurnRate.limitID: observedBurnRate]
     )
 
     let data = try CompanionSyncPayloadCodec.encode(document)
@@ -1341,6 +1356,39 @@ import Testing
     #expect(json.contains("raw-openai") == false)
     #expect(json.contains("configured-openai") == false)
     #expect(json.contains("secret") == false)
+}
+
+@Test func companionPayloadCodecDefaultsMissingObservedBurnRatesForLegacyDocuments() throws {
+    let generatedAt = Date(timeIntervalSince1970: 3_333.5)
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: generatedAt),
+        publishedAt: generatedAt.addingTimeInterval(5)
+    )
+    let encoded = try CompanionSyncPayloadCodec.encode(document)
+    var json = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    json.removeValue(forKey: "observedBurnRates")
+
+    let decoded = try CompanionSyncPayloadCodec.decode(JSONSerialization.data(withJSONObject: json))
+
+    #expect(decoded.observedBurnRates.isEmpty)
+}
+
+@Test func companionPresentationPayloadCodecRoundTripsPreferencesWithoutSnapshotData() throws {
+    var preferences = WidgetDisplayPreferences.defaultPreferences
+    preferences.moveMainLimits(fromOffsets: IndexSet(integer: 6), toOffset: 0)
+    let document = CompanionPresentationDocument(
+        updatedAt: Date(timeIntervalSince1970: 3_333),
+        widgetDisplayPreferences: preferences
+    )
+
+    let data = try CompanionPresentationPayloadCodec.encode(document)
+    let json = String(decoding: data, as: UTF8.self)
+    let decoded = try CompanionPresentationPayloadCodec.decode(data)
+
+    #expect(decoded == document)
+    #expect(json.contains("widgetDisplayPreferences"))
+    #expect(json.contains("snapshot") == false)
+    #expect(json.contains("observedBurnRates") == false)
 }
 
 @Test func companionLoaderWithoutRemoteUsesOnlyLocalMirror() async throws {
@@ -1560,6 +1608,12 @@ import Testing
         reserveUnits: 12,
         minimumSafeHours: 3
     )
+    let observedBurnRate = ObservedBurnRate(
+        limitID: "openai:weekly",
+        unitsPerHour: 13,
+        observedDurationHours: 2,
+        sampleCount: 3
+    )
     try WidgetDisplayPreferencesStore(preferencesURL: preferencesURL).save(preferences)
     try FastModeForecastSettingsStore(settingsURL: settingsURL).save(forecastSettings)
     let publisher = CompanionSyncPublisher(
@@ -1568,12 +1622,17 @@ import Testing
         fastModeForecastSettingsStore: FastModeForecastSettingsStore(settingsURL: settingsURL)
     )
 
-    publisher.publish(storedSnapshot: companionStoredSnapshot(generatedAt: generatedAt), publishedAt: publishedAt)
+    publisher.publish(
+        storedSnapshot: companionStoredSnapshot(generatedAt: generatedAt),
+        publishedAt: publishedAt,
+        observedBurnRates: [observedBurnRate.limitID: observedBurnRate]
+    )
 
     let result = CompanionSyncStore(documentURL: companionURL).load()
     #expect(result.document?.snapshot.generatedAt == generatedAt)
     #expect(result.document?.snapshot.publishedAt == publishedAt)
     #expect(result.document?.widgetDisplayPreferences == preferences)
+    #expect(result.document?.observedBurnRates[observedBurnRate.limitID] == observedBurnRate)
     #expect(result.document?.fastModeForecastSettings == forecastSettings)
 }
 
@@ -1618,6 +1677,24 @@ import Testing
         )],
         status: .close
     )
+    for (offset, used) in [(-2 * 3_600.0, 70), (-1 * 3_600.0, 82)] {
+        let sampleDate = savedAt.addingTimeInterval(offset)
+        try primary.save(StoredUsageSnapshot(
+            savedAt: sampleDate,
+            snapshot: UsageSnapshot(generatedAt: sampleDate, limits: [UsageLimit(
+                provider: .openAI,
+                accountID: "raw-openai",
+                configuredAccountID: "configured-openai",
+                accountName: "Work OpenAI",
+                label: "Weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: used,
+                limit: 100,
+                lastUpdatedAt: sampleDate
+            )])
+        ))
+    }
 
     _ = try service.saveMerged(
         refreshResult: ConnectorRefreshResult(generatedAt: savedAt, reports: [report]),
@@ -1630,6 +1707,7 @@ import Testing
     #expect(result.document?.snapshot.publishedAt == savedAt)
     #expect(result.document?.snapshot.limits.first?.accountName == "Work OpenAI")
     #expect(result.document?.snapshot.limits.first?.companionAccountID != "raw-openai")
+    #expect(abs((result.document?.observedBurnRates["openai:weekly"]?.unitsPerHour ?? 0) - 12) < 0.001)
     #expect(diagnostics.lastCompanionPublish?.outcome == .healthy)
     #expect(diagnostics.lastCompanionLoad?.outcome == .healthy)
     #expect(diagnostics.lastCompanionLoad?.loadedDocument == true)

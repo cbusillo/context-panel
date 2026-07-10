@@ -204,33 +204,13 @@ public struct WidgetMainLimitSettingsRows<ProviderLabel: View>: View {
 
     public var body: some View {
         ForEach(preferences.mainLimits) { preference in
-            HStack(spacing: 10) {
-                if showsDragIndicator {
-                    Image(systemName: "line.3.horizontal")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(colors.tertiaryText)
-                        .frame(width: 14)
-                }
-                Toggle(isOn: Binding(
-                    get: { preference.isVisible },
-                    set: { isVisible in
-                        MainActor.assumeIsolated {
-                            onVisibilityChange(preference, isVisible)
-                        }
-                    }
-                )) {
-                    HStack(spacing: 8) {
-                        providerLabel(preference.provider)
-                        Text(settingsDisplayName(preference.window))
-                        Spacer()
-                        Text(preference.isVisible ? "Shown" : "Hidden")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(colors.secondaryText)
-                    }
-                }
-                .toggleStyle(.switch)
-            }
-            .padding(.vertical, 2)
+            WidgetMainLimitSettingsRow(
+                preference: preference,
+                colors: colors,
+                showsDragIndicator: showsDragIndicator,
+                providerLabel: providerLabel,
+                onVisibilityChange: onVisibilityChange
+            )
         }
         .onMove { source, destination in
             MainActor.assumeIsolated {
@@ -239,13 +219,157 @@ public struct WidgetMainLimitSettingsRows<ProviderLabel: View>: View {
         }
     }
 
-    private func settingsDisplayName(_ window: MainLimitWindow) -> String {
-        switch window {
-        case .availability:
-            "Google reset window"
-        default:
-            window.displayName
+}
+
+public struct WidgetMainLimitSettingsStack<ProviderLabel: View>: View {
+    private let preferences: WidgetDisplayPreferences
+    private let colors: ContextPanelSettingsControlColors
+    private let isReordering: Bool
+    private let providerLabel: (Provider) -> ProviderLabel
+    private let onVisibilityChange: @MainActor (WidgetMainLimitPreference, Bool) -> Void
+    private let onMove: @MainActor (IndexSet, Int) -> Void
+
+    public init(
+        preferences: WidgetDisplayPreferences,
+        colors: ContextPanelSettingsControlColors = ContextPanelSettingsControlColors(),
+        isReordering: Bool,
+        @ViewBuilder providerLabel: @escaping (Provider) -> ProviderLabel,
+        onVisibilityChange: @escaping @MainActor (WidgetMainLimitPreference, Bool) -> Void,
+        onMove: @escaping @MainActor (IndexSet, Int) -> Void
+    ) {
+        self.preferences = preferences
+        self.colors = colors
+        self.isReordering = isReordering
+        self.providerLabel = providerLabel
+        self.onVisibilityChange = onVisibilityChange
+        self.onMove = onMove
+    }
+
+    public var body: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(preferences.mainLimits.enumerated()), id: \.element.id) { index, preference in
+                if index > 0 {
+                    Divider()
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    WidgetMainLimitSettingsRow(
+                        preference: preference,
+                        colors: colors,
+                        showsDragIndicator: false,
+                        providerLabel: providerLabel,
+                        onVisibilityChange: onVisibilityChange
+                    )
+
+                    if isReordering {
+                        HStack(spacing: 8) {
+                            Spacer(minLength: 0)
+                            reorderButton(
+                                systemName: "chevron.up",
+                                title: "Move Up",
+                                accessibilityLabel: "Move \(preference.displayName) up",
+                                isEnabled: index > 0
+                            ) {
+                                onMove(IndexSet(integer: index), index - 1)
+                            }
+                            reorderButton(
+                                systemName: "chevron.down",
+                                title: "Move Down",
+                                accessibilityLabel: "Move \(preference.displayName) down",
+                                isEnabled: index < preferences.mainLimits.count - 1
+                            ) {
+                                onMove(IndexSet(integer: index), index + 2)
+                            }
+                        }
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                }
+                .padding(.vertical, 6)
+            }
         }
+        .animation(.easeInOut(duration: 0.18), value: isReordering)
+    }
+
+    private func reorderButton(
+        systemName: String,
+        title: String,
+        accessibilityLabel: String,
+        isEnabled: Bool,
+        action: @escaping @MainActor () -> Void
+    ) -> some View {
+        Button {
+            action()
+        } label: {
+            Label(title, systemImage: systemName)
+                .font(.caption.weight(.semibold))
+                .frame(minWidth: 76, minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.bordered)
+        .foregroundStyle(isEnabled ? colors.secondaryText : colors.tertiaryText.opacity(0.35))
+        .disabled(!isEnabled)
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+private struct WidgetMainLimitSettingsRow<ProviderLabel: View>: View {
+    let preference: WidgetMainLimitPreference
+    let colors: ContextPanelSettingsControlColors
+    let showsDragIndicator: Bool
+    let providerLabel: (Provider) -> ProviderLabel
+    let onVisibilityChange: @MainActor (WidgetMainLimitPreference, Bool) -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if showsDragIndicator {
+                Image(systemName: "line.3.horizontal")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(colors.tertiaryText)
+                    .frame(width: 14)
+            }
+            Toggle(isOn: Binding(
+                get: { preference.isVisible },
+                set: { isVisible in
+                    MainActor.assumeIsolated {
+                        onVisibilityChange(preference, isVisible)
+                    }
+                }
+            )) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) {
+                        providerLabel(preference.provider)
+                        Text(widgetMainLimitSettingsDisplayName(preference.window))
+                        Spacer()
+                        visibilityText
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            providerLabel(preference.provider)
+                            Text(widgetMainLimitSettingsDisplayName(preference.window))
+                        }
+                        visibilityText
+                    }
+                }
+            }
+            .toggleStyle(.switch)
+        }
+        .padding(.vertical, 2)
+    }
+
+    private var visibilityText: some View {
+        Text(preference.isVisible ? "Shown" : "Hidden")
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(colors.secondaryText)
+    }
+}
+
+private func widgetMainLimitSettingsDisplayName(_ window: MainLimitWindow) -> String {
+    switch window {
+    case .availability:
+        "Google reset window"
+    default:
+        window.displayName
     }
 }
 

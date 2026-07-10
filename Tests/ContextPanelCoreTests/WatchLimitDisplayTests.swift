@@ -105,12 +105,73 @@ import Testing
         message: "Synced"
     )
 
-    let rows = WatchLimitDisplay.mainLaneRows(from: snapshot, maximumCount: 2)
+    let rows = WatchLimitDisplay.mainLaneRows(
+        from: snapshot,
+        preferences: .defaultPreferences,
+        maximumCount: 2
+    )
 
     #expect(rows.map(\.provider) == [.openAI, .openAI])
     #expect(rows.map(\.subtitle) == ["1w", "5h"])
     #expect(rows.map(\.remainingText) == ["40%", "55%"])
     #expect(rows.map(\.pressureRatio) == [0.6, 0.45])
+}
+
+@Test func watchLimitDisplayMainLaneRowsFollowCompanionOrdering() throws {
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+        limits: [
+            openAIWeeklyPercentLimit(accountID: "primary", used: 60),
+            openAIFiveHourPercentLimit(accountID: "primary", used: 45),
+            googleWeeklyPercentLimit(accountID: "antigravity", used: 55),
+        ],
+        status: .healthy,
+        message: "Synced"
+    )
+    var preferences = WidgetDisplayPreferences.defaultPreferences
+    let googleIndex = try #require(preferences.mainLimits.firstIndex {
+        $0.provider == .google && $0.window == .weekly
+    })
+    preferences.moveMainLimits(fromOffsets: IndexSet(integer: googleIndex), toOffset: 0)
+
+    let rows = WatchLimitDisplay.mainLaneRows(
+        from: snapshot,
+        preferences: preferences,
+        maximumCount: 3
+    )
+
+    #expect(rows.map(\.provider) == [.google, .openAI, .openAI])
+    #expect(rows.map(\.subtitle) == ["1w", "1w", "5h"])
+}
+
+@Test func watchLimitDisplayMainLaneRowsFallBackToNonMainLimits() throws {
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+        limits: [UsageLimit(
+            provider: .google,
+            accountID: "antigravity",
+            accountName: "Antigravity",
+            label: "Model requests",
+            unit: .requests,
+            used: 35,
+            limit: 100
+        )],
+        status: .healthy,
+        message: "Synced"
+    )
+
+    let rows = WatchLimitDisplay.mainLaneRows(
+        from: snapshot,
+        preferences: .defaultPreferences,
+        maximumCount: 2
+    )
+
+    let row = try #require(rows.first)
+    #expect(row.title == "Google")
+    #expect(row.subtitle == "Model requests")
+    #expect(row.remainingText == "65")
 }
 
 @Test func watchLimitDisplayUsesPressureRatioForPooledRows() throws {

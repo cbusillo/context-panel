@@ -4,8 +4,40 @@ import Foundation
 
 public enum CompanionCloudKitSyncStoreFactory {
     public static func make(containerIdentifier: String = ContextPanelLocations.iCloudContainerID) -> CompanionRemoteSyncStore {
-        let client = CompanionCloudKitClient(containerIdentifier: containerIdentifier)
+        make(
+            containerIdentifier: containerIdentifier,
+            recordName: CompanionRemoteSync.cloudKitRecordName,
+            storeRole: CompanionRemoteSync.cloudKitStoreRole
+        )
+    }
+
+    public static func makePresentationPreferences(
+        containerIdentifier: String = ContextPanelLocations.iCloudContainerID
+    ) -> CompanionPresentationRemoteStore {
+        let client = CompanionCloudKitClient(
+            containerIdentifier: containerIdentifier,
+            recordName: CompanionRemoteSync.cloudKitPresentationRecordName,
+            storeRole: CompanionRemoteSync.cloudKitPresentationStoreRole
+        )
+        return CompanionPresentationRemoteStore(
+            storeRole: CompanionRemoteSync.cloudKitPresentationStoreRole,
+            saveDocument: { document in await client.savePresentation(document) },
+            loadDocument: { await client.loadPresentation() }
+        )
+    }
+
+    private static func make(
+        containerIdentifier: String,
+        recordName: String,
+        storeRole: String
+    ) -> CompanionRemoteSyncStore {
+        let client = CompanionCloudKitClient(
+            containerIdentifier: containerIdentifier,
+            recordName: recordName,
+            storeRole: storeRole
+        )
         return CompanionRemoteSyncStore(
+            storeRole: storeRole,
             saveDocument: { document in await client.save(document) },
             loadDocument: { now in await client.load(now: now) },
             registerForUpdates: { await client.registerSubscription() }
@@ -15,9 +47,13 @@ public enum CompanionCloudKitSyncStoreFactory {
 
 private actor CompanionCloudKitClient {
     private let containerIdentifier: String
+    private let recordName: String
+    private let storeRole: String
 
-    init(containerIdentifier: String) {
+    init(containerIdentifier: String, recordName: String, storeRole: String) {
         self.containerIdentifier = containerIdentifier
+        self.recordName = recordName
+        self.storeRole = storeRole
     }
 
     func save(_ document: CompanionSyncDocument) async -> CompanionRemoteSyncOutcome {
@@ -39,13 +75,14 @@ private actor CompanionCloudKitClient {
             try verifyPublishedRecord(savedRecord, expectedPayload: payload)
         } catch {
             return CompanionRemoteSyncOutcome(
+                storeRole: storeRole,
                 isAvailable: isCloudKitAvailable(error),
                 succeeded: false,
                 errorMessage: diagnosticMessage(operation: "publish", error: error)
             )
         }
 
-        return CompanionRemoteSyncOutcome(succeeded: true)
+        return CompanionRemoteSyncOutcome(storeRole: storeRole, succeeded: true)
     }
 
     func load(now: Date) async -> CompanionRemoteSyncLoadResult {
@@ -67,12 +104,13 @@ private actor CompanionCloudKitClient {
             )
             return CompanionRemoteSyncLoadResult(
                 result: result,
-                outcome: CompanionRemoteSyncOutcome(succeeded: true)
+                outcome: CompanionRemoteSyncOutcome(storeRole: storeRole, succeeded: true)
             )
         } catch let error as CKError where error.code == .unknownItem {
             return CompanionRemoteSyncLoadResult(
                 result: CompanionSyncLoadResult(document: nil, status: .unknown),
                 outcome: CompanionRemoteSyncOutcome(
+                    storeRole: storeRole,
                     succeeded: true,
                     missingRecord: true
                 )
@@ -85,9 +123,69 @@ private actor CompanionCloudKitClient {
                     errorMessage: diagnosticMessage(operation: "load", error: error)
                 ),
                 outcome: CompanionRemoteSyncOutcome(
+                    storeRole: storeRole,
                     isAvailable: isCloudKitAvailable(error),
                     succeeded: false,
                     errorMessage: diagnosticMessage(operation: "load", error: error)
+                )
+            )
+        }
+    }
+
+    func savePresentation(_ document: CompanionPresentationDocument) async -> CompanionRemoteSyncOutcome {
+        let payload: Data
+
+        do {
+            payload = try CompanionPresentationPayloadCodec.encode(document)
+            let record = makePresentationRecord(document: document, payload: payload)
+            let saveResult = try await privateDatabase.modifyRecords(
+                saving: [record],
+                deleting: [],
+                savePolicy: .allKeys
+            )
+
+            guard let savedRecordResult = saveResult.saveResults[recordID] else {
+                throw SnapshotStoreError.corruptStore("CloudKit companion presentation publish did not return the saved record.")
+            }
+            let savedRecord = try savedRecordResult.get()
+            try verifyPublishedPresentationRecord(savedRecord, expectedPayload: payload)
+        } catch {
+            return CompanionRemoteSyncOutcome(
+                storeRole: storeRole,
+                isAvailable: isCloudKitAvailable(error),
+                succeeded: false,
+                errorMessage: diagnosticMessage(operation: "presentation publish", error: error)
+            )
+        }
+
+        return CompanionRemoteSyncOutcome(storeRole: storeRole, succeeded: true)
+    }
+
+    func loadPresentation() async -> CompanionPresentationRemoteLoadResult {
+        do {
+            let record = try await privateDatabase.record(for: recordID)
+            let document = try decodePresentationDocument(from: record)
+            return CompanionPresentationRemoteLoadResult(
+                document: document,
+                outcome: CompanionRemoteSyncOutcome(storeRole: storeRole, succeeded: true)
+            )
+        } catch let error as CKError where error.code == .unknownItem {
+            return CompanionPresentationRemoteLoadResult(
+                document: nil,
+                outcome: CompanionRemoteSyncOutcome(
+                    storeRole: storeRole,
+                    succeeded: true,
+                    missingRecord: true
+                )
+            )
+        } catch {
+            return CompanionPresentationRemoteLoadResult(
+                document: nil,
+                outcome: CompanionRemoteSyncOutcome(
+                    storeRole: storeRole,
+                    isAvailable: isCloudKitAvailable(error),
+                    succeeded: false,
+                    errorMessage: diagnosticMessage(operation: "presentation load", error: error)
                 )
             )
         }
@@ -97,7 +195,9 @@ private actor CompanionCloudKitClient {
         do {
             let subscription = CKQuerySubscription(
                 recordType: CompanionRemoteSync.cloudKitRecordType,
-                predicate: NSPredicate(format: "TRUEPREDICATE"),
+                predicate: NSPredicate(format: "recordID == %@", CKRecord.ID(
+                    recordName: CompanionRemoteSync.cloudKitRecordName
+                )),
                 subscriptionID: CompanionRemoteSync.cloudKitSubscriptionID,
                 options: [.firesOnRecordCreation, .firesOnRecordUpdate]
             )
@@ -105,9 +205,10 @@ private actor CompanionCloudKitClient {
             info.shouldSendContentAvailable = true
             subscription.notificationInfo = info
             _ = try await privateDatabase.save(subscription)
-            return CompanionRemoteSyncOutcome(succeeded: true)
+            return CompanionRemoteSyncOutcome(storeRole: storeRole, succeeded: true)
         } catch {
             return CompanionRemoteSyncOutcome(
+                storeRole: storeRole,
                 isAvailable: isCloudKitAvailable(error),
                 succeeded: false,
                 errorMessage: diagnosticMessage(operation: "subscribe", error: error)
@@ -120,7 +221,7 @@ private actor CompanionCloudKitClient {
     }
 
     private var recordID: CKRecord.ID {
-        CKRecord.ID(recordName: CompanionRemoteSync.cloudKitRecordName)
+        CKRecord.ID(recordName: recordName)
     }
 
     private func makeRecord(document: CompanionSyncDocument, payload: Data) -> CKRecord {
@@ -135,11 +236,33 @@ private actor CompanionCloudKitClient {
         return record
     }
 
+    private func makePresentationRecord(
+        document: CompanionPresentationDocument,
+        payload: Data
+    ) -> CKRecord {
+        let record = CKRecord(recordType: CompanionRemoteSync.cloudKitRecordType, recordID: recordID)
+        record[CompanionRemoteSync.payloadFieldName] = payload as CKRecordValue
+        record[CompanionRemoteSync.schemaVersionFieldName] = 1 as CKRecordValue
+        record[CompanionRemoteSync.documentSchemaVersionFieldName] = document.schemaVersion as CKRecordValue
+        record[CompanionRemoteSync.snapshotSchemaVersionFieldName] = 0 as CKRecordValue
+        record[CompanionRemoteSync.generatedAtFieldName] = document.updatedAt as CKRecordValue
+        record[CompanionRemoteSync.publishedAtFieldName] = document.updatedAt as CKRecordValue
+        record[CompanionRemoteSync.payloadByteCountFieldName] = payload.count as CKRecordValue
+        return record
+    }
+
     private func decodeDocument(from record: CKRecord) throws -> CompanionSyncDocument {
         guard let payload = record[CompanionRemoteSync.payloadFieldName] as? Data else {
             throw SnapshotStoreError.corruptStore("CloudKit companion sync record is missing payload data.")
         }
         return try CompanionSyncPayloadCodec.decode(payload)
+    }
+
+    private func decodePresentationDocument(from record: CKRecord) throws -> CompanionPresentationDocument {
+        guard let payload = record[CompanionRemoteSync.payloadFieldName] as? Data else {
+            throw SnapshotStoreError.corruptStore("CloudKit companion presentation record is missing payload data.")
+        }
+        return try CompanionPresentationPayloadCodec.decode(payload)
     }
 
     private func verifyPublishedRecord(_ record: CKRecord, expectedPayload: Data) throws {
@@ -150,6 +273,16 @@ private actor CompanionCloudKitClient {
             throw SnapshotStoreError.corruptStore("CloudKit companion sync publish returned a different payload.")
         }
         _ = try CompanionSyncPayloadCodec.decode(payload)
+    }
+
+    private func verifyPublishedPresentationRecord(_ record: CKRecord, expectedPayload: Data) throws {
+        guard let payload = record[CompanionRemoteSync.payloadFieldName] as? Data else {
+            throw SnapshotStoreError.corruptStore("CloudKit companion presentation record is missing payload data.")
+        }
+        guard payload == expectedPayload else {
+            throw SnapshotStoreError.corruptStore("CloudKit companion presentation publish returned a different payload.")
+        }
+        _ = try CompanionPresentationPayloadCodec.decode(payload)
     }
 
     private func diagnosticMessage(operation: String, error: Error) -> String {

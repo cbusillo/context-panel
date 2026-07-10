@@ -64,6 +64,10 @@ public enum ContextPanelLocations {
         applicationSupportDirectory().appending(path: "widget-display-preferences.json")
     }
 
+    public static func watchPresentationPreferencesCacheURL() -> URL {
+        applicationSupportDirectory().appending(path: "watch-presentation-preferences.json")
+    }
+
     public static func widgetSandboxLocalFastModeForecastSettingsURL() -> URL {
         applicationSupportDirectory().appending(path: "fast-mode-forecast-settings.json")
     }

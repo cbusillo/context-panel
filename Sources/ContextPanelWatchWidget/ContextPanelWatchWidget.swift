@@ -6,12 +6,17 @@ import WidgetKit
 struct ContextPanelWatchWidgetEntry: TimelineEntry {
     let date: Date
     let snapshot: WidgetSnapshot
+    let displayPreferences: WidgetDisplayPreferences
 }
 
 struct ContextPanelWatchWidgetProvider: TimelineProvider {
     func placeholder(in context: Context) -> ContextPanelWatchWidgetEntry {
         let date = Date()
-        return ContextPanelWatchWidgetEntry(date: date, snapshot: placeholderSnapshot(date: date))
+        return ContextPanelWatchWidgetEntry(
+            date: date,
+            snapshot: placeholderSnapshot(date: date),
+            displayPreferences: .defaultPreferences
+        )
     }
 
     func getSnapshot(in context: Context, completion: @escaping (ContextPanelWatchWidgetEntry) -> Void) {
@@ -33,13 +38,27 @@ struct ContextPanelWatchWidgetProvider: TimelineProvider {
     }
 
     private func entry(date: Date) async -> ContextPanelWatchWidgetEntry {
-        let result = await CompanionCloudKitSyncStoreFactory.make().load(now: date).result
+        let presentationPreferencesStore = WidgetDisplayPreferencesStore(
+            preferencesURL: ContextPanelLocations.watchPresentationPreferencesCacheURL()
+        )
+        let cachedDisplayPreferences = presentationPreferencesStore.loadIfAvailable()
+        async let loadedSnapshot = CompanionCloudKitSyncStoreFactory.make().load(now: date)
+        async let loadedPresentation = CompanionCloudKitSyncStoreFactory.makePresentationPreferences().load()
+        let result = await loadedSnapshot.result
+        let presentationDocument = await loadedPresentation.document
+        if let presentationPreferences = presentationDocument?.widgetDisplayPreferences {
+            try? presentationPreferencesStore.save(presentationPreferences)
+        }
         return ContextPanelWatchWidgetEntry(
             date: date,
             snapshot: WidgetSnapshot.fromCompanionSync(
                 result,
                 now: date,
                 stalenessPolicy: SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
+            ),
+            displayPreferences: WidgetDisplayPreferences.companionEffectivePreferences(
+                localOverride: presentationDocument?.widgetDisplayPreferences ?? cachedDisplayPreferences,
+                synced: result.document?.widgetDisplayPreferences
             )
         )
     }
@@ -77,11 +96,15 @@ struct ContextPanelWatchWidgetView: View {
     }
 
     private var rectangularLimits: [WatchLimitDisplay] {
-        WatchLimitDisplay.mainLaneRows(from: entry.snapshot, maximumCount: 2)
+        limits(maximumCount: 2)
     }
 
     private func limits(maximumCount: Int) -> [WatchLimitDisplay] {
-        WatchLimitDisplay.rows(from: entry.snapshot, maximumCount: maximumCount)
+        WatchLimitDisplay.mainLaneRows(
+            from: entry.snapshot,
+            preferences: entry.displayPreferences,
+            maximumCount: maximumCount
+        )
     }
 
     var body: some View {
