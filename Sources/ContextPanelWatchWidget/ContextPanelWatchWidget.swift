@@ -131,7 +131,7 @@ struct WatchCircularComplication: View {
         Gauge(value: limit?.pressureRatio ?? 0) {
             Image(systemName: symbol)
         } currentValueLabel: {
-            Text(limit?.remainingText ?? "--")
+            Text(limit?.usageText ?? "--")
                 .minimumScaleFactor(0.55)
         }
         .gaugeStyle(.accessoryCircularCapacity)
@@ -181,7 +181,7 @@ private struct WatchRectangularLimitLine: View {
             Spacer(minLength: 2)
             WatchMiniPressureBar(value: limit.pressureRatio, tint: watchStatusColor(limit.status))
                 .frame(width: 26, height: 3)
-            Text(limit.remainingText)
+            Text(limit.usageText)
                 .foregroundStyle(watchStatusColor(limit.status))
         }
         .font(.caption.weight(.semibold))
@@ -213,7 +213,7 @@ struct WatchInlineComplication: View {
 
     var body: some View {
         if let limit {
-            Text("\(limit.title) \(limit.subtitle) \(limit.remainingText)")
+            Text("\(limit.title) \(limit.subtitle) \(limit.usageText)")
         } else {
             Text(snapshot.state == .failure ? "Context Panel sync failed" : "Context Panel needs sync")
         }
@@ -225,7 +225,7 @@ struct WatchCornerComplication: View {
     let snapshot: WidgetSnapshot
 
     var body: some View {
-        Text(limit?.remainingText ?? "--")
+        Text(limit?.usageText ?? "--")
             .widgetCurvesContent()
             .widgetLabel {
                 Gauge(value: limit?.pressureRatio ?? 0) {

@@ -249,7 +249,7 @@ private struct WatchLimitRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Spacer(minLength: 4)
-                Text(limit.remainingText)
+                Text(limit.usageText)
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(statusColor)
             }

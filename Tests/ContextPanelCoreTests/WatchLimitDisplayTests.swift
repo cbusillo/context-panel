@@ -22,12 +22,28 @@ import Testing
     #expect(tightest.title == "OpenAI")
     #expect(tightest.subtitle == "1w")
     #expect(tightest.context == "3 accounts")
-    #expect(tightest.remainingText == "67%")
+    #expect(tightest.usageText == "33%")
     #expect(abs(tightest.capacityRatio - 0.6666) < 0.001)
     #expect(abs(tightest.pressureRatio - 0.3333) < 0.001)
 
     #expect(tightest.id == "summary:openai:weekly")
     #expect(rows.filter { $0.provider == .openAI && $0.subtitle == "1w" }.count == 1)
+}
+
+@Test func watchLimitDisplayShowsPercentUsedFromThePressureRatio() throws {
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+        limits: [openAIWeeklyPercentLimit(accountID: "primary", used: 15)],
+        status: .healthy,
+        message: "Synced"
+    )
+
+    let row = try #require(WatchLimitDisplay.rows(from: snapshot, maximumCount: 1).first)
+
+    #expect(row.usageText == "15%")
+    #expect(row.pressureRatio == 0.15)
+    #expect(row.capacityRatio == 0.85)
 }
 
 @Test func watchLimitDisplayDeduplicatesPooledRowsBeforeApplyingLimit() throws {
@@ -68,7 +84,7 @@ import Testing
     #expect(rows.map(\.title) == ["OpenAI", "Google"])
     #expect(rows.first?.id == "summary:openai:weekly")
     #expect(rows.first?.context == "3 accounts")
-    #expect(rows.first?.remainingText == "10%")
+    #expect(rows.first?.usageText == "90%")
 }
 
 @Test func watchLimitDisplayKeepsOpenAIWeeklyAndFiveHourLanes() throws {
@@ -88,7 +104,7 @@ import Testing
 
     let openAIRows = rows.filter { $0.provider == .openAI }
     #expect(openAIRows.map(\.subtitle) == ["1w", "5h"])
-    #expect(openAIRows.map(\.remainingText) == ["40%", "55%"])
+    #expect(openAIRows.map(\.usageText) == ["60%", "45%"])
     #expect(openAIRows.map(\.pressureRatio) == [0.6, 0.45])
 }
 
@@ -113,7 +129,7 @@ import Testing
 
     #expect(rows.map(\.provider) == [.openAI, .openAI])
     #expect(rows.map(\.subtitle) == ["1w", "5h"])
-    #expect(rows.map(\.remainingText) == ["40%", "55%"])
+    #expect(rows.map(\.usageText) == ["60%", "45%"])
     #expect(rows.map(\.pressureRatio) == [0.6, 0.45])
 }
 
@@ -171,7 +187,7 @@ import Testing
     let row = try #require(rows.first)
     #expect(row.title == "Google")
     #expect(row.subtitle == "Model requests")
-    #expect(row.remainingText == "65")
+    #expect(row.usageText == "35")
 }
 
 @Test func watchLimitDisplayUsesPressureRatioForPooledRows() throws {
@@ -222,8 +238,36 @@ import Testing
     #expect(weekly.title == "Anthropic")
     #expect(weekly.subtitle == "Weekly")
     #expect(weekly.context == "Primary")
-    #expect(weekly.remainingText == "?")
+    #expect(weekly.usageText == "?")
     #expect(weekly.status == .unknown)
+}
+
+@Test func watchLimitDisplayKeepsPercentUnknownWhenLimitIsMissing() throws {
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+        limits: [
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "primary",
+                accountName: "Primary",
+                label: "Weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 15,
+                limit: nil,
+                confidence: .estimated
+            ),
+        ],
+        status: .unknown,
+        message: "Partial sync"
+    )
+
+    let row = try #require(WatchLimitDisplay.rows(from: snapshot, maximumCount: 1).first)
+
+    #expect(row.usageText == "?")
+    #expect(row.pressureRatio == 0)
+    #expect(row.status == .unknown)
 }
 
 private func openAIWeeklyPercentLimit(accountID: String, used: Int) -> UsageLimit {
