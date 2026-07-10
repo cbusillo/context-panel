@@ -264,12 +264,13 @@ public enum CompanionSyncLoader {
               let selectedDocument = selectedResult.document
         else { return false }
 
+        if localDocument == selectedDocument { return true }
         if localResult.status == .stale, selectedResult.status != .stale { return false }
         if localResult.status != .stale, selectedResult.status == .stale { return true }
         if localDocument.snapshot.generatedAt != selectedDocument.snapshot.generatedAt {
             return localDocument.snapshot.generatedAt > selectedDocument.snapshot.generatedAt
         }
-        return localDocument.snapshot.publishedAt >= selectedDocument.snapshot.publishedAt
+        return localDocument.snapshot.publishedAt > selectedDocument.snapshot.publishedAt
     }
 
     private static func recordDiagnostics(

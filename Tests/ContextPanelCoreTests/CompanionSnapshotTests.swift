@@ -1436,6 +1436,44 @@ import Testing
     #expect(mirrored.document == remoteDocument)
 }
 
+@Test func companionLoaderReplacesEqualTimestampMirrorWhenRemotePayloadChanges() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 3_335)
+    let localURL = root.appending(path: "local-companion.json")
+    let storedSnapshot = companionStoredSnapshot(generatedAt: now)
+    let localDocument = CompanionSyncDocument(
+        storedSnapshot: storedSnapshot,
+        publishedAt: now
+    )
+    let observedBurnRate = ObservedBurnRate(
+        limitID: "openai:weekly",
+        unitsPerHour: 12,
+        observedDurationHours: 2,
+        sampleCount: 3
+    )
+    let remoteDocument = CompanionSyncDocument(
+        storedSnapshot: storedSnapshot,
+        publishedAt: now,
+        observedBurnRates: [observedBurnRate.limitID: observedBurnRate]
+    )
+    try CompanionSyncStore(documentURL: localURL).save(localDocument)
+
+    let result = CompanionSyncLoader.load(
+        localMirrorURL: localURL,
+        remoteLoad: CompanionRemoteSyncLoadResult(
+            result: CompanionSyncLoadResult(document: remoteDocument, status: .healthy),
+            outcome: CompanionRemoteSyncOutcome(succeeded: true)
+        ),
+        now: now
+    )
+
+    let mirrored = CompanionSyncStore(documentURL: localURL).load()
+    #expect(result.document == remoteDocument)
+    #expect(result.document?.observedBurnRates[observedBurnRate.limitID] == observedBurnRate)
+    #expect(mirrored.document == remoteDocument)
+}
+
 @Test func companionLoaderDiagnosticsReportHealthyRemoteCloudKitMirror() throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -1474,8 +1512,11 @@ import Testing
 @Test func companionLoaderPreservesCloudKitMetadataWhenLocalMirrorAlreadyMatches() throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
-    let now = Date(timeIntervalSince1970: 3_335.75)
+    let now = Date(timeIntervalSince1970: 3_337)
     let localURL = root.appending(path: "local-companion.json")
+    let diagnosticsStore = RefreshDiagnosticsStateStore(
+        stateURL: root.appending(path: "refresh-diagnostics-state.json")
+    )
     let document = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now),
         publishedAt: now.addingTimeInterval(60)
@@ -1489,13 +1530,16 @@ import Testing
             result: CompanionSyncLoadResult(document: document, status: .healthy),
             outcome: CompanionRemoteSyncOutcome(succeeded: true)
         ),
+        diagnosticsStore: diagnosticsStore,
         now: receivedAt
     )
 
+    let diagnostics = diagnosticsStore.load().lastCompanionLoad
     #expect(result.document == document)
     #expect(result.transportMetadata?.source == .cloudKit)
     #expect(result.transportMetadata?.receivedAt == receivedAt)
     #expect(result.transportMetadata?.mirroredAt == receivedAt)
+    #expect(diagnostics?.mirroredDocument == nil)
 }
 
 @Test func companionLoaderKeepsNewerLocalMirrorOverOlderCloudKitDocument() throws {
