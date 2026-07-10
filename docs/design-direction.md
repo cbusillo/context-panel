@@ -24,14 +24,15 @@ trying to turn the widget into a dashboard.
 Use an instrument-first widget hierarchy:
 
 - Small widget: answer-first remaining-capacity verdict, tightest main limit,
-  provider/window label, reset confidence, and stale or setup problem copy when
-  that is the most important state. Native comparison should decide between a
-  remaining-capacity ring and an explicitly labeled used-pressure bridge.
+  provider/window label, reset confidence, and an explicitly labeled
+  used-pressure bar. The `used` caption is required whenever that inverse bar
+  renders. Stale or setup problem copy takes priority when needed.
 - Medium widget: overall/tightest status plus the most constrained provider or
   account rows, nearest reset, prompt-cache summary when enabled, and compact
   sync/refresh state.
 - Large widget: provider groups, several constrained account/model rows, compact
-  capacity bars, reset summary, prompt-cache comparison, and refresh/stale state.
+  used-pressure bars, reset summary, prompt-cache comparison, and refresh/stale
+  state.
 
 The large widget may use a dense ledger-like treatment when realistic
 multi-account data does not fit a dial-led composition. The design preference is
@@ -79,9 +80,15 @@ privacy/credential messaging.
   widget structures unpredictably.
 - The widget should preserve last-good values through refresh and loading states
   whenever possible.
+- Stale widget data preserves its last-good numeric value when available, colors
+  its quantitative instruments with a distinct warm-neutral treatment, and
+  never shares the limited/failure red.
 - Remaining-capacity heroes and used-pressure detail rows are complementary, but
   an individual quantitative cluster must never cross their number and fill
   directions or rely on an unlabeled inverse value.
+- Widget accessibility groups each glance instrument, limit row, and provider
+  summary into a coherent value that names provider/window, quantity direction,
+  pressure status, freshness, and reset timing.
 
 ## Component Vocabulary
 
