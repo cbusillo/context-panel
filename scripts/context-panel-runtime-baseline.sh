@@ -7,25 +7,30 @@ launch_after_reset=0
 open_url_after_reset=0
 reset_widget_placement=0
 include_btm_diagnostics=0
+require_production_runtime=0
 source_only=0
 
 usage() {
 	cat <<'USAGE'
-Usage: scripts/context-panel-runtime-baseline.sh [check|install|reset] [--launch] [--open-url] [--reset-widget-placement]
+Usage: scripts/context-panel-runtime-baseline.sh [check|install|reset] [--launch] [--open-url] [--reset-widget-placement] [--require-production-runtime]
 
 check  Print a runtime receipt and fail if Context Panel is not isolated to this checkout.
 install
        Build this checkout and update /Applications/Context Panel.app in place while preserving
-       the user's placed widget and runtime storage.
+       the user's placed widget and runtime storage. Refuses to replace a Production, TestFlight,
+       App Store, or unverified installed runtime.
 reset  Build this checkout, clear Context Panel storage, quarantine conflicting bundles, and
-       update /Applications/Context Panel.app in place so widget placement is preserved.
+       update /Applications/Context Panel.app in place so widget placement is preserved. Refuses
+       to replace a Production, TestFlight, App Store, or unverified installed runtime.
 
---launch    With reset, launch the checked-out app after cleanup.
+--launch    With install or reset, launch the checked-out app after cleanup.
 --open-url  With reset, open contextpanel://overview after launch to exercise widget click-through.
 --reset-widget-placement
             Also clear WidgetKit/Chrono placement caches. This may remove the widget from the UI.
 --btm-diagnostics
             Include sfltool Background Task Management diagnostics. macOS may prompt for a password.
+--require-production-runtime
+            With check, require Production CloudKit entitlements for the app and refresh agent.
 
 USAGE
 }
@@ -53,6 +58,10 @@ while [[ $# -gt 0 ]]; do
 		include_btm_diagnostics=1
 		shift
 		;;
+	--require-production-runtime)
+		require_production_runtime=1
+		shift
+		;;
 	--source-only)
 		source_only=1
 		shift
@@ -68,6 +77,12 @@ while [[ $# -gt 0 ]]; do
 		;;
 	esac
 done
+
+if [[ "$require_production_runtime" == "1" && "$mode" != "check" ]]; then
+	echo "--require-production-runtime is only valid with check" >&2
+	usage >&2
+	exit 2
+fi
 
 derived_data_path="$repo_root/.build/runtime-baseline-derived-data"
 built_app_path="$derived_data_path/Build/Products/Debug/Context Panel.app"
@@ -692,6 +707,7 @@ check_profile_plist_covers_entitlements() {
 	check_profile_authorizes_array_entitlement "$profile_plist" "$entitlements_plist" "$label" "com.apple.developer.icloud-container-identifiers" || true
 	check_profile_authorizes_array_entitlement "$profile_plist" "$entitlements_plist" "$label" "com.apple.developer.icloud-services" || true
 	check_profile_authorizes_array_entitlement "$profile_plist" "$entitlements_plist" "$label" "com.apple.developer.ubiquity-container-identifiers" || true
+	check_profile_authorizes_scalar_entitlement "$profile_plist" "$entitlements_plist" "$label" "com.apple.developer.icloud-container-environment" || true
 	check_profile_authorizes_scalar_entitlement "$profile_plist" "$entitlements_plist" "$label" "com.apple.developer.team-identifier" || true
 
 	if [[ "$failures" == "$failures_before" ]]; then
@@ -711,6 +727,176 @@ signed_entitlements_plist() {
 	local bundle="$1"
 	local output="$2"
 	codesign -d --entitlements :- "$bundle" >"$output" 2>/dev/null
+}
+
+bundle_cloudkit_environment() {
+	local bundle="$1"
+	local entitlements value
+	if [[ ! -e "$bundle" ]]; then
+		printf 'absent\n'
+		return 0
+	fi
+	entitlements="$(mktemp)"
+	if ! signed_entitlements_plist "$bundle" "$entitlements"; then
+		rm -f "$entitlements"
+		printf 'unreadable\n'
+		return 0
+	fi
+	value="$(signed_entitlement_value "$entitlements" "com.apple.developer.icloud-container-environment")"
+	rm -f "$entitlements"
+	if [[ -n "$value" ]]; then
+		printf '%s\n' "$value"
+	else
+		printf 'unknown\n'
+	fi
+}
+
+bundle_beta_reports_active() {
+	local bundle="$1"
+	local entitlements value
+	if [[ ! -e "$bundle" ]]; then
+		printf 'absent\n'
+		return 0
+	fi
+	entitlements="$(mktemp)"
+	if ! signed_entitlements_plist "$bundle" "$entitlements"; then
+		rm -f "$entitlements"
+		printf 'unreadable\n'
+		return 0
+	fi
+	value="$(signed_entitlement_value "$entitlements" "beta-reports-active")"
+	rm -f "$entitlements"
+	if [[ "$value" == "true" ]]; then
+		printf 'true\n'
+	else
+		printf 'false\n'
+	fi
+}
+
+bundle_store_receipt_status() {
+	local bundle="$1"
+	if [[ -f "$bundle/Contents/_MASReceipt/receipt" ]]; then
+		printf 'present\n'
+	else
+		printf 'absent\n'
+	fi
+}
+
+runtime_distribution_identity() {
+	local cloudkit_environment="$1"
+	local beta_reports_active="$2"
+	local store_receipt="$3"
+	if [[ "$cloudkit_environment" == "absent" ]]; then
+		printf 'absent\n'
+	elif [[ "$beta_reports_active" == "true" ]]; then
+		printf 'testflight\n'
+	elif [[ "$store_receipt" == "present" ]]; then
+		printf 'app-store\n'
+	elif [[ "$cloudkit_environment" == "Production" ]]; then
+		printf 'production-signed\n'
+	elif [[ "$cloudkit_environment" == "Development" ]]; then
+		printf 'development\n'
+	elif [[ "$cloudkit_environment" == "unreadable" ]]; then
+		printf 'unreadable\n'
+	else
+		printf 'unknown\n'
+	fi
+}
+
+guard_installed_runtime_replacement() {
+	local installed_app="${1:-$app_path}"
+	local installed_refresh_agent="${2:-$refresh_agent_path}"
+	local app_environment refresh_environment beta_reports_active store_receipt distribution reason
+
+	section "Runtime Replacement Guard"
+	if [[ ! -e "$installed_app" ]]; then
+		ok "no existing canonical app will be replaced"
+		return 0
+	fi
+
+	app_environment="$(bundle_cloudkit_environment "$installed_app")"
+	refresh_environment="$(bundle_cloudkit_environment "$installed_refresh_agent")"
+	beta_reports_active="$(bundle_beta_reports_active "$installed_app")"
+	store_receipt="$(bundle_store_receipt_status "$installed_app")"
+	distribution="$(runtime_distribution_identity "$app_environment" "$beta_reports_active" "$store_receipt")"
+	note "app-cloudkit=$app_environment"
+	note "refresh-agent-cloudkit=$refresh_environment"
+	note "distribution=$distribution"
+	note "beta-reports-active=$beta_reports_active"
+	note "app-store-receipt=$store_receipt"
+
+	reason=""
+	if [[ "$beta_reports_active" == "true" ]]; then
+		reason="the installed app is a TestFlight runtime"
+	elif [[ "$store_receipt" == "present" ]]; then
+		reason="the installed app has an App Store receipt"
+	elif [[ "$beta_reports_active" == "unreadable" ]]; then
+		reason="the installed app's beta entitlement cannot be verified"
+	elif [[ "$app_environment" == "Production" ]]; then
+		reason="the installed app uses Production CloudKit"
+	elif [[ "$refresh_environment" == "Production" ]]; then
+		reason="the installed refresh agent uses Production CloudKit"
+	elif [[ "$app_environment" != "Development" ]]; then
+		reason="the installed app's CloudKit environment is not verified as Development"
+	elif [[ "$refresh_environment" != "Development" && "$refresh_environment" != "absent" ]]; then
+		reason="the installed refresh agent's CloudKit environment is not verified as Development"
+	fi
+
+	if [[ -n "$reason" ]]; then
+		fail "refusing to replace $installed_app because $reason"
+		note "install and reset build a local Debug runtime that uses Development CloudKit."
+		note "For signed companion validation, keep the installed runtime and run:"
+		note "  scripts/context-panel-runtime-baseline.sh check --require-production-runtime"
+		note "To intentionally return to local development, first remove or relocate the installed app outside this script."
+		return 1
+	fi
+
+	ok "existing canonical runtime is verified as Development"
+}
+
+check_runtime_identity() {
+	local installed_app="${1:-$app_path}"
+	local installed_refresh_agent="${2:-$refresh_agent_path}"
+	local app_environment refresh_environment beta_reports_active store_receipt distribution
+	app_environment="$(bundle_cloudkit_environment "$installed_app")"
+	refresh_environment="$(bundle_cloudkit_environment "$installed_refresh_agent")"
+	beta_reports_active="$(bundle_beta_reports_active "$installed_app")"
+	store_receipt="$(bundle_store_receipt_status "$installed_app")"
+	distribution="$(runtime_distribution_identity "$app_environment" "$beta_reports_active" "$store_receipt")"
+
+	note "app-cloudkit=$app_environment"
+	note "refresh-agent-cloudkit=$refresh_environment"
+	note "distribution=$distribution"
+	note "beta-reports-active=$beta_reports_active"
+	note "app-store-receipt=$store_receipt"
+
+	if [[ "$require_production_runtime" != "1" ]]; then
+		return 0
+	fi
+	if [[ "$app_environment" == "Production" ]]; then
+		ok "app uses Production CloudKit"
+	else
+		fail "app must use Production CloudKit for signed companion validation; found $app_environment"
+	fi
+	if [[ "$refresh_environment" == "Production" ]]; then
+		ok "refresh agent uses Production CloudKit"
+	else
+		fail "refresh agent must use Production CloudKit for signed companion validation; found $refresh_environment"
+	fi
+}
+
+check_bundle_cloudkit_environment() {
+	local bundle="$1"
+	local label="$2"
+	local expected="$3"
+	local actual
+	actual="$(bundle_cloudkit_environment "$bundle")"
+	if [[ "$actual" == "$expected" ]]; then
+		ok "$label uses $expected CloudKit"
+		return 0
+	fi
+	fail "$label must use $expected CloudKit; found $actual"
+	return 1
 }
 
 check_bundle_profile_covers_signed_entitlements() {
@@ -756,6 +942,8 @@ check_bundle_profile_covers_signed_entitlements() {
 preflight_built_runtime_profiles() {
 	section "Built Runtime Profile Preflight"
 	local failures_before="$failures"
+	check_bundle_cloudkit_environment "$built_app_path" "built app" "Development" || true
+	check_bundle_cloudkit_environment "$built_refresh_agent_path" "built refresh agent" "Development" || true
 	check_bundle_profile_covers_signed_entitlements "$built_app_path" "built app" || true
 	check_bundle_profile_covers_signed_entitlements "$built_widget_path" "built widget" || true
 	check_bundle_profile_covers_signed_entitlements "$built_refresh_agent_path" "built refresh agent" || true
@@ -915,6 +1103,7 @@ install_checkout_app() {
 		fail "built app is missing: $built_app_path"
 		return 1
 	fi
+	guard_installed_runtime_replacement
 	developer_signing_identity="$(resolve_developer_signing_identity)"
 	if [[ -z "$developer_signing_identity" ]]; then
 		fail "could not find an Apple Development signing identity"
@@ -947,8 +1136,10 @@ install_checkout_app() {
 }
 
 install_runtime() {
+	guard_installed_runtime_replacement
 	build_checkout_app
 	preflight_built_runtime_profiles
+	guard_installed_runtime_replacement
 
 	section "Install"
 	local stamp quarantine
@@ -1076,8 +1267,10 @@ quarantine_stale_runtime_bundles() {
 }
 
 reset_runtime() {
+	guard_installed_runtime_replacement
 	build_checkout_app
 	preflight_built_runtime_profiles
+	guard_installed_runtime_replacement
 
 	section "Reset"
 	local stamp quarantine
@@ -1195,6 +1388,9 @@ check_runtime() {
 			fail "unexpected app bundle id: $app_id"
 		fi
 	fi
+
+	section "Runtime Identity"
+	check_runtime_identity "$app_path" "$refresh_agent_path"
 
 	section "Entitlements"
 	check_canonical_app_group "$app_path" "app"

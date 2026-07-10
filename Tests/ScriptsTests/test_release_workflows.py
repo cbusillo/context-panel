@@ -5,6 +5,7 @@ import re
 import tempfile
 import os
 import json
+import shlex
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -89,6 +90,82 @@ class ReleaseWorkflowTests(unittest.TestCase):
             stderr=subprocess.STDOUT,
             check=False,
         )
+
+    def run_runtime_identity_fixture(
+        self,
+        app_entitlements: str | None,
+        refresh_entitlements: str | None = None,
+        *,
+        receipt: bool = False,
+        operation: str = "guard",
+    ) -> subprocess.CompletedProcess[str]:
+        fixture_dir = REPO_ROOT / "Tests/ScriptsTests/fixtures/runtime-preflight"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            app_path = root / "Context Panel.app"
+            refresh_path = app_path / "Contents/Library/LoginItems/ContextPanelRefreshAgent.app"
+            if app_entitlements is not None:
+                app_path.mkdir(parents=True)
+            if refresh_entitlements is not None:
+                refresh_path.mkdir(parents=True)
+            if receipt:
+                receipt_path = app_path / "Contents/_MASReceipt/receipt"
+                receipt_path.parent.mkdir(parents=True, exist_ok=True)
+                receipt_path.write_text("fixture")
+
+            app_entitlements_path = fixture_dir / app_entitlements if app_entitlements is not None else None
+            refresh_entitlements_path = (
+                fixture_dir / refresh_entitlements if refresh_entitlements is not None else None
+            )
+            if operation == "guard":
+                operation_body = 'guard_installed_runtime_replacement "$fixture_app" "$fixture_refresh"'
+            elif operation == "production-check":
+                operation_body = """
+                require_production_runtime=1
+                failures=0
+                check_runtime_identity "$fixture_app" "$fixture_refresh"
+                [[ "$failures" == "0" ]]
+                """
+            elif operation == "development-check":
+                operation_body = """
+                failures=0
+                check_bundle_cloudkit_environment "$fixture_app" "built app" "Development" || true
+                check_bundle_cloudkit_environment "$fixture_refresh" "built refresh agent" "Development" || true
+                [[ "$failures" == "0" ]]
+                """
+            else:
+                raise ValueError(f"unsupported runtime fixture operation: {operation}")
+
+            command = f"""
+            source {shlex.quote(str(REPO_ROOT / 'scripts/context-panel-runtime-baseline.sh'))} --source-only
+            fixture_app={shlex.quote(str(app_path))}
+            fixture_refresh={shlex.quote(str(refresh_path))}
+            fixture_app_entitlements={shlex.quote(str(app_entitlements_path) if app_entitlements_path else '')}
+            fixture_refresh_entitlements={shlex.quote(str(refresh_entitlements_path) if refresh_entitlements_path else '')}
+            signed_entitlements_plist() {{
+              if [[ -n "$fixture_app_entitlements" && "$1" == "$fixture_app" ]]; then
+                cp "$fixture_app_entitlements" "$2"
+                return 0
+              fi
+              if [[ -n "$fixture_refresh_entitlements" && "$1" == "$fixture_refresh" ]]; then
+                cp "$fixture_refresh_entitlements" "$2"
+                return 0
+              fi
+              return 1
+            }}
+            set +e
+            {operation_body}
+            status=$?
+            exit "$status"
+            """
+            return subprocess.run(
+                ["bash", "-lc", command],
+                cwd=REPO_ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
 
     def run_package_script_preflight(self, args: list[str], profiles: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1312,12 +1389,14 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("--build-number <yyyymmddHHMM>", release_docs)
         self.assertIn("Mac-to-companion CloudKit dependency", release_docs)
         self.assertIn("CloudKit-backed companion snapshot", release_docs)
+        self.assertIn("check --require-production-runtime", release_docs)
         self.assertIn("run that as separate `Ship` dispatches", release_docs)
         self.assertIn("widget reads the companion app's app-group mirror", release_docs)
         self.assertNotIn("issue #174", release_docs)
         self.assertNotIn("Mac-published iCloud companion document", release_docs)
         self.assertNotIn("companion app and widget profiles to authorize the Context Panel iCloud", release_docs)
         self.assertNotIn("read-only companion surfaces can sync fresh snapshots", release_docs)
+        self.assertNotIn("runtime-baseline.sh install --launch` or", release_docs)
         self.assertNotIn("--version 1.0.32", release_docs)
 
     def test_runtime_baseline_does_not_require_google_oauth_build_settings(self):
@@ -1365,7 +1444,120 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         assert reset_runtime is not None
         for function in (install_runtime, reset_runtime):
             body = function.group("body")
+            self.assertTrue(body.lstrip().startswith("guard_installed_runtime_replacement"))
+            guard_positions = [match.start() for match in re.finditer("guard_installed_runtime_replacement", body)]
+            self.assertGreaterEqual(len(guard_positions), 2)
+            self.assertLess(guard_positions[0], body.index("build_checkout_app"))
+            self.assertGreater(guard_positions[1], body.index("preflight_built_runtime_profiles"))
+            self.assertLess(guard_positions[1], body.index("stop_context_panel"))
             self.assertLess(body.index("preflight_built_runtime_profiles"), body.index("install_checkout_app"))
+
+        install_checkout_app = re.search(r"install_checkout_app\(\) \{(?P<body>.*?)\n\}", script, re.S)
+        self.assertIsNotNone(install_checkout_app)
+        assert install_checkout_app is not None
+        install_body = install_checkout_app.group("body")
+        self.assertLess(install_body.index("guard_installed_runtime_replacement"), install_body.index("rsync"))
+
+    def test_runtime_baseline_guard_allows_absent_or_development_runtime(self):
+        absent = self.run_runtime_identity_fixture(None)
+        development = self.run_runtime_identity_fixture(
+            "app-entitlements.plist",
+            "app-entitlements.plist",
+        )
+
+        self.assertEqual(absent.returncode, 0, absent.stdout)
+        self.assertIn("no existing canonical app will be replaced", absent.stdout)
+        self.assertEqual(development.returncode, 0, development.stdout)
+        self.assertIn("app-cloudkit=Development", development.stdout)
+        self.assertIn("existing canonical runtime is verified as Development", development.stdout)
+
+    def test_runtime_baseline_guard_blocks_production_runtime(self):
+        result = self.run_runtime_identity_fixture(
+            "app-entitlements-production.plist",
+            "app-entitlements-production.plist",
+        )
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("app-cloudkit=Production", result.stdout)
+        self.assertIn("refusing to replace", result.stdout)
+        self.assertIn("check --require-production-runtime", result.stdout)
+
+    def test_runtime_baseline_guard_blocks_production_refresh_agent(self):
+        result = self.run_runtime_identity_fixture(
+            "app-entitlements.plist",
+            "app-entitlements-production.plist",
+        )
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("app-cloudkit=Development", result.stdout)
+        self.assertIn("refresh-agent-cloudkit=Production", result.stdout)
+        self.assertIn("installed refresh agent uses Production CloudKit", result.stdout)
+
+    def test_runtime_baseline_guard_blocks_testflight_without_embedded_profile(self):
+        result = self.run_runtime_identity_fixture(
+            "runtime-testflight-entitlements.plist",
+            "app-entitlements-production.plist",
+        )
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("distribution=testflight", result.stdout)
+        self.assertIn("installed app is a TestFlight runtime", result.stdout)
+
+    def test_runtime_baseline_guard_blocks_store_receipt_even_with_development_entitlements(self):
+        result = self.run_runtime_identity_fixture(
+            "app-entitlements.plist",
+            "app-entitlements.plist",
+            receipt=True,
+        )
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("distribution=app-store", result.stdout)
+        self.assertIn("installed app has an App Store receipt", result.stdout)
+
+    def test_runtime_baseline_guard_fails_closed_for_unverified_runtime(self):
+        result = self.run_runtime_identity_fixture("runtime-unknown-entitlements.plist")
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("app-cloudkit=unknown", result.stdout)
+        self.assertIn("not verified as Development", result.stdout)
+
+    def test_runtime_baseline_production_check_requires_matching_cloudkit_environments(self):
+        production = self.run_runtime_identity_fixture(
+            "app-entitlements-production.plist",
+            "app-entitlements-production.plist",
+            operation="production-check",
+        )
+        development = self.run_runtime_identity_fixture(
+            "app-entitlements.plist",
+            "app-entitlements.plist",
+            operation="production-check",
+        )
+
+        self.assertEqual(production.returncode, 0, production.stdout)
+        self.assertIn("app uses Production CloudKit", production.stdout)
+        self.assertIn("refresh agent uses Production CloudKit", production.stdout)
+        self.assertNotEqual(development.returncode, 0, development.stdout)
+        self.assertIn("app must use Production CloudKit", development.stdout)
+        self.assertIn("refresh agent must use Production CloudKit", development.stdout)
+
+    def test_runtime_baseline_built_preflight_requires_development_cloudkit(self):
+        development = self.run_runtime_identity_fixture(
+            "app-entitlements.plist",
+            "app-entitlements.plist",
+            operation="development-check",
+        )
+        production = self.run_runtime_identity_fixture(
+            "app-entitlements-production.plist",
+            "app-entitlements-production.plist",
+            operation="development-check",
+        )
+
+        self.assertEqual(development.returncode, 0, development.stdout)
+        self.assertIn("built app uses Development CloudKit", development.stdout)
+        self.assertIn("built refresh agent uses Development CloudKit", development.stdout)
+        self.assertNotEqual(production.returncode, 0, production.stdout)
+        self.assertIn("built app must use Development CloudKit", production.stdout)
+        self.assertIn("built refresh agent must use Development CloudKit", production.stdout)
 
     def test_runtime_baseline_install_and_reset_share_stale_bundle_cleanup(self):
         script = self.read("scripts/context-panel-runtime-baseline.sh")
@@ -1421,6 +1613,15 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
 
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("fixture-app provisioning profile covers signed entitlements", result.stdout)
+
+    def test_runtime_baseline_profile_fixture_rejects_cloudkit_environment_mismatch(self):
+        result = self.run_runtime_preflight_fixture(
+            "profile-good.plist",
+            "app-entitlements-production.plist",
+        )
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("does not authorize com.apple.developer.icloud-container-environment", result.stdout)
 
     def test_runtime_baseline_profile_fixture_rejects_wildcard_profile(self):
         result = self.run_runtime_preflight_fixture("profile-wildcard.plist")

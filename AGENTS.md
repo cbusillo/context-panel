@@ -67,9 +67,22 @@ receipt and require it to pass:
 scripts/context-panel-runtime-baseline.sh check
 ```
 
+For TestFlight, App Store, or other signed Production companion validation, use
+the read-only Production receipt and require both the app and refresh agent to
+report `Production` CloudKit:
+
+```sh
+scripts/context-panel-runtime-baseline.sh check --require-production-runtime
+```
+
+Never run `install` or `reset` while preserving a signed Production publisher.
+Those modes build a local Debug runtime with Development CloudKit and now refuse
+to replace a Production, TestFlight, App Store, or unverified canonical app.
+
 After rebuilding or reinstalling during normal development, use the in-place
-install gate. It updates `/Applications/Context Panel.app` and verifies the same
-runtime receipt while preserving the user's placed widget:
+install gate. This is the Development runtime path: it updates
+`/Applications/Context Panel.app` and verifies the same runtime receipt while
+preserving the user's placed widget:
 
 ```sh
 scripts/context-panel-runtime-baseline.sh install --launch
@@ -202,14 +215,18 @@ For UI work, also run the native app/widget locally and inspect the actual macOS
 presentation before calling the work ready.
 
 For widget/app UI changes, the SwiftPM gate is not sufficient by itself. Use the
-install gate instead of manually opening or copying DerivedData builds; it
-regenerates the Xcode project, builds the real Xcode app target, installs the
-fresh app to `/Applications/Context Panel.app`, refreshes the app/widget runtime,
-and prints the runtime receipt:
+Development install gate instead of manually opening or copying DerivedData
+builds; it regenerates the Xcode project, builds the real Xcode app target,
+installs the fresh app to `/Applications/Context Panel.app`, refreshes the
+app/widget runtime, and prints the runtime receipt:
 
 ```sh
 scripts/context-panel-runtime-baseline.sh install --launch
 ```
+
+If the canonical app is a signed Production/TestFlight runtime, preserve it and
+use `scripts/context-panel-runtime-baseline.sh check --require-production-runtime`
+instead of installing a Development build.
 
 Do not create backup copies of `/Applications/Context Panel.app` during normal
 development installs.
