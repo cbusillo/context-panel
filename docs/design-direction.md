@@ -1,6 +1,6 @@
 # Design Direction
 
-Last updated: 2026-06-22.
+Last updated: 2026-07-09.
 
 ## Accepted Direction
 
@@ -36,6 +36,12 @@ The large widget may use a dense ledger-like treatment when realistic
 multi-account data does not fit a dial-led composition. The design preference is
 still instrument-first: clear pressure, reset timing, and state hierarchy before
 raw completeness.
+
+Apple Watch app rows and complications should use count-up usage percentages.
+The visible percentage must come from the same usage ratio that fills the watch
+gauge or pressure bar; do not pair a usage-pressure gauge with an unlabeled
+remaining-capacity value. Keep unknown usage explicit rather than substituting
+zero.
 
 ## App Layout Direction
 
