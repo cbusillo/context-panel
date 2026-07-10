@@ -1,6 +1,6 @@
 # Design Direction
 
-Last updated: 2026-07-09.
+Last updated: 2026-07-10.
 
 ## Accepted Direction
 
@@ -23,9 +23,10 @@ trying to turn the widget into a dashboard.
 
 Use an instrument-first widget hierarchy:
 
-- Small widget: answer-first verdict, tightest main limit, provider/window label,
-  compact capacity bar, reset confidence, and stale or setup problem copy when
-  that is the most important state.
+- Small widget: answer-first remaining-capacity verdict, tightest main limit,
+  provider/window label, reset confidence, and stale or setup problem copy when
+  that is the most important state. Native comparison should decide between a
+  remaining-capacity ring and an explicitly labeled used-pressure bridge.
 - Medium widget: overall/tightest status plus the most constrained provider or
   account rows, nearest reset, prompt-cache summary when enabled, and compact
   sync/refresh state.
@@ -37,11 +38,14 @@ multi-account data does not fit a dial-led composition. The design preference is
 still instrument-first: clear pressure, reset timing, and state hierarchy before
 raw completeness.
 
-Apple Watch app rows and complications should use count-up usage percentages.
-The visible percentage must come from the same usage ratio that fills the watch
-gauge or pressure bar; do not pair a usage-pressure gauge with an unlabeled
-remaining-capacity value. Keep unknown usage explicit rather than substituting
-zero.
+Apple Watch complications should first test one remaining-capacity answer across
+families so the same snapshot does not appear as inverse percentages on
+different faces. A shape-based fallback may use remaining-capacity rings for
+circular and corner families plus explicitly labeled used-pressure bars for
+rectangular rows. Watch app detail rows may remain used-pressure views. In every
+case, the visible number, wording, fill, color, and accessibility value must
+describe the same quantity. Keep unknown values indeterminate rather than
+substituting zero.
 
 ## App Layout Direction
 
@@ -75,14 +79,22 @@ privacy/credential messaging.
   widget structures unpredictably.
 - The widget should preserve last-good values through refresh and loading states
   whenever possible.
+- Remaining-capacity heroes and used-pressure detail rows are complementary, but
+  an individual quantitative cluster must never cross their number and fill
+  directions or rely on an unlabeled inverse value.
 
 ## Component Vocabulary
 
-The durable native vocabulary lives in SwiftUI, not in a web export. Current
-implementation uses shared app/widget ideas including:
+The durable native vocabulary lives in SwiftUI and the shared semantic model,
+not in a web export. Current implementation uses shared app/widget ideas
+including:
 
-- `CapacityDial`: circular pressure indicator for app detail and summary views.
-- `CapacityBar` / `CPWCapacityBar`: compact pressure bar for rows and widgets.
+- `MetricProgress`: explicit remaining-capacity, used-pressure, neutral-rate,
+  and indeterminate state with normalized display and accessibility values.
+- `MetricDial`: circular metric renderer whose `MetricProgress` value states its
+  meaning; remaining-capacity and neutral-rate callers must stay explicit.
+- `UsagePressureBar` / `CPWUsagePressureBar`: compact used-pressure bars that
+  accept optional ratios and render missing values as indeterminate.
 - `ProviderBadge` / `CPWProviderBadge`: short provider badge with nearby label
   context.
 - `StatusMark` / `CPWStatusMark`: compact state marker paired with text.
@@ -95,6 +107,15 @@ implementation uses shared app/widget ideas including:
 
 Keep colors, spacing, radius, typography, material, and status semantics in
 native theme helpers instead of scattering raw values through views.
+
+The semantic defaults are:
+
+- Rings and capacity dials communicate remaining capacity.
+- Linear pressure bars communicate used capacity and pair with `used` copy.
+- Rates such as prompt-cache hit rate remain neutral telemetry rather than being
+  named or announced as capacity or pressure.
+- Missing, non-finite, unavailable, and unknown ratios are indeterminate. They
+  never become a determinate zero-length or zero-capacity instrument.
 
 ## State Coverage
 

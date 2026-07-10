@@ -19,12 +19,14 @@ import Testing
     let rows = WatchLimitDisplay.rows(from: snapshot, maximumCount: 5)
 
     let tightest = try #require(rows.first)
+    let remainingRatio = try #require(tightest.remainingCapacity.ratio)
+    let usedRatio = try #require(tightest.usedPressure.ratio)
     #expect(tightest.title == "OpenAI")
     #expect(tightest.subtitle == "1w")
     #expect(tightest.context == "3 accounts")
-    #expect(tightest.usageText == "33%")
-    #expect(abs(tightest.capacityRatio - 0.6666) < 0.001)
-    #expect(abs(tightest.pressureRatio - 0.3333) < 0.001)
+    #expect(tightest.usedText == "33%")
+    #expect(abs(remainingRatio - 0.6666) < 0.001)
+    #expect(abs(usedRatio - 0.3333) < 0.001)
 
     #expect(tightest.id == "summary:openai:weekly")
     #expect(rows.filter { $0.provider == .openAI && $0.subtitle == "1w" }.count == 1)
@@ -41,9 +43,9 @@ import Testing
 
     let row = try #require(WatchLimitDisplay.rows(from: snapshot, maximumCount: 1).first)
 
-    #expect(row.usageText == "15%")
-    #expect(row.pressureRatio == 0.15)
-    #expect(row.capacityRatio == 0.85)
+    #expect(row.usedText == "15%")
+    #expect(row.usedPressure.ratio == 0.15)
+    #expect(row.remainingCapacity.ratio == 0.85)
 }
 
 @Test func watchLimitDisplayDeduplicatesPooledRowsBeforeApplyingLimit() throws {
@@ -84,7 +86,7 @@ import Testing
     #expect(rows.map(\.title) == ["OpenAI", "Google"])
     #expect(rows.first?.id == "summary:openai:weekly")
     #expect(rows.first?.context == "3 accounts")
-    #expect(rows.first?.usageText == "90%")
+    #expect(rows.first?.usedText == "90%")
 }
 
 @Test func watchLimitDisplayKeepsOpenAIWeeklyAndFiveHourLanes() throws {
@@ -104,8 +106,8 @@ import Testing
 
     let openAIRows = rows.filter { $0.provider == .openAI }
     #expect(openAIRows.map(\.subtitle) == ["1w", "5h"])
-    #expect(openAIRows.map(\.usageText) == ["60%", "45%"])
-    #expect(openAIRows.map(\.pressureRatio) == [0.6, 0.45])
+    #expect(openAIRows.map(\.usedText) == ["60%", "45%"])
+    #expect(openAIRows.compactMap { $0.usedPressure.ratio } == [0.6, 0.45])
 }
 
 @Test func watchLimitDisplayMainLaneRowsKeepOpenAIWeeklyAndFiveHourFirst() throws {
@@ -129,8 +131,8 @@ import Testing
 
     #expect(rows.map(\.provider) == [.openAI, .openAI])
     #expect(rows.map(\.subtitle) == ["1w", "5h"])
-    #expect(rows.map(\.usageText) == ["60%", "45%"])
-    #expect(rows.map(\.pressureRatio) == [0.6, 0.45])
+    #expect(rows.map(\.usedText) == ["60%", "45%"])
+    #expect(rows.compactMap { $0.usedPressure.ratio } == [0.6, 0.45])
 }
 
 @Test func watchLimitDisplayMainLaneRowsFollowCompanionOrdering() throws {
@@ -187,7 +189,7 @@ import Testing
     let row = try #require(rows.first)
     #expect(row.title == "Google")
     #expect(row.subtitle == "Model requests")
-    #expect(row.usageText == "35")
+    #expect(row.usedText == "35")
 }
 
 @Test func watchLimitDisplayUsesPressureRatioForPooledRows() throws {
@@ -205,8 +207,8 @@ import Testing
     let rows = WatchLimitDisplay.rows(from: snapshot, maximumCount: 2)
 
     #expect(rows.first?.id == "summary:openai:weekly")
-    #expect(rows.first?.pressureRatio == 0.4)
-    #expect(rows.first?.capacityRatio == 0.6)
+    #expect(rows.first?.usedPressure.ratio == 0.4)
+    #expect(rows.first?.remainingCapacity.ratio == 0.6)
 }
 
 @Test func watchLimitDisplayFallsBackToRawMainLimitWhenPoolCannotBeBuilt() throws {
@@ -238,7 +240,9 @@ import Testing
     #expect(weekly.title == "Anthropic")
     #expect(weekly.subtitle == "Weekly")
     #expect(weekly.context == "Primary")
-    #expect(weekly.usageText == "?")
+    #expect(weekly.usedText == "—")
+    #expect(weekly.usedPressure.isIndeterminate)
+    #expect(weekly.remainingCapacity.isIndeterminate)
     #expect(weekly.status == .unknown)
 }
 
@@ -265,8 +269,9 @@ import Testing
 
     let row = try #require(WatchLimitDisplay.rows(from: snapshot, maximumCount: 1).first)
 
-    #expect(row.usageText == "?")
-    #expect(row.pressureRatio == 0)
+    #expect(row.usedText == "—")
+    #expect(row.usedPressure.isIndeterminate)
+    #expect(row.remainingCapacity.isIndeterminate)
     #expect(row.status == .unknown)
 }
 

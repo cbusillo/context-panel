@@ -86,6 +86,7 @@
 		86D64E082F50479344767059 /* ContextPanelRefreshAgent.app in Embed Dependencies */ = {isa = PBXBuildFile; fileRef = 086B12021073A6F2A49850A1 /* ContextPanelRefreshAgent.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		878E71CCE2E75264C33668BF /* ContextPanelDateFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9909074D7E80648BC2A01C51 /* ContextPanelDateFormatting.swift */; };
 		8A926EF24F018FCD884C2254 /* ResetExpiryRefreshState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58B71A183966EEC56B955CD3 /* ResetExpiryRefreshState.swift */; };
+		8B7BECF40741A26AF61E7153 /* MetricProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B5621100867602BDE8B426A /* MetricProgress.swift */; };
 		8C227B6AFC01D8930A658419 /* ContextPanelLocations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23E9C71457F4E1F101132FCF /* ContextPanelLocations.swift */; };
 		8D1A72D53AC6BE2FB14449E4 /* FastModeForecast.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BD985B0213AB5987D3B3170 /* FastModeForecast.swift */; };
 		91F74C1A26BC9EA4034BCCE4 /* libContextPanelCompanionSupport.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 4DF7B37FFD557C030E4D4960 /* libContextPanelCompanionSupport.a */; };
@@ -98,6 +99,7 @@
 		9D39D9C75B6CB1F4255FB1EF /* BurnRateEstimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FB4BEA57ACE8B84CAE71E75 /* BurnRateEstimator.swift */; };
 		9D7098AB5C83051676B31188 /* OAuthPKCE.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB0E4D0FF6DD744B87D215B9 /* OAuthPKCE.swift */; };
 		9D8AF2D95FF9A28EC504BC6C /* RefreshDiagnosticsState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DAF08B3CB69404A37DECA39 /* RefreshDiagnosticsState.swift */; };
+		A101488BBBE552136B8CDF4E /* MetricProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B5621100867602BDE8B426A /* MetricProgress.swift */; };
 		A1DB7CDCDD4A29AF1B157B83 /* UsageLimit.swift in Sources */ = {isa = PBXBuildFile; fileRef = D459054C90410A784EBD308B /* UsageLimit.swift */; };
 		A1E12E6C1FA3E1356F93519B /* PromptCacheTelemetryMirrorService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3B93DAA06AE42D89A02C5EE /* PromptCacheTelemetryMirrorService.swift */; };
 		A78C35127BB0471865FD6A8B /* WidgetDisplayPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBDCF9F49A90CA3576BF2792 /* WidgetDisplayPreferences.swift */; };
@@ -155,6 +157,7 @@
 		F565AD4A356528D70BB11EF5 /* MainLimitSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FC2DAEDD38483FC3A5D4880 /* MainLimitSummary.swift */; };
 		F697EDAA2739E3F27FDC885B /* CompanionRemoteSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = E97D64E1F32386FD74AA335F /* CompanionRemoteSync.swift */; };
 		FCA6C462A0AE82045D52B0AF /* CodexRateLimits.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FA8FE4CC9BE058D8F46FBA2 /* CodexRateLimits.swift */; };
+		FD07565A26FDB7E969EDD110 /* MetricProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B5621100867602BDE8B426A /* MetricProgress.swift */; };
 		FD57113FA34F28EE0EE9CAF0 /* libContextPanelCloudKitSync.a in Frameworks */ = {isa = PBXBuildFile; fileRef = F7E0CE227A384064BE08DD1D /* libContextPanelCloudKitSync.a */; };
 		FE093A1996BA546A10A800DA /* ContextPanelWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = E195C6E906DA9C0BF082622F /* ContextPanelWidget.swift */; };
 /* End PBXBuildFile section */
@@ -454,6 +457,7 @@
 /* Begin PBXFileReference section */
 		07D959D621E594C0CFC2CEF5 /* ContextPanelWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ContextPanelWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		086B12021073A6F2A49850A1 /* ContextPanelRefreshAgent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ContextPanelRefreshAgent.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		0B5621100867602BDE8B426A /* MetricProgress.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetricProgress.swift; sourceTree = "<group>"; };
 		1161DC4C994F71A1E6CEE608 /* LimitWarning.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LimitWarning.swift; sourceTree = "<group>"; };
 		15DC14CB07B8BA4756DAB731 /* BackgroundRefreshSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundRefreshSettings.swift; sourceTree = "<group>"; };
 		1687FD0F688491B244523D6B /* libContextPanelSettingsUI.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libContextPanelSettingsUI.a; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -660,6 +664,7 @@
 				1161DC4C994F71A1E6CEE608 /* LimitWarning.swift */,
 				CE09AE825E3B368ED89CD521 /* LimitWarningWebhook.swift */,
 				3FC2DAEDD38483FC3A5D4880 /* MainLimitSummary.swift */,
+				0B5621100867602BDE8B426A /* MetricProgress.swift */,
 				FB0E4D0FF6DD744B87D215B9 /* OAuthPKCE.swift */,
 				96C85B770C80B786EAE068CF /* PromptCacheTelemetry.swift */,
 				F3B93DAA06AE42D89A02C5EE /* PromptCacheTelemetryMirrorService.swift */,
@@ -1555,6 +1560,7 @@
 				3DC7CCECA7A97D625CC0BC9F /* LimitWarning.swift in Sources */,
 				43AEBC47E228C383860005E5 /* LimitWarningWebhook.swift in Sources */,
 				F565AD4A356528D70BB11EF5 /* MainLimitSummary.swift in Sources */,
+				8B7BECF40741A26AF61E7153 /* MetricProgress.swift in Sources */,
 				23ABE5B585C86CEE16E84D05 /* OAuthPKCE.swift in Sources */,
 				35FFA3B9FB8409D0BFE06E4F /* PromptCacheTelemetry.swift in Sources */,
 				504BF827465F73E39B4729A8 /* PromptCacheTelemetryMirrorService.swift in Sources */,
@@ -1647,6 +1653,7 @@
 				43A84E96C9E0812C69B93E18 /* LimitWarning.swift in Sources */,
 				415899B432627D7269C97838 /* LimitWarningWebhook.swift in Sources */,
 				A9464088796B38105C01F7D3 /* MainLimitSummary.swift in Sources */,
+				A101488BBBE552136B8CDF4E /* MetricProgress.swift in Sources */,
 				4BA8FE73012AF7F7900B5D4E /* OAuthPKCE.swift in Sources */,
 				576079E3E46B8EF5C2A9F61C /* PromptCacheTelemetry.swift in Sources */,
 				A1E12E6C1FA3E1356F93519B /* PromptCacheTelemetryMirrorService.swift in Sources */,
@@ -1713,6 +1720,7 @@
 				B7B7288471F886AA64A0C7D8 /* LimitWarning.swift in Sources */,
 				B678E00990494E22F2C547F8 /* LimitWarningWebhook.swift in Sources */,
 				D8E9C0AC4AE18B84C90690E9 /* MainLimitSummary.swift in Sources */,
+				FD07565A26FDB7E969EDD110 /* MetricProgress.swift in Sources */,
 				9D7098AB5C83051676B31188 /* OAuthPKCE.swift in Sources */,
 				745F209B9C80F1CC162C9DE0 /* PromptCacheTelemetry.swift in Sources */,
 				434565B862A69E23F184FB4D /* PromptCacheTelemetryMirrorService.swift in Sources */,

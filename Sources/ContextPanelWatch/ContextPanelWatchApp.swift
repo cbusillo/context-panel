@@ -249,13 +249,16 @@ private struct WatchLimitRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Spacer(minLength: 4)
-                Text(limit.usageText)
+                Text(limit.usedText)
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(statusColor)
+                    .accessibilityHidden(true)
             }
 
-            ProgressView(value: pressureRatio)
-                .tint(statusColor)
+            pressureTrack
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Usage pressure")
+                .accessibilityValue(limit.usedPressure.accessibilityValue)
 
             HStack(spacing: 6) {
                 Text(limit.context)
@@ -272,8 +275,19 @@ private struct WatchLimitRow: View {
         .padding(.vertical, 1)
     }
 
-    private var pressureRatio: Double {
-        limit.pressureRatio
+    @ViewBuilder
+    private var pressureTrack: some View {
+        if let ratio = limit.usedPressure.ratio {
+            ProgressView(value: ratio)
+                .tint(statusColor)
+        } else {
+            Capsule()
+                .stroke(
+                    statusColor,
+                    style: StrokeStyle(lineWidth: 1, dash: [2, 2])
+                )
+                .frame(height: 4)
+        }
     }
 
     private var resetText: String? {

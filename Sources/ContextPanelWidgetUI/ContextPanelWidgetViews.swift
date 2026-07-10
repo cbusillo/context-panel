@@ -172,7 +172,7 @@ struct ContextPanelSmallWidget: View {
                         .minimumScaleFactor(0.8)
                         .lineLimit(1)
                 }
-                CPWCapacityBar(value: tightest.usageRatio ?? 0, status: tightest.status, height: 5)
+                CPWUsagePressureBar(usedRatio: tightest.usageRatio, status: tightest.status, height: 5)
             } else {
                 Text("Set up accounts")
                     .font(.system(size: 22, weight: .semibold))
@@ -498,7 +498,7 @@ struct CPWMainLimitRow: View {
                     .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
             }
             HStack(spacing: 6) {
-                CPWCapacityBar(value: summary?.usageRatio ?? 0, status: status)
+                CPWUsagePressureBar(usedRatio: summary?.usageRatio, status: status)
                 Text(summary?.widgetResetConfidenceText ?? "")
                     .font(.system(size: 9))
                     .foregroundStyle(CPWTheme.tertiaryText(variant: themeVariant))
@@ -545,7 +545,11 @@ struct CPWProviderSummaryGrid: View {
                         .font(.system(size: compact ? 10 : 11, weight: .medium))
                         .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
                         .lineLimit(compact ? 1 : 2)
-                    CPWCapacityBar(value: summaries.map { $0.usageRatio ?? 0 }.max() ?? 0, status: displayStatus, height: 5)
+                    CPWUsagePressureBar(
+                        usedRatio: summaries.compactMap(\.usageRatio).max(),
+                        status: displayStatus,
+                        height: 5
+                    )
                 }
                 .opacity(isConnected ? 1 : 0.45)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -598,22 +602,37 @@ struct CPWFastModeCard: View {
     }
 }
 
-struct CPWCapacityBar: View {
+struct CPWUsagePressureBar: View {
     @Environment(\.cpwThemeVariant) private var themeVariant
-    let value: Double
+    let usedRatio: Double?
     let status: UsageStatus
     var height: CGFloat = 4
+
+    private var metric: MetricProgress {
+        .usedPressure(usedRatio: usedRatio)
+    }
 
     var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
                 Capsule().fill(CPWTheme.line(variant: themeVariant))
-                Capsule()
-                    .fill(CPWTheme.statusColor(status))
-                    .frame(width: proxy.size.width * min(max(value, 0), 1))
+                if let ratio = metric.ratio {
+                    Capsule()
+                        .fill(CPWTheme.statusColor(status))
+                        .frame(width: proxy.size.width * ratio)
+                } else {
+                    Capsule()
+                        .stroke(
+                            CPWTheme.statusColor(status),
+                            style: StrokeStyle(lineWidth: 1, dash: [2, 2])
+                        )
+                }
             }
         }
         .frame(height: height)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Usage pressure")
+        .accessibilityValue(metric.accessibilityValue)
     }
 }
 
@@ -999,15 +1018,6 @@ extension WidgetSnapshot {
         if needsProviderConnection { return "No provider data yet" }
         guard let summary = tightestMainLimitSummary else { return message }
         return "\(summary.provider.shortName) \(summary.widgetWindowName)"
-    }
-
-    var tightestUsageRatio: Double {
-        tightestMainLimitSummary?.usageRatio ?? 0
-    }
-
-    var tightestCapacityRatio: Double {
-        guard let ratio = tightestMainLimitSummary?.usageRatio else { return 0 }
-        return max(1 - ratio, 0)
     }
 
     var providerPressureText: String {

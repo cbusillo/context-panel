@@ -127,19 +127,37 @@ struct WatchCircularComplication: View {
     let limit: WatchLimitDisplay?
     let snapshot: WidgetSnapshot
 
+    @ViewBuilder
     var body: some View {
-        Gauge(value: limit?.pressureRatio ?? 0) {
-            Image(systemName: symbol)
-        } currentValueLabel: {
-            Text(limit?.usageText ?? "--")
-                .minimumScaleFactor(0.55)
+        if let limit, let ratio = limit.usedPressure.ratio {
+            Gauge(value: ratio) {
+                Image(systemName: symbol)
+            } currentValueLabel: {
+                Text(limit.usedText)
+                    .minimumScaleFactor(0.55)
+            }
+            .gaugeStyle(.accessoryCircularCapacity)
+            .tint(tint)
+            .accessibilityLabel("\(limit.title) \(limit.subtitle) usage pressure")
+            .accessibilityValue(limit.usedPressure.accessibilityValue)
+        } else {
+            ZStack {
+                Circle()
+                    .stroke(tint, style: StrokeStyle(lineWidth: 2, dash: [3, 3]))
+                Image(systemName: symbol)
+                    .font(.caption2.weight(.semibold))
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(limit.map { "\($0.title) \($0.subtitle) usage pressure" } ?? "Context Panel sync")
+            .accessibilityValue(limit?.usedPressure.accessibilityValue ?? "No synced limit")
         }
-        .gaugeStyle(.accessoryCircularCapacity)
-        .tint(tint)
     }
 
     private var symbol: String {
-        limit == nil ? "icloud.slash" : "gauge.with.dots.needle.bottom.50percent"
+        guard let limit else { return "icloud.slash" }
+        return limit.usedPressure.isIndeterminate
+            ? "questionmark"
+            : "gauge.with.dots.needle.bottom.50percent"
     }
 
     private var tint: Color {
@@ -179,19 +197,22 @@ private struct WatchRectangularLimitLine: View {
             Text(limit.subtitle)
                 .foregroundStyle(.secondary)
             Spacer(minLength: 2)
-            WatchMiniPressureBar(value: limit.pressureRatio, tint: watchStatusColor(limit.status))
+            WatchMiniPressureBar(metric: limit.usedPressure, tint: watchStatusColor(limit.status))
                 .frame(width: 26, height: 3)
-            Text(limit.usageText)
+            Text(limit.usedText)
                 .foregroundStyle(watchStatusColor(limit.status))
         }
         .font(.caption.weight(.semibold))
         .lineLimit(1)
         .minimumScaleFactor(0.75)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(limit.title) \(limit.subtitle)")
+        .accessibilityValue(limit.usedPressure.accessibilityValue)
     }
 }
 
 private struct WatchMiniPressureBar: View {
-    let value: Double
+    let metric: MetricProgress
     let tint: Color
 
     var body: some View {
@@ -199,9 +220,14 @@ private struct WatchMiniPressureBar: View {
             Capsule()
                 .fill(.tertiary)
                 .overlay(alignment: .leading) {
-                    Capsule()
-                        .fill(tint)
-                        .frame(width: proxy.size.width * min(max(value, 0), 1))
+                    if let ratio = metric.ratio {
+                        Capsule()
+                            .fill(tint)
+                            .frame(width: proxy.size.width * ratio)
+                    } else {
+                        Capsule()
+                            .stroke(tint, style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
+                    }
                 }
         }
     }
@@ -213,7 +239,8 @@ struct WatchInlineComplication: View {
 
     var body: some View {
         if let limit {
-            Text("\(limit.title) \(limit.subtitle) \(limit.usageText)")
+            Text("\(limit.title) \(limit.subtitle) \(limit.usedText)")
+                .accessibilityLabel("\(limit.title) \(limit.subtitle), \(limit.usedPressure.accessibilityValue)")
         } else {
             Text(snapshot.state == .failure ? "Context Panel sync failed" : "Context Panel needs sync")
         }
@@ -224,15 +251,29 @@ struct WatchCornerComplication: View {
     let limit: WatchLimitDisplay?
     let snapshot: WidgetSnapshot
 
+    @ViewBuilder
     var body: some View {
-        Text(limit?.usageText ?? "--")
-            .widgetCurvesContent()
-            .widgetLabel {
-                Gauge(value: limit?.pressureRatio ?? 0) {
+        if let limit, let ratio = limit.usedPressure.ratio {
+            Text(limit.usedText)
+                .widgetCurvesContent()
+                .widgetLabel {
+                    Gauge(value: ratio) {
+                        Text(limit.title)
+                    }
+                    .tint(watchStatusColor(limit.status))
+                }
+                .accessibilityLabel("\(limit.title) \(limit.subtitle) usage pressure")
+                .accessibilityValue(limit.usedPressure.accessibilityValue)
+        } else {
+            Text("—")
+                .widgetCurvesContent()
+                .widgetLabel {
                     Text(limit?.title ?? "Sync")
                 }
-                .tint(limit.map { watchStatusColor($0.status) } ?? watchStatusColor(snapshot.status))
-            }
+                .accessibilityLabel(limit.map { "\($0.title) \($0.subtitle) usage pressure" } ?? "Context Panel sync")
+                .accessibilityValue(limit?.usedPressure.accessibilityValue ?? "No synced limit")
+                .foregroundStyle(limit.map { watchStatusColor($0.status) } ?? watchStatusColor(snapshot.status))
+        }
     }
 }
 

@@ -203,6 +203,10 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
         return min(Double(used) / Double(limit), 1)
     }
 
+    public var remainingCapacityRatio: Double? {
+        usageRatio.map { max(1 - $0, 0) }
+    }
+
     public var displayLabel: String {
         windowLabel ?? label
     }

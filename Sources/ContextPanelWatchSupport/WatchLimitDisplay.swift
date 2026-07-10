@@ -7,10 +7,10 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
     public let title: String
     public let subtitle: String
     public let context: String
-    public let usageText: String
+    public let usedText: String
     public let resetText: String?
-    public let capacityRatio: Double
-    public let pressureRatio: Double
+    public let remainingCapacity: MetricProgress
+    public let usedPressure: MetricProgress
     public let status: UsageStatus
 
     public static func rows(from snapshot: WidgetSnapshot, maximumCount: Int) -> [WatchLimitDisplay] {
@@ -83,14 +83,14 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
             title: summary.provider.displayName,
             subtitle: summary.compactDisplayWindowName,
             context: accountText,
-            usageText: usageText(
+            usedText: usedText(
                 used: summary.used,
                 unit: summary.unit,
                 usageRatio: usageRatio
             ),
             resetText: summary.resetCountdownText,
-            capacityRatio: clampedCapacityRatio(summary.capacityRatio),
-            pressureRatio: clampedRatio(usageRatio ?? 0),
+            remainingCapacity: .remainingCapacity(remainingRatio: summary.remainingCapacityRatio),
+            usedPressure: .usedPressure(usedRatio: usageRatio),
             status: summary.status
         )
     }
@@ -101,44 +101,29 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
 
     private static func row(from limit: UsageLimit) -> WatchLimitDisplay {
         let usageRatio = limit.usageRatio
-        let pressureRatio = clampedRatio(usageRatio ?? 0)
         return WatchLimitDisplay(
             id: "limit:\(limit.id)",
             provider: limit.provider,
             title: limit.provider.displayName,
             subtitle: limit.displayLabel,
             context: limit.contextLabel.isEmpty ? limit.accountName : limit.contextLabel,
-            usageText: usageText(used: limit.used, unit: limit.unit, usageRatio: usageRatio),
+            usedText: usedText(used: limit.used, unit: limit.unit, usageRatio: usageRatio),
             resetText: resetText(for: limit),
-            capacityRatio: capacityRatio(for: limit),
-            pressureRatio: pressureRatio,
+            remainingCapacity: .remainingCapacity(remainingRatio: limit.remainingCapacityRatio),
+            usedPressure: .usedPressure(usedRatio: usageRatio),
             status: limit.status
         )
     }
 
-    private static func capacityRatio(for limit: UsageLimit) -> Double {
-        guard let usageRatio = limit.usageRatio else { return 0 }
-        return clampedCapacityRatio(1 - usageRatio)
-    }
-
-    private static func clampedCapacityRatio(_ ratio: Double) -> Double {
-        clampedRatio(ratio)
-    }
-
-    private static func clampedRatio(_ ratio: Double) -> Double {
-        min(max(ratio, 0), 1)
-    }
-
-    private static func usageText(
+    private static func usedText(
         used: Int?,
         unit: UsageUnit?,
         usageRatio: Double?
     ) -> String {
         if unit == .percent {
-            guard let usageRatio else { return "?" }
-            return "\(Int((clampedRatio(usageRatio) * 100).rounded()))%"
+            return MetricProgress.usedPressure(usedRatio: usageRatio).percentText
         }
-        guard let used else { return "?" }
+        guard let used else { return "—" }
         return "\(used)"
     }
 

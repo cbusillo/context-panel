@@ -175,9 +175,12 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
         return min(Double(used) / Double(limit), 1)
     }
 
+    public var remainingCapacityRatio: Double? {
+        usageRatio.map { max(1 - $0, 0) }
+    }
+
     public var capacityRatio: Double {
-        guard let usageRatio else { return 0 }
-        return max(1 - usageRatio, 0)
+        remainingCapacityRatio ?? 0
     }
 
     public var remaining: Int? {
