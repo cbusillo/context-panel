@@ -530,8 +530,16 @@ sequence from signed runtimes:
 
 1. Install and launch the canonical Mac app from `/Applications/Context
 Panel.app`.
-2. Run `scripts/context-panel-runtime-baseline.sh install --launch` or
-   `scripts/context-panel-runtime-baseline.sh check` and require `baseline=OK`.
+2. Run the read-only Production receipt:
+
+   ```sh
+   scripts/context-panel-runtime-baseline.sh check --require-production-runtime
+   ```
+
+   Require `baseline=OK`, `app-cloudkit=Production`, and
+   `refresh-agent-cloudkit=Production`. Do not run `install` or `reset`; those
+   modes build a local Development-CloudKit runtime and refuse to replace the
+   signed Production publisher.
 3. Trigger a Mac refresh that publishes the sanitized companion snapshot to
    CloudKit and updates the companion app-group mirror used by the app and
    widget runtimes.

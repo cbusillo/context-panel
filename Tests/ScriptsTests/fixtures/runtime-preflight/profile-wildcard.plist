@@ -12,6 +12,8 @@
 	<dict>
 		<key>application-identifier</key>
 		<string>MM5YXC7T6E.*</string>
+		<key>com.apple.developer.icloud-container-environment</key>
+		<string>Development</string>
 		<key>com.apple.developer.team-identifier</key>
 		<string>MM5YXC7T6E</string>
 		<key>com.apple.security.application-groups</key>
