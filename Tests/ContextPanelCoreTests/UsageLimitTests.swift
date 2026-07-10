@@ -407,6 +407,37 @@ import Testing
     #expect(abs((summary.usageRatio ?? 0) - 0.455) < 0.0001)
     #expect(abs(summary.capacityRatio - 0.545) < 0.0001)
     #expect(summary.status == .healthy)
+    let pooledCapacity = try #require(summary.pooledPercentCapacity)
+    #expect(pooledCapacity.usedPoints == 91)
+    #expect(pooledCapacity.poolPoints == 200)
+    #expect(pooledCapacity.remainingPoints == 109)
+    #expect(pooledCapacity.usedPercent == 45)
+    #expect(pooledCapacity.remainingPercent == 55)
+    #expect(pooledCapacity.usedPercent + pooledCapacity.remainingPercent == 100)
+    #expect(pooledCapacity.contributingAccountCount == 2)
+    #expect(pooledCapacity.pointsPerAccount == 100)
+    #expect(MetricProgress.remainingCapacity(remainingRatio: summary.remainingCapacityRatio).percentText == "55%")
+}
+
+@Test func pooledPercentCapacityRejectsNonPercentPools() {
+    let summary = MainLimitSummary(
+        provider: .openAI,
+        window: .weekly,
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "tokens",
+                accountName: "Token account",
+                label: "Token weekly",
+                windowLabel: "Weekly",
+                unit: .tokens,
+                used: 400,
+                limit: 1_000
+            ),
+        ]
+    )
+
+    #expect(summary.pooledPercentCapacity == nil)
 }
 
 @Test func mainLimitSummariesExcludeAccountsExhaustedByLongerOpenAIWindow() throws {
@@ -480,6 +511,9 @@ import Testing
     #expect(fiveHour.limit == 100)
     #expect(fiveHour.remaining == 95)
     #expect(fiveHour.usageRatio == 0.05)
+    let fiveHourPool = try #require(fiveHour.pooledPercentCapacity)
+    #expect(fiveHourPool.contributingAccountCount == 1)
+    #expect(fiveHourPool.pointsPerAccount == 100)
     #expect(weekly.liveLimits.map(\.accountName) == ["Full weekly", "Available weekly"])
     #expect(weekly.used == 122)
     #expect(weekly.limit == 200)

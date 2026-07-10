@@ -176,16 +176,51 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
     }
 
     public var remainingCapacityRatio: Double? {
-        usageRatio.map { max(1 - $0, 0) }
+        guard let remaining, let limit, limit > 0 else { return nil }
+        return min(max(Double(remaining) / Double(limit), 0), 1)
     }
 
     public var capacityRatio: Double {
         remainingCapacityRatio ?? 0
     }
 
+    public var roundedRemainingPercent: Int? {
+        remainingCapacityRatio.map { Int(($0 * 100).rounded()) }
+    }
+
+    public var roundedUsedPercent: Int? {
+        roundedRemainingPercent.map { max(100 - $0, 0) }
+    }
+
     public var remaining: Int? {
         guard let used, let limit else { return nil }
         return max(limit - used, 0)
+    }
+
+    public var pooledPercentCapacity: PooledPercentCapacity? {
+        guard
+            unit == .percent,
+            let usedPoints = used,
+            let poolPoints = limit,
+            let remainingPoints = remaining,
+            let usedPercent = roundedUsedPercent,
+            let remainingPercent = roundedRemainingPercent,
+            poolPoints > 0
+        else {
+            return nil
+        }
+        let contributingAccountCount = Set(liveNumericLimits.map(\.accountID)).count
+        return PooledPercentCapacity(
+            usedPoints: usedPoints,
+            poolPoints: poolPoints,
+            remainingPoints: remainingPoints,
+            usedPercent: usedPercent,
+            remainingPercent: remainingPercent,
+            contributingAccountCount: contributingAccountCount,
+            pointsPerAccount: contributingAccountCount > 0 && poolPoints.isMultiple(of: contributingAccountCount)
+                ? poolPoints / contributingAccountCount
+                : nil
+        )
     }
 
     public var resetsAt: Date? {
@@ -239,7 +274,7 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
         )
     }
 
-    public init(
+    init(
         provider: Provider,
         window: MainLimitWindow,
         limits: [UsageLimit],
@@ -336,6 +371,34 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
             guard let candidateWindow = candidate.mainLimitWindow else { return false }
             return candidateWindow.capacityGateRank > window.capacityGateRank
         }
+    }
+}
+
+public struct PooledPercentCapacity: Equatable, Sendable {
+    public let usedPoints: Int
+    public let poolPoints: Int
+    public let remainingPoints: Int
+    public let usedPercent: Int
+    public let remainingPercent: Int
+    public let contributingAccountCount: Int
+    public let pointsPerAccount: Int?
+
+    public init(
+        usedPoints: Int,
+        poolPoints: Int,
+        remainingPoints: Int,
+        usedPercent: Int,
+        remainingPercent: Int,
+        contributingAccountCount: Int,
+        pointsPerAccount: Int?
+    ) {
+        self.usedPoints = usedPoints
+        self.poolPoints = poolPoints
+        self.remainingPoints = remainingPoints
+        self.usedPercent = usedPercent
+        self.remainingPercent = remainingPercent
+        self.contributingAccountCount = contributingAccountCount
+        self.pointsPerAccount = pointsPerAccount
     }
 }
 
