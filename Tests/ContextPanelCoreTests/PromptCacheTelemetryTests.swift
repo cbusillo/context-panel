@@ -87,7 +87,33 @@ import Testing
     #expect(summary.latestHitRate == 0.94)
     #expect(summary.tokenWeightedHitRate == 0.8)
     #expect(abs((summary.latestDeltaFromWeightedAverage ?? 0) - 0.14) < 0.0001)
+    #expect(summary.latestRateComparison == .above(points: 14))
     #expect(summary.comparisonStatus == .healthy)
+}
+
+@Test func promptCacheRateComparisonStaysPositiveWhenAbsoluteRateIsLow() {
+    let now = Date(timeIntervalSince1970: 1_000)
+    let summary = PromptCacheSummary(observations: [
+        PromptCacheObservation(
+            provider: .openAI,
+            accountID: "latest",
+            accountName: "Every Code",
+            observedAt: now,
+            windowLabel: "Latest",
+            tokens: PromptCacheTokenSet(inputTokens: 100, cachedInputTokens: 30)
+        ),
+        PromptCacheObservation(
+            provider: .openAI,
+            accountID: "previous",
+            accountName: "Every Code",
+            observedAt: now.addingTimeInterval(-60),
+            windowLabel: "Previous",
+            tokens: PromptCacheTokenSet(inputTokens: 100, cachedInputTokens: 10)
+        ),
+    ])
+
+    #expect(summary.comparisonStatus == .limited)
+    #expect(summary.latestRateComparison == .above(points: 10))
 }
 
 @Test func promptCacheSummaryMarksMeaningfulLatestDrops() {

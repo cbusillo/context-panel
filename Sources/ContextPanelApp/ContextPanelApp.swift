@@ -2188,10 +2188,10 @@ struct SidebarRateLimitRow: View {
                 Text(summary.previewWindowLine)
                     .font(.system(size: 13, weight: .medium))
                     .lineLimit(2)
-                Text(summary.sidebarDetailText)
+                Text(summary.sidebarTimingText)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .lineLimit(1)
             }
             Spacer()
             Text(summary.compactUsageText)
@@ -2199,6 +2199,9 @@ struct SidebarRateLimitRow: View {
                 .foregroundStyle(.secondary)
         }
         .padding(.vertical, 3)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(summary.quantitativeAccessibilityLabel)
+        .accessibilityValue(summary.usedPressureAccessibilityValue)
     }
 }
 
@@ -2257,7 +2260,7 @@ struct OverviewDashboard: View {
     let snapshot: UsageSnapshot
 
     private var constrainedSummaries: [MainLimitSummary] {
-        Array(snapshot.mostConstrainedMainLimitSummaries.prefix(5))
+        snapshot.mostConstrainedMainLimitSummaries
     }
 
     var body: some View {
@@ -2272,8 +2275,6 @@ struct OverviewDashboard: View {
                         MainLimitRow(summary: summary)
                     }
                 }
-                SectionHeader(title: "Provider Groups", trailing: snapshot.nearestResetText)
-                ProviderGroupGrid(snapshot: snapshot)
                 AdditionalLimitsSection(snapshot: snapshot)
             }
             .padding(24)
@@ -2404,23 +2405,30 @@ struct PromptCacheOverviewCard: View {
     var body: some View {
         if summary.isAvailable {
             HStack(alignment: .center, spacing: 18) {
-                MetricDial(
-                    metric: .neutralRate(ratio: currentRate),
-                    status: summary.comparisonStatus,
-                    accessibilityName: "Prompt cache hit rate",
-                    sublabel: "now",
-                    size: 86,
-                    thickness: 6
-                )
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(currentRate.map(Self.percentText) ?? "—")
+                        .font(.system(size: 28, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(CPTheme.primaryText)
+                    Text("Current hit rate")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(CPTheme.tertiaryText)
+                        .textCase(.uppercase)
+                }
+                .frame(width: 112, alignment: .leading)
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) {
-                        StatusMark(status: summary.comparisonStatus, size: 8)
+                        Image(systemName: "chart.xyaxis.line")
+                            .foregroundStyle(CPTheme.secondaryText)
                         Text("Prompt Cache")
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(CPTheme.primaryText)
-                        if summary.hasPossibleCacheBreak {
-                            TagLabel("Break?")
-                        }
+                        Text(comparisonText)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(CPTheme.statusColor(comparisonTone))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(CPTheme.statusColor(comparisonTone).opacity(0.10))
+                            .clipShape(Capsule())
                     }
                     Text(summary.hasPossibleCacheBreak ? "Cached input dropped sharply on the latest window." : "Latest hit rate compared with the token-weighted recent average.")
                         .font(.system(size: 12, weight: .medium))
@@ -2442,7 +2450,58 @@ struct PromptCacheOverviewCard: View {
             .background(CPTheme.surface)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(CPTheme.stroke(cornerRadius: 8))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Prompt cache")
+            .accessibilityValue(accessibilityValue)
         }
+    }
+
+    private var comparisonText: String {
+        switch summary.latestRateComparison {
+        case .above(let points):
+            return "\(points) \(points == 1 ? "pt" : "pts") above average"
+        case .below(let points):
+            return "\(points) \(points == 1 ? "pt" : "pts") below average"
+        case .matching:
+            return "Matches average"
+        case .unavailable:
+            return "Average unavailable"
+        }
+    }
+
+    private var comparisonTone: UsageStatus {
+        switch summary.latestRateComparison {
+        case .above, .matching:
+            return .healthy
+        case .below:
+            return .close
+        case .unavailable:
+            return .unknown
+        }
+    }
+
+    private var accessibilityValue: String {
+        let current = currentRate.map { "\(Int(($0 * 100).rounded())) percent" } ?? "unknown"
+        var value = "Hit rate \(current)."
+        if let averageRate {
+            value += " \(comparisonText). Recent average \(Int((averageRate * 100).rounded())) percent."
+        } else {
+            value += " Recent average unavailable."
+        }
+        if summary.hasPossibleCacheBreak {
+            value += " Possible cache break; cached input dropped sharply on the latest window."
+        }
+        value += " Input \(summary.totalInputTokens) tokens. Cached \(summary.totalCachedInputTokens) tokens."
+        if let uncached = summary.totalUncachedInputTokens {
+            value += " Uncached \(uncached) tokens."
+        }
+        if let latest = summary.latest {
+            let age = relativeAge(latest.observedAt)
+            value += age == "now"
+                ? " \(latest.windowLabel), observed now."
+                : " \(latest.windowLabel), observed \(age) ago."
+        }
+        return value
     }
 
     private func relativeAge(_ date: Date) -> String {
@@ -2848,12 +2907,16 @@ struct HeaderCard: View {
                 Text(snapshot.subheadline)
                     .font(.system(size: 13))
                     .foregroundStyle(CPTheme.secondaryText)
-                Text(model.fastModeForecast.copy)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(CPTheme.accent)
-                Text("Fast mode works 50% faster, but uses limits about twice as quickly.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(CPTheme.tertiaryText)
+                VStack(alignment: .leading, spacing: 3) {
+                    CPLabel("Mode guidance")
+                    Text(model.fastModeForecast.copy)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(CPTheme.primaryText)
+                    Text("Fast mode spends about 2× capacity for about 1.5× throughput.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(CPTheme.secondaryText)
+                }
+                .accessibilityElement(children: .combine)
                 HStack(spacing: 8) {
                     TagLabel("\(snapshot.mainLimitSummaries.count) main windows")
                     TagLabel("Accounts pooled")
@@ -2863,13 +2926,23 @@ struct HeaderCard: View {
                 }
             }
             Spacer(minLength: 16)
-            MetricDial(
-                metric: .remainingCapacity(remainingRatio: snapshot.tightestRemainingCapacityRatio),
-                status: snapshot.aggregateStatus,
-                accessibilityName: "Overall remaining capacity",
-                sublabel: "left",
-                size: 116
-            )
+            VStack(spacing: 7) {
+                MetricDial(
+                    metric: .remainingCapacity(remainingRatio: snapshot.tightestRemainingCapacityRatio),
+                    status: snapshot.tightestMainLimitSummary?.status ?? snapshot.aggregateStatus,
+                    accessibilityName: snapshot.tightestMainLimitSummary.map {
+                        "Tightest remaining capacity, \($0.provider.displayName), \($0.previewWindowName), \($0.accountText)"
+                    } ?? "Tightest remaining capacity",
+                    sublabel: "remaining",
+                    size: 116
+                )
+                Text(snapshot.tightestSupportText)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(CPTheme.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .frame(maxWidth: 180)
+            }
         }
         .padding(22)
         .background(CPTheme.surface)
@@ -2915,8 +2988,8 @@ struct ProviderHeaderCard: View {
                 MetricDial(
                     metric: .remainingCapacity(remainingRatio: tightestSummary.remainingCapacityRatio),
                     status: tightestSummary.status,
-                    accessibilityName: "\(provider.displayName) remaining capacity",
-                    sublabel: "left",
+                    accessibilityName: "\(provider.displayName) \(tightestSummary.previewWindowName) \(tightestSummary.accountText) remaining capacity",
+                    sublabel: "remaining",
                     size: 116
                 )
             }
@@ -3276,38 +3349,31 @@ struct MainLimitDetail: View {
                     }
                     Spacer()
                     StatusMark(status: summary.status, size: 10)
+                        .accessibilityHidden(true)
                 }
 
-                MetricDial(
-                    metric: .remainingCapacity(remainingRatio: summary.remainingCapacityRatio),
-                    status: summary.status,
-                    accessibilityName: "\(summary.provider.displayName) \(summary.previewWindowName) remaining capacity",
-                    sublabel: "left",
-                    displayText: summary.detailRemainingValue,
-                    size: 140
-                )
-                .frame(maxWidth: .infinity)
+                HStack(alignment: .top, spacing: 18) {
+                    MetricDial(
+                        metric: .remainingCapacity(remainingRatio: summary.remainingCapacityRatio),
+                        status: summary.status,
+                        accessibilityName: "\(summary.provider.displayName) \(summary.previewWindowName) remaining capacity",
+                        sublabel: "remaining",
+                        displayText: summary.detailRemainingValue,
+                        accessibilityValue: summary.detailRemainingAccessibilityValue,
+                        size: 140
+                    )
+                    .frame(width: 180)
 
-                DetailCard(title: "Forecast") {
-                    Text(forecastCopy)
-                        .font(.system(size: 15, weight: .medium))
-                    Text("Fast mode spends 2x capacity for about 1.5x throughput.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(CPTheme.secondaryText)
-                    Text("Confidence: \(summary.confidence.rawValue)")
-                        .font(.system(size: 12))
-                        .foregroundStyle(CPTheme.secondaryText)
-                }
-
-                DetailCard(title: "Pooled limit") {
-                    DetailRow(label: "Provider", value: summary.provider.displayName)
-                    DetailRow(label: "Window", value: summary.previewWindowName)
-                    DetailRow(label: "Accounts", value: "\(summary.accountCount)")
-                    DetailRow(label: "Used", value: summary.detailUsedValue)
-                    DetailRow(label: "Limit", value: summary.detailLimitValue)
-                    DetailRow(label: "Remaining", value: summary.detailRemainingText)
-                    DetailRow(label: "Status", value: summary.status.rawValue)
-                    DetailRow(label: "Updated", value: summary.lastUpdatedAt.map(model.relativeTime) ?? "unknown")
+                    DetailCard(title: "Forecast") {
+                        Text(forecastCopy)
+                            .font(.system(size: 15, weight: .medium))
+                        Text("Fast mode spends about 2× capacity for about 1.5× throughput.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(CPTheme.secondaryText)
+                        Text("Confidence: \(summary.confidence.rawValue)")
+                            .font(.system(size: 12))
+                            .foregroundStyle(CPTheme.secondaryText)
+                    }
                 }
 
                 DetailCard(title: "Accounts") {
@@ -3315,6 +3381,22 @@ struct MainLimitDetail: View {
                         MainLimitAccountRow(limit: limit)
                     }
                 }
+
+                DetailCard(title: "Pooled capacity") {
+                    if let caption = summary.pooledCapacityCaption {
+                        Text(caption)
+                            .font(.system(size: 11))
+                            .foregroundStyle(CPTheme.secondaryText)
+                    }
+                    DetailRow(label: "Remaining", value: summary.detailRemainingText)
+                    DetailRow(label: "Used", value: summary.detailUsedValue)
+                    DetailRow(label: summary.detailPoolLabel, value: summary.detailLimitValue)
+                    DetailRow(label: "Status", value: summary.status.accessibilityStatusText)
+                    DetailRow(label: "Updated", value: summary.lastUpdatedAt.map(model.relativeTime) ?? "unknown")
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(summary.pooledCapacityAccessibilityLabel)
+                .accessibilityValue(summary.pooledCapacityAccessibilityValue(updatedText: summary.lastUpdatedAt.map(model.relativeTime) ?? "unknown"))
             }
             .padding(22)
         }
@@ -3378,6 +3460,9 @@ struct MainLimitAccountRow: View {
         .padding(10)
         .background(CPTheme.surface2)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(limit.mainLimitAccessibilityLabel)
+        .accessibilityValue(limit.remainingCapacityAccessibilityValue)
     }
 
     private var usageText: String {
@@ -3501,6 +3586,9 @@ struct MainLimitRow: View {
                 CPTheme.stroke(cornerRadius: 8)
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(summary.quantitativeAccessibilityLabel)
+        .accessibilityValue(summary.usedPressureAccessibilityValue)
     }
 }
 
@@ -3888,6 +3976,7 @@ struct MetricDial: View {
     let accessibilityName: String
     let sublabel: String
     var displayText: String? = nil
+    var accessibilityValue: String? = nil
     var size: CGFloat = 96
     var thickness: CGFloat = 6
 
@@ -3923,7 +4012,7 @@ struct MetricDial: View {
         .frame(width: size, height: size)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityName)
-        .accessibilityValue(metric.accessibilityValue)
+        .accessibilityValue(accessibilityValue ?? (metric.isIndeterminate ? metric.accessibilityValue : "\(metric.accessibilityValue), \(status.accessibilityStatusText)"))
     }
 }
 
@@ -4347,32 +4436,61 @@ enum CPTheme {
         dark: NSColor(red: 178 / 255, green: 180 / 255, blue: 186 / 255, alpha: 1)
     )
     static let tertiaryText = adaptiveColor(
-        light: NSColor(red: 130 / 255, green: 130 / 255, blue: 136 / 255, alpha: 1),
-        dark: NSColor(red: 128 / 255, green: 131 / 255, blue: 139 / 255, alpha: 1)
+        light: NSColor(red: 105 / 255, green: 105 / 255, blue: 113 / 255, alpha: 1),
+        dark: NSColor(red: 151 / 255, green: 154 / 255, blue: 164 / 255, alpha: 1)
     )
-    static let accent = Color(red: 74 / 255, green: 91 / 255, blue: 122 / 255)
+    static let accent = adaptiveColor(
+        light: NSColor(red: 74 / 255, green: 91 / 255, blue: 122 / 255, alpha: 1),
+        dark: NSColor(red: 137 / 255, green: 161 / 255, blue: 211 / 255, alpha: 1)
+    )
 
     static func providerColor(_ provider: Provider) -> Color {
         switch provider {
         case .openAI:
-            Color(red: 56 / 255, green: 92 / 255, blue: 126 / 255)
+            adaptiveColor(
+                light: NSColor(red: 56 / 255, green: 92 / 255, blue: 126 / 255, alpha: 1),
+                dark: NSColor(red: 107 / 255, green: 164 / 255, blue: 218 / 255, alpha: 1)
+            )
         case .anthropic:
-            Color(red: 139 / 255, green: 102 / 255, blue: 51 / 255)
+            adaptiveColor(
+                light: NSColor(red: 139 / 255, green: 102 / 255, blue: 51 / 255, alpha: 1),
+                dark: NSColor(red: 220 / 255, green: 174 / 255, blue: 103 / 255, alpha: 1)
+            )
         case .google:
-            Color(red: 35 / 255, green: 116 / 255, blue: 106 / 255)
+            adaptiveColor(
+                light: NSColor(red: 35 / 255, green: 116 / 255, blue: 106 / 255, alpha: 1),
+                dark: NSColor(red: 83 / 255, green: 183 / 255, blue: 168 / 255, alpha: 1)
+            )
         }
     }
 
     static func statusColor(_ status: UsageStatus) -> Color {
         switch status {
         case .healthy:
-            Color(red: 74 / 255, green: 122 / 255, blue: 91 / 255)
+            adaptiveColor(
+                light: NSColor(red: 61 / 255, green: 111 / 255, blue: 78 / 255, alpha: 1),
+                dark: NSColor(red: 102 / 255, green: 181 / 255, blue: 132 / 255, alpha: 1)
+            )
         case .close:
-            Color(red: 138 / 255, green: 106 / 255, blue: 42 / 255)
-        case .limited, .failure, .stale:
-            Color(red: 138 / 255, green: 74 / 255, blue: 74 / 255)
+            adaptiveColor(
+                light: NSColor(red: 125 / 255, green: 91 / 255, blue: 26 / 255, alpha: 1),
+                dark: NSColor(red: 217 / 255, green: 173 / 255, blue: 81 / 255, alpha: 1)
+            )
+        case .limited, .failure:
+            adaptiveColor(
+                light: NSColor(red: 132 / 255, green: 62 / 255, blue: 62 / 255, alpha: 1),
+                dark: NSColor(red: 220 / 255, green: 119 / 255, blue: 119 / 255, alpha: 1)
+            )
+        case .stale:
+            adaptiveColor(
+                light: NSColor(red: 112 / 255, green: 84 / 255, blue: 57 / 255, alpha: 1),
+                dark: NSColor(red: 194 / 255, green: 158 / 255, blue: 117 / 255, alpha: 1)
+            )
         case .unknown, .loading:
-            Color(red: 106 / 255, green: 106 / 255, blue: 114 / 255)
+            adaptiveColor(
+                light: NSColor(red: 90 / 255, green: 90 / 255, blue: 99 / 255, alpha: 1),
+                dark: NSColor(red: 170 / 255, green: 173 / 255, blue: 182 / 255, alpha: 1)
+            )
         }
     }
 
@@ -4468,7 +4586,7 @@ extension MainLimitSummary {
             if status == .failure { return "Failed" }
             return "Unknown"
         }
-        if usageRatio != nil { return "\(Int((capacityRatio * 100).rounded()))% left" }
+        if let roundedRemainingPercent { return "\(roundedRemainingPercent)% left" }
         guard let remaining else { return "Unknown" }
         return "\(remaining) left"
     }
@@ -4477,8 +4595,8 @@ extension MainLimitSummary {
         guard unit != nil, used != nil, limit != nil else {
             return status == .failure ? "—" : "?"
         }
-        if usageRatio != nil {
-            return "\(Int(((usageRatio ?? 0) * 100).rounded()))% used"
+        if let roundedUsedPercent {
+            return "\(roundedUsedPercent)% used"
         }
         guard let used, let limit else { return "?" }
         return "\(used)/\(limit)"
@@ -4488,11 +4606,8 @@ extension MainLimitSummary {
         guard unit != nil, used != nil, limit != nil else {
             return status == .failure ? "refresh failed" : "unknown"
         }
-        if window == .availability {
-            return previewRemainingHeadline
-        }
-        if usageRatio != nil {
-            return "\(Int(((usageRatio ?? 0) * 100).rounded()))% used"
+        if let roundedUsedPercent {
+            return "\(roundedUsedPercent)% used"
         }
         guard let used, let limit else { return "unknown" }
         return "\(used)/\(limit) used"
@@ -4506,8 +4621,12 @@ extension MainLimitSummary {
         "\(compactPreviewWindowName) · \(accountText)"
     }
 
-    var sidebarDetailText: String {
-        "\(accountText) · \(previewRemainingHeadline.lowercased())"
+    var sidebarTimingText: String {
+        if status == .stale {
+            guard let lastUpdatedAt else { return "stale · update time unknown" }
+            return "stale · updated \(lastUpdatedAt.widgetRelativeText)"
+        }
+        return resetText
     }
 
     var accountText: String {
@@ -4529,25 +4648,135 @@ extension MainLimitSummary {
     }
 
     var detailRemainingValue: String {
-        guard unit != .percent else {
-            return "\(Int((capacityRatio * 100).rounded()))%"
+        if let pooledPercentCapacity {
+            return "\(pooledPercentCapacity.remainingPercent)%"
         }
         return remaining.map(String.init) ?? "?"
     }
 
+    var detailRemainingAccessibilityValue: String {
+        if let pooledPercentCapacity {
+            return "\(pooledPercentCapacity.remainingPercent) percent remaining, \(status.accessibilityStatusText)"
+        }
+        guard let remaining else { return "Remaining capacity unknown" }
+        return "\(remaining) \(accessibilityUnitText) remaining, \(status.accessibilityStatusText)"
+    }
+
     var detailUsedValue: String {
-        guard let used else { return "unknown" }
-        return unit == .percent ? "\(used)%" : "\(used)"
+        if let pooledPercentCapacity {
+            return "\(pooledPercentCapacity.usedPoints) pts · \(pooledPercentCapacity.usedPercent)%"
+        }
+        return detailValue(used)
     }
 
     var detailLimitValue: String {
-        guard let limit else { return "unknown" }
-        return unit == .percent ? "\(limit)%" : "\(limit)"
+        if let pooledPercentCapacity {
+            return "\(pooledPercentCapacity.poolPoints) pts"
+        }
+        return detailValue(limit)
     }
 
     var detailRemainingText: String {
-        guard let remaining else { return "unknown" }
-        return unit == .percent ? "\(remaining)%" : "\(remaining)"
+        if let pooledPercentCapacity {
+            return "\(pooledPercentCapacity.remainingPoints) pts · \(pooledPercentCapacity.remainingPercent)%"
+        }
+        return detailValue(remaining)
+    }
+
+    var detailPoolLabel: String {
+        pooledPercentCapacity == nil ? "Limit" : "Pool"
+    }
+
+    var pooledCapacityCaption: String? {
+        guard let pooledPercentCapacity else { return nil }
+        let scope = pooledCapacityScopeText(pooledPercentCapacity)
+        if let pointsPerAccount = pooledPercentCapacity.pointsPerAccount {
+            return "\(scope), normalized to \(pointsPerAccount) pts each"
+        }
+        return "\(scope), \(pooledPercentCapacity.poolPoints) pooled pts total"
+    }
+
+    var quantitativeAccessibilityLabel: String {
+        "\(provider.displayName), \(previewWindowName), \(accountText)"
+    }
+
+    var usedPressureAccessibilityValue: String {
+        let usage: String
+        if let roundedUsedPercent {
+            usage = "\(roundedUsedPercent) percent used"
+        } else if let used, let limit {
+            usage = "\(used) of \(limit) \(accessibilityUnitText) used"
+        } else {
+            usage = "Usage unknown"
+        }
+        return "\(usage), \(accessibilityStateText). \(resetAccessibilityText). \(confidence.previewText)."
+    }
+
+    func pooledCapacityAccessibilityValue(updatedText: String) -> String {
+        let capacity: String
+        if let pooledPercentCapacity {
+            capacity = "\(pooledPercentCapacity.remainingPercent) percent remaining, \(pooledPercentCapacity.remainingPoints) of \(pooledPercentCapacity.poolPoints) points. \(pooledPercentCapacity.usedPercent) percent used"
+        } else {
+            capacity = "\(detailRemainingText) remaining. \(detailUsedValue) used. \(detailLimitValue) limit"
+        }
+        return "\(pooledCapacityScopeText(pooledPercentCapacity)). \(capacity). \(accessibilityStateText). Updated \(updatedText)."
+    }
+
+    var pooledCapacityAccessibilityLabel: String {
+        "Pooled \(provider.displayName) \(previewWindowName) capacity, \(pooledCapacityScopeText(pooledPercentCapacity))"
+    }
+
+    var resetAccessibilityText: String {
+        if status == .failure { return "Refresh failed" }
+        guard let resetsAt else { return "Reset not reported" }
+        return resetsAt.accessibilityResetText
+    }
+
+    private var accessibilityStateText: String {
+        if status == .stale, let lastUpdatedAt {
+            return "stale, updated \(lastUpdatedAt.accessibilityAgeText)"
+        }
+        if status == .stale { return "stale, update time unknown" }
+        return status.accessibilityStatusText
+    }
+
+    private func pooledCapacityScopeText(_ pooledPercentCapacity: PooledPercentCapacity?) -> String {
+        guard let pooledPercentCapacity else { return accountText }
+        let contributing = pooledPercentCapacity.contributingAccountCount
+        guard contributing != accountCount else { return accountText }
+        return "\(contributing) of \(accountCount) accounts contributing"
+    }
+
+    private var accessibilityUnitText: String {
+        switch unit {
+        case .percent:
+            return "percentage points"
+        case .tokens:
+            return "tokens"
+        case .requests:
+            return "requests"
+        case .credits:
+            return "credits"
+        case .units, .unknown, nil:
+            return "units"
+        }
+    }
+
+    private func detailValue(_ value: Int?) -> String {
+        guard let value else { return "unknown" }
+        guard let unit else { return "\(value)" }
+        switch unit {
+        case .percent:
+            return "\(value) pts"
+        case .tokens:
+            return "\(value) tokens"
+        case .requests:
+            return "\(value) requests"
+        case .credits:
+            return "\(value) credits"
+        case .units, .unknown:
+            return "\(value) units"
+        }
     }
 }
 
@@ -4694,6 +4923,54 @@ extension UsageLimit {
         return displayLabel
     }
 
+    var mainLimitAccessibilityLabel: String {
+        [mainLimitAccountTitle, mainLimitAccountSubtitle]
+            .filter { !$0.isEmpty }
+            .deduplicated()
+            .joined(separator: ", ")
+    }
+
+    var remainingCapacityAccessibilityValue: String {
+        let capacity: String
+        if unit == .percent, let remaining {
+            capacity = "\(remaining) percent remaining"
+        } else if let remaining {
+            capacity = "\(remaining) \(accessibilityUnitText) remaining"
+        } else {
+            capacity = "Remaining capacity unknown"
+        }
+        return "\(capacity), \(accessibilityStateText). \(resetAccessibilityText). \(confidence.previewText)."
+    }
+
+    private var resetAccessibilityText: String {
+        if status == .failure { return "Refresh failed" }
+        guard let resetsAt else { return "Reset not reported" }
+        return resetsAt.accessibilityResetText
+    }
+
+    private var accessibilityStateText: String {
+        if status == .stale, let lastUpdatedAt {
+            return "stale, updated \(lastUpdatedAt.accessibilityAgeText)"
+        }
+        if status == .stale { return "stale, update time unknown" }
+        return status.accessibilityStatusText
+    }
+
+    private var accessibilityUnitText: String {
+        switch unit {
+        case .percent:
+            return "percentage points"
+        case .tokens:
+            return "tokens"
+        case .requests:
+            return "requests"
+        case .credits:
+            return "credits"
+        case .units, .unknown:
+            return "units"
+        }
+    }
+
     private var hasDistinctModelLabel: Bool {
         guard let modelLabel, !modelLabel.isEmpty else { return false }
         let normalizedModel = modelLabel.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -4812,6 +5089,25 @@ extension UsageStatus {
         case .healthy, .close, .limited, .loading: 0
         }
     }
+
+    var accessibilityStatusText: String {
+        switch self {
+        case .healthy:
+            "available"
+        case .close:
+            "close to limit"
+        case .limited:
+            "limited"
+        case .stale:
+            "stale"
+        case .unknown:
+            "unknown"
+        case .failure:
+            "refresh failed"
+        case .loading:
+            "refreshing"
+        }
+    }
 }
 
 private extension StoredProviderReport {
@@ -4896,6 +5192,37 @@ extension Date {
         let formatter = DateFormatter()
         formatter.dateFormat = "EEE h:mm a"
         return formatter.string(from: self)
+    }
+
+    var accessibilityResetText: String {
+        let seconds = Int(timeIntervalSince(Date()))
+        if abs(seconds) < 60 { return "Resets now" }
+        guard seconds > 0 else { return "Reset passed" }
+        let minutes = Self.roundedUpMinutes(seconds: seconds)
+        if minutes < 60 {
+            return "Resets in \(minutes) \(minutes == 1 ? "minute" : "minutes")"
+        }
+        let hours = Self.roundedUpHours(minutes: minutes)
+        if hours <= 24 {
+            return "Resets in \(hours) \(hours == 1 ? "hour" : "hours")"
+        }
+        let days = max(Int(ceil(Double(hours) / 24)), 1)
+        return "Resets in \(days) \(days == 1 ? "day" : "days")"
+    }
+
+    var accessibilityAgeText: String {
+        let seconds = max(Int(Date().timeIntervalSince(self)), 0)
+        if seconds < 60 { return "just now" }
+        let minutes = seconds / 60
+        if minutes < 60 {
+            return "\(minutes) \(minutes == 1 ? "minute" : "minutes") ago"
+        }
+        let hours = minutes / 60
+        if hours < 24 {
+            return "\(hours) \(hours == 1 ? "hour" : "hours") ago"
+        }
+        let days = hours / 24
+        return "\(days) \(days == 1 ? "day" : "days") ago"
     }
 
     private static func formatDaysAndHours(hours: Int) -> String {

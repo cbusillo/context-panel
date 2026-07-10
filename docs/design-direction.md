@@ -86,6 +86,12 @@ privacy/credential messaging.
 - Remaining-capacity heroes and used-pressure detail rows are complementary, but
   an individual quantitative cluster must never cross their number and fill
   directions or rely on an unlabeled inverse value.
+- When inverse whole percentages are shown for the same limit, round remaining
+  capacity once and derive used capacity as its complement so the visible pair
+  reconciles to 100%.
+- Percent-based multi-account ledgers use pooled points plus normalized aggregate
+  percentages. Summed percentage points must never be labeled as percentages
+  above 100%.
 - Widget accessibility groups each glance instrument, limit row, and provider
   summary into a coherent value that names provider/window, quantity direction,
   pressure status, freshness, and reset timing.

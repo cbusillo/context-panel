@@ -49,6 +49,13 @@ public struct PromptCacheObservation: Codable, Equatable, Identifiable, Sendable
     public var hitRate: Double? { tokens.hitRate }
 }
 
+public enum PromptCacheRateComparison: Equatable, Sendable {
+    case above(points: Int)
+    case below(points: Int)
+    case matching
+    case unavailable
+}
+
 public struct PromptCacheSummary: Equatable, Sendable {
     public static let defaultMaximumAge: TimeInterval = 6 * 60 * 60
 
@@ -87,6 +94,13 @@ public struct PromptCacheSummary: Equatable, Sendable {
     public var latestDeltaFromWeightedAverage: Double? {
         guard let latestHitRate, let tokenWeightedHitRate else { return nil }
         return latestHitRate - tokenWeightedHitRate
+    }
+
+    public var latestRateComparison: PromptCacheRateComparison {
+        guard let delta = latestDeltaFromWeightedAverage else { return .unavailable }
+        let points = Int((abs(delta) * 100).rounded())
+        guard points > 0 else { return .matching }
+        return delta > 0 ? .above(points: points) : .below(points: points)
     }
 
     public var comparisonStatus: UsageStatus {
