@@ -129,35 +129,37 @@ struct WatchCircularComplication: View {
 
     @ViewBuilder
     var body: some View {
-        if let limit, let ratio = limit.usedPressure.ratio {
+        if let limit, let ratio = limit.remainingCapacity.ratio {
             Gauge(value: ratio) {
-                Image(systemName: symbol)
+                EmptyView()
             } currentValueLabel: {
-                Text(limit.usedText)
-                    .minimumScaleFactor(0.55)
+                VStack(spacing: 0) {
+                    Text(limit.remainingText)
+                        .minimumScaleFactor(0.55)
+                    if let symbol = watchExceptionalStatusSymbol(limit.status) {
+                        Image(systemName: symbol)
+                            .font(.system(size: 6, weight: .semibold))
+                    }
+                }
             }
             .gaugeStyle(.accessoryCircularCapacity)
             .tint(tint)
-            .accessibilityLabel("\(limit.title) \(limit.subtitle) usage pressure")
-            .accessibilityValue(limit.usedPressure.accessibilityValue)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(limit.accessibilitySentence(direction: .remaining))
         } else {
             ZStack {
                 Circle()
                     .stroke(tint, style: StrokeStyle(lineWidth: 2, dash: [3, 3]))
-                Image(systemName: symbol)
+                Image(systemName: fallbackSymbol)
                     .font(.caption2.weight(.semibold))
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(limit.map { "\($0.title) \($0.subtitle) usage pressure" } ?? "Context Panel sync")
-            .accessibilityValue(limit?.usedPressure.accessibilityValue ?? "No synced limit")
+            .accessibilityLabel(limit?.accessibilitySentence(direction: .remaining) ?? "Context Panel is not synced")
         }
     }
 
-    private var symbol: String {
-        guard let limit else { return "icloud.slash" }
-        return limit.usedPressure.isIndeterminate
-            ? "questionmark"
-            : "gauge.with.dots.needle.bottom.50percent"
+    private var fallbackSymbol: String {
+        limit == nil ? "icloud.slash" : "questionmark"
     }
 
     private var tint: Color {
@@ -199,15 +201,15 @@ private struct WatchRectangularLimitLine: View {
             Spacer(minLength: 2)
             WatchMiniPressureBar(metric: limit.usedPressure, tint: watchStatusColor(limit.status))
                 .frame(width: 26, height: 3)
-            Text(limit.usedText)
+            Text(limit.usedComplicationText)
                 .foregroundStyle(watchStatusColor(limit.status))
+                .layoutPriority(1)
         }
         .font(.caption.weight(.semibold))
         .lineLimit(1)
         .minimumScaleFactor(0.75)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(limit.title) \(limit.subtitle)")
-        .accessibilityValue(limit.usedPressure.accessibilityValue)
+        .accessibilityLabel(limit.accessibilitySentence(direction: .used))
     }
 }
 
@@ -239,8 +241,8 @@ struct WatchInlineComplication: View {
 
     var body: some View {
         if let limit {
-            Text("\(limit.title) \(limit.subtitle) \(limit.usedText)")
-                .accessibilityLabel("\(limit.title) \(limit.subtitle), \(limit.usedPressure.accessibilityValue)")
+            Text("\(limit.title) \(limit.subtitle) · \(limit.remainingComplicationText)")
+                .accessibilityLabel(limit.accessibilitySentence(direction: .remaining))
         } else {
             Text(snapshot.state == .failure ? "Context Panel sync failed" : "Context Panel needs sync")
         }
@@ -253,25 +255,28 @@ struct WatchCornerComplication: View {
 
     @ViewBuilder
     var body: some View {
-        if let limit, let ratio = limit.usedPressure.ratio {
-            Text(limit.usedText)
+        if let limit, let ratio = limit.remainingCapacity.ratio {
+            Text(limit.remainingText)
                 .widgetCurvesContent()
                 .widgetLabel {
                     Gauge(value: ratio) {
-                        Text(limit.title)
+                        Text(
+                            limit.exceptionalStatusText.map { "\(limit.title) \($0)" }
+                                ?? limit.title
+                        )
                     }
                     .tint(watchStatusColor(limit.status))
                 }
-                .accessibilityLabel("\(limit.title) \(limit.subtitle) usage pressure")
-                .accessibilityValue(limit.usedPressure.accessibilityValue)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(limit.accessibilitySentence(direction: .remaining))
         } else {
             Text("—")
                 .widgetCurvesContent()
                 .widgetLabel {
                     Text(limit?.title ?? "Sync")
                 }
-                .accessibilityLabel(limit.map { "\($0.title) \($0.subtitle) usage pressure" } ?? "Context Panel sync")
-                .accessibilityValue(limit?.usedPressure.accessibilityValue ?? "No synced limit")
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(limit?.accessibilitySentence(direction: .remaining) ?? "Context Panel is not synced")
                 .foregroundStyle(limit.map { watchStatusColor($0.status) } ?? watchStatusColor(snapshot.status))
         }
     }
@@ -306,7 +311,22 @@ private func watchStatusColor(_ status: UsageStatus) -> Color {
         .yellow
     case .limited, .failure:
         .red
-    case .stale, .unknown, .loading:
+    case .stale:
+        .orange
+    case .unknown, .loading:
         .secondary
+    }
+}
+
+private func watchExceptionalStatusSymbol(_ status: UsageStatus) -> String? {
+    switch status {
+    case .stale:
+        "clock"
+    case .failure:
+        "exclamationmark"
+    case .loading:
+        "arrow.clockwise"
+    case .healthy, .close, .limited, .unknown:
+        nil
     }
 }

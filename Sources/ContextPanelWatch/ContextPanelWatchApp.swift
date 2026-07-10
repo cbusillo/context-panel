@@ -249,16 +249,16 @@ private struct WatchLimitRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Spacer(minLength: 4)
-                Text(limit.usedText)
-                    .font(.headline.weight(.semibold))
+                Text(limit.usedTextLabeled)
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(statusColor)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .layoutPriority(1)
                     .accessibilityHidden(true)
             }
 
             pressureTrack
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Usage pressure")
-                .accessibilityValue(limit.usedPressure.accessibilityValue)
 
             HStack(spacing: 6) {
                 Text(limit.context)
@@ -273,6 +273,8 @@ private struct WatchLimitRow: View {
             .foregroundStyle(.tertiary)
         }
         .padding(.vertical, 1)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(limit.accessibilitySentence(direction: .used))
     }
 
     @ViewBuilder
@@ -302,7 +304,9 @@ private struct WatchLimitRow: View {
             .yellow
         case .limited, .failure:
             .red
-        case .stale, .unknown, .loading:
+        case .stale:
+            .orange
+        case .unknown, .loading:
             .secondary
         }
     }
@@ -358,19 +362,6 @@ private struct WatchSyncPresentation {
             detail = "Open Context Panel on your Mac to publish usage limits through CloudKit."
             symbol = "icloud.and.arrow.down"
             tint = .secondary
-        }
-    }
-
-    private static func statusColor(_ status: UsageStatus) -> Color {
-        switch status {
-        case .healthy:
-            .green
-        case .close:
-            .yellow
-        case .limited, .failure:
-            .red
-        case .stale, .unknown, .loading:
-            .secondary
         }
     }
 }
