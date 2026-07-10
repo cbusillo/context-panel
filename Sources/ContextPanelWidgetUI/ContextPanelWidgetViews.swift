@@ -150,7 +150,7 @@ struct ContextPanelSmallWidget: View {
     let snapshot: WidgetSnapshot
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 4) {
             if let problem = snapshot.widgetProblemText {
                 CPWProblemLabel(problem, status: snapshot.status)
             }
@@ -172,7 +172,16 @@ struct ContextPanelSmallWidget: View {
                         .minimumScaleFactor(0.8)
                         .lineLimit(1)
                 }
-                CPWUsagePressureBar(usedRatio: tightest.usageRatio, status: tightest.status, height: 5)
+                Spacer(minLength: 0)
+                Text(tightest.widgetUsageText.uppercased())
+                    .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
+                    .lineLimit(1)
+                CPWUsagePressureBar(
+                    usedRatio: tightest.widgetUsageRatio,
+                    status: snapshot.widgetPresentationStatus(for: tightest.status),
+                    height: 5
+                )
             } else {
                 Text("Set up accounts")
                     .font(.system(size: 22, weight: .semibold))
@@ -183,10 +192,12 @@ struct ContextPanelSmallWidget: View {
                     .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
                     .lineLimit(2)
             }
-            Spacer(minLength: 0)
         }
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(snapshot.widgetSmallAccessibilityLabel)
+        .accessibilityValue(snapshot.widgetSmallAccessibilityValue)
     }
 }
 
@@ -240,7 +251,7 @@ struct ContextPanelMediumWidget: View {
                     CPWEmptyRow(message: snapshot.message)
                 } else {
                     ForEach(lanes) { lane in
-                        CPWMainLimitRow(lane: lane)
+                        CPWMainLimitRow(lane: lane, snapshotState: snapshot.state)
                     }
                 }
             }
@@ -302,7 +313,7 @@ struct ContextPanelLargeWidget: View {
                     CPWEmptyRow(message: snapshot.message)
                 } else {
                     ForEach(lanes) { lane in
-                        CPWMainLimitRow(lane: lane)
+                        CPWMainLimitRow(lane: lane, snapshotState: snapshot.state)
                     }
                 }
             }
@@ -452,9 +463,15 @@ struct CPWGlanceNumber: View {
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
                 .lineLimit(2)
-            CPWBurnPaceBar(forecast: snapshot.fastModeForecast)
+            CPWBurnPaceBar(
+                forecast: snapshot.fastModeForecast,
+                isStale: snapshot.state == .stale
+            )
         }
         .frame(width: 94, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(snapshot.widgetGlanceAccessibilityLabel)
+        .accessibilityValue(snapshot.widgetGlanceAccessibilityValue)
     }
 }
 
@@ -463,17 +480,20 @@ struct CPWMainLimitRow: View {
     let summary: MainLimitSummary?
     let fallbackProvider: Provider
     let fallbackWindow: MainLimitWindow
+    let snapshotState: WidgetSnapshotState
 
-    init(summary: MainLimitSummary) {
+    init(summary: MainLimitSummary, snapshotState: WidgetSnapshotState = .ready) {
         self.summary = summary
         fallbackProvider = summary.provider
         fallbackWindow = summary.window
+        self.snapshotState = snapshotState
     }
 
-    init(lane: WidgetMainLimitLane) {
+    init(lane: WidgetMainLimitLane, snapshotState: WidgetSnapshotState = .ready) {
         summary = lane.summary
         fallbackProvider = lane.provider
         fallbackWindow = lane.window
+        self.snapshotState = snapshotState
     }
 
     private var provider: Provider {
@@ -481,7 +501,7 @@ struct CPWMainLimitRow: View {
     }
 
     private var status: UsageStatus {
-        summary?.status ?? .unknown
+        snapshotState == .stale ? .stale : (summary?.status ?? .unknown)
     }
 
     var body: some View {
@@ -498,14 +518,31 @@ struct CPWMainLimitRow: View {
                     .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
             }
             HStack(spacing: 6) {
-                CPWUsagePressureBar(usedRatio: summary?.usageRatio, status: status)
+                CPWUsagePressureBar(usedRatio: summary?.widgetUsageRatio, status: status)
                 Text(summary?.widgetResetConfidenceText ?? "")
                     .font(.system(size: 9))
-                    .foregroundStyle(CPWTheme.tertiaryText(variant: themeVariant))
+                    .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
                     .lineLimit(1)
                     .frame(minWidth: 72, alignment: .trailing)
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue(accessibilityValue)
+    }
+
+    private var accessibilityLabel: String {
+        guard let summary else {
+            return "\(provider.displayName), \(fallbackWindow.displayName)"
+        }
+        return "\(provider.displayName), \(summary.widgetWindowLine)"
+    }
+
+    private var accessibilityValue: String {
+        guard let summary else {
+            return snapshotState == .stale ? "Usage unknown. Data stale" : "Usage unknown. Status unknown"
+        }
+        return summary.widgetPressureAccessibilityValue(snapshotState: snapshotState)
     }
 }
 
@@ -518,43 +555,86 @@ struct CPWProviderSummaryGrid: View {
         HStack(spacing: compact ? 10 : 12) {
             ForEach(Provider.allCases) { provider in
                 let providerLimits = snapshot.limits.filter { $0.provider == provider }
+                let metricSummary = snapshot.widgetProviderMainLimitSummary(provider: provider)
                 let summaries = snapshot.mainLimitSummaries.filter { $0.provider == provider }
                 let nonMainStatuses = providerLimits.filter { !$0.isMainLimit }.map(\.status)
-                let status = provider == .anthropic && !summaries.isEmpty
+                let providerStatus = provider == .anthropic && !summaries.isEmpty
                     ? summaries.map(\.status).contextPanelWorstStatus
                     : (summaries.map(\.status) + nonMainStatuses).contextPanelWorstStatus
-                let displayStatus = provider == .anthropic && !providerLimits.isEmpty && summaries.isEmpty && status == .unknown
-                    ? UsageStatus.healthy
-                    : status
+                let metricStatus = metricSummary?.status ?? .unknown
+                let displayProviderStatus = snapshot.widgetPresentationStatus(for: providerStatus)
+                let displayMetricStatus = snapshot.widgetPresentationStatus(for: metricStatus)
                 let isConnected = !providerLimits.isEmpty
+                let summaryText = snapshot.widgetProviderSummaryText(provider: provider)
 
                 VStack(alignment: .leading, spacing: compact ? 3 : 5) {
                     HStack(spacing: 5) {
                         CPWProviderBadge(provider: provider, compact: true)
-                        if displayStatus.shouldShowWidgetIssue {
-                            Text(displayStatus.widgetLabel)
+                        if isConnected && displayProviderStatus.shouldShowWidgetProviderStatus(relativeTo: displayMetricStatus) {
+                            Text(displayProviderStatus.widgetLabel)
                                 .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(CPWTheme.statusColor(displayStatus))
+                                .foregroundStyle(CPWTheme.statusColor(displayProviderStatus))
                                 .textCase(.uppercase)
                                 .lineLimit(1)
                                 .fixedSize(horizontal: true, vertical: false)
                         }
                         Spacer(minLength: 0)
                     }
-                    Text(snapshot.widgetProviderSummaryText(provider: provider))
+                    Text(summaryText)
                         .font(.system(size: compact ? 10 : 11, weight: .medium))
                         .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
                         .lineLimit(compact ? 1 : 2)
                     CPWUsagePressureBar(
-                        usedRatio: summaries.compactMap(\.usageRatio).max(),
-                        status: displayStatus,
+                        usedRatio: metricSummary?.widgetUsageRatio,
+                        status: displayMetricStatus,
                         height: 5
                     )
                 }
                 .opacity(isConnected ? 1 : 0.45)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(providerAccessibilityLabel(provider: provider, summary: metricSummary))
+                .accessibilityValue(providerAccessibilityValue(
+                    summaryText: summaryText,
+                    providerStatus: providerStatus,
+                    metricSummary: metricSummary,
+                    isConnected: isConnected,
+                    snapshotState: snapshot.state
+                ))
             }
         }
+    }
+
+    private func providerAccessibilityLabel(provider: Provider, summary: MainLimitSummary?) -> String {
+        guard let summary else { return provider.displayName }
+        return "\(provider.displayName), \(summary.widgetWindowLine)"
+    }
+
+    private func providerAccessibilityValue(
+        summaryText: String,
+        providerStatus: UsageStatus,
+        metricSummary: MainLimitSummary?,
+        isConnected: Bool,
+        snapshotState: WidgetSnapshotState
+    ) -> String {
+        guard isConnected else { return "Setup needed" }
+        var parts: [String]
+        if let metricSummary {
+            parts = [metricSummary.widgetPressureAccessibilityValue(snapshotState: snapshotState)]
+            if providerStatus != metricSummary.status {
+                let label = snapshotState == .stale ? "Last known provider status" : "Provider status"
+                parts.append("\(label) \(providerStatus.widgetAccessibilityLabel)")
+            }
+        } else {
+            parts = [summaryText]
+            parts.append("Usage pressure unknown")
+            if snapshotState == .stale {
+                parts.append("Data stale")
+            }
+            let label = snapshotState == .stale ? "Last known provider status" : "Provider status"
+            parts.append("\(label) \(providerStatus.widgetAccessibilityLabel)")
+        }
+        return parts.joined(separator: ". ")
     }
 }
 
@@ -623,7 +703,7 @@ struct CPWUsagePressureBar: View {
                 } else {
                     Capsule()
                         .stroke(
-                            CPWTheme.statusColor(status),
+                            CPWTheme.statusColor(.unknown),
                             style: StrokeStyle(lineWidth: 1, dash: [2, 2])
                         )
                 }
@@ -639,6 +719,7 @@ struct CPWUsagePressureBar: View {
 struct CPWBurnPaceBar: View {
     @Environment(\.cpwThemeVariant) private var themeVariant
     let forecast: FastModeCapacityForecast?
+    var isStale = false
 
     private var markerPosition: Double? {
         guard let ratio = forecast?.burnPaceRatio, ratio.isFinite else { return nil }
@@ -655,10 +736,18 @@ struct CPWBurnPaceBar: View {
                 ZStack(alignment: .leading) {
                     Capsule().fill(CPWTheme.line(variant: themeVariant))
                     Capsule()
-                        .fill(CPWTheme.statusColor(.healthy).opacity(0.85))
+                        .fill(
+                            isStale
+                                ? CPWTheme.statusColor(.stale).opacity(0.82)
+                                : CPWTheme.statusColor(.healthy).opacity(0.85)
+                        )
                         .frame(width: width * 0.5)
                     Capsule()
-                        .fill(CPWTheme.statusColor(.limited).opacity(0.78))
+                        .fill(
+                            isStale
+                                ? CPWTheme.statusColor(.stale).opacity(0.42)
+                                : CPWTheme.statusColor(.limited).opacity(0.78)
+                        )
                         .frame(width: width * 0.5)
                         .offset(x: width * 0.5)
                     Rectangle()
@@ -849,7 +938,10 @@ public enum CPWTheme {
         case .limited, .failure:
             Color(red: 138 / 255, green: 74 / 255, blue: 74 / 255)
         case .stale:
-            Color(red: 138 / 255, green: 74 / 255, blue: 74 / 255)
+            adaptiveColor(
+                light: CPWPlatformColor(red: 122 / 255, green: 98 / 255, blue: 63 / 255, alpha: 1),
+                dark: CPWPlatformColor(red: 194 / 255, green: 168 / 255, blue: 117 / 255, alpha: 1)
+            )
         case .unknown, .loading:
             Color(red: 106 / 255, green: 106 / 255, blue: 114 / 255)
         }
@@ -927,9 +1019,6 @@ extension UsageLimit {
         if provider == .anthropic, unit == .unknown, status == .unknown {
             return "limit not reported"
         }
-        if isModelCapacityLimit {
-            return widgetRemainingHeadline
-        }
         if unit == .percent, let used {
             return "\(used)% used"
         }
@@ -994,7 +1083,7 @@ extension WidgetSnapshot {
             if lhsPriority != rhsPriority {
                 return lhsPriority > rhsPriority
             }
-            return (lhs.usageRatio ?? 0) > (rhs.usageRatio ?? 0)
+            return (lhs.widgetUsageRatio ?? 0) > (rhs.widgetUsageRatio ?? 0)
         }
     }
 
@@ -1099,13 +1188,79 @@ extension WidgetSnapshot {
 
     func widgetProviderSummaryText(provider: Provider) -> String {
         let providerLimits = limits.filter { $0.provider == provider }
-        let summaries = mainLimitSummaries.filter { $0.provider == provider }
-        guard !summaries.isEmpty else {
-            if needsProviderConnection { return "not connected" }
-            return providerLimits.isEmpty ? "setup needed" : "connected"
+        guard let tightest = widgetProviderMainLimitSummary(provider: provider) else {
+            if needsProviderConnection {
+                return "not connected"
+            }
+            return providerLimits.isEmpty ? "setup needed" : "usage unknown"
         }
-        let tightest = summaries.sorted(by: { ($0.usageRatio ?? 0) > ($1.usageRatio ?? 0) }).first!
-        return "\(tightest.widgetCompactWindowName) \(tightest.widgetRemainingHeadline.lowercased())"
+        return "\(tightest.widgetCompactWindowName) \(tightest.widgetUsageText.lowercased())"
+    }
+
+    func widgetPresentationStatus(for status: UsageStatus) -> UsageStatus {
+        state == .stale ? .stale : status
+    }
+
+    func widgetProviderMainLimitSummary(provider: Provider) -> MainLimitSummary? {
+        let summaries = mainLimitSummaries.filter { $0.provider == provider }
+        let determinate = summaries.filter { $0.widgetUsageRatio != nil }
+        return determinate.max {
+            ($0.widgetUsageRatio ?? 0) < ($1.widgetUsageRatio ?? 0)
+        } ?? summaries.first
+    }
+
+    var widgetSmallAccessibilityLabel: String {
+        guard let summary = tightestMainLimitSummary else { return "Context Panel" }
+        return "\(summary.provider.displayName), \(summary.widgetWindowLine)"
+    }
+
+    var widgetSmallAccessibilityValue: String {
+        guard let summary = tightestMainLimitSummary else {
+            return "\(message). Status \(status.widgetAccessibilityLabel)"
+        }
+        var parts: [String] = []
+        if let problem = widgetProblemText {
+            parts.append(problem)
+        }
+        parts.append(summary.widgetRemainingHeadline)
+        parts.append(summary.widgetUsageText)
+        let statusLabel = state == .stale ? "Last known status" : "Status"
+        parts.append("\(statusLabel) \(summary.status.widgetAccessibilityLabel)")
+        if let freshness = summary.widgetFreshnessAccessibilityLabel(snapshotState: state) {
+            parts.append(freshness)
+        }
+        if let reset = summary.widgetResetConfidenceText {
+            parts.append("Reset \(reset)")
+        }
+        return parts.joined(separator: ". ")
+    }
+
+    var widgetGlanceAccessibilityLabel: String {
+        guard let summary = tightestMainLimitSummary else { return "Context Panel usage" }
+        return "Tightest limit, \(summary.provider.displayName), \(summary.widgetWindowName)"
+    }
+
+    var widgetGlanceAccessibilityValue: String {
+        guard let summary = tightestMainLimitSummary else {
+            return "\(message). Status \(status.widgetAccessibilityLabel)"
+        }
+        var parts = [
+            summary.widgetRemainingHeadline,
+            "\(state == .stale ? "Last known main limit status" : "Main limit status") \(summary.status.widgetAccessibilityLabel)",
+        ]
+        if let freshness = summary.widgetFreshnessAccessibilityLabel(snapshotState: state) {
+            parts.append(freshness)
+        }
+        if state != .stale, status != summary.status {
+            parts.append("Overall status \(status.widgetAccessibilityLabel)")
+        }
+        if let reset = summary.widgetResetConfidenceText {
+            parts.append("Reset \(reset)")
+        }
+        if let forecast = fastModeForecast {
+            parts.append("Burn pace \(forecast.burnPaceCopy)")
+        }
+        return parts.joined(separator: ". ")
     }
 
     private static func format(hours: Double) -> String {
@@ -1122,34 +1277,86 @@ extension WidgetSnapshot {
 }
 
 extension MainLimitSummary {
+    var widgetUsageRatio: Double? {
+        let numericLimits = lastKnownCapacityLimits
+        guard let unit = numericLimits.first?.unit,
+              numericLimits.allSatisfy({ $0.unit == unit }) else {
+            return nil
+        }
+        let used = numericLimits.reduce(0) { $0 + ($1.used ?? 0) }
+        let limit = numericLimits.reduce(0) { $0 + ($1.limit ?? 0) }
+        guard limit > 0 else { return nil }
+        return min(max(Double(used) / Double(limit), 0), 1)
+    }
+
+    var widgetRemainingCapacityRatio: Double? {
+        widgetUsageRatio.map { max(1 - $0, 0) }
+    }
+
     var widgetRemainingHeadline: String {
+        if let remainingRatio = widgetRemainingCapacityRatio {
+            return "\(Int((remainingRatio * 100).rounded()))% left"
+        }
         guard unit != nil, remaining != nil else {
             if status == .failure { return "Failed" }
             if provider == .anthropic { return "Awaiting data" }
             return "Unknown"
-        }
-        if usageRatio != nil {
-            return "\(Int((capacityRatio * 100).rounded()))% left"
         }
         guard let remaining else { return "Unknown" }
         return "\(remaining) left"
     }
 
     var widgetUsageText: String {
+        if let usageRatio = widgetUsageRatio {
+            return "\(Int((usageRatio * 100).rounded()))% used"
+        }
         guard unit != nil, used != nil, limit != nil else {
             if provider == .anthropic, status != .failure {
                 return "limit not reported"
             }
             return status == .failure ? "refresh failed" : "unknown"
         }
-        if window == .availability {
-            return widgetRemainingHeadline
-        }
-        if usageRatio != nil {
-            return "\(Int(((usageRatio ?? 0) * 100).rounded()))% used"
-        }
         guard let used, let limit else { return "unknown" }
         return "\(used)/\(limit) used"
+    }
+
+    var widgetFreshnessAccessibilityLabel: String? {
+        widgetFreshnessAccessibilityLabel(snapshotState: nil)
+    }
+
+    func widgetFreshnessAccessibilityLabel(snapshotState: WidgetSnapshotState?) -> String? {
+        if snapshotState == .stale {
+            return "Data stale"
+        }
+        if limits.contains(where: { $0.status == .failure }) {
+            return "Refresh failed"
+        }
+        if limits.contains(where: { $0.status == .stale }) {
+            return "Data stale"
+        }
+        if limits.contains(where: { $0.status == .loading }) {
+            return "Refreshing"
+        }
+        return nil
+    }
+
+    var widgetPressureAccessibilityValue: String {
+        widgetPressureAccessibilityValue(snapshotState: nil)
+    }
+
+    func widgetPressureAccessibilityValue(snapshotState: WidgetSnapshotState?) -> String {
+        let statusLabel = snapshotState == .stale ? "Last known main limit status" : "Main limit status"
+        var parts = [
+            widgetUsageText,
+            "\(statusLabel) \(status.widgetAccessibilityLabel)",
+        ]
+        if let freshness = widgetFreshnessAccessibilityLabel(snapshotState: snapshotState) {
+            parts.append(freshness)
+        }
+        if let reset = widgetResetConfidenceText {
+            parts.append("Reset \(reset)")
+        }
+        return parts.joined(separator: ". ")
     }
 
     var widgetWindowLine: String {
@@ -1197,15 +1404,26 @@ extension MainLimitSummary {
     }
 }
 
-private extension UsageLimit {
-    var isModelCapacityLimit: Bool {
-        guard let windowLabel else { return false }
-        return windowLabel.localizedCaseInsensitiveCompare("Model capacity") == .orderedSame
-            || windowLabel.localizedCaseInsensitiveCompare("Availability") == .orderedSame
-    }
-}
-
 extension UsageStatus {
+    var widgetAccessibilityLabel: String {
+        switch self {
+        case .healthy:
+            "available"
+        case .close:
+            "close to limit"
+        case .limited:
+            "limited"
+        case .stale:
+            "stale"
+        case .unknown:
+            "unknown"
+        case .failure:
+            "refresh failed"
+        case .loading:
+            "refreshing"
+        }
+    }
+
     var widgetLabel: String {
         switch self {
         case .healthy:
@@ -1232,6 +1450,10 @@ extension UsageStatus {
         case .healthy, .close, .loading:
             false
         }
+    }
+
+    func shouldShowWidgetProviderStatus(relativeTo metricStatus: UsageStatus) -> Bool {
+        shouldShowWidgetIssue || (self == .close && self != metricStatus)
     }
 }
 

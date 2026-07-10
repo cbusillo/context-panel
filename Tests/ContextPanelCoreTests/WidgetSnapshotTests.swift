@@ -541,7 +541,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(widget.message == "Usage data is current.")
     #expect(widget.tightestHeadline == "80% left")
     #expect(widget.widgetDeepLinkURL(links: testWidgetLinks) == testWidgetLinks.overview)
-    #expect(widget.widgetProviderSummaryText(provider: .openAI) == "1w 80% left")
+    #expect(widget.widgetProviderSummaryText(provider: .openAI) == "1w 20% used")
     #expect(widget.widgetProviderSummaryText(provider: .anthropic) == "setup needed")
 }
 
@@ -1083,6 +1083,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(snapshot.status == .unknown)
     #expect(snapshot.limits.contains { $0.provider == .anthropic })
     #expect(snapshot.usageSnapshot.mainLimitSummaries.filter { $0.provider == .anthropic }.isEmpty)
+    #expect(snapshot.widgetProviderSummaryText(provider: .anthropic) == "usage unknown")
 
     let healthyLimit = UsageLimit(
         provider: .anthropic,
@@ -1103,6 +1104,245 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     let summary = MainLimitSummary(provider: .anthropic, window: .weekly, limits: [healthyLimit])
     #expect(summary.resetsAt == nil)
     #expect(summary.status == .healthy)
+}
+
+@Test func widgetAvailabilityRowsAndProviderSummariesUsePressureCopy() throws {
+    let now = Date()
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: now,
+        limits: [
+            UsageLimit(
+                provider: .google,
+                accountID: "google",
+                accountName: "Google",
+                label: "Model capacity",
+                windowLabel: "Model capacity",
+                modelLabel: "Gemini Pro",
+                unit: .percent,
+                used: 92,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(86_400),
+                lastUpdatedAt: now,
+                confidence: .observed,
+                note: "source: Google Antigravity model availability"
+            ),
+        ],
+        status: .close,
+        message: "Synced"
+    )
+
+    let summary = try #require(snapshot.mainLimitSummaries.first)
+    #expect(summary.window == .availability)
+    #expect(summary.widgetUsageText == "92% used")
+    #expect(snapshot.widgetProviderSummaryText(provider: .google) == "Cap 92% used")
+}
+
+@Test func widgetPresentationPreservesLastGoodStaleValues() throws {
+    let now = Date()
+    let summary = MainLimitSummary(
+        provider: .openAI,
+        window: .weekly,
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "openai",
+                accountName: "OpenAI",
+                label: "Weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 58,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(86_400),
+                lastUpdatedAt: now.addingTimeInterval(-10_800),
+                confidence: .observed,
+                statusOverride: .stale
+            ),
+        ],
+        generatedAt: now
+    )
+
+    #expect(summary.usageRatio == nil)
+    #expect(summary.widgetUsageRatio == 0.58)
+    #expect(summary.widgetRemainingHeadline == "42% left")
+    #expect(summary.widgetUsageText == "58% used")
+    #expect(summary.widgetFreshnessAccessibilityLabel == "Data stale")
+    #expect(summary.widgetPressureAccessibilityValue.contains("58% used"))
+    #expect(summary.widgetPressureAccessibilityValue.contains("Data stale"))
+}
+
+@Test func widgetPresentationHonorsLongerWindowCapacityGates() throws {
+    let now = Date()
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: now,
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "limited-weekly",
+                accountName: "Limited weekly",
+                label: "Codex 5-hour",
+                windowLabel: "5-hour",
+                unit: .percent,
+                used: 60,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(10_800),
+                confidence: .observed
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "limited-weekly",
+                accountName: "Limited weekly",
+                label: "Codex Weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 100,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(345_600),
+                confidence: .observed
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "available",
+                accountName: "Available",
+                label: "Codex 5-hour",
+                windowLabel: "5-hour",
+                unit: .percent,
+                used: 5,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(7_200),
+                confidence: .observed
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "available",
+                accountName: "Available",
+                label: "Codex Weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 22,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(604_800),
+                confidence: .observed
+            ),
+        ],
+        status: .limited,
+        message: "Synced"
+    )
+
+    let fiveHour = try #require(snapshot.mainLimitSummaries.first { $0.window == .fiveHour })
+    #expect(fiveHour.status == .healthy)
+    #expect(fiveHour.widgetUsageRatio == 0.05)
+    #expect(fiveHour.widgetUsageText == "5% used")
+}
+
+@Test func snapshotLevelStalenessOverridesWidgetInstrumentColorAndAccessibility() throws {
+    let now = Date()
+    let snapshot = WidgetSnapshot(
+        state: .stale,
+        generatedAt: now,
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "openai",
+                accountName: "OpenAI",
+                label: "Weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 58,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(86_400),
+                lastUpdatedAt: now.addingTimeInterval(-10_800),
+                confidence: .observed
+            ),
+        ],
+        status: .stale,
+        message: "Refresh Context Panel to update data."
+    )
+
+    let summary = try #require(snapshot.tightestMainLimitSummary)
+    #expect(summary.status == .healthy)
+    #expect(snapshot.widgetPresentationStatus(for: summary.status) == .stale)
+    #expect(snapshot.widgetSmallAccessibilityValue.contains("Last known status available"))
+    #expect(snapshot.widgetSmallAccessibilityValue.contains("Data stale"))
+    #expect(summary.widgetPressureAccessibilityValue(snapshotState: snapshot.state).contains("Data stale"))
+}
+
+@Test func providerSummaryShowsCloseWhenAnotherMetricIsHealthy() {
+    #expect(UsageStatus.close.shouldShowWidgetProviderStatus(relativeTo: .healthy))
+    #expect(!UsageStatus.close.shouldShowWidgetProviderStatus(relativeTo: .close))
+}
+
+@Test func smallWidgetAccessibilityNamesBothBridgeDirections() {
+    let now = Date()
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: now,
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "openai",
+                accountName: "OpenAI",
+                label: "Weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 58,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(86_400),
+                lastUpdatedAt: now,
+                confidence: .observed
+            ),
+        ],
+        status: .healthy,
+        message: "Synced"
+    )
+
+    #expect(snapshot.widgetSmallAccessibilityLabel.contains("OpenAI"))
+    #expect(snapshot.widgetSmallAccessibilityValue.contains("42% left"))
+    #expect(snapshot.widgetSmallAccessibilityValue.contains("58% used"))
+    #expect(snapshot.widgetSmallAccessibilityValue.contains("Status available"))
+}
+
+@Test func providerSummarySelectionPrefersDeterminateZeroOverUnknown() throws {
+    let now = Date()
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: now,
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "weekly",
+                accountName: "Weekly",
+                label: "Weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: nil,
+                limit: nil,
+                confidence: .estimated,
+                statusOverride: .unknown
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "five-hour",
+                accountName: "Five Hour",
+                label: "5-hour",
+                windowLabel: "5-hour",
+                unit: .percent,
+                used: 0,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(18_000),
+                lastUpdatedAt: now,
+                confidence: .observed
+            ),
+        ],
+        status: .unknown,
+        message: "Partial sync"
+    )
+
+    let summary = try #require(snapshot.widgetProviderMainLimitSummary(provider: .openAI))
+    #expect(summary.window == .fiveHour)
+    #expect(summary.widgetUsageRatio == 0)
+    #expect(snapshot.widgetProviderSummaryText(provider: .openAI) == "5h 0% used")
 }
 
 private func widgetSnapshotTemporaryDirectory() throws -> URL {

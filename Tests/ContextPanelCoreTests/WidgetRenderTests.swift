@@ -59,15 +59,39 @@ private let renderTestWidgetLinks = ContextPanelWidgetLinks(
     .frame(width: 344, height: 164)
     .background(CPWTheme.surface(variant: .light))
 
-    let image = try #require(renderedImage(from: view))
+    let image = try #require(renderedImage(from: view, width: 344, height: 164))
     #expect(nonBackgroundPixelCount(in: image) > 2_500)
 }
 
 @MainActor
-private func renderedImage<V: View>(from view: V) -> CGImage? {
+@Test func selectedSmallWidgetRendersKnownUnknownAndStaleStates() throws {
+    let scenarios: [(snapshot: WidgetSnapshot, variant: CPWThemeVariant)] = [
+        (smallWidgetSnapshot(usedPercent: 58), .light),
+        (smallWidgetSnapshot(usedPercent: nil, status: .unknown), .dark),
+        (smallWidgetSnapshot(usedPercent: 58, state: .stale), .light),
+    ]
+
+    for scenario in scenarios {
+        let view = ContextPanelWidgetContentView(
+            family: .systemSmall,
+            snapshot: scenario.snapshot,
+            displayPreferences: .defaultPreferences,
+            links: renderTestWidgetLinks
+        )
+        .cpwThemeVariant(scenario.variant)
+        .frame(width: 164, height: 164)
+        .background(CPWTheme.surface(variant: scenario.variant))
+
+        let image = try #require(renderedImage(from: view, width: 164, height: 164))
+        #expect(nonBackgroundPixelCount(in: image) > 1_400)
+    }
+}
+
+@MainActor
+private func renderedImage<V: View>(from view: V, width: CGFloat, height: CGFloat) -> CGImage? {
     let renderer = ImageRenderer(content: view)
     renderer.scale = 1
-    renderer.proposedSize = ProposedViewSize(width: 344, height: 164)
+    renderer.proposedSize = ProposedViewSize(width: width, height: height)
     return renderer.cgImage
 }
 
@@ -102,4 +126,34 @@ private func nonBackgroundPixelCount(in image: CGImage) -> Int {
         }
     }
     return changed
+}
+
+private func smallWidgetSnapshot(
+    usedPercent: Int?,
+    state: WidgetSnapshotState = .ready,
+    status: UsageStatus? = nil
+) -> WidgetSnapshot {
+    let now = Date()
+    return WidgetSnapshot(
+        state: state,
+        generatedAt: now,
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "render",
+                accountName: "Render",
+                label: "Weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: usedPercent,
+                limit: usedPercent == nil ? nil : 100,
+                resetsAt: now.addingTimeInterval(86_400),
+                lastUpdatedAt: state == .stale || status == .stale ? now.addingTimeInterval(-10_800) : now,
+                confidence: usedPercent == nil ? .estimated : .observed,
+                statusOverride: status
+            ),
+        ],
+        status: state == .stale ? .stale : (status ?? .healthy),
+        message: "Synced"
+    )
 }

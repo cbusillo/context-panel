@@ -475,6 +475,7 @@ import Testing
 
     #expect(fiveHour.accountCount == 2)
     #expect(fiveHour.liveLimits.map(\.accountName) == ["Available weekly"])
+    #expect(fiveHour.lastKnownCapacityLimits.map(\.accountName) == ["Available weekly"])
     #expect(fiveHour.used == 5)
     #expect(fiveHour.limit == 100)
     #expect(fiveHour.remaining == 95)
@@ -519,6 +520,7 @@ import Testing
     let summary = try #require(snapshot.mainLimitSummaries.first)
 
     #expect(summary.liveLimits.map(\.label) == ["Claude 5-hour fresh"])
+    #expect(summary.lastKnownCapacityLimits.map(\.label) == ["Claude 5-hour fresh"])
     #expect(summary.used == 2)
     #expect(summary.limit == 100)
     #expect(summary.remaining == 98)

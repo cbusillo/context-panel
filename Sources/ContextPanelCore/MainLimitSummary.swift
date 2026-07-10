@@ -278,6 +278,17 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
         }
     }
 
+    public var lastKnownCapacityLimits: [UsageLimit] {
+        limits.compactMap { limit in
+            guard limit.used != nil, limit.limit != nil else { return nil }
+            if let resetsAt = limit.resetsAt, resetsAt <= generatedAt.addingTimeInterval(-60) {
+                return nil
+            }
+            guard !hasLastKnownExhaustedLongerWindow(for: limit) else { return nil }
+            return limit
+        }
+    }
+
     public var nextAccountToUse: AccountResetRecommendation? {
         liveLimits.compactMap { limit -> AccountResetRecommendation? in
             guard let resetsAt = limit.resetsAt, resetsAt > generatedAt else { return nil }
@@ -312,6 +323,16 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
             guard candidate.accountID == limit.accountID else { return false }
             guard candidate.id != limit.id else { return false }
             guard candidate.status == .limited else { return false }
+            guard let candidateWindow = candidate.mainLimitWindow else { return false }
+            return candidateWindow.capacityGateRank > window.capacityGateRank
+        }
+    }
+
+    private func hasLastKnownExhaustedLongerWindow(for limit: UsageLimit) -> Bool {
+        providerMainLimits.contains { candidate in
+            guard candidate.accountID == limit.accountID else { return false }
+            guard candidate.id != limit.id else { return false }
+            guard candidate.status == .limited || candidate.usageRatio == 1 else { return false }
             guard let candidateWindow = candidate.mainLimitWindow else { return false }
             return candidateWindow.capacityGateRank > window.capacityGateRank
         }
