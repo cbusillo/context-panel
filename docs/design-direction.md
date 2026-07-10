@@ -39,14 +39,13 @@ multi-account data does not fit a dial-led composition. The design preference is
 still instrument-first: clear pressure, reset timing, and state hierarchy before
 raw completeness.
 
-Apple Watch complications should first test one remaining-capacity answer across
-families so the same snapshot does not appear as inverse percentages on
-different faces. A shape-based fallback may use remaining-capacity rings for
-circular and corner families plus explicitly labeled used-pressure bars for
-rectangular rows. Watch app detail rows may remain used-pressure views. In every
-case, the visible number, wording, fill, color, and accessibility value must
-describe the same quantity. Keep unknown values indeterminate rather than
-substituting zero.
+Apple Watch uses a shape-based quantity matrix. Circular and corner
+complications are remaining-capacity rings, and inline complications state the
+remaining answer explicitly. Rectangular complications and watch app rows are
+explicitly labeled used-pressure views. In every case, the visible number,
+wording, fill, color, and accessibility sentence describe the same quantity.
+Keep unknown values indeterminate rather than substituting zero, preserve stale
+last-good values with explicit freshness language, and retain saved lane order.
 
 ## App Layout Direction
 
