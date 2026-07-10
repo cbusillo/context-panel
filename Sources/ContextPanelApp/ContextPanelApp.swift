@@ -2404,10 +2404,10 @@ struct PromptCacheOverviewCard: View {
     var body: some View {
         if summary.isAvailable {
             HStack(alignment: .center, spacing: 18) {
-                CapacityDial(
-                    value: currentRate ?? 0,
+                MetricDial(
+                    metric: .neutralRate(ratio: currentRate),
                     status: summary.comparisonStatus,
-                    label: currentRate.map(Self.percentText) ?? "--",
+                    accessibilityName: "Prompt cache hit rate",
                     sublabel: "now",
                     size: 86,
                     thickness: 6
@@ -2769,7 +2769,7 @@ private struct OpenAIAccountWindowPill: View {
             Text(limit?.previewUsageText ?? "unknown")
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundStyle(CPTheme.primaryText)
-            CapacityBar(value: limit?.usageRatio ?? 0, status: limit?.status ?? .unknown, height: 4)
+            UsagePressureBar(usedRatio: limit?.usageRatio, status: limit?.status ?? .unknown, height: 4)
             Text(limit?.resetText ?? "unknown reset")
                 .font(.system(size: 10))
                 .foregroundStyle(CPTheme.tertiaryText)
@@ -2863,10 +2863,10 @@ struct HeaderCard: View {
                 }
             }
             Spacer(minLength: 16)
-            CapacityDial(
-                value: snapshot.tightestCapacityRatio,
+            MetricDial(
+                metric: .remainingCapacity(remainingRatio: snapshot.tightestRemainingCapacityRatio),
                 status: snapshot.aggregateStatus,
-                label: "\(Int(snapshot.tightestCapacityRatio * 100))",
+                accessibilityName: "Overall remaining capacity",
                 sublabel: "left",
                 size: 116
             )
@@ -2912,10 +2912,10 @@ struct ProviderHeaderCard: View {
             }
             Spacer(minLength: 16)
             if let tightestSummary {
-                CapacityDial(
-                    value: tightestSummary.capacityRatio,
+                MetricDial(
+                    metric: .remainingCapacity(remainingRatio: tightestSummary.remainingCapacityRatio),
                     status: tightestSummary.status,
-                    label: "\(Int((tightestSummary.capacityRatio * 100).rounded()))",
+                    accessibilityName: "\(provider.displayName) remaining capacity",
                     sublabel: "left",
                     size: 116
                 )
@@ -3040,7 +3040,11 @@ struct SmallWidgetPreview: View {
                 Text(snapshot.tightestMainLimitSummary?.previewResetConfidenceText ?? snapshot.subheadline)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(CPTheme.secondaryText)
-                CapacityBar(value: snapshot.tightestMainLimitSummary?.usageRatio ?? 0, status: snapshot.aggregateStatus, height: 6)
+                UsagePressureBar(
+                    usedRatio: snapshot.tightestMainLimitSummary?.usageRatio,
+                    status: snapshot.aggregateStatus,
+                    height: 6
+                )
                 Spacer()
                 ProviderMiniStatus(snapshot: snapshot)
             }
@@ -3066,7 +3070,11 @@ struct MediumWidgetPreview: View {
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(CPTheme.secondaryText)
                         .textCase(.uppercase)
-                    CapacityBar(value: snapshot.tightestMainLimitSummary?.usageRatio ?? 0, status: snapshot.aggregateStatus, height: 6)
+                    UsagePressureBar(
+                        usedRatio: snapshot.tightestMainLimitSummary?.usageRatio,
+                        status: snapshot.aggregateStatus,
+                        height: 6
+                    )
                     VStack(alignment: .leading, spacing: 2) {
                         Text(snapshot.fastModeForecast.copy)
                             .font(.system(size: 18, weight: .semibold))
@@ -3270,11 +3278,12 @@ struct MainLimitDetail: View {
                     StatusMark(status: summary.status, size: 10)
                 }
 
-                CapacityDial(
-                    value: summary.capacityRatio,
+                MetricDial(
+                    metric: .remainingCapacity(remainingRatio: summary.remainingCapacityRatio),
                     status: summary.status,
-                    label: summary.detailRemainingValue,
+                    accessibilityName: "\(summary.provider.displayName) \(summary.previewWindowName) remaining capacity",
                     sublabel: "left",
+                    displayText: summary.detailRemainingValue,
                     size: 140
                 )
                 .frame(maxWidth: .infinity)
@@ -3476,7 +3485,7 @@ struct MainLimitRow: View {
                         .foregroundStyle(CPTheme.secondaryText)
                 }
                 HStack(spacing: 8) {
-                    CapacityBar(value: summary.usageRatio ?? 0, status: summary.status)
+                    UsagePressureBar(usedRatio: summary.usageRatio, status: summary.status)
                     Text(compact ? summary.resetText : summary.previewResetConfidenceText)
                         .font(.system(size: 10))
                         .foregroundStyle(summary.status == .stale ? CPTheme.statusColor(.stale) : CPTheme.tertiaryText)
@@ -3873,11 +3882,12 @@ struct DiagnosticProviderReport: Identifiable, Equatable {
     let detail: String?
 }
 
-struct CapacityDial: View {
-    let value: Double
+struct MetricDial: View {
+    let metric: MetricProgress
     let status: UsageStatus
-    let label: String
+    let accessibilityName: String
     let sublabel: String
+    var displayText: String? = nil
     var size: CGFloat = 96
     var thickness: CGFloat = 6
 
@@ -3885,15 +3895,23 @@ struct CapacityDial: View {
         ZStack {
             Circle()
                 .stroke(CPTheme.line, lineWidth: thickness)
-            Circle()
-                .trim(from: 0, to: min(max(value, 0), 1))
-                .stroke(
-                    CPTheme.statusColor(status),
-                    style: StrokeStyle(lineWidth: thickness, lineCap: .round)
-                )
-                .rotationEffect(.degrees(-90))
+            if let ratio = metric.ratio {
+                Circle()
+                    .trim(from: 0, to: ratio)
+                    .stroke(
+                        CPTheme.statusColor(status),
+                        style: StrokeStyle(lineWidth: thickness, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(-90))
+            } else {
+                Circle()
+                    .stroke(
+                        CPTheme.statusColor(status),
+                        style: StrokeStyle(lineWidth: 1.5, dash: [4, 4])
+                    )
+            }
             VStack(spacing: 0) {
-                Text(label)
+                Text(displayText ?? metric.percentText)
                     .font(.system(size: size > 100 ? 30 : 22, weight: .semibold, design: .monospaced))
                     .foregroundStyle(CPTheme.primaryText)
                 Text(sublabel)
@@ -3903,6 +3921,9 @@ struct CapacityDial: View {
             }
         }
         .frame(width: size, height: size)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityName)
+        .accessibilityValue(metric.accessibilityValue)
     }
 }
 
@@ -4151,22 +4172,37 @@ private struct AppLimitWarningNotificationService {
     }
 }
 
-struct CapacityBar: View {
-    let value: Double
+struct UsagePressureBar: View {
+    let usedRatio: Double?
     let status: UsageStatus
     var height: CGFloat = 4
+
+    private var metric: MetricProgress {
+        .usedPressure(usedRatio: usedRatio)
+    }
 
     var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
                 Capsule()
                     .fill(CPTheme.line)
-                Capsule()
-                    .fill(CPTheme.statusColor(status))
-                    .frame(width: proxy.size.width * min(max(value, 0), 1))
+                if let ratio = metric.ratio {
+                    Capsule()
+                        .fill(CPTheme.statusColor(status))
+                        .frame(width: proxy.size.width * ratio)
+                } else {
+                    Capsule()
+                        .stroke(
+                            CPTheme.statusColor(status),
+                            style: StrokeStyle(lineWidth: 1, dash: [2, 2])
+                        )
+                }
             }
         }
         .frame(height: height)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Usage pressure")
+        .accessibilityValue(metric.accessibilityValue)
     }
 }
 
@@ -4376,9 +4412,8 @@ extension UsageSnapshot {
         return "\(tightestMainLimitSummary.provider.shortName) · \(tightestMainLimitSummary.previewWindowName) · \(tightestMainLimitSummary.accountText)"
     }
 
-    var tightestCapacityRatio: Double {
-        guard let ratio = tightestMainLimitSummary?.usageRatio else { return 0 }
-        return max(1 - ratio, 0)
+    var tightestRemainingCapacityRatio: Double? {
+        tightestMainLimitSummary?.remainingCapacityRatio
     }
 
     var fastModeForecast: FastModeCapacityPortfolioForecast {
