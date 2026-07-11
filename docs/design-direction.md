@@ -7,12 +7,26 @@ Last updated: 2026-07-11.
 Context Panel should use **Quiet Instrument** as its default visual direction.
 The product should feel like a calm Mac status instrument rather than a billing
 dashboard. It should answer the user's immediate question first: can I keep
-working, which account or limit is most constrained, and when will that pressure
-change?
+working, which saved limit is my stable reference, does a different limit need
+attention now, and when will that pressure change?
+
+The stable main answer is the first visible limit in the person's saved order.
+The default order begins with OpenAI Weekly. Missing or stale data keeps that
+answer in place and is described honestly instead of silently switching the
+large number to another provider or time window. A separate `Closest to limit`
+answer appears only for a different numeric limit that is close, limited, or at
+least 20 percentage points lower than the main answer. Supporting limits retain
+saved order. Visibility controls the saved list, not safety: a hidden current
+limit may still appear as `Closest to limit` when it meets that rule.
+If every saved limit is hidden, the interface says that no limit is selected
+instead of restoring hidden rows or promoting a warning without a stable
+reference. Auxiliary provider data can remain available in detail views, but
+it does not replace a missing saved answer.
 
 The widget is the glance surface. It should be dense, calm, and answer-first:
-remaining capacity, tightest provider/account/model lane, reset timing, refresh
-health, stale state, and compact prompt-cache telemetry where available.
+remaining capacity, the stable saved answer, meaningful limit pressure, reset
+timing, refresh health, stale state, and compact prompt-cache telemetry where
+available.
 
 The app is the setup, detail, and troubleshooting surface. It can use denser
 ledger treatments, diagnostics, history, account management, refresh controls,
@@ -23,11 +37,13 @@ trying to turn the widget into a dashboard.
 
 Use an instrument-first widget hierarchy:
 
-- Small widget: show up to three configured main-limit lanes in saved order.
-  A single selected lane may use the larger remaining-capacity treatment;
-  multi-lane layouts use a compact remaining-capacity ledger with locally
-  aligned capacity bars, reset confidence, and explicit unknown/stale state.
-  Stale or setup problem copy takes priority when needed.
+- Small widget: use one visually dominant saved answer plus up to two quieter
+  supporting limits. A useful `Closest to limit` answer takes the first
+  supporting slot; any remaining slot follows saved order. The primary answer
+  gets the larger remaining-capacity number and full-width bar; supporting
+  limits use compact rows with explicit `left`, reset, unknown, and stale
+  meaning. A single saved limit may use the larger one-limit treatment. Stale
+  or setup problem copy takes priority when needed.
 - Medium widget: overall/tightest status plus the most constrained provider or
   account rows, nearest reset, prompt-cache summary when enabled, and compact
   sync/refresh state.
@@ -41,13 +57,15 @@ still instrument-first: clear pressure, reset timing, and state hierarchy before
 raw completeness.
 
 Every Apple Watch complication family is a glance surface and shows remaining
-capacity, matching the primary macOS widget answer. Circular and corner gauges,
-rectangular bars, and inline copy all use the remaining ratio and explicit
-remaining language. Watch app rows remain detail surfaces and stay explicitly
-used-pressure. In every case, the visible number, wording, fill, color, and
-accessibility sentence describe the same quantity. Keep unknown values
-indeterminate rather than substituting zero, preserve stale last-good values
-with explicit freshness language, and retain saved lane order.
+capacity, matching the primary macOS widget answer. Circular and corner gauges
+remain one-value surfaces. Inline may show the stable answer plus a useful
+closest limit when both fit, otherwise it shows the next saved limit or falls
+back to one clear value. Rectangular bars and inline copy use the remaining
+ratio and explicit `left` language. Watch app rows remain detail surfaces and
+stay explicitly used-pressure. In every case, the visible number, wording,
+fill, color, and accessibility sentence describe the same quantity. Keep
+unknown values indeterminate rather than substituting zero, preserve stale
+last-good values with explicit freshness language, and retain saved order.
 
 ## App Layout Direction
 
@@ -64,15 +82,20 @@ The read-only iPhone, iPad, and visionOS companion uses an adaptive composition:
 
 - iPhone keeps the existing full-width single column with 16-point page padding
   in every orientation.
-- Non-phone windows below 810 points and accessibility text sizes use one
-  centered column capped at 720 points with 24-point page padding. The order is
+- Non-phone content widths below 824 points and accessibility text sizes use one
+  centered column capped at 760 points with 24-point page padding. The order is
   usage instrument, sync status, display settings, refresh settings, then
   visionOS appearance.
-- Regular-width iPad and visionOS windows use two bounded columns: the usage
-  instrument and sync status lead, while settings remain secondary in the
-  trailing column. The layout begins at 810 points and stops expanding at 1080
-  points; the instrument column flexes from 400 to 720 points and the settings
-  column remains 340 points.
+- Regular-width iPad windows use an inline page header aligned with the content
+  grid, with refresh beside the current sync state. Two bounded columns begin
+  only after page padding leaves at least 824 points of usable content and stop
+  expanding at 1240 points; the instrument column flexes from 440 to 820 points,
+  the settings column remains 360 points, and the gap is 24 points.
+- visionOS keeps its calmer native navigation title and bounded composition;
+  iPad-specific title and width changes must not be imposed on it automatically.
+  Its established 810-point breakpoint, 720/1080-point content caps, 400–720
+  point instrument column, 340-point settings column, and 20-point gap remain
+  unchanged.
 - Resizing must preserve view identity, settings state, and accessibility
   reading order.
 - The companion remains a focused read-only utility. Do not turn regular width
@@ -82,6 +105,22 @@ Mutation belongs in the app, not the widget: adding logins, reconnecting,
 naming accounts, disabling or removing accounts, saving bookmarks, choosing
 visible widget lanes, refreshing, calibration, warning configuration, and
 privacy/credential messaging.
+
+## Apple TV Direction
+
+Apple TV uses a native ten-foot **Couch Mode**, not a stretched widget or iPad
+layout. Keep the accepted three-provider, focus-driven composition, provider
+drill-down, privacy modes, and explicit stale/offline states.
+
+Each provider card applies the shared answer rule within that provider: the
+first visible saved time window stays as the large answer, a distinct
+`Closest to limit` line appears only when useful, and provider details keep
+saved order. Provider-only auxiliary capacity remains available in detail but
+does not take over the large answer when a saved time window is missing. Full
+Detail, Hide Account Names, and Percentages Only change the amount of personal
+detail, not answer selection. Visible percentages use `left`. CloudKit reads,
+last-good cache behavior, focus navigation, and deep links remain separate
+platform concerns and must not be coupled to shared SwiftUI components.
 
 ## Visual System
 
@@ -136,6 +175,8 @@ including:
   companion widget targets.
 - `ContextPanelWidget`: WidgetKit timeline, family mapping, widget URL wiring,
   app-group reads, and sandbox-local fallback behavior.
+- `MainLimitAnswerSelection`: shared stable-answer, optional closest-limit, and
+  saved-order selection consumed by Mac, Watch, widget, and tvOS presentation.
 
 Keep colors, spacing, radius, typography, material, and status semantics in
 native theme helpers instead of scattering raw values through views.
@@ -167,6 +208,8 @@ Design and implementation must handle these states deliberately:
 - Dense multi-account/provider data.
 - Prompt-cache unavailable, enabled, healthy, and sharply degraded states.
 - Companion sync unavailable, stale, partial, and healthy states.
+- Apple TV offline with a last-good cache, restored-live sync, and no prior
+  cached document.
 
 Failure and stale states should isolate to the affected account, provider, or
 transport when neighboring data is still valid. Do not blank the whole widget or
@@ -197,17 +240,22 @@ capacity bar.
 
 ## Ordering And Density
 
-Widget ordering should default to constraint/tightness so the most important
-lane appears first. The app can support stable user/provider grouping and richer
-detail because users have room to compare and act.
+The first visible saved limit is the stable primary answer. Constraint ranking
+does not replace that answer; it supplies the optional `Closest to limit`
+message when the result is materially different or concerning. Supporting
+limits retain saved order, except that constrained glance surfaces may give the
+useful closest-limit warning their first secondary slot. Detail screens may
+still sort diagnostic rows by pressure when that ordering is explicitly
+labeled and does not change the stable glance answer.
 
 When space is tight, prefer:
 
-1. current limit pressure
-2. reset timing and confidence
-3. provider/account identity
-4. stale, setup, or refresh problem
-5. prompt-cache or forecast detail
+1. stable saved answer
+2. materially different or concerning closest limit
+3. reset timing and confidence
+4. provider/account identity
+5. stale, setup, offline, or refresh problem
+6. prompt-cache or forecast detail
 
 Large-widget density should be tested with realistic multi-account snapshots
 before committing to a visible row count. Six to eight rows is a target, not a

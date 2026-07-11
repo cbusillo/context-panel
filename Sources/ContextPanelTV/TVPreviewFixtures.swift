@@ -24,7 +24,8 @@ enum TVPreviewFixtures {
         let document = makeDocument(
             generatedAt: generatedAt,
             publishedAt: now.addingTimeInterval(-35),
-            includesPartialFailure: fixture == "partial"
+            includesPartialFailure: fixture == "partial",
+            showsDistinctClosest: fixture == "closest"
         )
         let status: UsageStatus = switch fixture {
         case "failure":
@@ -51,7 +52,8 @@ enum TVPreviewFixtures {
     private static func makeDocument(
         generatedAt: Date,
         publishedAt: Date,
-        includesPartialFailure: Bool
+        includesPartialFailure: Bool,
+        showsDistinctClosest: Bool
     ) -> CompanionSyncDocument {
         let limits = [
             UsageLimit(
@@ -88,7 +90,7 @@ enum TVPreviewFixtures {
                 label: "OpenAI 5-hour",
                 windowLabel: "5-hour",
                 unit: .percent,
-                used: 18,
+                used: showsDistinctClosest ? 92 : 18,
                 limit: 100,
                 resetsAt: generatedAt.addingTimeInterval(2.2 * 60 * 60),
                 confidence: .official

@@ -63,9 +63,8 @@ public struct WidgetDisplayPreferences: Codable, Equatable, Sendable {
 
     public func visibleMainLimitSummaries(from summaries: [MainLimitSummary], maximumCount: Int = 4) -> [MainLimitSummary] {
         let visible = summaries.filter { preference(for: $0)?.isVisible ?? false }
-        let selected = visible.isEmpty ? summaries : visible
 
-        return Array(selected.sorted { lhs, rhs in
+        return Array(visible.sorted { lhs, rhs in
             let lhsOrder = preference(for: lhs)?.sortOrder ?? Int.max
             let rhsOrder = preference(for: rhs)?.sortOrder ?? Int.max
             if lhsOrder != rhsOrder {
@@ -82,17 +81,7 @@ public struct WidgetDisplayPreferences: Codable, Equatable, Sendable {
         let visiblePreferences = mainLimits.filter(\.isVisible)
 
         if visiblePreferences.isEmpty {
-            return visibleMainLimitSummaries(from: summaries, maximumCount: maximumCount).enumerated().map { index, summary in
-                WidgetMainLimitLane(
-                    preference: WidgetMainLimitPreference(
-                        provider: summary.provider,
-                        window: summary.window,
-                        isVisible: true,
-                        sortOrder: index
-                    ),
-                    summary: summary
-                )
-            }
+            return []
         }
 
         let selectedPreferences: [WidgetMainLimitPreference]
@@ -114,6 +103,57 @@ public struct WidgetDisplayPreferences: Codable, Equatable, Sendable {
         return selectedPreferences.map { preference in
             WidgetMainLimitLane(preference: preference, summary: summaryByID[preference.id])
         }
+    }
+
+    public func mainLimitAnswerSelection(
+        from summaries: [MainLimitSummary],
+        provider: Provider? = nil
+    ) -> MainLimitAnswerSelection {
+        let scopedSummaries = summaries.filter { summary in
+            provider == nil || summary.provider == provider
+        }
+        let maximumCount = max(mainLimits.count, scopedSummaries.count)
+        let savedLanes = visibleMainLimitLanes(
+            from: scopedSummaries,
+            maximumCount: maximumCount
+        )
+        .filter { lane in
+            provider == nil || lane.provider == provider
+        }
+        let primary = savedLanes.first
+        let closestSummary = savedLanes.isEmpty
+            ? nil
+            : scopedSummaries
+                .filter { summary in
+                    summary.id != primary?.id
+                        && summary.remainingCapacityRatio != nil
+                        && summary.status.isCurrentCapacityStatus
+                }
+                .sorted { lhs, rhs in
+                    let lhsRemaining = lhs.remainingCapacityRatio ?? 1
+                    let rhsRemaining = rhs.remainingCapacityRatio ?? 1
+                    if lhsRemaining != rhsRemaining {
+                        return lhsRemaining < rhsRemaining
+                    }
+                    return lhs.defaultWidgetSortRank > rhs.defaultWidgetSortRank
+                }
+                .first
+        let closest = closestSummary.flatMap { summary -> WidgetMainLimitLane? in
+            guard Self.shouldShowClosestLimit(primary: primary, candidate: summary) else { return nil }
+            let preference = preference(for: summary) ?? WidgetMainLimitPreference(
+                provider: summary.provider,
+                window: summary.window,
+                isVisible: true,
+                sortOrder: Int.max
+            )
+            return WidgetMainLimitLane(preference: preference, summary: summary)
+        }
+
+        return MainLimitAnswerSelection(
+            primary: primary,
+            closest: closest,
+            saved: savedLanes
+        )
     }
 
     public mutating func setMainLimit(provider: Provider, window: MainLimitWindow, isVisible: Bool) {
@@ -198,6 +238,27 @@ public struct WidgetDisplayPreferences: Codable, Equatable, Sendable {
         ]
 
         return preferences == legacyDefaults
+    }
+
+    private static func shouldShowClosestLimit(
+        primary: WidgetMainLimitLane?,
+        candidate: MainLimitSummary
+    ) -> Bool {
+        guard let candidateRemaining = candidate.remainingCapacityRatio else { return false }
+        if let primaryRemaining = primary?.summary?.remainingCapacityRatio {
+            guard candidateRemaining < primaryRemaining else { return false }
+            if candidate.status == .close || candidate.status == .limited {
+                return true
+            }
+            let primaryDecimal = Decimal(string: String(primaryRemaining)) ?? Decimal(primaryRemaining)
+            let candidateDecimal = Decimal(string: String(candidateRemaining)) ?? Decimal(candidateRemaining)
+            let materialDifference = Decimal(MainLimitAnswerSelection.materialDifferencePoints) / 100
+            return primaryDecimal - candidateDecimal >= materialDifference
+        }
+        if candidate.status == .close || candidate.status == .limited {
+            return true
+        }
+        return false
     }
 
     private static var defaultMainLimits: [WidgetMainLimitPreference] {
@@ -312,6 +373,41 @@ public struct WidgetMainLimitLane: Equatable, Identifiable, Sendable {
     }
 }
 
+public struct MainLimitAnswerSelection: Equatable, Sendable {
+    public static let materialDifferencePoints = 20
+
+    public let primary: WidgetMainLimitLane?
+    public let closest: WidgetMainLimitLane?
+    public let saved: [WidgetMainLimitLane]
+
+    public var supportingSaved: [WidgetMainLimitLane] {
+        saved.filter { $0.id != primary?.id }
+    }
+
+    public func compactSupportingLanes(maximumCount: Int) -> [WidgetMainLimitLane] {
+        guard maximumCount > 0 else { return [] }
+
+        var lanes: [WidgetMainLimitLane] = []
+        var representedIDs = Set<String>()
+        for lane in [closest].compactMap({ $0 }) + supportingSaved {
+            guard representedIDs.insert(lane.id).inserted else { continue }
+            lanes.append(lane)
+            guard lanes.count < maximumCount else { break }
+        }
+        return lanes
+    }
+
+    public init(
+        primary: WidgetMainLimitLane?,
+        closest: WidgetMainLimitLane?,
+        saved: [WidgetMainLimitLane]
+    ) {
+        self.primary = primary
+        self.closest = closest
+        self.saved = saved
+    }
+}
+
 public extension MainLimitSummary {
     var defaultWidgetSortRank: Int {
         if provider == .openAI, window == .weekly {
@@ -339,5 +435,16 @@ public extension MainLimitSummary {
             return 50
         }
         return 0
+    }
+}
+
+private extension UsageStatus {
+    var isCurrentCapacityStatus: Bool {
+        switch self {
+        case .healthy, .close, .limited:
+            true
+        case .stale, .unknown, .failure, .loading:
+            false
+        }
     }
 }
