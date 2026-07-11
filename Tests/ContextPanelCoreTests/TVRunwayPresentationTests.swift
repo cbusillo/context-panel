@@ -176,6 +176,55 @@ import Testing
     #expect(store.load(matching: newerDocument) == nil)
 }
 
+@Test func tvSyncReceiptStoreRejectsAnUnsupportedSchema() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-tv-receipt-schema-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let receiptURL = directory.appending(path: "receipt.json")
+    let store = TVSyncReceiptStore(receiptURL: receiptURL)
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let document = makeTVDocument(now: now)
+
+    try store.save(document: document, receivedAt: now)
+    let data = try Data(contentsOf: receiptURL)
+    var receiptObject = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    receiptObject["schemaVersion"] = TVSyncReceipt.schemaVersion + 1
+    try JSONSerialization.data(withJSONObject: receiptObject).write(to: receiptURL, options: .atomic)
+
+    #expect(store.load(matching: document) == nil)
+}
+
+@Test func tvSyncNoticePolicyUsesTransportOutcomeInsteadOfProviderStatus() {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let providerFailure = CompanionRemoteSyncLoadResult(
+        result: CompanionSyncLoadResult(
+            document: makeTVDocument(now: now),
+            status: .failure
+        ),
+        outcome: CompanionRemoteSyncOutcome(succeeded: true)
+    )
+    let transportFailure = CompanionRemoteSyncLoadResult(
+        result: CompanionSyncLoadResult(document: nil, status: .failure),
+        outcome: CompanionRemoteSyncOutcome(isAvailable: false, succeeded: false)
+    )
+
+    #expect(!TVSyncNoticePolicy.shouldShowCloudUnavailable(for: providerFailure))
+    #expect(TVSyncNoticePolicy.shouldShowCloudUnavailable(for: transportFailure))
+}
+
+@Test func tvLocalCacheLocationsUseTheCachesContainer() {
+    let cachesDirectory = URL(fileURLWithPath: "/container/Library/Caches", isDirectory: true)
+    let locations = TVLocalCacheLocations(cachesDirectory: cachesDirectory)
+
+    #expect(locations.rootDirectory.path == "/container/Library/Caches/Context Panel")
+    #expect(
+        locations.companionDocumentURL.path
+            == "/container/Library/Caches/Context Panel/Companion/context-panel-companion.json"
+    )
+    #expect(locations.receiptURL.path == "/container/Library/Caches/Context Panel/tv-sync-receipt.json")
+}
+
 private func makeTVSnapshot(now: Date) -> WidgetSnapshot {
     let document = makeTVDocument(now: now)
     return WidgetSnapshot.fromCompanionSync(

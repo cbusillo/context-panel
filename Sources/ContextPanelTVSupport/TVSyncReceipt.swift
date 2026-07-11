@@ -32,6 +32,7 @@ public struct TVSyncReceiptStore: Sendable {
     public func load(matching document: CompanionSyncDocument) -> TVSyncReceipt? {
         guard let data = try? Data(contentsOf: receiptURL) else { return nil }
         guard let receipt = try? JSONDecoder().decode(TVSyncReceipt.self, from: data) else { return nil }
+        guard receipt.schemaVersion == TVSyncReceipt.schemaVersion else { return nil }
         return receipt.matches(document) ? receipt : nil
     }
 

@@ -68,8 +68,8 @@ private struct TVRootView: View {
                     .padding(.vertical, 48)
                 }
 
-                if model.lastSyncErrorMessage != nil, !presentation.isEmpty {
-                    TVSyncAlert()
+                if let syncNoticeMessage = model.syncNoticeMessage, !presentation.isEmpty {
+                    TVSyncAlert(message: syncNoticeMessage)
                         .padding(.horizontal, 72)
                         .padding(.bottom, 28)
                 }
@@ -123,26 +123,33 @@ private final class TVSyncModel {
     private let cacheStore: CompanionSyncStore
     private let receiptStore: TVSyncReceiptStore
     private let usesPreviewFixture: Bool
+    private let forcesRemoteFailure: Bool
     private var reloadTask: Task<Void, Never>?
     private var needsReloadAfterCurrentTask = false
 
     private(set) var result: CompanionSyncLoadResult
     private(set) var displayResult: CompanionSyncLoadResult
     private(set) var snapshot: WidgetSnapshot
-    private(set) var lastSyncErrorMessage: String?
+    private(set) var syncNoticeMessage: String?
     private(set) var lastReceivedAt: Date?
     private(set) var isLoading = false
 
     init(now: Date = Date()) {
         remoteStore = CompanionCloudKitSyncStoreFactory.make()
+        let localCacheLocations = TVLocalCacheLocations.live()
         cacheStore = CompanionSyncStore(
-            documentURL: ContextPanelLocations.companionSyncDocumentURL(appGroupID: nil)
+            documentURL: localCacheLocations.companionDocumentURL
         )
         let localReceiptStore = TVSyncReceiptStore(
-            receiptURL: ContextPanelLocations.applicationSupportDirectory()
-                .appending(path: "tv-sync-receipt.json")
+            receiptURL: localCacheLocations.receiptURL
         )
         receiptStore = localReceiptStore
+
+        #if DEBUG
+        forcesRemoteFailure = TVPreviewFixtures.forcesRemoteFailure
+        #else
+        forcesRemoteFailure = false
+        #endif
 
         #if DEBUG
         if let fixtureResult = TVPreviewFixtures.requestedResult(now: now) {
@@ -150,7 +157,9 @@ private final class TVSyncModel {
             result = fixtureResult
             displayResult = fixtureResult
             lastReceivedAt = fixtureResult.transportMetadata?.receivedAt
-            lastSyncErrorMessage = fixtureResult.errorMessage
+            syncNoticeMessage = fixtureResult.transportMetadata?.deliveryStatus == .failed
+                ? Self.cloudUnavailableMessage
+                : nil
             snapshot = WidgetSnapshot.fromCompanionSync(
                 fixtureResult,
                 now: now,
@@ -182,8 +191,9 @@ private final class TVSyncModel {
 
         needsReloadAfterCurrentTask = false
         isLoading = true
-        lastSyncErrorMessage = nil
+        syncNoticeMessage = nil
         result = CompanionSyncLoadResult(document: result.document, status: .loading)
+        let shouldForceRemoteFailure = forcesRemoteFailure
 
         reloadTask = Task { [weak self, remoteStore, cacheStore, receiptStore] in
             defer {
@@ -196,14 +206,25 @@ private final class TVSyncModel {
                 }
             }
 
-            let remoteLoad = await remoteStore.load(now: now)
+            let remoteLoad = shouldForceRemoteFailure
+                ? Self.forcedRemoteFailureLoadResult()
+                : await remoteStore.load(now: now)
             guard !Task.isCancelled, let self else { return }
             let loaded = remoteLoad.result
             result = loaded
+            var persistenceNoticeMessage: String?
 
             if let document = loaded.document {
-                try? cacheStore.save(document)
-                try? receiptStore.save(document: document, receivedAt: now)
+                do {
+                    try cacheStore.save(document)
+                    do {
+                        try receiptStore.save(document: document, receivedAt: now)
+                    } catch {
+                        persistenceNoticeMessage = Self.syncReceiptUnavailableMessage
+                    }
+                } catch {
+                    persistenceNoticeMessage = Self.offlineCacheUnavailableMessage
+                }
                 lastReceivedAt = now
                 displayResult = loaded
             } else {
@@ -220,7 +241,9 @@ private final class TVSyncModel {
                 }
             }
 
-            lastSyncErrorMessage = loaded.status == .failure ? loaded.errorMessage : nil
+            syncNoticeMessage = TVSyncNoticePolicy.shouldShowCloudUnavailable(for: remoteLoad)
+                ? Self.cloudUnavailableMessage
+                : persistenceNoticeMessage
             snapshot = WidgetSnapshot.fromCompanionSync(
                 displayResult,
                 now: now,
@@ -232,6 +255,38 @@ private final class TVSyncModel {
     private static let stalenessPolicy = SnapshotStoreStalenessPolicy.appDefault(
         maximumAge: SnapshotFreshness.companionProviderMaximumAge
     )
+
+    private static let cloudUnavailableMessage =
+        "Cloud sync is unavailable. Showing saved runway; open Context Panel on your Mac if this persists."
+    private static let offlineCacheUnavailableMessage =
+        "Runway loaded, but it could not be saved for offline use."
+    private static let syncReceiptUnavailableMessage =
+        "Runway saved for offline use, but its sync time could not be recorded."
+
+    private static func forcedRemoteFailureLoadResult() -> CompanionRemoteSyncLoadResult {
+        let message = "Offline validation mode"
+        return CompanionRemoteSyncLoadResult(
+            result: CompanionSyncLoadResult(
+                document: nil,
+                status: .failure,
+                errorMessage: message,
+                transportStatuses: [
+                    CompanionSyncTransportStatus(
+                        source: .cloudKit,
+                        isAvailable: false,
+                        succeeded: false,
+                        loadedDocument: false,
+                        errorMessage: message
+                    ),
+                ]
+            ),
+            outcome: CompanionRemoteSyncOutcome(
+                isAvailable: false,
+                succeeded: false,
+                errorMessage: message
+            )
+        )
+    }
 }
 
 private struct TVHeaderView: View {
@@ -814,11 +869,13 @@ private struct TVEmptyRunwayView: View {
 }
 
 private struct TVSyncAlert: View {
+    let message: String
+
     var body: some View {
         HStack(spacing: 16) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.yellow)
-            Text("Cloud sync is unavailable. Showing saved runway; open Context Panel on your Mac if this persists.")
+            Text(message)
                 .font(.headline)
             Spacer()
         }
