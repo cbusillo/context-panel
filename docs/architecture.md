@@ -27,6 +27,9 @@ Context Panel is expected to split into a few native boundaries:
   under the app's notification authorization.
 - Widget extension: compact read-only display backed by the app's latest local
   snapshot.
+- tvOS app: a separate read-only couch-distance runway surface backed by the
+  sanitized CloudKit companion document and a last-good local cache. It does
+  not link WidgetKit, provider connectors, credentials, or collector controls.
 - Optional outbound webhook channel: user-configured limit-warning delivery to
   a third-party URL, with secrets stored in Keychain and normalized payloads
   built from `LimitWarningEvent`.
@@ -139,8 +142,8 @@ small, medium, and large glance layouts, while the macOS widget extension owns
 the timeline provider, family mapping, widget URL wiring, local App Group store,
 and widget-container fallback behavior.
 
-`CompanionSnapshot` is the transport-neutral projection for future Apple
-companion clients such as iPhone, iPad, and visionOS. It is constructed from a
+`CompanionSnapshot` is the transport-neutral projection for Apple companion
+clients such as iPhone, iPad, visionOS, watchOS, and tvOS. It is constructed from a
 stored local snapshot but intentionally omits raw account IDs, configured account
 IDs, local notes, auth paths, provider error strings, webhook secrets, tokens,
 and raw provider responses. Companion sync transports must publish this safe
@@ -160,6 +163,15 @@ changes lane visibility or order, that app-group override becomes authoritative
 for the companion app and its widgets only. Companion edits never flow back to
 the Mac, so there is no bidirectional conflict resolution or collector/admin
 mutation path.
+
+The tvOS companion is a standalone target rather than another destination on
+the iOS/visionOS app. It reuses `ContextPanelCore` and
+`ContextPanelCloudKitSync` through tvOS-specific static-library wrappers, while
+its focus-driven ten-foot UI remains isolated from WidgetKit and touch-oriented
+settings surfaces. The first slice refreshes on launch, foreground activation,
+and explicit user action, persists the last good companion document locally,
+and records the CloudKit receipt time separately so cached provider age and
+sync age do not become conflated.
 
 Limit warnings are evaluated from normalized `MainLimitSummary` capacity, not
 raw provider payloads. Local macOS notifications and outbound webhooks use
