@@ -27,7 +27,8 @@
       "default": "scripts/commit-gate.sh",
       "companionIOSArchive": "scripts/validate-companion-builds.sh --configuration Release --archive ios",
       "companionVisionOSArchive": "scripts/validate-companion-builds.sh --configuration Release --archive visionos",
-      "companionWatchBuild": "scripts/validate-companion-builds.sh --configuration Release watchos"
+      "companionWatchBuild": "scripts/validate-companion-builds.sh --configuration Release watchos",
+      "companionTVBuild": "scripts/validate-companion-builds.sh --configuration Release tvos"
     },
     "docsRequiredWhen": [
       "provider behavior changes",

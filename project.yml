@@ -183,6 +183,48 @@ targets:
         WATCHOS_DEPLOYMENT_TARGET: "10.0"
         SKIP_INSTALL: true
 
+  ContextPanelCoreTV:
+    type: library.static
+    platform: tvOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Sources/ContextPanelCore
+    settings:
+      base:
+        PRODUCT_NAME: ContextPanelCoreTV
+        PRODUCT_MODULE_NAME: ContextPanelCore
+        TVOS_DEPLOYMENT_TARGET: "17.0"
+        SKIP_INSTALL: true
+
+  ContextPanelCloudKitSyncTV:
+    type: library.static
+    platform: tvOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Sources/ContextPanelCloudKitSync
+    dependencies:
+      - target: ContextPanelCoreTV
+    settings:
+      base:
+        PRODUCT_NAME: ContextPanelCloudKitSyncTV
+        PRODUCT_MODULE_NAME: ContextPanelCloudKitSync
+        TVOS_DEPLOYMENT_TARGET: "17.0"
+        SKIP_INSTALL: true
+
+  ContextPanelTVSupport:
+    type: library.static
+    platform: tvOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Sources/ContextPanelTVSupport
+    dependencies:
+      - target: ContextPanelCoreTV
+    settings:
+      base:
+        PRODUCT_NAME: ContextPanelTVSupport
+        TVOS_DEPLOYMENT_TARGET: "17.0"
+        SKIP_INSTALL: true
+
   ContextPanel:
     type: application
     platform: macOS
@@ -444,6 +486,35 @@ targets:
           PROVISIONING_PROFILE_SPECIFIER: >-
             $(CONTEXT_PANEL_APP_STORE_WATCH_WIDGET_PROFILE_SPECIFIER)
 
+  ContextPanelTV:
+    type: application
+    platform: tvOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Sources/ContextPanelTV
+    dependencies:
+      - target: ContextPanelCoreTV
+      - target: ContextPanelCloudKitSyncTV
+      - target: ContextPanelTVSupport
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.shinycomputers.contextpanel
+        PRODUCT_NAME: Context Panel
+        GENERATE_INFOPLIST_FILE: false
+        INFOPLIST_FILE: Config/ContextPanelTV-Info.plist
+        INFOPLIST_KEY_CFBundleDisplayName: Context Panel
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: false
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "3"
+        TVOS_DEPLOYMENT_TARGET: "17.0"
+        CODE_SIGN_ENTITLEMENTS: Config/ContextPanelTV.entitlements
+      configs:
+        Release:
+          CODE_SIGN_IDENTITY: Apple Distribution
+          PROVISIONING_PROFILE_SPECIFIER: >-
+            $(CONTEXT_PANEL_APP_STORE_TV_PROFILE_SPECIFIER)
+
 schemes:
   ContextPanel:
     build:
@@ -469,6 +540,14 @@ schemes:
       targets:
         ContextPanelWatch: all
         ContextPanelWatchWidgetExtension: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  ContextPanelTV:
+    build:
+      targets:
+        ContextPanelTV: all
     run:
       config: Debug
     archive:

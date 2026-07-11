@@ -32,22 +32,23 @@ usage() {
 Usage: scripts/validate-companion-builds.sh [options] [platform...]
 
 Builds the companion app surfaces for generic Apple companion platforms without
-code signing. This catches iOS/visionOS/watchOS source, project, asset, and
+code signing. This catches iOS/visionOS/watchOS/tvOS source, project, asset, and
 WidgetKit compile regressions without requiring provisioning profiles or a
 physical device.
 
 With --archive, validates companion app archive packaging for iOS/visionOS.
-The watchOS target is embedded in the iOS companion archive and remains a
-build-only standalone validation target.
+The watchOS target is embedded in the iOS companion archive. watchOS and tvOS
+remain build-only standalone validation targets in this gate.
 
 Platforms:
   ios        Build generic iOS.
   visionos   Build generic visionOS.
   watchos    Build generic watchOS.
+  tvos       Build generic tvOS.
 
 Options:
   --archive                   Archive iOS/visionOS companion apps instead of
-                              building them. Not supported for watchOS.
+                              building them. Not supported for watchOS/tvOS.
   --configuration VALUE       Xcode configuration. Default: Debug.
   --derived-data-root PATH    DerivedData root. Default: artifact cache when mounted,
                               otherwise .build/companion-build-validation.
@@ -73,7 +74,7 @@ while [[ $# -gt 0 ]]; do
 		usage
 		exit 0
 		;;
-	ios | visionos | watchos)
+	ios | visionos | watchos | tvos)
 		platforms+=("$1")
 		shift
 		;;
@@ -86,7 +87,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ ${#platforms[@]} -eq 0 ]]; then
-	platforms=(ios visionos watchos)
+	platforms=(ios visionos watchos tvos)
 fi
 
 require_command() {
@@ -156,6 +157,9 @@ destination_for_platform() {
 	watchos)
 		printf 'generic/platform=watchOS'
 		;;
+	tvos)
+		printf 'generic/platform=tvOS'
+		;;
 	*)
 		echo "unsupported companion validation platform: $1" >&2
 		exit 2
@@ -178,6 +182,12 @@ for platform in "${platforms[@]}"; do
 			exit 2
 		fi
 		scheme="ContextPanelWatch"
+	elif [[ "$platform" == "tvos" ]]; then
+		if ((archive)); then
+			echo "archive validation is not supported for standalone tvOS" >&2
+			exit 2
+		fi
+		scheme="ContextPanelTV"
 	else
 		scheme="ContextPanelCompanion"
 	fi

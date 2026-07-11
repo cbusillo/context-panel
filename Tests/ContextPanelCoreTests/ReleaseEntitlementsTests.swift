@@ -134,6 +134,21 @@ import Testing
     }
 }
 
+@Test func tvEntitlementsStayReadOnlyAndCloudKitOnly() throws {
+    let entitlements = try loadEntitlements("Config/ContextPanelTV.entitlements")
+
+    let iCloudContainers = try #require(
+        entitlements["com.apple.developer.icloud-container-identifiers"] as? [String]
+    )
+    #expect(iCloudContainers == ["iCloud.com.shinycomputers.contextpanel"])
+    let services = try #require(entitlements["com.apple.developer.icloud-services"] as? [String])
+    #expect(services == ["CloudKit"])
+    #expect(entitlements["aps-environment"] == nil)
+    #expect(entitlements["com.apple.security.application-groups"] == nil)
+    #expect(entitlements["keychain-access-groups"] == nil)
+    #expect(entitlements["com.apple.developer.ubiquity-container-identifiers"] == nil)
+}
+
 @Test func companionProjectTargetsUseSharedSyncAndWidgetModules() throws {
     let project = try loadProjectYAML()
 
@@ -280,6 +295,66 @@ import Testing
     #expect(plist["WKCompanionAppBundleIdentifier"] as? String == "com.shinycomputers.contextpanel")
     #expect(plist["UIApplicationSceneManifest"] == nil)
     #expect(plist["UIBackgroundModes"] == nil)
+}
+
+@Test func tvProjectTargetUsesDistinctReadOnlyCompanionSurface() throws {
+    let project = try loadProjectYAML()
+
+    let coreTarget = try #require(project.target(named: "ContextPanelCoreTV"))
+    #expect(coreTarget["platform"] as? String == "tvOS")
+    #expect(coreTarget["deploymentTarget"] as? String == "17.0")
+    let coreSettings = try #require(project.targetSettings(named: "ContextPanelCoreTV"))
+    #expect(coreSettings["PRODUCT_MODULE_NAME"] as? String == "ContextPanelCore")
+    #expect(coreSettings["TVOS_DEPLOYMENT_TARGET"] as? String == "17.0")
+
+    let cloudKitTarget = try #require(project.target(named: "ContextPanelCloudKitSyncTV"))
+    #expect(cloudKitTarget["platform"] as? String == "tvOS")
+    let cloudKitDependencies = try #require(project.dependencies(named: "ContextPanelCloudKitSyncTV"))
+    #expect(cloudKitDependencies == ["ContextPanelCoreTV"])
+
+    let supportTarget = try #require(project.target(named: "ContextPanelTVSupport"))
+    #expect(supportTarget["platform"] as? String == "tvOS")
+    let supportDependencies = try #require(project.dependencies(named: "ContextPanelTVSupport"))
+    #expect(supportDependencies == ["ContextPanelCoreTV"])
+
+    let appTarget = try #require(project.target(named: "ContextPanelTV"))
+    #expect(appTarget["platform"] as? String == "tvOS")
+    #expect(appTarget["deploymentTarget"] as? String == "17.0")
+
+    let appSettings = try #require(project.targetSettings(named: "ContextPanelTV"))
+    #expect(appSettings["PRODUCT_BUNDLE_IDENTIFIER"] as? String == "com.shinycomputers.contextpanel")
+    #expect(appSettings["CODE_SIGN_ENTITLEMENTS"] as? String == "Config/ContextPanelTV.entitlements")
+    #expect(appSettings["INFOPLIST_FILE"] as? String == "Config/ContextPanelTV-Info.plist")
+    #expect(appSettings["TVOS_DEPLOYMENT_TARGET"] as? String == "17.0")
+    #expect(appSettings["TARGETED_DEVICE_FAMILY"] as? String == "3")
+    #expect(appSettings["ASSETCATALOG_COMPILER_APPICON_NAME"] == nil)
+    #expect(appSettings["APS_ENVIRONMENT"] == nil)
+
+    let appReleaseSettings = try #require(project.releaseTargetSettings(named: "ContextPanelTV"))
+    #expect(appReleaseSettings["CODE_SIGN_IDENTITY"] as? String == "Apple Distribution")
+    #expect(
+        appReleaseSettings["PROVISIONING_PROFILE_SPECIFIER"] as? String
+            == "$(CONTEXT_PANEL_APP_STORE_TV_PROFILE_SPECIFIER)"
+    )
+
+    let appDependencies = try #require(project.dependencies(named: "ContextPanelTV"))
+    #expect(appDependencies == [
+        "ContextPanelCoreTV",
+        "ContextPanelCloudKitSyncTV",
+        "ContextPanelTVSupport",
+    ])
+    #expect(!appDependencies.contains("ContextPanelWidgetUICompanion"))
+    #expect(!appDependencies.contains("ContextPanelSettingsUICompanion"))
+    #expect(!appDependencies.contains("ContextPanelCompanionWidgetExtension"))
+    #expect(!appDependencies.contains("ContextPanelWatch"))
+
+    let plist = try loadInfoPlist("Config/ContextPanelTV-Info.plist")
+    let urlTypes = try #require(plist["CFBundleURLTypes"] as? [[String: Any]])
+    let schemes = urlTypes.flatMap { $0["CFBundleURLSchemes"] as? [String] ?? [] }
+    #expect(schemes == ["contextpaneltv"])
+    #expect(plist["UIBackgroundModes"] == nil)
+    #expect(plist["UISupportedInterfaceOrientations"] == nil)
+    #expect(plist["WKApplication"] == nil)
 }
 
 @Test func refreshAgentDoesNotReferenceRetiredGoogleCredentialPaths() throws {

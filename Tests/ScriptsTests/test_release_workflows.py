@@ -780,13 +780,14 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 self.assertIn("PATH=\"$(xcodebuild_system_path)\" /usr/bin/xcodebuild", script)
                 self.assertNotRegex(script, r"(?m)^xcodebuild \\")
 
-    def test_companion_build_validation_supports_ios_visionos_and_watchos_without_signing(self):
+    def test_companion_build_validation_supports_ios_visionos_watchos_and_tvos_without_signing(self):
         workflow = self.read(".github/workflows/ci.yml")
         script = self.read("scripts/validate-companion-builds.sh")
 
         self.assertIn("scripts/validate-companion-builds.sh", workflow)
         self.assertIn("--configuration Release --archive ios", workflow)
         self.assertIn("scripts/validate-companion-builds.sh --configuration Release watchos", workflow)
+        self.assertIn("scripts/validate-companion-builds.sh --configuration Release tvos", workflow)
         self.assertIn("--archive", script)
         self.assertIn("archive validation is not supported for standalone watchOS", script)
         self.assertIn("Validating $scheme archive for $destination", script)
@@ -798,13 +799,15 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("Products/Applications/Context Panel.app", script)
         self.assertIn("Watch/Context Panel.app", script)
         self.assertIn("PlugIns/ContextPanelWatchWidgetExtension.appex", script)
-        self.assertIn("platforms=(ios visionos watchos)", script)
+        self.assertIn("platforms=(ios visionos watchos tvos)", script)
         self.assertIn("generic/platform=iOS", script)
         self.assertIn("generic/platform=visionOS", script)
         self.assertIn("generic/platform=watchOS", script)
+        self.assertIn("generic/platform=tvOS", script)
         self.assertIn("CODE_SIGNING_ALLOWED=NO", script)
         self.assertIn("ContextPanelCompanion", script)
         self.assertIn("ContextPanelWatch", script)
+        self.assertIn("ContextPanelTV", script)
         self.assertIn("PATH=\"$(xcodebuild_system_path)\" /usr/bin/xcodebuild", script)
 
     def test_visionos_dogfood_script_uses_development_signing_and_devicectl(self):
