@@ -41,6 +41,10 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
         complicationText(remainingCapacity.isIndeterminate ? "capacity unknown" : remainingTextLabeled)
     }
 
+    public var compactInlineQuantity: String {
+        complicationText(remainingCapacity.isIndeterminate ? "?" : remainingText)
+    }
+
     public var exceptionalStatusText: String? {
         switch status {
         case .stale:
@@ -129,24 +133,74 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
         maximumCount: Int
     ) -> [WatchLimitDisplay] {
         guard maximumCount > 0 else { return [] }
+        guard snapshot.state != .setupNeeded else { return [] }
 
-        let preferredRows = preferences
-            .visibleMainLimitLanes(from: snapshot.usageSnapshot.mainLimitSummaries, maximumCount: maximumCount)
-            .compactMap { lane in
-                if let summary = lane.summary,
-                   let summaryRow = row(from: summary, snapshot: snapshot) {
-                    return summaryRow
-                }
-                return snapshot.mostConstrainedLimits
-                    .first {
-                        $0.provider == lane.preference.provider
-                            && $0.mainLimitWindow == lane.preference.window
-                    }
-                    .map { row(from: $0, snapshot: snapshot) }
-            }
-        return preferredRows.isEmpty
-            ? rows(from: snapshot, maximumCount: maximumCount)
-            : preferredRows
+        let summaries = snapshot.usageSnapshot.mainLimitSummaries
+        return preferences
+            .mainLimitAnswerSelection(from: summaries)
+            .saved
+            .prefix(maximumCount)
+            .compactMap { row(from: $0, snapshot: snapshot) }
+    }
+
+    public static func inlineRows(
+        from snapshot: WidgetSnapshot,
+        preferences: WidgetDisplayPreferences,
+        maximumCount: Int = 2
+    ) -> [WatchLimitDisplay] {
+        guard maximumCount > 0 else { return [] }
+        guard snapshot.state != .setupNeeded else { return [] }
+
+        let selection = preferences.mainLimitAnswerSelection(from: snapshot.usageSnapshot.mainLimitSummaries)
+        var lanes: [WidgetMainLimitLane] = []
+        var representedIDs = Set<String>()
+        let compactLanes = [selection.primary].compactMap { $0 }
+            + selection.compactSupportingLanes(maximumCount: maximumCount)
+        for lane in compactLanes {
+            guard representedIDs.insert(lane.id).inserted else { continue }
+            lanes.append(lane)
+            guard lanes.count < maximumCount else { break }
+        }
+
+        return lanes.compactMap { row(from: $0, snapshot: snapshot) }
+    }
+
+    private static func row(
+        from lane: WidgetMainLimitLane,
+        snapshot: WidgetSnapshot
+    ) -> WatchLimitDisplay? {
+        if let summary = lane.summary,
+           let summaryRow = row(from: summary, snapshot: snapshot) {
+            return summaryRow
+        }
+        if let matchingLimit = snapshot.mostConstrainedLimits.first(where: {
+                $0.provider == lane.preference.provider
+                    && $0.mainLimitWindow == lane.preference.window
+            }) {
+            return row(from: matchingLimit, snapshot: snapshot)
+        }
+
+        let status = displayStatus(source: .unknown, snapshotState: snapshot.state)
+        let metrics = metricValues(remainingRatio: nil, usedRatio: nil, status: status)
+        return WatchLimitDisplay(
+            id: summaryID(provider: lane.provider, window: lane.window),
+            provider: lane.provider,
+            title: lane.provider.displayName,
+            subtitle: lane.window.shortName,
+            context: "No current data",
+            usedText: "—",
+            remainingText: "—",
+            remainingCapacity: metrics.remaining,
+            usedPressure: metrics.used,
+            status: status,
+            accessibilityWindow: lane.window.displayName,
+            accessibilityContext: "No current data",
+            usedAccessibilityText: "usage unknown",
+            remainingAccessibilityText: "remaining capacity unknown",
+            resetsAt: nil,
+            snapshotGeneratedAt: snapshot.generatedAt,
+            snapshotState: snapshot.state
+        )
     }
 
     private static func row(from summary: MainLimitSummary, snapshot: WidgetSnapshot) -> WatchLimitDisplay? {

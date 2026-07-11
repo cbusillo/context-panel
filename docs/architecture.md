@@ -40,9 +40,15 @@ wakes the running app with a distributed notification. The main app drains that
 queue through `UNUserNotificationCenter`, so macOS authorization stays attached
 to the user-facing app bundle rather than the background login item.
 
-The shared vocabulary now lives in `ContextPanelCore`. App, widget, probes, and
-the background refresh agent all consume the same normalized provider reports,
-account configuration, snapshots, main-limit summaries, and forecast math.
+The shared vocabulary now lives in `ContextPanelCore`. App, widgets, Watch,
+tvOS, probes, and the background refresh agent all consume the same normalized
+provider reports, account configuration, snapshots, main-limit summaries,
+display preferences, main-answer selection, and forecast math. The shared
+selection keeps the first visible saved limit stable, identifies an optional
+distinct closest limit, and preserves supporting saved order; platform targets
+still own their native layout and interaction. Missing saved limits remain
+explicit placeholders, an all-hidden selection remains empty, and auxiliary
+provider limits stay in detail surfaces instead of replacing the stable answer.
 
 ## Domain Model
 

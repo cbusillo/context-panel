@@ -3,34 +3,38 @@ import Testing
 @testable import ContextPanelCompanionSupport
 
 @Test func companionLayoutPolicyUsesTwoColumnsAtRegularWidth() {
+    let minimumViewportWidth = CompanionLayoutPolicy.twoColumnMinimumContentWidth
+        + (CompanionLayoutPolicy.regularPagePadding * 2)
     #expect(
         CompanionLayoutPolicy.mode(
-            availableWidth: CompanionLayoutPolicy.twoColumnMinimumWidth,
-            isPhone: false,
+            availableWidth: minimumViewportWidth,
+            platform: .pad,
             usesAccessibilityTextSizes: false
         ) == .twoColumn
     )
     #expect(
         CompanionLayoutPolicy.mode(
             availableWidth: 1_400,
-            isPhone: false,
+            platform: .pad,
             usesAccessibilityTextSizes: false
         ) == .twoColumn
     )
 }
 
 @Test func companionLayoutPolicyKeepsNarrowAndPreferredLayoutsSingleColumn() {
+    let minimumViewportWidth = CompanionLayoutPolicy.twoColumnMinimumContentWidth
+        + (CompanionLayoutPolicy.regularPagePadding * 2)
     #expect(
         CompanionLayoutPolicy.mode(
-            availableWidth: CompanionLayoutPolicy.twoColumnMinimumWidth - 1,
-            isPhone: false,
+            availableWidth: minimumViewportWidth - 1,
+            platform: .pad,
             usesAccessibilityTextSizes: false
         ) == .singleColumn
     )
     #expect(
         CompanionLayoutPolicy.mode(
             availableWidth: 1_400,
-            isPhone: false,
+            platform: .pad,
             usesAccessibilityTextSizes: true
         ) == .singleColumn
     )
@@ -39,56 +43,94 @@ import Testing
 @Test func companionLayoutPolicyKeepsPhonesFullWidthAndSingleColumn() {
     let layoutMode = CompanionLayoutPolicy.mode(
         availableWidth: 1_400,
-        isPhone: true,
+        platform: .phone,
         usesAccessibilityTextSizes: false
     )
 
     #expect(layoutMode == .singleColumn)
-    #expect(CompanionLayoutPolicy.maximumContentWidth(layoutMode: layoutMode, isPhone: true) == nil)
-    #expect(CompanionLayoutPolicy.pagePadding(isPhone: true) == 16)
+    #expect(CompanionLayoutPolicy.maximumContentWidth(layoutMode: layoutMode, platform: .phone) == nil)
+    #expect(CompanionLayoutPolicy.pagePadding(platform: .phone) == 16)
 }
 
 @Test func companionLayoutPolicyBoundsNonPhoneSingleAndTwoColumnLayouts() {
     #expect(
-        CompanionLayoutPolicy.maximumContentWidth(layoutMode: .singleColumn, isPhone: false)
+        CompanionLayoutPolicy.maximumContentWidth(layoutMode: .singleColumn, platform: .pad)
             == CompanionLayoutPolicy.singleColumnMaximumWidth
     )
     #expect(
-        CompanionLayoutPolicy.maximumContentWidth(layoutMode: .twoColumn, isPhone: false)
+        CompanionLayoutPolicy.maximumContentWidth(layoutMode: .twoColumn, platform: .pad)
             == CompanionLayoutPolicy.twoColumnMaximumWidth
     )
-    #expect(CompanionLayoutPolicy.pagePadding(isPhone: false) == 24)
+    #expect(CompanionLayoutPolicy.pagePadding(platform: .pad) == 24)
 }
 
 @Test func companionLayoutPolicyRejectsInvalidWidths() {
     #expect(
         CompanionLayoutPolicy.mode(
             availableWidth: -.infinity,
-            isPhone: false,
+            platform: .pad,
             usesAccessibilityTextSizes: false
         ) == .singleColumn
     )
     #expect(
         CompanionLayoutPolicy.mode(
             availableWidth: .nan,
-            isPhone: false,
+            platform: .pad,
             usesAccessibilityTextSizes: false
         ) == .singleColumn
     )
     #expect(
         CompanionLayoutPolicy.mode(
             availableWidth: .infinity,
-            isPhone: false,
+            platform: .pad,
             usesAccessibilityTextSizes: false
         ) == .singleColumn
     )
 }
 
 @Test func companionLayoutPolicyMinimumColumnsFitItsBreakpoint() {
-    let requiredWidth = CompanionLayoutPolicy.regularPagePadding * 2
-        + CompanionLayoutPolicy.instrumentMinimumWidth
+    let requiredContentWidth = CompanionLayoutPolicy.instrumentMinimumWidth
         + CompanionLayoutPolicy.columnSpacing
         + CompanionLayoutPolicy.settingsColumnWidth
 
-    #expect(requiredWidth <= CompanionLayoutPolicy.twoColumnMinimumWidth)
+    #expect(requiredContentWidth <= CompanionLayoutPolicy.twoColumnMinimumContentWidth)
+}
+
+@Test func companionLayoutPolicySubtractsPagePaddingBeforeUsingTwoColumns() {
+    #expect(
+        CompanionLayoutPolicy.mode(
+            availableWidth: CompanionLayoutPolicy.twoColumnMinimumContentWidth,
+            platform: .pad,
+            usesAccessibilityTextSizes: false
+        ) == .singleColumn
+    )
+}
+
+@Test func companionLayoutPolicyPreservesVisionOSGeometry() {
+    #expect(
+        CompanionLayoutPolicy.mode(
+            availableWidth: CompanionLayoutPolicy.visionTwoColumnMinimumWidth,
+            platform: .visionOS,
+            usesAccessibilityTextSizes: false
+        ) == .twoColumn
+    )
+    #expect(
+        CompanionLayoutPolicy.mode(
+            availableWidth: CompanionLayoutPolicy.visionTwoColumnMinimumWidth - 1,
+            platform: .visionOS,
+            usesAccessibilityTextSizes: false
+        ) == .singleColumn
+    )
+    #expect(
+        CompanionLayoutPolicy.maximumContentWidth(layoutMode: .twoColumn, platform: .visionOS)
+            == CompanionLayoutPolicy.visionTwoColumnMaximumWidth
+    )
+    #expect(
+        CompanionLayoutPolicy.instrumentMaximumWidth(platform: .visionOS)
+            == CompanionLayoutPolicy.visionInstrumentMaximumWidth
+    )
+    #expect(
+        CompanionLayoutPolicy.settingsColumnWidth(platform: .visionOS)
+            == CompanionLayoutPolicy.visionSettingsColumnWidth
+    )
 }

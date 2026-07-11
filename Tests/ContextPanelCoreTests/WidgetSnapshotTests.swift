@@ -444,8 +444,6 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(widget.state == .ready)
     #expect(widget.needsProviderConnection)
     #expect(widget.message == "Connect an account to show limits.")
-    #expect(widget.tightestHeadline == "Not connected")
-    #expect(widget.tightestSubheadline == "No provider data yet")
     #expect(widget.fastModeVerdict == "Connect accounts to track limits")
     #expect(widget.fastModeDetail == "Open the app to connect OpenAI, Claude, or Google.")
     #expect(widget.fastModeResetDetail == "limits appear after setup")
@@ -489,7 +487,6 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(widget.needsProviderConnection)
     #expect(widget.shouldShowMainLimitEmptyRow)
     #expect(widget.message == "Connect an account to show limits.")
-    #expect(widget.tightestHeadline == "Not connected")
     #expect(widget.widgetProblemText == "Setup needed")
     #expect(widget.widgetDeepLinkURL(links: testWidgetLinks) == testWidgetLinks.reconnect)
     #expect(widget.widgetProviderSummaryText(provider: .openAI) == "not connected")
@@ -539,7 +536,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(widget.needsProviderConnection == false)
     #expect(widget.shouldShowMainLimitEmptyRow == false)
     #expect(widget.message == "Usage data is current.")
-    #expect(widget.tightestHeadline == "80% left")
+    #expect(defaultPrimarySummary(in: widget)?.widgetRemainingHeadline == "80% left")
     #expect(widget.widgetDeepLinkURL(links: testWidgetLinks) == testWidgetLinks.overview)
     #expect(widget.widgetProviderSummaryText(provider: .openAI) == "1w 20% used")
     #expect(widget.widgetProviderSummaryText(provider: .anthropic) == "setup needed")
@@ -1260,7 +1257,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
         message: "Refresh Context Panel to update data."
     )
 
-    let summary = try #require(snapshot.tightestMainLimitSummary)
+    let summary = try #require(defaultPrimarySummary(in: snapshot))
     #expect(summary.status == .healthy)
     #expect(snapshot.widgetPresentationStatus(for: summary.status) == .stale)
     #expect(summary.widgetCapacityAccessibilityValue(snapshotState: snapshot.state).contains("Last known main limit status available"))
@@ -1292,7 +1289,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
         message: "Refresh failed"
     )
 
-    let summary = try #require(snapshot.tightestMainLimitSummary)
+    let summary = try #require(defaultPrimarySummary(in: snapshot))
     let accessibilityValue = summary.widgetCapacityAccessibilityValue(snapshotState: snapshot.state)
     #expect(accessibilityValue.contains("42% left"))
     #expect(accessibilityValue.contains("Last known main limit status available"))
@@ -1328,7 +1325,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
         message: "Synced"
     )
 
-    let summary = try #require(snapshot.tightestMainLimitSummary)
+    let summary = try #require(defaultPrimarySummary(in: snapshot))
     let accessibilityValue = summary.widgetCapacityAccessibilityValue(snapshotState: snapshot.state)
     #expect(accessibilityValue.contains("42% left"))
     #expect(!accessibilityValue.contains("58% used"))
@@ -1375,6 +1372,13 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(summary.window == .fiveHour)
     #expect(summary.widgetUsageRatio == 0)
     #expect(snapshot.widgetProviderSummaryText(provider: .openAI) == "5h 0% used")
+}
+
+private func defaultPrimarySummary(in snapshot: WidgetSnapshot) -> MainLimitSummary? {
+    WidgetDisplayPreferences.defaultPreferences
+        .mainLimitAnswerSelection(from: snapshot.usageSnapshot.mainLimitSummaries)
+        .primary?
+        .summary
 }
 
 private func widgetSnapshotTemporaryDirectory() throws -> URL {

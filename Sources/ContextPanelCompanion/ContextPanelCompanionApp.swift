@@ -138,6 +138,7 @@ private final class CompanionAppDelegate: NSObject, UIApplicationDelegate {
 @MainActor
 private struct CompanionRootView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.scenePhase) private var scenePhase
     @State private var model = CompanionSyncModel()
 
@@ -165,8 +166,30 @@ private struct CompanionRootView: View {
         #endif
     }
 
+    private var isPad: Bool {
+        #if os(iOS)
+        UIDevice.current.userInterfaceIdiom == .pad
+        #else
+        false
+        #endif
+    }
+
+    private var layoutPlatform: CompanionLayoutPlatform {
+        #if os(visionOS)
+        .visionOS
+        #else
+        isPhone ? .phone : .pad
+        #endif
+    }
+
+    private var usesPageHeader: Bool {
+        isPad
+            && horizontalSizeClass == .regular
+            && !dynamicTypeSize.isAccessibilitySize
+    }
+
     private var pagePadding: CGFloat {
-        CompanionLayoutPolicy.pagePadding(isPhone: isPhone)
+        CompanionLayoutPolicy.pagePadding(platform: layoutPlatform)
     }
 
     var body: some View {
@@ -174,16 +197,23 @@ private struct CompanionRootView: View {
             GeometryReader { geometry in
                 let layoutMode = CompanionLayoutPolicy.mode(
                     availableWidth: geometry.size.width,
-                    isPhone: isPhone,
+                    platform: layoutPlatform,
                     usesAccessibilityTextSizes: dynamicTypeSize.isAccessibilitySize
                 )
 
                 ScrollView {
-                    companionContent(layoutMode: layoutMode)
+                    VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
+                        if usesPageHeader {
+                            CompanionPageHeader(result: model.result) {
+                                model.reload()
+                            }
+                        }
+                        companionContent(layoutMode: layoutMode)
+                    }
                         .frame(
                             maxWidth: CompanionLayoutPolicy.maximumContentWidth(
                                 layoutMode: layoutMode,
-                                isPhone: isPhone
+                                platform: layoutPlatform
                             )
                         )
                         .frame(maxWidth: .infinity)
@@ -191,13 +221,15 @@ private struct CompanionRootView: View {
                 }
                 .background(surfacePalette.pageBackground.ignoresSafeArea())
             }
-            .navigationTitle("Context Panel")
+            .companionNavigationChrome(usesPageHeader: usesPageHeader)
             .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        model.reload()
-                    } label: {
-                        Label("Refresh", systemImage: "arrow.clockwise")
+                if !usesPageHeader {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button {
+                            model.reload()
+                        } label: {
+                            Label("Refresh", systemImage: "arrow.clockwise")
+                        }
                     }
                 }
             }
@@ -221,7 +253,12 @@ private struct CompanionRootView: View {
     @ViewBuilder
     private func companionContent(layoutMode: CompanionLayoutMode) -> some View {
         let layout = layoutMode == .twoColumn
-            ? AnyLayout(HStackLayout(alignment: .top, spacing: CompanionLayoutPolicy.columnSpacing))
+            ? AnyLayout(
+                HStackLayout(
+                    alignment: .top,
+                    spacing: CompanionLayoutPolicy.columnSpacing(platform: layoutPlatform)
+                )
+            )
             : AnyLayout(
                 VStackLayout(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing)
             )
@@ -241,8 +278,12 @@ private struct CompanionRootView: View {
             CompanionSyncStatusView(result: model.result)
         }
         .frame(
-            minWidth: layoutMode == .twoColumn ? CompanionLayoutPolicy.instrumentMinimumWidth : nil,
-            maxWidth: layoutMode == .twoColumn ? CompanionLayoutPolicy.instrumentMaximumWidth : .infinity,
+            minWidth: layoutMode == .twoColumn
+                ? CompanionLayoutPolicy.instrumentMinimumWidth(platform: layoutPlatform)
+                : nil,
+            maxWidth: layoutMode == .twoColumn
+                ? CompanionLayoutPolicy.instrumentMaximumWidth(platform: layoutPlatform)
+                : .infinity,
             alignment: .topLeading
         )
         .layoutPriority(layoutMode == .twoColumn ? 1 : 0)
@@ -289,9 +330,58 @@ private struct CompanionRootView: View {
             #endif
         }
         .frame(
-            width: layoutMode == .twoColumn ? CompanionLayoutPolicy.settingsColumnWidth : nil,
+            width: layoutMode == .twoColumn
+                ? CompanionLayoutPolicy.settingsColumnWidth(platform: layoutPlatform)
+                : nil,
             alignment: .topLeading
         )
+    }
+}
+
+private struct CompanionPageHeader: View {
+    @Environment(\.companionSurfacePalette) private var palette
+
+    let result: CompanionSyncLoadResult
+    let onRefresh: () -> Void
+
+    private var presentation: CompanionSyncPresentation {
+        CompanionSyncPresentation(result: result)
+    }
+
+    private var lastSyncedAt: Date? {
+        result.transportMetadata?.receivedAt
+            ?? result.transportMetadata?.mirroredAt
+            ?? result.document?.snapshot.publishedAt
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 24) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Context Panel")
+                    .font(.system(size: 34, weight: .semibold, design: .rounded))
+                    .foregroundStyle(palette.primaryText)
+                    .accessibilityAddTraits(.isHeader)
+                HStack(spacing: 8) {
+                    Text(presentation.title)
+                    if let lastSyncedAt {
+                        Text("·")
+                            .foregroundStyle(palette.tertiaryText)
+                        Text("Synced " + lastSyncedAt.formatted(.relative(presentation: .named)))
+                    }
+                }
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(palette.secondaryText)
+                .lineLimit(1)
+            }
+
+            Spacer(minLength: 20)
+
+            Button(action: onRefresh) {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -859,6 +949,19 @@ private struct CompanionSyncStatusView: View {
 }
 
 private extension View {
+    @ViewBuilder
+    func companionNavigationChrome(usesPageHeader: Bool) -> some View {
+        #if os(iOS)
+        if usesPageHeader {
+            toolbar(.hidden, for: .navigationBar)
+        } else {
+            navigationTitle("Context Panel")
+        }
+        #else
+        navigationTitle("Context Panel")
+        #endif
+    }
+
     @ViewBuilder
     func companionVisionOSAppearance(_ settings: CompanionAppearanceSettings) -> some View {
         #if os(visionOS)
