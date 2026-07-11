@@ -31,6 +31,12 @@ public enum TVPresentationMode: String, CaseIterable, Codable, Equatable, Identi
     }
 }
 
+public enum TVSyncNoticePolicy {
+    public static func shouldShowCloudUnavailable(for remoteLoad: CompanionRemoteSyncLoadResult) -> Bool {
+        !remoteLoad.outcome.succeeded
+    }
+}
+
 public struct TVRunwayPresentation: Equatable, Sendable {
     public let state: WidgetSnapshotState
     public let status: UsageStatus

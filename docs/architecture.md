@@ -169,9 +169,12 @@ the iOS/visionOS app. It reuses `ContextPanelCore` and
 `ContextPanelCloudKitSync` through tvOS-specific static-library wrappers, while
 its focus-driven ten-foot UI remains isolated from WidgetKit and touch-oriented
 settings surfaces. The first slice refreshes on launch, foreground activation,
-and explicit user action, persists the last good companion document locally,
-and records the CloudKit receipt time separately so cached provider age and
-sync age do not become conflated.
+and explicit user action. Physical tvOS stores the last good companion document
+and its matching CloudKit receipt under the app's `Library/Caches` container;
+tvOS may purge that storage, so a missing cache remains an explicit setup state
+rather than durable account configuration. Provider snapshot age and CloudKit
+receipt age remain separate so stale usage and delayed delivery do not become
+conflated.
 
 Limit warnings are evaluated from normalized `MainLimitSummary` capacity, not
 raw provider payloads. Local macOS notifications and outbound webhooks use

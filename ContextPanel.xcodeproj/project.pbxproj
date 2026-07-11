@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		0008638B08072E2E1DA6A3AF /* ContextPanelLocations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23E9C71457F4E1F101132FCF /* ContextPanelLocations.swift */; };
+		025C06128C86B7E034BD0A0C /* TVLocalCacheLocations.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7CCA2AD1263BFDAB028A69A /* TVLocalCacheLocations.swift */; };
 		036E715780427071B988724E /* CapacityPool.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8862B929FE544FCB2C3D06B /* CapacityPool.swift */; };
 		057A71BA0CD90371C675C014 /* WidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5233BBC86AE8057D749F71CD /* WidgetSnapshot.swift */; };
 		0592F3FB92DB8AE0A82C4C07 /* OAuthPKCE.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB0E4D0FF6DD744B87D215B9 /* OAuthPKCE.swift */; };
@@ -602,6 +603,7 @@
 		CE09AE825E3B368ED89CD521 /* LimitWarningWebhook.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LimitWarningWebhook.swift; sourceTree = "<group>"; };
 		D03C19BEA1C610711A048EB7 /* SnapshotFreshness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotFreshness.swift; sourceTree = "<group>"; };
 		D459054C90410A784EBD308B /* UsageLimit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageLimit.swift; sourceTree = "<group>"; };
+		D7CCA2AD1263BFDAB028A69A /* TVLocalCacheLocations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVLocalCacheLocations.swift; sourceTree = "<group>"; };
 		DBD0BD51B5F5AD8D24CA217D /* libContextPanelCoreCompanion.a */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = archive.ar; path = libContextPanelCoreCompanion.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		E195C6E906DA9C0BF082622F /* ContextPanelWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelWidget.swift; sourceTree = "<group>"; };
 		E97D64E1F32386FD74AA335F /* CompanionRemoteSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionRemoteSync.swift; sourceTree = "<group>"; };
@@ -849,6 +851,7 @@
 		9B17BBBC39E9B54214D3AD7B /* ContextPanelTVSupport */ = {
 			isa = PBXGroup;
 			children = (
+				D7CCA2AD1263BFDAB028A69A /* TVLocalCacheLocations.swift */,
 				BAC6B24F1876E6D7627E2B82 /* TVRunwayPresentation.swift */,
 				544FE80ADC4650CDB85B4640 /* TVSyncReceipt.swift */,
 			);
@@ -1794,6 +1797,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				025C06128C86B7E034BD0A0C /* TVLocalCacheLocations.swift in Sources */,
 				E3F82D291A06A0393BD1B9F3 /* TVRunwayPresentation.swift in Sources */,
 				70156A1E7C885A1E66F95D68 /* TVSyncReceipt.swift in Sources */,
 			);
