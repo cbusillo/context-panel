@@ -17,7 +17,11 @@ enum TVPreviewFixtures {
         }
 
         let generatedAt = fixture == "stale" ? now.addingTimeInterval(-18 * 60 * 60) : now.addingTimeInterval(-95)
-        let document = makeDocument(generatedAt: generatedAt, publishedAt: now.addingTimeInterval(-35))
+        let document = makeDocument(
+            generatedAt: generatedAt,
+            publishedAt: now.addingTimeInterval(-35),
+            includesPartialFailure: fixture == "partial"
+        )
         let status: UsageStatus = switch fixture {
         case "failure":
             .failure
@@ -40,7 +44,11 @@ enum TVPreviewFixtures {
         )
     }
 
-    private static func makeDocument(generatedAt: Date, publishedAt: Date) -> CompanionSyncDocument {
+    private static func makeDocument(
+        generatedAt: Date,
+        publishedAt: Date,
+        includesPartialFailure: Bool
+    ) -> CompanionSyncDocument {
         let limits = [
             UsageLimit(
                 provider: .openAI,
@@ -121,7 +129,7 @@ enum TVPreviewFixtures {
                 confidence: .official
             ),
         ]
-        let reports = Dictionary(grouping: limits, by: { "\($0.provider.rawValue):\($0.accountID)" })
+        var reports = Dictionary(grouping: limits, by: { "\($0.provider.rawValue):\($0.accountID)" })
             .compactMap { _, accountLimits -> StoredProviderReport? in
                 guard let limit = accountLimits.first else { return nil }
                 return StoredProviderReport(
@@ -134,6 +142,19 @@ enum TVPreviewFixtures {
                     errorMessage: nil
                 )
             }
+        if includesPartialFailure {
+            reports.append(
+                StoredProviderReport(
+                    provider: .openAI,
+                    accountID: "openai-team",
+                    configuredAccountID: "openai-team",
+                    accountName: "Team",
+                    generatedAt: generatedAt,
+                    status: .failure,
+                    errorMessage: "Reconnect required"
+                )
+            )
+        }
         let stored = StoredUsageSnapshot(
             savedAt: publishedAt,
             snapshot: UsageSnapshot(generatedAt: generatedAt, limits: limits),

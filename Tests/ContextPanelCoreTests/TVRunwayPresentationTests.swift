@@ -66,6 +66,99 @@ import Testing
     #expect(!presentation.sections.isEmpty)
 }
 
+@Test func tvRunwayPresentationSurfacesRefreshFailuresBesideCapacityLanes() throws {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let ready = makeTVSnapshot(now: now)
+    let personalLimit = try #require(
+        ready.limits.first { $0.provider == .openAI && $0.accountName == "Personal" }
+    )
+    let partial = WidgetSnapshot(
+        state: .ready,
+        generatedAt: ready.generatedAt,
+        limits: ready.limits,
+        reports: [
+            StoredProviderReport(
+                provider: .openAI,
+                accountID: personalLimit.accountID,
+                configuredAccountID: personalLimit.configuredAccountID,
+                accountName: "Personal",
+                generatedAt: now,
+                status: .healthy,
+                errorMessage: nil
+            ),
+            StoredProviderReport(
+                provider: .openAI,
+                accountID: "team",
+                configuredAccountID: "team",
+                accountName: "Team",
+                generatedAt: now,
+                status: .failure,
+                errorMessage: "Reconnect required"
+            ),
+        ],
+        status: .failure,
+        message: "One account needs attention"
+    )
+
+    let presentation = TVRunwayPresentation(snapshot: partial, mode: .fullDetail, now: now)
+    let openAI = try #require(presentation.sections.first { $0.provider == .openAI })
+    let statusLane = try #require(openAI.lanes.first { $0.kind == .accountStatus })
+
+    #expect(openAI.status == .failure)
+    #expect(openAI.trackedWindowCount == 1)
+    #expect(openAI.trackedWindowText == "1 window tracked")
+    #expect(openAI.lanes.filter { $0.kind == .accountStatus }.count == 1)
+    #expect(statusLane.title == "Team status")
+    #expect(statusLane.status == .failure)
+    #expect(statusLane.detailText == "No fresh capacity data")
+    #expect(statusLane.accountNames == ["Team"])
+}
+
+@Test func tvRunwayPresentationMakesRefreshStateExplicitWithoutDroppingSavedData() {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let presentation = TVRunwayPresentation(
+        snapshot: makeTVSnapshot(now: now),
+        mode: .fullDetail,
+        isRefreshing: true,
+        now: now
+    )
+
+    #expect(presentation.status == .loading)
+    #expect(presentation.headline == "Checking runway")
+    #expect(presentation.detail == "Refreshing provider capacity published by your Mac.")
+    #expect(!presentation.sections.isEmpty)
+}
+
+@Test func tvRunwayPresentationDoesNotCountAccountStatusAsAWindow() throws {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let snapshot = WidgetSnapshot(
+        state: .failure,
+        generatedAt: now,
+        limits: [],
+        reports: [
+            StoredProviderReport(
+                provider: .google,
+                accountID: "google",
+                configuredAccountID: "google",
+                accountName: "Google",
+                generatedAt: now,
+                status: .failure,
+                errorMessage: "Reconnect required"
+            ),
+        ],
+        status: .failure,
+        message: "Reconnect required"
+    )
+
+    let presentation = TVRunwayPresentation(snapshot: snapshot, mode: .fullDetail, now: now)
+    let google = try #require(presentation.sections.first { $0.provider == .google })
+
+    #expect(google.trackedWindowCount == 0)
+    #expect(google.trackedWindowText == "No capacity windows")
+    #expect(google.lanes.count == 1)
+    #expect(google.lanes.first?.kind == .accountStatus)
+}
+
 @Test func tvSyncReceiptStoreRejectsAReceiptForAnotherDocument() throws {
     let directory = FileManager.default.temporaryDirectory
         .appending(path: "context-panel-tv-receipt-\(UUID().uuidString)", directoryHint: .isDirectory)

@@ -24,9 +24,9 @@ public enum TVPresentationMode: String, CaseIterable, Codable, Equatable, Identi
         case .fullDetail:
             "Show safe account names, exact capacity, windows, and reset timing."
         case .projectOnly:
-            "Hide account names and exact values while keeping windows and reset timing."
+            "Hide account names and raw totals while keeping percentages, windows, and reset timing."
         case .countsOnly:
-            "Show provider capacity and status only."
+            "Show percentages and provider or window status only."
         }
     }
 }
@@ -42,12 +42,15 @@ public struct TVRunwayPresentation: Equatable, Sendable {
     public init(
         snapshot: WidgetSnapshot,
         mode: TVPresentationMode,
+        isRefreshing: Bool = false,
         now: Date = Date()
     ) {
         state = snapshot.state
-        status = snapshot.status
-        headline = Self.headline(state: snapshot.state, status: snapshot.status)
-        detail = Self.detail(snapshot: snapshot)
+        status = isRefreshing ? .loading : snapshot.status
+        headline = isRefreshing
+            ? "Checking runway"
+            : Self.headline(state: snapshot.state, status: snapshot.status)
+        detail = Self.detail(snapshot: snapshot, isRefreshing: isRefreshing)
         generatedAt = snapshot.generatedAt
         sections = Provider.allCases.compactMap { provider in
             TVProviderRunwaySection(
@@ -93,7 +96,12 @@ public struct TVRunwayPresentation: Equatable, Sendable {
         }
     }
 
-    private static func detail(snapshot: WidgetSnapshot) -> String {
+    private static func detail(snapshot: WidgetSnapshot, isRefreshing: Bool) -> String {
+        if isRefreshing {
+            return snapshot.state == .setupNeeded
+                ? "Contacting CloudKit for the first Mac-published snapshot."
+                : "Refreshing provider capacity published by your Mac."
+        }
         if snapshot.state == .setupNeeded {
             return "Open Context Panel on your Mac to publish the first companion snapshot."
         }
@@ -105,6 +113,11 @@ public struct TVRunwayPresentation: Equatable, Sendable {
         }
         return "Provider capacity published by your Mac."
     }
+}
+
+public enum TVRunwayLaneKind: String, Codable, Equatable, Sendable {
+    case capacity
+    case accountStatus
 }
 
 public struct TVProviderRunwaySection: Equatable, Identifiable, Sendable {
@@ -121,38 +134,79 @@ public struct TVProviderRunwaySection: Equatable, Identifiable, Sendable {
         now: Date
     ) {
         let reports = snapshot.reports.filter { $0.provider == provider }
+        let providerLimits = snapshot.limits.filter { $0.provider == provider }
         let mainSummaries = snapshot.usageSnapshot.mostConstrainedMainLimitSummaries
             .filter { $0.provider == provider }
         let fallbackLimits = snapshot.mostConstrainedLimits
             .filter { $0.provider == provider && !$0.isMainLimit }
 
-        let lanes: [TVRunwayLane]
+        let capacityLanes: [TVRunwayLane]
         if !mainSummaries.isEmpty {
-            lanes = mainSummaries.map { TVRunwayLane(summary: $0, mode: mode, now: now) }
+            capacityLanes = mainSummaries.map { TVRunwayLane(summary: $0, mode: mode, now: now) }
         } else if !fallbackLimits.isEmpty {
-            lanes = fallbackLimits.map { TVRunwayLane(limit: $0, mode: mode, now: now) }
-        } else if let report = reports.first {
-            lanes = [TVRunwayLane(provider: provider, report: report)]
+            capacityLanes = fallbackLimits.map { TVRunwayLane(limit: $0, mode: mode, now: now) }
         } else {
-            return nil
+            capacityLanes = []
         }
+
+        let reportLanes = reports
+            .filter { report in
+                !Self.hasMatchingLimit(for: report, in: providerLimits)
+                    || !report.status.tvRepresentsCurrentCapacity
+            }
+            .sorted { lhs, rhs in
+                lhs.accountName.localizedCaseInsensitiveCompare(rhs.accountName) == .orderedAscending
+            }
+            .map { TVRunwayLane(provider: provider, report: $0, mode: mode) }
+        let lanes = capacityLanes + reportLanes
+        guard !lanes.isEmpty else { return nil }
 
         self.provider = provider
         status = (lanes.map(\.status) + reports.map(\.status)).contextPanelWorstStatus
         self.lanes = lanes
     }
+
+    public var trackedWindowCount: Int {
+        lanes.filter { $0.kind == .capacity }.count
+    }
+
+    public var trackedWindowText: String {
+        switch trackedWindowCount {
+        case 0:
+            "No capacity windows"
+        case 1:
+            "1 window tracked"
+        default:
+            "\(trackedWindowCount) windows tracked"
+        }
+    }
+
+    private static func hasMatchingLimit(
+        for report: StoredProviderReport,
+        in limits: [UsageLimit]
+    ) -> Bool {
+        limits.contains { limit in
+            if let configuredAccountID = report.configuredAccountID {
+                return limit.configuredAccountID == configuredAccountID || limit.accountID == report.accountID
+            }
+            return limit.accountID == report.accountID
+        }
+    }
 }
 
 public struct TVRunwayLane: Equatable, Identifiable, Sendable {
     public let id: String
+    public let kind: TVRunwayLaneKind
     public let provider: Provider
     public let title: String
     public let status: UsageStatus
     public let remainingPercent: Int?
     public let capacityRatio: Double?
     public let resetText: String?
+    public let accessibilityResetText: String?
     public let exactCapacityText: String?
     public let accountCountText: String?
+    public let detailText: String?
     public let accountNames: [String]
     public let metrics: [TVRunwayMetric]
 
@@ -162,16 +216,21 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
 
     init(summary: MainLimitSummary, mode: TVPresentationMode, now: Date) {
         id = summary.id
+        kind = .capacity
         provider = summary.provider
         title = mode == .countsOnly ? summary.compactDisplayWindowName : summary.displayWindowName
         status = summary.status
         remainingPercent = summary.roundedRemainingPercent
         capacityRatio = summary.remainingCapacityRatio
         resetText = mode == .countsOnly ? nil : summary.resetCountdownText(now: now)
+        accessibilityResetText = mode == .countsOnly
+            ? nil
+            : Self.accessibilityResetText(until: summary.resetsAt, now: now)
         exactCapacityText = mode == .fullDetail
             ? Self.exactCapacityText(remaining: summary.remaining, limit: summary.limit, unit: summary.unit)
             : nil
         accountCountText = mode == .countsOnly ? nil : Self.accountCountText(summary.accountCount)
+        detailText = nil
         accountNames = mode == .fullDetail
             ? Array(Set(summary.limits.map(\.accountName))).sorted { lhs, rhs in
                 lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
@@ -182,31 +241,41 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
 
     init(limit: UsageLimit, mode: TVPresentationMode, now: Date) {
         id = limit.id
+        kind = .capacity
         provider = limit.provider
-        title = mode == .countsOnly ? limit.provider.shortName : limit.displayLabel
+        title = mode == .fullDetail
+            ? "\(limit.accountName) · \(limit.displayLabel)"
+            : limit.displayLabel
         status = limit.status
         remainingPercent = limit.remainingCapacityRatio.map { Int(($0 * 100).rounded()) }
         capacityRatio = limit.remainingCapacityRatio
         resetText = mode == .countsOnly ? nil : Self.compactResetText(until: limit.resetsAt, now: now)
+        accessibilityResetText = mode == .countsOnly
+            ? nil
+            : Self.accessibilityResetText(until: limit.resetsAt, now: now)
         exactCapacityText = mode == .fullDetail
             ? Self.exactCapacityText(remaining: limit.remaining, limit: limit.limit, unit: limit.unit)
             : nil
         accountCountText = mode == .countsOnly ? nil : Self.accountCountText(1)
+        detailText = nil
         accountNames = mode == .fullDetail ? [limit.accountName] : []
         metrics = mode == .countsOnly ? [] : [TVRunwayMetric(limit: limit, mode: mode, now: now)]
     }
 
-    init(provider: Provider, report: StoredProviderReport) {
-        id = "\(provider.rawValue):status"
+    init(provider: Provider, report: StoredProviderReport, mode: TVPresentationMode) {
+        id = "\(provider.rawValue):report:\(report.configuredAccountID ?? report.accountID)"
+        kind = .accountStatus
         self.provider = provider
-        title = "No capacity data"
+        title = mode == .fullDetail ? "\(report.accountName) status" : "Account status"
         status = report.status
         remainingPercent = nil
         capacityRatio = nil
         resetText = nil
+        accessibilityResetText = nil
         exactCapacityText = nil
         accountCountText = nil
-        accountNames = []
+        detailText = "No fresh capacity data"
+        accountNames = mode == .fullDetail ? [report.accountName] : []
         metrics = []
     }
 
@@ -269,6 +338,24 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
         let remainingHours = hours % 24
         return remainingHours == 0 ? "Resets in \(days)d" : "Resets in \(days)d \(remainingHours)h"
     }
+
+    private static func accessibilityResetText(until resetDate: Date?, now: Date) -> String? {
+        guard let resetDate, resetDate >= now.addingTimeInterval(-60) else { return nil }
+        let minutes = max(Int(ceil(resetDate.timeIntervalSince(now) / 60)), 0)
+        if minutes < 60 {
+            return "Resets in \(minutes) \(minutes == 1 ? "minute" : "minutes")"
+        }
+        let hours = Int(ceil(Double(minutes) / 60))
+        if hours < 24 {
+            return "Resets in \(hours) \(hours == 1 ? "hour" : "hours")"
+        }
+        let days = hours / 24
+        let remainingHours = hours % 24
+        let dayText = "\(days) \(days == 1 ? "day" : "days")"
+        guard remainingHours > 0 else { return "Resets in \(dayText)" }
+        let hourText = "\(remainingHours) \(remainingHours == 1 ? "hour" : "hours")"
+        return "Resets in \(dayText), \(hourText)"
+    }
 }
 
 public struct TVRunwayMetric: Equatable, Identifiable, Sendable {
@@ -310,6 +397,15 @@ public struct TVRunwayMetric: Equatable, Identifiable, Sendable {
 }
 
 private extension UsageStatus {
+    var tvRepresentsCurrentCapacity: Bool {
+        switch self {
+        case .healthy, .close, .limited:
+            true
+        case .failure, .loading, .stale, .unknown:
+            false
+        }
+    }
+
     var tvDisplayName: String {
         switch self {
         case .healthy:

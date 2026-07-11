@@ -18,6 +18,7 @@ private struct TVRootView: View {
     @AppStorage("tv-presentation-mode") private var presentationModeRawValue = TVPresentationMode.fullDetail.rawValue
     @State private var model = TVSyncModel()
     @State private var navigationPath: [String] = []
+    @State private var pendingProviderRawValue: String?
 
     init() {
         #if DEBUG
@@ -32,7 +33,11 @@ private struct TVRootView: View {
     }
 
     private var presentation: TVRunwayPresentation {
-        TVRunwayPresentation(snapshot: model.snapshot, mode: presentationMode)
+        TVRunwayPresentation(
+            snapshot: model.snapshot,
+            mode: presentationMode,
+            isRefreshing: model.isLoading
+        )
     }
 
     var body: some View {
@@ -63,8 +68,8 @@ private struct TVRootView: View {
                     .padding(.vertical, 48)
                 }
 
-                if let syncErrorMessage = model.lastSyncErrorMessage {
-                    TVSyncAlert(message: syncErrorMessage)
+                if model.lastSyncErrorMessage != nil, !presentation.isEmpty {
+                    TVSyncAlert()
                         .padding(.horizontal, 72)
                         .padding(.bottom, 28)
                 }
@@ -79,17 +84,35 @@ private struct TVRootView: View {
             }
             .navigationDestination(for: String.self) { providerRawValue in
                 if let section = presentation.sections.first(where: { $0.provider.rawValue == providerRawValue }) {
-                    TVProviderDetailView(section: section, mode: presentationMode)
+                    TVProviderDetailView(
+                        section: section,
+                        mode: presentationMode,
+                        snapshotState: presentation.state,
+                        generatedAt: presentation.generatedAt
+                    )
                 }
+            }
+            .onChange(of: presentation.sections.map { $0.provider.rawValue }) { _, _ in
+                resolvePendingProviderRoute()
             }
             .onOpenURL { url in
                 guard url.scheme == "contextpaneltv", url.host == "provider" else { return }
                 let providerRawValue = url.lastPathComponent
-                guard presentation.sections.contains(where: { $0.provider.rawValue == providerRawValue }) else { return }
-                navigationPath = [providerRawValue]
+                guard Provider(rawValue: providerRawValue) != nil else { return }
+                pendingProviderRawValue = providerRawValue
+                resolvePendingProviderRoute()
             }
         }
         .preferredColorScheme(.dark)
+    }
+
+    private func resolvePendingProviderRoute() {
+        guard let pendingProviderRawValue else { return }
+        guard presentation.sections.contains(where: { $0.provider.rawValue == pendingProviderRawValue }) else {
+            return
+        }
+        navigationPath = [pendingProviderRawValue]
+        self.pendingProviderRawValue = nil
     }
 }
 
@@ -218,6 +241,10 @@ private struct TVHeaderView: View {
     @Binding var presentationModeRawValue: String
     let onRefresh: () -> Void
 
+    private var presentationMode: TVPresentationMode {
+        TVPresentationMode(rawValue: presentationModeRawValue) ?? .fullDetail
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 36) {
             VStack(alignment: .leading, spacing: 10) {
@@ -249,17 +276,24 @@ private struct TVHeaderView: View {
                                 .lineLimit(1)
                         }
 
-                        HStack(spacing: 8) {
-                            Text("Usage \(Self.compactAge(since: presentation.generatedAt, now: context.date))")
-                            if let receivedAt {
-                                Text("·")
-                                    .foregroundStyle(.tertiary)
-                                Text("Synced \(Self.compactAge(since: receivedAt, now: context.date))")
+                        if presentation.state == .setupNeeded {
+                            Text(isRefreshing ? "Contacting CloudKit" : "No usage received yet")
+                                .font(.headline)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        } else {
+                            HStack(spacing: 8) {
+                                Text("Usage \(Self.compactAge(since: presentation.generatedAt, now: context.date))")
+                                if let receivedAt {
+                                    Text("·")
+                                        .foregroundStyle(.tertiary)
+                                    Text("Synced \(Self.compactAge(since: receivedAt, now: context.date))")
+                                }
                             }
+                            .font(.headline.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
                         }
-                        .font(.headline.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
                     }
                 }
 
@@ -277,8 +311,9 @@ private struct TVHeaderView: View {
                             }
                         }
                     } label: {
-                        Label("Display", systemImage: "slider.horizontal.3")
+                        Label(presentationMode.displayName, systemImage: "slider.horizontal.3")
                     }
+                    .accessibilityHint(presentationMode.detail)
                 }
             }
         }
@@ -330,6 +365,7 @@ private struct TVProviderOverviewGrid: View {
 
 private struct TVProviderOverviewCard: View {
     @Environment(\.isFocused) private var isFocused
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let section: TVProviderRunwaySection
     let mode: TVPresentationMode
@@ -375,7 +411,7 @@ private struct TVProviderOverviewCard: View {
                         .foregroundStyle(.secondary)
                 }
             } else {
-                Text("Unknown")
+                Text(lane.kind == .accountStatus ? "No fresh capacity" : "Unknown")
                     .font(.system(size: 64, weight: .bold, design: .rounded))
                     .foregroundStyle(.secondary)
             }
@@ -390,14 +426,17 @@ private struct TVProviderOverviewCard: View {
                     if let accountCountText = lane.accountCountText {
                         Text(accountCountText)
                     }
+                    if let detailText = lane.detailText {
+                        Text(detailText)
+                    }
                 }
                 .font(.callout.monospacedDigit())
                 .foregroundStyle(.secondary)
             }
 
-            Text(section.lanes.count == 1 ? "1 window tracked" : "\(section.lanes.count) windows tracked")
-            .font(.callout.weight(.semibold))
-            .foregroundStyle(.secondary)
+            Text(section.trackedWindowText)
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.secondary)
         }
         .padding(30)
         .frame(maxWidth: .infinity, minHeight: 468, alignment: .leading)
@@ -419,11 +458,12 @@ private struct TVProviderOverviewCard: View {
                     lineWidth: isFocused ? 3 : 1
                 )
         }
-        .scaleEffect(isFocused ? 1.025 : 1)
+        .scaleEffect(isFocused && !reduceMotion ? 1.025 : 1)
         .shadow(color: .black.opacity(isFocused ? 0.45 : 0.16), radius: isFocused ? 26 : 10, y: 12)
-        .animation(.spring(response: 0.28, dampingFraction: 0.78), value: isFocused)
+        .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.78), value: isFocused)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint("Open \(section.provider.displayName) details")
     }
 
     private var accessibilityLabel: String {
@@ -431,9 +471,16 @@ private struct TVProviderOverviewCard: View {
         if let remainingPercent = lane.remainingPercent {
             components.append("\(remainingPercent) percent remaining")
         }
-        if let resetText = lane.resetText {
-            components.append(resetText)
+        if let accessibilityResetText = lane.accessibilityResetText {
+            components.append(accessibilityResetText)
         }
+        if let accountCountText = lane.accountCountText {
+            components.append(accountCountText)
+        }
+        if let detailText = lane.detailText {
+            components.append(detailText)
+        }
+        components.append(section.trackedWindowText)
         return components.joined(separator: ", ")
     }
 }
@@ -441,6 +488,8 @@ private struct TVProviderOverviewCard: View {
 private struct TVProviderDetailView: View {
     let section: TVProviderRunwaySection
     let mode: TVPresentationMode
+    let snapshotState: WidgetSnapshotState
+    let generatedAt: Date
 
     private var columns: [GridItem] {
         let count = section.lanes.count == 1 ? 1 : min(section.lanes.count, 3)
@@ -464,10 +513,17 @@ private struct TVProviderDetailView: View {
                         .foregroundStyle(TVTheme.statusColor(section.status))
                 }
 
+                TVFreshnessNotice(state: snapshotState, generatedAt: generatedAt)
+
                 LazyVGrid(columns: columns, alignment: .center, spacing: 32) {
                     ForEach(section.lanes) { lane in
                         NavigationLink {
-                            TVRunwayDetailView(lane: lane, mode: mode)
+                            TVRunwayDetailView(
+                                lane: lane,
+                                mode: mode,
+                                snapshotState: snapshotState,
+                                generatedAt: generatedAt
+                            )
                         } label: {
                             TVRunwayCard(lane: lane, mode: mode)
                         }
@@ -485,6 +541,7 @@ private struct TVProviderDetailView: View {
 
 private struct TVRunwayCard: View {
     @Environment(\.isFocused) private var isFocused
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let lane: TVRunwayLane
     let mode: TVPresentationMode
@@ -511,7 +568,7 @@ private struct TVRunwayCard: View {
                         .foregroundStyle(.secondary)
                 }
             } else {
-                Text("Unknown")
+                Text(lane.kind == .accountStatus ? "No fresh capacity" : "Unknown")
                     .font(.system(size: 52, weight: .bold, design: .rounded))
                     .foregroundStyle(.secondary)
             }
@@ -528,6 +585,9 @@ private struct TVRunwayCard: View {
                     }
                     if let exactCapacityText = lane.exactCapacityText {
                         Text(exactCapacityText)
+                    }
+                    if let detailText = lane.detailText {
+                        Text(detailText)
                     }
                 }
                 .font(.callout.monospacedDigit())
@@ -555,11 +615,12 @@ private struct TVRunwayCard: View {
                     lineWidth: isFocused ? 3 : 1
                 )
         }
-        .scaleEffect(isFocused ? 1.018 : 1)
+        .scaleEffect(isFocused && !reduceMotion ? 1.018 : 1)
         .shadow(color: .black.opacity(isFocused ? 0.42 : 0.14), radius: isFocused ? 24 : 8, y: 12)
-        .animation(.spring(response: 0.28, dampingFraction: 0.78), value: isFocused)
+        .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.78), value: isFocused)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint("Open \(lane.title) details")
     }
 
     private var accessibilityLabel: String {
@@ -567,8 +628,17 @@ private struct TVRunwayCard: View {
         if let remainingPercent = lane.remainingPercent {
             components.append("\(remainingPercent) percent remaining")
         }
-        if let resetText = lane.resetText {
-            components.append(resetText)
+        if let accessibilityResetText = lane.accessibilityResetText {
+            components.append(accessibilityResetText)
+        }
+        if let accountCountText = lane.accountCountText {
+            components.append(accountCountText)
+        }
+        if let exactCapacityText = lane.exactCapacityText {
+            components.append(exactCapacityText)
+        }
+        if let detailText = lane.detailText {
+            components.append(detailText)
         }
         return components.joined(separator: ", ")
     }
@@ -602,6 +672,8 @@ private struct TVCapacityBar: View {
 private struct TVRunwayDetailView: View {
     let lane: TVRunwayLane
     let mode: TVPresentationMode
+    let snapshotState: WidgetSnapshotState
+    let generatedAt: Date
 
     var body: some View {
         ScrollView {
@@ -619,6 +691,17 @@ private struct TVRunwayDetailView: View {
                     Text(lane.statusText)
                         .font(.title3.weight(.semibold))
                         .foregroundStyle(TVTheme.statusColor(lane.status))
+                }
+
+                TVFreshnessNotice(state: snapshotState, generatedAt: generatedAt)
+
+                if lane.kind == .accountStatus {
+                    Label(
+                        "Open Context Panel on your Mac to refresh or reconnect this account.",
+                        systemImage: "macbook"
+                    )
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
                 }
 
                 if let remainingPercent = lane.remainingPercent {
@@ -707,7 +790,7 @@ private struct TVEmptyRunwayView: View {
             Image(systemName: "sparkles.tv")
                 .font(.system(size: 64, weight: .medium))
                 .foregroundStyle(.secondary)
-            Text(presentation.headline)
+            Text(emptyStateTitle)
                 .font(.system(size: 44, weight: .bold, design: .rounded))
             Text(presentation.detail)
                 .font(.title3)
@@ -718,26 +801,77 @@ private struct TVEmptyRunwayView: View {
         .frame(maxWidth: .infinity, minHeight: 360, alignment: .leading)
         .background(Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 30, style: .continuous))
     }
+
+    private var emptyStateTitle: String {
+        if presentation.status == .loading {
+            return "Checking for Mac sync"
+        }
+        if presentation.state == .failure {
+            return "Check your Mac connection"
+        }
+        return "Publish from your Mac"
+    }
 }
 
 private struct TVSyncAlert: View {
-    let message: String
-
     var body: some View {
         HStack(spacing: 16) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.yellow)
-            Text("Cloud sync is unavailable. Showing the last saved runway when possible.")
+            Text("Cloud sync is unavailable. Showing saved runway; open Context Panel on your Mac if this persists.")
                 .font(.headline)
             Spacer()
-            Text(message)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 18)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+}
+
+private struct TVFreshnessNotice: View {
+    let state: WidgetSnapshotState
+    let generatedAt: Date
+
+    @ViewBuilder
+    var body: some View {
+        if state == .stale || state == .failure {
+            TimelineView(.periodic(from: .now, by: 60)) { context in
+                Label(
+                    state == .failure
+                        ? "Provider issue · data \(Self.compactAge(since: generatedAt, now: context.date)) old"
+                        : "Saved data · \(Self.compactAge(since: generatedAt, now: context.date)) old",
+                    systemImage: "clock.badge.exclamationmark"
+                )
+                .font(.headline)
+                .foregroundStyle(state == .failure ? .orange : .yellow)
+                .accessibilityLabel(
+                    state == .failure
+                        ? "Provider issue. Data from \(Self.spokenAge(since: generatedAt, now: context.date)) ago"
+                        : "Saved data from \(Self.spokenAge(since: generatedAt, now: context.date)) ago"
+                )
+            }
+        }
+    }
+
+    private static func compactAge(since date: Date, now: Date) -> String {
+        let seconds = max(Int(now.timeIntervalSince(date)), 0)
+        if seconds < 60 { return "now" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(minutes)m" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours)h" }
+        return "\(hours / 24)d"
+    }
+
+    private static func spokenAge(since date: Date, now: Date) -> String {
+        let seconds = max(Int(now.timeIntervalSince(date)), 0)
+        if seconds < 60 { return "less than one minute" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(minutes) \(minutes == 1 ? "minute" : "minutes")" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours) \(hours == 1 ? "hour" : "hours")" }
+        let days = hours / 24
+        return "\(days) \(days == 1 ? "day" : "days")"
     }
 }
 
