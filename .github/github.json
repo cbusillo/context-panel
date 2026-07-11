@@ -28,7 +28,7 @@
       "companionIOSArchive": "scripts/validate-companion-builds.sh --configuration Release --archive ios",
       "companionVisionOSArchive": "scripts/validate-companion-builds.sh --configuration Release --archive visionos",
       "companionWatchBuild": "scripts/validate-companion-builds.sh --configuration Release watchos",
-      "companionTVBuild": "scripts/validate-companion-builds.sh --configuration Release tvos"
+      "companionTVArchive": "scripts/validate-companion-builds.sh --configuration Release --archive tvos"
     },
     "docsRequiredWhen": [
       "provider behavior changes",

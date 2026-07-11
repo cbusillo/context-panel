@@ -201,6 +201,10 @@ def namespace_additional_review_versions(args: argparse.Namespace) -> list[str]:
     return list(getattr(args, "additional_review_version", []))
 
 
+def namespace_copy_from_platform(args: argparse.Namespace) -> str:
+    return getattr(args, "copy_from_platform", None) or namespace_platform(args)
+
+
 def version_state(resource: dict[str, Any]) -> str | None:
     attributes = resource.get("attributes", {})
     return attributes.get("appStoreState") or attributes.get("appVersionState")
@@ -1327,13 +1331,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--platform",
         default="MAC_OS",
-        choices=("IOS", "MAC_OS", "VISION_OS"),
+        choices=("IOS", "MAC_OS", "TV_OS", "VISION_OS"),
         help="App Store platform to submit for review",
     )
     parser.add_argument("--version", required=True, help="App Store marketing version, for example 1.0.12")
     parser.add_argument("--build-number", help="CFBundleVersion uploaded to App Store Connect")
     parser.add_argument("--whats-new")
     parser.add_argument("--copy-from-version", help="Existing App Store version to copy localization and review details from")
+    parser.add_argument(
+        "--copy-from-platform",
+        choices=("IOS", "MAC_OS", "TV_OS", "VISION_OS"),
+        help="Platform containing --copy-from-version metadata; defaults to --platform",
+    )
     parser.add_argument(
         "--remove-active-review-version",
         help="Existing App Store version to remove from active review before creating the target version",
@@ -1423,7 +1432,7 @@ def main() -> int:
             client,
             app_id,
             args.copy_from_version,
-            args.platform,
+            namespace_copy_from_platform(args),
         )
         build = ensure_build(client, app_id, args, allow_updates=not args.dry_run) if args.build_number else None
         removable_review_version = None

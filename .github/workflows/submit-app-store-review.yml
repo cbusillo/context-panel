@@ -25,6 +25,10 @@ name: Submit App Store Review
         description: Existing App Store version to copy metadata from.
         required: false
         type: string
+      copy_from_platform:
+        description: Platform containing the metadata source. Defaults to the target platform.
+        required: false
+        type: string
       remove_active_review_version:
         description: >-
           Existing App Store version to remove/reuse first when App Store
@@ -68,6 +72,7 @@ name: Submit App Store Review
         options:
           - MAC_OS
           - IOS
+          - TV_OS
           - VISION_OS
       build_number:
         description: Uploaded CFBundleVersion/build number.
@@ -79,6 +84,10 @@ name: Submit App Store Review
         type: string
       copy_from_version:
         description: Existing App Store version to copy metadata from.
+        required: false
+        type: string
+      copy_from_platform:
+        description: Platform containing the metadata source. Defaults to the target platform.
         required: false
         type: string
       remove_active_review_version:
@@ -152,6 +161,7 @@ jobs:
           INPUT_BUILD_NUMBER: ${{ inputs.build_number }}
           INPUT_WHATS_NEW: ${{ inputs.whats_new }}
           INPUT_COPY_FROM_VERSION: ${{ inputs.copy_from_version }}
+          INPUT_COPY_FROM_PLATFORM: ${{ inputs.copy_from_platform }}
           INPUT_REMOVE_ACTIVE_REVIEW_VERSION: >-
             ${{ inputs.remove_active_review_version }}
           INPUT_ADDITIONAL_REVIEW_VERSIONS: >-
@@ -185,6 +195,9 @@ jobs:
           fi
           if [[ -n "${INPUT_COPY_FROM_VERSION}" ]]; then
             args+=(--copy-from-version "${INPUT_COPY_FROM_VERSION}")
+          fi
+          if [[ -n "${INPUT_COPY_FROM_PLATFORM}" ]]; then
+            args+=(--copy-from-platform "${INPUT_COPY_FROM_PLATFORM}")
           fi
           if [[ -n "${INPUT_REMOVE_ACTIVE_REVIEW_VERSION}" ]]; then
             args+=(

@@ -9,7 +9,7 @@ archive_path=""
 derived_data_path=".build/app-store-connect-companion/xcode-derived"
 export_path=""
 export_options_path=""
-app_profile="${COMPANION_APP_STORE_APP_PROVISIONING_PROFILE:-.build/provisioning-appstore/ContextPanelCompanion.provisionprofile}"
+app_profile="${COMPANION_APP_STORE_APP_PROVISIONING_PROFILE:-}"
 widget_profile="${COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE:-.build/provisioning-appstore/ContextPanelCompanionWidgetExtension.provisionprofile}"
 watch_profile="${COMPANION_APP_STORE_WATCH_PROVISIONING_PROFILE:-.build/provisioning-appstore/ContextPanelWatch.provisionprofile}"
 watch_widget_profile="${COMPANION_APP_STORE_WATCH_WIDGET_PROVISIONING_PROFILE:-.build/provisioning-appstore/ContextPanelWatchWidgetExtension.provisionprofile}"
@@ -29,7 +29,7 @@ Archives the Context Panel companion app and exports or uploads the signed IPA
 to App Store Connect.
 
 Options:
-  --platform VALUE                     Companion platform: ios or visionos. Default: ios.
+  --platform VALUE                     Companion platform: ios, visionos, or tvos. Default: ios.
   --build-number VALUE                 Override CURRENT_PROJECT_VERSION.
   --version VALUE                      Override MARKETING_VERSION.
   --archive-path PATH                  Archive output path.
@@ -476,17 +476,27 @@ MSG
 
 case "$platform" in
 ios)
+	app_profile="${app_profile:-.build/provisioning-appstore/ContextPanelCompanion.provisionprofile}"
 	xcode_destination="generic/platform=iOS"
 	platform_label="iOS"
 	app_store_platform="IOS"
 	profile_platforms=(iOS)
 	;;
 visionos)
+	app_profile="${app_profile:-.build/provisioning-appstore/ContextPanelCompanion.provisionprofile}"
 	xcode_destination="generic/platform=visionOS"
 	platform_label="visionOS"
 	app_store_platform="VISION_OS"
 	profile_platforms=(visionOS xrOS)
 	assert_visionos_packaging_ready
+	;;
+tvos)
+	scheme="ContextPanelTV"
+	app_profile="${app_profile:-${COMPANION_APP_STORE_TV_PROVISIONING_PROFILE:-.build/provisioning-appstore/ContextPanelTV.provisionprofile}}"
+	xcode_destination="generic/platform=tvOS"
+	platform_label="tvOS"
+	app_store_platform="TV_OS"
+	profile_platforms=(tvOS)
 	;;
 *)
 	echo "unsupported companion platform: $platform" >&2
@@ -494,7 +504,7 @@ visionos)
 	;;
 esac
 
-archive_path="${archive_path:-.build/app-store-connect-companion/ContextPanelCompanion-$platform_label.xcarchive}"
+archive_path="${archive_path:-.build/app-store-connect-companion/$scheme-$platform_label.xcarchive}"
 export_path="${export_path:-.build/app-store-connect-companion/upload-$platform_label}"
 export_options_path="${export_options_path:-.build/app-store-connect-companion/UploadOptions-$platform_label.plist}"
 
@@ -519,13 +529,37 @@ run_xcodebuild() {
 	PATH="$(xcodebuild_system_path)" /usr/bin/xcodebuild "$@"
 }
 
+assert_tvos_archive_ready() {
+	local app_path="$archive_path/Products/Applications/Context Panel.app"
+	local icon_name top_shelf_image top_shelf_image_wide
+	if [[ -e "$app_path/PlugIns/ContextPanelCompanionWidgetExtension.appex" ]]; then
+		echo "tvOS archive unexpectedly contains the iOS/visionOS companion widget" >&2
+		exit 1
+	fi
+	if [[ ! -f "$app_path/Assets.car" ]]; then
+		echo "tvOS archive is missing compiled brand assets: $app_path/Assets.car" >&2
+		exit 1
+	fi
+	icon_name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundlePrimaryIcon' "$app_path/Info.plist" 2>/dev/null || true)"
+	if [[ "$icon_name" != "App Icon - Small" ]]; then
+		echo "tvOS archive is missing the primary layered app icon" >&2
+		exit 1
+	fi
+	top_shelf_image="$(/usr/libexec/PlistBuddy -c 'Print :TVTopShelfImage:TVTopShelfPrimaryImage' "$app_path/Info.plist" 2>/dev/null || true)"
+	top_shelf_image_wide="$(/usr/libexec/PlistBuddy -c 'Print :TVTopShelfImage:TVTopShelfPrimaryImageWide' "$app_path/Info.plist" 2>/dev/null || true)"
+	if [[ -z "$top_shelf_image" || -z "$top_shelf_image_wide" ]]; then
+		echo "tvOS archive is missing required standard or wide Top Shelf artwork" >&2
+		exit 1
+	fi
+}
+
 validate_marketing_version
 
 if [[ ! -f "$app_profile" ]]; then
 	echo "companion app provisioning profile not found: $app_profile" >&2
 	exit 1
 fi
-if [[ ! -f "$widget_profile" ]]; then
+if [[ "$platform" != "tvos" && ! -f "$widget_profile" ]]; then
 	echo "companion widget provisioning profile not found: $widget_profile" >&2
 	exit 1
 fi
@@ -571,17 +605,22 @@ if [[ "$upload" == "true" ]]; then
 fi
 
 app_profile_uuid="$(profile_uuid "$app_profile")"
-widget_profile_uuid="$(profile_uuid "$widget_profile")"
+widget_profile_uuid=""
 watch_profile_uuid=""
 watch_widget_profile_uuid=""
+if [[ "$platform" != "tvos" ]]; then
+	widget_profile_uuid="$(profile_uuid "$widget_profile")"
+fi
 if [[ "$platform" == "ios" ]]; then
 	watch_profile_uuid="$(profile_uuid "$watch_profile")"
 	watch_widget_profile_uuid="$(profile_uuid "$watch_widget_profile")"
 fi
 assert_profile_bundle_id "$app_profile" "companion app" "com.shinycomputers.contextpanel"
-assert_profile_bundle_id "$widget_profile" "companion widget" "com.shinycomputers.contextpanel.widget"
 assert_profile_platform_any "$app_profile" "companion app" "${profile_platforms[@]}"
-assert_profile_platform_any "$widget_profile" "companion widget" "${profile_platforms[@]}"
+if [[ "$platform" != "tvos" ]]; then
+	assert_profile_bundle_id "$widget_profile" "companion widget" "com.shinycomputers.contextpanel.widget"
+	assert_profile_platform_any "$widget_profile" "companion widget" "${profile_platforms[@]}"
+fi
 if [[ "$platform" == "ios" ]]; then
 	assert_profile_bundle_id "$watch_profile" "companion watch" "com.shinycomputers.contextpanel.watch"
 	assert_profile_bundle_id "$watch_widget_profile" "companion watch widget" "com.shinycomputers.contextpanel.watch.widget"
@@ -590,21 +629,31 @@ if [[ "$platform" == "ios" ]]; then
 	assert_profile_icloud_service "$watch_profile" "companion watch" "CloudKit"
 	assert_profile_icloud_service "$watch_widget_profile" "companion watch widget" "CloudKit"
 fi
-assert_profile_app_group "$app_profile" "companion app"
-assert_profile_app_group "$widget_profile" "companion widget"
-assert_profile_icloud_service "$app_profile" "companion app" "CloudDocuments"
 assert_profile_icloud_service "$app_profile" "companion app" "CloudKit"
-assert_profile_ubiquity_container "$app_profile" "companion app"
 assert_profile_push_notifications "$app_profile" "companion app" "production"
+if [[ "$platform" != "tvos" ]]; then
+	assert_profile_app_group "$app_profile" "companion app"
+	assert_profile_app_group "$widget_profile" "companion widget"
+	assert_profile_icloud_service "$app_profile" "companion app" "CloudDocuments"
+	assert_profile_ubiquity_container "$app_profile" "companion app"
+fi
 install_profile "$app_profile" "$app_profile_uuid"
-install_profile "$widget_profile" "$widget_profile_uuid"
+if [[ "$platform" != "tvos" ]]; then
+	install_profile "$widget_profile" "$widget_profile_uuid"
+fi
 if [[ "$platform" == "ios" ]]; then
 	install_profile "$watch_profile" "$watch_profile_uuid"
 	install_profile "$watch_widget_profile" "$watch_widget_profile_uuid"
 fi
 
 mkdir -p "$(dirname "$export_options_path")"
+widget_export_profile_plist=""
 watch_export_profile_plist=""
+if [[ "$platform" != "tvos" ]]; then
+	widget_export_profile_plist="
+			<key>com.shinycomputers.contextpanel.widget</key>
+			<string>$widget_profile_uuid</string>"
+fi
 if [[ "$platform" == "ios" ]]; then
 	watch_export_profile_plist="
 		<key>com.shinycomputers.contextpanel.watch</key>
@@ -631,8 +680,7 @@ cat >"$export_options_path" <<PLIST
 	<dict>
 		<key>com.shinycomputers.contextpanel</key>
 		<string>$app_profile_uuid</string>
-		<key>com.shinycomputers.contextpanel.widget</key>
-		<string>$widget_profile_uuid</string>
+$widget_export_profile_plist
 $watch_export_profile_plist
 	</dict>
 	<key>uploadSymbols</key>
@@ -656,9 +704,13 @@ archive_args=(
 	-authenticationKeyIssuerID "$api_issuer_id"
 	CODE_SIGN_STYLE=Manual
 	DEVELOPMENT_TEAM="$team_id"
-	CONTEXT_PANEL_APP_STORE_COMPANION_PROFILE_SPECIFIER="$app_profile_uuid"
-	CONTEXT_PANEL_APP_STORE_COMPANION_WIDGET_PROFILE_SPECIFIER="$widget_profile_uuid"
 )
+if [[ "$platform" == "tvos" ]]; then
+	archive_args+=(CONTEXT_PANEL_APP_STORE_TV_PROFILE_SPECIFIER="$app_profile_uuid")
+else
+	archive_args+=(CONTEXT_PANEL_APP_STORE_COMPANION_PROFILE_SPECIFIER="$app_profile_uuid")
+	archive_args+=(CONTEXT_PANEL_APP_STORE_COMPANION_WIDGET_PROFILE_SPECIFIER="$widget_profile_uuid")
+fi
 if [[ "$platform" == "ios" ]]; then
 	archive_args+=(CONTEXT_PANEL_APP_STORE_WATCH_PROFILE_SPECIFIER="$watch_profile_uuid")
 	archive_args+=(CONTEXT_PANEL_APP_STORE_WATCH_WIDGET_PROFILE_SPECIFIER="$watch_widget_profile_uuid")
@@ -672,6 +724,9 @@ fi
 
 rm -rf "$archive_path" "$derived_data_path" "$export_path"
 run_xcodebuild "${archive_args[@]}" archive
+if [[ "$platform" == "tvos" ]]; then
+	assert_tvos_archive_ready
+fi
 
 run_xcodebuild \
 	-exportArchive \

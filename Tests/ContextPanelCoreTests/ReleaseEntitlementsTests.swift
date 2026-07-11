@@ -134,7 +134,7 @@ import Testing
     }
 }
 
-@Test func tvEntitlementsStayReadOnlyAndCloudKitOnly() throws {
+@Test func tvEntitlementsStayReadOnlyWithCloudKitRequiredPushEnvironment() throws {
     let entitlements = try loadEntitlements("Config/ContextPanelTV.entitlements")
 
     let iCloudContainers = try #require(
@@ -143,7 +143,7 @@ import Testing
     #expect(iCloudContainers == ["iCloud.com.shinycomputers.contextpanel"])
     let services = try #require(entitlements["com.apple.developer.icloud-services"] as? [String])
     #expect(services == ["CloudKit"])
-    #expect(entitlements["aps-environment"] == nil)
+    #expect(entitlements["aps-environment"] as? String == "$(APS_ENVIRONMENT)")
     #expect(entitlements["com.apple.security.application-groups"] == nil)
     #expect(entitlements["keychain-access-groups"] == nil)
     #expect(entitlements["com.apple.developer.ubiquity-container-identifiers"] == nil)
@@ -327,10 +327,11 @@ import Testing
     #expect(appSettings["INFOPLIST_FILE"] as? String == "Config/ContextPanelTV-Info.plist")
     #expect(appSettings["TVOS_DEPLOYMENT_TARGET"] as? String == "17.0")
     #expect(appSettings["TARGETED_DEVICE_FAMILY"] as? String == "3")
-    #expect(appSettings["ASSETCATALOG_COMPILER_APPICON_NAME"] == nil)
-    #expect(appSettings["APS_ENVIRONMENT"] == nil)
+    #expect(appSettings["ASSETCATALOG_COMPILER_APPICON_NAME"] as? String == "App Icon & Top Shelf Image")
+    #expect(appSettings["APS_ENVIRONMENT"] as? String == "development")
 
     let appReleaseSettings = try #require(project.releaseTargetSettings(named: "ContextPanelTV"))
+    #expect(appReleaseSettings["APS_ENVIRONMENT"] as? String == "production")
     #expect(appReleaseSettings["CODE_SIGN_IDENTITY"] as? String == "Apple Distribution")
     #expect(
         appReleaseSettings["PROVISIONING_PROFILE_SPECIFIER"] as? String

@@ -1,6 +1,6 @@
 # macOS And Companion Release Path
 
-Last verified: 2026-06-19.
+Last verified: 2026-07-11.
 
 Context Panel's normal beta release path is the GitHub Actions `Ship` workflow.
 It coordinates selected release channels from one commit and one marketing
@@ -10,11 +10,14 @@ version:
 - App Store Connect build upload, signed with Mac App Store profiles
 - TestFlight beta distribution for the uploaded build
 
-Companion iOS/iPadOS distribution uses the same App Store Connect and
-TestFlight building blocks, but it is deliberately opt-in from `Ship` until the
-companion device path is proven on signed devices. visionOS currently has build
-scaffolding and a generic no-sign compile check only; do not treat the
-`visionos` upload options as evidence that a validated visionOS product exists.
+Companion iOS/iPadOS, visionOS, and tvOS distribution use the same App Store
+Connect and TestFlight building blocks, but each platform is deliberately
+opt-in from `Ship` until its signed device path is proven. The tvOS App Store
+Connect platform is active for version `1.0.44`; signed Apple TV and Production
+CloudKit evidence are still required before App Store submission. visionOS
+currently has build scaffolding and a generic no-sign compile check only; do not
+treat the `visionos` upload options as evidence that a validated visionOS
+product exists.
 
 App Store Review submission is intentionally separate from `Ship`. Run it only
 after the TestFlight build has been validated and the App Store release decision
@@ -30,9 +33,9 @@ The lower-level workflows remain callable for recovery and validation:
   provisioning profiles, then exports or uploads the package to App Store
   Connect
 - a GitHub Actions App Store Connect Companion Build Upload workflow that
-  archives the companion app and embedded companion WidgetKit extension for iOS
-  or visionOS with their App Store provisioning profiles, then exports or
-  uploads the signed IPA to App Store Connect
+  archives the iOS/visionOS companion app with its embedded WidgetKit extension,
+  or the standalone tvOS app, with platform-matching App Store provisioning
+  profiles, then exports or uploads the signed IPA to App Store Connect
 - a GitHub Actions TestFlight Beta Distribution workflow that waits for an
   uploaded build to finish App Store Connect processing, then assigns it to
   TestFlight beta groups
@@ -86,9 +89,11 @@ Use `Ship` for normal releases. It accepts:
 - `github_release`: publish the GitHub release channel.
 - `notarize_github_release`: notarize the GitHub zip; default is true.
 - `app_store_channel`: `upload`, `export-only`, or `skip`.
+- `companion_app_store_channel`: `upload`, `export-only`, or `skip`.
+- `companion_platform`: `ios`, `visionos`, or `tvos`.
 - `testflight_beta`: distribute the uploaded build through TestFlight.
 - `testflight_beta_source`: `macos` distributes the Mac App Store build;
-  `companion` distributes the companion iOS/visionOS build. If
+  `companion` distributes the selected iOS/visionOS/tvOS build. If
   `companion_app_store_channel=upload` and `testflight_beta=true`, `Ship`
   requires `testflight_beta_source=companion`.
 - `testflight_beta_groups`: optional comma-separated TestFlight beta group
@@ -235,6 +240,56 @@ Use this path for issue #274 and companion device dogfood. It is separate from
 the normal Mac TestFlight cut unless `Ship` is explicitly configured to use the
 companion channel.
 
+### tvOS Release Lane
+
+The `ContextPanelTV` scheme is a standalone read-only tvOS app. The release path
+archives it for `generic/platform=tvOS`, validates a tvOS App Store profile for
+bundle ID `com.shinycomputers.contextpanel` and CloudKit container
+`iCloud.com.shinycomputers.contextpanel`, uploads it as App Store Connect
+platform `TV_OS`, and can assign the processed build to TestFlight groups.
+
+The tvOS app intentionally does not embed the iOS/visionOS widget or watchOS
+targets and does not request their App Group, iCloud Documents, or ubiquity
+entitlements. App Store Connect requires `aps-environment` when the tvOS binary
+declares CloudKit, so Release uses the production APNs environment even before
+the app registers for provider-alert delivery. This entitlement alone does not
+request user-visible notification permission.
+
+The tvOS target compiles layered small/App Store icons plus required standard and
+wide Top Shelf artwork from
+`Resources/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets`. Both the CI
+archive gate and signed upload script require the compiled `Assets.car`, the
+`App Icon - Small` primary-icon declaration, and both generated
+`TVTopShelfImage` keys. The static brand artwork satisfies binary packaging;
+#376 may later add the dynamic Top Shelf extension and provider-specific content.
+
+The first signed tvOS canary is:
+
+```sh
+scripts/upload-app-store-connect-companion-app.sh \
+  --platform tvos \
+  --version <active-tvos-app-store-version> \
+  --build-number <yyyymmddHHMM> \
+  --export-only
+```
+
+Before treating the first tvOS TestFlight build as release evidence:
+
+- archive and upload from `main` with the dedicated tvOS profile secret;
+- verify the Production CloudKit schema and the canonical Mac Production
+  publisher before loading data on Apple TV;
+- install from TestFlight on physical Apple TV hardware and cover fresh, stale,
+  offline, missing-record, and restrictive-presentation states;
+- prepare tvOS screenshots, privacy disclosures, age rating, App Review notes,
+  and a physical-hardware demo path before App Store review;
+- keep Top Shelf/provider alerts optional for the first internal train; they may
+  join a later TestFlight build without blocking the standalone app upload.
+
+The approved screenshot uploader does not yet contain a tvOS screenshot set.
+Capture and approve the Apple TV marketing frames under #379, then either upload
+the first set directly in App Store Connect or extend the uploader with the
+approved files and Apple TV display type before review submission.
+
 ### visionOS Reality Check
 
 The companion project includes visionOS-capable targets and
@@ -313,6 +368,8 @@ the Mac upload path plus companion-specific Apple Distribution signing assets:
   uploads that embed the watchOS companion app
 - `COMPANION_APP_STORE_WATCH_WIDGET_PROVISIONING_PROFILE_BASE64` for iOS
   companion uploads that embed the watchOS complication extension
+- `COMPANION_APP_STORE_TV_PROVISIONING_PROFILE_BASE64` for the standalone tvOS
+  app
 
 The companion app profile must authorize:
 
@@ -335,6 +392,13 @@ watch profiles because the watch app and complication extension are exported as
 part of the iOS companion archive. The watch app is embedded only in the iOS
 companion package; native visionOS companion builds deliberately exclude watchOS
 content.
+
+The tvOS profile is separate from the iOS/visionOS companion app profile even
+though it uses the same bundle ID. It must support `tvOS`, authorize CloudKit
+for `iCloud.com.shinycomputers.contextpanel`, and carry production APNs because
+App Store Connect requires that entitlement alongside tvOS CloudKit. It does not
+need the iOS/visionOS-only iCloud Documents, ubiquity, widget, or watch
+entitlements.
 
 Do not remove older App IDs, profiles, or profile secrets while validating the
 new companion path. Keep them available until a signed device/TestFlight install
@@ -490,7 +554,7 @@ Use inputs:
 
 - `version`: the App Store marketing version.
 - `build_number`: optional; blank uses a UTC timestamp.
-- `platform`: `ios` or `visionos`.
+- `platform`: `ios`, `visionos`, or `tvos`.
 - `upload`: `true` to upload, `false` for export-only.
 
 After a successful upload, distribute that build with `TestFlight Beta
@@ -498,12 +562,13 @@ Distribution` using:
 
 - `platform=IOS` for iPhone/iPad companion builds.
 - `platform=VISION_OS` for visionOS companion builds.
+- `platform=TV_OS` for tvOS builds.
 - the same `version` and resolved `build_number` from the upload summary.
 
 For a coordinated one-shot run through `Ship`, select:
 
 - `companion_app_store_channel=upload`
-- `companion_platform=ios` or `visionos`
+- `companion_platform=ios`, `visionos`, or `tvos`
 - `testflight_beta=true`
 - `testflight_beta_source=companion`
 - `app_store_channel=skip` unless the same run should also upload a Mac build
@@ -518,6 +583,11 @@ Use `companion_platform=visionos` only for the #168/#231 native visionOS
 validation path, after #230 has confirmed profile, icon, metadata, and App Store
 Connect requirements. The normal companion dogfood path remains `ios` for
 iPhone/iPad.
+
+Use `companion_platform=tvos` for issue #379 after the tvOS profile secret is
+present. The first internal train may ship the standalone Couch Mode app while
+Top Shelf/provider alerts continue in parallel; App Store submission still
+requires physical Apple TV, screenshot, metadata, privacy, and review evidence.
 
 Do not set `testflight_beta_source=macos` when the intent is companion device
 validation; that distributes the Mac App Store build instead of the companion
@@ -585,6 +655,10 @@ Preferred operator flow:
    The selected build's pre-release marketing version must match the App Store
    marketing version; do not attach an older companion build to a fresh App
    Store version.
+   For the first version on a new platform, set `copy_from_platform` to an
+   existing platform such as `MAC_OS` and `copy_from_version` to the approved
+   source version. Review the copied text for platform-specific claims before
+   submission.
 3. If the dry run reports that an older App Store version blocks creating the
    target version, rerun the dry run with `remove_active_review_version` set to
    that blocking version.
@@ -599,13 +673,16 @@ submit that fresh version instead. The submit helper fails fast when the target
 version is in `DEVELOPER_REJECTED`, `REJECTED`, `METADATA_REJECTED`, or
 `INVALID_BINARY`.
 
-Companion App Review may ask for a demo video when the iOS, iPadOS, watchOS, or
-visionOS surface depends on a Mac-published CloudKit companion snapshot. For
-Guideline 2.1 information-needed responses, add an App Review Information link
-to a demo video filmed on physical hardware. Show the current companion app on a
-physical iPhone or iPad, the Mac running Context Panel as the designated
-hardware/source app, the Mac publishing a fresh snapshot, and the companion app
-or widget moving from setup/waiting-for-Mac-sync into synced usage-limit data.
+Companion App Review may ask for a demo video when the iOS, iPadOS, watchOS,
+visionOS, or tvOS surface depends on a Mac-published CloudKit companion
+snapshot. For Guideline 2.1 information-needed responses, add an App Review
+Information link to a demo video filmed on physical hardware. Show the current
+companion app on a physical iPhone or iPad, the Mac running Context Panel as the
+designated hardware/source app, the Mac publishing a fresh snapshot, and the
+companion app or widget moving from setup/waiting-for-Mac-sync into synced
+usage-limit data. For `TV_OS`, record the equivalent flow on a physical Apple
+TV, including app launch, the waiting/no-Mac state, and the transition to a fresh
+Mac-published snapshot.
 Reply to App Review with that link and summarize that no demo account is needed
 unless the build requires one.
 
@@ -615,12 +692,12 @@ approved metadata and screenshot matrix there, attach a newly validated build,
 and submit that fresh version after device validation.
 
 Use `platform: MAC_OS` for the native macOS app. For companion review, first run
-the companion App Store Connect upload for `platform=ios` or `platform=visionos`,
-then run `Submit App Store Review` with `platform: IOS` or `platform: VISION_OS`
-and the companion build number. If App Store Connect says the app needs an
-approved iOS version or an iOS version in the current review submission, do not
-retry the macOS submit as the fix; upload and submit the companion iOS review
-path.
+the companion App Store Connect upload for `platform=ios`, `platform=visionos`,
+or `platform=tvos`, then run `Submit App Store Review` with `platform: IOS`,
+`platform: VISION_OS`, or `platform: TV_OS` and the companion build number. If
+App Store Connect says the app needs an approved iOS version or an iOS version
+in the current review submission, do not retry the macOS submit as the fix;
+upload and submit the companion iOS review path.
 
 Cancel-only recovery is available through `Submit App Store Review` by setting
 `cancel_review_only: true` and `remove_active_review_version` to the version

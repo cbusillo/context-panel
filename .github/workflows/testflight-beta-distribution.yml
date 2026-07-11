@@ -47,6 +47,7 @@ name: TestFlight Beta Distribution
         options:
           - IOS
           - MAC_OS
+          - TV_OS
           - VISION_OS
       beta_groups:
         description: Optional comma-separated TestFlight beta group names. Internal groups are included by default.
