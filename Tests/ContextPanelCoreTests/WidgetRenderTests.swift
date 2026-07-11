@@ -65,17 +65,26 @@ private let renderTestWidgetLinks = ContextPanelWidgetLinks(
 
 @MainActor
 @Test func selectedSmallWidgetRendersKnownUnknownAndStaleStates() throws {
-    let scenarios: [(snapshot: WidgetSnapshot, variant: CPWThemeVariant)] = [
-        (smallWidgetSnapshot(usedPercent: 58), .light),
-        (smallWidgetSnapshot(usedPercent: nil, status: .unknown), .dark),
-        (smallWidgetSnapshot(usedPercent: 58, state: .stale), .light),
+    let scenarios: [(
+        snapshot: WidgetSnapshot,
+        preferences: WidgetDisplayPreferences,
+        variant: CPWThemeVariant,
+        expectsThreeLanes: Bool
+    )] = [
+        (smallWidgetSnapshot(usedPercent: 58), singleLaneWidgetPreferences, .light, false),
+        (smallWidgetSnapshot(usedPercent: nil, status: .unknown), singleLaneWidgetPreferences, .dark, false),
+        (smallWidgetSnapshot(usedPercent: 58, state: .stale), singleLaneWidgetPreferences, .light, false),
+        (smallWidgetSnapshot(usedPercent: 58, state: .failure), singleLaneWidgetPreferences, .dark, false),
+        (multiLaneSmallWidgetSnapshot(), .defaultPreferences, .dark, true),
+        (multiLaneSmallWidgetSnapshot(state: .stale), .defaultPreferences, .light, true),
+        (multiLaneSmallWidgetSnapshot(state: .failure), .defaultPreferences, .dark, true),
     ]
 
     for scenario in scenarios {
         let view = ContextPanelWidgetContentView(
             family: .systemSmall,
             snapshot: scenario.snapshot,
-            displayPreferences: .defaultPreferences,
+            displayPreferences: scenario.preferences,
             links: renderTestWidgetLinks
         )
         .cpwThemeVariant(scenario.variant)
@@ -84,7 +93,81 @@ private let renderTestWidgetLinks = ContextPanelWidgetLinks(
 
         let image = try #require(renderedImage(from: view, width: 164, height: 164))
         #expect(nonBackgroundPixelCount(in: image) > 1_400)
+        if scenario.expectsThreeLanes {
+            #expect(nonBackgroundPixelCount(in: image, rows: 109..<164) > 150)
+        }
     }
+}
+
+private var singleLaneWidgetPreferences: WidgetDisplayPreferences {
+    var preferences = WidgetDisplayPreferences.defaultPreferences
+    for index in preferences.mainLimits.indices {
+        preferences.mainLimits[index].isVisible = preferences.mainLimits[index].provider == .openAI
+            && preferences.mainLimits[index].window == .weekly
+    }
+    return preferences
+}
+
+private func multiLaneSmallWidgetSnapshot(state: WidgetSnapshotState = .ready) -> WidgetSnapshot {
+    let now = Date()
+    let snapshotStatus: UsageStatus
+    switch state {
+    case .ready:
+        snapshotStatus = .healthy
+    case .stale:
+        snapshotStatus = .stale
+    case .failure:
+        snapshotStatus = .failure
+    case .setupNeeded:
+        snapshotStatus = .unknown
+    }
+    return WidgetSnapshot(
+        state: state,
+        generatedAt: now,
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "openai-weekly",
+                accountName: "OpenAI",
+                label: "Codex Weekly",
+                windowLabel: "weekly",
+                unit: .percent,
+                used: 44,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(86_400),
+                lastUpdatedAt: now,
+                confidence: .observed
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "openai-five-hour",
+                accountName: "OpenAI",
+                label: "Codex 5-hour",
+                windowLabel: "5-hour",
+                unit: .percent,
+                used: 18,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(7_200),
+                lastUpdatedAt: now,
+                confidence: .observed
+            ),
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "anthropic-weekly",
+                accountName: "Anthropic",
+                label: "Claude Weekly",
+                windowLabel: "weekly",
+                unit: .percent,
+                used: 27,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(172_800),
+                lastUpdatedAt: now,
+                confidence: .official
+            ),
+        ],
+        status: snapshotStatus,
+        message: "All providers refreshed."
+    )
 }
 
 @MainActor
@@ -96,6 +179,10 @@ private func renderedImage<V: View>(from view: V, width: CGFloat, height: CGFloa
 }
 
 private func nonBackgroundPixelCount(in image: CGImage) -> Int {
+    nonBackgroundPixelCount(in: image, rows: 0..<image.height)
+}
+
+private func nonBackgroundPixelCount(in image: CGImage, rows: Range<Int>) -> Int {
     let width = image.width
     let height = image.height
     let bytesPerPixel = 4
@@ -116,16 +203,25 @@ private func nonBackgroundPixelCount(in image: CGImage) -> Int {
     context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
     let background = Array(pixels.prefix(bytesPerPixel))
     var changed = 0
-    for offset in stride(from: 0, to: pixels.count, by: bytesPerPixel) {
-        let delta = abs(Int(pixels[offset]) - Int(background[0]))
-            + abs(Int(pixels[offset + 1]) - Int(background[1]))
-            + abs(Int(pixels[offset + 2]) - Int(background[2]))
-            + abs(Int(pixels[offset + 3]) - Int(background[3]))
-        if delta > 18 {
-            changed += 1
+    for row in rows.clamped(to: 0..<height) {
+        let rowStart = row * bytesPerRow
+        for offset in stride(from: rowStart, to: rowStart + bytesPerRow, by: bytesPerPixel) {
+            let delta = abs(Int(pixels[offset]) - Int(background[0]))
+                + abs(Int(pixels[offset + 1]) - Int(background[1]))
+                + abs(Int(pixels[offset + 2]) - Int(background[2]))
+                + abs(Int(pixels[offset + 3]) - Int(background[3]))
+            if delta > 18 {
+                changed += 1
+            }
         }
     }
     return changed
+}
+
+private extension Range where Bound == Int {
+    func clamped(to limits: Range<Int>) -> Range<Int> {
+        Swift.max(lowerBound, limits.lowerBound)..<Swift.min(upperBound, limits.upperBound)
+    }
 }
 
 private func smallWidgetSnapshot(
@@ -134,6 +230,17 @@ private func smallWidgetSnapshot(
     status: UsageStatus? = nil
 ) -> WidgetSnapshot {
     let now = Date()
+    let snapshotStatus: UsageStatus
+    switch state {
+    case .ready:
+        snapshotStatus = status ?? .healthy
+    case .stale:
+        snapshotStatus = .stale
+    case .failure:
+        snapshotStatus = .failure
+    case .setupNeeded:
+        snapshotStatus = .unknown
+    }
     return WidgetSnapshot(
         state: state,
         generatedAt: now,
@@ -153,7 +260,7 @@ private func smallWidgetSnapshot(
                 statusOverride: status
             ),
         ],
-        status: state == .stale ? .stale : (status ?? .healthy),
+        status: snapshotStatus,
         message: "Synced"
     )
 }

@@ -133,14 +133,16 @@ struct WatchCircularComplication: View {
             Gauge(value: ratio) {
                 EmptyView()
             } currentValueLabel: {
-                VStack(spacing: 0) {
-                    Text(limit.remainingText)
-                        .minimumScaleFactor(0.55)
-                    if let symbol = watchExceptionalStatusSymbol(limit.status) {
-                        Image(systemName: symbol)
-                            .font(.system(size: 6, weight: .semibold))
+                Text(limit.remainingText)
+                    .minimumScaleFactor(0.55)
+                    .overlay(alignment: .bottomTrailing) {
+                        if let symbol = watchExceptionalStatusSymbol(limit.status) {
+                            Image(systemName: symbol)
+                                .font(.system(size: 7, weight: .semibold))
+                                .offset(x: 3, y: 3)
+                                .accessibilityHidden(true)
+                        }
                     }
-                }
             }
             .gaugeStyle(.accessoryCircularCapacity)
             .tint(tint)
@@ -199,9 +201,9 @@ private struct WatchRectangularLimitLine: View {
             Text(limit.subtitle)
                 .foregroundStyle(.secondary)
             Spacer(minLength: 2)
-            WatchMiniPressureBar(metric: limit.usedPressure, tint: watchStatusColor(limit.status))
+            WatchMiniCapacityBar(metric: limit.remainingCapacity, tint: watchStatusColor(limit.status))
                 .frame(width: 26, height: 3)
-            Text(limit.usedComplicationText)
+            Text(limit.remainingComplicationText)
                 .foregroundStyle(watchStatusColor(limit.status))
                 .layoutPriority(1)
         }
@@ -209,28 +211,27 @@ private struct WatchRectangularLimitLine: View {
         .lineLimit(1)
         .minimumScaleFactor(0.75)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(limit.accessibilitySentence(direction: .used))
+        .accessibilityLabel(limit.accessibilitySentence(direction: .remaining))
     }
 }
 
-private struct WatchMiniPressureBar: View {
+private struct WatchMiniCapacityBar: View {
     let metric: MetricProgress
     let tint: Color
 
     var body: some View {
         GeometryReader { proxy in
-            Capsule()
-                .fill(.tertiary)
-                .overlay(alignment: .leading) {
-                    if let ratio = metric.ratio {
-                        Capsule()
-                            .fill(tint)
-                            .frame(width: proxy.size.width * ratio)
-                    } else {
-                        Capsule()
-                            .stroke(tint, style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
-                    }
+            if let ratio = metric.ratio {
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.tertiary)
+                    Capsule()
+                        .fill(tint)
+                        .frame(width: proxy.size.width * ratio)
                 }
+            } else {
+                Capsule()
+                    .stroke(tint, style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
+            }
         }
     }
 }
@@ -241,7 +242,7 @@ struct WatchInlineComplication: View {
 
     var body: some View {
         if let limit {
-            Text("\(limit.title) \(limit.subtitle) · \(limit.remainingComplicationText)")
+            Text("\(limit.title) \(limit.subtitle) · \(limit.remainingInlineText)")
                 .accessibilityLabel(limit.accessibilitySentence(direction: .remaining))
         } else {
             Text(snapshot.state == .failure ? "Context Panel sync failed" : "Context Panel needs sync")
@@ -291,7 +292,7 @@ struct ContextPanelWatchWidget: Widget {
                 .containerBackground(.clear, for: .widget)
         }
         .configurationDisplayName("Context Panel")
-        .description("Shows the tightest AI usage limit from your Mac sync.")
+        .description("Shows remaining capacity for your tightest AI usage limits.")
         .supportedFamilies([.accessoryCircular, .accessoryRectangular, .accessoryInline, .accessoryCorner])
     }
 }
