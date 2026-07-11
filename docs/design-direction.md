@@ -1,6 +1,6 @@
 # Design Direction
 
-Last updated: 2026-07-10.
+Last updated: 2026-07-11.
 
 ## Accepted Direction
 
@@ -23,10 +23,11 @@ trying to turn the widget into a dashboard.
 
 Use an instrument-first widget hierarchy:
 
-- Small widget: answer-first remaining-capacity verdict, tightest main limit,
-  provider/window label, reset confidence, and an explicitly labeled
-  used-pressure bar. The `used` caption is required whenever that inverse bar
-  renders. Stale or setup problem copy takes priority when needed.
+- Small widget: show up to three configured main-limit lanes in saved order.
+  A single selected lane may use the larger remaining-capacity treatment;
+  multi-lane layouts use a compact remaining-capacity ledger with locally
+  aligned capacity bars, reset confidence, and explicit unknown/stale state.
+  Stale or setup problem copy takes priority when needed.
 - Medium widget: overall/tightest status plus the most constrained provider or
   account rows, nearest reset, prompt-cache summary when enabled, and compact
   sync/refresh state.
@@ -39,13 +40,14 @@ multi-account data does not fit a dial-led composition. The design preference is
 still instrument-first: clear pressure, reset timing, and state hierarchy before
 raw completeness.
 
-Apple Watch uses a shape-based quantity matrix. Circular and corner
-complications are remaining-capacity rings, and inline complications state the
-remaining answer explicitly. Rectangular complications and watch app rows are
-explicitly labeled used-pressure views. In every case, the visible number,
-wording, fill, color, and accessibility sentence describe the same quantity.
-Keep unknown values indeterminate rather than substituting zero, preserve stale
-last-good values with explicit freshness language, and retain saved lane order.
+Every Apple Watch complication family is a glance surface and shows remaining
+capacity, matching the primary macOS widget answer. Circular and corner gauges,
+rectangular bars, and inline copy all use the remaining ratio and explicit
+remaining language. Watch app rows remain detail surfaces and stay explicitly
+used-pressure. In every case, the visible number, wording, fill, color, and
+accessibility sentence describe the same quantity. Keep unknown values
+indeterminate rather than substituting zero, preserve stale last-good values
+with explicit freshness language, and retain saved lane order.
 
 ## App Layout Direction
 
@@ -142,6 +144,8 @@ The semantic defaults are:
 
 - Rings and capacity dials communicate remaining capacity.
 - Linear pressure bars communicate used capacity and pair with `used` copy.
+  Remaining-capacity bars are reserved for glance surfaces such as Watch
+  complications and the small widget, and pair with explicit `left` copy.
 - Rates such as prompt-cache hit rate remain neutral telemetry rather than being
   named or announced as capacity or pressure.
 - Missing, non-finite, unavailable, and unknown ratios are indeterminate. They

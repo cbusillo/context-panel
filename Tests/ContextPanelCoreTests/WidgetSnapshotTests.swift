@@ -1263,9 +1263,40 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     let summary = try #require(snapshot.tightestMainLimitSummary)
     #expect(summary.status == .healthy)
     #expect(snapshot.widgetPresentationStatus(for: summary.status) == .stale)
-    #expect(snapshot.widgetSmallAccessibilityValue.contains("Last known status available"))
-    #expect(snapshot.widgetSmallAccessibilityValue.contains("Data stale"))
+    #expect(summary.widgetCapacityAccessibilityValue(snapshotState: snapshot.state).contains("Last known main limit status available"))
+    #expect(summary.widgetCapacityAccessibilityValue(snapshotState: snapshot.state).contains("Data stale"))
     #expect(summary.widgetPressureAccessibilityValue(snapshotState: snapshot.state).contains("Data stale"))
+}
+
+@Test func snapshotLevelFailureOverridesSmallWidgetCapacityPresentation() throws {
+    let now = Date()
+    let snapshot = WidgetSnapshot(
+        state: .failure,
+        generatedAt: now,
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "openai",
+                accountName: "OpenAI",
+                label: "Weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 58,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(86_400),
+                lastUpdatedAt: now.addingTimeInterval(-10_800),
+                confidence: .observed
+            ),
+        ],
+        status: .failure,
+        message: "Refresh failed"
+    )
+
+    let summary = try #require(snapshot.tightestMainLimitSummary)
+    let accessibilityValue = summary.widgetCapacityAccessibilityValue(snapshotState: snapshot.state)
+    #expect(accessibilityValue.contains("42% left"))
+    #expect(accessibilityValue.contains("Last known main limit status available"))
+    #expect(accessibilityValue.contains("Refresh failed"))
 }
 
 @Test func providerSummaryShowsCloseWhenAnotherMetricIsHealthy() {
@@ -1273,7 +1304,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(!UsageStatus.close.shouldShowWidgetProviderStatus(relativeTo: .close))
 }
 
-@Test func smallWidgetAccessibilityNamesBothBridgeDirections() {
+@Test func smallWidgetAccessibilityNamesRemainingCapacity() throws {
     let now = Date()
     let snapshot = WidgetSnapshot(
         state: .ready,
@@ -1297,10 +1328,11 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
         message: "Synced"
     )
 
-    #expect(snapshot.widgetSmallAccessibilityLabel.contains("OpenAI"))
-    #expect(snapshot.widgetSmallAccessibilityValue.contains("42% left"))
-    #expect(snapshot.widgetSmallAccessibilityValue.contains("58% used"))
-    #expect(snapshot.widgetSmallAccessibilityValue.contains("Status available"))
+    let summary = try #require(snapshot.tightestMainLimitSummary)
+    let accessibilityValue = summary.widgetCapacityAccessibilityValue(snapshotState: snapshot.state)
+    #expect(accessibilityValue.contains("42% left"))
+    #expect(!accessibilityValue.contains("58% used"))
+    #expect(accessibilityValue.contains("Main limit status available"))
 }
 
 @Test func providerSummarySelectionPrefersDeterminateZeroOverUnknown() throws {

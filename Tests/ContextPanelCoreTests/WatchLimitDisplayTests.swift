@@ -54,6 +54,8 @@ import Testing
     #expect(row.usedTextLabeled == "15% used")
     #expect(row.remainingText == "85%")
     #expect(row.remainingTextLabeled == "85% left")
+    #expect(row.remainingComplicationText == "85% left")
+    #expect(row.remainingInlineText == "85% left")
     #expect(row.usedPressure.ratio == 0.15)
     #expect(row.remainingCapacity.ratio == 0.85)
     #expect(row.resetText(now: snapshot.generatedAt) == "7d")
@@ -178,6 +180,54 @@ import Testing
     #expect(rows.map(\.subtitle) == ["1w", "1w", "5h"])
 }
 
+@Test func watchLimitDisplayMainLaneRowsPreserveSelectedUnknownLane() throws {
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+        limits: [
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "anthropic",
+                accountName: "Anthropic",
+                label: "Weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: nil,
+                limit: nil,
+                confidence: .estimated,
+                statusOverride: .unknown
+            ),
+            openAIWeeklyPercentLimit(accountID: "openai", used: 15),
+        ],
+        status: .unknown,
+        message: "Partial sync"
+    )
+    var preferences = WidgetDisplayPreferences.defaultPreferences
+    for index in preferences.mainLimits.indices {
+        preferences.mainLimits[index].isVisible = (
+            preferences.mainLimits[index].provider == .anthropic
+                && preferences.mainLimits[index].window == .weekly
+        ) || (
+            preferences.mainLimits[index].provider == .openAI
+                && preferences.mainLimits[index].window == .weekly
+        )
+    }
+    let anthropicIndex = try #require(preferences.mainLimits.firstIndex {
+        $0.provider == .anthropic && $0.window == .weekly
+    })
+    preferences.moveMainLimits(fromOffsets: IndexSet(integer: anthropicIndex), toOffset: 0)
+
+    let rows = WatchLimitDisplay.mainLaneRows(
+        from: snapshot,
+        preferences: preferences,
+        maximumCount: 2
+    )
+
+    #expect(rows.map(\.provider) == [.anthropic, .openAI])
+    #expect(rows.first?.remainingCapacity.isIndeterminate == true)
+    #expect(rows.first?.remainingComplicationText == "unknown")
+}
+
 @Test func watchLimitDisplayMainLaneRowsFallBackToNonMainLimits() throws {
     let snapshot = WidgetSnapshot(
         state: .ready,
@@ -206,10 +256,11 @@ import Testing
     #expect(row.subtitle == "Model requests")
     #expect(row.usedText == "35")
     #expect(row.usedTextLabeled == "35 used")
-    #expect(row.remainingText == "65%")
+    #expect(row.remainingText == "65")
+    #expect(row.remainingComplicationText == "65 left")
     #expect(
-        row.accessibilitySentence(direction: .used, now: snapshot.generatedAt)
-            == "Google, Model requests, account Antigravity. 35 of 100 requests used, available. Reset time unknown. Synced just now."
+        row.accessibilitySentence(direction: .remaining, now: snapshot.generatedAt)
+            == "Google, Model requests, account Antigravity. 65 of 100 requests remaining, available. Reset time unknown. Synced just now."
     )
 }
 
@@ -358,11 +409,13 @@ import Testing
 
     #expect(row.usedTextLabeled == "usage unknown")
     #expect(row.remainingTextLabeled == "remaining unknown")
+    #expect(row.remainingComplicationText == "unknown")
+    #expect(row.remainingInlineText == "capacity unknown")
     #expect(row.usedPressure.isIndeterminate)
     #expect(row.remainingCapacity.isIndeterminate)
     #expect(
-        row.accessibilitySentence(direction: .used, now: generatedAt)
-            == "Google, Model requests, account Antigravity. usage unknown, unknown. Reset time unknown. Synced just now."
+        row.accessibilitySentence(direction: .remaining, now: generatedAt)
+            == "Google, Model requests, account Antigravity. remaining capacity unknown. Reset time unknown. Synced just now."
     )
 }
 
@@ -390,13 +443,45 @@ import Testing
     let row = try #require(WatchLimitDisplay.rows(from: snapshot, maximumCount: 1).first)
 
     #expect(row.usedTextLabeled == "35 used")
-    #expect(row.usedComplicationText == "35 used · stale")
-    #expect(row.remainingComplicationText == "65% left · stale")
+    #expect(row.remainingText == "65")
+    #expect(row.remainingComplicationText == "65 left · stale")
     #expect(row.status == .stale)
     #expect(row.resetText(now: now) == "2h")
     #expect(
-        row.accessibilitySentence(direction: .used, now: now)
-            == "Google, Model requests, account Antigravity. 35 of 100 requests used, stale. Resets in 2 hours. Showing saved data, last synced 2 hours ago."
+        row.accessibilitySentence(direction: .remaining, now: now)
+            == "Google, Model requests, account Antigravity. 65 of 100 requests remaining, stale. Resets in 2 hours. Showing saved data, last synced 2 hours ago."
+    )
+}
+
+@Test func watchLimitDisplayPreservesRemainingCapacityWhenRefreshFails() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let snapshot = WidgetSnapshot(
+        state: .failure,
+        generatedAt: now.addingTimeInterval(-2 * 3_600),
+        limits: [
+            UsageLimit(
+                provider: .google,
+                accountID: "failed",
+                accountName: "Antigravity",
+                label: "Model requests",
+                unit: .requests,
+                used: 35,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(2 * 3_600)
+            ),
+        ],
+        status: .failure,
+        message: "Sync failed"
+    )
+
+    let row = try #require(WatchLimitDisplay.rows(from: snapshot, maximumCount: 1).first)
+
+    #expect(row.remainingCapacity.ratio == 0.65)
+    #expect(row.remainingComplicationText == "65 left · failed")
+    #expect(row.status == .failure)
+    #expect(
+        row.accessibilitySentence(direction: .remaining, now: now)
+            == "Google, Model requests, account Antigravity. 65 of 100 requests remaining, refresh failed. Resets in 2 hours. Not synced."
     )
 }
 

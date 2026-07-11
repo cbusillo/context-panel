@@ -33,12 +33,12 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
         remainingCapacity.isIndeterminate ? "remaining unknown" : "\(remainingText) left"
     }
 
-    public var usedComplicationText: String {
-        complicationText(usedTextLabeled)
+    public var remainingComplicationText: String {
+        complicationText(remainingCapacity.isIndeterminate ? "unknown" : remainingTextLabeled)
     }
 
-    public var remainingComplicationText: String {
-        complicationText(remainingTextLabeled)
+    public var remainingInlineText: String {
+        complicationText(remainingCapacity.isIndeterminate ? "capacity unknown" : remainingTextLabeled)
     }
 
     public var exceptionalStatusText: String? {
@@ -73,8 +73,14 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
         }
         let identity = identityParts
             .joined(separator: ", ")
+        let isIndeterminate = direction == .remaining
+            ? remainingCapacity.isIndeterminate
+            : usedPressure.isIndeterminate
         let quantity = direction == .remaining ? remainingAccessibilityText : usedAccessibilityText
-        return "\(identity). \(quantity), \(statusText). \(resetAccessibilityText(now: now)) \(freshnessAccessibilityText(now: now))"
+        let quantityAndStatus = isIndeterminate && status == .unknown
+            ? quantity
+            : "\(quantity), \(statusText)"
+        return "\(identity). \(quantityAndStatus). \(resetAccessibilityText(now: now)) \(freshnessAccessibilityText(now: now))"
     }
 
     private func complicationText(_ quantity: String) -> String {
@@ -127,8 +133,9 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
         let preferredRows = preferences
             .visibleMainLimitLanes(from: snapshot.usageSnapshot.mainLimitSummaries, maximumCount: maximumCount)
             .compactMap { lane in
-                if let summary = lane.summary {
-                    return row(from: summary, snapshot: snapshot)
+                if let summary = lane.summary,
+                   let summaryRow = row(from: summary, snapshot: snapshot) {
+                    return summaryRow
                 }
                 return snapshot.mostConstrainedLimits
                     .first {
@@ -163,7 +170,13 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
                 usedPercent: metrics.usedPercent,
                 isIndeterminate: metrics.used.isIndeterminate
             ),
-            remainingText: metrics.remainingPercent.map { "\($0)%" } ?? "—",
+            remainingText: remainingDisplayText(
+                used: summary.used,
+                limit: summary.limit,
+                unit: summary.unit,
+                remainingPercent: metrics.remainingPercent,
+                isIndeterminate: metrics.remaining.isIndeterminate
+            ),
             remainingCapacity: metrics.remaining,
             usedPressure: metrics.used,
             status: status,
@@ -212,7 +225,13 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
                 usedPercent: metrics.usedPercent,
                 isIndeterminate: metrics.used.isIndeterminate
             ),
-            remainingText: metrics.remainingPercent.map { "\($0)%" } ?? "—",
+            remainingText: remainingDisplayText(
+                used: limit.used,
+                limit: limit.limit,
+                unit: limit.unit,
+                remainingPercent: metrics.remainingPercent,
+                isIndeterminate: metrics.remaining.isIndeterminate
+            ),
             remainingCapacity: metrics.remaining,
             usedPressure: metrics.used,
             status: status,
@@ -298,6 +317,21 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
         }
         guard let used else { return "—" }
         return "\(used)"
+    }
+
+    private static func remainingDisplayText(
+        used: Int?,
+        limit: Int?,
+        unit: UsageUnit?,
+        remainingPercent: Int?,
+        isIndeterminate: Bool
+    ) -> String {
+        guard !isIndeterminate else { return "—" }
+        if unit == .percent {
+            return remainingPercent.map { "\($0)%" } ?? "—"
+        }
+        guard let used, let limit else { return "—" }
+        return "\(max(limit - used, 0))"
     }
 
     private static func usedAccessibilityText(
