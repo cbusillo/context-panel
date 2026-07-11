@@ -58,6 +58,24 @@ The native macOS app should stay a work-focused `NavigationSplitView`:
   naming, widget lane preferences, refresh cadence, warning/webhook settings,
   and troubleshooting.
 
+The read-only iPhone, iPad, and visionOS companion uses an adaptive composition:
+
+- iPhone keeps the existing full-width single column with 16-point page padding
+  in every orientation.
+- Non-phone windows below 810 points and accessibility text sizes use one
+  centered column capped at 720 points with 24-point page padding. The order is
+  usage instrument, sync status, display settings, refresh settings, then
+  visionOS appearance.
+- Regular-width iPad and visionOS windows use two bounded columns: the usage
+  instrument and sync status lead, while settings remain secondary in the
+  trailing column. The layout begins at 810 points and stops expanding at 1080
+  points; the instrument column flexes from 400 to 720 points and the settings
+  column remains 340 points.
+- Resizing must preserve view identity, settings state, and accessibility
+  reading order.
+- The companion remains a focused read-only utility. Do not turn regular width
+  into a collector dashboard, navigation sidebar, or denser telemetry surface.
+
 Mutation belongs in the app, not the widget: adding logins, reconnecting,
 naming accounts, disabling or removing accounts, saving bookmarks, choosing
 visible widget lanes, refreshing, calibration, warning configuration, and

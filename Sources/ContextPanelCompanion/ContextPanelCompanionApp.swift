@@ -137,6 +137,7 @@ private final class CompanionAppDelegate: NSObject, UIApplicationDelegate {
 
 @MainActor
 private struct CompanionRootView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.scenePhase) private var scenePhase
     @State private var model = CompanionSyncModel()
 
@@ -156,52 +157,40 @@ private struct CompanionRootView: View {
         #endif
     }
 
+    private var isPhone: Bool {
+        #if os(iOS)
+        UIDevice.current.userInterfaceIdiom == .phone
+        #else
+        false
+        #endif
+    }
+
+    private var pagePadding: CGFloat {
+        CompanionLayoutPolicy.pagePadding(isPhone: isPhone)
+    }
+
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    ContextPanelWidgetContentView(
-                        family: .systemLarge,
-                        snapshot: model.snapshot,
-                        displayPreferences: model.displayPreferences,
-                        links: CompanionDeepLinks.links
-                    )
-                    .frame(maxWidth: .infinity, minHeight: 360)
-                    .cpwThemeVariant(previewThemeVariant)
-                    .background(
-                        CPWTheme.surface(variant: previewThemeVariant),
-                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    )
+            GeometryReader { geometry in
+                let layoutMode = CompanionLayoutPolicy.mode(
+                    availableWidth: geometry.size.width,
+                    isPhone: isPhone,
+                    usesAccessibilityTextSizes: dynamicTypeSize.isAccessibilitySize
+                )
 
-                    CompanionSyncStatusView(result: model.result)
-
-                    CompanionWidgetMainLimitsSettingsView(
-                        preferences: model.displayPreferences,
-                        isLoaded: model.hasLoadedDisplayPreferences,
-                        isEditable: model.canEditDisplayPreferences,
-                        errorMessage: model.displayPreferencesErrorMessage,
-                        onVisibilityChange: model.setWidgetMainLimit(_:isVisible:),
-                        onMove: model.moveWidgetMainLimits(from:to:)
-                    )
-
-                    CompanionRefreshSettingsView(
-                        settings: model.refreshSettings,
-                        errorMessage: model.settingsErrorMessage,
-                        onIntervalChange: model.updateRefreshInterval(minutes:)
-                    )
-
-                    #if os(visionOS)
-                    CompanionAppearanceSettingsView(
-                        settings: model.appearanceSettings,
-                        errorMessage: model.appearanceErrorMessage,
-                        onAppAppearanceChange: model.updateVisionOSAppAppearance(_:),
-                        onWidgetAppearanceChange: model.updateVisionOSWidgetAppearance(_:)
-                    )
-                    #endif
+                ScrollView {
+                    companionContent(layoutMode: layoutMode)
+                        .frame(
+                            maxWidth: CompanionLayoutPolicy.maximumContentWidth(
+                                layoutMode: layoutMode,
+                                isPhone: isPhone
+                            )
+                        )
+                        .frame(maxWidth: .infinity)
+                        .padding(pagePadding)
                 }
-                .padding()
+                .background(surfacePalette.pageBackground.ignoresSafeArea())
             }
-            .background(surfacePalette.pageBackground.ignoresSafeArea())
             .navigationTitle("Context Panel")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
@@ -227,6 +216,82 @@ private struct CompanionRootView: View {
         }
         .environment(\.companionSurfacePalette, surfacePalette)
         .companionVisionOSAppearance(model.appearanceSettings)
+    }
+
+    @ViewBuilder
+    private func companionContent(layoutMode: CompanionLayoutMode) -> some View {
+        let layout = layoutMode == .twoColumn
+            ? AnyLayout(HStackLayout(alignment: .top, spacing: CompanionLayoutPolicy.columnSpacing))
+            : AnyLayout(
+                VStackLayout(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing)
+            )
+
+        layout {
+            instrumentColumn(layoutMode: layoutMode)
+            settingsColumn(layoutMode: layoutMode)
+        }
+    }
+
+    private func instrumentColumn(layoutMode: CompanionLayoutMode) -> some View {
+        VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
+            widgetPreview
+                .frame(height: layoutMode == .twoColumn ? CompanionLayoutPolicy.wideWidgetHeight : nil)
+                .frame(maxWidth: .infinity, minHeight: CompanionLayoutPolicy.wideWidgetHeight)
+
+            CompanionSyncStatusView(result: model.result)
+        }
+        .frame(
+            minWidth: layoutMode == .twoColumn ? CompanionLayoutPolicy.instrumentMinimumWidth : nil,
+            maxWidth: layoutMode == .twoColumn ? CompanionLayoutPolicy.instrumentMaximumWidth : .infinity,
+            alignment: .topLeading
+        )
+        .layoutPriority(layoutMode == .twoColumn ? 1 : 0)
+    }
+
+    private var widgetPreview: some View {
+        ContextPanelWidgetContentView(
+            family: .systemLarge,
+            snapshot: model.snapshot,
+            displayPreferences: model.displayPreferences,
+            links: CompanionDeepLinks.links
+        )
+        .cpwThemeVariant(previewThemeVariant)
+        .background(
+            CPWTheme.surface(variant: previewThemeVariant),
+            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+        )
+    }
+
+    private func settingsColumn(layoutMode: CompanionLayoutMode) -> some View {
+        VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
+            CompanionWidgetMainLimitsSettingsView(
+                preferences: model.displayPreferences,
+                isLoaded: model.hasLoadedDisplayPreferences,
+                isEditable: model.canEditDisplayPreferences,
+                errorMessage: model.displayPreferencesErrorMessage,
+                onVisibilityChange: model.setWidgetMainLimit(_:isVisible:),
+                onMove: model.moveWidgetMainLimits(from:to:)
+            )
+
+            CompanionRefreshSettingsView(
+                settings: model.refreshSettings,
+                errorMessage: model.settingsErrorMessage,
+                onIntervalChange: model.updateRefreshInterval(minutes:)
+            )
+
+            #if os(visionOS)
+            CompanionAppearanceSettingsView(
+                settings: model.appearanceSettings,
+                errorMessage: model.appearanceErrorMessage,
+                onAppAppearanceChange: model.updateVisionOSAppAppearance(_:),
+                onWidgetAppearanceChange: model.updateVisionOSWidgetAppearance(_:)
+            )
+            #endif
+        }
+        .frame(
+            width: layoutMode == .twoColumn ? CompanionLayoutPolicy.settingsColumnWidth : nil,
+            alignment: .topLeading
+        )
     }
 }
 
