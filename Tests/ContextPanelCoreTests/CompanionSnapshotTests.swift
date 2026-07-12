@@ -1317,8 +1317,132 @@ import Testing
         )
     )
 
+    #expect(widget.state == .ready)
+    #expect(widget.status == .limited)
     #expect(widget.refreshAttentionSummary == nil)
-    #expect(widget.message == "Refresh Context Panel to update data.")
+    #expect(widget.message == "Usage data is current.")
+}
+
+@Test func companionWidgetKeepsFreshLanesReadyWhenOneProviderNeedsRefresh() {
+    let generatedAt = Date(timeIntervalSince1970: 3_250)
+    let expiredResetAt = generatedAt.addingTimeInterval(-60)
+    let document = CompanionSyncDocument(
+        storedSnapshot: StoredUsageSnapshot(
+            savedAt: generatedAt,
+            snapshot: UsageSnapshot(generatedAt: generatedAt, limits: [
+                UsageLimit(
+                    provider: .openAI,
+                    accountID: "expired-openai",
+                    accountName: "Expired OpenAI",
+                    label: "Codex 5-hour",
+                    windowLabel: "5-hour",
+                    unit: .percent,
+                    used: 0,
+                    limit: 100,
+                    resetsAt: expiredResetAt,
+                    lastUpdatedAt: generatedAt.addingTimeInterval(-300),
+                    confidence: .observed
+                ),
+                UsageLimit(
+                    provider: .openAI,
+                    accountID: "current-openai",
+                    accountName: "Current OpenAI",
+                    label: "Codex 5-hour",
+                    windowLabel: "5-hour",
+                    unit: .percent,
+                    used: 34,
+                    limit: 100,
+                    resetsAt: generatedAt.addingTimeInterval(3_600),
+                    lastUpdatedAt: generatedAt,
+                    confidence: .observed
+                ),
+                UsageLimit(
+                    provider: .anthropic,
+                    accountID: "current-claude",
+                    accountName: "Claude",
+                    label: "Claude weekly",
+                    windowLabel: "Weekly",
+                    unit: .percent,
+                    used: 12,
+                    limit: 100,
+                    resetsAt: generatedAt.addingTimeInterval(86_400),
+                    lastUpdatedAt: generatedAt,
+                    confidence: .observed
+                ),
+                UsageLimit(
+                    provider: .google,
+                    accountID: "current-google",
+                    accountName: "Antigravity",
+                    label: "Gemini weekly",
+                    windowLabel: "Weekly",
+                    unit: .percent,
+                    used: 13,
+                    limit: 100,
+                    resetsAt: generatedAt.addingTimeInterval(86_400),
+                    lastUpdatedAt: generatedAt,
+                    confidence: .observed
+                ),
+            ]),
+            reports: [StoredProviderReport(
+                provider: .openAI,
+                accountID: "expired-openai",
+                accountName: "Expired OpenAI",
+                generatedAt: generatedAt,
+                status: .failure,
+                errorMessage: "Every Code auth is no longer authorized for Codex usage."
+            )]
+        ),
+        publishedAt: generatedAt
+    )
+
+    let widget = WidgetSnapshot.fromCompanionSync(
+        CompanionSyncLoadResult(document: document, status: document.companionStatus),
+        now: generatedAt
+    )
+
+    #expect(widget.state == .ready)
+    #expect(widget.status == .healthy)
+    #expect(widget.refreshAttentionSummary?.providers == [.openAI])
+    #expect(widget.refreshAttentionSummary?.isSnapshotAgeStale == false)
+    #expect(widget.promptCacheWidgetState == .unavailable)
+}
+
+@Test func companionWidgetDropsExpiredPromptCacheObservationsIndependently() {
+    let now = Date(timeIntervalSince1970: 4_000)
+    let stored = StoredUsageSnapshot(
+        savedAt: now,
+        snapshot: UsageSnapshot(generatedAt: now, limits: [UsageLimit(
+            provider: .openAI,
+            accountID: "openai",
+            accountName: "OpenAI",
+            label: "Codex weekly",
+            windowLabel: "Weekly",
+            unit: .percent,
+            used: 20,
+            limit: 100,
+            resetsAt: now.addingTimeInterval(86_400),
+            lastUpdatedAt: now,
+            confidence: .observed
+        )]),
+        promptCacheObservations: [PromptCacheObservation(
+            provider: .openAI,
+            accountID: "openai",
+            accountName: "OpenAI",
+            observedAt: now.addingTimeInterval(-(PromptCacheSummary.defaultMaximumAge + 1)),
+            windowLabel: "Last hour",
+            tokens: PromptCacheTokenSet(inputTokens: 1_000, cachedInputTokens: 900)
+        )]
+    )
+    let document = CompanionSyncDocument(storedSnapshot: stored, publishedAt: now)
+
+    let widget = WidgetSnapshot.fromCompanionSync(
+        CompanionSyncLoadResult(document: document, status: document.companionStatus),
+        now: now
+    )
+
+    #expect(widget.state == .ready)
+    #expect(widget.promptCacheObservations.isEmpty)
+    #expect(widget.promptCacheWidgetState == .unavailable)
 }
 
 @Test func widgetSnapshotFromMissingCompanionSyncAsksForMacSync() {
@@ -1633,7 +1757,7 @@ import Testing
 
     #expect(widget.state == .stale)
     #expect(widget.status == .stale)
-    #expect(widget.promptCacheWidgetState == .stale)
+    #expect(widget.promptCacheWidgetState == .available)
     #expect(widget.refreshAttentionSummary != nil)
     #expect(widget.message != "Usage data is current.")
 }
@@ -1662,7 +1786,7 @@ import Testing
     )
 
     #expect(widget.state == .stale)
-    #expect(widget.promptCacheWidgetState == .stale)
+    #expect(widget.promptCacheWidgetState == .available)
     #expect(widget.refreshAttentionSummary != nil)
 }
 

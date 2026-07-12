@@ -26,6 +26,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     public let status: UsageStatus
     public let message: String
     public let refreshAttentionSummary: RefreshAttentionSummary?
+    public let syncErrorMessage: String?
 
     public init(
         state: WidgetSnapshotState,
@@ -38,7 +39,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         fastModeForecastSettings: FastModeForecastSettings = .defaultSettings,
         status: UsageStatus,
         message: String,
-        refreshAttentionSummary: RefreshAttentionSummary? = nil
+        refreshAttentionSummary: RefreshAttentionSummary? = nil,
+        syncErrorMessage: String? = nil
     ) {
         self.state = state
         self.generatedAt = generatedAt
@@ -51,6 +53,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         self.status = status
         self.message = message
         self.refreshAttentionSummary = refreshAttentionSummary
+        self.syncErrorMessage = syncErrorMessage.map(ConnectorRedactor.redact)
     }
 
     public var usageSnapshot: UsageSnapshot {
@@ -109,17 +112,18 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             )
         }
 
-        let state: WidgetSnapshotState = switch result.status {
-        case .failure:
+        let refreshAttentionSummary = stalenessPolicy.refreshAttentionSummary(for: stored, now: now)
+        let state: WidgetSnapshotState = if result.status == .failure, result.errorMessage != nil {
             .failure
-        case .stale:
+        } else if refreshAttentionSummary?.isSnapshotAgeStale == true {
             .stale
-        default:
+        } else {
             .ready
         }
-
-        let status = widgetStatus(for: stored.snapshot, fallback: result.status)
-        let refreshAttentionSummary = stalenessPolicy.refreshAttentionSummary(for: stored, now: now)
+        let status = widgetStatus(
+            for: stored.snapshot,
+            fallback: snapshotWideStatus(for: state, snapshot: stored.snapshot)
+        )
 
         let recentPromptCacheObservations = PromptCacheTelemetryReader.filteredRecentObservations(
             stored.promptCacheObservations,
@@ -160,46 +164,46 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
                 limits: [],
                 fastModeForecastSettings: .defaultSettings,
                 status: result.status,
-                message: result.errorMessage ?? "Sync Context Panel from your Mac."
+                message: result.errorMessage ?? "Sync Context Panel from your Mac.",
+                syncErrorMessage: result.errorMessage
             )
         }
 
         let companion = document.snapshot
         let limits = companion.limits.map(\.usageLimit)
         let reports = companion.providerStatuses.map(\.storedProviderReport)
-        let promptCacheObservations = companion.promptCacheSummaries.map(\.promptCacheObservation)
+        let promptCacheObservations = PromptCacheTelemetryReader.filteredRecentObservations(
+            companion.promptCacheSummaries.map(\.promptCacheObservation),
+            now: now
+        )
         let stored = StoredUsageSnapshot(
             savedAt: companion.publishedAt,
             snapshot: UsageSnapshot(generatedAt: companion.generatedAt, limits: limits),
             reports: reports,
             promptCacheObservations: promptCacheObservations
         )
-        let policyStatus = stalenessPolicy.status(for: stored, now: now)
-        let effectiveStatus: UsageStatus = if result.status == .failure {
-            .failure
-        } else if result.status == .stale || policyStatus == .stale {
+        let refreshAttentionSummary = stalenessPolicy.refreshAttentionSummary(for: stored, now: now)
+        let state: WidgetSnapshotState = if refreshAttentionSummary?.isSnapshotAgeStale == true {
             .stale
         } else {
-            result.status
-        }
-        let state: WidgetSnapshotState = switch effectiveStatus {
-        case .failure:
-            .failure
-        case .stale:
-            .stale
-        default:
             .ready
         }
-        let status = widgetStatus(for: stored.snapshot, fallback: effectiveStatus)
-        let refreshAttentionSummary = stalenessPolicy.refreshAttentionSummary(for: stored, now: now)
-        let syncDeliveryDelayed = result.transportMetadata?.deliveryStatus == .delayed && effectiveStatus != .stale
-        let providerDataStale = effectiveStatus == .stale
+        let status = widgetStatus(
+            for: stored.snapshot,
+            fallback: snapshotWideStatus(for: state, snapshot: stored.snapshot)
+        )
+        let hasProviderRefreshAttention = refreshAttentionSummary.map {
+            !$0.providers.isEmpty && !$0.isSnapshotAgeStale
+        } ?? false
+        let syncDeliveryDelayed = result.transportMetadata?.deliveryStatus == .delayed
+            && state == .ready
+            && !hasProviderRefreshAttention
         let promptCacheState: PromptCacheWidgetState = promptCacheObservations.isEmpty
             ? .unavailable
-            : (providerDataStale || effectiveStatus == .failure ? .stale : .available)
+            : .available
 
         return WidgetSnapshot(
-            state: syncDeliveryDelayed && effectiveStatus != .failure ? .ready : state,
+            state: state,
             generatedAt: companion.generatedAt,
             limits: limits,
             reports: reports,
@@ -208,12 +212,13 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             observedBurnRates: document.observedBurnRates,
             fastModeForecastSettings: document.fastModeForecastSettings,
             status: status,
-            message: message(
-                state: syncDeliveryDelayed && effectiveStatus != .failure ? .ready : state,
+            message: result.errorMessage ?? message(
+                state: state,
                 stored: stored,
                 refreshAttentionSummary: syncDeliveryDelayed ? nil : refreshAttentionSummary
             ),
-            refreshAttentionSummary: syncDeliveryDelayed ? nil : refreshAttentionSummary
+            refreshAttentionSummary: syncDeliveryDelayed ? nil : refreshAttentionSummary,
+            syncErrorMessage: result.errorMessage
         )
     }
 
@@ -256,6 +261,9 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             if stored.snapshot.mainLimitSummaries.isEmpty, stored.reports.contains(where: { $0.status == .failure }) {
                 return "Connect an account to show limits."
             }
+            if let refreshNeededDetail = refreshAttentionSummary?.refreshNeededDetail {
+                return refreshNeededDetail
+            }
             return "Usage data is current."
         case .setupNeeded:
             return "Set up Context Panel in the app."
@@ -266,6 +274,20 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             return "Refresh Context Panel to update data."
         case .failure:
             return "Reconnect account to update data."
+        }
+    }
+
+    private static func snapshotWideStatus(
+        for state: WidgetSnapshotState,
+        snapshot: UsageSnapshot
+    ) -> UsageStatus {
+        switch state {
+        case .failure:
+            .failure
+        case .stale:
+            .stale
+        case .ready, .setupNeeded:
+            snapshot.aggregateStatus
         }
     }
 

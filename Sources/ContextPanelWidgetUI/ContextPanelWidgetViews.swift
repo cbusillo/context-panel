@@ -162,7 +162,7 @@ struct ContextPanelSmallWidget: View {
 
         VStack(alignment: .leading, spacing: 5) {
             if let problem = snapshot.widgetProblemText {
-                CPWProblemLabel(problem, status: snapshot.status)
+                CPWProblemLabel(problem, status: snapshot.widgetProblemStatus)
             }
             if let primary, supporting.isEmpty {
                 CPWSmallSingleLimitView(lane: primary, snapshotState: snapshot.state)
@@ -414,7 +414,7 @@ struct ContextPanelMediumWidget: View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 5) {
                 if let problem = snapshot.widgetProblemText {
-                    CPWProblemLabel(problem, status: snapshot.status)
+                    CPWProblemLabel(problem, status: snapshot.widgetProblemStatus)
                 }
                 Spacer(minLength: 0)
                 CPWGlanceNumber(snapshot: snapshot, lane: primaryLane)
@@ -478,7 +478,7 @@ struct ContextPanelLargeWidget: View {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 4) {
                     if let problem = snapshot.widgetProblemText {
-                        CPWProblemLabel(problem, status: snapshot.status)
+                        CPWProblemLabel(problem, status: snapshot.widgetProblemStatus)
                     }
                     Text(snapshot.fastModeVerdict)
                         .font(.system(size: 20, weight: .semibold))
@@ -1407,32 +1407,47 @@ extension WidgetSnapshot {
     }
 
     var widgetProblemText: String? {
+        if syncErrorMessage != nil { return "Mac sync failed" }
         switch state {
         case .failure:
             return "Reconnect account"
         case .stale:
-            return hasProviderReconnectIssue ? "Reconnect account" : refreshAttentionSummary?.refreshNeededTitle ?? "Refresh needed"
+            return requiresProviderReconnect ? widgetReconnectTitle : refreshAttentionSummary?.refreshNeededTitle ?? "Refresh needed"
         case .setupNeeded:
             return limits.isEmpty ? nil : "Setup needed"
         case .ready:
             if needsProviderConnection { return "Setup needed" }
-            if status == .failure { return "Reconnect account" }
+            if let refreshAttentionSummary {
+                return requiresProviderReconnect ? widgetReconnectTitle : refreshAttentionSummary.refreshNeededTitle
+            }
+            if status == .failure { return "Provider refresh needed" }
             if status == .stale {
-                return hasProviderReconnectIssue ? "Reconnect account" : refreshAttentionSummary?.refreshNeededTitle ?? "Refresh needed"
+                return requiresProviderReconnect ? widgetReconnectTitle : refreshAttentionSummary?.refreshNeededTitle ?? "Refresh needed"
             }
             if status == .unknown { return "Awaiting data" }
             return nil
         }
     }
 
+    var widgetProblemStatus: UsageStatus {
+        if syncErrorMessage != nil || requiresProviderReconnect || state == .failure || status == .failure {
+            return .failure
+        }
+        if refreshAttentionSummary != nil || state == .stale || status == .stale {
+            return .stale
+        }
+        return status
+    }
+
     func widgetDeepLinkURL(links: ContextPanelWidgetLinks) -> URL {
+        if syncErrorMessage != nil { return links.overview }
         return switch state {
         case .failure:
             links.reconnect
         case .stale:
-            hasProviderReconnectIssue ? links.reconnect : links.overview
+            requiresProviderReconnect ? links.reconnect : links.overview
         case .ready:
-            if needsProviderConnection || status == .failure || (status == .stale && hasProviderReconnectIssue) {
+            if needsProviderConnection || requiresProviderReconnect {
                 links.reconnect
             } else if promptCacheWidgetState == .needsAuthorization {
                 links.cacheStatsSettings
@@ -1442,6 +1457,17 @@ extension WidgetSnapshot {
         case .setupNeeded:
             promptCacheWidgetState == .needsAuthorization ? links.cacheStatsSettings : links.overview
         }
+    }
+
+    private var requiresProviderReconnect: Bool {
+        reports.reconnectBlockingFailures(coveredBy: limits).contains(where: \.requiresCredentialReconnect)
+    }
+
+    private var widgetReconnectTitle: String {
+        if let provider = refreshAttentionSummary?.singleProvider {
+            return "\(provider.displayName) reconnect needed"
+        }
+        return "Account reconnect needed"
     }
 
     func widgetProviderSummaryText(provider: Provider) -> String {

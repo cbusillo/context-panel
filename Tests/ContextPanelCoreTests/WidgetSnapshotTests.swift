@@ -31,6 +31,70 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(widget.message.contains("Set up"))
 }
 
+@Test func companionTransportFailureKeepsFreshLanesAndRoutesToOverview() {
+    let now = Date(timeIntervalSince1970: 100)
+    let stored = StoredUsageSnapshot(
+        savedAt: now,
+        snapshot: UsageSnapshot(generatedAt: now, limits: [UsageLimit(
+            provider: .openAI,
+            accountID: "openai",
+            accountName: "OpenAI",
+            label: "Codex weekly",
+            windowLabel: "Weekly",
+            unit: .percent,
+            used: 20,
+            limit: 100,
+            resetsAt: now.addingTimeInterval(86_400),
+            lastUpdatedAt: now,
+            confidence: .observed
+        )])
+    )
+    let document = CompanionSyncDocument(storedSnapshot: stored, publishedAt: now)
+
+    let widget = WidgetSnapshot.fromCompanionSync(
+        CompanionSyncLoadResult(
+            document: document,
+            status: .failure,
+            errorMessage: "The local companion mirror could not be updated."
+        ),
+        now: now
+    )
+
+    #expect(widget.state == .ready)
+    #expect(widget.status == .healthy)
+    #expect(widget.syncErrorMessage != nil)
+    #expect(widget.widgetProblemText == "Mac sync failed")
+    #expect(widget.widgetProblemStatus == .failure)
+    #expect(widget.widgetDeepLinkURL(links: testWidgetLinks) == testWidgetLinks.overview)
+}
+
+@Test func nonCredentialProviderFailureRoutesToOverview() {
+    let now = Date(timeIntervalSince1970: 100)
+    let widget = WidgetSnapshot(
+        state: .ready,
+        generatedAt: now,
+        limits: [UsageLimit(
+            provider: .google,
+            accountID: "google",
+            accountName: "Google",
+            label: "Gemini weekly",
+            windowLabel: "Weekly",
+            unit: .percent,
+            used: nil,
+            limit: nil,
+            lastUpdatedAt: now,
+            confidence: .estimated,
+            statusOverride: .failure
+        )],
+        status: .failure,
+        message: "Google refresh failed."
+    )
+
+    #expect(widget.widgetProblemText == "Provider refresh needed")
+    #expect(widget.widgetProblemStatus == .failure)
+    #expect(widget.widgetDeepLinkURL(links: testWidgetLinks) == testWidgetLinks.overview)
+}
+
 @Test func widgetSnapshotPreservesStaleCachedLimits() {
     let savedAt = Date(timeIntervalSince1970: 100)
     let stored = StoredUsageSnapshot(savedAt: savedAt, snapshot: UsageSnapshot(
@@ -40,13 +104,13 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
 
     let widget = WidgetSnapshot.fromStore(
         SnapshotStoreLoadResult(snapshot: stored, status: .stale),
-        now: savedAt.addingTimeInterval(60)
+        now: savedAt.addingTimeInterval(SnapshotFreshness.widgetMaximumAge + 1)
     )
 
     #expect(widget.state == .stale)
     #expect(widget.status == .stale)
     #expect(widget.limits.count == 1)
-    #expect(widget.message == "Refresh Context Panel to update data.")
+    #expect(widget.message.contains("snapshot is old"))
     #expect(widget.hasProviderReconnectIssue == false)
 }
 
@@ -102,7 +166,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     )
 
     #expect(widget.hasProviderReconnectIssue == false)
-    #expect(widget.message == "Refresh Context Panel to update data.")
+    #expect(widget.message == "Usage data is current.")
     #expect(widget.widgetProblemText != "Reconnect account")
 }
 
@@ -134,6 +198,89 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(widget.refreshAttentionSummary?.singleProvider == .google)
     #expect(widget.widgetProblemText == "Google refresh needed")
     #expect(widget.message.contains("Google · Antigravity"))
+}
+
+@Test func providerRefreshAttentionDoesNotMakeUnrelatedWidgetLanesStale() throws {
+    let savedAt = Date(timeIntervalSince1970: 100)
+    let now = savedAt.addingTimeInterval(120)
+    let stored = StoredUsageSnapshot(
+        savedAt: savedAt,
+        snapshot: UsageSnapshot(generatedAt: now, limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "expired-openai",
+                accountName: "Expired OpenAI",
+                label: "Codex 5-hour",
+                windowLabel: "5-hour",
+                unit: .percent,
+                used: 0,
+                limit: 100,
+                resetsAt: savedAt.addingTimeInterval(60),
+                lastUpdatedAt: savedAt,
+                confidence: .observed
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "current-openai",
+                accountName: "Current OpenAI",
+                label: "Codex 5-hour",
+                windowLabel: "5-hour",
+                unit: .percent,
+                used: 34,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(3_600),
+                lastUpdatedAt: now,
+                confidence: .observed
+            ),
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "current-claude",
+                accountName: "Claude",
+                label: "Claude weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 12,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(86_400),
+                lastUpdatedAt: now,
+                confidence: .observed
+            ),
+            UsageLimit(
+                provider: .google,
+                accountID: "current-google",
+                accountName: "Antigravity",
+                label: "Gemini weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 13,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(86_400),
+                lastUpdatedAt: now,
+                confidence: .observed
+            ),
+        ]),
+        reports: [StoredProviderReport(
+            provider: .openAI,
+            accountID: "expired-openai",
+            accountName: "Expired OpenAI",
+            generatedAt: now,
+            status: .failure,
+            errorMessage: "Every Code auth is no longer authorized for Codex usage."
+        )]
+    )
+
+    let widget = WidgetSnapshot.fromStore(
+        SnapshotStoreLoadResult(snapshot: stored, status: .stale),
+        now: now
+    )
+    let googleSummary = try #require(widget.mainLimitSummaries.first { $0.provider == .google })
+
+    #expect(widget.state == .ready)
+    #expect(widget.refreshAttentionSummary?.providers == [.openAI])
+    #expect(widget.widgetProblemText == "OpenAI refresh needed")
+    #expect(widget.widgetProblemStatus == .stale)
+    #expect(widget.widgetDeepLinkURL(links: testWidgetLinks) == testWidgetLinks.overview)
+    #expect(widget.widgetPresentationStatus(for: googleSummary.status) == .healthy)
 }
 
 @Test func widgetSnapshotDefaultStalenessPolicyDoesNotSuppressExpiredResetRefresh() {
@@ -189,13 +336,13 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
 
     let widget = WidgetSnapshot.fromStore(
         SnapshotStoreLoadResult(snapshot: stored, status: .stale),
-        now: Date(timeIntervalSince1970: 1_000)
+        now: Date(timeIntervalSince1970: 1_001)
     )
 
     #expect(widget.state == .stale)
     #expect(widget.status == .stale)
     #expect(widget.limits.first?.status == .limited)
-    #expect(widget.message == "Refresh Context Panel to update data.")
+    #expect(widget.message.contains("snapshot is old"))
 }
 
 @Test func widgetSnapshotKeepsFailureStatusWhenCachedLimitIsLimited() {
@@ -206,7 +353,11 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     ))
 
     let widget = WidgetSnapshot.fromStore(
-        SnapshotStoreLoadResult(snapshot: stored, status: .failure),
+        SnapshotStoreLoadResult(
+            snapshot: stored,
+            status: .failure,
+            errorMessage: "Snapshot read failed"
+        ),
         now: Date(timeIntervalSince1970: 1_000)
     )
 
@@ -222,7 +373,15 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
         savedAt: savedAt,
         snapshot: UsageSnapshot(
             generatedAt: savedAt,
-            limits: [UsageLimit(provider: .openAI, label: "Codex", used: 20, limit: 100)]
+            limits: [UsageLimit(
+                provider: .openAI,
+                accountID: "openai-working-account",
+                accountName: "Working OpenAI",
+                label: "Codex weekly",
+                windowLabel: "Weekly",
+                used: 20,
+                limit: 100
+            )]
         ),
         reports: [
             StoredProviderReport(
@@ -232,7 +391,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
                 accountName: "OpenAI",
                 generatedAt: savedAt,
                 status: .failure,
-                errorMessage: "Auth expired"
+                errorMessage: "OpenAI session has expired. Sign in again."
             ),
         ]
     )
@@ -242,10 +401,12 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
         now: Date(timeIntervalSince1970: 1_000)
     )
 
-    #expect(widget.state == .stale)
-    #expect(widget.status == .stale)
-    #expect(widget.message == "OpenAI · OpenAI needs attention: Auth expired")
+    #expect(widget.state == .ready)
+    #expect(widget.status == .healthy)
+    #expect(widget.message.contains("session has expired"))
     #expect(widget.hasProviderReconnectIssue == true)
+    #expect(widget.widgetProblemText == "OpenAI reconnect needed")
+    #expect(widget.widgetDeepLinkURL(links: testWidgetLinks) == testWidgetLinks.reconnect)
 }
 
 @Test func widgetSnapshotUsesGoogleAntigravityGuidanceForStaleProviderFailures() {
@@ -259,7 +420,8 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
                 accountID: "google-working-account",
                 configuredAccountID: "google-other-account",
                 accountName: "Antigravity",
-                label: "Gemini",
+                label: "Gemini weekly",
+                windowLabel: "Weekly",
                 used: 20,
                 limit: 100
             )]
@@ -282,13 +444,14 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
         now: Date(timeIntervalSince1970: 1_000)
     )
 
-    #expect(widget.state == .stale)
-    #expect(widget.status == .stale)
-    #expect(widget.widgetProblemText == "Reconnect account")
+    #expect(widget.state == .ready)
+    #expect(widget.status == .healthy)
+    #expect(widget.widgetProblemText == "Google refresh needed")
     #expect(widget.message.contains("Google · Antigravity needs attention:"))
     #expect(widget.message.contains("Open Antigravity"))
     #expect(widget.message.contains("refresh Google in Context Panel"))
     #expect(widget.message.contains("Reconnect") == false)
+    #expect(widget.widgetDeepLinkURL(links: testWidgetLinks) == testWidgetLinks.overview)
 }
 
 @Test func widgetSnapshotUsesProviderFailureDetailWhenFailureHasDifferentWorkingConfiguredSiblingAccount() {
@@ -302,7 +465,8 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
                 accountID: "openai-working-account",
                 configuredAccountID: "openai-code-default",
                 accountName: "Working OpenAI",
-                label: "Codex",
+                label: "Codex weekly",
+                windowLabel: "Weekly",
                 used: 20,
                 limit: 100
             )]
@@ -334,8 +498,8 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
         now: Date(timeIntervalSince1970: 1_000)
     )
 
-    #expect(widget.state == .stale)
-    #expect(widget.status == .stale)
+    #expect(widget.state == .ready)
+    #expect(widget.status == .healthy)
     #expect(widget.message == "OpenAI · Expired OpenAI needs attention: Auth expired")
     #expect(widget.hasProviderReconnectIssue == true)
 }
@@ -351,7 +515,8 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
                 accountID: "openai-working-account",
                 configuredAccountID: "openai-other-default",
                 accountName: "Working OpenAI",
-                label: "Codex",
+                label: "Codex weekly",
+                windowLabel: "Weekly",
                 used: 20,
                 limit: 100
             )]
@@ -383,7 +548,8 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
         now: Date(timeIntervalSince1970: 1_000)
     )
 
-    #expect(widget.state == .stale)
+    #expect(widget.state == .ready)
+    #expect(widget.status == .healthy)
     #expect(widget.message == "OpenAI · Expired OpenAI needs attention: Auth expired")
     #expect(widget.hasProviderReconnectIssue == true)
 }
@@ -535,9 +701,10 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(widget.mainLimitSummaries.map(\.provider) == [.openAI])
     #expect(widget.needsProviderConnection == false)
     #expect(widget.shouldShowMainLimitEmptyRow == false)
-    #expect(widget.message == "Usage data is current.")
+    #expect(widget.message != "Usage data is current.")
+    #expect(widget.widgetProblemText == "Anthropic reconnect needed")
     #expect(defaultPrimarySummary(in: widget)?.widgetRemainingHeadline == "80% left")
-    #expect(widget.widgetDeepLinkURL(links: testWidgetLinks) == testWidgetLinks.overview)
+    #expect(widget.widgetDeepLinkURL(links: testWidgetLinks) == testWidgetLinks.reconnect)
     #expect(widget.widgetProviderSummaryText(provider: .openAI) == "1w 20% used")
     #expect(widget.widgetProviderSummaryText(provider: .anthropic) == "setup needed")
 }
@@ -603,7 +770,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
         now: savedAt.addingTimeInterval(60)
     )
 
-    #expect(widget.state == .stale)
+    #expect(widget.state == .ready)
     #expect(widget.promptCacheObservations.count == 1)
     #expect(widget.promptCacheSummary.tokenWeightedHitRate == 0.9)
     #expect(widget.promptCacheWidgetState == .available)
@@ -822,6 +989,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(entries[0].snapshot.state == .ready)
     #expect(entries[1].date == now.addingTimeInterval(SnapshotFreshness.widgetMaximumAge + 1))
     #expect(entries[1].snapshot.state == .stale)
+    #expect(entries[1].snapshot.widgetProblemText == "OpenAI refresh needed")
     #expect(entries[1].snapshot.status == .stale)
 }
 
@@ -863,7 +1031,8 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
 
     #expect(entries.count == 2)
     #expect(entries[1].date == resetsAt.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace))
-    #expect(entries[1].snapshot.state == .stale)
+    #expect(entries[1].snapshot.state == .ready)
+    #expect(entries[1].snapshot.widgetProblemText == "Anthropic refresh needed")
     #expect(entries[1].snapshot.refreshAttentionSummary?.expiredResetLimits.map(\.accountID) == ["claude-timeline-reset"])
 }
 
