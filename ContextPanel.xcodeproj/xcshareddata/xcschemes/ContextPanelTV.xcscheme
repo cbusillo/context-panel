@@ -21,6 +21,20 @@
                ReferencedContainer = "container:ContextPanel.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "AA9FBEBD900640BF49B0B8BA"
+               BuildableName = "ContextPanelTVTopShelfExtension.appex"
+               BlueprintName = "ContextPanelTVTopShelfExtension"
+               ReferencedContainer = "container:ContextPanel.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction

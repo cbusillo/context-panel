@@ -1,0 +1,279 @@
+@preconcurrency import CloudKit
+import ContextPanelCloudKitSync
+import ContextPanelCore
+import ContextPanelTVSupport
+import Foundation
+@preconcurrency import TVServices
+import UIKit
+@preconcurrency import UserNotifications
+
+struct TVSystemSurfaceUpdate: Equatable, Sendable {
+    let noticeMessage: String?
+    let eventMessage: String?
+    let badgeCount: Int
+}
+
+actor TVSystemSurfaceCoordinator {
+    static let shared = TVSystemSurfaceCoordinator()
+    private static let badgeExpiryRequestIdentifier = "context-panel-provider-badge-expiry"
+
+    private let topShelfStore: TVTopShelfDocumentStore?
+    private let alertStateStore: TVProviderAlertStateStore
+    private let notificationCenter: UNUserNotificationCenter
+
+    init(
+        topShelfStore: TVTopShelfDocumentStore? = TVTopShelfSharedLocations.live().map {
+            TVTopShelfDocumentStore(documentURL: $0.documentURL)
+        },
+        alertStateStore: TVProviderAlertStateStore = TVProviderAlertStateStore(
+            stateURL: TVLocalCacheLocations.live().providerAlertStateURL
+        ),
+        notificationCenter: UNUserNotificationCenter = .current()
+    ) {
+        self.topShelfStore = topShelfStore
+        self.alertStateStore = alertStateStore
+        self.notificationCenter = notificationCenter
+    }
+
+    func requestBadgeAuthorization() async -> Bool {
+        let settings = await notificationCenter.notificationSettings()
+        if settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional {
+            return settings.badgeSetting == .enabled
+        }
+        if settings.authorizationStatus == .denied {
+            return false
+        }
+        do {
+            return try await notificationCenter.requestAuthorization(options: [.badge])
+        } catch {
+            return false
+        }
+    }
+
+    func update(
+        snapshot: WidgetSnapshot,
+        mode: TVPresentationMode,
+        badgesEnabled: Bool,
+        now: Date = Date()
+    ) async -> TVSystemSurfaceUpdate {
+        var notices: [String] = []
+        if let topShelfStore {
+            do {
+                try topShelfStore.save(TVTopShelfDocument(snapshot: snapshot, mode: mode, now: now))
+                TVTopShelfContentProvider.topShelfContentDidChange()
+            } catch {
+                notices.append("Top Shelf could not save its latest provider runway.")
+            }
+        } else {
+            notices.append("Top Shelf shared storage is unavailable on this Apple TV.")
+        }
+
+        let previousState = alertStateStore.load()
+        let evaluation = TVProviderAlertEvaluator.evaluate(
+            snapshot: snapshot,
+            previousState: previousState,
+            now: now
+        )
+        do {
+            try alertStateStore.save(evaluation.state)
+        } catch {
+            notices.append("Provider badge history could not be saved.")
+        }
+
+        let badgeCount = badgesEnabled ? evaluation.badgeCount : 0
+        do {
+            try await notificationCenter.setBadgeCount(badgeCount)
+        } catch {
+            if badgesEnabled {
+                notices.append("The provider attention badge could not be updated.")
+            }
+        }
+        do {
+            try await updateBadgeExpiry(
+                snapshot: snapshot,
+                badgeCount: badgeCount,
+                badgesEnabled: badgesEnabled,
+                now: now
+            )
+        } catch {
+            notices.append("The provider attention badge expiry could not be scheduled.")
+        }
+
+        return TVSystemSurfaceUpdate(
+            noticeMessage: notices.first,
+            eventMessage: badgesEnabled ? Self.eventMessage(evaluation.events) : nil,
+            badgeCount: badgeCount
+        )
+    }
+
+    private static func eventMessage(_ events: [TVProviderAlertEvent]) -> String? {
+        switch events.count {
+        case 0:
+            nil
+        case 1:
+            "\(events[0].provider.displayName) needs attention."
+        default:
+            "\(events.count) providers need attention."
+        }
+    }
+
+    private func updateBadgeExpiry(
+        snapshot: WidgetSnapshot,
+        badgeCount: Int,
+        badgesEnabled: Bool,
+        now: Date
+    ) async throws {
+        let identifiers = [Self.badgeExpiryRequestIdentifier]
+        notificationCenter.removePendingNotificationRequests(withIdentifiers: identifiers)
+        guard badgesEnabled, badgeCount > 0 else { return }
+
+        let expirationDate = TVSnapshotFreshnessPolicy.expirationDate(
+            generatedAt: snapshot.generatedAt
+        )
+        let interval = expirationDate.timeIntervalSince(now)
+        guard interval > 0 else { return }
+
+        let content = UNMutableNotificationContent()
+        content.badge = 0
+        let trigger = UNTimeIntervalNotificationTrigger(
+            timeInterval: max(interval, 1),
+            repeats: false
+        )
+        let request = UNNotificationRequest(
+            identifier: Self.badgeExpiryRequestIdentifier,
+            content: content,
+            trigger: trigger
+        )
+        try await notificationCenter.add(request)
+    }
+}
+
+@MainActor
+final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
+    private let remoteStore = CompanionCloudKitSyncStoreFactory.make()
+
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        application.registerForRemoteNotifications()
+        Task { [remoteStore] in
+            let defaults = UserDefaults.standard
+            let storedVersion = defaults.integer(forKey: TVPreferenceKeys.cloudKitSubscriptionVersion)
+            guard TVCloudKitSubscriptionRegistrationPolicy.shouldRegister(
+                storedVersion: storedVersion
+            ) else {
+                return
+            }
+
+            let outcome = await remoteStore.registerSubscription()
+            if outcome.succeeded {
+                defaults.set(
+                    TVCloudKitSubscriptionRegistrationPolicy.currentVersion,
+                    forKey: TVPreferenceKeys.cloudKitSubscriptionVersion
+                )
+                defaults.removeObject(forKey: TVPreferenceKeys.cloudKitSubscriptionError)
+            } else {
+                defaults.set(
+                    outcome.errorMessage ?? "CloudKit background updates could not be registered.",
+                    forKey: TVPreferenceKeys.cloudKitSubscriptionError
+                )
+            }
+        }
+        return true
+    }
+
+    func application(
+        _ application: UIApplication,
+        didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+        fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+    ) {
+        guard let notificationMetadata = Self.cloudKitNotificationMetadata(userInfo) else {
+            completionHandler(.noData)
+            return
+        }
+        Task { [remoteStore] in
+            let currentUserRecordName: String?
+            if notificationMetadata.subscriptionOwnerRecordName == nil {
+                currentUserRecordName = nil
+            } else {
+                currentUserRecordName = try? await CKContainer(
+                    identifier: ContextPanelLocations.iCloudContainerID
+                ).userRecordID().recordName
+            }
+            guard TVCloudKitNotificationPolicy.accepts(
+                notificationMetadata,
+                expectedSubscriptionID: CompanionRemoteSync.cloudKitSubscriptionID,
+                expectedContainerIdentifier: ContextPanelLocations.iCloudContainerID,
+                currentUserRecordName: currentUserRecordName
+            ) else {
+                completionHandler(.noData)
+                return
+            }
+            let result = await TVBackgroundSyncCoordinator(remoteStore: remoteStore).refresh()
+            completionHandler(result)
+        }
+    }
+
+    private static func cloudKitNotificationMetadata(
+        _ userInfo: [AnyHashable: Any]
+    ) -> TVCloudKitNotificationMetadata? {
+        guard let notification = CKNotification(fromRemoteNotificationDictionary: userInfo) else {
+            return nil
+        }
+        return TVCloudKitNotificationMetadata(
+            subscriptionID: notification.subscriptionID,
+            containerIdentifier: notification.containerIdentifier,
+            subscriptionOwnerRecordName: notification.subscriptionOwnerUserRecordID?.recordName
+        )
+    }
+}
+
+private struct TVBackgroundSyncCoordinator: Sendable {
+    let remoteStore: CompanionRemoteSyncStore
+
+    func refresh(now: Date = Date()) async -> UIBackgroundFetchResult {
+        guard let remoteLoad = await loadWithTimeout(now: now) else { return .failed }
+        let loaded = remoteLoad.result
+        guard let document = loaded.document else {
+            return loaded.status == .failure ? .failed : .noData
+        }
+
+        let localLocations = TVLocalCacheLocations.live()
+        do {
+            try CompanionSyncStore(documentURL: localLocations.companionDocumentURL).save(document)
+            try TVSyncReceiptStore(receiptURL: localLocations.receiptURL).save(
+                document: document,
+                receivedAt: now
+            )
+        } catch {
+            return .failed
+        }
+
+        let snapshot = WidgetSnapshot.fromCompanionSync(
+            loaded,
+            now: now,
+            stalenessPolicy: SnapshotStoreStalenessPolicy.appDefault(
+                maximumAge: SnapshotFreshness.companionProviderMaximumAge
+            )
+        )
+        let defaults = UserDefaults.standard
+        let mode = defaults.string(forKey: TVPreferenceKeys.presentationMode)
+            .flatMap(TVPresentationMode.init(rawValue:))
+            ?? .fullDetail
+        let badgesEnabled = defaults.bool(forKey: TVPreferenceKeys.providerBadgesEnabled)
+        _ = await TVSystemSurfaceCoordinator.shared.update(
+            snapshot: snapshot,
+            mode: mode,
+            badgesEnabled: badgesEnabled,
+            now: now
+        )
+        return .newData
+    }
+
+    private func loadWithTimeout(now: Date) async -> CompanionRemoteSyncLoadResult? {
+        await TVAsyncDeadline.value(timeout: .seconds(18)) {
+            await remoteStore.load(now: now)
+        }
+    }
+}

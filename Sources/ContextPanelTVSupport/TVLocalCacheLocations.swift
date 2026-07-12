@@ -19,6 +19,10 @@ public struct TVLocalCacheLocations: Equatable, Sendable {
         rootDirectory.appending(path: "tv-sync-receipt.json")
     }
 
+    public var providerAlertStateURL: URL {
+        rootDirectory.appending(path: "provider-alert-state.json")
+    }
+
     public static func live(fileManager: FileManager = .default) -> TVLocalCacheLocations {
         let cachesDirectory = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? fileManager.temporaryDirectory
