@@ -312,6 +312,9 @@ Preferred v1 connector scope:
   the user to reconnect.
 - Refresh `/api/oauth/usage` in the app and background agent. Treat
   `utilization` as percent used and persist only normalized limit windows.
+- Send Anthropic's current OAuth beta header on refresh-token grants. The
+  official Anthropic SDK requires `anthropic-beta: oauth-2025-04-20`; omitting
+  it can reject an otherwise valid Context Panel refresh token.
 - Do not read Claude Code status-line caches, stats caches, `ccusage` output,
   raw transcript JSONL files, prompts, account UUIDs, emails, organization IDs,
   token blobs, or Claude Code Keychain items as provider usage sources.

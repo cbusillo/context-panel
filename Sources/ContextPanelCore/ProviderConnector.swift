@@ -4,6 +4,7 @@ public enum ConnectorError: LocalizedError, Equatable, Sendable {
     case missingAuth(String)
     case invalidAuth(String)
     case httpFailure(operation: String, statusCode: Int)
+    case redactedHTTPFailure(operation: String, statusCode: Int)
     case nonHTTPResponse(String)
     case processFailure(operation: String, exitCode: Int32)
     case decodingFailure(String)
@@ -24,6 +25,8 @@ public enum ConnectorError: LocalizedError, Equatable, Sendable {
             if statusCode == 429 {
                 return "\(operation) is rate limited. Try again after the provider reset window."
             }
+            return "\(operation) returned HTTP \(statusCode); raw body redacted"
+        case let .redactedHTTPFailure(operation, statusCode):
             return "\(operation) returned HTTP \(statusCode); raw body redacted"
         case let .processFailure(operation, exitCode):
             return "\(operation) failed with exit code \(exitCode); stderr redacted"

@@ -1369,35 +1369,41 @@ import Testing
 
     #expect(result.reports[0].status == .healthy)
     #expect(http.requests.map(\.method) == ["POST", "GET"])
+    #expect(http.requests[0].headers["anthropic-beta"] == ClaudeOAuthMetadata.oauthBetaHeader)
+    #expect(http.requests[0].headers["User-Agent"] == "context-panel")
     #expect(http.requests[0].body.flatMap { String(data: $0, encoding: .utf8) }?.contains("refresh-secret") == true)
     #expect(http.requests[1].headers["Authorization"] == "Bearer new-access")
     #expect(store.savedAccountID == "claude-oauth-default")
     #expect(store.savedData.flatMap { try? JSONDecoder.contextPanelISO8601.decode(ClaudeOAuthCredentials.self, from: $0) }?.refreshToken == "new-refresh")
 }
 
-@Test func claudeOAuthConnectorRefreshesWhenUsageCallIsUnauthorized() async throws {
-    let credentials = #"{"accessToken":"old-access","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
-    let token = #"{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600,"scope":"user:profile user:inference"}"#.data(using: .utf8)!
-    let usage = #"{"five_hour":{"utilization":1,"resets_at":"2026-05-14T23:10:00Z"}}"#.data(using: .utf8)!
-    let http = StubHTTPClient(responses: [
-        ConnectorHTTPResponse(statusCode: 401, data: Data(#"{"error":"invalid_token"}"#.utf8)),
-        ConnectorHTTPResponse(statusCode: 200, data: token),
-        ConnectorHTTPResponse(statusCode: 200, data: usage),
-    ])
-    let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
-    let connector = ClaudeOAuthUsageConnector(
-        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
-        httpClient: http,
-        credentialStore: store
-    )
+@Test func claudeOAuthConnectorRefreshesWhenUsageCallRejectsAccessToken() async throws {
+    for statusCode in [401, 403] {
+        let credentials = #"{"accessToken":"old-access","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
+        let token = #"{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600,"scope":"user:profile user:inference"}"#.data(using: .utf8)!
+        let usage = #"{"five_hour":{"utilization":1,"resets_at":"2026-05-14T23:10:00Z"}}"#.data(using: .utf8)!
+        let http = StubHTTPClient(responses: [
+            ConnectorHTTPResponse(statusCode: statusCode, data: Data(#"{"error":"invalid_token"}"#.utf8)),
+            ConnectorHTTPResponse(statusCode: 200, data: token),
+            ConnectorHTTPResponse(statusCode: 200, data: usage),
+        ])
+        let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
+        let connector = ClaudeOAuthUsageConnector(
+            accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
+            httpClient: http,
+            credentialStore: store
+        )
 
-    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+        let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
 
-    #expect(result.reports[0].status == .healthy)
-    #expect(http.requests.map(\.method) == ["GET", "POST", "GET"])
-    #expect(http.requests[1].body.flatMap { String(data: $0, encoding: .utf8) }?.contains("refresh-secret") == true)
-    #expect(http.requests[2].headers["Authorization"] == "Bearer new-access")
-    #expect(store.savedAccountID == "claude-oauth-default")
+        #expect(result.reports[0].status == .healthy)
+        #expect(http.requests.map(\.method) == ["GET", "POST", "GET"])
+        #expect(http.requests[1].headers["anthropic-beta"] == ClaudeOAuthMetadata.oauthBetaHeader)
+        #expect(http.requests[1].body.flatMap { String(data: $0, encoding: .utf8) }?.contains("refresh-secret") == true)
+        #expect(http.requests[2].headers["Authorization"] == "Bearer new-access")
+        #expect(http.requests[2].headers["anthropic-beta"] == ClaudeOAuthMetadata.oauthBetaHeader)
+        #expect(store.savedAccountID == "claude-oauth-default")
+    }
 }
 
 @Test func claudeOAuthConnectorTreatsInvalidRefreshRequestAsHTTPFailure() async throws {
@@ -1417,6 +1423,27 @@ import Testing
 
     #expect(result.reports[0].status == .failure)
     #expect(result.reports[0].errorMessage == "Claude OAuth refresh returned HTTP 400; raw body redacted")
+    #expect(result.reports[0].errorMessage?.contains("request-secret") == false)
+}
+
+@Test func claudeOAuthConnectorDoesNotTreatMissingBetaHeaderAsExpiredAuth() async throws {
+    let credentials = #"{"accessToken":"old-access","refreshToken":"refresh-secret","expiresAt":"2000-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
+    let errorBody = #"{"type":"error","error":{"type":"invalid_request_error","message":"Missing required beta header"},"request_id":"request-secret"}"#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 403, data: errorBody),
+    ])
+    let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
+    let connector = ClaudeOAuthUsageConnector(
+        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
+        httpClient: http,
+        credentialStore: store
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+
+    #expect(result.reports[0].status == .failure)
+    #expect(result.reports[0].errorMessage == "Claude OAuth refresh returned HTTP 403; raw body redacted")
+    #expect(result.reports[0].errorMessage?.contains("expired") == false)
     #expect(result.reports[0].errorMessage?.contains("request-secret") == false)
 }
 
