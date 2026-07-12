@@ -262,6 +262,8 @@ public struct TVTopShelfSharedLocations: Equatable, Sendable {
 
     public init(containerURL: URL) {
         rootDirectory = containerURL
+            .appending(path: "Library", directoryHint: .isDirectory)
+            .appending(path: "Caches", directoryHint: .isDirectory)
             .appending(path: "Context Panel", directoryHint: .isDirectory)
             .appending(path: "TV", directoryHint: .isDirectory)
     }

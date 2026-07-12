@@ -202,10 +202,13 @@ The approved three-provider overview remains a separate stable surface.
 Top Shelf is a separate TVServices extension with no provider or CloudKit
 network authority. The containing tvOS app projects its current snapshot and
 device-local presentation mode into a purpose-built, privacy-filtered document
-in the existing companion App Group, then asks the system to reload Top Shelf.
-The extension reads that document immediately and generates provider cards in
-its own cache; missing and stale documents remain explicit rather than blocking
-the shelf on network work. CloudKit content-available pushes are handled only by
+under `Library/Caches` in the existing companion App Group, then asks the system
+to reload Top Shelf. Keeping this derived document inside the app-group Library
+domain preserves current-user access on physical tvOS while avoiding backup of
+ephemeral runway data. The extension reads that document immediately and
+generates provider cards in its own cache; missing and stale documents remain
+explicit rather than blocking the shelf on network work. CloudKit
+content-available pushes are handled only by
 the containing app as a best-effort refresh path and never replace foreground
 refresh or visible freshness labels. Both the app and extension run as the
 current Apple TV user so CloudKit, preferences, and the shared Top Shelf cache
