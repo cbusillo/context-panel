@@ -103,6 +103,7 @@
 		762B3AD1D74922F681D202DF /* RefreshDiagnosticsState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DAF08B3CB69404A37DECA39 /* RefreshDiagnosticsState.swift */; };
 		764E6B79575AA8EC460441E3 /* CodexRateLimits.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FA8FE4CC9BE058D8F46FBA2 /* CodexRateLimits.swift */; };
 		7A8EFEA712279E8000D00B87 /* CompanionRefreshSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53708C425CC9029A9300FA79 /* CompanionRefreshSettings.swift */; };
+		7B416456182072C7AA839A9A /* TVAppRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0DC574A48A772716FE09735 /* TVAppRoute.swift */; };
 		7C2FC7CB5590C95244023520 /* ContextPanelDateFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9909074D7E80648BC2A01C51 /* ContextPanelDateFormatting.swift */; };
 		7C6664EA7FABECBBFC8F71A1 /* libContextPanelCloudKitSyncCompanion.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 4EF1C31059DCFA7FFC3969EC /* libContextPanelCloudKitSyncCompanion.a */; };
 		7CAEB043EEE06F41D719F7A7 /* LimitWarningWebhook.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE09AE825E3B368ED89CD521 /* LimitWarningWebhook.swift */; };
@@ -643,6 +644,7 @@
 		A3C9122F0E0741C701520316 /* libContextPanelWidgetUICompanion.a */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = archive.ar; path = libContextPanelWidgetUICompanion.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		A625CCDC97920B24B000C170 /* ProviderCredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderCredentialStore.swift; sourceTree = "<group>"; };
 		AC712405A58ED12AA33BDC68 /* ContextPanelRefreshAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelRefreshAgent.swift; sourceTree = "<group>"; };
+		B0DC574A48A772716FE09735 /* TVAppRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVAppRoute.swift; sourceTree = "<group>"; };
 		B8862B929FE544FCB2C3D06B /* CapacityPool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapacityPool.swift; sourceTree = "<group>"; };
 		B95F7CCD196F66458CB50E82 /* CompanionLayoutPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionLayoutPolicy.swift; sourceTree = "<group>"; };
 		BAC6B24F1876E6D7627E2B82 /* TVRunwayPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVRunwayPresentation.swift; sourceTree = "<group>"; };
@@ -914,6 +916,7 @@
 		9B17BBBC39E9B54214D3AD7B /* ContextPanelTVSupport */ = {
 			isa = PBXGroup;
 			children = (
+				B0DC574A48A772716FE09735 /* TVAppRoute.swift */,
 				4AE89FE10368B8714C3F0798 /* TVAsyncDeadline.swift */,
 				25038A5D95D954F0AB88FEA2 /* TVCloudKitNotificationPolicy.swift */,
 				D7CCA2AD1263BFDAB028A69A /* TVLocalCacheLocations.swift */,
@@ -1909,6 +1912,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7B416456182072C7AA839A9A /* TVAppRoute.swift in Sources */,
 				D6488317105C434A6894A732 /* TVAsyncDeadline.swift in Sources */,
 				828DEBC58258F34231E2D514 /* TVCloudKitNotificationPolicy.swift in Sources */,
 				025C06128C86B7E034BD0A0C /* TVLocalCacheLocations.swift in Sources */,

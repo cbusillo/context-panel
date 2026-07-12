@@ -86,6 +86,8 @@ jobs:
         ${{ secrets.COMPANION_APP_STORE_WATCH_WIDGET_PROVISIONING_PROFILE_BASE64 }}
       COMPANION_APP_STORE_TV_PROVISIONING_PROFILE_BASE64: >-
         ${{ secrets.COMPANION_APP_STORE_TV_PROVISIONING_PROFILE_BASE64 }}
+      COMPANION_APP_STORE_TV_TOP_SHELF_PROVISIONING_PROFILE_BASE64: >-
+        ${{ secrets.COMPANION_APP_STORE_TV_TOP_SHELF_PROVISIONING_PROFILE_BASE64 }}
 
     steps:
       - name: Checkout
@@ -181,13 +183,17 @@ jobs:
           mkdir -p .build/provisioning-appstore
           platform="${{ steps.platform.outputs.platform }}"
           if [[ "${platform}" == "tvos" ]]; then
-            if [[ -z "${COMPANION_APP_STORE_TV_PROVISIONING_PROFILE_BASE64:-}" ]]; then
-              echo "COMPANION_APP_STORE_TV_PROVISIONING_PROFILE_BASE64 is required for tvOS uploads." >&2
+            if [[ -z "${COMPANION_APP_STORE_TV_PROVISIONING_PROFILE_BASE64:-}" || \
+              -z "${COMPANION_APP_STORE_TV_TOP_SHELF_PROVISIONING_PROFILE_BASE64:-}" ]]; then
+              echo "tvOS app and Top Shelf App Store provisioning profile secrets are required." >&2
               exit 1
             fi
             printf '%s' "${COMPANION_APP_STORE_TV_PROVISIONING_PROFILE_BASE64}" \
               | base64 -D \
                 > .build/provisioning-appstore/ContextPanelTV.provisionprofile
+            printf '%s' "${COMPANION_APP_STORE_TV_TOP_SHELF_PROVISIONING_PROFILE_BASE64}" \
+              | base64 -D \
+                > .build/provisioning-appstore/ContextPanelTVTopShelfExtension.provisionprofile
           else
             if [[ -z "${COMPANION_APP_STORE_APP_PROVISIONING_PROFILE_BASE64:-}" || \
               -z "${COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64:-}" ]]; then

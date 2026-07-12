@@ -13,6 +13,12 @@ struct TVSystemSurfaceUpdate: Equatable, Sendable {
     let badgeCount: Int
 }
 
+extension Notification.Name {
+    static let contextPanelTVBackgroundSyncDidUpdateCache = Notification.Name(
+        "ContextPanelTVBackgroundSyncDidUpdateCache"
+    )
+}
+
 actor TVSystemSurfaceCoordinator {
     static let shared = TVSystemSurfaceCoordinator()
     private static let badgeExpiryRequestIdentifier = "context-panel-provider-badge-expiry"
@@ -20,6 +26,9 @@ actor TVSystemSurfaceCoordinator {
     private let topShelfStore: TVTopShelfDocumentStore?
     private let alertStateStore: TVProviderAlertStateStore
     private let notificationCenter: UNUserNotificationCenter
+    private var contentSelection = TVSystemSurfaceContentSelection()
+    private var updateTask: Task<TVSystemSurfaceUpdate, Never>?
+    private var updateSequence = 0
 
     init(
         topShelfStore: TVTopShelfDocumentStore? = TVTopShelfSharedLocations.live().map {
@@ -44,7 +53,11 @@ actor TVSystemSurfaceCoordinator {
             return false
         }
         do {
-            return try await notificationCenter.requestAuthorization(options: [.badge])
+            _ = try await notificationCenter.requestAuthorization(options: [.badge])
+            let updatedSettings = await notificationCenter.notificationSettings()
+            return (updatedSettings.authorizationStatus == .authorized
+                || updatedSettings.authorizationStatus == .provisional)
+                && updatedSettings.badgeSetting == .enabled
         } catch {
             return false
         }
@@ -52,14 +65,45 @@ actor TVSystemSurfaceCoordinator {
 
     func update(
         snapshot: WidgetSnapshot,
-        mode: TVPresentationMode,
-        badgesEnabled: Bool,
-        now: Date = Date()
+        preferences: WidgetDisplayPreferences,
+        version: TVCompanionSyncVersion?
     ) async -> TVSystemSurfaceUpdate {
+        let selectedContent = contentSelection.select(
+            snapshot: snapshot,
+            preferences: preferences,
+            version: version
+        )
+        let previousUpdateTask = updateTask
+        updateSequence += 1
+        let sequence = updateSequence
+        let task = Task {
+            _ = await previousUpdateTask?.value
+            return await performUpdate(selectedContent)
+        }
+        updateTask = task
+        let update = await task.value
+        if updateSequence == sequence {
+            updateTask = nil
+        }
+        return update
+    }
+
+    private func performUpdate(_ selectedContent: TVSystemSurfaceContent) async -> TVSystemSurfaceUpdate {
+        let defaults = UserDefaults.standard
+        let mode = defaults.string(forKey: TVPreferenceKeys.presentationMode)
+            .flatMap(TVPresentationMode.init(rawValue:))
+            ?? .fullDetail
+        let badgesEnabled = defaults.bool(forKey: TVPreferenceKeys.providerBadgesEnabled)
+        let now = Date()
         var notices: [String] = []
         if let topShelfStore {
             do {
-                try topShelfStore.save(TVTopShelfDocument(snapshot: snapshot, mode: mode, now: now))
+                try topShelfStore.save(TVTopShelfDocument(
+                    snapshot: selectedContent.snapshot,
+                    preferences: selectedContent.preferences,
+                    mode: mode,
+                    now: now
+                ))
                 TVTopShelfContentProvider.topShelfContentDidChange()
             } catch {
                 notices.append("Top Shelf could not save its latest provider runway.")
@@ -70,7 +114,7 @@ actor TVSystemSurfaceCoordinator {
 
         let previousState = alertStateStore.load()
         let evaluation = TVProviderAlertEvaluator.evaluate(
-            snapshot: snapshot,
+            snapshot: selectedContent.snapshot,
             previousState: previousState,
             now: now
         )
@@ -90,7 +134,7 @@ actor TVSystemSurfaceCoordinator {
         }
         do {
             try await updateBadgeExpiry(
-                snapshot: snapshot,
+                snapshot: selectedContent.snapshot,
                 badgeCount: badgeCount,
                 badgesEnabled: badgesEnabled,
                 now: now
@@ -232,43 +276,77 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
 private struct TVBackgroundSyncCoordinator: Sendable {
     let remoteStore: CompanionRemoteSyncStore
 
-    func refresh(now: Date = Date()) async -> UIBackgroundFetchResult {
-        guard let remoteLoad = await loadWithTimeout(now: now) else { return .failed }
+    func refresh() async -> UIBackgroundFetchResult {
+        let startedAt = Date()
+        guard let remoteLoad = await loadWithTimeout(now: startedAt) else { return .failed }
+        let completedAt = Date()
         let loaded = remoteLoad.result
         guard let document = loaded.document else {
             return loaded.status == .failure ? .failed : .noData
         }
 
         let localLocations = TVLocalCacheLocations.live()
-        do {
-            try CompanionSyncStore(documentURL: localLocations.companionDocumentURL).save(document)
-            try TVSyncReceiptStore(receiptURL: localLocations.receiptURL).save(
-                document: document,
-                receivedAt: now
+        let stalenessPolicy = SnapshotStoreStalenessPolicy.appDefault(
+            maximumAge: SnapshotFreshness.companionProviderMaximumAge
+        )
+        let cacheSaveResult = CompanionSyncStore(
+            documentURL: localLocations.companionDocumentURL
+        ).saveResult(
+            document,
+            policy: stalenessPolicy,
+            now: completedAt
+        ) { currentResult in
+            TVCompanionSyncCachePolicy.shouldKeepCurrent(
+                currentResult,
+                replacingWith: document
             )
-        } catch {
-            return .failed
+        }
+        let receiptStore = TVSyncReceiptStore(receiptURL: localLocations.receiptURL)
+        let incomingVersion = TVCompanionSyncVersion(document: document)
+        let publicationResult: CompanionSyncLoadResult
+        let fetchResult: UIBackgroundFetchResult
+        switch cacheSaveResult {
+        case let .keptCurrent(currentResult):
+            guard let currentDocument = currentResult.document else { return .failed }
+            if TVCompanionSyncVersion(document: currentDocument) == incomingVersion {
+                do {
+                    try receiptStore.save(document: currentDocument, receivedAt: completedAt)
+                } catch {
+                    return .failed
+                }
+            }
+            publicationResult = currentResult
+            fetchResult = .noData
+        case let .saved(saveResult):
+            guard saveResult.succeeded else { return .failed }
+            do {
+                try receiptStore.save(
+                    document: document,
+                    receivedAt: completedAt
+                )
+            } catch {
+                return .failed
+            }
+            publicationResult = loaded
+            fetchResult = .newData
         }
 
         let snapshot = WidgetSnapshot.fromCompanionSync(
-            loaded,
-            now: now,
-            stalenessPolicy: SnapshotStoreStalenessPolicy.appDefault(
-                maximumAge: SnapshotFreshness.companionProviderMaximumAge
-            )
+            publicationResult,
+            now: completedAt,
+            stalenessPolicy: stalenessPolicy
         )
-        let defaults = UserDefaults.standard
-        let mode = defaults.string(forKey: TVPreferenceKeys.presentationMode)
-            .flatMap(TVPresentationMode.init(rawValue:))
-            ?? .fullDetail
-        let badgesEnabled = defaults.bool(forKey: TVPreferenceKeys.providerBadgesEnabled)
+        guard let publicationDocument = publicationResult.document else { return .failed }
         _ = await TVSystemSurfaceCoordinator.shared.update(
             snapshot: snapshot,
-            mode: mode,
-            badgesEnabled: badgesEnabled,
-            now: now
+            preferences: publicationDocument.widgetDisplayPreferences,
+            version: TVCompanionSyncVersion(document: publicationDocument)
         )
-        return .newData
+        NotificationCenter.default.post(
+            name: .contextPanelTVBackgroundSyncDidUpdateCache,
+            object: nil
+        )
+        return fetchResult
     }
 
     private func loadWithTimeout(now: Date) async -> CompanionRemoteSyncLoadResult? {

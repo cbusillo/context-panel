@@ -121,13 +121,15 @@ public enum TVProviderAlertEvaluator {
         else {
             return [:]
         }
-        let presentation = TVRunwayPresentation(
-            snapshot: snapshot,
-            mode: .countsOnly,
-            now: now
-        )
-        return Dictionary(uniqueKeysWithValues: presentation.sections.map { section in
-            (section.provider, alertLevel(status: section.status))
+        return Dictionary(uniqueKeysWithValues: Provider.allCases.map { provider in
+            let statuses = snapshot.limits
+                .filter { $0.provider == provider }
+                .map(\.status)
+                + snapshot.reports
+                .filter { $0.provider == provider }
+                .map(\.status)
+            let level = statuses.map(alertLevel).max() ?? .none
+            return (provider, level)
         })
     }
 

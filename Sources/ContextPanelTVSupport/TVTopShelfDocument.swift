@@ -62,10 +62,16 @@ public struct TVTopShelfDocument: Codable, Equatable, Sendable {
 
     public init(
         snapshot: WidgetSnapshot,
+        preferences: WidgetDisplayPreferences = .defaultPreferences,
         mode: TVPresentationMode,
         now: Date = Date()
     ) {
-        let presentation = TVRunwayPresentation(snapshot: snapshot, mode: mode, now: now)
+        let presentation = TVRunwayPresentation(
+            snapshot: snapshot,
+            preferences: preferences,
+            mode: mode,
+            now: now
+        )
         schemaVersion = Self.schemaVersion
         generatedAt = presentation.generatedAt
         renderedAt = now
@@ -119,9 +125,18 @@ public struct TVTopShelfDocument: Codable, Equatable, Sendable {
         section: TVProviderRunwaySection,
         mode: TVPresentationMode
     ) -> TVTopShelfCard {
-        let capacityLane = section.lanes.first { $0.kind == .capacity }
-        let headline = capacityLane?.remainingPercent.map { "\($0)% left" }
-            ?? statusLabel(section.status)
+        let capacityLane = section.primaryLane
+        let headline: String
+        if let remainingPercent = capacityLane?.remainingPercent {
+            headline = "\(remainingPercent)% left"
+        } else {
+            headline = switch section.status {
+            case .close, .limited, .stale, .failure, .loading:
+                statusLabel(section.status)
+            case .healthy, .unknown:
+                capacityLane?.kind == .accountStatus ? "No fresh capacity" : "Unknown"
+            }
+        }
         let detail = detailText(lane: capacityLane, mode: mode, fallbackStatus: section.status)
         return TVTopShelfCard(
             id: "provider-\(section.provider.rawValue)",
@@ -131,7 +146,7 @@ public struct TVTopShelfDocument: Codable, Equatable, Sendable {
             detail: detail,
             status: section.status,
             remainingPercent: capacityLane?.remainingPercent,
-            actionURLString: "contextpaneltv://provider/\(section.provider.rawValue)"
+            actionURLString: TVAppRoute.provider(section.provider).url.absoluteString
         )
     }
 
@@ -144,7 +159,7 @@ public struct TVTopShelfDocument: Codable, Equatable, Sendable {
             detail: presentation.detail,
             status: presentation.status,
             remainingPercent: nil,
-            actionURLString: "contextpaneltv://runway"
+            actionURLString: TVAppRoute.runway.url.absoluteString
         )
     }
 

@@ -5,6 +5,8 @@ import SwiftUI
 
 @main
 struct ContextPanelTVApp: App {
+    @UIApplicationDelegateAdaptor(ContextPanelTVAppDelegate.self) private var appDelegate
+
     var body: some Scene {
         WindowGroup {
             TVRootView()
@@ -15,10 +17,14 @@ struct ContextPanelTVApp: App {
 @MainActor
 private struct TVRootView: View {
     @Environment(\.scenePhase) private var scenePhase
-    @AppStorage("tv-presentation-mode") private var presentationModeRawValue = TVPresentationMode.fullDetail.rawValue
+    @AppStorage(TVPreferenceKeys.presentationMode) private var presentationModeRawValue = TVPresentationMode.fullDetail.rawValue
+    @AppStorage(TVPreferenceKeys.providerBadgesEnabled) private var providerBadgesEnabled = false
+    @AppStorage(TVPreferenceKeys.cloudKitSubscriptionError) private var subscriptionErrorMessage = ""
     @State private var model = TVSyncModel()
     @State private var navigationPath: [String] = []
     @State private var pendingProviderRawValue: String?
+    @State private var badgeAuthorizationNoticeMessage: String?
+    @State private var badgeAuthorizationTask: Task<Void, Never>?
 
     init() {
         #if DEBUG
@@ -41,6 +47,36 @@ private struct TVRootView: View {
         )
     }
 
+    private var systemSurfacePublication: TVSystemSurfacePublication {
+        TVSystemSurfacePublication(
+            snapshot: model.snapshot,
+            preferences: model.displayPreferences,
+            version: model.displayVersion,
+            mode: presentationMode,
+            badgesEnabled: providerBadgesEnabled
+        )
+    }
+
+    private var providerBadgesBinding: Binding<Bool> {
+        Binding(
+            get: { providerBadgesEnabled },
+            set: { setProviderBadgesEnabled($0) }
+        )
+    }
+
+    private var visibleNoticeMessage: String? {
+        model.syncNoticeMessage
+            ?? subscriptionNoticeMessage
+            ?? model.systemSurfaceNoticeMessage
+            ?? badgeAuthorizationNoticeMessage
+            ?? model.systemSurfaceEventMessage
+    }
+
+    private var subscriptionNoticeMessage: String? {
+        guard !subscriptionErrorMessage.isEmpty else { return nil }
+        return "Background updates are unavailable. Refresh still works while Context Panel is open."
+    }
+
     var body: some View {
         NavigationStack(path: $navigationPath) {
             ZStack(alignment: .bottom) {
@@ -53,6 +89,7 @@ private struct TVRootView: View {
                             receivedAt: model.lastReceivedAt,
                             isRefreshing: model.isLoading,
                             presentationModeRawValue: $presentationModeRawValue,
+                            providerBadgesEnabled: providerBadgesBinding,
                             onRefresh: { model.reload() }
                         )
 
@@ -69,19 +106,24 @@ private struct TVRootView: View {
                     .padding(.vertical, 48)
                 }
 
-                if let syncNoticeMessage = model.syncNoticeMessage, !presentation.isEmpty {
-                    TVSyncAlert(message: syncNoticeMessage)
+                if let visibleNoticeMessage {
+                    TVSyncAlert(message: visibleNoticeMessage)
                         .padding(.horizontal, 72)
                         .padding(.bottom, 28)
                 }
             }
-            .task {
-                model.reload()
-            }
-            .onChange(of: scenePhase) { _, phase in
+            .onChange(of: scenePhase, initial: true) { _, phase in
                 if phase == .active {
                     model.reload()
                 }
+            }
+            .onChange(of: systemSurfacePublication, initial: true) { _, publication in
+                model.publishSystemSurfaces(publication)
+            }
+            .onReceive(NotificationCenter.default.publisher(
+                for: .contextPanelTVBackgroundSyncDidUpdateCache
+            )) { _ in
+                model.adoptCachedSnapshot()
             }
             .navigationDestination(for: String.self) { providerRawValue in
                 if let section = presentation.sections.first(where: { $0.provider.rawValue == providerRawValue }) {
@@ -97,11 +139,15 @@ private struct TVRootView: View {
                 resolvePendingProviderRoute()
             }
             .onOpenURL { url in
-                guard url.scheme == "contextpaneltv", url.host == "provider" else { return }
-                let providerRawValue = url.lastPathComponent
-                guard Provider(rawValue: providerRawValue) != nil else { return }
-                pendingProviderRawValue = providerRawValue
-                resolvePendingProviderRoute()
+                guard let route = TVAppRoute(url: url) else { return }
+                switch route {
+                case .runway:
+                    pendingProviderRawValue = nil
+                    navigationPath = []
+                case let .provider(provider):
+                    pendingProviderRawValue = provider.rawValue
+                    resolvePendingProviderRoute()
+                }
             }
         }
         .preferredColorScheme(.dark)
@@ -115,6 +161,36 @@ private struct TVRootView: View {
         navigationPath = [pendingProviderRawValue]
         self.pendingProviderRawValue = nil
     }
+
+    private func setProviderBadgesEnabled(_ enabled: Bool) {
+        badgeAuthorizationTask?.cancel()
+        guard enabled else {
+            providerBadgesEnabled = false
+            badgeAuthorizationNoticeMessage = nil
+            return
+        }
+
+        badgeAuthorizationTask = Task {
+            let authorized = await TVSystemSurfaceCoordinator.shared.requestBadgeAuthorization()
+            guard !Task.isCancelled else { return }
+            if authorized {
+                providerBadgesEnabled = true
+                badgeAuthorizationNoticeMessage = nil
+            } else {
+                providerBadgesEnabled = false
+                badgeAuthorizationNoticeMessage =
+                    "Provider badges are off. Allow badges in Apple TV Settings to enable them."
+            }
+        }
+    }
+}
+
+private struct TVSystemSurfacePublication: Equatable, Sendable {
+    let snapshot: WidgetSnapshot
+    let preferences: WidgetDisplayPreferences
+    let version: TVCompanionSyncVersion?
+    let mode: TVPresentationMode
+    let badgesEnabled: Bool
 }
 
 @MainActor
@@ -126,17 +202,25 @@ private final class TVSyncModel {
     private let usesPreviewFixture: Bool
     private let forcesRemoteFailure: Bool
     private var reloadTask: Task<Void, Never>?
-    private var needsReloadAfterCurrentTask = false
+    private var systemSurfaceTask: Task<Void, Never>?
+    private var pendingSystemSurfacePublication: TVSystemSurfacePublication?
+    private var systemSurfaceEventClearTask: Task<Void, Never>?
 
     private(set) var result: CompanionSyncLoadResult
     private(set) var displayResult: CompanionSyncLoadResult
     private(set) var snapshot: WidgetSnapshot
     private(set) var syncNoticeMessage: String?
+    private(set) var systemSurfaceNoticeMessage: String?
+    private(set) var systemSurfaceEventMessage: String?
     private(set) var lastReceivedAt: Date?
     private(set) var isLoading = false
 
     var displayPreferences: WidgetDisplayPreferences {
         displayResult.document?.widgetDisplayPreferences ?? .defaultPreferences
+    }
+
+    var displayVersion: TVCompanionSyncVersion? {
+        displayResult.document.map { TVCompanionSyncVersion(document: $0) }
     }
 
     init(now: Date = Date()) {
@@ -187,14 +271,12 @@ private final class TVSyncModel {
         )
     }
 
-    func reload(now: Date = Date()) {
+    func reload() {
         guard !usesPreviewFixture else { return }
-        guard reloadTask == nil else {
-            needsReloadAfterCurrentTask = true
-            return
-        }
+        guard reloadTask == nil else { return }
 
-        needsReloadAfterCurrentTask = false
+        let startedAt = Date()
+        let startingVersion = displayVersion
         isLoading = true
         syncNoticeMessage = nil
         result = CompanionSyncLoadResult(document: result.document, status: .loading)
@@ -205,55 +287,153 @@ private final class TVSyncModel {
                 if let self {
                     isLoading = false
                     reloadTask = nil
-                    if needsReloadAfterCurrentTask {
-                        reload()
-                    }
                 }
             }
 
             let remoteLoad = shouldForceRemoteFailure
                 ? Self.forcedRemoteFailureLoadResult()
-                : await remoteStore.load(now: now)
+                : await remoteStore.load(now: startedAt)
             guard !Task.isCancelled, let self else { return }
+            let completedAt = Date()
             let loaded = remoteLoad.result
             result = loaded
             var persistenceNoticeMessage: String?
+            var wasSupersededByNewerCache = false
 
             if let document = loaded.document {
-                do {
-                    try cacheStore.save(document)
-                    do {
-                        try receiptStore.save(document: document, receivedAt: now)
-                    } catch {
-                        persistenceNoticeMessage = Self.syncReceiptUnavailableMessage
-                    }
-                } catch {
-                    persistenceNoticeMessage = Self.offlineCacheUnavailableMessage
-                }
-                lastReceivedAt = now
-                displayResult = loaded
-            } else {
-                let cached = cacheStore.load(policy: Self.stalenessPolicy, now: now)
-                if let cachedDocument = cached.document {
-                    displayResult = CompanionSyncLoadResult(
-                        document: cachedDocument,
-                        status: .stale,
-                        transportMetadata: cached.transportMetadata,
-                        transportStatuses: loaded.transportStatuses
+                let cacheSaveResult = cacheStore.saveResult(
+                    document,
+                    policy: Self.stalenessPolicy,
+                    now: completedAt
+                ) { currentResult in
+                    TVCompanionSyncCachePolicy.shouldKeepCurrent(
+                        currentResult,
+                        replacingWith: document
                     )
+                }
+                let incomingVersion = TVCompanionSyncVersion(document: document)
+                switch cacheSaveResult {
+                case let .keptCurrent(currentResult):
+                    result = currentResult
+                    displayResult = currentResult
+                    if let currentDocument = currentResult.document {
+                        if TVCompanionSyncVersion(document: currentDocument) == incomingVersion {
+                            do {
+                                try receiptStore.save(
+                                    document: currentDocument,
+                                    receivedAt: completedAt
+                                )
+                            } catch {
+                                persistenceNoticeMessage = Self.syncReceiptUnavailableMessage
+                            }
+                        }
+                        lastReceivedAt = receiptStore.load(matching: currentDocument)?.receivedAt
+                            ?? lastReceivedAt
+                    }
+                case let .saved(saveResult):
+                    if saveResult.succeeded {
+                        do {
+                            try receiptStore.save(document: document, receivedAt: completedAt)
+                        } catch {
+                            persistenceNoticeMessage = Self.syncReceiptUnavailableMessage
+                        }
+                    } else {
+                        persistenceNoticeMessage = Self.offlineCacheUnavailableMessage
+                    }
+                    lastReceivedAt = receiptStore.load(matching: document)?.receivedAt
+                        ?? completedAt
+                    displayResult = loaded
+                }
+            } else {
+                let cached = cacheStore.load(policy: Self.stalenessPolicy, now: completedAt)
+                if let cachedDocument = cached.document {
+                    let receipt = receiptStore.load(matching: cachedDocument)
+                    lastReceivedAt = receipt?.receivedAt ?? lastReceivedAt
+                    wasSupersededByNewerCache = TVCompanionSyncAttemptPolicy.cacheSupersedesAttempt(
+                        document: cachedDocument,
+                        receipt: receipt,
+                        startingVersion: startingVersion,
+                        startedAt: startedAt
+                    )
+                    if wasSupersededByNewerCache {
+                        result = cached
+                        displayResult = cached
+                    } else {
+                        displayResult = CompanionSyncLoadResult(
+                            document: cachedDocument,
+                            status: .stale,
+                            transportMetadata: cached.transportMetadata,
+                            transportStatuses: loaded.transportStatuses
+                        )
+                    }
                 } else {
                     displayResult = loaded
                 }
             }
 
             syncNoticeMessage = TVSyncNoticePolicy.shouldShowCloudUnavailable(for: remoteLoad)
+                && !wasSupersededByNewerCache
                 ? Self.cloudUnavailableMessage
                 : persistenceNoticeMessage
             snapshot = WidgetSnapshot.fromCompanionSync(
                 displayResult,
-                now: now,
+                now: completedAt,
                 stalenessPolicy: Self.stalenessPolicy
             )
+        }
+    }
+
+    func adoptCachedSnapshot(now: Date = Date()) {
+        guard !usesPreviewFixture else { return }
+        let cachedResult = cacheStore.load(policy: Self.stalenessPolicy, now: now)
+        guard let document = cachedResult.document else { return }
+
+        result = cachedResult
+        displayResult = cachedResult
+        lastReceivedAt = receiptStore.load(matching: document)?.receivedAt
+        syncNoticeMessage = nil
+        snapshot = WidgetSnapshot.fromCompanionSync(
+            cachedResult,
+            now: now,
+            stalenessPolicy: Self.stalenessPolicy
+        )
+    }
+
+    func publishSystemSurfaces(_ publication: TVSystemSurfacePublication) {
+        pendingSystemSurfacePublication = publication
+        guard systemSurfaceTask == nil else { return }
+
+        systemSurfaceTask = Task { [weak self] in
+            guard let self else { return }
+            defer { systemSurfaceTask = nil }
+
+            while let publication = pendingSystemSurfacePublication {
+                pendingSystemSurfacePublication = nil
+                let update = await TVSystemSurfaceCoordinator.shared.update(
+                    snapshot: publication.snapshot,
+                    preferences: publication.preferences,
+                    version: publication.version
+                )
+                guard !Task.isCancelled else { return }
+                systemSurfaceNoticeMessage = update.noticeMessage
+                if update.badgeCount == 0 {
+                    systemSurfaceEventClearTask?.cancel()
+                    systemSurfaceEventMessage = nil
+                } else {
+                    presentSystemSurfaceEvent(update.eventMessage)
+                }
+            }
+        }
+    }
+
+    private func presentSystemSurfaceEvent(_ message: String?) {
+        guard let message else { return }
+        systemSurfaceEventClearTask?.cancel()
+        systemSurfaceEventMessage = message
+        systemSurfaceEventClearTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(8))
+            guard !Task.isCancelled, self?.systemSurfaceEventMessage == message else { return }
+            self?.systemSurfaceEventMessage = nil
         }
     }
 
@@ -299,6 +479,7 @@ private struct TVHeaderView: View {
     let receivedAt: Date?
     let isRefreshing: Bool
     @Binding var presentationModeRawValue: String
+    @Binding var providerBadgesEnabled: Bool
     let onRefresh: () -> Void
 
     private var presentationMode: TVPresentationMode {
@@ -367,13 +548,21 @@ private struct TVHeaderView: View {
                         Picker("Presentation", selection: $presentationModeRawValue) {
                             ForEach(TVPresentationMode.allCases) { mode in
                                 Text(mode.displayName)
-                                    .tag(mode.rawValue)
+                                .tag(mode.rawValue)
                             }
+                        }
+
+                        Divider()
+
+                        Toggle(isOn: $providerBadgesEnabled) {
+                            Label("Provider Attention Badge", systemImage: "app.badge")
                         }
                     } label: {
                         Label(presentationMode.displayName, systemImage: "slider.horizontal.3")
                     }
-                    .accessibilityHint(presentationMode.detail)
+                    .accessibilityHint(
+                        "\(presentationMode.detail) Provider badges are optional and show only limited or failed providers."
+                    )
                 }
             }
         }

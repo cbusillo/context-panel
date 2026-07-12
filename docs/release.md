@@ -249,19 +249,21 @@ bundle ID `com.shinycomputers.contextpanel` and CloudKit container
 platform `TV_OS`, and can assign the processed build to TestFlight groups.
 
 The tvOS app intentionally does not embed the iOS/visionOS widget or watchOS
-targets and does not request their App Group, iCloud Documents, or ubiquity
-entitlements. App Store Connect requires `aps-environment` when the tvOS binary
-declares CloudKit, so Release uses the production APNs environment even before
-the app registers for provider-alert delivery. This entitlement alone does not
-request user-visible notification permission.
+targets and does not request iCloud Documents or ubiquity entitlements. It does
+share `group.com.shinycomputers.contextpanel` with its Top Shelf extension and
+runs both targets as the current Apple TV user. App Store Connect requires
+`aps-environment` when the tvOS binary declares CloudKit, so Release uses the
+production APNs environment for best-effort background sync. User-visible badge
+permission remains an explicit in-app opt-in.
 
 The tvOS target compiles layered small/App Store icons plus required standard and
 wide Top Shelf artwork from
 `Resources/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets`. Both the CI
 archive gate and signed upload script require the compiled `Assets.car`, the
 `App Icon - Small` primary-icon declaration, and both generated
-`TVTopShelfImage` keys. The static brand artwork satisfies binary packaging;
-#376 may later add the dynamic Top Shelf extension and provider-specific content.
+`TVTopShelfImage` keys. The static brand artwork remains the fallback, while the
+embedded `ContextPanelTVTopShelfExtension` provides privacy-filtered dynamic
+provider runway from the shared App Group without network access.
 
 The first signed tvOS canary is:
 
@@ -275,15 +277,16 @@ scripts/upload-app-store-connect-companion-app.sh \
 
 Before treating the first tvOS TestFlight build as release evidence:
 
-- archive and upload from `main` with the dedicated tvOS profile secret;
+- archive and upload from `main` with dedicated tvOS app and Top Shelf extension
+  profile secrets;
 - verify the Production CloudKit schema and the canonical Mac Production
   publisher before loading data on Apple TV;
 - install from TestFlight on physical Apple TV hardware and cover fresh, stale,
   offline, missing-record, and restrictive-presentation states;
 - prepare tvOS screenshots, privacy disclosures, age rating, App Review notes,
   and a physical-hardware demo path before App Store review;
-- keep Top Shelf/provider alerts optional for the first internal train; they may
-  join a later TestFlight build without blocking the standalone app upload.
+- validate dynamic Top Shelf, provider badges, and all presentation modes on the
+  same signed candidate used for release evidence.
 
 The approved screenshot uploader does not yet contain a tvOS screenshot set.
 Capture and approve the Apple TV marketing frames under #379, then either upload
@@ -370,6 +373,8 @@ the Mac upload path plus companion-specific Apple Distribution signing assets:
   companion uploads that embed the watchOS complication extension
 - `COMPANION_APP_STORE_TV_PROVISIONING_PROFILE_BASE64` for the standalone tvOS
   app
+- `COMPANION_APP_STORE_TV_TOP_SHELF_PROVISIONING_PROFILE_BASE64` for bundle ID
+  `com.shinycomputers.contextpanel.topshelf`
 
 The companion app profile must authorize:
 
@@ -393,12 +398,17 @@ part of the iOS companion archive. The watch app is embedded only in the iOS
 companion package; native visionOS companion builds deliberately exclude watchOS
 content.
 
-The tvOS profile is separate from the iOS/visionOS companion app profile even
-though it uses the same bundle ID. It must support `tvOS`, authorize CloudKit
-for `iCloud.com.shinycomputers.contextpanel`, and carry production APNs because
-App Store Connect requires that entitlement alongside tvOS CloudKit. It does not
-need the iOS/visionOS-only iCloud Documents, ubiquity, widget, or watch
-entitlements.
+The tvOS app profile is separate from the iOS/visionOS companion app profile
+even though it uses the same bundle ID. It must support `tvOS`, authorize
+CloudKit for `iCloud.com.shinycomputers.contextpanel`, carry production APNs,
+authorize App Group `group.com.shinycomputers.contextpanel`, and include
+`runs-as-current-user-with-user-independent-keychain`. It does not need the
+iOS/visionOS-only iCloud Documents, ubiquity, widget, or watch entitlements.
+
+The tvOS Top Shelf profile must support bundle ID
+`com.shinycomputers.contextpanel.topshelf`, the tvOS platform, the same App
+Group, and the same current-user capability. The extension must not carry
+CloudKit or APNs entitlements.
 
 Do not remove older App IDs, profiles, or profile secrets while validating the
 new companion path. Keep them available until a signed device/TestFlight install
@@ -584,10 +594,10 @@ validation path, after #230 has confirmed profile, icon, metadata, and App Store
 Connect requirements. The normal companion dogfood path remains `ios` for
 iPhone/iPad.
 
-Use `companion_platform=tvos` for issue #379 after the tvOS profile secret is
-present. The first internal train may ship the standalone Couch Mode app while
-Top Shelf/provider alerts continue in parallel; App Store submission still
-requires physical Apple TV, screenshot, metadata, privacy, and review evidence.
+Use `companion_platform=tvos` for issue #379 after both tvOS profile secrets are
+present. The signed candidate includes Couch Mode, the dynamic Top Shelf
+extension, and opt-in provider badges; App Store submission still requires
+physical Apple TV, screenshot, metadata, privacy, and review evidence.
 
 Do not set `testflight_beta_source=macos` when the intent is companion device
 validation; that distributes the Mac App Store build instead of the companion
