@@ -1752,6 +1752,12 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         }
 
         let refreshSubject = refreshSubjectText(for: account)
+        if reports.contains(where: \.requiresCredentialReconnect) {
+            return SettingsAccountRefreshSummary(
+                text: "Last \(refreshSubject) failed; reconnect required",
+                status: .failure
+            )
+        }
         if !reports.reconnectBlockingFailures(coveredBy: storedSnapshot.snapshot.limits).isEmpty {
             return SettingsAccountRefreshSummary(text: "Last \(refreshSubject) failed; see Diagnostics", status: .failure)
         }
@@ -1764,6 +1770,9 @@ final class SettingsPaneModel: NSObject, ObservableObject {
 
         let successfulReports = reports.filter { report in
             report.status != .failure && report.status != .stale && report.status != .unknown
+        }
+        guard !successfulReports.isEmpty else {
+            return SettingsAccountRefreshSummary(text: "Last \(refreshSubject) unavailable", status: .unknown)
         }
         let count = successfulReports.count
         let accountText: String
@@ -2056,6 +2065,8 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         request.httpBody = body
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(ClaudeOAuthMetadata.oauthBetaHeader, forHTTPHeaderField: "anthropic-beta")
+        request.setValue("context-panel", forHTTPHeaderField: "User-Agent")
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else {
