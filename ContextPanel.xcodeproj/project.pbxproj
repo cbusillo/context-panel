@@ -45,6 +45,7 @@
 		2A218D15299263DD43C91111 /* libContextPanelTVSupport.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 44FF54AE4BAF0EF490CAD694 /* libContextPanelTVSupport.a */; };
 		2ADBB5A7E4963EDDE12DAC48 /* CompanionSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8211A4CCCDD1AA6113F22D1 /* CompanionSnapshot.swift */; };
 		2D53BD76E94E68A54CF36F92 /* SnapshotFreshness.swift in Sources */ = {isa = PBXBuildFile; fileRef = D03C19BEA1C610711A048EB7 /* SnapshotFreshness.swift */; };
+		2EBF1D50D1530377171B2FBF /* libContextPanelTVSupport.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 44FF54AE4BAF0EF490CAD694 /* libContextPanelTVSupport.a */; };
 		3110B4EC8EFDD00AEC978791 /* libContextPanelWidgetUI.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 4CDAD640E6A641A427B87752 /* libContextPanelWidgetUI.a */; };
 		3265E9C3827536C0FFE36A28 /* RefreshDiagnosticsState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DAF08B3CB69404A37DECA39 /* RefreshDiagnosticsState.swift */; };
 		326D113966D8B3E0B174E98F /* libContextPanelCompanionSupport.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 4DF7B37FFD557C030E4D4960 /* libContextPanelCompanionSupport.a */; };
@@ -92,7 +93,9 @@
 		642684C666F2BEC487CEB7A2 /* SecureFileBookmark.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FA0C66F95091A96B8F7CBF4 /* SecureFileBookmark.swift */; };
 		652E3352E67082CBC13D4064 /* UsageLimit.swift in Sources */ = {isa = PBXBuildFile; fileRef = D459054C90410A784EBD308B /* UsageLimit.swift */; };
 		66A9008C342403F14896E0DB /* CompanionCloudKitSyncStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F188796FF19C3A0564D5EEAB /* CompanionCloudKitSyncStore.swift */; };
+		68A9CA020103CBBA585813A4 /* TVSystemSurfaces.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8C0573DE5DB1DBE4E963FB2 /* TVSystemSurfaces.swift */; };
 		6B8C7E3ADAA341D886D8CCCD /* UsageLimit.swift in Sources */ = {isa = PBXBuildFile; fileRef = D459054C90410A784EBD308B /* UsageLimit.swift */; };
+		6CDED7168B2A40038BF4A2FE /* TVProviderAlert.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3374FC54B67AE91D53E4D7BF /* TVProviderAlert.swift */; };
 		6E1A0333F84CA8A43597430C /* CompanionCloudKitSyncStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F188796FF19C3A0564D5EEAB /* CompanionCloudKitSyncStore.swift */; };
 		70156A1E7C885A1E66F95D68 /* TVSyncReceipt.swift in Sources */ = {isa = PBXBuildFile; fileRef = 544FE80ADC4650CDB85B4640 /* TVSyncReceipt.swift */; };
 		73FCB559A49D7474E51023C4 /* CompanionSyncPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47DB9468EE997E9DAD1CE6D3 /* CompanionSyncPresentation.swift */; };
@@ -100,17 +103,20 @@
 		762B3AD1D74922F681D202DF /* RefreshDiagnosticsState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DAF08B3CB69404A37DECA39 /* RefreshDiagnosticsState.swift */; };
 		764E6B79575AA8EC460441E3 /* CodexRateLimits.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FA8FE4CC9BE058D8F46FBA2 /* CodexRateLimits.swift */; };
 		7A8EFEA712279E8000D00B87 /* CompanionRefreshSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53708C425CC9029A9300FA79 /* CompanionRefreshSettings.swift */; };
+		7B416456182072C7AA839A9A /* TVAppRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0DC574A48A772716FE09735 /* TVAppRoute.swift */; };
 		7C2FC7CB5590C95244023520 /* ContextPanelDateFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9909074D7E80648BC2A01C51 /* ContextPanelDateFormatting.swift */; };
 		7C6664EA7FABECBBFC8F71A1 /* libContextPanelCloudKitSyncCompanion.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 4EF1C31059DCFA7FFC3969EC /* libContextPanelCloudKitSyncCompanion.a */; };
 		7CAEB043EEE06F41D719F7A7 /* LimitWarningWebhook.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE09AE825E3B368ED89CD521 /* LimitWarningWebhook.swift */; };
 		7D389D52287E9778C1742B44 /* ResetExpiryRefreshState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58B71A183966EEC56B955CD3 /* ResetExpiryRefreshState.swift */; };
 		7FD021610CC3841DE13AD70E /* ContextPanelCompanionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E29EEFA73267A8346212E7A /* ContextPanelCompanionApp.swift */; };
 		8121EE15127A2C78EED0D4B8 /* AccountConfigurationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 186D607FE2EEFDFFE2E70446 /* AccountConfigurationStore.swift */; };
+		828DEBC58258F34231E2D514 /* TVCloudKitNotificationPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25038A5D95D954F0AB88FEA2 /* TVCloudKitNotificationPolicy.swift */; };
 		85EBA57F3F1633F2D6E54103 /* ContextPanelWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 07D959D621E594C0CFC2CEF5 /* ContextPanelWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		86D64E082F50479344767059 /* ContextPanelRefreshAgent.app in Embed Dependencies */ = {isa = PBXBuildFile; fileRef = 086B12021073A6F2A49850A1 /* ContextPanelRefreshAgent.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		878E71CCE2E75264C33668BF /* ContextPanelDateFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9909074D7E80648BC2A01C51 /* ContextPanelDateFormatting.swift */; };
 		8A926EF24F018FCD884C2254 /* ResetExpiryRefreshState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58B71A183966EEC56B955CD3 /* ResetExpiryRefreshState.swift */; };
 		8B7BECF40741A26AF61E7153 /* MetricProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B5621100867602BDE8B426A /* MetricProgress.swift */; };
+		8BA9DD6D774BEB7A4C3ABD5C /* ContextPanelTVTopShelfProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89CAE692DB1BCF76AB802C6F /* ContextPanelTVTopShelfProvider.swift */; };
 		8C227B6AFC01D8930A658419 /* ContextPanelLocations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23E9C71457F4E1F101132FCF /* ContextPanelLocations.swift */; };
 		8D1A72D53AC6BE2FB14449E4 /* FastModeForecast.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BD985B0213AB5987D3B3170 /* FastModeForecast.swift */; };
 		91D95F15D7EFD12BFDB18DBC /* CompanionSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8211A4CCCDD1AA6113F22D1 /* CompanionSnapshot.swift */; };
@@ -119,6 +125,7 @@
 		954AD3201EED8C8D2304DAD7 /* PortableSettingsControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3527625AD320E4A63AF9952D /* PortableSettingsControls.swift */; };
 		964443706CF70969DD20BD54 /* BackgroundRefreshSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15DC14CB07B8BA4756DAB731 /* BackgroundRefreshSettings.swift */; };
 		96B17A7F4844C6A4B3AE59FA /* BackgroundRefreshSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15DC14CB07B8BA4756DAB731 /* BackgroundRefreshSettings.swift */; };
+		96E0A0DDE37D3A584214DB37 /* libContextPanelCoreTV.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 352F396977388C817E5A692E /* libContextPanelCoreTV.a */; };
 		9A99B0F4B1EFEDAD0D86A75F /* ContextPanelLocations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23E9C71457F4E1F101132FCF /* ContextPanelLocations.swift */; };
 		9AF418F09B8A1D820B92947F /* CompanionLayoutPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = B95F7CCD196F66458CB50E82 /* CompanionLayoutPolicy.swift */; };
 		9B00126ECF11C774D1B0290E /* CompanionRemoteSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = E97D64E1F32386FD74AA335F /* CompanionRemoteSync.swift */; };
@@ -154,6 +161,7 @@
 		BE436BB00AADD314F73FDF4C /* CodexRateLimits.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FA8FE4CC9BE058D8F46FBA2 /* CodexRateLimits.swift */; };
 		BE7F8E276624C8E6D93BC329 /* libContextPanelCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = F09182E1FD96DAEEC38F3909 /* libContextPanelCore.a */; };
 		C0DD7394E058BEE84E20AA43 /* ProviderCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A625CCDC97920B24B000C170 /* ProviderCredentialStore.swift */; };
+		C1B226368839368E93FC0AA7 /* ContextPanelTVTopShelfExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 3682A52E7297D6D89A6749AC /* ContextPanelTVTopShelfExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		C1DF7B59257060AC0A6AF44D /* ContextPanelLocations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23E9C71457F4E1F101132FCF /* ContextPanelLocations.swift */; };
 		C36C6074ECB13321CC6714B8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 944A3154A0C2E33C5971E571 /* Assets.xcassets */; };
 		C39E8B2F5A737793415839A8 /* GoogleAntigravityQuota.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C29BEF2E36108729A8B4EC4 /* GoogleAntigravityQuota.swift */; };
@@ -169,6 +177,7 @@
 		D1AE42202229297FD0665FDC /* ClaudeAccountMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BBC1080557704B2EF023A7B /* ClaudeAccountMigration.swift */; };
 		D4F01BFAED925D24A37BEB89 /* SnapshotStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32D8515D047F5A8117DB762C /* SnapshotStore.swift */; };
 		D576C47E63484116DD45FC7D /* CapacityPool.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8862B929FE544FCB2C3D06B /* CapacityPool.swift */; };
+		D6488317105C434A6894A732 /* TVAsyncDeadline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AE89FE10368B8714C3F0798 /* TVAsyncDeadline.swift */; };
 		D75323A888BC8BC683D2F6AA /* LimitProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */; };
 		D84B263CCE762609E7CB8F06 /* AccountConfigurationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 186D607FE2EEFDFFE2E70446 /* AccountConfigurationStore.swift */; };
 		D8E9C0AC4AE18B84C90690E9 /* MainLimitSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FC2DAEDD38483FC3A5D4880 /* MainLimitSummary.swift */; };
@@ -194,6 +203,7 @@
 		EC6D05FFECBDD2F8D65FAB49 /* ResetExpiryRefreshState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58B71A183966EEC56B955CD3 /* ResetExpiryRefreshState.swift */; };
 		EDA9CB5EF30F0B9878C60267 /* SnapshotStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32D8515D047F5A8117DB762C /* SnapshotStore.swift */; };
 		EE22EBA64F60246CD4EFE93C /* ResetExpiryRefreshState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58B71A183966EEC56B955CD3 /* ResetExpiryRefreshState.swift */; };
+		EE877A67DE1B045C092038FB /* TVTopShelfDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = E435106FACB9E5DD2F9C2651 /* TVTopShelfDocument.swift */; };
 		F0F6D1465CCA4AA21D72A68B /* ContextPanelWidgetIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 735462CA7931BEFE526B5B51 /* ContextPanelWidgetIdentity.swift */; };
 		F1AACB0C565F6F4D4E8D619C /* CompanionRemoteSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = E97D64E1F32386FD74AA335F /* CompanionRemoteSync.swift */; };
 		F240827E65E98A1749285EF0 /* SnapshotFreshness.swift in Sources */ = {isa = PBXBuildFile; fileRef = D03C19BEA1C610711A048EB7 /* SnapshotFreshness.swift */; };
@@ -210,6 +220,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		0672CDEE296E6742DB44447C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 194387DBD3D0F10E17F284F9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AA9FBEBD900640BF49B0B8BA;
+			remoteInfo = ContextPanelTVTopShelfExtension;
+		};
 		09393BB62BC81600338F31F8 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 194387DBD3D0F10E17F284F9 /* Project object */;
@@ -223,6 +240,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = EE4B8035BB7A9BD03B668BB8;
 			remoteInfo = ContextPanelCore;
+		};
+		0ABA8948466116D465D57441 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 194387DBD3D0F10E17F284F9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 18FFE1CC3AFF82A64DE43484;
+			remoteInfo = ContextPanelTVSupport;
 		};
 		12E751FBD886F3AEF5F3199A /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -462,6 +486,13 @@
 			remoteGlobalIDString = 2C827A90E9B1D569F5781EE2;
 			remoteInfo = ContextPanelCoreCompanion;
 		};
+		EC60AB2C98D18F5133354AC0 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 194387DBD3D0F10E17F284F9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A91F7E844C2282521AA2E7F0;
+			remoteInfo = ContextPanelCoreTV;
+		};
 		F50613819263F00AE0B770DA /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 194387DBD3D0F10E17F284F9 /* Project object */;
@@ -497,6 +528,17 @@
 			dstSubfolderSpec = 13;
 			files = (
 				188E64070A38D747957C4332 /* ContextPanelCompanionWidgetExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		73F7EE8C1FCE97B9F45FDD80 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				C1B226368839368E93FC0AA7 /* ContextPanelTVTopShelfExtension.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -550,13 +592,16 @@
 		1E49D3D1313F47F05FC0F33D /* ContextPanelWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelWatchApp.swift; sourceTree = "<group>"; };
 		1FFE6BBDF595A795C1DC34D9 /* ContextPanelCompanionWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelCompanionWidget.swift; sourceTree = "<group>"; };
 		23E9C71457F4E1F101132FCF /* ContextPanelLocations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelLocations.swift; sourceTree = "<group>"; };
+		25038A5D95D954F0AB88FEA2 /* TVCloudKitNotificationPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVCloudKitNotificationPolicy.swift; sourceTree = "<group>"; };
 		25E82B6087974E01B972918C /* GoogleAccountMigration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleAccountMigration.swift; sourceTree = "<group>"; };
 		2DAF08B3CB69404A37DECA39 /* RefreshDiagnosticsState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RefreshDiagnosticsState.swift; sourceTree = "<group>"; };
 		2E29EEFA73267A8346212E7A /* ContextPanelCompanionApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelCompanionApp.swift; sourceTree = "<group>"; };
 		32D8515D047F5A8117DB762C /* SnapshotStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotStore.swift; sourceTree = "<group>"; };
+		3374FC54B67AE91D53E4D7BF /* TVProviderAlert.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVProviderAlert.swift; sourceTree = "<group>"; };
 		350ED5589FB23C42ED32704A /* ProviderConnector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderConnector.swift; sourceTree = "<group>"; };
 		3527625AD320E4A63AF9952D /* PortableSettingsControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortableSettingsControls.swift; sourceTree = "<group>"; };
 		352F396977388C817E5A692E /* libContextPanelCoreTV.a */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = archive.ar; path = libContextPanelCoreTV.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		3682A52E7297D6D89A6749AC /* ContextPanelTVTopShelfExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = ContextPanelTVTopShelfExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		380420B70E6A75C9E356322E /* ContextPanelApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelApp.swift; sourceTree = "<group>"; };
 		3FC2DAEDD38483FC3A5D4880 /* MainLimitSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainLimitSummary.swift; sourceTree = "<group>"; };
 		400B0794690F91F5C3029A21 /* libContextPanelCloudKitSyncTV.a */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = archive.ar; path = libContextPanelCloudKitSyncTV.a; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -565,6 +610,7 @@
 		45E8D3C3E45C1B6B3FACE828 /* SnapshotRefreshService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotRefreshService.swift; sourceTree = "<group>"; };
 		47D628E750682BA2235D68F3 /* WatchLimitDisplay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchLimitDisplay.swift; sourceTree = "<group>"; };
 		47DB9468EE997E9DAD1CE6D3 /* CompanionSyncPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionSyncPresentation.swift; sourceTree = "<group>"; };
+		4AE89FE10368B8714C3F0798 /* TVAsyncDeadline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVAsyncDeadline.swift; sourceTree = "<group>"; };
 		4CDAD640E6A641A427B87752 /* libContextPanelWidgetUI.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libContextPanelWidgetUI.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		4DF7B37FFD557C030E4D4960 /* libContextPanelCompanionSupport.a */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = archive.ar; path = libContextPanelCompanionSupport.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		4E12E941B0706B6DA759F0C8 /* CompanionSyncLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionSyncLoader.swift; sourceTree = "<group>"; };
@@ -581,6 +627,7 @@
 		7A5856DAEEED4696F7849C66 /* ContextPanelTVApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelTVApp.swift; sourceTree = "<group>"; };
 		7BD985B0213AB5987D3B3170 /* FastModeForecast.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FastModeForecast.swift; sourceTree = "<group>"; };
 		895A979571D5E5C14830B41D /* ClaudeOAuthUsage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeOAuthUsage.swift; sourceTree = "<group>"; };
+		89CAE692DB1BCF76AB802C6F /* ContextPanelTVTopShelfProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelTVTopShelfProvider.swift; sourceTree = "<group>"; };
 		8BBC1080557704B2EF023A7B /* ClaudeAccountMigration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeAccountMigration.swift; sourceTree = "<group>"; };
 		8C29BEF2E36108729A8B4EC4 /* GoogleAntigravityQuota.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleAntigravityQuota.swift; sourceTree = "<group>"; };
 		8D6350007C73BEF27D871AB0 /* ContextPanel.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ContextPanel.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -597,6 +644,7 @@
 		A3C9122F0E0741C701520316 /* libContextPanelWidgetUICompanion.a */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = archive.ar; path = libContextPanelWidgetUICompanion.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		A625CCDC97920B24B000C170 /* ProviderCredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderCredentialStore.swift; sourceTree = "<group>"; };
 		AC712405A58ED12AA33BDC68 /* ContextPanelRefreshAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelRefreshAgent.swift; sourceTree = "<group>"; };
+		B0DC574A48A772716FE09735 /* TVAppRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVAppRoute.swift; sourceTree = "<group>"; };
 		B8862B929FE544FCB2C3D06B /* CapacityPool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapacityPool.swift; sourceTree = "<group>"; };
 		B95F7CCD196F66458CB50E82 /* CompanionLayoutPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionLayoutPolicy.swift; sourceTree = "<group>"; };
 		BAC6B24F1876E6D7627E2B82 /* TVRunwayPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVRunwayPresentation.swift; sourceTree = "<group>"; };
@@ -606,8 +654,10 @@
 		D03C19BEA1C610711A048EB7 /* SnapshotFreshness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotFreshness.swift; sourceTree = "<group>"; };
 		D459054C90410A784EBD308B /* UsageLimit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageLimit.swift; sourceTree = "<group>"; };
 		D7CCA2AD1263BFDAB028A69A /* TVLocalCacheLocations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVLocalCacheLocations.swift; sourceTree = "<group>"; };
+		D8C0573DE5DB1DBE4E963FB2 /* TVSystemSurfaces.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVSystemSurfaces.swift; sourceTree = "<group>"; };
 		DBD0BD51B5F5AD8D24CA217D /* libContextPanelCoreCompanion.a */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = archive.ar; path = libContextPanelCoreCompanion.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		E195C6E906DA9C0BF082622F /* ContextPanelWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelWidget.swift; sourceTree = "<group>"; };
+		E435106FACB9E5DD2F9C2651 /* TVTopShelfDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVTopShelfDocument.swift; sourceTree = "<group>"; };
 		E97D64E1F32386FD74AA335F /* CompanionRemoteSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionRemoteSync.swift; sourceTree = "<group>"; };
 		F09182E1FD96DAEEC38F3909 /* libContextPanelCore.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libContextPanelCore.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		F188796FF19C3A0564D5EEAB /* CompanionCloudKitSyncStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionCloudKitSyncStore.swift; sourceTree = "<group>"; };
@@ -666,6 +716,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A5039728358148B207C157F4 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				96E0A0DDE37D3A584214DB37 /* libContextPanelCoreTV.a in Frameworks */,
+				2EBF1D50D1530377171B2FBF /* libContextPanelTVSupport.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		B1405DFCD153893D6B1AC535 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -717,6 +776,7 @@
 				97822BE5E66CA9D319A09950 /* ContextPanelCompanionWidgetExtension.appex */,
 				086B12021073A6F2A49850A1 /* ContextPanelRefreshAgent.app */,
 				95C575E8B51C3D7972F23956 /* ContextPanelTV.app */,
+				3682A52E7297D6D89A6749AC /* ContextPanelTVTopShelfExtension.appex */,
 				8F69BC9358E3C7F9853C0A53 /* ContextPanelWatch.app */,
 				C95FE0723637833124642C79 /* ContextPanelWatchWidgetExtension.appex */,
 				07D959D621E594C0CFC2CEF5 /* ContextPanelWidgetExtension.appex */,
@@ -752,6 +812,7 @@
 			children = (
 				7A5856DAEEED4696F7849C66 /* ContextPanelTVApp.swift */,
 				069C02BFF25BF7CD01E47C31 /* TVPreviewFixtures.swift */,
+				D8C0573DE5DB1DBE4E963FB2 /* TVSystemSurfaces.swift */,
 			);
 			name = ContextPanelTV;
 			path = Sources/ContextPanelTV;
@@ -823,6 +884,7 @@
 				07D7470DD957A6051CE8B6A6 /* ContextPanelSettingsUI */,
 				4DF021C7068267FF5A48080F /* ContextPanelTV */,
 				9B17BBBC39E9B54214D3AD7B /* ContextPanelTVSupport */,
+				AB6CEEAC00A0BFFEF75370E5 /* ContextPanelTVTopShelf */,
 				4721D7A2AA6E06E4A29CE1B9 /* ContextPanelWatch */,
 				A93B1963F1919BC89E97F6C8 /* ContextPanelWatchSupport */,
 				C75B6ABAACD654F367448040 /* ContextPanelWatchWidget */,
@@ -854,9 +916,14 @@
 		9B17BBBC39E9B54214D3AD7B /* ContextPanelTVSupport */ = {
 			isa = PBXGroup;
 			children = (
+				B0DC574A48A772716FE09735 /* TVAppRoute.swift */,
+				4AE89FE10368B8714C3F0798 /* TVAsyncDeadline.swift */,
+				25038A5D95D954F0AB88FEA2 /* TVCloudKitNotificationPolicy.swift */,
 				D7CCA2AD1263BFDAB028A69A /* TVLocalCacheLocations.swift */,
+				3374FC54B67AE91D53E4D7BF /* TVProviderAlert.swift */,
 				BAC6B24F1876E6D7627E2B82 /* TVRunwayPresentation.swift */,
 				544FE80ADC4650CDB85B4640 /* TVSyncReceipt.swift */,
+				E435106FACB9E5DD2F9C2651 /* TVTopShelfDocument.swift */,
 			);
 			name = ContextPanelTVSupport;
 			path = Sources/ContextPanelTVSupport;
@@ -889,6 +956,15 @@
 			);
 			name = ContextPanelWatchSupport;
 			path = Sources/ContextPanelWatchSupport;
+			sourceTree = "<group>";
+		};
+		AB6CEEAC00A0BFFEF75370E5 /* ContextPanelTVTopShelf */ = {
+			isa = PBXGroup;
+			children = (
+				89CAE692DB1BCF76AB802C6F /* ContextPanelTVTopShelfProvider.swift */,
+			);
+			name = ContextPanelTVTopShelf;
+			path = Sources/ContextPanelTVTopShelf;
 			sourceTree = "<group>";
 		};
 		C75B6ABAACD654F367448040 /* ContextPanelWatchWidget */ = {
@@ -1237,6 +1313,26 @@
 			productReference = 352F396977388C817E5A692E /* libContextPanelCoreTV.a */;
 			productType = "com.apple.product-type.library.static";
 		};
+		AA9FBEBD900640BF49B0B8BA /* ContextPanelTVTopShelfExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C0AF514AE7AA59639A0321ED /* Build configuration list for PBXNativeTarget "ContextPanelTVTopShelfExtension" */;
+			buildPhases = (
+				452887858E02950E4AFE7F54 /* Sources */,
+				A5039728358148B207C157F4 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				CF3FAE4C97B50432D574ABC9 /* PBXTargetDependency */,
+				F6056A618C3590BA8EB59D90 /* PBXTargetDependency */,
+			);
+			name = ContextPanelTVTopShelfExtension;
+			packageProductDependencies = (
+			);
+			productName = ContextPanelTVTopShelfExtension;
+			productReference = 3682A52E7297D6D89A6749AC /* ContextPanelTVTopShelfExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		CB3DAA4F3D58BB27AF5536B9 /* ContextPanelWatchWidgetExtension */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 4550E2B82BD3BA0BA7FAE272 /* Build configuration list for PBXNativeTarget "ContextPanelWatchWidgetExtension" */;
@@ -1264,6 +1360,7 @@
 				1BF355E947AA9A7817BAC377 /* Sources */,
 				477C2264C23E16DADE8E9678 /* Resources */,
 				552AB015F92B2D6B7F58C307 /* Frameworks */,
+				73F7EE8C1FCE97B9F45FDD80 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
@@ -1271,6 +1368,7 @@
 				29FE4CDA12D1E3A9D6EAC4FA /* PBXTargetDependency */,
 				CF4173AF43050A8C101A3F5D /* PBXTargetDependency */,
 				C44B8AD0896DC3FCD46FE22D /* PBXTargetDependency */,
+				73969E5736893E19794F42DB /* PBXTargetDependency */,
 			);
 			name = ContextPanelTV;
 			packageProductDependencies = (
@@ -1452,6 +1550,10 @@
 						DevelopmentTeam = MM5YXC7T6E;
 						ProvisioningStyle = Automatic;
 					};
+					AA9FBEBD900640BF49B0B8BA = {
+						DevelopmentTeam = MM5YXC7T6E;
+						ProvisioningStyle = Automatic;
+					};
 					CB3DAA4F3D58BB27AF5536B9 = {
 						DevelopmentTeam = MM5YXC7T6E;
 						ProvisioningStyle = Automatic;
@@ -1513,6 +1615,7 @@
 				D2566691E7DF22530AECB972 /* ContextPanelSettingsUICompanion */,
 				CDBFF951BBB3335C070C345B /* ContextPanelTV */,
 				18FFE1CC3AFF82A64DE43484 /* ContextPanelTVSupport */,
+				AA9FBEBD900640BF49B0B8BA /* ContextPanelTVTopShelfExtension */,
 				6C7864E545239989BC309576 /* ContextPanelWatch */,
 				CB3DAA4F3D58BB27AF5536B9 /* ContextPanelWatchWidgetExtension */,
 				92EF616FEBA46FCB02E887BE /* ContextPanelWidgetExtension */,
@@ -1809,9 +1912,14 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7B416456182072C7AA839A9A /* TVAppRoute.swift in Sources */,
+				D6488317105C434A6894A732 /* TVAsyncDeadline.swift in Sources */,
+				828DEBC58258F34231E2D514 /* TVCloudKitNotificationPolicy.swift in Sources */,
 				025C06128C86B7E034BD0A0C /* TVLocalCacheLocations.swift in Sources */,
+				6CDED7168B2A40038BF4A2FE /* TVProviderAlert.swift in Sources */,
 				E3F82D291A06A0393BD1B9F3 /* TVRunwayPresentation.swift in Sources */,
 				70156A1E7C885A1E66F95D68 /* TVSyncReceipt.swift in Sources */,
+				EE877A67DE1B045C092038FB /* TVTopShelfDocument.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1829,6 +1937,7 @@
 			files = (
 				39EC83B5010B6EECAB3BC4D8 /* ContextPanelTVApp.swift in Sources */,
 				ADDFDAC4772C75CAB7B5C8CD /* TVPreviewFixtures.swift in Sources */,
+				68A9CA020103CBBA585813A4 /* TVSystemSurfaces.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1931,6 +2040,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				AA2B1A4265AA6530B7F8DB67 /* ContextPanelWidgetViews.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		452887858E02950E4AFE7F54 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8BA9DD6D774BEB7A4C3ABD5C /* ContextPanelTVTopShelfProvider.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2224,6 +2341,11 @@
 			target = 3AAFE3C855763E715F13EA76 /* ContextPanelCloudKitSync */;
 			targetProxy = 1D3DD2018D533BC2972DC942 /* PBXContainerItemProxy */;
 		};
+		73969E5736893E19794F42DB /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AA9FBEBD900640BF49B0B8BA /* ContextPanelTVTopShelfExtension */;
+			targetProxy = 0672CDEE296E6742DB44447C /* PBXContainerItemProxy */;
+		};
 		8361FD30418655D673073A5A /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = EE4B8035BB7A9BD03B668BB8 /* ContextPanelCore */;
@@ -2289,6 +2411,11 @@
 			target = 3AAFE3C855763E715F13EA76 /* ContextPanelCloudKitSync */;
 			targetProxy = 303ED284433E5791335DB175 /* PBXContainerItemProxy */;
 		};
+		CF3FAE4C97B50432D574ABC9 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A91F7E844C2282521AA2E7F0 /* ContextPanelCoreTV */;
+			targetProxy = EC60AB2C98D18F5133354AC0 /* PBXContainerItemProxy */;
+		};
 		CF4173AF43050A8C101A3F5D /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 52D435E973827F779C548C49 /* ContextPanelCloudKitSyncTV */;
@@ -2318,6 +2445,11 @@
 			isa = PBXTargetDependency;
 			target = F81EA59C5D4D7FDB8497CDD0 /* ContextPanelWidgetUI */;
 			targetProxy = DF52827B9FF9633C60859149 /* PBXContainerItemProxy */;
+		};
+		F6056A618C3590BA8EB59D90 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 18FFE1CC3AFF82A64DE43484 /* ContextPanelTVSupport */;
+			targetProxy = 0ABA8948466116D465D57441 /* PBXContainerItemProxy */;
 		};
 		F904660B86A4B03D1E3444D7 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -2688,6 +2820,35 @@
 				SKIP_INSTALL = YES;
 				TARGETED_DEVICE_FAMILY = 4;
 				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Release;
+		};
+		731E54431EC7E7507B595231 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Config/ContextPanelTVTopShelf.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Distribution";
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "Config/ContextPanelTVTopShelf-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-ObjC",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.shinycomputers.contextpanel.topshelf;
+				PRODUCT_NAME = ContextPanelTVTopShelfExtension;
+				PROVISIONING_PROFILE_SPECIFIER = "$(CONTEXT_PANEL_APP_STORE_TV_TOP_SHELF_PROFILE_SPECIFIER)";
+				SDKROOT = appletvos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 3;
+				TVOS_DEPLOYMENT_TARGET = 17.0;
 			};
 			name = Release;
 		};
@@ -3338,6 +3499,33 @@
 			};
 			name = Debug;
 		};
+		E882C14AFB931FBB49594759 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Config/ContextPanelTVTopShelf.entitlements;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "Config/ContextPanelTVTopShelf-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-ObjC",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.shinycomputers.contextpanel.topshelf;
+				PRODUCT_NAME = ContextPanelTVTopShelfExtension;
+				SDKROOT = appletvos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 3;
+				TVOS_DEPLOYMENT_TARGET = 17.0;
+			};
+			name = Debug;
+		};
 		E9A4F0F461D5544A35DB06BD /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -3580,6 +3768,15 @@
 			buildConfigurations = (
 				58ADB2EF94022C1803CA1F30 /* Debug */,
 				8A5FA37DF23FC4E3C4201B12 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		C0AF514AE7AA59639A0321ED /* Build configuration list for PBXNativeTarget "ContextPanelTVTopShelfExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E882C14AFB931FBB49594759 /* Debug */,
+				731E54431EC7E7507B595231 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

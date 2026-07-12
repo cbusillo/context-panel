@@ -408,6 +408,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("COMPANION_APP_STORE_APP_PROVISIONING_PROFILE_BASE64", workflow)
         self.assertIn("COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64", workflow)
         self.assertIn("COMPANION_APP_STORE_TV_PROVISIONING_PROFILE_BASE64", workflow)
+        self.assertIn("COMPANION_APP_STORE_TV_TOP_SHELF_PROVISIONING_PROFILE_BASE64", workflow)
         self.assertIn("ContextPanelCompanion", script)
         self.assertIn("ContextPanelTV", script)
         self.assertIn("generic/platform=iOS", script)
@@ -415,6 +416,9 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("generic/platform=tvOS", script)
         self.assertIn("CONTEXT_PANEL_APP_STORE_COMPANION_PROFILE_SPECIFIER", script)
         self.assertIn("CONTEXT_PANEL_APP_STORE_TV_PROFILE_SPECIFIER", script)
+        self.assertIn("CONTEXT_PANEL_APP_STORE_TV_TOP_SHELF_PROFILE_SPECIFIER", script)
+        self.assertIn("--tv-top-shelf-profile", script)
+        self.assertIn("com.shinycomputers.contextpanel.topshelf", script)
         self.assertIn("iCloud.com.shinycomputers.contextpanel", script)
         self.assertIn("group.com.shinycomputers.contextpanel", script)
         self.assertIn("'Entitlements:com.apple.developer.icloud-services' '*'", script)
@@ -818,12 +822,14 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("visionOS companion archive unexpectedly contains watch content", script)
         self.assertIn("tvOS companion archive unexpectedly contains watch content", script)
         self.assertIn("tvOS companion archive unexpectedly contains the iOS/visionOS companion widget", script)
+        self.assertIn("tvOS companion archive is missing embedded Top Shelf extension", script)
         self.assertIn("tvOS companion archive is missing compiled brand assets", script)
         self.assertIn("tvOS companion archive is missing the primary layered app icon", script)
         self.assertIn("tvOS companion archive is missing required standard or wide Top Shelf artwork", script)
         self.assertIn("Products/Applications/Context Panel.app", script)
         self.assertIn("Watch/Context Panel.app", script)
         self.assertIn("PlugIns/ContextPanelWatchWidgetExtension.appex", script)
+        self.assertIn("PlugIns/ContextPanelTVTopShelfExtension.appex", script)
         self.assertIn("platforms=(ios visionos watchos tvos)", script)
         self.assertIn("generic/platform=iOS", script)
         self.assertIn("generic/platform=visionOS", script)
@@ -840,6 +846,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
 
         self.assertIn("assert_tvos_archive_ready()", script)
         self.assertIn("tvOS archive unexpectedly contains the iOS/visionOS companion widget", script)
+        self.assertIn("tvOS archive is missing the embedded Top Shelf extension", script)
         self.assertIn("tvOS archive is missing compiled brand assets", script)
         self.assertIn("tvOS archive is missing the primary layered app icon", script)
         self.assertIn("tvOS archive is missing required standard or wide Top Shelf artwork", script)
@@ -1043,6 +1050,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertNotIn("AppIcon.solidimagestack", result.stdout)
 
     def test_companion_upload_tvos_uses_dedicated_profile_without_widget(self):
+        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
         result = self.run_companion_upload_script(
             [
                 "--platform",
@@ -1061,6 +1069,9 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("missing-tvos-app.provisionprofile", result.stdout)
         self.assertNotIn("companion widget provisioning profile not found", result.stdout)
         self.assertNotIn("visionOS companion packaging is blocked", result.stdout)
+        self.assertIn("tv_top_shelf_profile_uuid", script)
+        self.assertIn("ContextPanelTVTopShelfExtension.provisionprofile", script)
+        self.assertIn("CONTEXT_PANEL_APP_STORE_TV_TOP_SHELF_PROFILE_SPECIFIER", script)
 
     def test_companion_upload_fails_visionos_before_profiles_without_layered_icon(self):
         with tempfile.TemporaryDirectory() as working_dir:

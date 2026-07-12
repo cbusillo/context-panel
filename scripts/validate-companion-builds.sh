@@ -144,12 +144,17 @@ validate_archive_contents() {
 		fi
 		;;
 	tvos)
+		local top_shelf_path="$app_path/PlugIns/ContextPanelTVTopShelfExtension.appex"
 		if [[ -e "$app_path/Watch" ]]; then
 			echo "tvOS companion archive unexpectedly contains watch content: $app_path/Watch" >&2
 			exit 1
 		fi
 		if [[ -e "$app_path/PlugIns/ContextPanelCompanionWidgetExtension.appex" ]]; then
 			echo "tvOS companion archive unexpectedly contains the iOS/visionOS companion widget" >&2
+			exit 1
+		fi
+		if [[ ! -d "$top_shelf_path" ]]; then
+			echo "tvOS companion archive is missing embedded Top Shelf extension: $top_shelf_path" >&2
 			exit 1
 		fi
 		if [[ ! -f "$app_path/Assets.car" ]]; then

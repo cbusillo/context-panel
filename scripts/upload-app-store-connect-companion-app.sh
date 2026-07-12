@@ -13,6 +13,7 @@ app_profile="${COMPANION_APP_STORE_APP_PROVISIONING_PROFILE:-}"
 widget_profile="${COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE:-.build/provisioning-appstore/ContextPanelCompanionWidgetExtension.provisionprofile}"
 watch_profile="${COMPANION_APP_STORE_WATCH_PROVISIONING_PROFILE:-.build/provisioning-appstore/ContextPanelWatch.provisionprofile}"
 watch_widget_profile="${COMPANION_APP_STORE_WATCH_WIDGET_PROVISIONING_PROFILE:-.build/provisioning-appstore/ContextPanelWatchWidgetExtension.provisionprofile}"
+tv_top_shelf_profile="${COMPANION_APP_STORE_TV_TOP_SHELF_PROVISIONING_PROFILE:-.build/provisioning-appstore/ContextPanelTVTopShelfExtension.provisionprofile}"
 api_key_path="${APP_STORE_CONNECT_API_KEY_PATH:-}"
 api_key_id="${APP_STORE_CONNECT_KEY_ID:-}"
 api_issuer_id="${APP_STORE_CONNECT_ISSUER_ID:-}"
@@ -40,6 +41,7 @@ Options:
   --widget-profile PATH                Companion widget provisioning profile.
   --watch-profile PATH                 Companion watch app provisioning profile.
   --watch-widget-profile PATH          Companion watch widget provisioning profile.
+  --tv-top-shelf-profile PATH          tvOS Top Shelf extension provisioning profile.
   --api-key PATH                       App Store Connect API private key path.
   --api-key-id ID                      App Store Connect API key ID.
   --api-issuer-id ID                   App Store Connect API issuer ID.
@@ -96,6 +98,10 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--watch-widget-profile)
 		watch_widget_profile="${2:?--watch-widget-profile requires a value}"
+		shift 2
+		;;
+	--tv-top-shelf-profile)
+		tv_top_shelf_profile="${2:?--tv-top-shelf-profile requires a value}"
 		shift 2
 		;;
 	--api-key)
@@ -257,6 +263,21 @@ assert_profile_app_group() {
 	if ! plist_array_contains_value "$plist" 'Entitlements:com.apple.security.application-groups' "$app_group"; then
 		rm -f "$plist"
 		echo "$label provisioning profile does not authorize app group: $app_group" >&2
+		exit 1
+	fi
+	rm -f "$plist"
+}
+
+assert_profile_user_management() {
+	local profile="$1"
+	local label="$2"
+	local capability="runs-as-current-user-with-user-independent-keychain"
+	local plist
+	plist="$(mktemp)"
+	security cms -D -i "$profile" -o "$plist"
+	if ! plist_array_contains_value "$plist" 'Entitlements:com.apple.developer.user-management' "$capability"; then
+		rm -f "$plist"
+		echo "$label provisioning profile does not authorize current-user isolation" >&2
 		exit 1
 	fi
 	rm -f "$plist"
@@ -531,9 +552,14 @@ run_xcodebuild() {
 
 assert_tvos_archive_ready() {
 	local app_path="$archive_path/Products/Applications/Context Panel.app"
+	local top_shelf_path="$app_path/PlugIns/ContextPanelTVTopShelfExtension.appex"
 	local icon_name top_shelf_image top_shelf_image_wide
 	if [[ -e "$app_path/PlugIns/ContextPanelCompanionWidgetExtension.appex" ]]; then
 		echo "tvOS archive unexpectedly contains the iOS/visionOS companion widget" >&2
+		exit 1
+	fi
+	if [[ ! -d "$top_shelf_path" ]]; then
+		echo "tvOS archive is missing the embedded Top Shelf extension: $top_shelf_path" >&2
 		exit 1
 	fi
 	if [[ ! -f "$app_path/Assets.car" ]]; then
@@ -569,6 +595,10 @@ if [[ "$platform" == "ios" && ! -f "$watch_profile" ]]; then
 fi
 if [[ "$platform" == "ios" && ! -f "$watch_widget_profile" ]]; then
 	echo "companion watch widget provisioning profile not found: $watch_widget_profile" >&2
+	exit 1
+fi
+if [[ "$platform" == "tvos" && ! -f "$tv_top_shelf_profile" ]]; then
+	echo "tvOS Top Shelf provisioning profile not found: $tv_top_shelf_profile" >&2
 	exit 1
 fi
 
@@ -608,12 +638,16 @@ app_profile_uuid="$(profile_uuid "$app_profile")"
 widget_profile_uuid=""
 watch_profile_uuid=""
 watch_widget_profile_uuid=""
+tv_top_shelf_profile_uuid=""
 if [[ "$platform" != "tvos" ]]; then
 	widget_profile_uuid="$(profile_uuid "$widget_profile")"
 fi
 if [[ "$platform" == "ios" ]]; then
 	watch_profile_uuid="$(profile_uuid "$watch_profile")"
 	watch_widget_profile_uuid="$(profile_uuid "$watch_widget_profile")"
+fi
+if [[ "$platform" == "tvos" ]]; then
+	tv_top_shelf_profile_uuid="$(profile_uuid "$tv_top_shelf_profile")"
 fi
 assert_profile_bundle_id "$app_profile" "companion app" "com.shinycomputers.contextpanel"
 assert_profile_platform_any "$app_profile" "companion app" "${profile_platforms[@]}"
@@ -629,9 +663,18 @@ if [[ "$platform" == "ios" ]]; then
 	assert_profile_icloud_service "$watch_profile" "companion watch" "CloudKit"
 	assert_profile_icloud_service "$watch_widget_profile" "companion watch widget" "CloudKit"
 fi
+if [[ "$platform" == "tvos" ]]; then
+	assert_profile_bundle_id "$tv_top_shelf_profile" "tvOS Top Shelf" "com.shinycomputers.contextpanel.topshelf"
+	assert_profile_platform_any "$tv_top_shelf_profile" "tvOS Top Shelf" tvOS
+fi
 assert_profile_icloud_service "$app_profile" "companion app" "CloudKit"
 assert_profile_push_notifications "$app_profile" "companion app" "production"
-if [[ "$platform" != "tvos" ]]; then
+if [[ "$platform" == "tvos" ]]; then
+	assert_profile_app_group "$app_profile" "tvOS app"
+	assert_profile_user_management "$app_profile" "tvOS app"
+	assert_profile_app_group "$tv_top_shelf_profile" "tvOS Top Shelf"
+	assert_profile_user_management "$tv_top_shelf_profile" "tvOS Top Shelf"
+else
 	assert_profile_app_group "$app_profile" "companion app"
 	assert_profile_app_group "$widget_profile" "companion widget"
 	assert_profile_icloud_service "$app_profile" "companion app" "CloudDocuments"
@@ -645,10 +688,14 @@ if [[ "$platform" == "ios" ]]; then
 	install_profile "$watch_profile" "$watch_profile_uuid"
 	install_profile "$watch_widget_profile" "$watch_widget_profile_uuid"
 fi
+if [[ "$platform" == "tvos" ]]; then
+	install_profile "$tv_top_shelf_profile" "$tv_top_shelf_profile_uuid"
+fi
 
 mkdir -p "$(dirname "$export_options_path")"
 widget_export_profile_plist=""
 watch_export_profile_plist=""
+tv_top_shelf_export_profile_plist=""
 if [[ "$platform" != "tvos" ]]; then
 	widget_export_profile_plist="
 			<key>com.shinycomputers.contextpanel.widget</key>
@@ -660,6 +707,11 @@ if [[ "$platform" == "ios" ]]; then
 		<string>$watch_profile_uuid</string>
 		<key>com.shinycomputers.contextpanel.watch.widget</key>
 		<string>$watch_widget_profile_uuid</string>"
+fi
+if [[ "$platform" == "tvos" ]]; then
+	tv_top_shelf_export_profile_plist="
+		<key>com.shinycomputers.contextpanel.topshelf</key>
+		<string>$tv_top_shelf_profile_uuid</string>"
 fi
 cat >"$export_options_path" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -680,6 +732,7 @@ cat >"$export_options_path" <<PLIST
 	<dict>
 		<key>com.shinycomputers.contextpanel</key>
 		<string>$app_profile_uuid</string>
+$tv_top_shelf_export_profile_plist
 $widget_export_profile_plist
 $watch_export_profile_plist
 	</dict>
@@ -707,6 +760,7 @@ archive_args=(
 )
 if [[ "$platform" == "tvos" ]]; then
 	archive_args+=(CONTEXT_PANEL_APP_STORE_TV_PROFILE_SPECIFIER="$app_profile_uuid")
+	archive_args+=(CONTEXT_PANEL_APP_STORE_TV_TOP_SHELF_PROFILE_SPECIFIER="$tv_top_shelf_profile_uuid")
 else
 	archive_args+=(CONTEXT_PANEL_APP_STORE_COMPANION_PROFILE_SPECIFIER="$app_profile_uuid")
 	archive_args+=(CONTEXT_PANEL_APP_STORE_COMPANION_WIDGET_PROFILE_SPECIFIER="$widget_profile_uuid")
