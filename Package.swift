@@ -115,6 +115,7 @@ let package = Package(
             name: "ContextPanelCoreTests",
             dependencies: [
                 "ContextPanelCore",
+                "ContextPanelCloudKitSync",
                 "ContextPanelCompanionSupport",
                 "ContextPanelSettingsUI",
                 "ContextPanelTVSupport",

@@ -10,6 +10,19 @@ sell personal data. Account configuration, credentials, usage snapshots, widget
 preferences, refresh history, and diagnostics are stored locally on the user's
 Mac.
 
+When the user installs a companion app, Context Panel may sync a normalized
+companion snapshot through the user's private iCloud/CloudKit account to that
+user's Apple devices. The snapshot can include provider names, normalized usage
+capacity, reset timing, freshness, and the user-facing account display label.
+That display label may be an email address when the provider or user uses an
+email as the account name. Companion snapshots do not include provider tokens,
+raw account identifiers, prompts, transcripts, raw provider responses, or
+diagnostic logs.
+
+Apple TV presentation privacy is device-local. Full Detail may show safe account
+display labels; Hide Account Names and Percentages Only suppress them. The Top
+Shelf document strips account names in every presentation mode.
+
 If the user enables outbound webhook alerts, Context Panel sends selected
 normalized limit-warning data to the user-configured webhook URL. This can
 include provider name, main-limit window, percent remaining, remaining and limit

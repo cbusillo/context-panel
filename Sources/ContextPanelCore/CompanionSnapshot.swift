@@ -1144,8 +1144,9 @@ private enum CompanionAccountIdentity {
     }
 
     static func displayName(_ value: String) -> String {
-        let redacted = ConnectorRedactor.redact(value)
-        let pathRedacted = ConnectorRedactor.redactedPath(redacted)
+        let displayName = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !displayName.isEmpty else { return "Account" }
+        let pathRedacted = NSString(string: displayName).lastPathComponent
         return pathRedacted.isEmpty ? "Account" : pathRedacted
     }
 }

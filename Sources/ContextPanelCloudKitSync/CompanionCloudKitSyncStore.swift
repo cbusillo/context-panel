@@ -45,6 +45,21 @@ public enum CompanionCloudKitSyncStoreFactory {
     }
 }
 
+enum CompanionCloudKitSubscriptionFactory {
+    static func make() -> CKQuerySubscription {
+        let subscription = CKQuerySubscription(
+            recordType: CompanionRemoteSync.cloudKitRecordType,
+            predicate: NSPredicate(format: "TRUEPREDICATE"),
+            subscriptionID: CompanionRemoteSync.cloudKitSubscriptionID,
+            options: [.firesOnRecordCreation, .firesOnRecordUpdate]
+        )
+        let info = CKSubscription.NotificationInfo()
+        info.shouldSendContentAvailable = true
+        subscription.notificationInfo = info
+        return subscription
+    }
+}
+
 private actor CompanionCloudKitClient {
     private let containerIdentifier: String
     private let recordName: String
@@ -193,17 +208,7 @@ private actor CompanionCloudKitClient {
 
     func registerSubscription() async -> CompanionRemoteSyncOutcome {
         do {
-            let subscription = CKQuerySubscription(
-                recordType: CompanionRemoteSync.cloudKitRecordType,
-                predicate: NSPredicate(format: "recordID == %@", CKRecord.ID(
-                    recordName: CompanionRemoteSync.cloudKitRecordName
-                )),
-                subscriptionID: CompanionRemoteSync.cloudKitSubscriptionID,
-                options: [.firesOnRecordCreation, .firesOnRecordUpdate]
-            )
-            let info = CKSubscription.NotificationInfo()
-            info.shouldSendContentAvailable = true
-            subscription.notificationInfo = info
+            let subscription = CompanionCloudKitSubscriptionFactory.make()
             _ = try await privateDatabase.save(subscription)
             return CompanionRemoteSyncOutcome(storeRole: storeRole, succeeded: true)
         } catch {
