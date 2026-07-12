@@ -3,6 +3,7 @@ import ContextPanelCloudKitSync
 import ContextPanelCore
 import ContextPanelTVSupport
 import Foundation
+import OSLog
 @preconcurrency import TVServices
 import UIKit
 @preconcurrency import UserNotifications
@@ -22,6 +23,10 @@ extension Notification.Name {
 actor TVSystemSurfaceCoordinator {
     static let shared = TVSystemSurfaceCoordinator()
     private static let badgeExpiryRequestIdentifier = "context-panel-provider-badge-expiry"
+    private static let logger = Logger(
+        subsystem: "com.shinycomputers.contextpanel",
+        category: "TVSystemSurfaces"
+    )
 
     private let topShelfStore: TVTopShelfDocumentStore?
     private let alertStateStore: TVProviderAlertStateStore
@@ -106,6 +111,10 @@ actor TVSystemSurfaceCoordinator {
                 ))
                 TVTopShelfContentProvider.topShelfContentDidChange()
             } catch {
+                let error = error as NSError
+                Self.logger.error(
+                    "Top Shelf save failed (\(error.domain, privacy: .public) \(error.code, privacy: .public))"
+                )
                 notices.append("Top Shelf could not save its latest provider runway.")
             }
         } else {
