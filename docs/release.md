@@ -261,9 +261,12 @@ wide Top Shelf artwork from
 `Resources/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets`. Both the CI
 archive gate and signed upload script require the compiled `Assets.car`, the
 `App Icon - Small` primary-icon declaration, and both generated
-`TVTopShelfImage` keys. The static brand artwork remains the fallback, while the
-embedded `ContextPanelTVTopShelfExtension` provides privacy-filtered dynamic
-provider runway from the shared App Group without network access.
+`TVTopShelfImage` keys. They also require the compiled Top Shelf extension to
+declare `arm64` in `UIRequiredDeviceCapabilities`; App Store Connect rejects the
+64-bit extension as an invalid bundle without that declaration. The static brand
+artwork remains the fallback, while the embedded
+`ContextPanelTVTopShelfExtension` provides privacy-filtered dynamic provider
+runway from the shared App Group without network access.
 
 The first signed tvOS canary is:
 
