@@ -36,9 +36,9 @@ code signing. This catches iOS/visionOS/watchOS/tvOS source, project, asset, and
 WidgetKit compile regressions without requiring provisioning profiles or a
 physical device.
 
-With --archive, validates companion app archive packaging for iOS/visionOS.
-The watchOS target is embedded in the iOS companion archive. watchOS and tvOS
-remain build-only standalone validation targets in this gate.
+With --archive, validates companion app archive packaging for iOS, visionOS,
+and tvOS. The watchOS target is embedded in the iOS companion archive and
+remains a build-only standalone validation target in this gate.
 
 Platforms:
   ios        Build generic iOS.
@@ -47,8 +47,8 @@ Platforms:
   tvos       Build generic tvOS.
 
 Options:
-  --archive                   Archive iOS/visionOS companion apps instead of
-                              building them. Not supported for watchOS/tvOS.
+  --archive                   Archive iOS/visionOS/tvOS companion apps instead
+                              of building them. Not supported for watchOS.
   --configuration VALUE       Xcode configuration. Default: Debug.
   --derived-data-root PATH    DerivedData root. Default: artifact cache when mounted,
                               otherwise .build/companion-build-validation.
@@ -114,7 +114,7 @@ run_xcodebuild() {
 }
 
 validate_archive_contents() {
-	local platform archive_path app_path watch_path watch_widget_path
+	local platform archive_path app_path watch_path watch_widget_path icon_name top_shelf_image top_shelf_image_wide
 	platform="$1"
 	archive_path="$2"
 	app_path="$archive_path/Products/Applications/Context Panel.app"
@@ -140,6 +140,31 @@ validate_archive_contents() {
 	visionos)
 		if [[ -e "$app_path/Watch" ]]; then
 			echo "visionOS companion archive unexpectedly contains watch content: $app_path/Watch" >&2
+			exit 1
+		fi
+		;;
+	tvos)
+		if [[ -e "$app_path/Watch" ]]; then
+			echo "tvOS companion archive unexpectedly contains watch content: $app_path/Watch" >&2
+			exit 1
+		fi
+		if [[ -e "$app_path/PlugIns/ContextPanelCompanionWidgetExtension.appex" ]]; then
+			echo "tvOS companion archive unexpectedly contains the iOS/visionOS companion widget" >&2
+			exit 1
+		fi
+		if [[ ! -f "$app_path/Assets.car" ]]; then
+			echo "tvOS companion archive is missing compiled brand assets: $app_path/Assets.car" >&2
+			exit 1
+		fi
+		icon_name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundlePrimaryIcon' "$app_path/Info.plist" 2>/dev/null || true)"
+		if [[ "$icon_name" != "App Icon - Small" ]]; then
+			echo "tvOS companion archive is missing the primary layered app icon" >&2
+			exit 1
+		fi
+		top_shelf_image="$(/usr/libexec/PlistBuddy -c 'Print :TVTopShelfImage:TVTopShelfPrimaryImage' "$app_path/Info.plist" 2>/dev/null || true)"
+		top_shelf_image_wide="$(/usr/libexec/PlistBuddy -c 'Print :TVTopShelfImage:TVTopShelfPrimaryImageWide' "$app_path/Info.plist" 2>/dev/null || true)"
+		if [[ -z "$top_shelf_image" || -z "$top_shelf_image_wide" ]]; then
+			echo "tvOS companion archive is missing required standard or wide Top Shelf artwork" >&2
 			exit 1
 		fi
 		;;
@@ -183,10 +208,6 @@ for platform in "${platforms[@]}"; do
 		fi
 		scheme="ContextPanelWatch"
 	elif [[ "$platform" == "tvos" ]]; then
-		if ((archive)); then
-			echo "archive validation is not supported for standalone tvOS" >&2
-			exit 2
-		fi
 		scheme="ContextPanelTV"
 	else
 		scheme="ContextPanelCompanion"

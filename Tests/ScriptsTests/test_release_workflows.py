@@ -367,8 +367,10 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("preflight_app_store_version MAC_OS", mac_upload_block)
         self.assertIn("preflight_app_store_version IOS", workflow)
         self.assertIn("preflight_app_store_version VISION_OS", workflow)
+        self.assertIn("preflight_app_store_version TV_OS", workflow)
         self.assertIn("preflight_app_store_version IOS", companion_upload_block)
         self.assertIn("preflight_app_store_version VISION_OS", companion_upload_block)
+        self.assertIn("preflight_app_store_version TV_OS", companion_upload_block)
         self.assertIn("APP_STORE_CONNECT_API_KEY_P8_BASE64", workflow)
         self.assertIn("App Store Connect API credentials are required for Ship App Store version preflight", workflow)
 
@@ -405,10 +407,14 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("scripts/upload-app-store-connect-companion-app.sh", workflow)
         self.assertIn("COMPANION_APP_STORE_APP_PROVISIONING_PROFILE_BASE64", workflow)
         self.assertIn("COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64", workflow)
+        self.assertIn("COMPANION_APP_STORE_TV_PROVISIONING_PROFILE_BASE64", workflow)
         self.assertIn("ContextPanelCompanion", script)
+        self.assertIn("ContextPanelTV", script)
         self.assertIn("generic/platform=iOS", script)
         self.assertIn("generic/platform=visionOS", script)
+        self.assertIn("generic/platform=tvOS", script)
         self.assertIn("CONTEXT_PANEL_APP_STORE_COMPANION_PROFILE_SPECIFIER", script)
+        self.assertIn("CONTEXT_PANEL_APP_STORE_TV_PROFILE_SPECIFIER", script)
         self.assertIn("iCloud.com.shinycomputers.contextpanel", script)
         self.assertIn("group.com.shinycomputers.contextpanel", script)
         self.assertIn("'Entitlements:com.apple.developer.icloud-services' '*'", script)
@@ -431,6 +437,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("group: testflight-beta-${{ inputs.version }}-${{ inputs.build_number }}-${{ inputs.platform }}", workflow)
         self.assertIn('args+=(--platform "${INPUT_PLATFORM}")', workflow)
         self.assertNotIn("${INPUT_PLATFORM:-any}", workflow)
+        self.assertIn("- TV_OS", workflow)
         self.assertIn("/betaGroups/{group_id}/relationships/builds", script)
         self.assertIn("processingState", script)
         self.assertIn('required=True,\n        choices=("IOS", "MAC_OS", "TV_OS", "VISION_OS")', script)
@@ -473,6 +480,17 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("--prepare-only", script)
         self.assertIn("Prepare only: review submission was not created or submitted", script)
         self.assertIn("--prepare-only and --cancel-review-only are mutually exclusive", script)
+
+    def test_app_store_review_workflow_supports_tvos(self):
+        workflow = self.read(".github/workflows/submit-app-store-review.yml")
+        script = self.read("scripts/submit-app-store-review.py")
+
+        self.assertIn("- TV_OS", workflow)
+        self.assertIn('choices=("IOS", "MAC_OS", "TV_OS", "VISION_OS")', script)
+        self.assertIn("copy_from_platform:", workflow)
+        self.assertIn("INPUT_COPY_FROM_PLATFORM", workflow)
+        self.assertIn('args+=(--copy-from-platform "${INPUT_COPY_FROM_PLATFORM}")', workflow)
+        self.assertIn("--copy-from-platform", script)
 
     def test_ship_concurrency_does_not_block_reusable_release_workflow(self):
         ship_workflow = self.read(".github/workflows/ship.yml")
@@ -759,6 +777,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
 
         self.assertIn('app_store_platform="IOS"', script)
         self.assertIn('app_store_platform="VISION_OS"', script)
+        self.assertIn('app_store_platform="TV_OS"', script)
 
     def test_companion_upload_does_not_hard_code_closed_initial_marketing_version(self):
         script = self.read("scripts/upload-app-store-connect-companion-app.sh")
@@ -787,15 +806,21 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("scripts/validate-companion-builds.sh", workflow)
         self.assertIn("--configuration Release --archive ios", workflow)
         self.assertIn("scripts/validate-companion-builds.sh --configuration Release watchos", workflow)
-        self.assertIn("scripts/validate-companion-builds.sh --configuration Release tvos", workflow)
+        self.assertIn("scripts/validate-companion-builds.sh --configuration Release --archive tvos", workflow)
         self.assertIn("--archive", script)
         self.assertIn("archive validation is not supported for standalone watchOS", script)
+        self.assertNotIn("archive validation is not supported for standalone tvOS", script)
         self.assertIn("Validating $scheme archive for $destination", script)
         self.assertIn("-archivePath \"$archive_path\"", script)
         self.assertIn("validate_archive_contents()", script)
         self.assertIn("iOS companion archive is missing embedded watch app", script)
         self.assertIn("iOS companion archive is missing embedded watch widget", script)
         self.assertIn("visionOS companion archive unexpectedly contains watch content", script)
+        self.assertIn("tvOS companion archive unexpectedly contains watch content", script)
+        self.assertIn("tvOS companion archive unexpectedly contains the iOS/visionOS companion widget", script)
+        self.assertIn("tvOS companion archive is missing compiled brand assets", script)
+        self.assertIn("tvOS companion archive is missing the primary layered app icon", script)
+        self.assertIn("tvOS companion archive is missing required standard or wide Top Shelf artwork", script)
         self.assertIn("Products/Applications/Context Panel.app", script)
         self.assertIn("Watch/Context Panel.app", script)
         self.assertIn("PlugIns/ContextPanelWatchWidgetExtension.appex", script)
@@ -809,6 +834,16 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("ContextPanelWatch", script)
         self.assertIn("ContextPanelTV", script)
         self.assertIn("PATH=\"$(xcodebuild_system_path)\" /usr/bin/xcodebuild", script)
+
+    def test_companion_upload_requires_tvos_layered_app_icon(self):
+        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
+
+        self.assertIn("assert_tvos_archive_ready()", script)
+        self.assertIn("tvOS archive unexpectedly contains the iOS/visionOS companion widget", script)
+        self.assertIn("tvOS archive is missing compiled brand assets", script)
+        self.assertIn("tvOS archive is missing the primary layered app icon", script)
+        self.assertIn("tvOS archive is missing required standard or wide Top Shelf artwork", script)
+        self.assertIn('if [[ "$platform" == "tvos" ]]; then\n\tassert_tvos_archive_ready', script)
 
     def test_visionos_dogfood_script_uses_development_signing_and_devicectl(self):
         script = self.read("scripts/dogfood-visionos-companion.sh")
@@ -964,6 +999,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("plist_array_contains_value \"$plist\" 'Platform'", script)
         self.assertIn("profile_platforms=(iOS)", script)
         self.assertIn("profile_platforms=(visionOS xrOS)", script)
+        self.assertIn("profile_platforms=(tvOS)", script)
         self.assertIn("assert_profile_platform_any \"$app_profile\" \"companion app\"", script)
         self.assertIn("assert_profile_platform_any \"$widget_profile\" \"companion widget\"", script)
 
@@ -1005,6 +1041,26 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("companion app provisioning profile not found", result.stdout)
         self.assertNotIn("visionOS companion packaging is blocked", result.stdout)
         self.assertNotIn("AppIcon.solidimagestack", result.stdout)
+
+    def test_companion_upload_tvos_uses_dedicated_profile_without_widget(self):
+        result = self.run_companion_upload_script(
+            [
+                "--platform",
+                "tvos",
+                "--version",
+                "1.0.99",
+                "--build-number",
+                "168011",
+                "--export-only",
+                "--app-profile",
+                ".build/missing-tvos-app.provisionprofile",
+            ]
+        )
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("missing-tvos-app.provisionprofile", result.stdout)
+        self.assertNotIn("companion widget provisioning profile not found", result.stdout)
+        self.assertNotIn("visionOS companion packaging is blocked", result.stdout)
 
     def test_companion_upload_fails_visionos_before_profiles_without_layered_icon(self):
         with tempfile.TemporaryDirectory() as working_dir:
@@ -1395,6 +1451,9 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("check --require-production-runtime", release_docs)
         self.assertIn("run that as separate `Ship` dispatches", release_docs)
         self.assertIn("widget reads the companion app's app-group mirror", release_docs)
+        self.assertIn("`COMPANION_APP_STORE_TV_PROVISIONING_PROFILE_BASE64`", release_docs)
+        self.assertIn("`platform=TV_OS` for tvOS builds", release_docs)
+        self.assertIn("`platform: TV_OS`", release_docs)
         self.assertNotIn("issue #174", release_docs)
         self.assertNotIn("Mac-published iCloud companion document", release_docs)
         self.assertNotIn("companion app and widget profiles to authorize the Context Panel iCloud", release_docs)

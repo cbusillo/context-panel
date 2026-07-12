@@ -527,10 +527,14 @@ struct SettingsPane: View {
                                     .font(.system(size: 11, weight: .semibold))
                                     .foregroundStyle(CPTheme.tertiaryText)
                             } else if model.hasSavedAuthorization(account) {
+                                let authorizationSummary = model.authorizationSummary(
+                                    for: account,
+                                    storedSnapshot: appModel.storedSnapshot
+                                )
                                 HStack(spacing: 8) {
-                                    Text(model.authorizationSavedText(for: account))
+                                    Text(authorizationSummary.text)
                                         .font(.system(size: 11, weight: .semibold))
-                                        .foregroundStyle(CPTheme.statusColor(.healthy))
+                                        .foregroundStyle(CPTheme.statusColor(authorizationSummary.status))
                                     if model.canAuthorizeAuthFile(for: account) {
                                         Button("Change") { authorizeAuthFile(for: account) }
                                             .buttonStyle(.bordered)
@@ -1683,15 +1687,27 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         account.connectorKind == .claudeOAuthUsage
     }
 
-    func authorizationSavedText(for account: LocalProviderAccountConfiguration) -> String {
-        switch account.connectorKind {
-        case .claudeOAuthUsage:
-            return "Connected"
-        case .googleAntigravityQuota:
-            return "Keychain login"
-        case .codexRateLimits:
-            return "File saved"
+    func authorizationSummary(
+        for account: LocalProviderAccountConfiguration,
+        storedSnapshot: StoredUsageSnapshot?
+    ) -> SettingsAccountRefreshSummary {
+        if account.connectorKind == .claudeOAuthUsage,
+           let report = storedSnapshot?.reports
+            .filter({ account.matchesProviderReport($0) })
+            .max(by: { $0.generatedAt < $1.generatedAt }),
+           report.requiresCredentialReconnect {
+            return SettingsAccountRefreshSummary(text: "Reconnect required", status: .failure)
         }
+
+        let text = switch account.connectorKind {
+        case .claudeOAuthUsage:
+            "Connected"
+        case .googleAntigravityQuota:
+            "Keychain login"
+        case .codexRateLimits:
+            "File saved"
+        }
+        return SettingsAccountRefreshSummary(text: text, status: .healthy)
     }
 
     func disconnectOAuth(for account: LocalProviderAccountConfiguration) {
@@ -1736,6 +1752,12 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         }
 
         let refreshSubject = refreshSubjectText(for: account)
+        if reports.contains(where: \.requiresCredentialReconnect) {
+            return SettingsAccountRefreshSummary(
+                text: "Last \(refreshSubject) failed; reconnect required",
+                status: .failure
+            )
+        }
         if !reports.reconnectBlockingFailures(coveredBy: storedSnapshot.snapshot.limits).isEmpty {
             return SettingsAccountRefreshSummary(text: "Last \(refreshSubject) failed; see Diagnostics", status: .failure)
         }
@@ -1749,6 +1771,9 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         let successfulReports = reports.filter { report in
             report.status != .failure && report.status != .stale && report.status != .unknown
         }
+        guard !successfulReports.isEmpty else {
+            return SettingsAccountRefreshSummary(text: "Last \(refreshSubject) unavailable", status: .unknown)
+        }
         let count = successfulReports.count
         let accountText: String
         if account.connectorKind == .codexRateLimits, count > 1 {
@@ -1757,20 +1782,6 @@ final class SettingsPaneModel: NSObject, ObservableObject {
             accountText = successfulReports.first?.accountName ?? account.displayName
         }
         return SettingsAccountRefreshSummary(text: "Last \(refreshSubject) healthy: \(accountText)", status: .healthy)
-    }
-
-    func shouldOfferOAuthReconnect(
-        for account: LocalProviderAccountConfiguration,
-        storedSnapshot: StoredUsageSnapshot?
-    ) -> Bool {
-        guard account.connectorKind == .claudeOAuthUsage else {
-            return false
-        }
-        guard let reports = storedSnapshot?.reports.filter({ account.matchesProviderReport($0) }), !reports.isEmpty else {
-            return false
-        }
-        guard !reports.reconnectBlockingFailures(coveredBy: storedSnapshot?.snapshot.limits ?? []).isEmpty else { return false }
-        return !reports.contains(where: { $0.hasProviderConfigurationFailure })
     }
 
     private func refreshSubjectText(for account: LocalProviderAccountConfiguration) -> String {
@@ -2054,6 +2065,8 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         request.httpBody = body
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(ClaudeOAuthMetadata.oauthBetaHeader, forHTTPHeaderField: "anthropic-beta")
+        request.setValue("context-panel", forHTTPHeaderField: "User-Agent")
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else {
@@ -2259,8 +2272,11 @@ struct OverviewDashboard: View {
     @ObservedObject var model: ContextPanelAppModel
     let snapshot: UsageSnapshot
 
-    private var constrainedSummaries: [MainLimitSummary] {
-        snapshot.mostConstrainedMainLimitSummaries
+    private var savedSummaries: [MainLimitSummary] {
+        model.widgetPreferences.visibleMainLimitSummaries(
+            from: snapshot.mainLimitSummaries,
+            maximumCount: snapshot.mainLimitSummaries.count
+        )
     }
 
     var body: some View {
@@ -2269,10 +2285,25 @@ struct OverviewDashboard: View {
                 HeaderCard(model: model, snapshot: snapshot)
                 SetupStatusStrip(model: model)
                 PromptCacheOverviewCard(summary: model.promptCacheSummary)
-                SectionHeader(title: "Main Limits", trailing: "\(snapshot.mainLimitSummaries.count) windows")
-                VStack(spacing: 10) {
-                    ForEach(constrainedSummaries) { summary in
-                        MainLimitRow(summary: summary)
+                SectionHeader(
+                    title: "Main Limits",
+                    trailing: savedSummaries.isEmpty ? "No limits selected" : "\(savedSummaries.count) windows"
+                )
+                if savedSummaries.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("No limits selected")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(CPTheme.primaryText)
+                        Text("Choose at least one limit in Settings to show it here.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(CPTheme.secondaryText)
+                    }
+                    .padding(.vertical, 8)
+                } else {
+                    VStack(spacing: 10) {
+                        ForEach(savedSummaries) { summary in
+                            MainLimitRow(summary: summary)
+                        }
                     }
                 }
                 AdditionalLimitsSection(snapshot: snapshot)
@@ -2897,6 +2928,26 @@ struct HeaderCard: View {
     @ObservedObject var model: ContextPanelAppModel
     let snapshot: UsageSnapshot
 
+    private var answerSelection: MainLimitAnswerSelection {
+        model.widgetPreferences.mainLimitAnswerSelection(from: snapshot.mainLimitSummaries)
+    }
+
+    private var primaryLane: WidgetMainLimitLane? {
+        answerSelection.primary
+    }
+
+    private var primarySummary: MainLimitSummary? {
+        primaryLane?.summary
+    }
+
+    private var closestSummary: MainLimitSummary? {
+        answerSelection.closest?.summary
+    }
+
+    private var primaryStatus: UsageStatus {
+        displayStatus(source: primarySummary?.status ?? .unknown)
+    }
+
     var body: some View {
         HStack(alignment: .center, spacing: 22) {
             VStack(alignment: .leading, spacing: 10) {
@@ -2926,22 +2977,42 @@ struct HeaderCard: View {
                 }
             }
             Spacer(minLength: 16)
-            VStack(spacing: 7) {
+            VStack(spacing: 8) {
                 MetricDial(
-                    metric: .remainingCapacity(remainingRatio: snapshot.tightestRemainingCapacityRatio),
-                    status: snapshot.tightestMainLimitSummary?.status ?? snapshot.aggregateStatus,
-                    accessibilityName: snapshot.tightestMainLimitSummary.map {
-                        "Tightest remaining capacity, \($0.provider.displayName), \($0.previewWindowName), \($0.accountText)"
-                    } ?? "Tightest remaining capacity",
-                    sublabel: "remaining",
+                    metric: .remainingCapacity(remainingRatio: primarySummary?.remainingCapacityRatio),
+                    status: primaryStatus,
+                    accessibilityName: primaryLane.map {
+                        "Main limit, \($0.provider.displayName), \($0.window.displayName), remaining capacity"
+                    } ?? "Main limit remaining capacity",
+                    sublabel: "left",
                     size: 116
                 )
-                Text(snapshot.tightestSupportText)
+                Text(primaryLane.map { "\($0.provider.displayName) · \($0.window.displayName)" } ?? "No limits selected")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(CPTheme.secondaryText)
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
                     .frame(maxWidth: 180)
+                if let closestSummary {
+                    Divider()
+                        .frame(width: 168)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 5) {
+                            StatusMark(status: displayStatus(source: closestSummary.status), size: 7)
+                            Text("Closest to limit")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(CPTheme.primaryText)
+                        }
+                        Text(
+                            "\(closestSummary.provider.displayName) · \(closestSummary.previewWindowName) · \(closestSummary.previewRemainingHeadline)"
+                        )
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(CPTheme.secondaryText)
+                        .lineLimit(2)
+                    }
+                    .frame(width: 180, alignment: .leading)
+                    .accessibilityElement(children: .combine)
+                }
             }
         }
         .padding(22)
@@ -2949,6 +3020,19 @@ struct HeaderCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(CPTheme.stroke(cornerRadius: 12))
         .shadow(color: .black.opacity(0.05), radius: 14, x: 0, y: 8)
+    }
+
+    private func displayStatus(source: UsageStatus) -> UsageStatus {
+        switch model.storeStatus {
+        case .failure:
+            .failure
+        case .stale:
+            .stale
+        case .loading:
+            .loading
+        case .healthy, .close, .limited, .unknown:
+            source
+        }
     }
 }
 
@@ -3598,6 +3682,7 @@ final class ContextPanelAppModel: ObservableObject {
     @Published private(set) var storeStatus: UsageStatus = .unknown
     @Published private(set) var historyCount: Int = 0
     @Published private(set) var configuredAccounts: [LocalProviderAccountConfiguration] = []
+    @Published private(set) var widgetPreferences: WidgetDisplayPreferences = .defaultPreferences
     @Published private(set) var fastModeForecastSettings: FastModeForecastSettings = .defaultSettings
     @Published private(set) var observedBurnRates: [String: ObservedBurnRate] = [:]
     @Published private(set) var isRefreshing = false
@@ -3612,6 +3697,9 @@ final class ContextPanelAppModel: ObservableObject {
     private let refreshRunner: SnapshotRefreshRunner
     private let forecastSettingsStore = FastModeForecastSettingsStore(
         settingsURL: ContextPanelLocations.fastModeForecastSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
+    )
+    private let widgetPreferencesStore = WidgetDisplayPreferencesStore(
+        preferencesURL: ContextPanelLocations.widgetDisplayPreferencesURL(appGroupID: ContextPanelLocations.appGroupID)
     )
     private let refreshDiagnosticsStore = RefreshDiagnosticsStateStore(
         stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.appGroupID)
@@ -3810,6 +3898,7 @@ final class ContextPanelAppModel: ObservableObject {
 
     func loadSnapshot(reloadWidgetTimelines: Bool = true) {
         fastModeForecastSettings = forecastSettingsStore.load()
+        widgetPreferences = widgetPreferencesStore.load()
         let accounts = refreshService.loadConfiguredAccounts().document.accounts
         configuredAccounts = accounts
         let result = refreshService.loadCurrent(

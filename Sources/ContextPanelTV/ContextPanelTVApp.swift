@@ -35,6 +35,7 @@ private struct TVRootView: View {
     private var presentation: TVRunwayPresentation {
         TVRunwayPresentation(
             snapshot: model.snapshot,
+            preferences: model.displayPreferences,
             mode: presentationMode,
             isRefreshing: model.isLoading
         )
@@ -133,6 +134,10 @@ private final class TVSyncModel {
     private(set) var syncNoticeMessage: String?
     private(set) var lastReceivedAt: Date?
     private(set) var isLoading = false
+
+    var displayPreferences: WidgetDisplayPreferences {
+        displayResult.document?.widgetDisplayPreferences ?? .defaultPreferences
+    }
 
     init(now: Date = Date()) {
         remoteStore = CompanionCloudKitSyncStoreFactory.make()
@@ -426,11 +431,11 @@ private struct TVProviderOverviewCard: View {
     let mode: TVPresentationMode
 
     private var lane: TVRunwayLane {
-        section.lanes[0]
+        section.primaryLane ?? section.lanes[0]
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
                     .fill(TVTheme.providerColor(section.provider))
@@ -461,7 +466,7 @@ private struct TVProviderOverviewCard: View {
                     Text("\(remainingPercent)%")
                         .font(.system(size: 92, weight: .bold, design: .rounded))
                         .monospacedDigit()
-                    Text("remaining")
+                    Text("left")
                         .font(.title3)
                         .foregroundStyle(.secondary)
                 }
@@ -473,13 +478,22 @@ private struct TVProviderOverviewCard: View {
 
             TVCapacityBar(ratio: lane.capacityRatio, provider: lane.provider)
 
+            if let closestLane = section.closestLane {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Closest to limit")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(TVTheme.statusColor(closestLane.status))
+                    Text(closestLimitText(closestLane))
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
             if mode != .countsOnly {
                 VStack(alignment: .leading, spacing: 7) {
-                    if let resetText = lane.resetText {
-                        Text(resetText)
-                    }
-                    if let accountCountText = lane.accountCountText {
-                        Text(accountCountText)
+                    if let timingAndAccountsText {
+                        Text(timingAndAccountsText)
                     }
                     if let detailText = lane.detailText {
                         Text(detailText)
@@ -489,9 +503,6 @@ private struct TVProviderOverviewCard: View {
                 .foregroundStyle(.secondary)
             }
 
-            Text(section.trackedWindowText)
-                .font(.callout.weight(.semibold))
-                .foregroundStyle(.secondary)
         }
         .padding(30)
         .frame(maxWidth: .infinity, minHeight: 468, alignment: .leading)
@@ -524,7 +535,7 @@ private struct TVProviderOverviewCard: View {
     private var accessibilityLabel: String {
         var components = [section.provider.displayName, section.status.tvStatusLabel, lane.title]
         if let remainingPercent = lane.remainingPercent {
-            components.append("\(remainingPercent) percent remaining")
+            components.append("\(remainingPercent) percent left")
         }
         if let accessibilityResetText = lane.accessibilityResetText {
             components.append(accessibilityResetText)
@@ -535,8 +546,23 @@ private struct TVProviderOverviewCard: View {
         if let detailText = lane.detailText {
             components.append(detailText)
         }
+        if let closestLane = section.closestLane {
+            components.append("Closest to limit, \(closestLimitText(closestLane))")
+        }
         components.append(section.trackedWindowText)
         return components.joined(separator: ", ")
+    }
+
+    private var timingAndAccountsText: String? {
+        let components = [lane.resetText, lane.accountCountText].compactMap { $0 }
+        return components.isEmpty ? nil : components.joined(separator: " · ")
+    }
+
+    private func closestLimitText(_ closestLane: TVRunwayLane) -> String {
+        if let remainingPercent = closestLane.remainingPercent {
+            return "\(closestLane.title) · \(remainingPercent)% left"
+        }
+        return "\(closestLane.title) · unknown"
     }
 }
 
@@ -618,7 +644,7 @@ private struct TVRunwayCard: View {
                     Text("\(remainingPercent)%")
                         .font(.system(size: mode == .countsOnly ? 84 : 76, weight: .bold, design: .rounded))
                         .monospacedDigit()
-                    Text("remaining")
+                    Text("left")
                         .font(.title3)
                         .foregroundStyle(.secondary)
                 }
@@ -681,7 +707,7 @@ private struct TVRunwayCard: View {
     private var accessibilityLabel: String {
         var components = [lane.provider.displayName, lane.title, lane.statusText]
         if let remainingPercent = lane.remainingPercent {
-            components.append("\(remainingPercent) percent remaining")
+            components.append("\(remainingPercent) percent left")
         }
         if let accessibilityResetText = lane.accessibilityResetText {
             components.append(accessibilityResetText)
@@ -764,7 +790,7 @@ private struct TVRunwayDetailView: View {
                         Text("\(remainingPercent)%")
                             .font(.system(size: 108, weight: .bold, design: .rounded))
                             .monospacedDigit()
-                        Text("remaining")
+                        Text("left")
                             .font(.title2)
                             .foregroundStyle(.secondary)
                     }
@@ -824,7 +850,7 @@ private struct TVMetricRow: View {
             Spacer()
 
             if let remainingPercent = metric.remainingPercent {
-                Text("\(remainingPercent)%")
+                Text("\(remainingPercent)% left")
                     .font(.title2.bold().monospacedDigit())
             } else {
                 Text(metric.status.tvStatusLabel)

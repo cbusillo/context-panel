@@ -28,11 +28,11 @@ struct ContextPanelCompanionTimelineProvider: TimelineProvider {
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<ContextPanelCompanionWidgetEntry>) -> Void) {
         let now = Date()
-        loadEntry(date: now) { entry in
+        CompanionWidgetLoadQueue.loadTimeline(date: now) { entries in
             let settings = ContextPanelLocations.companionRefreshSettingsURL()
                 .map { CompanionRefreshSettingsStore(settingsURL: $0).load() }
                 ?? .defaultSettings
-            completion(Timeline(entries: [entry], policy: .after(now.addingTimeInterval(settings.widgetInterval))))
+            completion(Timeline(entries: entries, policy: .after(now.addingTimeInterval(settings.widgetInterval))))
         }
     }
 
@@ -52,11 +52,39 @@ private enum CompanionWidgetLoadQueue {
 
     static func load(date: Date, completion: @escaping (ContextPanelCompanionWidgetEntry) -> Void) {
         queue.async {
-            completion(entry(date: date))
+            completion(entry(
+                date: date,
+                stalenessPolicy: SnapshotStoreStalenessPolicy.appDefault(
+                    maximumAge: SnapshotFreshness.widgetMaximumAge
+                )
+            ))
         }
     }
 
-    private static func entry(date: Date) -> ContextPanelCompanionWidgetEntry {
+    static func loadTimeline(
+        date: Date,
+        completion: @escaping ([ContextPanelCompanionWidgetEntry]) -> Void
+    ) {
+        queue.async {
+            let policy = SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
+            let currentEntry = entry(date: date, stalenessPolicy: policy)
+            guard currentEntry.snapshot.state == .ready,
+                  let staleDate = policy.nextStaleTransitionDate(
+                    for: currentEntry.snapshot.usageSnapshot,
+                    now: date
+                  )
+            else {
+                completion([currentEntry])
+                return
+            }
+            completion([currentEntry, entry(date: staleDate, stalenessPolicy: policy)])
+        }
+    }
+
+    private static func entry(
+        date: Date,
+        stalenessPolicy: SnapshotStoreStalenessPolicy
+    ) -> ContextPanelCompanionWidgetEntry {
         let result = CompanionSyncLoader.loadWidgetMirror(now: date)
         let appearanceSettings = ContextPanelLocations.companionAppearanceSettingsURL()
             .map { CompanionAppearanceSettingsStore(settingsURL: $0).load() }
@@ -68,7 +96,7 @@ private enum CompanionWidgetLoadQueue {
             snapshot: WidgetSnapshot.fromCompanionSync(
                 result,
                 now: date,
-                stalenessPolicy: SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
+                stalenessPolicy: stalenessPolicy
             ),
             displayPreferences: WidgetDisplayPreferences.companionEffectivePreferences(
                 localOverride: localDisplayPreferences,

@@ -180,6 +180,97 @@ import Testing
     #expect(rows.map(\.subtitle) == ["1w", "1w", "5h"])
 }
 
+@Test func watchInlineRowsUseClosestLimitWhenItNeedsAttention() {
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+        limits: [
+            openAIWeeklyPercentLimit(accountID: "primary", used: 7),
+            openAIFiveHourPercentLimit(accountID: "primary", used: 12),
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "anthropic",
+                accountName: "Anthropic",
+                label: "Weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 85,
+                limit: 100
+            ),
+        ],
+        status: .close,
+        message: "Synced"
+    )
+
+    let rows = WatchLimitDisplay.inlineRows(
+        from: snapshot,
+        preferences: .defaultPreferences
+    )
+
+    #expect(rows.map(\.provider) == [.openAI, .anthropic])
+    #expect(rows.map(\.subtitle) == ["1w", "1w"])
+    #expect(rows.map(\.compactInlineQuantity) == ["93%", "15%"])
+}
+
+@Test func watchInlineRowsUseNextSavedLimitWhenClosestWouldAddNoise() {
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+        limits: [
+            openAIWeeklyPercentLimit(accountID: "primary", used: 30),
+            openAIFiveHourPercentLimit(accountID: "primary", used: 40),
+            googleWeeklyPercentLimit(accountID: "antigravity", used: 45),
+        ],
+        status: .healthy,
+        message: "Synced"
+    )
+
+    let rows = WatchLimitDisplay.inlineRows(
+        from: snapshot,
+        preferences: .defaultPreferences
+    )
+
+    #expect(rows.map(\.provider) == [.openAI, .openAI])
+    #expect(rows.map(\.subtitle) == ["1w", "5h"])
+}
+
+@Test func watchRowsKeepMissingSavedPrimaryAsUnknown() {
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+        limits: [
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "anthropic",
+                accountName: "Anthropic",
+                label: "Weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 85,
+                limit: 100
+            ),
+        ],
+        status: .close,
+        message: "Partial sync"
+    )
+
+    let singleRow = WatchLimitDisplay.mainLaneRows(
+        from: snapshot,
+        preferences: .defaultPreferences,
+        maximumCount: 1
+    )
+    let inlineRows = WatchLimitDisplay.inlineRows(
+        from: snapshot,
+        preferences: .defaultPreferences
+    )
+
+    #expect(singleRow.first?.provider == .openAI)
+    #expect(singleRow.first?.context == "No current data")
+    #expect(singleRow.first?.remainingCapacity.isIndeterminate == true)
+    #expect(inlineRows.map(\.provider) == [.openAI, .anthropic])
+    #expect(inlineRows.first?.compactInlineQuantity == "?")
+}
+
 @Test func watchLimitDisplayMainLaneRowsPreserveSelectedUnknownLane() throws {
     let snapshot = WidgetSnapshot(
         state: .ready,
@@ -228,7 +319,7 @@ import Testing
     #expect(rows.first?.remainingComplicationText == "unknown")
 }
 
-@Test func watchLimitDisplayMainLaneRowsFallBackToNonMainLimits() throws {
+@Test func watchLimitDisplayMainLaneRowsKeepSavedPrimaryWhenOnlyNonMainLimitsExist() {
     let snapshot = WidgetSnapshot(
         state: .ready,
         generatedAt: Date(timeIntervalSince1970: 1_800_000_000),
@@ -251,16 +342,37 @@ import Testing
         maximumCount: 2
     )
 
-    let row = try #require(rows.first)
-    #expect(row.title == "Google")
-    #expect(row.subtitle == "Model requests")
-    #expect(row.usedText == "35")
-    #expect(row.usedTextLabeled == "35 used")
-    #expect(row.remainingText == "65")
-    #expect(row.remainingComplicationText == "65 left")
+    #expect(rows.map(\.provider) == [.openAI, .openAI])
+    #expect(rows.map(\.subtitle) == ["1w", "5h"])
+    #expect(rows.allSatisfy { $0.remainingCapacity.isIndeterminate })
+    #expect(rows.first?.context == "No current data")
+}
+
+@Test func watchLimitDisplayDoesNotRestoreHiddenMainLanes() {
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+        limits: [openAIWeeklyPercentLimit(accountID: "openai", used: 20)],
+        status: .healthy,
+        message: "Synced"
+    )
+    var preferences = WidgetDisplayPreferences.defaultPreferences
+    for index in preferences.mainLimits.indices {
+        preferences.mainLimits[index].isVisible = false
+    }
+
     #expect(
-        row.accessibilitySentence(direction: .remaining, now: snapshot.generatedAt)
-            == "Google, Model requests, account Antigravity. 65 of 100 requests remaining, available. Reset time unknown. Synced just now."
+        WatchLimitDisplay.mainLaneRows(
+            from: snapshot,
+            preferences: preferences,
+            maximumCount: 2
+        ).isEmpty
+    )
+    #expect(
+        WatchLimitDisplay.inlineRows(
+            from: snapshot,
+            preferences: preferences
+        ).isEmpty
     )
 }
 

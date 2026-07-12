@@ -154,22 +154,23 @@ struct ContextPanelSmallWidget: View {
     let displayPreferences: WidgetDisplayPreferences
 
     var body: some View {
-        let lanes = snapshot.visibleMainLimitLanes(
-            displayPreferences: displayPreferences,
-            maximumCount: 3
+        let selection = displayPreferences.mainLimitAnswerSelection(
+            from: snapshot.usageSnapshot.mainLimitSummaries
         )
+        let primary = selection.primary
+        let supporting = selection.compactSupportingLanes(maximumCount: 2)
 
         VStack(alignment: .leading, spacing: 5) {
             if let problem = snapshot.widgetProblemText {
                 CPWProblemLabel(problem, status: snapshot.status)
             }
-            if lanes.count == 1, let lane = lanes.first {
-                CPWSmallSingleLimitView(lane: lane, snapshotState: snapshot.state)
+            if let primary, supporting.isEmpty {
+                CPWSmallSingleLimitView(lane: primary, snapshotState: snapshot.state)
                     .frame(maxHeight: .infinity, alignment: .top)
-            } else if !lanes.isEmpty {
-                ForEach(lanes) { lane in
+            } else if let primary {
+                CPWSmallPrimaryLimitView(lane: primary, snapshotState: snapshot.state)
+                ForEach(supporting) { lane in
                     CPWSmallRemainingLimitRow(lane: lane, snapshotState: snapshot.state)
-                        .frame(maxHeight: .infinity, alignment: .center)
                 }
             } else {
                 Text("No limit data")
@@ -184,6 +185,68 @@ struct ContextPanelSmallWidget: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+private struct CPWSmallPrimaryLimitView: View {
+    @Environment(\.cpwThemeVariant) private var themeVariant
+    let lane: WidgetMainLimitLane
+    let snapshotState: WidgetSnapshotState
+
+    private var summary: MainLimitSummary? {
+        lane.summary
+    }
+
+    private var status: UsageStatus {
+        snapshotState.smallWidgetPresentationStatus(source: summary?.status ?? .unknown)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                CPWProviderBadge(provider: lane.provider, compact: true)
+                Text(summary?.widgetSmallLaneWindowLine ?? lane.window.shortName)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(CPWTheme.primaryText(variant: themeVariant))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                Spacer(minLength: 4)
+                Text(summary?.widgetRemainingHeadline ?? "Unknown")
+                    .font(.system(size: 18, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(CPWTheme.primaryText(variant: themeVariant))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .layoutPriority(1)
+            }
+            CPWRemainingCapacityBar(
+                remainingRatio: summary?.widgetRemainingCapacityRatio,
+                status: status,
+                height: 5
+            )
+            if let resetText = summary?.widgetSmallResetConfidenceText {
+                Text(resetText)
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+        }
+        .padding(.bottom, 2)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue(accessibilityValue)
+    }
+
+    private var accessibilityLabel: String {
+        guard let summary else {
+            return "Main limit, \(lane.provider.displayName), \(lane.window.displayName)"
+        }
+        return "Main limit, \(summary.provider.displayName), \(summary.widgetWindowLine)"
+    }
+
+    private var accessibilityValue: String {
+        summary?.widgetCapacityAccessibilityValue(snapshotState: snapshotState)
+            ?? snapshotState.smallWidgetUnknownCapacityAccessibilityValue
     }
 }
 
@@ -345,13 +408,16 @@ struct ContextPanelMediumWidget: View {
     let links: ContextPanelWidgetLinks
 
     var body: some View {
+        let primaryLane = displayPreferences.mainLimitAnswerSelection(
+            from: snapshot.usageSnapshot.mainLimitSummaries
+        ).primary
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 5) {
                 if let problem = snapshot.widgetProblemText {
                     CPWProblemLabel(problem, status: snapshot.status)
                 }
                 Spacer(minLength: 0)
-                CPWGlanceNumber(snapshot: snapshot)
+                CPWGlanceNumber(snapshot: snapshot, lane: primaryLane)
                 Text(snapshot.fastModeVerdict)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(CPWTheme.primaryText(variant: themeVariant))
@@ -405,6 +471,9 @@ struct ContextPanelLargeWidget: View {
     let links: ContextPanelWidgetLinks
 
     var body: some View {
+        let primaryLane = displayPreferences.mainLimitAnswerSelection(
+            from: snapshot.usageSnapshot.mainLimitSummaries
+        ).primary
         VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -427,7 +496,7 @@ struct ContextPanelLargeWidget: View {
                         .minimumScaleFactor(0.82)
                 }
                 Spacer()
-                CPWGlanceNumber(snapshot: snapshot)
+                CPWGlanceNumber(snapshot: snapshot, lane: primaryLane)
             }
 
             CPWProviderSummaryGrid(snapshot: snapshot, compact: true)
@@ -588,27 +657,71 @@ struct CPWProblemLabel: View {
 struct CPWGlanceNumber: View {
     @Environment(\.cpwThemeVariant) private var themeVariant
     let snapshot: WidgetSnapshot
+    let lane: WidgetMainLimitLane?
+
+    private var summary: MainLimitSummary? {
+        lane?.summary
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(snapshot.tightestHeadline)
+            Text(headline)
                 .font(.system(size: 28, weight: .semibold, design: .monospaced))
                 .foregroundStyle(CPWTheme.primaryText(variant: themeVariant))
                 .minimumScaleFactor(0.65)
                 .lineLimit(1)
-            Text(snapshot.tightestSubheadline)
+            Text(subheadline)
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
                 .lineLimit(2)
-            CPWBurnPaceBar(
-                forecast: snapshot.fastModeForecast,
-                isStale: snapshot.state == .stale
-            )
+            if lane?.provider == .openAI {
+                CPWBurnPaceBar(
+                    forecast: snapshot.fastModeForecast,
+                    isStale: snapshot.state == .stale
+                )
+            }
         }
         .frame(width: 94, alignment: .leading)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(snapshot.widgetGlanceAccessibilityLabel)
-        .accessibilityValue(snapshot.widgetGlanceAccessibilityValue)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue(accessibilityValue)
+    }
+
+    private var headline: String {
+        if snapshot.needsProviderConnection { return "Not connected" }
+        if let summary { return summary.widgetRemainingHeadline }
+        return lane == nil ? "No data" : "Unknown"
+    }
+
+    private var subheadline: String {
+        if snapshot.needsProviderConnection { return "No provider data yet" }
+        guard let lane else { return snapshot.message }
+        return "\(lane.provider.shortName) \(lane.window.displayName)"
+    }
+
+    private var accessibilityLabel: String {
+        guard let lane else { return "Context Panel usage" }
+        return "Main limit, \(lane.provider.displayName), \(lane.window.displayName)"
+    }
+
+    private var accessibilityValue: String {
+        guard let summary else {
+            return switch snapshot.state {
+            case .ready:
+                "Remaining capacity unknown. Main limit status unknown"
+            case .stale:
+                "Remaining capacity unknown. Data stale"
+            case .failure:
+                "Remaining capacity unknown. Refresh failed"
+            case .setupNeeded:
+                "Remaining capacity unknown. Setup needed"
+            }
+        }
+        var value = summary.widgetCapacityAccessibilityValue(snapshotState: snapshot.state)
+        if lane?.provider == .openAI, let forecast = snapshot.fastModeForecast {
+            value += ". Burn pace \(forecast.burnPaceCopy)"
+        }
+        return value
     }
 }
 
@@ -1247,37 +1360,11 @@ extension WidgetSnapshot {
         usageSnapshot.mostConstrainedMainLimitSummaries
     }
 
-    var largeWidgetMainLimitSummaries: [MainLimitSummary] {
-        mainLimitSummaries.sorted { lhs, rhs in
-            let lhsPriority = lhs.defaultWidgetSortRank
-            let rhsPriority = rhs.defaultWidgetSortRank
-            if lhsPriority != rhsPriority {
-                return lhsPriority > rhsPriority
-            }
-            return (lhs.widgetUsageRatio ?? 0) > (rhs.widgetUsageRatio ?? 0)
-        }
-    }
-
-    var tightestMainLimitSummary: MainLimitSummary? {
-        largeWidgetMainLimitSummaries.first ?? mostConstrainedMainLimitSummaries.first
-    }
-
     func visibleMainLimitLanes(
         displayPreferences: WidgetDisplayPreferences,
         maximumCount: Int = 4
     ) -> [WidgetMainLimitLane] {
         displayPreferences.visibleMainLimitLanes(from: mainLimitSummaries, maximumCount: maximumCount)
-    }
-
-    var tightestHeadline: String {
-        if needsProviderConnection { return "Not connected" }
-        return tightestMainLimitSummary?.widgetRemainingHeadline ?? "No data"
-    }
-
-    var tightestSubheadline: String {
-        if needsProviderConnection { return "No provider data yet" }
-        guard let summary = tightestMainLimitSummary else { return message }
-        return "\(summary.provider.shortName) \(summary.widgetWindowName)"
     }
 
     var providerPressureText: String {
@@ -1378,34 +1465,6 @@ extension WidgetSnapshot {
         return determinate.max {
             ($0.widgetUsageRatio ?? 0) < ($1.widgetUsageRatio ?? 0)
         } ?? summaries.first
-    }
-
-    var widgetGlanceAccessibilityLabel: String {
-        guard let summary = tightestMainLimitSummary else { return "Context Panel usage" }
-        return "Tightest limit, \(summary.provider.displayName), \(summary.widgetWindowName)"
-    }
-
-    var widgetGlanceAccessibilityValue: String {
-        guard let summary = tightestMainLimitSummary else {
-            return "\(message). Status \(status.widgetAccessibilityLabel)"
-        }
-        var parts = [
-            summary.widgetRemainingHeadline,
-            "\(state == .stale ? "Last known main limit status" : "Main limit status") \(summary.status.widgetAccessibilityLabel)",
-        ]
-        if let freshness = summary.widgetFreshnessAccessibilityLabel(snapshotState: state) {
-            parts.append(freshness)
-        }
-        if state != .stale, status != summary.status {
-            parts.append("Overall status \(status.widgetAccessibilityLabel)")
-        }
-        if let reset = summary.widgetResetConfidenceText {
-            parts.append("Reset \(reset)")
-        }
-        if let forecast = fastModeForecast {
-            parts.append("Burn pace \(forecast.burnPaceCopy)")
-        }
-        return parts.joined(separator: ". ")
     }
 
     private static func format(hours: Double) -> String {

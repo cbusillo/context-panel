@@ -492,6 +492,7 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - path: Sources/ContextPanelTV
+      - path: Resources/TVAssets.xcassets
     dependencies:
       - target: ContextPanelCoreTV
       - target: ContextPanelCloudKitSyncTV
@@ -512,6 +513,7 @@ targets:
         TVOS_DEPLOYMENT_TARGET: "17.0"
         APS_ENVIRONMENT: development
         CODE_SIGN_ENTITLEMENTS: Config/ContextPanelTV.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: App Icon & Top Shelf Image
       configs:
         Release:
           APS_ENVIRONMENT: production

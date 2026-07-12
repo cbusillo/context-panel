@@ -83,11 +83,7 @@ private final class WatchSyncModel {
     private(set) var isLoading = false
 
     var displayLimits: [WatchLimitDisplay] {
-        WatchLimitDisplay.mainLaneRows(
-            from: snapshot,
-            preferences: displayPreferences,
-            maximumCount: 8
-        )
+        WatchLimitDisplay.rows(from: snapshot, maximumCount: 8)
     }
 
     func reload(now: Date = Date()) {

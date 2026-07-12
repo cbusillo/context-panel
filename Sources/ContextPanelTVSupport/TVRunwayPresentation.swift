@@ -13,9 +13,9 @@ public enum TVPresentationMode: String, CaseIterable, Codable, Equatable, Identi
         case .fullDetail:
             "Full Detail"
         case .projectOnly:
-            "Project Only"
+            "Hide Account Names"
         case .countsOnly:
-            "Counts Only"
+            "Percentages Only"
         }
     }
 
@@ -26,7 +26,7 @@ public enum TVPresentationMode: String, CaseIterable, Codable, Equatable, Identi
         case .projectOnly:
             "Hide account names and raw totals while keeping percentages, windows, and reset timing."
         case .countsOnly:
-            "Show percentages and provider or window status only."
+            "Show percentages and provider or time-window status only."
         }
     }
 }
@@ -47,6 +47,7 @@ public struct TVRunwayPresentation: Equatable, Sendable {
 
     public init(
         snapshot: WidgetSnapshot,
+        preferences: WidgetDisplayPreferences = .defaultPreferences,
         mode: TVPresentationMode,
         isRefreshing: Bool = false,
         now: Date = Date()
@@ -62,6 +63,7 @@ public struct TVRunwayPresentation: Equatable, Sendable {
             TVProviderRunwaySection(
                 provider: provider,
                 snapshot: snapshot,
+                preferences: preferences,
                 mode: mode,
                 now: now
             )
@@ -124,35 +126,97 @@ public struct TVRunwayPresentation: Equatable, Sendable {
 public enum TVRunwayLaneKind: String, Codable, Equatable, Sendable {
     case capacity
     case accountStatus
+    case selectionStatus
 }
 
 public struct TVProviderRunwaySection: Equatable, Identifiable, Sendable {
     public let provider: Provider
     public let status: UsageStatus
     public let lanes: [TVRunwayLane]
+    public let primaryLaneID: String?
+    public let closestLane: TVRunwayLane?
 
     public var id: Provider { provider }
+
+    public var primaryLane: TVRunwayLane? {
+        primaryLaneID.flatMap { id in lanes.first { $0.id == id } }
+            ?? lanes.first { $0.kind == .capacity }
+    }
 
     init?(
         provider: Provider,
         snapshot: WidgetSnapshot,
+        preferences: WidgetDisplayPreferences,
         mode: TVPresentationMode,
         now: Date
     ) {
         let reports = snapshot.reports.filter { $0.provider == provider }
         let providerLimits = snapshot.limits.filter { $0.provider == provider }
-        let mainSummaries = snapshot.usageSnapshot.mostConstrainedMainLimitSummaries
-            .filter { $0.provider == provider }
-        let fallbackLimits = snapshot.mostConstrainedLimits
-            .filter { $0.provider == provider && !$0.isMainLimit }
+        guard !reports.isEmpty || !providerLimits.isEmpty else { return nil }
 
-        let capacityLanes: [TVRunwayLane]
-        if !mainSummaries.isEmpty {
-            capacityLanes = mainSummaries.map { TVRunwayLane(summary: $0, mode: mode, now: now) }
-        } else if !fallbackLimits.isEmpty {
-            capacityLanes = fallbackLimits.map { TVRunwayLane(limit: $0, mode: mode, now: now) }
-        } else {
-            capacityLanes = []
+        let mainSummaries = snapshot.usageSnapshot.mainLimitSummaries
+            .filter { $0.provider == provider }
+        let summarizedLimitIDs = Set(mainSummaries.flatMap(\.limits).map(\.id))
+        let fallbackLimits = snapshot.mostConstrainedLimits
+            .filter {
+                $0.provider == provider
+                    && !$0.isMainLimit
+                    && !summarizedLimitIDs.contains($0.id)
+            }
+        let selection = preferences.mainLimitAnswerSelection(
+            from: mainSummaries,
+            provider: provider
+        )
+
+        var capacityLanes: [TVRunwayLane] = []
+        for savedLane in selection.saved {
+            if let summary = savedLane.summary {
+                capacityLanes.append(
+                    TVRunwayLane(
+                        summary: summary,
+                        snapshotState: snapshot.state,
+                        mode: mode,
+                        now: now
+                    )
+                )
+            } else {
+                capacityLanes.append(
+                    TVRunwayLane(
+                        preference: savedLane.preference,
+                        snapshotState: snapshot.state
+                    )
+                )
+            }
+        }
+        if capacityLanes.isEmpty {
+            capacityLanes.append(
+                TVRunwayLane(
+                    unselectedProvider: provider,
+                    snapshotState: snapshot.state
+                )
+            )
+        }
+        capacityLanes.append(contentsOf: fallbackLimits.map {
+            TVRunwayLane(
+                limit: $0,
+                snapshotState: snapshot.state,
+                mode: mode,
+                now: now
+            )
+        })
+        let closestLane = selection.closest.map { lane in
+            if let summary = lane.summary {
+                return TVRunwayLane(
+                    summary: summary,
+                    snapshotState: snapshot.state,
+                    mode: mode,
+                    now: now
+                )
+            }
+            return TVRunwayLane(
+                preference: lane.preference,
+                snapshotState: snapshot.state
+            )
         }
 
         let reportLanes = reports
@@ -163,13 +227,26 @@ public struct TVProviderRunwaySection: Equatable, Identifiable, Sendable {
             .sorted { lhs, rhs in
                 lhs.accountName.localizedCaseInsensitiveCompare(rhs.accountName) == .orderedAscending
             }
-            .map { TVRunwayLane(provider: provider, report: $0, mode: mode) }
+            .map {
+                TVRunwayLane(
+                    provider: provider,
+                    report: $0,
+                    snapshotState: snapshot.state,
+                    mode: mode
+                )
+            }
         let lanes = capacityLanes + reportLanes
         guard !lanes.isEmpty else { return nil }
 
         self.provider = provider
-        status = (lanes.map(\.status) + reports.map(\.status)).contextPanelWorstStatus
+        let sourceStatuses = mainSummaries.map(\.status)
+            + fallbackLimits.map(\.status)
+            + reports.map(\.status)
+        status = snapshot.state.tvDisplayStatus(source: sourceStatuses.contextPanelWorstStatus)
         self.lanes = lanes
+        primaryLaneID = selection.primary?.id
+            ?? capacityLanes.first { $0.kind == .selectionStatus }?.id
+        self.closestLane = closestLane
     }
 
     public var trackedWindowCount: Int {
@@ -179,11 +256,11 @@ public struct TVProviderRunwaySection: Equatable, Identifiable, Sendable {
     public var trackedWindowText: String {
         switch trackedWindowCount {
         case 0:
-            "No capacity windows"
+            "No limits shown"
         case 1:
-            "1 window tracked"
+            "1 limit shown"
         default:
-            "\(trackedWindowCount) windows tracked"
+            "\(trackedWindowCount) limits shown"
         }
     }
 
@@ -220,12 +297,17 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
         status.tvDisplayName
     }
 
-    init(summary: MainLimitSummary, mode: TVPresentationMode, now: Date) {
+    init(
+        summary: MainLimitSummary,
+        snapshotState: WidgetSnapshotState,
+        mode: TVPresentationMode,
+        now: Date
+    ) {
         id = summary.id
         kind = .capacity
         provider = summary.provider
-        title = mode == .countsOnly ? summary.compactDisplayWindowName : summary.displayWindowName
-        status = summary.status
+        title = summary.displayWindowName
+        status = snapshotState.tvDisplayStatus(source: summary.status)
         remainingPercent = summary.roundedRemainingPercent
         capacityRatio = summary.remainingCapacityRatio
         resetText = mode == .countsOnly ? nil : summary.resetCountdownText(now: now)
@@ -242,17 +324,27 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
                 lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
             }
             : []
-        metrics = Self.metrics(summary: summary, mode: mode, now: now)
+        metrics = Self.metrics(
+            summary: summary,
+            snapshotState: snapshotState,
+            mode: mode,
+            now: now
+        )
     }
 
-    init(limit: UsageLimit, mode: TVPresentationMode, now: Date) {
+    init(
+        limit: UsageLimit,
+        snapshotState: WidgetSnapshotState,
+        mode: TVPresentationMode,
+        now: Date
+    ) {
         id = limit.id
         kind = .capacity
         provider = limit.provider
         title = mode == .fullDetail
             ? "\(limit.accountName) · \(limit.displayLabel)"
             : limit.displayLabel
-        status = limit.status
+        status = snapshotState.tvDisplayStatus(source: limit.status)
         remainingPercent = limit.remainingCapacityRatio.map { Int(($0 * 100).rounded()) }
         capacityRatio = limit.remainingCapacityRatio
         resetText = mode == .countsOnly ? nil : Self.compactResetText(until: limit.resetsAt, now: now)
@@ -265,15 +357,29 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
         accountCountText = mode == .countsOnly ? nil : Self.accountCountText(1)
         detailText = nil
         accountNames = mode == .fullDetail ? [limit.accountName] : []
-        metrics = mode == .countsOnly ? [] : [TVRunwayMetric(limit: limit, mode: mode, now: now)]
+        metrics = mode == .countsOnly
+            ? []
+            : [
+                TVRunwayMetric(
+                    limit: limit,
+                    snapshotState: snapshotState,
+                    mode: mode,
+                    now: now
+                ),
+            ]
     }
 
-    init(provider: Provider, report: StoredProviderReport, mode: TVPresentationMode) {
+    init(
+        provider: Provider,
+        report: StoredProviderReport,
+        snapshotState: WidgetSnapshotState,
+        mode: TVPresentationMode
+    ) {
         id = "\(provider.rawValue):report:\(report.configuredAccountID ?? report.accountID)"
         kind = .accountStatus
         self.provider = provider
         title = mode == .fullDetail ? "\(report.accountName) status" : "Account status"
-        status = report.status
+        status = snapshotState.tvDisplayStatus(source: report.status)
         remainingPercent = nil
         capacityRatio = nil
         resetText = nil
@@ -285,8 +391,43 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
         metrics = []
     }
 
+    init(preference: WidgetMainLimitPreference, snapshotState: WidgetSnapshotState) {
+        id = preference.id
+        kind = .capacity
+        provider = preference.provider
+        title = preference.window.displayName
+        status = snapshotState.tvDisplayStatus(source: .unknown)
+        remainingPercent = nil
+        capacityRatio = nil
+        resetText = nil
+        accessibilityResetText = nil
+        exactCapacityText = nil
+        accountCountText = nil
+        detailText = nil
+        accountNames = []
+        metrics = []
+    }
+
+    init(unselectedProvider provider: Provider, snapshotState: WidgetSnapshotState) {
+        id = "\(provider.rawValue):no-selection"
+        kind = .selectionStatus
+        self.provider = provider
+        title = "No limit selected"
+        status = snapshotState.tvDisplayStatus(source: .unknown)
+        remainingPercent = nil
+        capacityRatio = nil
+        resetText = nil
+        accessibilityResetText = nil
+        exactCapacityText = nil
+        accountCountText = nil
+        detailText = nil
+        accountNames = []
+        metrics = []
+    }
+
     private static func metrics(
         summary: MainLimitSummary,
+        snapshotState: WidgetSnapshotState,
         mode: TVPresentationMode,
         now: Date
     ) -> [TVRunwayMetric] {
@@ -299,13 +440,20 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
                     }
                     return lhs.displayLabel.localizedCaseInsensitiveCompare(rhs.displayLabel) == .orderedAscending
                 }
-                .map { TVRunwayMetric(limit: $0, mode: mode, now: now) }
+                .map {
+                    TVRunwayMetric(
+                        limit: $0,
+                        snapshotState: snapshotState,
+                        mode: mode,
+                        now: now
+                    )
+                }
         case .projectOnly:
             return [
                 TVRunwayMetric(
                     id: summary.id,
                     title: summary.displayWindowName,
-                    status: summary.status,
+                    status: snapshotState.tvDisplayStatus(source: summary.status),
                     remainingPercent: summary.roundedRemainingPercent,
                     exactCapacityText: nil,
                     resetText: summary.resetCountdownText(now: now)
@@ -388,17 +536,37 @@ public struct TVRunwayMetric: Equatable, Identifiable, Sendable {
         self.resetText = resetText
     }
 
-    init(limit: UsageLimit, mode: TVPresentationMode, now: Date) {
+    init(
+        limit: UsageLimit,
+        snapshotState: WidgetSnapshotState,
+        mode: TVPresentationMode,
+        now: Date
+    ) {
         id = limit.id
         title = mode == .fullDetail
             ? "\(limit.accountName) · \(limit.displayLabel)"
             : limit.displayLabel
-        status = limit.status
+        status = snapshotState.tvDisplayStatus(source: limit.status)
         remainingPercent = limit.remainingCapacityRatio.map { Int(($0 * 100).rounded()) }
         exactCapacityText = mode == .fullDetail
             ? TVRunwayLane.exactCapacityText(remaining: limit.remaining, limit: limit.limit, unit: limit.unit)
             : nil
         resetText = TVRunwayLane.compactResetText(until: limit.resetsAt, now: now)
+    }
+}
+
+private extension WidgetSnapshotState {
+    func tvDisplayStatus(source: UsageStatus) -> UsageStatus {
+        switch self {
+        case .ready:
+            source
+        case .stale:
+            .stale
+        case .failure:
+            .failure
+        case .setupNeeded:
+            .unknown
+        }
     }
 }
 

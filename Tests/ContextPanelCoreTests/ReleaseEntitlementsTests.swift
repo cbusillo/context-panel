@@ -134,7 +134,7 @@ import Testing
     }
 }
 
-@Test func tvEntitlementsSupportReadOnlyCloudKitBackgroundSync() throws {
+@Test func tvEntitlementsSupportCloudKitPushAndTopShelfSharing() throws {
     let entitlements = try loadEntitlements("Config/ContextPanelTV.entitlements")
 
     let iCloudContainers = try #require(
@@ -334,7 +334,7 @@ import Testing
     #expect(appSettings["INFOPLIST_FILE"] as? String == "Config/ContextPanelTV-Info.plist")
     #expect(appSettings["TVOS_DEPLOYMENT_TARGET"] as? String == "17.0")
     #expect(appSettings["TARGETED_DEVICE_FAMILY"] as? String == "3")
-    #expect(appSettings["ASSETCATALOG_COMPILER_APPICON_NAME"] == nil)
+    #expect(appSettings["ASSETCATALOG_COMPILER_APPICON_NAME"] as? String == "App Icon & Top Shelf Image")
     #expect(appSettings["APS_ENVIRONMENT"] as? String == "development")
 
     let appReleaseSettings = try #require(project.releaseTargetSettings(named: "ContextPanelTV"))

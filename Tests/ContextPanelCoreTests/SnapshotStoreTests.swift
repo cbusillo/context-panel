@@ -50,8 +50,43 @@ import Testing
         errorMessage: "Provider returned no usage records for this account."
     ) == .unknown)
     #expect(RefreshFailureCategory(
+        errorMessage: "Provider response body is missing a required field."
+    ) == .unknown)
+    #expect(RefreshFailureCategory(
         errorMessage: "Provider request failed with HTTP status code 429."
     ) == .httpFailure)
+}
+
+@Test func storedProviderReportDistinguishesSavedCredentialsFromReconnectRequired() {
+    let generatedAt = Date(timeIntervalSince1970: 100)
+    let expired = StoredProviderReport(
+        provider: .anthropic,
+        accountID: "claude",
+        accountName: "Claude",
+        generatedAt: generatedAt,
+        status: .failure,
+        errorMessage: "Claude OAuth session has expired. Sign in again from Settings."
+    )
+    let transient = StoredProviderReport(
+        provider: .anthropic,
+        accountID: "claude",
+        accountName: "Claude",
+        generatedAt: generatedAt,
+        status: .failure,
+        errorMessage: "Claude usage failed with HTTP status code 500."
+    )
+    let healthy = StoredProviderReport(
+        provider: .anthropic,
+        accountID: "claude",
+        accountName: "Claude",
+        generatedAt: generatedAt,
+        status: .healthy,
+        errorMessage: nil
+    )
+
+    #expect(expired.requiresCredentialReconnect)
+    #expect(!transient.requiresCredentialReconnect)
+    #expect(!healthy.requiresCredentialReconnect)
 }
 
 @Test func googleKeychainInteractionErrorsUseReconnectGuidance() {

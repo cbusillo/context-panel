@@ -99,6 +99,13 @@ struct ContextPanelWatchWidgetView: View {
         limits(maximumCount: 2)
     }
 
+    private var inlineLimits: [WatchLimitDisplay] {
+        WatchLimitDisplay.inlineRows(
+            from: entry.snapshot,
+            preferences: entry.displayPreferences
+        )
+    }
+
     private func limits(maximumCount: Int) -> [WatchLimitDisplay] {
         WatchLimitDisplay.mainLaneRows(
             from: entry.snapshot,
@@ -114,7 +121,7 @@ struct ContextPanelWatchWidgetView: View {
         case .accessoryRectangular:
             WatchRectangularComplication(limits: rectangularLimits, snapshot: entry.snapshot)
         case .accessoryInline:
-            WatchInlineComplication(limit: limit, snapshot: entry.snapshot)
+            WatchInlineComplication(limits: inlineLimits, snapshot: entry.snapshot)
         case .accessoryCorner:
             WatchCornerComplication(limit: limit, snapshot: entry.snapshot)
         default:
@@ -156,12 +163,16 @@ struct WatchCircularComplication: View {
                     .font(.caption2.weight(.semibold))
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(limit?.accessibilitySentence(direction: .remaining) ?? "Context Panel is not synced")
+            .accessibilityLabel(
+                limit?.accessibilitySentence(direction: .remaining)
+                    ?? watchEmptyText(for: snapshot, compact: false)
+            )
         }
     }
 
     private var fallbackSymbol: String {
-        limit == nil ? "icloud.slash" : "questionmark"
+        guard limit == nil else { return "questionmark" }
+        return snapshot.state == .ready || snapshot.state == .stale ? "eye.slash" : "icloud.slash"
     }
 
     private var tint: Color {
@@ -188,7 +199,7 @@ struct WatchRectangularComplication: View {
     }
 
     private var emptyText: String {
-        snapshot.state == .failure ? "Sync failed" : "Sync Mac"
+        watchEmptyText(for: snapshot, compact: true)
     }
 }
 
@@ -237,16 +248,41 @@ private struct WatchMiniCapacityBar: View {
 }
 
 struct WatchInlineComplication: View {
-    let limit: WatchLimitDisplay?
+    let limits: [WatchLimitDisplay]
     let snapshot: WidgetSnapshot
 
+    private var primary: WatchLimitDisplay? {
+        limits.first
+    }
+
     var body: some View {
-        if let limit {
-            Text("\(limit.title) \(limit.subtitle) · \(limit.remainingInlineText)")
-                .accessibilityLabel(limit.accessibilitySentence(direction: .remaining))
+        if let primary {
+            ViewThatFits(in: .horizontal) {
+                if limits.count > 1 {
+                    Text(twoLimitText(primary: primary, secondary: limits[1]))
+                        .accessibilityLabel(
+                            primary.accessibilitySentence(direction: .remaining)
+                                + ". "
+                                + limits[1].accessibilitySentence(direction: .remaining)
+                        )
+                }
+                Text("\(primary.title) \(primary.subtitle) · \(primary.remainingInlineText)")
+                    .accessibilityLabel(primary.accessibilitySentence(direction: .remaining))
+            }
         } else {
-            Text(snapshot.state == .failure ? "Context Panel sync failed" : "Context Panel needs sync")
+            Text(watchEmptyText(for: snapshot, compact: false))
         }
+    }
+
+    private func twoLimitText(
+        primary: WatchLimitDisplay,
+        secondary: WatchLimitDisplay
+    ) -> String {
+        let secondaryProvider = primary.provider == secondary.provider
+            ? ""
+            : "\(secondary.provider.shortName) "
+        return "\(primary.provider.shortName) \(primary.subtitle) \(primary.compactInlineQuantity) left"
+            + " · \(secondaryProvider)\(secondary.subtitle) \(secondary.compactInlineQuantity)"
     }
 }
 
@@ -274,10 +310,13 @@ struct WatchCornerComplication: View {
             Text("—")
                 .widgetCurvesContent()
                 .widgetLabel {
-                    Text(limit?.title ?? "Sync")
+                    Text(limit?.title ?? watchEmptyText(for: snapshot, compact: true))
                 }
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel(limit?.accessibilitySentence(direction: .remaining) ?? "Context Panel is not synced")
+                .accessibilityLabel(
+                    limit?.accessibilitySentence(direction: .remaining)
+                        ?? watchEmptyText(for: snapshot, compact: false)
+                )
                 .foregroundStyle(limit.map { watchStatusColor($0.status) } ?? watchStatusColor(snapshot.status))
         }
     }
@@ -292,7 +331,7 @@ struct ContextPanelWatchWidget: Widget {
                 .containerBackground(.clear, for: .widget)
         }
         .configurationDisplayName("Context Panel")
-        .description("Shows remaining capacity for your tightest AI usage limits.")
+        .description("Shows remaining capacity for the AI usage limits you chose.")
         .supportedFamilies([.accessoryCircular, .accessoryRectangular, .accessoryInline, .accessoryCorner])
     }
 }
@@ -316,6 +355,17 @@ private func watchStatusColor(_ status: UsageStatus) -> Color {
         .orange
     case .unknown, .loading:
         .secondary
+    }
+}
+
+private func watchEmptyText(for snapshot: WidgetSnapshot, compact: Bool) -> String {
+    switch snapshot.state {
+    case .ready, .stale:
+        compact ? "No limits" : "No limits selected"
+    case .failure:
+        compact ? "Sync failed" : "Context Panel sync failed"
+    case .setupNeeded:
+        compact ? "Sync Mac" : "Context Panel needs sync"
     }
 }
 

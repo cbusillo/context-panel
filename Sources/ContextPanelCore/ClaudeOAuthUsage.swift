@@ -222,7 +222,7 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
                 "Accept": "application/json",
                 "Content-Type": "application/json",
                 "User-Agent": "claude-code/2.1.141",
-                "anthropic-beta": "oauth-2025-04-20",
+                "anthropic-beta": ClaudeOAuthMetadata.oauthBetaHeader,
                 "anthropic-version": "2023-06-01",
                 "anthropic-client-platform": "context-panel",
             ]
@@ -238,7 +238,7 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
                     "Accept": "application/json",
                     "Content-Type": "application/json",
                     "User-Agent": "claude-code/2.1.141",
-                    "anthropic-beta": "oauth-2025-04-20",
+                    "anthropic-beta": ClaudeOAuthMetadata.oauthBetaHeader,
                     "anthropic-version": "2023-06-01",
                     "anthropic-client-platform": "context-panel",
                 ]
@@ -320,14 +320,19 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
             headers: [
                 "Content-Type": "application/json",
                 "Accept": "application/json",
+                "anthropic-beta": ClaudeOAuthMetadata.oauthBetaHeader,
+                "User-Agent": "context-panel",
             ],
             body: try ClaudeOAuthFlow.refreshTokenRequestBody(refreshToken: refreshToken)
         ))
         guard (200..<300).contains(response.statusCode) else {
-            if response.statusCode == 400 || response.statusCode == 401 || response.statusCode == 403 {
+            if refreshResponseRequiresReauthorization(response) {
                 throw ConnectorError.invalidAuth("Claude OAuth session has expired. Sign in again from Settings.")
             }
-            throw ConnectorError.httpFailure(operation: "Claude OAuth refresh", statusCode: response.statusCode)
+            throw ConnectorError.redactedHTTPFailure(
+                operation: "Claude OAuth refresh",
+                statusCode: response.statusCode
+            )
         }
         let token = try JSONDecoder().decode(ClaudeOAuthTokenResponse.self, from: response.data)
         credentials = ClaudeOAuthCredentials(
@@ -339,12 +344,40 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
         try saveCredentials(credentials, accountID: account.accountID)
         return token.accessToken
     }
+
+    private func refreshResponseRequiresReauthorization(_ response: ConnectorHTTPResponse) -> Bool {
+        guard response.statusCode == 400 || response.statusCode == 401 || response.statusCode == 403,
+              let payload = try? JSONSerialization.jsonObject(with: response.data) as? [String: Any]
+        else { return false }
+
+        var errorCodes: [String] = []
+        var errorMessages: [String] = []
+        if let error = payload["error"] as? String {
+            errorCodes.append(error)
+        } else if let error = payload["error"] as? [String: Any] {
+            if let type = error["type"] as? String { errorCodes.append(type) }
+            if let message = error["message"] as? String { errorMessages.append(message) }
+        }
+        if let type = payload["type"] as? String { errorCodes.append(type) }
+        if let description = payload["error_description"] as? String { errorMessages.append(description) }
+        if let message = payload["message"] as? String { errorMessages.append(message) }
+
+        let normalizedCodes = Set(errorCodes.map { $0.lowercased() })
+        if !normalizedCodes.isDisjoint(with: ["invalid_grant", "invalid_token", "refresh_token_expired"]) {
+            return true
+        }
+
+        let message = errorMessages.joined(separator: " ").lowercased()
+        return message.contains("refresh token")
+            && (message.contains("invalid") || message.contains("expired") || message.contains("revoked"))
+    }
 }
 
 public enum ClaudeOAuthMetadata {
     public static let clientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
     public static let authorizationEndpoint = URL(string: "https://claude.com/cai/oauth/authorize")!
     public static let tokenEndpoint = URL(string: "https://platform.claude.com/v1/oauth/token")!
+    public static let oauthBetaHeader = "oauth-2025-04-20"
     public static let scopes = [
         "org:create_api_key",
         "user:profile",

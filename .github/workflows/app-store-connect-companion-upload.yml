@@ -47,6 +47,7 @@ name: App Store Connect Companion Build Upload
         options:
           - ios
           - visionos
+          - tvos
       upload:
         description: Upload to App Store Connect. Disable to only export an IPA.
         required: true
@@ -83,6 +84,8 @@ jobs:
         ${{ secrets.COMPANION_APP_STORE_WATCH_PROVISIONING_PROFILE_BASE64 }}
       COMPANION_APP_STORE_WATCH_WIDGET_PROVISIONING_PROFILE_BASE64: >-
         ${{ secrets.COMPANION_APP_STORE_WATCH_WIDGET_PROVISIONING_PROFILE_BASE64 }}
+      COMPANION_APP_STORE_TV_PROVISIONING_PROFILE_BASE64: >-
+        ${{ secrets.COMPANION_APP_STORE_TV_PROVISIONING_PROFILE_BASE64 }}
 
     steps:
       - name: Checkout
@@ -115,6 +118,9 @@ jobs:
               ;;
             visionos)
               app_store_platform="VISION_OS"
+              ;;
+            tvos)
+              app_store_platform="TV_OS"
               ;;
             *)
               echo "unsupported companion platform: ${platform}" >&2
@@ -173,18 +179,29 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .build/provisioning-appstore
-          if [[ -z "${COMPANION_APP_STORE_APP_PROVISIONING_PROFILE_BASE64:-}" || \
-            -z "${COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64:-}" ]]; then
-            echo "Companion app and widget App Store provisioning profile secrets are required." >&2
-            exit 1
+          platform="${{ steps.platform.outputs.platform }}"
+          if [[ "${platform}" == "tvos" ]]; then
+            if [[ -z "${COMPANION_APP_STORE_TV_PROVISIONING_PROFILE_BASE64:-}" ]]; then
+              echo "COMPANION_APP_STORE_TV_PROVISIONING_PROFILE_BASE64 is required for tvOS uploads." >&2
+              exit 1
+            fi
+            printf '%s' "${COMPANION_APP_STORE_TV_PROVISIONING_PROFILE_BASE64}" \
+              | base64 -D \
+                > .build/provisioning-appstore/ContextPanelTV.provisionprofile
+          else
+            if [[ -z "${COMPANION_APP_STORE_APP_PROVISIONING_PROFILE_BASE64:-}" || \
+              -z "${COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64:-}" ]]; then
+              echo "Companion app and widget App Store provisioning profile secrets are required." >&2
+              exit 1
+            fi
+            printf '%s' "${COMPANION_APP_STORE_APP_PROVISIONING_PROFILE_BASE64}" \
+              | base64 -D \
+                > .build/provisioning-appstore/ContextPanelCompanion.provisionprofile
+            printf '%s' "${COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64}" \
+              | base64 -D \
+                > .build/provisioning-appstore/ContextPanelCompanionWidgetExtension.provisionprofile
           fi
-          printf '%s' "${COMPANION_APP_STORE_APP_PROVISIONING_PROFILE_BASE64}" \
-            | base64 -D \
-              > .build/provisioning-appstore/ContextPanelCompanion.provisionprofile
-          printf '%s' "${COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64}" \
-            | base64 -D \
-              > .build/provisioning-appstore/ContextPanelCompanionWidgetExtension.provisionprofile
-          if [[ "${{ steps.platform.outputs.platform }}" == "ios" ]]; then
+          if [[ "${platform}" == "ios" ]]; then
             if [[ -z "${COMPANION_APP_STORE_WATCH_PROVISIONING_PROFILE_BASE64:-}" || \
               -z "${COMPANION_APP_STORE_WATCH_WIDGET_PROVISIONING_PROFILE_BASE64:-}" ]]; then
               echo "Companion watch and watch widget App Store provisioning profile secrets are" \

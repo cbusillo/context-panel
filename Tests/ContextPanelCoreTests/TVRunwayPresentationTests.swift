@@ -38,7 +38,7 @@ import Testing
 
     let countsOnly = TVRunwayPresentation(snapshot: snapshot, mode: .countsOnly, now: now)
     let countsLane = try #require(
-        countsOnly.sections.first { $0.provider == .openAI }?.lanes.first { $0.title == "1w" }
+        countsOnly.sections.first { $0.provider == .openAI }?.lanes.first { $0.title == "Weekly" }
     )
     #expect(countsLane.accountNames.isEmpty)
     #expect(countsLane.exactCapacityText == nil)
@@ -64,6 +64,14 @@ import Testing
     #expect(presentation.headline == "Showing saved runway")
     #expect(presentation.detail.contains("may no longer reflect current usage"))
     #expect(!presentation.sections.isEmpty)
+    #expect(presentation.sections.allSatisfy { $0.status == .stale })
+    #expect(presentation.sections.flatMap(\.lanes).allSatisfy { $0.status == .stale })
+    #expect(
+        presentation.sections
+            .flatMap(\.lanes)
+            .flatMap(\.metrics)
+            .allSatisfy { $0.status == .stale }
+    )
 }
 
 @Test func tvRunwayPresentationSurfacesRefreshFailuresBesideCapacityLanes() throws {
@@ -105,8 +113,8 @@ import Testing
     let statusLane = try #require(openAI.lanes.first { $0.kind == .accountStatus })
 
     #expect(openAI.status == .failure)
-    #expect(openAI.trackedWindowCount == 1)
-    #expect(openAI.trackedWindowText == "1 window tracked")
+    #expect(openAI.trackedWindowCount == 2)
+    #expect(openAI.trackedWindowText == "2 limits shown")
     #expect(openAI.lanes.filter { $0.kind == .accountStatus }.count == 1)
     #expect(statusLane.title == "Team status")
     #expect(statusLane.status == .failure)
@@ -153,10 +161,216 @@ import Testing
     let presentation = TVRunwayPresentation(snapshot: snapshot, mode: .fullDetail, now: now)
     let google = try #require(presentation.sections.first { $0.provider == .google })
 
-    #expect(google.trackedWindowCount == 0)
-    #expect(google.trackedWindowText == "No capacity windows")
-    #expect(google.lanes.count == 1)
-    #expect(google.lanes.first?.kind == .accountStatus)
+    #expect(google.trackedWindowCount == 4)
+    #expect(google.trackedWindowText == "4 limits shown")
+    #expect(google.lanes.count == 5)
+    #expect(google.primaryLane?.title == "Model capacity")
+    #expect(google.primaryLane?.remainingPercent == nil)
+    #expect(google.lanes.filter { $0.kind == .accountStatus }.count == 1)
+}
+
+@Test func tvRunwayPresentationKeepsSavedPrimaryAndSeparatesClosestLimit() throws {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: now,
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "openai",
+                accountName: "OpenAI",
+                label: "OpenAI weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 10,
+                limit: 100
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "openai",
+                accountName: "OpenAI",
+                label: "OpenAI 5-hour",
+                windowLabel: "5-hour",
+                unit: .percent,
+                used: 85,
+                limit: 100
+            ),
+        ],
+        status: .close,
+        message: "Synced"
+    )
+
+    let presentation = TVRunwayPresentation(snapshot: snapshot, mode: .fullDetail, now: now)
+    let openAI = try #require(presentation.sections.first { $0.provider == .openAI })
+
+    #expect(openAI.primaryLane?.title == "Weekly")
+    #expect(openAI.primaryLane?.remainingPercent == 90)
+    #expect(openAI.closestLane?.title == "5-hour")
+    #expect(openAI.closestLane?.remainingPercent == 15)
+    #expect(openAI.lanes.prefix(2).map(\.title) == ["Weekly", "5-hour"])
+}
+
+@Test func tvRunwayPresentationFollowsSavedProviderOrder() throws {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: now,
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "openai",
+                accountName: "OpenAI",
+                label: "OpenAI weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 10,
+                limit: 100
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "openai",
+                accountName: "OpenAI",
+                label: "OpenAI 5-hour",
+                windowLabel: "5-hour",
+                unit: .percent,
+                used: 85,
+                limit: 100
+            ),
+        ],
+        status: .close,
+        message: "Synced"
+    )
+    var preferences = WidgetDisplayPreferences.defaultPreferences
+    let fiveHourIndex = try #require(preferences.mainLimits.firstIndex {
+        $0.provider == .openAI && $0.window == .fiveHour
+    })
+    preferences.moveMainLimits(fromOffsets: IndexSet(integer: fiveHourIndex), toOffset: 0)
+
+    let presentation = TVRunwayPresentation(
+        snapshot: snapshot,
+        preferences: preferences,
+        mode: .fullDetail,
+        now: now
+    )
+    let openAI = try #require(presentation.sections.first { $0.provider == .openAI })
+
+    #expect(openAI.primaryLane?.title == "5-hour")
+    #expect(openAI.closestLane == nil)
+    #expect(openAI.lanes.prefix(2).map(\.title) == ["5-hour", "Weekly"])
+}
+
+@Test func tvRunwayPresentationKeepsClosestCalloutOutOfSavedDetailOrder() throws {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: now,
+        limits: [
+            tvPercentLimit(provider: .google, window: .availability, used: 10),
+            tvPercentLimit(provider: .google, window: .weekly, used: 20),
+            tvPercentLimit(provider: .google, window: .fiveHour, used: 30),
+            tvPercentLimit(provider: .google, window: .daily, used: 85),
+        ],
+        status: .close,
+        message: "Synced"
+    )
+
+    let presentation = TVRunwayPresentation(snapshot: snapshot, mode: .fullDetail, now: now)
+    let google = try #require(presentation.sections.first { $0.provider == .google })
+
+    #expect(google.primaryLane?.title == "Model capacity")
+    #expect(google.closestLane?.title == "Daily")
+    #expect(google.lanes.map(\.title) == [
+        "Model capacity",
+        "Weekly",
+        "5-hour",
+        "Daily",
+        "Google · Model capacity",
+    ])
+}
+
+@Test func tvRunwayPresentationPreservesRealNonMainFallbackCapacity() throws {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: now,
+        limits: [
+            UsageLimit(
+                provider: .google,
+                accountID: "google",
+                accountName: "Google",
+                label: "Model requests",
+                unit: .requests,
+                used: 40,
+                limit: 100
+            ),
+        ],
+        status: .healthy,
+        message: "Synced"
+    )
+
+    let presentation = TVRunwayPresentation(snapshot: snapshot, mode: .fullDetail, now: now)
+    let google = try #require(presentation.sections.first { $0.provider == .google })
+    let fallback = try #require(google.lanes.first { $0.title == "Google · Model requests" })
+
+    #expect(google.primaryLane?.title == "Model capacity")
+    #expect(google.primaryLane?.remainingPercent == nil)
+    #expect(google.lanes.map(\.title) == [
+        "Model capacity",
+        "Weekly",
+        "5-hour",
+        "Daily",
+        "Google · Model requests",
+    ])
+    #expect(fallback.remainingPercent == 60)
+    #expect(google.closestLane == nil)
+}
+
+@Test func tvRunwayPresentationDoesNotRestoreHiddenMainLanes() throws {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: now,
+        limits: [tvPercentLimit(provider: .openAI, window: .weekly, used: 20)],
+        status: .healthy,
+        message: "Synced"
+    )
+    var preferences = WidgetDisplayPreferences.defaultPreferences
+    for index in preferences.mainLimits.indices {
+        preferences.mainLimits[index].isVisible = false
+    }
+
+    let presentation = TVRunwayPresentation(
+        snapshot: snapshot,
+        preferences: preferences,
+        mode: .fullDetail,
+        now: now
+    )
+    let openAI = try #require(presentation.sections.first { $0.provider == .openAI })
+
+    #expect(openAI.primaryLane?.title == "No limit selected")
+    #expect(openAI.primaryLane?.kind == .selectionStatus)
+    #expect(openAI.primaryLane?.remainingPercent == nil)
+    #expect(openAI.trackedWindowCount == 0)
+    #expect(openAI.closestLane == nil)
+}
+
+@Test func tvRunwayPresentationPreservesMissingSavedPrimaryAsUnknown() throws {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: now,
+        limits: [tvPercentLimit(provider: .openAI, window: .fiveHour, used: 85)],
+        status: .close,
+        message: "Partial sync"
+    )
+
+    let presentation = TVRunwayPresentation(snapshot: snapshot, mode: .fullDetail, now: now)
+    let openAI = try #require(presentation.sections.first { $0.provider == .openAI })
+
+    #expect(openAI.primaryLane?.title == "Weekly")
+    #expect(openAI.primaryLane?.remainingPercent == nil)
+    #expect(openAI.closestLane?.title == "5-hour")
+    #expect(openAI.lanes.prefix(2).map(\.title) == ["Weekly", "5-hour"])
 }
 
 @Test func tvSyncReceiptStoreRejectsAReceiptForAnotherDocument() throws {
@@ -280,4 +494,21 @@ private func makeTVDocument(now: Date) -> CompanionSyncDocument {
         snapshot: UsageSnapshot(generatedAt: now, limits: limits)
     )
     return CompanionSyncDocument(storedSnapshot: stored, publishedAt: now)
+}
+
+private func tvPercentLimit(
+    provider: Provider,
+    window: MainLimitWindow,
+    used: Int
+) -> UsageLimit {
+    UsageLimit(
+        provider: provider,
+        accountID: "\(provider.rawValue)-account",
+        accountName: provider.displayName,
+        label: "\(provider.displayName) \(window.displayName)",
+        windowLabel: window.displayName,
+        unit: .percent,
+        used: used,
+        limit: 100
+    )
 }

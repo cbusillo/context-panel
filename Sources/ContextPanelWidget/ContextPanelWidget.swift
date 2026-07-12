@@ -67,10 +67,31 @@ struct ContextPanelTimelineProvider: TimelineProvider {
     func getTimeline(in context: Context, completion: @escaping (Timeline<ContextPanelWidgetEntry>) -> Void) {
         let now = Date()
         let nextRefresh = now.addingTimeInterval(SnapshotFreshness.widgetTimelineInterval)
-        completion(Timeline(entries: [entry(date: now)], policy: .after(nextRefresh)))
+        completion(Timeline(entries: timelineEntries(date: now), policy: .after(nextRefresh)))
+    }
+
+    func timelineEntries(date: Date) -> [ContextPanelWidgetEntry] {
+        let policy = SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
+        let currentEntry = entry(date: date, stalenessPolicy: policy)
+        guard currentEntry.snapshot.state == .ready,
+              let staleDate = policy.nextStaleTransitionDate(for: currentEntry.snapshot.usageSnapshot, now: date)
+        else { return [currentEntry] }
+        return [currentEntry, entry(date: staleDate, stalenessPolicy: policy)]
     }
 
     func entry(date: Date) -> ContextPanelWidgetEntry {
+        entry(
+            date: date,
+            stalenessPolicy: SnapshotStoreStalenessPolicy.appDefault(
+                maximumAge: SnapshotFreshness.widgetMaximumAge
+            )
+        )
+    }
+
+    private func entry(
+        date: Date,
+        stalenessPolicy policy: SnapshotStoreStalenessPolicy
+    ) -> ContextPanelWidgetEntry {
         let displayPreferences = loadDisplayPreferences()
         let forecastSettings = loadForecastSettings()
         let promptCacheWidgetState = WidgetSnapshot.promptCacheWidgetState(
@@ -78,7 +99,6 @@ struct ContextPanelTimelineProvider: TimelineProvider {
             bookmarkStore: bookmarkStore,
             now: date
         )
-        let policy = SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
         let result = store.loadCurrent(policy: policy, now: date)
         if result.snapshot == nil || result.status == .failure {
             let fallback = containerFallbackStore.loadCurrent(

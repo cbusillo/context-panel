@@ -132,6 +132,7 @@
 		9D39D9C75B6CB1F4255FB1EF /* BurnRateEstimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FB4BEA57ACE8B84CAE71E75 /* BurnRateEstimator.swift */; };
 		9D7098AB5C83051676B31188 /* OAuthPKCE.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB0E4D0FF6DD744B87D215B9 /* OAuthPKCE.swift */; };
 		9D8AF2D95FF9A28EC504BC6C /* RefreshDiagnosticsState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DAF08B3CB69404A37DECA39 /* RefreshDiagnosticsState.swift */; };
+		9EBBE957FA988AA36704E9A5 /* TVAssets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 0B2F27D01900C53EC77A72BC /* TVAssets.xcassets */; };
 		A101488BBBE552136B8CDF4E /* MetricProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B5621100867602BDE8B426A /* MetricProgress.swift */; };
 		A1DB7CDCDD4A29AF1B157B83 /* UsageLimit.swift in Sources */ = {isa = PBXBuildFile; fileRef = D459054C90410A784EBD308B /* UsageLimit.swift */; };
 		A1E12E6C1FA3E1356F93519B /* PromptCacheTelemetryMirrorService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3B93DAA06AE42D89A02C5EE /* PromptCacheTelemetryMirrorService.swift */; };
@@ -580,6 +581,7 @@
 		069C02BFF25BF7CD01E47C31 /* TVPreviewFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVPreviewFixtures.swift; sourceTree = "<group>"; };
 		07D959D621E594C0CFC2CEF5 /* ContextPanelWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ContextPanelWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		086B12021073A6F2A49850A1 /* ContextPanelRefreshAgent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ContextPanelRefreshAgent.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		0B2F27D01900C53EC77A72BC /* TVAssets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = TVAssets.xcassets; sourceTree = "<group>"; };
 		0B5621100867602BDE8B426A /* MetricProgress.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetricProgress.swift; sourceTree = "<group>"; };
 		1161DC4C994F71A1E6CEE608 /* LimitWarning.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LimitWarning.swift; sourceTree = "<group>"; };
 		15DC14CB07B8BA4756DAB731 /* BackgroundRefreshSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundRefreshSettings.swift; sourceTree = "<group>"; };
@@ -862,6 +864,7 @@
 			isa = PBXGroup;
 			children = (
 				944A3154A0C2E33C5971E571 /* Assets.xcassets */,
+				0B2F27D01900C53EC77A72BC /* TVAssets.xcassets */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -1352,6 +1355,7 @@
 			buildConfigurationList = 08A30F48705966821F06142E /* Build configuration list for PBXNativeTarget "ContextPanelTV" */;
 			buildPhases = (
 				1BF355E947AA9A7817BAC377 /* Sources */,
+				477C2264C23E16DADE8E9678 /* Resources */,
 				552AB015F92B2D6B7F58C307 /* Frameworks */,
 				73F7EE8C1FCE97B9F45FDD80 /* Embed Foundation Extensions */,
 			);
@@ -1619,6 +1623,14 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		477C2264C23E16DADE8E9678 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9EBBE957FA988AA36704E9A5 /* TVAssets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		97F271F3922765D045C65D50 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
