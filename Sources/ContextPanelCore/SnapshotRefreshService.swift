@@ -996,7 +996,10 @@ enum RefreshFailureCategory: String {
             self = .oauthMissingRefreshToken
         } else if message.contains("unexpected format") || message.contains("does not contain") {
             self = .credentialFormat
-        } else if message.contains("not connected") || message.contains("missing") || message.contains("sign in") {
+        } else if message.contains("not connected")
+            || message.contains("local login is missing an access token")
+            || message.contains("local login was not found")
+        {
             self = .missingAuth
         } else if message.contains("rate limited") {
             self = .rateLimited

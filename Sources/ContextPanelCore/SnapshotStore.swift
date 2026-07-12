@@ -154,6 +154,16 @@ public extension Collection where Element == StoredProviderReport {
 }
 
 public extension StoredProviderReport {
+    var requiresCredentialReconnect: Bool {
+        guard status == .failure else { return false }
+        return switch RefreshFailureCategory(errorMessage: errorMessage) {
+        case .oauthInvalidClient, .oauthExpired, .oauthMissingRefreshToken, .credentialFormat, .missingAuth:
+            true
+        case .none, .providerAuthorization, .httpFailure, .rateLimited, .decoding, .processFailure, .filePermission, .unknown:
+            false
+        }
+    }
+
     var userFacingErrorMessage: String? {
         guard let errorMessage else { return nil }
         if provider == .google {
@@ -359,6 +369,16 @@ public struct SnapshotStoreStalenessPolicy: Equatable, Sendable {
             return .stale
         }
         return storedSnapshot.snapshot.aggregateStatus
+    }
+
+    public func nextStaleTransitionDate(for snapshot: UsageSnapshot, now: Date) -> Date? {
+        let ageTransition = snapshot.generatedAt.addingTimeInterval(maximumAge + 1)
+        let resetTransition = resetExpiryRefreshState?.nextRefreshCheckDate(for: snapshot, now: now)
+            ?? snapshot.nextResetRefreshDate(now: now)
+        return [ageTransition, resetTransition]
+            .compactMap { $0 }
+            .filter { $0 > now }
+            .min()
     }
 
     public func refreshAttentionSummary(for storedSnapshot: StoredUsageSnapshot?, now: Date) -> RefreshAttentionSummary? {

@@ -146,7 +146,10 @@ snapshot. That projection owns setup-needed, stale, failure, provider-summary,
 and most-constrained row selection. `ContextPanelWidgetUI` renders the shared
 small, medium, and large glance layouts, while the macOS widget extension owns
 the timeline provider, family mapping, widget URL wiring, local App Group store,
-and widget-container fallback behavior.
+and widget-container fallback behavior. Widget timelines include a future entry
+at the earliest snapshot-age or provider-reset freshness deadline so WidgetKit
+cannot keep an old healthy presentation indefinitely when the system delays the
+next extension refresh.
 
 `CompanionSnapshot` is the transport-neutral projection for Apple companion
 clients such as iPhone, iPad, visionOS, watchOS, and tvOS. It is constructed from a

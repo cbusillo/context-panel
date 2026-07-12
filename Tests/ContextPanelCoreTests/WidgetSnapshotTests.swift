@@ -726,6 +726,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
 
 @Test func timelineProviderShowsPromptCacheTelemetryAfterUsageBookmarkExists() throws {
     let root = try widgetSnapshotTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
     let now = Date(timeIntervalSince1970: 100)
     let codeDirectory = root.appending(path: ".code", directoryHint: .isDirectory)
     let usageDirectory = codeDirectory.appending(path: "usage", directoryHint: .isDirectory)
@@ -781,6 +782,164 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
 
     #expect(entry.snapshot.promptCacheWidgetState == .available)
     #expect(entry.snapshot.promptCacheSummary.latestHitRate == 0.94)
+}
+
+@Test func timelineProviderSchedulesAStaleFallbackEntry() throws {
+    let root = try widgetSnapshotTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 100)
+    let primaryStore = JSONSnapshotStore(rootDirectory: root.appending(path: "snapshots", directoryHint: .isDirectory))
+    try primaryStore.save(StoredUsageSnapshot(
+        savedAt: now,
+        snapshot: UsageSnapshot(generatedAt: now, limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "openai",
+                accountName: "OpenAI",
+                label: "Codex Weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 20,
+                limit: 100
+            ),
+        ])
+    ))
+    let provider = ContextPanelTimelineProvider(
+        store: primaryStore,
+        containerFallbackStore: JSONSnapshotStore(rootDirectory: root.appending(path: "fallback", directoryHint: .isDirectory)),
+        preferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "widget-prefs.json")),
+        containerFallbackPreferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "fallback-widget-prefs.json")),
+        forecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "forecast.json")),
+        containerFallbackForecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "fallback-forecast.json")),
+        accountStore: AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json")),
+        bookmarkStore: SecureFileBookmarkStore(storeURL: root.appending(path: "bookmarks.json"))
+    )
+
+    let entries = provider.timelineEntries(date: now)
+
+    #expect(entries.count == 2)
+    #expect(entries[0].date == now)
+    #expect(entries[0].snapshot.state == .ready)
+    #expect(entries[1].date == now.addingTimeInterval(SnapshotFreshness.widgetMaximumAge + 1))
+    #expect(entries[1].snapshot.state == .stale)
+    #expect(entries[1].snapshot.status == .stale)
+}
+
+@Test func timelineProviderSchedulesResetExpiryBeforeAgeStaleness() throws {
+    let root = try widgetSnapshotTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 100)
+    let resetsAt = now.addingTimeInterval(60)
+    let primaryStore = JSONSnapshotStore(rootDirectory: root.appending(path: "snapshots", directoryHint: .isDirectory))
+    try primaryStore.save(StoredUsageSnapshot(
+        savedAt: now,
+        snapshot: UsageSnapshot(generatedAt: now, limits: [
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "claude-timeline-reset",
+                accountName: "Claude",
+                label: "Claude 5-hour",
+                windowLabel: "5-hour",
+                unit: .percent,
+                used: 20,
+                limit: 100,
+                resetsAt: resetsAt,
+                lastUpdatedAt: now
+            ),
+        ])
+    ))
+    let provider = ContextPanelTimelineProvider(
+        store: primaryStore,
+        containerFallbackStore: JSONSnapshotStore(rootDirectory: root.appending(path: "fallback", directoryHint: .isDirectory)),
+        preferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "widget-prefs.json")),
+        containerFallbackPreferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "fallback-widget-prefs.json")),
+        forecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "forecast.json")),
+        containerFallbackForecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "fallback-forecast.json")),
+        accountStore: AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json")),
+        bookmarkStore: SecureFileBookmarkStore(storeURL: root.appending(path: "bookmarks.json"))
+    )
+
+    let entries = provider.timelineEntries(date: now)
+
+    #expect(entries.count == 2)
+    #expect(entries[1].date == resetsAt.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace))
+    #expect(entries[1].snapshot.state == .stale)
+    #expect(entries[1].snapshot.refreshAttentionSummary?.expiredResetLimits.map(\.accountID) == ["claude-timeline-reset"])
+}
+
+@Test func snapshotStaleTransitionCrossesStrictFreshnessBoundary() {
+    let generatedAt = Date(timeIntervalSince1970: 100)
+    let lastFreshDate = generatedAt.addingTimeInterval(SnapshotFreshness.widgetMaximumAge)
+    let staleDate = lastFreshDate.addingTimeInterval(1)
+    let snapshot = UsageSnapshot(generatedAt: generatedAt, limits: [])
+    let policy = SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge)
+
+    #expect(
+        policy.nextStaleTransitionDate(for: snapshot, now: lastFreshDate)
+            == staleDate
+    )
+    #expect(policy.nextStaleTransitionDate(for: snapshot, now: staleDate) == nil)
+}
+
+@Test func snapshotStaleTransitionUsesEarlierResetExpiry() {
+    let now = Date(timeIntervalSince1970: 100)
+    let resetsAt = now.addingTimeInterval(60)
+    let snapshot = UsageSnapshot(generatedAt: now, limits: [
+        UsageLimit(
+            provider: .anthropic,
+            accountID: "claude-reset-transition",
+            accountName: "Claude",
+            label: "Claude 5-hour",
+            windowLabel: "5-hour",
+            unit: .percent,
+            used: 20,
+            limit: 100,
+            resetsAt: resetsAt,
+            lastUpdatedAt: now
+        ),
+    ])
+    let policy = SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge)
+
+    #expect(
+        policy.nextStaleTransitionDate(for: snapshot, now: now)
+            == resetsAt.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace)
+    )
+}
+
+@Test func snapshotStaleTransitionRespectsDeferredResetRetry() throws {
+    let lastUpdatedAt = Date(timeIntervalSince1970: 10)
+    let resetsAt = Date(timeIntervalSince1970: 50)
+    let now = Date(timeIntervalSince1970: 100)
+    let nextRetryAt = Date(timeIntervalSince1970: 130)
+    let limit = UsageLimit(
+        provider: .anthropic,
+        accountID: "claude-deferred-reset",
+        accountName: "Claude",
+        label: "Claude 5-hour",
+        windowLabel: "5-hour",
+        unit: .percent,
+        used: 20,
+        limit: 100,
+        resetsAt: resetsAt,
+        lastUpdatedAt: lastUpdatedAt
+    )
+    let snapshot = UsageSnapshot(generatedAt: now, limits: [limit])
+    let key = try #require(ResetExpiryRefreshKey(limit: limit))
+    let policy = SnapshotStoreStalenessPolicy(
+        maximumAge: SnapshotFreshness.widgetMaximumAge,
+        resetExpiryRefreshState: ResetExpiryRefreshState(records: [
+            ResetExpiryRefreshRecord(
+                key: key,
+                attemptedAt: now,
+                nextRetryAt: nextRetryAt,
+                retryCount: 1
+            ),
+        ])
+    )
+
+    #expect(policy.status(for: StoredUsageSnapshot(savedAt: now, snapshot: snapshot), now: now) != .stale)
+    #expect(policy.nextStaleTransitionDate(for: snapshot, now: now) == nextRetryAt)
+    #expect(policy.status(for: StoredUsageSnapshot(savedAt: now, snapshot: snapshot), now: nextRetryAt) == .stale)
 }
 
 @Test func providerSummariesUseTheTightestWindowInsteadOfAverageCapacity() {

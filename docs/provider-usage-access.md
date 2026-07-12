@@ -302,6 +302,14 @@ Preferred v1 connector scope:
 
 - Let the user connect Claude from Settings using the visible Claude OAuth code
   flow. Store only the resulting Context Panel-owned OAuth tokens in Keychain.
+- Treat this credential as separate from Claude Code or Claude Desktop login.
+  If its refresh token is rejected, show `Reconnect required` even while the
+  Keychain item remains present; credential presence alone must not render a
+  green connected state.
+- Only an authorization rejection or an explicit invalid, expired, or revoked
+  refresh-token response should trigger that state. Keep malformed requests and
+  transient token-endpoint failures as redacted diagnostics instead of telling
+  the user to reconnect.
 - Refresh `/api/oauth/usage` in the app and background agent. Treat
   `utilization` as percent used and persist only normalized limit windows.
 - Do not read Claude Code status-line caches, stats caches, `ccusage` output,

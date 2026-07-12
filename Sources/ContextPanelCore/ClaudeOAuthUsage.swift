@@ -324,7 +324,7 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
             body: try ClaudeOAuthFlow.refreshTokenRequestBody(refreshToken: refreshToken)
         ))
         guard (200..<300).contains(response.statusCode) else {
-            if response.statusCode == 400 || response.statusCode == 401 || response.statusCode == 403 {
+            if refreshResponseRequiresReauthorization(response) {
                 throw ConnectorError.invalidAuth("Claude OAuth session has expired. Sign in again from Settings.")
             }
             throw ConnectorError.httpFailure(operation: "Claude OAuth refresh", statusCode: response.statusCode)
@@ -338,6 +338,36 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
         )
         try saveCredentials(credentials, accountID: account.accountID)
         return token.accessToken
+    }
+
+    private func refreshResponseRequiresReauthorization(_ response: ConnectorHTTPResponse) -> Bool {
+        if response.statusCode == 401 || response.statusCode == 403 {
+            return true
+        }
+        guard response.statusCode == 400,
+              let payload = try? JSONSerialization.jsonObject(with: response.data) as? [String: Any]
+        else { return false }
+
+        var errorCodes: [String] = []
+        var errorMessages: [String] = []
+        if let error = payload["error"] as? String {
+            errorCodes.append(error)
+        } else if let error = payload["error"] as? [String: Any] {
+            if let type = error["type"] as? String { errorCodes.append(type) }
+            if let message = error["message"] as? String { errorMessages.append(message) }
+        }
+        if let type = payload["type"] as? String { errorCodes.append(type) }
+        if let description = payload["error_description"] as? String { errorMessages.append(description) }
+        if let message = payload["message"] as? String { errorMessages.append(message) }
+
+        let normalizedCodes = Set(errorCodes.map { $0.lowercased() })
+        if !normalizedCodes.isDisjoint(with: ["invalid_grant", "invalid_token", "refresh_token_expired"]) {
+            return true
+        }
+
+        let message = errorMessages.joined(separator: " ").lowercased()
+        return message.contains("refresh token")
+            && (message.contains("invalid") || message.contains("expired") || message.contains("revoked"))
     }
 }
 
