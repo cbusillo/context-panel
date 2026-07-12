@@ -4,8 +4,8 @@ import Foundation
 public enum TVPreferenceKeys {
     public static let presentationMode = "tv-presentation-mode"
     public static let providerBadgesEnabled = "tv-provider-badges-enabled"
-    public static let cloudKitSubscriptionVersion = "tv-cloudkit-subscription-version"
     public static let cloudKitSubscriptionError = "tv-cloudkit-subscription-error"
+    public static let remoteNotificationRegistrationError = "tv-remote-notification-registration-error"
 }
 
 public enum TVProviderAlertLevel: Int, Codable, Comparable, Equatable, Sendable {

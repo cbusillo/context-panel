@@ -301,7 +301,7 @@ import Testing
     #expect(weekly.limit == 200)
 }
 
-@Test func companionSnapshotSanitizesPathAndEmailDisplayNames() throws {
+@Test func companionSnapshotSanitizesPathsAndPreservesEmailDisplayNames() throws {
     let generatedAt = Date(timeIntervalSince1970: 1_600)
     let stored = StoredUsageSnapshot(
         savedAt: generatedAt,
@@ -334,9 +334,9 @@ import Testing
     let roundTrip = try JSONDecoder.contextPanelCompanionDecoder.decode(CompanionSnapshot.self, from: data)
 
     #expect(json.contains("/Users/chris") == false)
-    #expect(json.contains("chris@example.com") == false)
+    #expect(json.contains("chris@example.com"))
     #expect(roundTrip.limits.map(\.accountName).contains("auth.json"))
-    #expect(roundTrip.limits.map(\.accountName).contains("[email redacted]"))
+    #expect(roundTrip.limits.map(\.accountName).contains("chris@example.com"))
 }
 
 @Test func companionSnapshotStaysWithinLatestSnapshotSizeBudget() throws {

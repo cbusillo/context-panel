@@ -122,6 +122,12 @@ detail, not answer selection. Visible percentages use `left`. CloudKit reads,
 last-good cache behavior, focus navigation, and deep links remain separate
 platform concerns and must not be coupled to shared SwiftUI components.
 
+Provider drill-down uses a vertical hierarchy rather than a grid of equal-sized
+cards: one primary-runway hero, optional Full Detail account runway, and compact
+secondary-limit rows. A temporarily missing saved primary remains visible but
+quiet while an available lane becomes the detail hero. The accepted
+three-provider overview must not change when detail is refined.
+
 ## Visual System
 
 - Use native macOS surfaces and system typography. Prefer quiet neutral grays,

@@ -25,7 +25,8 @@ enum TVPreviewFixtures {
             generatedAt: generatedAt,
             publishedAt: now.addingTimeInterval(-35),
             includesPartialFailure: fixture == "partial",
-            showsDistinctClosest: fixture == "closest"
+            showsDistinctClosest: fixture == "closest",
+            omitsOpenAIFiveHour: fixture == "missing-five-hour"
         )
         let status: UsageStatus = switch fixture {
         case "failure":
@@ -53,14 +54,15 @@ enum TVPreviewFixtures {
         generatedAt: Date,
         publishedAt: Date,
         includesPartialFailure: Bool,
-        showsDistinctClosest: Bool
+        showsDistinctClosest: Bool,
+        omitsOpenAIFiveHour: Bool
     ) -> CompanionSyncDocument {
         let limits = [
             UsageLimit(
                 provider: .openAI,
                 accountID: "openai-personal",
                 configuredAccountID: "openai-personal",
-                accountName: "Personal",
+                accountName: "personal@example.com",
                 label: "OpenAI weekly",
                 windowLabel: "Weekly",
                 unit: .percent,
@@ -73,7 +75,7 @@ enum TVPreviewFixtures {
                 provider: .openAI,
                 accountID: "openai-work",
                 configuredAccountID: "openai-work",
-                accountName: "Work",
+                accountName: "work@example.com",
                 label: "OpenAI weekly",
                 windowLabel: "Weekly",
                 unit: .percent,
@@ -86,7 +88,7 @@ enum TVPreviewFixtures {
                 provider: .openAI,
                 accountID: "openai-personal",
                 configuredAccountID: "openai-personal",
-                accountName: "Personal",
+                accountName: "personal@example.com",
                 label: "OpenAI 5-hour",
                 windowLabel: "5-hour",
                 unit: .percent,
@@ -134,7 +136,11 @@ enum TVPreviewFixtures {
                 resetsAt: generatedAt.addingTimeInterval(11.5 * 60 * 60),
                 confidence: .official
             ),
-        ]
+        ].filter { limit in
+            !omitsOpenAIFiveHour
+                || limit.provider != .openAI
+                || limit.windowLabel != "5-hour"
+        }
         var reports = Dictionary(grouping: limits, by: { "\($0.provider.rawValue):\($0.accountID)" })
             .compactMap { _, accountLimits -> StoredProviderReport? in
                 guard let limit = accountLimits.first else { return nil }
@@ -166,7 +172,22 @@ enum TVPreviewFixtures {
             snapshot: UsageSnapshot(generatedAt: generatedAt, limits: limits),
             reports: reports
         )
-        return CompanionSyncDocument(storedSnapshot: stored, publishedAt: publishedAt)
+        let widgetDisplayPreferences = omitsOpenAIFiveHour
+            ? WidgetDisplayPreferences(mainLimits: WidgetDisplayPreferences.defaultPreferences.mainLimits.map { preference in
+                guard preference.provider == .openAI else { return preference }
+                return WidgetMainLimitPreference(
+                    provider: preference.provider,
+                    window: preference.window,
+                    isVisible: preference.isVisible,
+                    sortOrder: preference.window == .fiveHour ? 0 : 1
+                )
+            })
+            : .defaultPreferences
+        return CompanionSyncDocument(
+            storedSnapshot: stored,
+            publishedAt: publishedAt,
+            widgetDisplayPreferences: widgetDisplayPreferences
+        )
     }
 }
 #endif

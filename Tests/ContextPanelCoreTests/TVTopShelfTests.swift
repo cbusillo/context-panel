@@ -383,13 +383,6 @@ import Testing
     #expect(value == 42)
 }
 
-@Test func tvCloudKitSubscriptionRegistrationIsVersionedAndIdempotent() {
-    #expect(TVCloudKitSubscriptionRegistrationPolicy.shouldRegister(storedVersion: 0))
-    #expect(!TVCloudKitSubscriptionRegistrationPolicy.shouldRegister(
-        storedVersion: TVCloudKitSubscriptionRegistrationPolicy.currentVersion
-    ))
-}
-
 @Test func tvCloudKitNotificationPolicyChecksSubscriptionContainerAndCurrentUser() {
     let expectedSubscriptionID = "companion-sync-updates"
     let expectedContainerIdentifier = "iCloud.com.example.contextpanel"
