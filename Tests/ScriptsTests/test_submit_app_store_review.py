@@ -188,6 +188,18 @@ class SubmittedReviewItemBlockedBySubmissionStateClient(SubmittedReviewItemClien
         return super().request(method, path, params, body, allowed)
 
 
+class MetadataSourcePlatformTests(unittest.TestCase):
+    def test_copy_from_platform_defaults_to_target_platform(self):
+        args = SimpleNamespace(platform="TV_OS", copy_from_platform=None)
+
+        self.assertEqual(submit_app_store_review.namespace_copy_from_platform(args), "TV_OS")
+
+    def test_copy_from_platform_can_select_existing_cross_platform_metadata(self):
+        args = SimpleNamespace(platform="TV_OS", copy_from_platform="MAC_OS")
+
+        self.assertEqual(submit_app_store_review.namespace_copy_from_platform(args), "MAC_OS")
+
+
 class PaginationTests(unittest.TestCase):
     def test_paginated_get_follows_next_link_query_parameters(self):
         class CursorClient:

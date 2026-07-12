@@ -46,6 +46,6 @@ jobs:
         run: >-
           scripts/validate-companion-builds.sh --configuration Release watchos
 
-      - name: Validate companion tvOS build
+      - name: Validate companion tvOS archive
         run: >-
-          scripts/validate-companion-builds.sh --configuration Release tvos
+          scripts/validate-companion-builds.sh --configuration Release --archive tvos

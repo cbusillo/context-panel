@@ -48,6 +48,7 @@ name: Ship
         options:
           - ios
           - visionos
+          - tvos
       testflight_beta:
         description: Distribute the uploaded build to TestFlight beta groups.
         required: true
@@ -162,6 +163,9 @@ jobs:
                 ;;
               visionos)
                 preflight_app_store_version VISION_OS
+                ;;
+              tvos)
+                preflight_app_store_version TV_OS
                 ;;
               *)
                 echo "unsupported companion_platform: ${{ inputs.companion_platform }}" >&2
