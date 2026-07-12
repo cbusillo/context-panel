@@ -134,7 +134,7 @@ import Testing
     }
 }
 
-@Test func tvEntitlementsStayReadOnlyWithCloudKitRequiredPushEnvironment() throws {
+@Test func tvEntitlementsSupportCloudKitPushAndTopShelfSharing() throws {
     let entitlements = try loadEntitlements("Config/ContextPanelTV.entitlements")
 
     let iCloudContainers = try #require(
@@ -144,7 +144,14 @@ import Testing
     let services = try #require(entitlements["com.apple.developer.icloud-services"] as? [String])
     #expect(services == ["CloudKit"])
     #expect(entitlements["aps-environment"] as? String == "$(APS_ENVIRONMENT)")
-    #expect(entitlements["com.apple.security.application-groups"] == nil)
+    #expect(
+        entitlements["com.apple.security.application-groups"] as? [String]
+            == ["group.com.shinycomputers.contextpanel"]
+    )
+    #expect(
+        entitlements["com.apple.developer.user-management"] as? [String]
+            == ["runs-as-current-user-with-user-independent-keychain"]
+    )
     #expect(entitlements["keychain-access-groups"] == nil)
     #expect(entitlements["com.apple.developer.ubiquity-container-identifiers"] == nil)
 }
@@ -343,19 +350,103 @@ import Testing
         "ContextPanelCoreTV",
         "ContextPanelCloudKitSyncTV",
         "ContextPanelTVSupport",
+        "ContextPanelTVTopShelfExtension",
     ])
     #expect(!appDependencies.contains("ContextPanelWidgetUICompanion"))
     #expect(!appDependencies.contains("ContextPanelSettingsUICompanion"))
     #expect(!appDependencies.contains("ContextPanelCompanionWidgetExtension"))
     #expect(!appDependencies.contains("ContextPanelWatch"))
+    let topShelfDependencySettings = try #require(
+        project.dependencySettings(
+            named: "ContextPanelTVTopShelfExtension",
+            in: "ContextPanelTV"
+        )
+    )
+    #expect(topShelfDependencySettings["embed"] as? String == "true")
 
     let plist = try loadInfoPlist("Config/ContextPanelTV-Info.plist")
     let urlTypes = try #require(plist["CFBundleURLTypes"] as? [[String: Any]])
     let schemes = urlTypes.flatMap { $0["CFBundleURLSchemes"] as? [String] ?? [] }
     #expect(schemes == ["contextpaneltv"])
-    #expect(plist["UIBackgroundModes"] == nil)
+    #expect(plist["UIBackgroundModes"] as? [String] == ["remote-notification"])
     #expect(plist["UISupportedInterfaceOrientations"] == nil)
     #expect(plist["WKApplication"] == nil)
+
+    let appEntitlements = try loadEntitlements("Config/ContextPanelTV.entitlements")
+    #expect(appEntitlements["aps-environment"] as? String == "$(APS_ENVIRONMENT)")
+    #expect(
+        appEntitlements["com.apple.developer.icloud-container-identifiers"] as? [String]
+            == ["iCloud.com.shinycomputers.contextpanel"]
+    )
+    #expect(appEntitlements["com.apple.developer.icloud-services"] as? [String] == ["CloudKit"])
+    #expect(
+        appEntitlements["com.apple.developer.user-management"] as? [String]
+            == ["runs-as-current-user-with-user-independent-keychain"]
+    )
+    #expect(
+        appEntitlements["com.apple.security.application-groups"] as? [String]
+            == ["group.com.shinycomputers.contextpanel"]
+    )
+    #expect(appEntitlements["com.apple.developer.ubiquity-container-identifiers"] == nil)
+    #expect(appEntitlements["keychain-access-groups"] == nil)
+
+    let topShelfTarget = try #require(project.target(named: "ContextPanelTVTopShelfExtension"))
+    #expect(topShelfTarget["type"] as? String == "app-extension")
+    #expect(topShelfTarget["platform"] as? String == "tvOS")
+    #expect(topShelfTarget["deploymentTarget"] as? String == "17.0")
+    let topShelfSettings = try #require(project.targetSettings(named: "ContextPanelTVTopShelfExtension"))
+    #expect(
+        topShelfSettings["PRODUCT_BUNDLE_IDENTIFIER"] as? String
+            == "com.shinycomputers.contextpanel.topshelf"
+    )
+    #expect(
+        topShelfSettings["CODE_SIGN_ENTITLEMENTS"] as? String
+            == "Config/ContextPanelTVTopShelf.entitlements"
+    )
+    #expect(
+        topShelfSettings["INFOPLIST_FILE"] as? String
+            == "Config/ContextPanelTVTopShelf-Info.plist"
+    )
+    #expect(topShelfSettings["TVOS_DEPLOYMENT_TARGET"] as? String == "17.0")
+    #expect(topShelfSettings["TARGETED_DEVICE_FAMILY"] as? String == "3")
+    #expect(topShelfSettings["SKIP_INSTALL"] as? String == "true")
+    #expect(topShelfSettings["APPLICATION_EXTENSION_API_ONLY"] as? String == "true")
+    let topShelfDependencies = try #require(project.dependencies(named: "ContextPanelTVTopShelfExtension"))
+    #expect(topShelfDependencies == ["ContextPanelCoreTV", "ContextPanelTVSupport"])
+    #expect(!topShelfDependencies.contains("ContextPanelCloudKitSyncTV"))
+
+    let topShelfReleaseSettings = try #require(
+        project.releaseTargetSettings(named: "ContextPanelTVTopShelfExtension")
+    )
+    #expect(topShelfReleaseSettings["CODE_SIGN_IDENTITY"] as? String == "Apple Distribution")
+    #expect(
+        topShelfReleaseSettings["PROVISIONING_PROFILE_SPECIFIER"] as? String
+            == "$(CONTEXT_PANEL_APP_STORE_TV_TOP_SHELF_PROFILE_SPECIFIER)"
+    )
+
+    let topShelfPlist = try loadInfoPlist("Config/ContextPanelTVTopShelf-Info.plist")
+    let topShelfExtension = try #require(topShelfPlist["NSExtension"] as? [String: Any])
+    #expect(
+        topShelfExtension["NSExtensionPointIdentifier"] as? String
+            == "com.apple.tv-top-shelf"
+    )
+    #expect(
+        topShelfExtension["NSExtensionPrincipalClass"] as? String
+            == "$(PRODUCT_MODULE_NAME).ContextPanelTVTopShelfProvider"
+    )
+
+    let topShelfEntitlements = try loadEntitlements("Config/ContextPanelTVTopShelf.entitlements")
+    #expect(
+        topShelfEntitlements["com.apple.security.application-groups"] as? [String]
+            == ["group.com.shinycomputers.contextpanel"]
+    )
+    #expect(
+        topShelfEntitlements["com.apple.developer.user-management"] as? [String]
+            == ["runs-as-current-user-with-user-independent-keychain"]
+    )
+    #expect(topShelfEntitlements["aps-environment"] == nil)
+    #expect(topShelfEntitlements["com.apple.developer.icloud-container-identifiers"] == nil)
+    #expect(topShelfEntitlements["com.apple.developer.icloud-services"] == nil)
 }
 
 @Test func refreshAgentDoesNotReferenceRetiredGoogleCredentialPaths() throws {
@@ -533,6 +624,36 @@ private struct ProjectYAML {
             index += 1
         }
         return dependencies
+    }
+
+    func dependencySettings(named dependencyName: String, in targetName: String) -> [String: Any]? {
+        guard let targetLine = firstLineIndex(matching: "  \(targetName):") else {
+            return nil
+        }
+        guard let dependenciesLine = firstLineIndex(
+            after: targetLine,
+            matching: "    dependencies:",
+            beforeIndentLessThan: 4
+        ) else {
+            return nil
+        }
+
+        var index = dependenciesLine + 1
+        while index < lines.count {
+            let line = lines[index]
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let indent = indentation(of: line)
+            guard !trimmed.isEmpty else {
+                index += 1
+                continue
+            }
+            if indent <= 4 { break }
+            if indent == 6, trimmed == "- target: \(dependencyName)" {
+                return mapping(after: index, indentation: 8)
+            }
+            index += 1
+        }
+        return nil
     }
 
     private func firstLineIndex(matching text: String) -> Int? {

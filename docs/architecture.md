@@ -185,6 +185,34 @@ rather than durable account configuration. Provider snapshot age and CloudKit
 receipt age remain separate so stale usage and delayed delivery do not become
 conflated.
 
+Top Shelf is a separate TVServices extension with no provider or CloudKit
+network authority. The containing tvOS app projects its current snapshot and
+device-local presentation mode into a purpose-built, privacy-filtered document
+in the existing companion App Group, then asks the system to reload Top Shelf.
+The extension reads that document immediately and generates provider cards in
+its own cache; missing and stale documents remain explicit rather than blocking
+the shelf on network work. CloudKit content-available pushes are handled only by
+the containing app as a best-effort refresh path and never replace foreground
+refresh or visible freshness labels. Both the app and extension run as the
+current Apple TV user so CloudKit, preferences, and the shared Top Shelf cache
+remain isolated when household profiles change. The app accepts only the known
+CloudKit subscription, rejects notifications owned by a different current user,
+and accepts a missing container field only because CloudKit may prune that
+nullable payload metadata. Fresh Top Shelf items expire at the shared snapshot
+freshness deadline so system-cached cards cannot continue presenting current
+copy after their source becomes stale. Background completion uses an unstructured
+deadline so a non-cooperative network request cannot hold the system callback
+open indefinitely.
+
+tvOS provider alerts use an opt-in app badge because notification title, body,
+and sound content are unavailable on tvOS. The badge is a coalesced count of
+providers currently limited or failed, is driven only by normalized snapshot
+state, and clears when providers recover or the snapshot is stale or unknown.
+A fixed badge-only local request also clears the count when the current snapshot
+reaches its freshness deadline without another background or foreground load.
+No account identifiers, account names, provider responses, or error payloads
+are written to the Top Shelf document or badge state.
+
 Limit warnings are evaluated from normalized `MainLimitSummary` capacity, not
 raw provider payloads. Local macOS notifications and outbound webhooks use
 separate delivery state so one channel cannot suppress the other. Webhook
