@@ -99,6 +99,95 @@ private let renderTestWidgetLinks = ContextPanelWidgetLinks(
     }
 }
 
+@MainActor
+@Test func providerRefreshAttentionKeepsHealthyLaneColors() throws {
+    let now = Date()
+    let expiredLimit = UsageLimit(
+        provider: .openAI,
+        accountID: "expired-openai",
+        accountName: "Expired OpenAI",
+        label: "Codex 5-hour",
+        windowLabel: "5-hour",
+        unit: .percent,
+        used: 0,
+        limit: 100,
+        resetsAt: now.addingTimeInterval(-60),
+        lastUpdatedAt: now.addingTimeInterval(-300),
+        confidence: .observed
+    )
+    let stored = StoredUsageSnapshot(
+        savedAt: now,
+        snapshot: UsageSnapshot(generatedAt: now, limits: [
+            expiredLimit,
+            UsageLimit(
+                provider: .openAI,
+                accountID: "current-openai",
+                accountName: "Current OpenAI",
+                label: "Codex 5-hour",
+                windowLabel: "5-hour",
+                unit: .percent,
+                used: 34,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(3_600),
+                lastUpdatedAt: now,
+                confidence: .observed
+            ),
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "current-claude",
+                accountName: "Claude",
+                label: "Claude weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 12,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(86_400),
+                lastUpdatedAt: now,
+                confidence: .observed
+            ),
+            UsageLimit(
+                provider: .google,
+                accountID: "current-google",
+                accountName: "Antigravity",
+                label: "Gemini weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 13,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(86_400),
+                lastUpdatedAt: now,
+                confidence: .observed
+            ),
+        ]),
+        reports: [StoredProviderReport(
+            provider: .openAI,
+            accountID: "expired-openai",
+            accountName: "Expired OpenAI",
+            generatedAt: now,
+            status: .failure,
+            errorMessage: "Every Code auth is no longer authorized for Codex usage."
+        )]
+    )
+    let document = CompanionSyncDocument(storedSnapshot: stored, publishedAt: now)
+    let snapshot = WidgetSnapshot.fromCompanionSync(
+        CompanionSyncLoadResult(document: document, status: document.companionStatus),
+        now: now
+    )
+    let view = ContextPanelWidgetContentView(
+        family: .systemLarge,
+        snapshot: snapshot,
+        displayPreferences: .defaultPreferences,
+        links: renderTestWidgetLinks
+    )
+    .cpwThemeVariant(.light)
+    .frame(width: 344, height: 344)
+    .background(CPWTheme.surface(variant: .light))
+
+    let image = try #require(renderedImage(from: view, width: 344, height: 344))
+    #expect(pixelCount(in: image, near: (74, 122, 91)) > 100)
+    #expect(pixelCount(in: image, near: (122, 98, 63)) > 5)
+}
+
 private var singleLaneWidgetPreferences: WidgetDisplayPreferences {
     var preferences = WidgetDisplayPreferences.defaultPreferences
     for index in preferences.mainLimits.indices {
@@ -216,6 +305,39 @@ private func nonBackgroundPixelCount(in image: CGImage, rows: Range<Int>) -> Int
         }
     }
     return changed
+}
+
+private func pixelCount(
+    in image: CGImage,
+    near target: (red: UInt8, green: UInt8, blue: UInt8),
+    tolerance: Int = 12
+) -> Int {
+    let width = image.width
+    let height = image.height
+    let bytesPerPixel = 4
+    let bytesPerRow = width * bytesPerPixel
+    var pixels = [UInt8](repeating: 0, count: height * bytesPerRow)
+    guard let context = CGContext(
+        data: &pixels,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: bytesPerRow,
+        space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ) else {
+        return 0
+    }
+
+    context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    return stride(from: 0, to: pixels.count, by: bytesPerPixel).reduce(into: 0) { count, offset in
+        let redDelta = abs(Int(pixels[offset]) - Int(target.red))
+        let greenDelta = abs(Int(pixels[offset + 1]) - Int(target.green))
+        let blueDelta = abs(Int(pixels[offset + 2]) - Int(target.blue))
+        if redDelta <= tolerance, greenDelta <= tolerance, blueDelta <= tolerance {
+            count += 1
+        }
+    }
 }
 
 private extension Range where Bound == Int {

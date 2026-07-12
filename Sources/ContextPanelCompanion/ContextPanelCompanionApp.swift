@@ -24,6 +24,7 @@ private struct CompanionWidgetRenderSignature: Equatable {
     let status: UsageStatus
     let message: String
     let refreshAttentionSummary: RefreshAttentionSummary?
+    let syncErrorMessage: String?
     let displayPreferences: WidgetDisplayPreferences
     let deliveryStatus: CompanionSyncDeliveryStatus?
 
@@ -49,6 +50,7 @@ private struct CompanionWidgetRenderSignature: Equatable {
         status = snapshot.status
         message = snapshot.message
         refreshAttentionSummary = snapshot.refreshAttentionSummary
+        syncErrorMessage = snapshot.syncErrorMessage
         self.displayPreferences = displayPreferences
         deliveryStatus = result.transportMetadata?.deliveryStatus
     }
@@ -65,7 +67,8 @@ private struct CompanionWidgetRenderSignature: Equatable {
             fastModeForecastSettings: fastModeForecastSettings,
             status: status,
             message: message,
-            refreshAttentionSummary: refreshAttentionSummary
+            refreshAttentionSummary: refreshAttentionSummary,
+            syncErrorMessage: syncErrorMessage
         )
     }
 
@@ -82,6 +85,7 @@ private struct CompanionWidgetRenderSignature: Equatable {
             && lhs.status == rhs.status
             && lhs.message == rhs.message
             && lhs.refreshAttentionSummary == rhs.refreshAttentionSummary
+            && lhs.syncErrorMessage == rhs.syncErrorMessage
             && lhs.displayPreferences == rhs.displayPreferences
             && lhs.deliveryStatus == rhs.deliveryStatus
     }
