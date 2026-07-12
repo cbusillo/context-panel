@@ -1400,7 +1400,7 @@ import Testing
     #expect(store.savedAccountID == "claude-oauth-default")
 }
 
-@Test func claudeOAuthConnectorTreatsRefreshRejectionAsReauthRequired() async throws {
+@Test func claudeOAuthConnectorTreatsInvalidRefreshRequestAsHTTPFailure() async throws {
     let credentials = #"{"accessToken":"old-access","refreshToken":"refresh-secret","expiresAt":"2000-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
     let errorBody = #"{"type":"error","error":{"type":"invalid_request_error","message":"Invalid request format"},"request_id":"request-secret"}"#.data(using: .utf8)!
     let http = StubHTTPClient(responses: [
@@ -1416,8 +1416,27 @@ import Testing
     let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
 
     #expect(result.reports[0].status == .failure)
+    #expect(result.reports[0].errorMessage == "Claude OAuth refresh returned HTTP 400; raw body redacted")
+    #expect(result.reports[0].errorMessage?.contains("request-secret") == false)
+}
+
+@Test func claudeOAuthConnectorTreatsInvalidGrantAsReauthRequired() async throws {
+    let credentials = #"{"accessToken":"old-access","refreshToken":"refresh-secret","expiresAt":"2000-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
+    let errorBody = #"{"error":"invalid_grant","error_description":"Refresh token has expired","request_id":"request-secret"}"#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 400, data: errorBody),
+    ])
+    let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
+    let connector = ClaudeOAuthUsageConnector(
+        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
+        httpClient: http,
+        credentialStore: store
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+
+    #expect(result.reports[0].status == .failure)
     #expect(result.reports[0].errorMessage == "Claude OAuth session has expired. Sign in again from Settings.")
-    #expect(result.reports[0].errorMessage?.contains("400") == false)
     #expect(result.reports[0].errorMessage?.contains("request-secret") == false)
 }
 

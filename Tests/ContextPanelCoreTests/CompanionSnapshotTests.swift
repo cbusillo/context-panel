@@ -1579,7 +1579,7 @@ import Testing
     #expect(CompanionSyncStore(documentURL: localURL).load().document == localDocument)
 }
 
-@Test func companionWidgetSnapshotTreatsMirrorDelayAsSyncDelayNotProviderRefresh() {
+@Test func companionSnapshotWithExtendedAgeTreatsMirrorDelayAsTransportOnly() {
     let generatedAt = Date(timeIntervalSince1970: 3_337)
     let now = generatedAt.addingTimeInterval(SnapshotFreshness.widgetMaximumAge + 30)
     let document = CompanionSyncDocument(
@@ -1606,6 +1606,36 @@ import Testing
     #expect(widget.status == .close)
     #expect(widget.refreshAttentionSummary == nil)
     #expect(widget.message == "Usage data is current.")
+}
+
+@Test func companionWidgetSnapshotDoesNotMaskExpiredHealthyMirrorAsDeliveryDelay() {
+    let generatedAt = Date(timeIntervalSince1970: 3_337)
+    let now = generatedAt.addingTimeInterval(SnapshotFreshness.widgetMaximumAge + 30)
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: generatedAt),
+        publishedAt: generatedAt
+    )
+
+    let widget = WidgetSnapshot.fromCompanionSync(
+        CompanionSyncLoadResult(
+            document: document,
+            status: .healthy,
+            transportMetadata: CompanionSyncTransportMetadata(
+                source: .appGroup,
+                receivedAt: generatedAt,
+                mirroredAt: generatedAt,
+                deliveryStatus: .delayed
+            )
+        ),
+        now: now,
+        stalenessPolicy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.widgetMaximumAge)
+    )
+
+    #expect(widget.state == .stale)
+    #expect(widget.status == .stale)
+    #expect(widget.promptCacheWidgetState == .stale)
+    #expect(widget.refreshAttentionSummary != nil)
+    #expect(widget.message != "Usage data is current.")
 }
 
 @Test func companionWidgetSnapshotKeepsProviderStaleEvenWhenTransportIsDelayed() {

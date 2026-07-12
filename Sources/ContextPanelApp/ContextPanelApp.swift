@@ -527,10 +527,14 @@ struct SettingsPane: View {
                                     .font(.system(size: 11, weight: .semibold))
                                     .foregroundStyle(CPTheme.tertiaryText)
                             } else if model.hasSavedAuthorization(account) {
+                                let authorizationSummary = model.authorizationSummary(
+                                    for: account,
+                                    storedSnapshot: appModel.storedSnapshot
+                                )
                                 HStack(spacing: 8) {
-                                    Text(model.authorizationSavedText(for: account))
+                                    Text(authorizationSummary.text)
                                         .font(.system(size: 11, weight: .semibold))
-                                        .foregroundStyle(CPTheme.statusColor(.healthy))
+                                        .foregroundStyle(CPTheme.statusColor(authorizationSummary.status))
                                     if model.canAuthorizeAuthFile(for: account) {
                                         Button("Change") { authorizeAuthFile(for: account) }
                                             .buttonStyle(.bordered)
@@ -1683,15 +1687,27 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         account.connectorKind == .claudeOAuthUsage
     }
 
-    func authorizationSavedText(for account: LocalProviderAccountConfiguration) -> String {
-        switch account.connectorKind {
-        case .claudeOAuthUsage:
-            return "Connected"
-        case .googleAntigravityQuota:
-            return "Keychain login"
-        case .codexRateLimits:
-            return "File saved"
+    func authorizationSummary(
+        for account: LocalProviderAccountConfiguration,
+        storedSnapshot: StoredUsageSnapshot?
+    ) -> SettingsAccountRefreshSummary {
+        if account.connectorKind == .claudeOAuthUsage,
+           let report = storedSnapshot?.reports
+            .filter({ account.matchesProviderReport($0) })
+            .max(by: { $0.generatedAt < $1.generatedAt }),
+           report.requiresCredentialReconnect {
+            return SettingsAccountRefreshSummary(text: "Reconnect required", status: .failure)
         }
+
+        let text = switch account.connectorKind {
+        case .claudeOAuthUsage:
+            "Connected"
+        case .googleAntigravityQuota:
+            "Keychain login"
+        case .codexRateLimits:
+            "File saved"
+        }
+        return SettingsAccountRefreshSummary(text: text, status: .healthy)
     }
 
     func disconnectOAuth(for account: LocalProviderAccountConfiguration) {
@@ -1757,20 +1773,6 @@ final class SettingsPaneModel: NSObject, ObservableObject {
             accountText = successfulReports.first?.accountName ?? account.displayName
         }
         return SettingsAccountRefreshSummary(text: "Last \(refreshSubject) healthy: \(accountText)", status: .healthy)
-    }
-
-    func shouldOfferOAuthReconnect(
-        for account: LocalProviderAccountConfiguration,
-        storedSnapshot: StoredUsageSnapshot?
-    ) -> Bool {
-        guard account.connectorKind == .claudeOAuthUsage else {
-            return false
-        }
-        guard let reports = storedSnapshot?.reports.filter({ account.matchesProviderReport($0) }), !reports.isEmpty else {
-            return false
-        }
-        guard !reports.reconnectBlockingFailures(coveredBy: storedSnapshot?.snapshot.limits ?? []).isEmpty else { return false }
-        return !reports.contains(where: { $0.hasProviderConfigurationFailure })
     }
 
     private func refreshSubjectText(for account: LocalProviderAccountConfiguration) -> String {

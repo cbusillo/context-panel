@@ -165,14 +165,6 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         }
 
         let companion = document.snapshot
-        let state: WidgetSnapshotState = switch result.status {
-        case .failure:
-            .failure
-        case .stale:
-            .stale
-        default:
-            .ready
-        }
         let limits = companion.limits.map(\.usageLimit)
         let reports = companion.providerStatuses.map(\.storedProviderReport)
         let promptCacheObservations = companion.promptCacheSummaries.map(\.promptCacheObservation)
@@ -182,16 +174,32 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             reports: reports,
             promptCacheObservations: promptCacheObservations
         )
-        let status = widgetStatus(for: stored.snapshot, fallback: result.status)
+        let policyStatus = stalenessPolicy.status(for: stored, now: now)
+        let effectiveStatus: UsageStatus = if result.status == .failure {
+            .failure
+        } else if result.status == .stale || policyStatus == .stale {
+            .stale
+        } else {
+            result.status
+        }
+        let state: WidgetSnapshotState = switch effectiveStatus {
+        case .failure:
+            .failure
+        case .stale:
+            .stale
+        default:
+            .ready
+        }
+        let status = widgetStatus(for: stored.snapshot, fallback: effectiveStatus)
         let refreshAttentionSummary = stalenessPolicy.refreshAttentionSummary(for: stored, now: now)
-        let syncDeliveryDelayed = result.transportMetadata?.deliveryStatus == .delayed && result.status != .stale
-        let providerDataStale = result.status == .stale
+        let syncDeliveryDelayed = result.transportMetadata?.deliveryStatus == .delayed && effectiveStatus != .stale
+        let providerDataStale = effectiveStatus == .stale
         let promptCacheState: PromptCacheWidgetState = promptCacheObservations.isEmpty
             ? .unavailable
-            : (providerDataStale || result.status == .failure ? .stale : .available)
+            : (providerDataStale || effectiveStatus == .failure ? .stale : .available)
 
         return WidgetSnapshot(
-            state: syncDeliveryDelayed && result.status != .failure ? .ready : state,
+            state: syncDeliveryDelayed && effectiveStatus != .failure ? .ready : state,
             generatedAt: companion.generatedAt,
             limits: limits,
             reports: reports,
@@ -201,7 +209,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             fastModeForecastSettings: document.fastModeForecastSettings,
             status: status,
             message: message(
-                state: syncDeliveryDelayed && result.status != .failure ? .ready : state,
+                state: syncDeliveryDelayed && effectiveStatus != .failure ? .ready : state,
                 stored: stored,
                 refreshAttentionSummary: syncDeliveryDelayed ? nil : refreshAttentionSummary
             ),
