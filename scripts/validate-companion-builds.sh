@@ -157,6 +157,11 @@ validate_archive_contents() {
 			echo "tvOS companion archive is missing embedded Top Shelf extension: $top_shelf_path" >&2
 			exit 1
 		fi
+		if ! /usr/bin/plutil -extract UIRequiredDeviceCapabilities json -o - "$top_shelf_path/Info.plist" 2>/dev/null \
+			| /usr/bin/grep -q '"arm64"'; then
+			echo "tvOS Top Shelf extension is missing the required arm64 device capability" >&2
+			exit 1
+		fi
 		if [[ ! -f "$app_path/Assets.car" ]]; then
 			echo "tvOS companion archive is missing compiled brand assets: $app_path/Assets.car" >&2
 			exit 1

@@ -434,6 +434,7 @@ import Testing
         topShelfExtension["NSExtensionPrincipalClass"] as? String
             == "$(PRODUCT_MODULE_NAME).ContextPanelTVTopShelfProvider"
     )
+    #expect(topShelfPlist["UIRequiredDeviceCapabilities"] as? [String] == ["arm64"])
 
     let topShelfEntitlements = try loadEntitlements("Config/ContextPanelTVTopShelf.entitlements")
     #expect(
