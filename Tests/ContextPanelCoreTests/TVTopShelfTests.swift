@@ -302,8 +302,8 @@ import Testing
     let containerURL = URL(fileURLWithPath: "/group", isDirectory: true)
     let locations = TVTopShelfSharedLocations(containerURL: containerURL)
 
-    #expect(locations.rootDirectory.path == "/group/Context Panel/TV")
-    #expect(locations.documentURL.path == "/group/Context Panel/TV/top-shelf.json")
+    #expect(locations.rootDirectory.path == "/group/Library/Caches/Context Panel/TV")
+    #expect(locations.documentURL.path == "/group/Library/Caches/Context Panel/TV/top-shelf.json")
 }
 
 @Test func tvProviderAlertsCoalesceWorseningProvidersAndDeduplicateStableState() {
@@ -381,13 +381,6 @@ import Testing
 @Test func tvAsyncDeadlineReturnsCompletedWork() async {
     let value = await TVAsyncDeadline.value(timeout: .seconds(1)) { 42 }
     #expect(value == 42)
-}
-
-@Test func tvCloudKitSubscriptionRegistrationIsVersionedAndIdempotent() {
-    #expect(TVCloudKitSubscriptionRegistrationPolicy.shouldRegister(storedVersion: 0))
-    #expect(!TVCloudKitSubscriptionRegistrationPolicy.shouldRegister(
-        storedVersion: TVCloudKitSubscriptionRegistrationPolicy.currentVersion
-    ))
 }
 
 @Test func tvCloudKitNotificationPolicyChecksSubscriptionContainerAndCurrentUser() {

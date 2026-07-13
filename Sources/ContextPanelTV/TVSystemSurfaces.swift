@@ -3,6 +3,7 @@ import ContextPanelCloudKitSync
 import ContextPanelCore
 import ContextPanelTVSupport
 import Foundation
+import OSLog
 @preconcurrency import TVServices
 import UIKit
 @preconcurrency import UserNotifications
@@ -22,6 +23,10 @@ extension Notification.Name {
 actor TVSystemSurfaceCoordinator {
     static let shared = TVSystemSurfaceCoordinator()
     private static let badgeExpiryRequestIdentifier = "context-panel-provider-badge-expiry"
+    private static let logger = Logger(
+        subsystem: "com.shinycomputers.contextpanel",
+        category: "TVSystemSurfaces"
+    )
 
     private let topShelfStore: TVTopShelfDocumentStore?
     private let alertStateStore: TVProviderAlertStateStore
@@ -106,6 +111,10 @@ actor TVSystemSurfaceCoordinator {
                 ))
                 TVTopShelfContentProvider.topShelfContentDidChange()
             } catch {
+                let error = error as NSError
+                Self.logger.error(
+                    "Top Shelf save failed (\(error.domain, privacy: .public) \(error.code, privacy: .public))"
+                )
                 notices.append("Top Shelf could not save its latest provider runway.")
             }
         } else {
@@ -195,36 +204,40 @@ actor TVSystemSurfaceCoordinator {
 @MainActor
 final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
     private let remoteStore = CompanionCloudKitSyncStoreFactory.make()
+    private var subscriptionRegistrationTask: Task<Void, Never>?
 
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         application.registerForRemoteNotifications()
-        Task { [remoteStore] in
-            let defaults = UserDefaults.standard
-            let storedVersion = defaults.integer(forKey: TVPreferenceKeys.cloudKitSubscriptionVersion)
-            guard TVCloudKitSubscriptionRegistrationPolicy.shouldRegister(
-                storedVersion: storedVersion
-            ) else {
-                return
-            }
-
-            let outcome = await remoteStore.registerSubscription()
-            if outcome.succeeded {
-                defaults.set(
-                    TVCloudKitSubscriptionRegistrationPolicy.currentVersion,
-                    forKey: TVPreferenceKeys.cloudKitSubscriptionVersion
-                )
-                defaults.removeObject(forKey: TVPreferenceKeys.cloudKitSubscriptionError)
-            } else {
-                defaults.set(
-                    outcome.errorMessage ?? "CloudKit background updates could not be registered.",
-                    forKey: TVPreferenceKeys.cloudKitSubscriptionError
-                )
-            }
-        }
+        registerCloudKitSubscription()
         return true
+    }
+
+    func applicationDidBecomeActive(_ application: UIApplication) {
+        application.registerForRemoteNotifications()
+        registerCloudKitSubscription()
+    }
+
+    func application(
+        _ application: UIApplication,
+        didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+    ) {
+        UserDefaults.standard.removeObject(
+            forKey: TVPreferenceKeys.remoteNotificationRegistrationError
+        )
+    }
+
+    func application(
+        _ application: UIApplication,
+        didFailToRegisterForRemoteNotificationsWithError error: Error
+    ) {
+        let error = error as NSError
+        UserDefaults.standard.set(
+            "Remote notification registration failed (\(error.domain) \(error.code)).",
+            forKey: TVPreferenceKeys.remoteNotificationRegistrationError
+        )
     }
 
     func application(
@@ -270,6 +283,25 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
             containerIdentifier: notification.containerIdentifier,
             subscriptionOwnerRecordName: notification.subscriptionOwnerUserRecordID?.recordName
         )
+    }
+
+    private func registerCloudKitSubscription() {
+        guard subscriptionRegistrationTask == nil else { return }
+        let defaults = UserDefaults.standard
+
+        subscriptionRegistrationTask = Task { [weak self, remoteStore] in
+            let outcome = await remoteStore.registerSubscription()
+            guard let self else { return }
+            if outcome.succeeded {
+                defaults.removeObject(forKey: TVPreferenceKeys.cloudKitSubscriptionError)
+            } else {
+                defaults.set(
+                    outcome.errorMessage ?? "CloudKit background updates could not be registered.",
+                    forKey: TVPreferenceKeys.cloudKitSubscriptionError
+                )
+            }
+            subscriptionRegistrationTask = nil
+        }
     }
 }
 

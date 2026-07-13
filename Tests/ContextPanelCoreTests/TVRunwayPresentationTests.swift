@@ -20,6 +20,7 @@ import Testing
     #expect(weekly.accountCountText == "2 accounts")
     #expect(weekly.accountNames == ["Personal", "Work"])
     #expect(weekly.metrics.count == 2)
+    #expect(openAI.accountNames == ["Personal", "Work"])
 }
 
 @Test func tvRunwayPresentationModesRemoveSensitiveDetail() throws {
@@ -30,7 +31,9 @@ import Testing
     let projectLane = try #require(
         projectOnly.sections.first { $0.provider == .openAI }?.lanes.first { $0.title == "Weekly" }
     )
+    let projectSection = try #require(projectOnly.sections.first { $0.provider == .openAI })
     #expect(projectLane.accountNames.isEmpty)
+    #expect(projectSection.accountNames.isEmpty)
     #expect(projectLane.exactCapacityText == nil)
     #expect(projectLane.accountCountText == "2 accounts")
     #expect(projectLane.metrics.count == 1)
@@ -40,7 +43,9 @@ import Testing
     let countsLane = try #require(
         countsOnly.sections.first { $0.provider == .openAI }?.lanes.first { $0.title == "Weekly" }
     )
+    let countsSection = try #require(countsOnly.sections.first { $0.provider == .openAI })
     #expect(countsLane.accountNames.isEmpty)
+    #expect(countsSection.accountNames.isEmpty)
     #expect(countsLane.exactCapacityText == nil)
     #expect(countsLane.accountCountText == nil)
     #expect(countsLane.resetText == nil)
@@ -208,6 +213,46 @@ import Testing
     #expect(openAI.closestLane?.title == "5-hour")
     #expect(openAI.closestLane?.remainingPercent == 15)
     #expect(openAI.lanes.prefix(2).map(\.title) == ["Weekly", "5-hour"])
+    #expect(openAI.secondaryLanes.map(\.title) == ["5-hour"])
+    #expect(openAI.detailPrimaryLane?.title == "Weekly")
+    #expect(openAI.detailSecondaryLanes.map(\.title) == ["5-hour"])
+}
+
+@Test func tvRunwayFullDetailShowsSafeEmailAccountIdentity() throws {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: now,
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "personal",
+                accountName: "chris@example.com",
+                label: "OpenAI weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 10,
+                limit: 100
+            ),
+        ],
+        status: .healthy,
+        message: "Synced"
+    )
+
+    let fullDetail = TVRunwayPresentation(snapshot: snapshot, mode: .fullDetail, now: now)
+    let fullSection = try #require(fullDetail.sections.first { $0.provider == .openAI })
+    #expect(fullSection.accountNames == ["chris@example.com"])
+    #expect(fullSection.primaryLane?.accountNames == ["chris@example.com"])
+
+    let hidden = TVRunwayPresentation(snapshot: snapshot, mode: .projectOnly, now: now)
+    let hiddenSection = try #require(hidden.sections.first { $0.provider == .openAI })
+    #expect(hiddenSection.accountNames.isEmpty)
+    #expect(hiddenSection.primaryLane?.accountNames.isEmpty == true)
+
+    let countsOnly = TVRunwayPresentation(snapshot: snapshot, mode: .countsOnly, now: now)
+    let countsSection = try #require(countsOnly.sections.first { $0.provider == .openAI })
+    #expect(countsSection.accountNames.isEmpty)
+    #expect(countsSection.primaryLane?.accountNames.isEmpty == true)
 }
 
 @Test func tvRunwayPresentationFollowsSavedProviderOrder() throws {
@@ -371,6 +416,9 @@ import Testing
     #expect(openAI.primaryLane?.remainingPercent == nil)
     #expect(openAI.closestLane?.title == "5-hour")
     #expect(openAI.lanes.prefix(2).map(\.title) == ["Weekly", "5-hour"])
+    #expect(openAI.detailPrimaryLane?.title == "5-hour")
+    #expect(openAI.detailPrimaryLane?.remainingPercent == 15)
+    #expect(openAI.detailSecondaryLanes.map(\.title) == ["Weekly"])
 }
 
 @Test func tvSyncReceiptStoreRejectsAReceiptForAnotherDocument() throws {

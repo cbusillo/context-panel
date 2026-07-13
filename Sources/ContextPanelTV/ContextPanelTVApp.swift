@@ -20,6 +20,7 @@ private struct TVRootView: View {
     @AppStorage(TVPreferenceKeys.presentationMode) private var presentationModeRawValue = TVPresentationMode.fullDetail.rawValue
     @AppStorage(TVPreferenceKeys.providerBadgesEnabled) private var providerBadgesEnabled = false
     @AppStorage(TVPreferenceKeys.cloudKitSubscriptionError) private var subscriptionErrorMessage = ""
+    @AppStorage(TVPreferenceKeys.remoteNotificationRegistrationError) private var remoteNotificationErrorMessage = ""
     @State private var model = TVSyncModel()
     @State private var navigationPath: [String] = []
     @State private var pendingProviderRawValue: String?
@@ -66,15 +67,15 @@ private struct TVRootView: View {
 
     private var visibleNoticeMessage: String? {
         model.syncNoticeMessage
-            ?? subscriptionNoticeMessage
+            ?? backgroundUpdateNoticeMessage
             ?? model.systemSurfaceNoticeMessage
             ?? badgeAuthorizationNoticeMessage
             ?? model.systemSurfaceEventMessage
     }
 
-    private var subscriptionNoticeMessage: String? {
-        guard !subscriptionErrorMessage.isEmpty else { return nil }
-        return "Background updates are unavailable. Refresh still works while Context Panel is open."
+    private var backgroundUpdateNoticeMessage: String? {
+        guard !subscriptionErrorMessage.isEmpty || !remoteNotificationErrorMessage.isEmpty else { return nil }
+        return "Automatic updates couldn’t be enabled yet. Context Panel retries when it opens, and Refresh still works now."
     }
 
     var body: some View {
@@ -761,17 +762,18 @@ private struct TVProviderDetailView: View {
     let snapshotState: WidgetSnapshotState
     let generatedAt: Date
 
-    private var columns: [GridItem] {
-        let count = section.lanes.count == 1 ? 1 : min(section.lanes.count, 3)
-        return Array(
-            repeating: GridItem(.flexible(minimum: 360, maximum: 620), spacing: 32, alignment: .top),
-            count: count
-        )
+    private var primaryMetrics: [TVRunwayMetric] {
+        guard mode == .fullDetail,
+              let primaryLane = section.detailPrimaryLane,
+              primaryLane.metrics.count > 1 else {
+            return []
+        }
+        return primaryLane.metrics
     }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 44) {
+            VStack(alignment: .leading, spacing: 36) {
                 HStack(spacing: 16) {
                     RoundedRectangle(cornerRadius: 4, style: .continuous)
                         .fill(TVTheme.providerColor(section.provider))
@@ -781,35 +783,102 @@ private struct TVProviderDetailView: View {
                     Text(section.status.tvStatusLabel)
                         .font(.title3.weight(.semibold))
                         .foregroundStyle(TVTheme.statusColor(section.status))
+                    Spacer()
+                    Text(section.trackedWindowText)
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
                 }
 
                 TVFreshnessNotice(state: snapshotState, generatedAt: generatedAt)
 
-                LazyVGrid(columns: columns, alignment: .center, spacing: 32) {
-                    ForEach(section.lanes) { lane in
+                if let primaryLane = section.detailPrimaryLane {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("Primary runway")
+                            .font(.title2.weight(.bold))
+                            .accessibilityAddTraits(.isHeader)
+
                         NavigationLink {
                             TVRunwayDetailView(
-                                lane: lane,
+                                lane: primaryLane,
                                 mode: mode,
                                 snapshotState: snapshotState,
                                 generatedAt: generatedAt
                             )
                         } label: {
-                            TVRunwayCard(lane: lane, mode: mode)
+                            TVProviderPrimaryCard(lane: primaryLane, mode: mode)
                         }
                         .buttonStyle(TVFocusButtonStyle())
                         .focusEffectDisabled()
                     }
                 }
+
+                if !section.accountNames.isEmpty && primaryMetrics.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(section.accountNames.count == 1 ? "Account" : "Accounts")
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
+                        Text(section.accountNames.joined(separator: " · "))
+                            .font(.title3.weight(.medium))
+                            .lineLimit(2)
+                    }
+                    .padding(26)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        Color.white.opacity(0.055),
+                        in: RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    )
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(accountNamesAccessibilityLabel)
+                }
+
+                if !primaryMetrics.isEmpty {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("Account runway")
+                            .font(.title2.weight(.bold))
+                            .accessibilityAddTraits(.isHeader)
+
+                        ForEach(primaryMetrics) { metric in
+                            TVMetricRow(metric: metric, provider: section.provider)
+                        }
+                    }
+                }
+
+                if !section.detailSecondaryLanes.isEmpty {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("Other limits")
+                            .font(.title2.weight(.bold))
+                            .accessibilityAddTraits(.isHeader)
+
+                        ForEach(section.detailSecondaryLanes) { lane in
+                            NavigationLink {
+                                TVRunwayDetailView(
+                                    lane: lane,
+                                    mode: mode,
+                                    snapshotState: snapshotState,
+                                    generatedAt: generatedAt
+                                )
+                            } label: {
+                                TVProviderLaneRow(lane: lane, mode: mode)
+                            }
+                            .buttonStyle(TVFocusButtonStyle())
+                            .focusEffectDisabled()
+                        }
+                    }
+                }
             }
-            .padding(.horizontal, 84)
-            .padding(.vertical, 72)
+            .padding(.horizontal, 96)
+            .padding(.vertical, 64)
         }
         .background(TVTheme.background.ignoresSafeArea())
     }
+
+    private var accountNamesAccessibilityLabel: String {
+        let heading = section.accountNames.count == 1 ? "Account" : "Accounts"
+        return ([heading] + section.accountNames).joined(separator: ", ")
+    }
 }
 
-private struct TVRunwayCard: View {
+private struct TVProviderPrimaryCard: View {
     @Environment(\.isFocused) private var isFocused
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -817,56 +886,47 @@ private struct TVRunwayCard: View {
     let mode: TVPresentationMode
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(alignment: .firstTextBaseline) {
+        HStack(alignment: .center, spacing: 48) {
+            VStack(alignment: .leading, spacing: 16) {
                 Text(lane.title)
-                    .font(.title3.weight(.semibold))
-                    .lineLimit(1)
-                Spacer(minLength: 16)
+                    .font(.system(size: 48, weight: .bold, design: .rounded))
+                    .lineLimit(2)
                 Text(lane.statusText)
-                    .font(.callout.weight(.semibold))
+                    .font(.title3.weight(.semibold))
                     .foregroundStyle(TVTheme.statusColor(lane.status))
+
+                if let metadataText {
+                    Text(metadataText)
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
             }
 
-            if let remainingPercent = lane.remainingPercent {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("\(remainingPercent)%")
-                        .font(.system(size: mode == .countsOnly ? 84 : 76, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                    Text("left")
-                        .font(.title3)
+            Spacer(minLength: 32)
+
+            VStack(alignment: .trailing, spacing: 20) {
+                if let remainingPercent = lane.remainingPercent {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("\(remainingPercent)%")
+                            .font(.system(size: mode == .countsOnly ? 92 : 86, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                        Text("left")
+                            .font(.title2)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text(lane.kind == .accountStatus ? "No fresh capacity" : "Unknown")
+                        .font(.system(size: 48, weight: .bold, design: .rounded))
                         .foregroundStyle(.secondary)
                 }
-            } else {
-                Text(lane.kind == .accountStatus ? "No fresh capacity" : "Unknown")
-                    .font(.system(size: 52, weight: .bold, design: .rounded))
-                    .foregroundStyle(.secondary)
-            }
 
-            TVCapacityBar(ratio: lane.capacityRatio, provider: lane.provider)
-
-            if mode != .countsOnly {
-                VStack(alignment: .leading, spacing: 6) {
-                    if let accountCountText = lane.accountCountText {
-                        Text(accountCountText)
-                    }
-                    if let resetText = lane.resetText {
-                        Text(resetText)
-                    }
-                    if let exactCapacityText = lane.exactCapacityText {
-                        Text(exactCapacityText)
-                    }
-                    if let detailText = lane.detailText {
-                        Text(detailText)
-                    }
-                }
-                .font(.callout.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
+                TVCapacityBar(ratio: lane.capacityRatio, provider: lane.provider)
+                    .frame(width: 620)
             }
         }
-        .padding(32)
-        .frame(maxWidth: .infinity, minHeight: 330, alignment: .topLeading)
+        .padding(36)
+        .frame(maxWidth: .infinity, minHeight: 250, alignment: .leading)
         .background(
             LinearGradient(
                 colors: [
@@ -893,6 +953,13 @@ private struct TVRunwayCard: View {
         .accessibilityHint("Open \(lane.title) details")
     }
 
+    private var metadataText: String? {
+        guard mode != .countsOnly else { return nil }
+        let components = [lane.accountCountText, lane.resetText, lane.exactCapacityText, lane.detailText]
+            .compactMap { $0 }
+        return components.isEmpty ? nil : components.joined(separator: " · ")
+    }
+
     private var accessibilityLabel: String {
         var components = [lane.provider.displayName, lane.title, lane.statusText]
         if let remainingPercent = lane.remainingPercent {
@@ -911,6 +978,97 @@ private struct TVRunwayCard: View {
             components.append(detailText)
         }
         return components.joined(separator: ", ")
+    }
+}
+
+private struct TVProviderLaneRow: View {
+    @Environment(\.isFocused) private var isFocused
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    let lane: TVRunwayLane
+    let mode: TVPresentationMode
+
+    var body: some View {
+        HStack(spacing: 32) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(lane.title)
+                    .font(.title2.weight(.semibold))
+                    .lineLimit(2)
+                if let metadataText {
+                    Text(metadataText)
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: 6) {
+                if let remainingPercent = lane.remainingPercent {
+                    Text("\(remainingPercent)% left")
+                        .font(.title2.bold().monospacedDigit())
+                } else {
+                    Text(lane.kind == .accountStatus ? "No fresh capacity" : "Unknown")
+                        .font(.title2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                Text(lane.statusText)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(TVTheme.statusColor(lane.status))
+            }
+        }
+        .padding(28)
+        .frame(maxWidth: .infinity, minHeight: 126, alignment: .leading)
+        .background(
+            LinearGradient(
+                colors: [
+                    TVTheme.providerColor(lane.provider).opacity(0.12),
+                    Color.white.opacity(0.045),
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            ),
+            in: RoundedRectangle(cornerRadius: 22, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(
+                    isFocused ? Color.white.opacity(0.9) : Color.white.opacity(0.08),
+                    lineWidth: isFocused ? 3 : 1
+                )
+        }
+        .scaleEffect(isFocused && !reduceMotion ? 1.012 : 1)
+        .shadow(color: .black.opacity(isFocused ? 0.36 : 0.1), radius: isFocused ? 20 : 6, y: 10)
+        .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.8), value: isFocused)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint("Open \(lane.title) details")
+    }
+
+    private var metadataText: String? {
+        guard mode != .countsOnly else { return nil }
+        let components = [lane.accountCountText, lane.resetText, lane.exactCapacityText, lane.detailText]
+            .compactMap { $0 }
+        return components.isEmpty ? nil : components.joined(separator: " · ")
+    }
+
+    private var accessibilityLabel: String {
+        var components = [lane.provider.displayName, lane.title, lane.statusText]
+        if let remainingPercent = lane.remainingPercent {
+            components.append("\(remainingPercent) percent left")
+        }
+        if let accessibilityResetText = lane.accessibilityResetText {
+            components.append(accessibilityResetText)
+        }
+        components.append(contentsOf: metadataComponents)
+        return components.joined(separator: ", ")
+    }
+
+    private var metadataComponents: [String] {
+        guard mode != .countsOnly else { return [] }
+        return [lane.accountCountText, lane.exactCapacityText, lane.detailText]
+            .compactMap { $0 }
     }
 }
 
@@ -1001,6 +1159,7 @@ private struct TVRunwayDetailView: View {
                     VStack(alignment: .leading, spacing: 18) {
                         Text("Capacity details")
                             .font(.title2.weight(.bold))
+                            .accessibilityAddTraits(.isHeader)
 
                         ForEach(lane.metrics) { metric in
                             TVMetricRow(metric: metric, provider: lane.provider)

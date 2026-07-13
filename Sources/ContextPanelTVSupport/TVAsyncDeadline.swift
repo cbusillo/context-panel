@@ -52,11 +52,3 @@ public enum TVAsyncDeadline {
         }
     }
 }
-
-public enum TVCloudKitSubscriptionRegistrationPolicy {
-    public static let currentVersion = 1
-
-    public static func shouldRegister(storedVersion: Int) -> Bool {
-        storedVersion < currentVersion
-    }
-}

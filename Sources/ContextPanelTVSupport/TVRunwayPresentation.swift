@@ -143,6 +143,30 @@ public struct TVProviderRunwaySection: Equatable, Identifiable, Sendable {
             ?? lanes.first { $0.kind == .capacity }
     }
 
+    public var secondaryLanes: [TVRunwayLane] {
+        guard let primaryLane else { return lanes }
+        return lanes.filter { $0.id != primaryLane.id }
+    }
+
+    public var detailPrimaryLane: TVRunwayLane? {
+        if let primaryLane, primaryLane.remainingPercent != nil {
+            return primaryLane
+        }
+        return lanes.first { $0.kind == .capacity && $0.remainingPercent != nil }
+            ?? primaryLane
+    }
+
+    public var detailSecondaryLanes: [TVRunwayLane] {
+        guard let detailPrimaryLane else { return lanes }
+        return lanes.filter { $0.id != detailPrimaryLane.id }
+    }
+
+    public var accountNames: [String] {
+        Array(Set(lanes.flatMap(\.accountNames))).sorted { lhs, rhs in
+            lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
+        }
+    }
+
     init?(
         provider: Provider,
         snapshot: WidgetSnapshot,

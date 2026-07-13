@@ -103,9 +103,11 @@ MVP connectors:
   sources.
 
 Connector implementations must keep secrets out of normalized state. Do not
-persist or print tokens, account IDs, project IDs, organization IDs, emails,
-headers, or raw response bodies. Errors should mention status and operation but
-not provider response content.
+persist or print tokens, raw account IDs, project IDs, organization IDs,
+headers, or raw response bodies. A user-facing account display label may be
+stored in normalized snapshots, including an email address when that is the
+provider or user-selected label, but it must stay out of logs and diagnostics.
+Errors should mention status and operation but not provider response content.
 
 ## Snapshot Store
 
@@ -130,7 +132,8 @@ The app, widget, and refresh agent share durable state through the
 `MM5YXC7T6E.group.com.shinycomputers.contextpanel` App Group. The account configuration
 store keeps non-secret connector settings in that group container so the login
 item can refresh data after the main app exits. Provider tokens and raw account
-identifiers stay outside normalized snapshots and logs.
+identifiers stay outside normalized snapshots and logs. User-facing account
+labels remain display data rather than authentication identity.
 
 `ContextPanelRefreshAgent` is embedded in the native app under
 `Contents/Library/LoginItems` and registered by the main app with
@@ -185,13 +188,27 @@ rather than durable account configuration. Provider snapshot age and CloudKit
 receipt age remain separate so stale usage and delayed delivery do not become
 conflated.
 
+The tvOS app registers both its CloudKit subscription and APNs delivery on
+launch and foreground activation. Failed registration remains a recoverable
+state: the app retries when it becomes active, preserves foreground refresh, and
+never stores or logs the APNs device token.
+
+Provider detail keeps the saved primary limit as the dominant answer while it
+has current capacity. If that lane is temporarily unavailable, detail promotes
+an available capacity lane and renders the missing lane as a compact supporting
+row. It shows safe account labels and per-account runway only in Full Detail.
+The approved three-provider overview remains a separate stable surface.
+
 Top Shelf is a separate TVServices extension with no provider or CloudKit
 network authority. The containing tvOS app projects its current snapshot and
 device-local presentation mode into a purpose-built, privacy-filtered document
-in the existing companion App Group, then asks the system to reload Top Shelf.
-The extension reads that document immediately and generates provider cards in
-its own cache; missing and stale documents remain explicit rather than blocking
-the shelf on network work. CloudKit content-available pushes are handled only by
+under `Library/Caches` in the existing companion App Group, then asks the system
+to reload Top Shelf. Keeping this derived document inside the app-group Library
+domain preserves current-user access on physical tvOS while avoiding backup of
+ephemeral runway data. The extension reads that document immediately and
+generates provider cards in its own cache; missing and stale documents remain
+explicit rather than blocking the shelf on network work. CloudKit
+content-available pushes are handled only by
 the containing app as a best-effort refresh path and never replace foreground
 refresh or visible freshness labels. Both the app and extension run as the
 current Apple TV user so CloudKit, preferences, and the shared Top Shelf cache
