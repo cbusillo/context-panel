@@ -109,8 +109,108 @@ xcodebuild_system_path() {
 	fi
 }
 
+terminate_xcodebuild_job() {
+	local job_pid="$1"
+	local process_group="$2"
+	local attempt
+
+	/bin/kill -TERM "-$process_group" 2>/dev/null || true
+	for attempt in 1 2 3 4 5; do
+		if ! /bin/kill -0 "$job_pid" 2>/dev/null; then
+			wait "$job_pid" 2>/dev/null || true
+			return 0
+		fi
+		/bin/sleep 1
+	done
+
+	/bin/kill -KILL "-$process_group" 2>/dev/null || true
+	for attempt in 1 2 3 4 5; do
+		if ! /bin/kill -0 "$job_pid" 2>/dev/null; then
+			wait "$job_pid" 2>/dev/null || true
+			return 0
+		fi
+		/bin/sleep 1
+	done
+
+	echo "xcodebuild validation process did not exit after SIGKILL" >&2
+	return 1
+}
+
 run_xcodebuild() {
-	PATH="$(xcodebuild_system_path)" /usr/bin/xcodebuild "$@"
+	local action_count=0
+	local deadline
+	local job_pid
+	local log_file
+	local marker
+	local monitor_was_enabled=0
+	local process_group
+	local status
+
+	marker="** BUILD SUCCEEDED **"
+	for argument in "$@"; do
+		case "$argument" in
+		build)
+			action_count=$((action_count + 1))
+			;;
+		archive)
+			action_count=$((action_count + 1))
+			marker="** ARCHIVE SUCCEEDED **"
+			;;
+		esac
+	done
+	if ((action_count != 1)); then
+		echo "xcodebuild validation requires exactly one build or archive action" >&2
+		return 2
+	fi
+
+	log_file="$(mktemp "${TMPDIR:-/tmp}/context-panel-xcodebuild.XXXXXX")"
+	if [[ $- == *m* ]]; then
+		monitor_was_enabled=1
+	fi
+	set -m
+	(
+		set -o pipefail
+		PATH="$(xcodebuild_system_path)" /usr/bin/xcodebuild "$@" 2>&1 \
+			| /usr/bin/tee "$log_file"
+	) &
+	job_pid=$!
+	process_group="$job_pid"
+	if ((monitor_was_enabled == 0)); then
+		set +m
+	fi
+	deadline=$((SECONDS + 30 * 60))
+
+	while /bin/kill -0 "$job_pid" 2>/dev/null; do
+		if /usr/bin/tail -n 500 "$log_file" | /usr/bin/grep -Fq "$marker"; then
+			if ! terminate_xcodebuild_job "$job_pid" "$process_group"; then
+				/bin/rm -f "$log_file"
+				return 1
+			fi
+			/bin/rm -f "$log_file"
+			return 0
+		fi
+		if /usr/bin/tail -n 500 "$log_file" | /usr/bin/grep -Eq '\*\* (BUILD|ARCHIVE) FAILED \*\*'; then
+			terminate_xcodebuild_job "$job_pid" "$process_group" || true
+			/bin/rm -f "$log_file"
+			return 1
+		fi
+		if ((SECONDS >= deadline)); then
+			echo "xcodebuild did not reach a terminal result within 30 minutes" >&2
+			terminate_xcodebuild_job "$job_pid" "$process_group" || true
+			/bin/rm -f "$log_file"
+			return 1
+		fi
+		/bin/sleep 1
+	done
+
+	status=0
+	wait "$job_pid" || status=$?
+	if /usr/bin/tail -n 500 "$log_file" | /usr/bin/grep -Fq "$marker"; then
+		/bin/rm -f "$log_file"
+		return 0
+	fi
+	/bin/rm -f "$log_file"
+	return "$status"
 }
 
 validate_archive_contents() {
