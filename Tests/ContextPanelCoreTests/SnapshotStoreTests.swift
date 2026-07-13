@@ -1664,6 +1664,95 @@ import Testing
     #expect(policy.status(for: stored, now: resetAt.addingTimeInterval(10)) == .stale)
 }
 
+@Test func snapshotStalenessPolicyKeepsEventDrivenAGYLimitsFreshWhileIdle() throws {
+    let generatedAt = Date(timeIntervalSince1970: 1_000)
+    let now = generatedAt.addingTimeInterval(24 * 3_600)
+    let resetAt = now.addingTimeInterval(3_600)
+    let limit = UsageLimit(
+        id: "google:local:agy:gemini-weekly",
+        provider: .google,
+        accountID: "local",
+        accountName: "Antigravity",
+        label: "Gemini Weekly",
+        unit: .percent,
+        used: 20,
+        limit: 100,
+        resetsAt: resetAt,
+        lastUpdatedAt: generatedAt,
+        confidence: .observed
+    )
+    let stored = StoredUsageSnapshot(
+        savedAt: generatedAt,
+        snapshot: UsageSnapshot(generatedAt: generatedAt, limits: [limit])
+    )
+    let policy = SnapshotStoreStalenessPolicy(maximumAge: 5 * 60)
+
+    #expect(policy.status(for: stored, now: now) == .healthy)
+    #expect(policy.refreshAttentionSummary(for: stored, now: now) == nil)
+    #expect(policy.nextStaleTransitionDate(for: stored.snapshot, now: now) == resetAt.addingTimeInterval(10))
+}
+
+@Test func snapshotStalenessPolicyRefreshesElapsedAGYResetWithoutShowingStale() {
+    let generatedAt = Date(timeIntervalSince1970: 1_000)
+    let resetAt = generatedAt.addingTimeInterval(60)
+    let now = resetAt.addingTimeInterval(10)
+    let limit = UsageLimit(
+        id: "google:local:agy:gemini-5h",
+        provider: .google,
+        accountID: "local",
+        accountName: "Antigravity",
+        label: "Gemini 5-hour",
+        unit: .percent,
+        used: 20,
+        limit: 100,
+        resetsAt: resetAt,
+        lastUpdatedAt: generatedAt,
+        confidence: .observed
+    )
+    let stored = StoredUsageSnapshot(
+        savedAt: generatedAt,
+        snapshot: UsageSnapshot(generatedAt: generatedAt, limits: [limit])
+    )
+    let policy = SnapshotStoreStalenessPolicy(maximumAge: 5 * 60)
+
+    #expect(policy.status(for: stored, now: now) == .healthy)
+    #expect(policy.refreshAttentionSummary(for: stored, now: now) == nil)
+    #expect(policy.needsResetRefresh(for: stored, now: now))
+}
+
+@Test func snapshotStalenessPolicyStillAgesMixedPolledProviders() {
+    let generatedAt = Date(timeIntervalSince1970: 1_000)
+    let now = generatedAt.addingTimeInterval(3_600)
+    let agyLimit = UsageLimit(
+        id: "google:local:agy:gemini-weekly",
+        provider: .google,
+        accountID: "local",
+        accountName: "Antigravity",
+        label: "Gemini Weekly",
+        unit: .percent,
+        used: 20,
+        limit: 100,
+        resetsAt: now.addingTimeInterval(3_600),
+        lastUpdatedAt: generatedAt,
+        confidence: .observed
+    )
+    let openAILimit = usageLimit(
+        provider: .openAI,
+        accountID: "openai",
+        used: 20,
+        savedAt: generatedAt,
+        resetsAt: now.addingTimeInterval(3_600)
+    )
+    let stored = StoredUsageSnapshot(
+        savedAt: generatedAt,
+        snapshot: UsageSnapshot(generatedAt: generatedAt, limits: [agyLimit, openAILimit])
+    )
+    let policy = SnapshotStoreStalenessPolicy(maximumAge: 5 * 60)
+
+    #expect(policy.status(for: stored, now: now) == .stale)
+    #expect(policy.refreshAttentionSummary(for: stored, now: now)?.isSnapshotAgeStale == true)
+}
+
 @Test func refreshAttentionSummaryNamesSingleExpiredResetProvider() throws {
     let savedAt = Date(timeIntervalSince1970: 1_000)
     let resetAt = savedAt.addingTimeInterval(60)
@@ -1840,6 +1929,54 @@ import Testing
     )
 
     let decision = try await runner.refreshIfNeeded(now: resetAt.addingTimeInterval(10))
+
+    #expect(decision == .skippedNoReports)
+    #expect(resetStateStore.load().records.count == 1)
+}
+
+@Test func snapshotRefreshRunnerRefreshesElapsedAGYResetWithoutVisibleStaleState() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let resetStateStore = ResetExpiryRefreshStateStore(stateURL: try temporaryDirectory().appending(path: "reset-state.json"))
+    let savedAt = Date(timeIntervalSince1970: 1_000)
+    let resetAt = savedAt.addingTimeInterval(60)
+    let agyLimit = UsageLimit(
+        id: "google:local:agy:gemini-5h",
+        provider: .google,
+        accountID: "local",
+        accountName: "Antigravity",
+        label: "Gemini 5-hour",
+        unit: .percent,
+        used: 20,
+        limit: 100,
+        resetsAt: resetAt,
+        lastUpdatedAt: savedAt,
+        confidence: .observed
+    )
+    try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
+        updatedAt: savedAt,
+        accounts: []
+    ))
+    try primary.save(StoredUsageSnapshot(
+        savedAt: savedAt,
+        snapshot: UsageSnapshot(generatedAt: savedAt, limits: [agyLimit])
+    ))
+    let policy = SnapshotStoreStalenessPolicy(maximumAge: 5 * 60)
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary),
+        promptCacheTelemetryReader: { _ in [] }
+    )
+    let runner = SnapshotRefreshRunner(
+        service: service,
+        stalenessPolicy: policy,
+        resetExpiryRefreshStore: resetStateStore,
+        lock: nil
+    )
+    let now = resetAt.addingTimeInterval(10)
+
+    #expect(policy.status(for: primary.loadCurrent().snapshot, now: now) == .healthy)
+    let decision = try await runner.refreshIfNeeded(now: now)
 
     #expect(decision == .skippedNoReports)
     #expect(resetStateStore.load().records.count == 1)

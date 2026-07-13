@@ -206,7 +206,9 @@ public struct SnapshotRefreshRunner: Sendable {
 
     public func refreshIfNeeded(now: Date = Date()) async throws -> SnapshotRefreshRunDecision {
         service.importConfiguredAuthFiles(now: now)
-        let current = service.loadCurrent(policy: effectiveStalenessPolicy(), now: now)
+        let stalenessPolicy = effectiveStalenessPolicy()
+        let current = service.loadCurrent(policy: stalenessPolicy, now: now)
+        let resetRefreshIsDue = stalenessPolicy.needsResetRefresh(for: current.snapshot, now: now)
         let promptCacheObservations = service.promptCacheObservations(now: now)
         if shouldSavePromptCacheOnly(
             current: current.snapshot,
@@ -228,7 +230,12 @@ public struct SnapshotRefreshRunner: Sendable {
         if isFreshPromptCacheOnly(current: current.snapshot, promptCacheObservations: promptCacheObservations, now: now) {
             return .skippedFresh
         }
-        guard current.snapshot == nil || current.status == .unknown || current.status == .stale || current.status == .failure else {
+        guard current.snapshot == nil
+            || current.status == .unknown
+            || current.status == .stale
+            || current.status == .failure
+            || resetRefreshIsDue
+        else {
             return .skippedFresh
         }
         return try await refresh(now: now)

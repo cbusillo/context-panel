@@ -1776,11 +1776,14 @@ final class SettingsPaneModel: NSObject, ObservableObject {
                 return SettingsAccountRefreshSummary(text: "Setup required", status: .unknown)
             }
             let activeBuckets = snapshot.buckets.filter { !$0.isDisabled }
-            if isAntigravityBridgeStale(snapshot) {
-                return SettingsAccountRefreshSummary(text: "Bridge stale", status: .stale)
-            }
             if activeBuckets.isEmpty || activeBuckets.allSatisfy({ $0.remainingFraction == nil }) {
                 return SettingsAccountRefreshSummary(text: "Bridge active · quota unavailable", status: .unknown)
+            }
+            if activeBuckets.contains(where: { bucket in
+                guard let resetsAt = bucket.resetsAt else { return false }
+                return resetsAt > snapshot.observedAt && resetsAt <= Date()
+            }) {
+                return SettingsAccountRefreshSummary(text: "Bridge active · updates with next AGY run", status: .healthy)
             }
             let text = snapshot.planTier.map { "Bridge active · \($0)" } ?? "Bridge active"
             return SettingsAccountRefreshSummary(text: text, status: .healthy)
@@ -2153,15 +2156,6 @@ final class SettingsPaneModel: NSObject, ObservableObject {
 
     private func antigravityBridgeSnapshot() -> GoogleAntigravityStatusLineSnapshot? {
         try? antigravityBridgeStore?.load()
-    }
-
-    private func isAntigravityBridgeStale(_ snapshot: GoogleAntigravityStatusLineSnapshot, now: Date = Date()) -> Bool {
-        now.timeIntervalSince(snapshot.observedAt) > SnapshotFreshness.appMaximumAge
-            || snapshot.buckets.contains { bucket in
-                guard !bucket.isDisabled else { return false }
-                guard let resetsAt = bucket.resetsAt else { return false }
-                return resetsAt <= now
-            }
     }
 
     private static func exchangeClaudeOAuthCode(
@@ -2772,8 +2766,13 @@ private struct ReconnectAccountRow: View {
             }
             .buttonStyle(.borderedProminent)
         } else if account.connectorKind == .googleAntigravityQuota {
-            Button("Copy Setup") { settingsModel.copyAntigravityBridgeSetupCommand() }
-                .buttonStyle(.borderedProminent)
+            if settingsModel.needsAuthorization(account) {
+                Button("Copy Setup") { settingsModel.copyAntigravityBridgeSetupCommand() }
+                    .buttonStyle(.borderedProminent)
+            } else {
+                Button("Refresh") { onRefresh() }
+                    .buttonStyle(.bordered)
+            }
         } else {
             Button("Refresh") { onRefresh() }
                 .buttonStyle(.bordered)
@@ -2787,7 +2786,11 @@ private struct ReconnectAccountRow: View {
     }
 
     private var statusText: String {
-        if settingsModel.needsAuthorization(account) { return "Account access is missing." }
+        if settingsModel.needsAuthorization(account) {
+            return account.connectorKind == .googleAntigravityQuota
+                ? "One-time AGY bridge setup is required."
+                : "Account access is missing."
+        }
         if settingsModel.hasLegacyAuthorization(account) { return "File access needs to be refreshed." }
         if account.connectorKind == .codexRateLimits, refreshSummary?.status == .failure {
             return "Sign in again from Every Code or Codex, then reselect the auth file."
@@ -2798,7 +2801,7 @@ private struct ReconnectAccountRow: View {
                 return "Google setup is missing from this build. Check provider configuration, then refresh."
             }
             return attentionReport?.userFacingErrorMessage
-                ?? "Copy the bridge setup command once in AGY CLI. With AGY 1.1.1, Every Code AGY runs and direct AGY prompts publish fresh quota."
+                ?? "AGY quota updates whenever Every Code or AGY runs. Idle time alone does not require setup again."
         }
         return settingsModel.detailText(for: account)
     }

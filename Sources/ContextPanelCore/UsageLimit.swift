@@ -220,6 +220,11 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
             .joined(separator: " · ")
     }
 
+    public var usesEventDrivenFreshness: Bool {
+        let components = id.split(separator: ":", omittingEmptySubsequences: false)
+        return provider == .google && components.count >= 4 && components[2] == "agy"
+    }
+
     public var status: UsageStatus {
         if let statusOverride {
             return statusOverride

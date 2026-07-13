@@ -552,16 +552,13 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
 
     private let accounts: [GoogleAntigravityAccountConfiguration]
     private let snapshotLoader: any GoogleAntigravityQuotaSnapshotLoading
-    private let maximumAge: TimeInterval
 
     public init(
         accounts: [GoogleAntigravityAccountConfiguration],
-        snapshotLoader: any GoogleAntigravityQuotaSnapshotLoading,
-        maximumAge: TimeInterval = SnapshotFreshness.appMaximumAge
+        snapshotLoader: any GoogleAntigravityQuotaSnapshotLoading
     ) {
         self.accounts = accounts
         self.snapshotLoader = snapshotLoader
-        self.maximumAge = maximumAge
     }
 
     public func refresh(now: Date) async -> ConnectorRefreshResult {
@@ -610,14 +607,13 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
             )
         }
 
-        let snapshotIsStale = now.timeIntervalSince(snapshot.observedAt) > maximumAge
         let limits = snapshot.buckets.filter { !$0.isDisabled }.map { bucket in
             usageLimit(
                 bucket: bucket,
                 account: account,
                 localAccountID: localAccountID,
                 observedAt: snapshot.observedAt,
-                isStale: snapshotIsStale || bucket.resetsAt.map { $0 <= now } == true
+                now: now
             )
         }
 
@@ -634,16 +630,15 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
             )
         }
 
-        let hasStaleLimit = limits.contains { $0.status == .stale }
         return ProviderConnectorReport(
             provider: provider,
             accountID: localAccountID,
             configuredAccountID: account.accountID,
             accountName: account.accountName,
-            generatedAt: snapshot.observedAt,
+            generatedAt: limits.compactMap(\.lastUpdatedAt).max() ?? snapshot.observedAt,
             limits: limits,
             status: nil,
-            errorMessage: hasStaleLimit ? "Antigravity quota is stale. Run an AGY-backed Every Code agent or an AGY CLI prompt to publish a fresh quota snapshot." : nil
+            errorMessage: nil
         )
     }
 
@@ -669,11 +664,19 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
         account: GoogleAntigravityAccountConfiguration,
         localAccountID: String,
         observedAt: Date,
-        isStale: Bool
+        now: Date
     ) -> UsageLimit {
         let labels = Self.labels(for: bucket.id)
+        let elapsedReset = bucket.resetsAt.flatMap { resetsAt in
+            resetsAt > observedAt && resetsAt <= now ? resetsAt : nil
+        }
         let used = bucket.remainingFraction.map { remaining in
             Int(((1 - remaining) * 100).rounded())
+        }
+        let note = if elapsedReset == nil {
+            "source: AGY documented status-line quota export; bucket: \(bucket.id)"
+        } else {
+            "source: AGY documented status-line quota export; bucket: \(bucket.id); last observed before provider reset; next AGY run confirms current capacity"
         }
         return UsageLimit(
             id: "\(provider.rawValue):\(localAccountID):agy:\(bucket.id)",
@@ -687,11 +690,11 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
             unit: .percent,
             used: used,
             limit: 100,
-            resetsAt: bucket.resetsAt,
-            lastUpdatedAt: observedAt,
-            confidence: .observed,
-            statusOverride: isStale ? .stale : (used == nil ? .unknown : nil),
-            note: "source: AGY documented status-line quota export; bucket: \(bucket.id)"
+            resetsAt: bucket.resetsAt.flatMap { $0 > now ? $0 : nil },
+            lastUpdatedAt: elapsedReset ?? observedAt,
+            confidence: elapsedReset == nil ? .observed : .estimated,
+            statusOverride: used == nil ? .unknown : nil,
+            note: note
         )
     }
 

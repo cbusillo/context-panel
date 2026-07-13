@@ -965,29 +965,25 @@ import Testing
     #expect(!report.limits.contains { $0.label.contains("GPT") })
 }
 
-@Test func googleAntigravityConnectorMarksOldOrResetSnapshotsStale() async throws {
+@Test func googleAntigravityConnectorKeepsIdleSnapshotsHealthyAndClearsElapsedResets() async throws {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
-    for snapshot in [
-        GoogleAntigravityStatusLineSnapshot(
-            observedAt: now.addingTimeInterval(-901),
-            buckets: [GoogleAntigravityStatusLineBucket(
-                id: "gemini-weekly",
-                remainingFraction: 0.8,
-                resetsAt: now.addingTimeInterval(3_600)
-            )]
-        ),
-        GoogleAntigravityStatusLineSnapshot(
-            observedAt: now,
+    let observedAt = now.addingTimeInterval(-24 * 3_600)
+    let elapsedReset = now.addingTimeInterval(-3_600)
+    let futureReset = now.addingTimeInterval(6 * 24 * 3_600)
+    let connector = GoogleAntigravityQuotaConnector(
+        accounts: [googleAntigravityTestAccount()],
+        snapshotLoader: StubGoogleAntigravitySnapshotLoader(snapshot: GoogleAntigravityStatusLineSnapshot(
+            observedAt: observedAt,
             buckets: [
                 GoogleAntigravityStatusLineBucket(
                     id: "gemini-5h",
                     remainingFraction: 0.8,
-                    resetsAt: now
+                    resetsAt: elapsedReset
                 ),
                 GoogleAntigravityStatusLineBucket(
                     id: "gemini-weekly",
                     remainingFraction: 0.9,
-                    resetsAt: now.addingTimeInterval(7 * 24 * 3_600)
+                    resetsAt: futureReset
                 ),
                 GoogleAntigravityStatusLineBucket(
                     id: "disabled-weekly",
@@ -996,26 +992,28 @@ import Testing
                     isDisabled: true
                 ),
             ]
-        ),
-    ] {
-        let connector = GoogleAntigravityQuotaConnector(
-            accounts: [googleAntigravityTestAccount()],
-            snapshotLoader: StubGoogleAntigravitySnapshotLoader(snapshot: snapshot),
-            maximumAge: 900
-        )
+        ))
+    )
 
-        let report = try #require(await connector.refresh(now: now).reports.first)
+    let report = try #require(await connector.refresh(now: now).reports.first)
+    let elapsed = try #require(report.limits.first { $0.label == "Gemini 5-hour" })
+    let current = try #require(report.limits.first { $0.label == "Gemini Weekly" })
 
-        #expect(report.status == .stale)
-        #expect(report.errorMessage?.contains("Every Code") == true)
-        if report.limits.count == 1 {
-            #expect(report.limits.allSatisfy { $0.status == .stale })
-        } else {
-            #expect(report.limits.contains { $0.label == "Gemini 5-hour" && $0.status == .stale })
-            #expect(report.limits.contains { $0.label == "Gemini Weekly" && $0.status == .healthy })
-        }
-        #expect(!report.limits.contains { $0.label.contains("Disabled") })
-    }
+    #expect(report.status == .healthy)
+    #expect(report.errorMessage == nil)
+    #expect(report.generatedAt == elapsedReset)
+    #expect(elapsed.status == .healthy)
+    #expect(elapsed.used == 20)
+    #expect(elapsed.resetsAt == nil)
+    #expect(elapsed.lastUpdatedAt == elapsedReset)
+    #expect(elapsed.confidence == .estimated)
+    #expect(elapsed.note?.contains("last observed before provider reset") == true)
+    #expect(current.status == .healthy)
+    #expect(current.used == 10)
+    #expect(current.resetsAt == futureReset)
+    #expect(current.lastUpdatedAt == observedAt)
+    #expect(current.confidence == .observed)
+    #expect(!report.limits.contains { $0.label.contains("Disabled") })
 }
 
 @Test func googleAntigravityConnectorTreatsDisabledOnlySnapshotsAsUnknown() async throws {
