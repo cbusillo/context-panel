@@ -532,11 +532,13 @@ installability, App Store provisioning, or physical device runtime behavior.
 
 The unsigned companion validation helper watches for Xcode's terminal build or
 archive marker and releases a wedged Xcode 27 process after that marker appears.
-It streams the build log live and terminates only the validation process group,
-preserving the completed result without leaving compiler children or occupying
-self-hosted CI after Xcode has already reported success. Cleanup escalates from
-`SIGTERM` to `SIGKILL` on a bounded deadline so a wedged process cannot also
-wedge the validation wrapper.
+It streams the build log live, gives successful builds a short natural-exit
+grace period, and then terminates the validation process group plus its known
+descendants. Cleanup escalates from `SIGTERM` to `SIGKILL` on a bounded deadline
+so a wedged process cannot also wedge the validation wrapper. A pre-terminal
+Xcode service stall with no output for five minutes receives one retry with
+isolated temporary DerivedData; ordinary compiler, packaging, and archive
+validation failures are never retried.
 
 ### Local Apple Vision Pro Dogfood
 
