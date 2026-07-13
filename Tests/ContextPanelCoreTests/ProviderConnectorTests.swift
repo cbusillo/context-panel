@@ -1007,7 +1007,7 @@ import Testing
         let report = try #require(await connector.refresh(now: now).reports.first)
 
         #expect(report.status == .stale)
-        #expect(report.errorMessage?.contains("AGY CLI") == true)
+        #expect(report.errorMessage?.contains("Every Code") == true)
         if report.limits.count == 1 {
             #expect(report.limits.allSatisfy { $0.status == .stale })
         } else {
@@ -1065,6 +1065,7 @@ import Testing
 
     #expect(missingReport.status == .unknown)
     #expect(missingReport.errorMessage?.contains("setup is required") == true)
+    #expect(missingReport.errorMessage?.contains("Every Code") == true)
     #expect(unreadableReport.status == .failure)
     #expect(unreadableReport.errorMessage?.contains("could not be read") == true)
     #expect(futureReport.status == .failure)

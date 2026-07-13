@@ -1708,7 +1708,7 @@ import Testing
 
 @Test func refreshAttentionSummaryUsesGoogleAntigravitySetupGuidance() throws {
     let savedAt = Date(timeIntervalSince1970: 1_000)
-    let message = "Antigravity bridge setup is required. Copy the setup command from Context Panel and paste it into AGY CLI."
+    let message = "Antigravity bridge setup is required. Copy the setup command from Context Panel and paste it into AGY CLI once. With AGY 1.1.1, later Every Code AGY runs publish quota automatically."
     let stored = StoredUsageSnapshot(
         savedAt: savedAt,
         snapshot: UsageSnapshot(generatedAt: savedAt, limits: []),

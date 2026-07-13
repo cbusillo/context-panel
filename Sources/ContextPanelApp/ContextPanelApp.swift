@@ -2105,7 +2105,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
             }
             return "Select the OpenAI CLI auth JSON file"
         case .googleAntigravityQuota:
-            return "Paste Copy Setup into AGY CLI. AGY supports one custom status-line command; Context Panel never reads its login"
+            return "Paste Copy Setup into AGY CLI once. Current Every Code AGY runs publish quota; AGY supports one status line and Context Panel never reads its login"
         case .claudeOAuthUsage:
             return "Connect Claude with OAuth for automatic background refresh"
         }
@@ -2798,7 +2798,7 @@ private struct ReconnectAccountRow: View {
                 return "Google setup is missing from this build. Check provider configuration, then refresh."
             }
             return attentionReport?.userFacingErrorMessage
-                ?? "Copy the bridge setup command, paste it into AGY CLI, and use AGY to publish fresh quota."
+                ?? "Copy the bridge setup command once in AGY CLI. With AGY 1.1.1, Every Code AGY runs and direct AGY prompts publish fresh quota."
         }
         return settingsModel.detailText(for: account)
     }

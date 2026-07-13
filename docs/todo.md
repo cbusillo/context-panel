@@ -20,6 +20,10 @@
 - Monitor the optional status-line quota schema and keep unknown or missing
   fields explicit. Never infer reset windows from timestamps; only recognize
   literal window tokens already present in provider bucket identifiers.
+- Revalidate that Every Code's non-interactive `agy --add-dir ... -p ...` path
+  still invokes the configured status-line callback when AGY is upgraded. Treat
+  a stopped callback as stale/unavailable data, never as a reason to restore
+  credential reads or private Cloud Code Assist requests.
 - AGY currently supports one custom status-line command. Keep setup guided and
   non-destructive until Google documents a safe stacking mechanism.
 - Keep AI credits unavailable until AGY documents a supported exported balance,

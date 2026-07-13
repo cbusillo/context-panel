@@ -196,6 +196,17 @@ The supported integration is AGY CLI's documented custom status-line command:
 5. The normal Google connector reads the sanitized snapshot. It performs no
    network request and has no access to Antigravity credentials.
 
+Every Code compatibility is validated against the actual non-interactive agent
+invocation, not inferred from the interactive UI. On 2026-07-12, AGY 1.1.1
+running as `agy --add-dir <workspace> -p <prompt>` advanced the signed
+TestFlight bridge snapshot during the command and published four current quota
+buckets. A subsequent canonical refresh consumed those buckets as healthy
+Google limits. Google's status-line documentation describes the callback in
+terms of the TUI, so print-mode callback execution remains a version-specific
+compatibility dependency rather than a separate documented background API. If
+a future AGY release stops invoking it, Context Panel must show stale or
+unavailable data instead of falling back to credentials or private endpoints.
+
 Unknown input fields are deliberately discarded. Email, account identifiers,
 conversation/session IDs, paths, transcript metadata, prompts, raw input,
 tokens, and decoder details must never be persisted or logged. The bridge file
@@ -204,8 +215,9 @@ lives outside the normalized provider snapshot store in a `0700` directory as a
 replacement so malformed input cannot destroy the last good observation.
 
 Quota observations are event-driven while AGY CLI runs, not independently
-pollable background data. Missing bridge data is setup-required, empty or
-unrecognized data is unknown, and old data or a passed reset deadline is stale.
+pollable background data. This includes AGY agent runs launched by Every Code.
+Missing bridge data is setup-required, empty or unrecognized data is unknown,
+and old data or a passed reset deadline is stale.
 Every reported active bucket remains distinct. Context Panel may humanize the
 bucket ID and recognize literal `weekly` or `5h` tokens already present in that
 provider identifier, but it must not infer a window from reset timing or add
