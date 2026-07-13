@@ -469,6 +469,7 @@ import Testing
     #expect(source.contains("return TVTopShelfInsetContent(items: [item])"))
     #expect(source.contains("let requestedSize = TVTopShelfInsetContent.imageSize"))
     #expect(source.contains("let action = TVTopShelfAction(url: TVAppRoute.runway.url)"))
+    #expect(source.contains("item.title = semanticTitle(document: document, cards: cards, now: now)"))
     #expect(!source.contains("TVTopShelfSectionedContent"))
     #expect(!source.contains("[.screenScale1x, .screenScale2x]"))
 }

@@ -45,7 +45,7 @@ private struct TVTopShelfRenderer {
         var currentImageURLs: [URL] = []
         do {
             let item = TVTopShelfItem(identifier: "provider-portfolio")
-            item.title = document.collectionTitle(at: now)
+            item.title = semanticTitle(document: document, cards: cards, now: now)
             item.expirationDate = document.contentExpirationDate(at: now)
             let action = TVTopShelfAction(url: TVAppRoute.runway.url)
             item.displayAction = action
@@ -269,19 +269,34 @@ private struct TVTopShelfRenderer {
         let horizontalPadding = 86 * scale
         draw(
             "CONTEXT PANEL",
-            in: CGRect(x: horizontalPadding, y: 46 * scale, width: 450 * scale, height: 44 * scale),
+            in: CGRect(
+                x: horizontalPadding,
+                y: size.height * 0.075,
+                width: 450 * scale,
+                height: size.height * 0.06
+            ),
             font: .systemFont(ofSize: 28 * scale, weight: .bold),
             color: .white
         )
         draw(
             document.collectionTitle(at: now),
-            in: CGRect(x: horizontalPadding, y: 88 * scale, width: 700 * scale, height: 40 * scale),
+            in: CGRect(
+                x: horizontalPadding,
+                y: size.height * 0.135,
+                width: 700 * scale,
+                height: size.height * 0.05
+            ),
             font: .systemFont(ofSize: 22 * scale, weight: .medium),
             color: UIColor.white.withAlphaComponent(0.62)
         )
         draw(
             document.freshnessText(at: now),
-            in: CGRect(x: size.width - horizontalPadding - 430 * scale, y: 56 * scale, width: 430 * scale, height: 44 * scale),
+            in: CGRect(
+                x: size.width - horizontalPadding - 430 * scale,
+                y: size.height * 0.09,
+                width: 430 * scale,
+                height: size.height * 0.06
+            ),
             font: .monospacedDigitSystemFont(ofSize: 22 * scale, weight: .semibold),
             color: document.isStale(at: now)
                 ? UIColor(red: 1, green: 0.79, blue: 0.18, alpha: 1)
@@ -418,6 +433,26 @@ private struct TVTopShelfRenderer {
                 .paragraphStyle: paragraph,
             ]
         )
+    }
+
+    private func semanticTitle(
+        document: TVTopShelfDocument,
+        cards: [TVTopShelfCard],
+        now: Date
+    ) -> String {
+        let isStale = document.isStale(at: now)
+        let cardSummaries = cards.map { card in
+            if let provider = card.provider {
+                return [
+                    provider.displayName,
+                    card.headline,
+                    statusText(displayStatus(for: card, isStale: isStale)),
+                ].joined(separator: ", ")
+            }
+            return [card.headline, card.detail].filter { !$0.isEmpty }.joined(separator: ", ")
+        }
+        return ([document.collectionTitle(at: now)] + cardSummaries + [document.freshnessText(at: now)])
+            .joined(separator: ". ")
     }
 
     private func providerColor(_ provider: Provider?) -> UIColor {

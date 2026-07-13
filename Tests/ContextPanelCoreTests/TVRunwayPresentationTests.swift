@@ -204,6 +204,12 @@ import Testing
     #expect(statusLane.status == .failure)
     #expect(statusLane.detailText == "No fresh capacity data")
     #expect(statusLane.accountNames == ["Team"])
+
+    let hiddenPresentation = TVRunwayPresentation(snapshot: partial, mode: .projectOnly, now: now)
+    let hiddenOpenAI = try #require(hiddenPresentation.sections.first { $0.provider == .openAI })
+    let hiddenStatusLane = try #require(hiddenOpenAI.lanes.first { $0.kind == .accountStatus })
+    #expect(hiddenStatusLane.title == "Account 2 status")
+    #expect(hiddenStatusLane.accountNames.isEmpty)
 }
 
 @Test func tvRunwayPresentationMakesRefreshStateExplicitWithoutDroppingSavedData() {
@@ -451,6 +457,14 @@ import Testing
     ])
     #expect(fallback.remainingPercent == 60)
     #expect(google.closestLane == nil)
+
+    let hiddenPresentation = TVRunwayPresentation(snapshot: snapshot, mode: .projectOnly, now: now)
+    let hiddenGoogle = try #require(hiddenPresentation.sections.first { $0.provider == .google })
+    let hiddenFallback = try #require(
+        hiddenGoogle.lanes.first { $0.title == "Account 1 · Model requests" }
+    )
+    #expect(hiddenFallback.metrics.map(\.title) == ["Account 1 · Model requests"])
+    #expect(hiddenFallback.exactCapacityText == nil)
 }
 
 @Test func tvRunwayPresentationDoesNotRestoreHiddenMainLanes() throws {

@@ -177,7 +177,10 @@ public struct TVProviderRunwaySection: Equatable, Identifiable, Sendable {
         let reports = snapshot.reports.filter { $0.provider == provider }
         let providerLimits = snapshot.limits.filter { $0.provider == provider }
         guard !reports.isEmpty || !providerLimits.isEmpty else { return nil }
-        let anonymousAccountNumbers = TVRunwayLane.anonymousAccountNumbers(for: providerLimits)
+        let anonymousAccountNumbers = TVRunwayLane.anonymousAccountNumbers(
+            for: providerLimits,
+            reports: reports
+        )
 
         let mainSummaries = snapshot.usageSnapshot.mainLimitSummaries
             .filter { $0.provider == provider }
@@ -227,6 +230,7 @@ public struct TVProviderRunwaySection: Equatable, Identifiable, Sendable {
                 limit: $0,
                 snapshotState: snapshot.state,
                 mode: mode,
+                anonymousAccountNumbers: anonymousAccountNumbers,
                 now: now
             )
         })
@@ -259,7 +263,8 @@ public struct TVProviderRunwaySection: Equatable, Identifiable, Sendable {
                     provider: provider,
                     report: $0,
                     snapshotState: snapshot.state,
-                    mode: mode
+                    mode: mode,
+                    anonymousAccountNumbers: anonymousAccountNumbers
                 )
             }
         let lanes = capacityLanes + reportLanes
@@ -365,14 +370,21 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
         limit: UsageLimit,
         snapshotState: WidgetSnapshotState,
         mode: TVPresentationMode,
+        anonymousAccountNumbers: [String: Int],
         now: Date
     ) {
         id = limit.id
         kind = .capacity
         provider = limit.provider
-        title = mode == .fullDetail
-            ? "\(limit.accountName) · \(limit.displayLabel)"
-            : limit.displayLabel
+        let accountNumber = anonymousAccountNumbers[Self.anonymousAccountIdentity(for: limit)]
+        title = switch mode {
+        case .fullDetail:
+            "\(limit.accountName) · \(limit.displayLabel)"
+        case .projectOnly:
+            accountNumber.map { "Account \($0) · \(limit.displayLabel)" } ?? limit.displayLabel
+        case .countsOnly:
+            limit.displayLabel
+        }
         status = snapshotState.tvDisplayStatus(source: limit.status)
         remainingPercent = limit.remainingCapacityRatio.map { Int(($0 * 100).rounded()) }
         capacityRatio = limit.remainingCapacityRatio
@@ -393,6 +405,7 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
                     limit: limit,
                     snapshotState: snapshotState,
                     mode: mode,
+                    anonymousAccountNumber: accountNumber,
                     now: now
                 ),
             ]
@@ -402,12 +415,26 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
         provider: Provider,
         report: StoredProviderReport,
         snapshotState: WidgetSnapshotState,
-        mode: TVPresentationMode
+        mode: TVPresentationMode,
+        anonymousAccountNumbers: [String: Int]
     ) {
         id = "\(provider.rawValue):report:\(report.configuredAccountID ?? report.accountID)"
         kind = .accountStatus
         self.provider = provider
-        title = mode == .fullDetail ? "\(report.accountName) status" : "Account status"
+        let accountNumber = anonymousAccountNumbers[
+            Self.anonymousAccountIdentity(
+                accountID: report.accountID,
+                configuredAccountID: report.configuredAccountID
+            )
+        ]
+        title = switch mode {
+        case .fullDetail:
+            "\(report.accountName) status"
+        case .projectOnly:
+            accountNumber.map { "Account \($0) status" } ?? "Account status"
+        case .countsOnly:
+            "Account status"
+        }
         status = snapshotState.tvDisplayStatus(source: report.status)
         remainingPercent = nil
         capacityRatio = nil
@@ -506,15 +533,39 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
         }
     }
 
-    fileprivate static func anonymousAccountNumbers(for limits: [UsageLimit]) -> [String: Int] {
-        var numbers: [String: Int] = [:]
-        for limit in orderedLimits(limits) {
-            let identity = anonymousAccountIdentity(for: limit)
-            if numbers[identity] == nil {
-                numbers[identity] = numbers.count + 1
+    fileprivate static func anonymousAccountNumbers(
+        for limits: [UsageLimit],
+        reports: [StoredProviderReport] = []
+    ) -> [String: Int] {
+        var namesByIdentity: [String: String] = [:]
+        for limit in limits {
+            namesByIdentity[anonymousAccountIdentity(for: limit)] = limit.accountName
+        }
+        for report in reports {
+            let identity = anonymousAccountIdentity(
+                accountID: report.accountID,
+                configuredAccountID: report.configuredAccountID
+            )
+            if namesByIdentity[identity] == nil {
+                namesByIdentity[identity] = report.accountName
             }
         }
-        return numbers
+
+        let identities = namesByIdentity.keys.sorted { lhs, rhs in
+            let leftName = namesByIdentity[lhs] ?? ""
+            let rightName = namesByIdentity[rhs] ?? ""
+            let comparison = leftName.localizedCaseInsensitiveCompare(rightName)
+            if comparison != .orderedSame {
+                return comparison == .orderedAscending
+            }
+            if leftName != rightName {
+                return leftName < rightName
+            }
+            return lhs < rhs
+        }
+        return Dictionary(uniqueKeysWithValues: identities.enumerated().map { index, identity in
+            (identity, index + 1)
+        })
     }
 
     private static func anonymousMetricTitle(
@@ -569,9 +620,19 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
     }
 
     private static func anonymousAccountIdentity(for limit: UsageLimit) -> String {
-        let configuredAccountID = limit.configuredAccountID ?? ""
+        anonymousAccountIdentity(
+            accountID: limit.accountID,
+            configuredAccountID: limit.configuredAccountID
+        )
+    }
+
+    private static func anonymousAccountIdentity(
+        accountID: String,
+        configuredAccountID: String?
+    ) -> String {
+        let configuredAccountID = configuredAccountID ?? ""
         return "configured#\(configuredAccountID.utf8.count):\(configuredAccountID)"
-            + "account#\(limit.accountID.utf8.count):\(limit.accountID)"
+            + "account#\(accountID.utf8.count):\(accountID)"
     }
 
     private static func accountCountText(_ count: Int) -> String {
@@ -653,12 +714,18 @@ public struct TVRunwayMetric: Equatable, Identifiable, Sendable {
         limit: UsageLimit,
         snapshotState: WidgetSnapshotState,
         mode: TVPresentationMode,
+        anonymousAccountNumber: Int? = nil,
         now: Date
     ) {
         id = limit.id
-        title = mode == .fullDetail
-            ? "\(limit.accountName) · \(limit.displayLabel)"
-            : limit.displayLabel
+        title = switch mode {
+        case .fullDetail:
+            "\(limit.accountName) · \(limit.displayLabel)"
+        case .projectOnly:
+            anonymousAccountNumber.map { "Account \($0) · \(limit.displayLabel)" } ?? limit.displayLabel
+        case .countsOnly:
+            limit.displayLabel
+        }
         status = snapshotState.tvDisplayStatus(source: limit.status)
         remainingPercent = limit.remainingCapacityRatio.map { Int(($0 * 100).rounded()) }
         exactCapacityText = mode == .fullDetail
