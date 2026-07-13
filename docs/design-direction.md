@@ -128,6 +128,13 @@ secondary-limit rows. A temporarily missing saved primary remains visible but
 quiet while an available lane becomes the detail hero. The accepted
 three-provider overview must not change when detail is refined.
 
+Hide Account Names preserves per-account runway rows but replaces identity with
+provider-scoped `Account N` labels reused across windows and hides raw totals.
+Model sublimits remain distinct when one account has more than one limit in the
+same window. Read-only lane summaries and capacity rows receive quiet, non-button focus treatment so the Siri Remote can
+move through and scroll detail without suggesting that selecting a row performs
+an action.
+
 ## Visual System
 
 - Use native macOS surfaces and system typography. Prefer quiet neutral grays,

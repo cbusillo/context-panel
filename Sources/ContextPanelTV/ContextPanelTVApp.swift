@@ -763,7 +763,7 @@ private struct TVProviderDetailView: View {
     let generatedAt: Date
 
     private var primaryMetrics: [TVRunwayMetric] {
-        guard mode == .fullDetail,
+        guard mode != .countsOnly,
               let primaryLane = section.detailPrimaryLane,
               primaryLane.metrics.count > 1 else {
             return []
@@ -1098,6 +1098,8 @@ private struct TVCapacityBar: View {
 }
 
 private struct TVRunwayDetailView: View {
+    @Namespace private var focusScope
+
     let lane: TVRunwayLane
     let mode: TVPresentationMode
     let snapshotState: WidgetSnapshotState
@@ -1106,54 +1108,14 @@ private struct TVRunwayDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 42) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(lane.provider.displayName.uppercased())
-                            .font(.headline.weight(.bold))
-                            .foregroundStyle(TVTheme.providerColor(lane.provider))
-                            .tracking(2)
-                        Text(lane.title)
-                            .font(.system(size: 58, weight: .bold, design: .rounded))
-                    }
-                    Spacer()
-                    Text(lane.statusText)
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(TVTheme.statusColor(lane.status))
-                }
-
-                TVFreshnessNotice(state: snapshotState, generatedAt: generatedAt)
-
-                if lane.kind == .accountStatus {
-                    Label(
-                        "Open Context Panel on your Mac to refresh or reconnect this account.",
-                        systemImage: "macbook"
-                    )
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-                }
-
-                if let remainingPercent = lane.remainingPercent {
-                    HStack(alignment: .firstTextBaseline, spacing: 12) {
-                        Text("\(remainingPercent)%")
-                            .font(.system(size: 108, weight: .bold, design: .rounded))
-                            .monospacedDigit()
-                        Text("left")
-                            .font(.title2)
-                            .foregroundStyle(.secondary)
-                    }
-                    TVCapacityBar(ratio: lane.capacityRatio, provider: lane.provider)
-                        .frame(maxWidth: 900)
-                }
-
-                if !lane.accountNames.isEmpty {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Accounts")
-                            .font(.headline)
-                            .foregroundStyle(.secondary)
-                        Text(lane.accountNames.joined(separator: " · "))
-                            .font(.title3)
-                    }
-                }
+                TVRunwaySummaryView(
+                    lane: lane,
+                    snapshotState: snapshotState,
+                    generatedAt: generatedAt
+                )
+                .focusable()
+                .focusEffectDisabled()
+                .prefersDefaultFocus(true, in: focusScope)
 
                 if !lane.metrics.isEmpty {
                     VStack(alignment: .leading, spacing: 18) {
@@ -1170,11 +1132,131 @@ private struct TVRunwayDetailView: View {
             .padding(.horizontal, 96)
             .padding(.vertical, 72)
         }
+        .focusScope(focusScope)
         .background(TVTheme.background.ignoresSafeArea())
     }
 }
 
+private struct TVRunwaySummaryView: View {
+    @Environment(\.isFocused) private var isFocused
+
+    let lane: TVRunwayLane
+    let snapshotState: WidgetSnapshotState
+    let generatedAt: Date
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 30) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(lane.provider.displayName.uppercased())
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(TVTheme.providerColor(lane.provider))
+                        .tracking(2)
+                    Text(lane.title)
+                        .font(.system(size: 58, weight: .bold, design: .rounded))
+                }
+                Spacer()
+                Text(lane.statusText)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(TVTheme.statusColor(lane.status))
+            }
+
+            TVFreshnessNotice(state: snapshotState, generatedAt: generatedAt)
+
+            if lane.kind == .accountStatus {
+                Label(
+                    "Open Context Panel on your Mac to refresh or reconnect this account.",
+                    systemImage: "macbook"
+                )
+                .font(.title3)
+                .foregroundStyle(.secondary)
+            }
+
+            if let remainingPercent = lane.remainingPercent {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Text("\(remainingPercent)%")
+                        .font(.system(size: 108, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                    Text("left")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                }
+                TVCapacityBar(ratio: lane.capacityRatio, provider: lane.provider)
+                    .frame(maxWidth: 900)
+            }
+
+            if !lane.accountNames.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Accounts")
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
+                    Text(lane.accountNames.joined(separator: " · "))
+                        .font(.title3)
+                }
+            }
+        }
+        .padding(30)
+        .background(
+            TVTheme.providerColor(lane.provider).opacity(isFocused ? 0.11 : 0.035),
+            in: RoundedRectangle(cornerRadius: 24, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(isFocused ? Color.white.opacity(0.85) : Color.white.opacity(0.06), lineWidth: isFocused ? 2 : 1)
+        }
+        .animation(.easeOut(duration: 0.16), value: isFocused)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(lane.provider.displayName), \(lane.title) summary")
+        .accessibilityValue(accessibilityValue)
+        .accessibilityAddTraits(.isStaticText)
+    }
+
+    private var accessibilityValue: String {
+        var components = [lane.statusText]
+        if snapshotState == .stale || snapshotState == .failure {
+            let age = Self.spokenAge(since: generatedAt, now: Date())
+            components.append(
+                snapshotState == .failure
+                    ? "Provider issue, data from \(age) ago"
+                    : "Saved data from \(age) ago"
+            )
+        }
+        if let remainingPercent = lane.remainingPercent {
+            components.append("\(remainingPercent) percent left")
+        }
+        if let accessibilityResetText = lane.accessibilityResetText {
+            components.append(accessibilityResetText)
+        }
+        if let accountCountText = lane.accountCountText {
+            components.append(accountCountText)
+        }
+        if let exactCapacityText = lane.exactCapacityText {
+            components.append(exactCapacityText)
+        }
+        if !lane.accountNames.isEmpty {
+            components.append(lane.accountNames.joined(separator: ", "))
+        }
+        if lane.kind == .accountStatus {
+            components.append("Open Context Panel on your Mac to refresh or reconnect this account")
+        }
+        return components.joined(separator: ", ")
+    }
+
+    private static func spokenAge(since date: Date, now: Date) -> String {
+        let seconds = max(Int(now.timeIntervalSince(date)), 0)
+        if seconds < 60 { return "less than one minute" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(minutes) \(minutes == 1 ? "minute" : "minutes")" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours) \(hours == 1 ? "hour" : "hours")" }
+        let days = hours / 24
+        return "\(days) \(days == 1 ? "day" : "days")"
+    }
+}
+
 private struct TVMetricRow: View {
+    @Environment(\.isFocused) private var isFocused
+
     let metric: TVRunwayMetric
     let provider: Provider
 
@@ -1198,8 +1280,13 @@ private struct TVMetricRow: View {
             Spacer()
 
             if let remainingPercent = metric.remainingPercent {
-                Text("\(remainingPercent)% left")
-                    .font(.title2.bold().monospacedDigit())
+                VStack(alignment: .trailing, spacing: 6) {
+                    Text("\(remainingPercent)% left")
+                        .font(.title2.bold().monospacedDigit())
+                    Text(metric.status.tvStatusLabel)
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(TVTheme.statusColor(metric.status))
+                }
             } else {
                 Text(metric.status.tvStatusLabel)
                     .font(.headline)
@@ -1207,7 +1294,35 @@ private struct TVMetricRow: View {
             }
         }
         .padding(26)
-        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(
+            TVTheme.providerColor(provider).opacity(isFocused ? 0.13 : 0.06),
+            in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(isFocused ? Color.white.opacity(0.85) : Color.clear, lineWidth: 2)
+        }
+        .animation(.easeOut(duration: 0.16), value: isFocused)
+        .focusable()
+        .focusEffectDisabled()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(metric.title)
+        .accessibilityValue(accessibilityValue)
+        .accessibilityAddTraits(.isStaticText)
+    }
+
+    private var accessibilityValue: String {
+        var components = [metric.status.tvStatusLabel]
+        if let remainingPercent = metric.remainingPercent {
+            components.append("\(remainingPercent) percent left")
+        }
+        if let exactCapacityText = metric.exactCapacityText {
+            components.append(exactCapacityText)
+        }
+        if let accessibilityResetText = metric.accessibilityResetText {
+            components.append(accessibilityResetText)
+        }
+        return components.joined(separator: ", ")
     }
 }
 

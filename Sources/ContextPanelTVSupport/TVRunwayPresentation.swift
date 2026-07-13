@@ -177,6 +177,7 @@ public struct TVProviderRunwaySection: Equatable, Identifiable, Sendable {
         let reports = snapshot.reports.filter { $0.provider == provider }
         let providerLimits = snapshot.limits.filter { $0.provider == provider }
         guard !reports.isEmpty || !providerLimits.isEmpty else { return nil }
+        let anonymousAccountNumbers = TVRunwayLane.anonymousAccountNumbers(for: providerLimits)
 
         let mainSummaries = snapshot.usageSnapshot.mainLimitSummaries
             .filter { $0.provider == provider }
@@ -200,6 +201,7 @@ public struct TVProviderRunwaySection: Equatable, Identifiable, Sendable {
                         summary: summary,
                         snapshotState: snapshot.state,
                         mode: mode,
+                        anonymousAccountNumbers: anonymousAccountNumbers,
                         now: now
                     )
                 )
@@ -234,6 +236,7 @@ public struct TVProviderRunwaySection: Equatable, Identifiable, Sendable {
                     summary: summary,
                     snapshotState: snapshot.state,
                     mode: mode,
+                    anonymousAccountNumbers: anonymousAccountNumbers,
                     now: now
                 )
             }
@@ -325,6 +328,7 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
         summary: MainLimitSummary,
         snapshotState: WidgetSnapshotState,
         mode: TVPresentationMode,
+        anonymousAccountNumbers: [String: Int],
         now: Date
     ) {
         id = summary.id
@@ -352,6 +356,7 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
             summary: summary,
             snapshotState: snapshotState,
             mode: mode,
+            anonymousAccountNumbers: anonymousAccountNumbers,
             now: now
         )
     }
@@ -453,18 +458,13 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
         summary: MainLimitSummary,
         snapshotState: WidgetSnapshotState,
         mode: TVPresentationMode,
+        anonymousAccountNumbers: [String: Int],
         now: Date
     ) -> [TVRunwayMetric] {
+        let sortedLimits = orderedLimits(summary.limits)
         switch mode {
         case .fullDetail:
-            return summary.limits
-                .sorted { lhs, rhs in
-                    if lhs.accountName != rhs.accountName {
-                        return lhs.accountName.localizedCaseInsensitiveCompare(rhs.accountName) == .orderedAscending
-                    }
-                    return lhs.displayLabel.localizedCaseInsensitiveCompare(rhs.displayLabel) == .orderedAscending
-                }
-                .map {
+            return sortedLimits.map {
                     TVRunwayMetric(
                         limit: $0,
                         snapshotState: snapshotState,
@@ -473,19 +473,105 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
                     )
                 }
         case .projectOnly:
-            return [
-                TVRunwayMetric(
-                    id: summary.id,
-                    title: summary.displayWindowName,
-                    status: snapshotState.tvDisplayStatus(source: summary.status),
-                    remainingPercent: summary.roundedRemainingPercent,
+            let limitsByAccount = Dictionary(grouping: sortedLimits) {
+                anonymousAccountIdentity(for: $0)
+            }
+            let resolvedAccountNumbers = anonymousAccountNumbers.isEmpty
+                ? Self.anonymousAccountNumbers(for: sortedLimits)
+                : anonymousAccountNumbers
+            var accountLimitOrdinals: [String: Int] = [:]
+            return sortedLimits.map { limit in
+                let identity = anonymousAccountIdentity(for: limit)
+                let limitOrdinal = accountLimitOrdinals[identity, default: 0] + 1
+                accountLimitOrdinals[identity] = limitOrdinal
+                let accountNumber = resolvedAccountNumbers[identity] ?? limitOrdinal
+                return TVRunwayMetric(
+                    id: limit.id,
+                    title: anonymousMetricTitle(
+                        limit: limit,
+                        accountNumber: accountNumber,
+                        limitOrdinal: limitOrdinal,
+                        siblingLimits: limitsByAccount[identity] ?? [],
+                        windowName: summary.displayWindowName
+                    ),
+                    status: snapshotState.tvDisplayStatus(source: limit.status),
+                    remainingPercent: limit.remainingCapacityRatio.map { Int(($0 * 100).rounded()) },
                     exactCapacityText: nil,
-                    resetText: summary.resetCountdownText(now: now)
-                ),
-            ]
+                    resetText: compactResetText(until: limit.resetsAt, now: now),
+                    accessibilityResetText: accessibilityResetText(until: limit.resetsAt, now: now)
+                )
+            }
         case .countsOnly:
             return []
         }
+    }
+
+    fileprivate static func anonymousAccountNumbers(for limits: [UsageLimit]) -> [String: Int] {
+        var numbers: [String: Int] = [:]
+        for limit in orderedLimits(limits) {
+            let identity = anonymousAccountIdentity(for: limit)
+            if numbers[identity] == nil {
+                numbers[identity] = numbers.count + 1
+            }
+        }
+        return numbers
+    }
+
+    private static func anonymousMetricTitle(
+        limit: UsageLimit,
+        accountNumber: Int,
+        limitOrdinal: Int,
+        siblingLimits: [UsageLimit],
+        windowName: String
+    ) -> String {
+        var components = ["Account \(accountNumber)", windowName]
+        guard siblingLimits.count > 1 else {
+            return components.joined(separator: " · ")
+        }
+
+        let modelLabel = limit.modelLabel?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let matchingModelCount = modelLabel.map { candidate in
+            siblingLimits.filter {
+                $0.modelLabel?.localizedCaseInsensitiveCompare(candidate) == .orderedSame
+            }.count
+        } ?? 0
+        components.append(
+            modelLabel.flatMap { !$0.isEmpty && matchingModelCount == 1 ? $0 : nil }
+                ?? "Limit \(limitOrdinal)"
+        )
+        return components.joined(separator: " · ")
+    }
+
+    private static func orderedLimits(_ limits: [UsageLimit]) -> [UsageLimit] {
+        limits.sorted { lhs, rhs in
+            let accountComparison = lhs.accountName.localizedCaseInsensitiveCompare(rhs.accountName)
+            if accountComparison != .orderedSame {
+                return accountComparison == .orderedAscending
+            }
+            if lhs.accountName != rhs.accountName {
+                return lhs.accountName < rhs.accountName
+            }
+            let labelComparison = lhs.displayLabel.localizedCaseInsensitiveCompare(rhs.displayLabel)
+            if labelComparison != .orderedSame {
+                return labelComparison == .orderedAscending
+            }
+            let leftModel = lhs.modelLabel ?? ""
+            let rightModel = rhs.modelLabel ?? ""
+            let modelComparison = leftModel.localizedCaseInsensitiveCompare(rightModel)
+            if modelComparison != .orderedSame {
+                return modelComparison == .orderedAscending
+            }
+            if leftModel != rightModel {
+                return leftModel < rightModel
+            }
+            return lhs.id < rhs.id
+        }
+    }
+
+    private static func anonymousAccountIdentity(for limit: UsageLimit) -> String {
+        let configuredAccountID = limit.configuredAccountID ?? ""
+        return "configured#\(configuredAccountID.utf8.count):\(configuredAccountID)"
+            + "account#\(limit.accountID.utf8.count):\(limit.accountID)"
     }
 
     private static func accountCountText(_ count: Int) -> String {
@@ -517,7 +603,7 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
         return remainingHours == 0 ? "Resets in \(days)d" : "Resets in \(days)d \(remainingHours)h"
     }
 
-    private static func accessibilityResetText(until resetDate: Date?, now: Date) -> String? {
+    fileprivate static func accessibilityResetText(until resetDate: Date?, now: Date) -> String? {
         guard let resetDate, resetDate >= now.addingTimeInterval(-60) else { return nil }
         let minutes = max(Int(ceil(resetDate.timeIntervalSince(now) / 60)), 0)
         if minutes < 60 {
@@ -543,6 +629,7 @@ public struct TVRunwayMetric: Equatable, Identifiable, Sendable {
     public let remainingPercent: Int?
     public let exactCapacityText: String?
     public let resetText: String?
+    public let accessibilityResetText: String?
 
     init(
         id: String,
@@ -550,7 +637,8 @@ public struct TVRunwayMetric: Equatable, Identifiable, Sendable {
         status: UsageStatus,
         remainingPercent: Int?,
         exactCapacityText: String?,
-        resetText: String?
+        resetText: String?,
+        accessibilityResetText: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -558,6 +646,7 @@ public struct TVRunwayMetric: Equatable, Identifiable, Sendable {
         self.remainingPercent = remainingPercent
         self.exactCapacityText = exactCapacityText
         self.resetText = resetText
+        self.accessibilityResetText = accessibilityResetText
     }
 
     init(
@@ -576,6 +665,7 @@ public struct TVRunwayMetric: Equatable, Identifiable, Sendable {
             ? TVRunwayLane.exactCapacityText(remaining: limit.remaining, limit: limit.limit, unit: limit.unit)
             : nil
         resetText = TVRunwayLane.compactResetText(until: limit.resetsAt, now: now)
+        accessibilityResetText = TVRunwayLane.accessibilityResetText(until: limit.resetsAt, now: now)
     }
 }
 
