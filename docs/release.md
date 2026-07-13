@@ -254,8 +254,10 @@ targets and does not request iCloud Documents or ubiquity entitlements. It does
 share `group.com.shinycomputers.contextpanel` with its Top Shelf extension and
 runs both targets as the current Apple TV user. App Store Connect requires
 `aps-environment` when the tvOS binary declares CloudKit, so Release uses the
-production APNs environment for best-effort background sync. User-visible badge
-permission remains an explicit in-app opt-in.
+production APNs environment for best-effort background sync. The tvOS app does
+not request badge permission: physical validation showed that badge-only local
+expiry is not reliable while the app is suspended, so the live/stale truth
+remains in the app and dynamic Top Shelf surface.
 
 The tvOS target compiles layered small/App Store icons plus required standard and
 wide Top Shelf artwork from
@@ -289,8 +291,8 @@ Before treating the first tvOS TestFlight build as release evidence:
   offline, missing-record, and restrictive-presentation states;
 - prepare tvOS screenshots, privacy disclosures, age rating, App Review notes,
   and a physical-hardware demo path before App Store review;
-- validate dynamic Top Shelf, provider badges, and all presentation modes on the
-  same signed candidate used for release evidence.
+- validate dynamic Top Shelf, retired-badge cleanup, and all presentation modes
+  on the same signed candidate used for release evidence.
 
 The approved screenshot uploader does not yet contain a tvOS screenshot set.
 Capture and approve the Apple TV marketing frames under #379, then either upload
@@ -621,7 +623,7 @@ iPhone/iPad.
 
 Use `companion_platform=tvos` for issue #379 after both tvOS profile secrets are
 present. The signed candidate includes Couch Mode, the dynamic Top Shelf
-extension, and opt-in provider badges; App Store submission still requires
+extension, and upgrade cleanup for the retired provider badge; App Store submission still requires
 physical Apple TV, screenshot, metadata, privacy, and review evidence.
 
 Do not set `testflight_beta_source=macos` when the intent is companion device

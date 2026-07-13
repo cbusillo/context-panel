@@ -10,8 +10,6 @@ import UIKit
 
 struct TVSystemSurfaceUpdate: Equatable, Sendable {
     let noticeMessage: String?
-    let eventMessage: String?
-    let badgeCount: Int
 }
 
 extension Notification.Name {
@@ -22,15 +20,12 @@ extension Notification.Name {
 
 actor TVSystemSurfaceCoordinator {
     static let shared = TVSystemSurfaceCoordinator()
-    private static let badgeExpiryRequestIdentifier = "context-panel-provider-badge-expiry"
     private static let logger = Logger(
         subsystem: "com.shinycomputers.contextpanel",
         category: "TVSystemSurfaces"
     )
 
     private let topShelfStore: TVTopShelfDocumentStore?
-    private let alertStateStore: TVProviderAlertStateStore
-    private let notificationCenter: UNUserNotificationCenter
     private var contentSelection = TVSystemSurfaceContentSelection()
     private var updateTask: Task<TVSystemSurfaceUpdate, Never>?
     private var updateSequence = 0
@@ -38,34 +33,9 @@ actor TVSystemSurfaceCoordinator {
     init(
         topShelfStore: TVTopShelfDocumentStore? = TVTopShelfSharedLocations.live().map {
             TVTopShelfDocumentStore(documentURL: $0.documentURL)
-        },
-        alertStateStore: TVProviderAlertStateStore = TVProviderAlertStateStore(
-            stateURL: TVLocalCacheLocations.live().providerAlertStateURL
-        ),
-        notificationCenter: UNUserNotificationCenter = .current()
+        }
     ) {
         self.topShelfStore = topShelfStore
-        self.alertStateStore = alertStateStore
-        self.notificationCenter = notificationCenter
-    }
-
-    func requestBadgeAuthorization() async -> Bool {
-        let settings = await notificationCenter.notificationSettings()
-        if settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional {
-            return settings.badgeSetting == .enabled
-        }
-        if settings.authorizationStatus == .denied {
-            return false
-        }
-        do {
-            _ = try await notificationCenter.requestAuthorization(options: [.badge])
-            let updatedSettings = await notificationCenter.notificationSettings()
-            return (updatedSettings.authorizationStatus == .authorized
-                || updatedSettings.authorizationStatus == .provisional)
-                && updatedSettings.badgeSetting == .enabled
-        } catch {
-            return false
-        }
     }
 
     func update(
@@ -98,7 +68,6 @@ actor TVSystemSurfaceCoordinator {
         let mode = defaults.string(forKey: TVPreferenceKeys.presentationMode)
             .flatMap(TVPresentationMode.init(rawValue:))
             ?? .fullDetail
-        let badgesEnabled = defaults.bool(forKey: TVPreferenceKeys.providerBadgesEnabled)
         let now = Date()
         var notices: [String] = []
         if let topShelfStore {
@@ -121,106 +90,31 @@ actor TVSystemSurfaceCoordinator {
             notices.append("Top Shelf shared storage is unavailable on this Apple TV.")
         }
 
-        let previousState = alertStateStore.load()
-        let evaluation = TVProviderAlertEvaluator.evaluate(
-            snapshot: selectedContent.snapshot,
-            previousState: previousState,
-            now: now
-        )
-        do {
-            try alertStateStore.save(evaluation.state)
-        } catch {
-            notices.append("Provider badge history could not be saved.")
-        }
-
-        let badgeCount = badgesEnabled ? evaluation.badgeCount : 0
-        do {
-            try await notificationCenter.setBadgeCount(badgeCount)
-        } catch {
-            if badgesEnabled {
-                notices.append("The provider attention badge could not be updated.")
-            }
-        }
-        do {
-            try await updateBadgeExpiry(
-                snapshot: selectedContent.snapshot,
-                badgeCount: badgeCount,
-                badgesEnabled: badgesEnabled,
-                now: now
-            )
-        } catch {
-            notices.append("The provider attention badge expiry could not be scheduled.")
-        }
-
-        return TVSystemSurfaceUpdate(
-            noticeMessage: notices.first,
-            eventMessage: badgesEnabled ? Self.eventMessage(evaluation.events) : nil,
-            badgeCount: badgeCount
-        )
-    }
-
-    private static func eventMessage(_ events: [TVProviderAlertEvent]) -> String? {
-        switch events.count {
-        case 0:
-            nil
-        case 1:
-            "\(events[0].provider.displayName) needs attention."
-        default:
-            "\(events.count) providers need attention."
-        }
-    }
-
-    private func updateBadgeExpiry(
-        snapshot: WidgetSnapshot,
-        badgeCount: Int,
-        badgesEnabled: Bool,
-        now: Date
-    ) async throws {
-        let identifiers = [Self.badgeExpiryRequestIdentifier]
-        guard badgesEnabled, badgeCount > 0 else {
-            notificationCenter.removePendingNotificationRequests(withIdentifiers: identifiers)
-            return
-        }
-
-        let expirationDate = TVSnapshotFreshnessPolicy.expirationDate(
-            generatedAt: snapshot.generatedAt
-        )
-        let interval = expirationDate.timeIntervalSince(now)
-        guard interval > 0 else {
-            notificationCenter.removePendingNotificationRequests(withIdentifiers: identifiers)
-            return
-        }
-
-        let content = UNMutableNotificationContent()
-        content.badge = 0
-        let trigger = UNTimeIntervalNotificationTrigger(
-            timeInterval: max(interval, 1),
-            repeats: false
-        )
-        let request = UNNotificationRequest(
-            identifier: Self.badgeExpiryRequestIdentifier,
-            content: content,
-            trigger: trigger
-        )
-        try await notificationCenter.add(request)
+        return TVSystemSurfaceUpdate(noticeMessage: notices.first)
     }
 }
 
 @MainActor
 final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
+    private static let retiredBadgeExpiryRequestIdentifier = "context-panel-provider-badge-expiry"
+    private static let retiredProviderBadgesPreferenceKey = "tv-provider-badges-enabled"
+
     private let remoteStore = CompanionCloudKitSyncStoreFactory.make()
+    private let notificationCenter = UNUserNotificationCenter.current()
     private var subscriptionRegistrationTask: Task<Void, Never>?
 
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        clearRetiredProviderBadge()
         application.registerForRemoteNotifications()
         registerCloudKitSubscription()
         return true
     }
 
     func applicationDidBecomeActive(_ application: UIApplication) {
+        clearRetiredProviderBadge()
         application.registerForRemoteNotifications()
         registerCloudKitSubscription()
     }
@@ -313,6 +207,17 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
                 )
             }
             subscriptionRegistrationTask = nil
+        }
+    }
+
+    private func clearRetiredProviderBadge() {
+        UserDefaults.standard.removeObject(forKey: Self.retiredProviderBadgesPreferenceKey)
+        notificationCenter.removePendingNotificationRequests(
+            withIdentifiers: [Self.retiredBadgeExpiryRequestIdentifier]
+        )
+        try? FileManager.default.removeItem(at: TVLocalCacheLocations.live().providerAlertStateURL)
+        Task { [notificationCenter] in
+            try? await notificationCenter.setBadgeCount(0)
         }
     }
 }

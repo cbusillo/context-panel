@@ -240,17 +240,15 @@ copy after their source becomes stale. Background completion uses an unstructure
 deadline so a non-cooperative network request cannot hold the system callback
 open indefinitely.
 
-tvOS provider alerts use an opt-in app badge because notification title, body,
-and sound content are unavailable on tvOS. The badge is a coalesced count of
-providers currently limited or failed, is driven only by normalized snapshot
-state, and clears when providers recover or the snapshot is stale or unknown.
-A fixed badge-only local request also clears the count when the current snapshot
-reaches its freshness deadline without another background or foreground load.
-Scheduling replaces the existing request with the same identifier; removal is
-reserved for disabled, recovered, or already-expired states so an older
-asynchronous removal cannot cancel a newly scheduled deadline.
+tvOS provider attention remains part of the app and Top Shelf runway rather than
+the app icon badge. Physical tvOS 27 validation showed that the system accepts a
+badge-only local expiry request but does not reliably deliver it while the app is
+suspended. A badge could therefore outlive the snapshot that justified it and
+present stale status as current. The tvOS app requests no badge permission,
+schedules no local badge notification, and clears the retired badge, preference,
+pending request, and device-local alert state when an upgraded app launches.
 No account identifiers, account names, provider responses, or error payloads
-are written to the Top Shelf document or badge state.
+are written to the Top Shelf document.
 
 Limit warnings are evaluated from normalized `MainLimitSummary` capacity, not
 raw provider payloads. Local macOS notifications and outbound webhooks use
