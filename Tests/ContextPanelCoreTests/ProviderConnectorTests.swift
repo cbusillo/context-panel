@@ -965,7 +965,7 @@ import Testing
     #expect(!report.limits.contains { $0.label.contains("GPT") })
 }
 
-@Test func googleAntigravityConnectorKeepsIdleSnapshotsHealthyAndClearsElapsedResets() async throws {
+@Test func googleAntigravityConnectorPreservesObservedUsageAcrossElapsedResets() async throws {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
     let observedAt = now.addingTimeInterval(-24 * 3_600)
     let elapsedReset = now.addingTimeInterval(-3_600)
@@ -998,16 +998,23 @@ import Testing
     let report = try #require(await connector.refresh(now: now).reports.first)
     let elapsed = try #require(report.limits.first { $0.label == "Gemini 5-hour" })
     let current = try #require(report.limits.first { $0.label == "Gemini Weekly" })
+    let presentedElapsed = elapsed.presented(at: now)
 
     #expect(report.status == .healthy)
     #expect(report.errorMessage == nil)
-    #expect(report.generatedAt == elapsedReset)
+    #expect(report.generatedAt == observedAt)
     #expect(elapsed.status == .healthy)
     #expect(elapsed.used == 20)
-    #expect(elapsed.resetsAt == nil)
-    #expect(elapsed.lastUpdatedAt == elapsedReset)
-    #expect(elapsed.confidence == .estimated)
-    #expect(elapsed.note?.contains("last observed before provider reset") == true)
+    #expect(elapsed.resetsAt == elapsedReset)
+    #expect(elapsed.lastUpdatedAt == observedAt)
+    #expect(elapsed.confidence == .observed)
+    #expect(elapsed.presentationAssumption == nil)
+    #expect(presentedElapsed.used == 0)
+    #expect(presentedElapsed.remaining == 100)
+    #expect(presentedElapsed.resetsAt == nil)
+    #expect(presentedElapsed.lastUpdatedAt == observedAt)
+    #expect(presentedElapsed.confidence == .estimated)
+    #expect(presentedElapsed.presentationAssumption == .scheduledReset)
     #expect(current.status == .healthy)
     #expect(current.used == 10)
     #expect(current.resetsAt == futureReset)

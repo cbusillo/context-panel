@@ -249,6 +249,10 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
         return confidences.first ?? .unknown
     }
 
+    public var hasAssumedScheduledResetCapacity: Bool {
+        liveNumericLimits.contains(where: \.isAssumedAfterScheduledReset)
+    }
+
     public var pooledLimit: UsageLimit? {
         guard
             let used,
@@ -270,6 +274,10 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
             resetsAt: resetsAt,
             lastUpdatedAt: lastUpdatedAt,
             confidence: confidence,
+            freshnessMode: liveLimits.isEmpty || liveLimits.contains(where: { !$0.usesEventDrivenFreshness })
+                ? .polling
+                : .eventDriven,
+            presentationAssumption: hasAssumedScheduledResetCapacity ? .scheduledReset : nil,
             statusOverride: status
         )
     }

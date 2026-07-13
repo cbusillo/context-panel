@@ -1295,19 +1295,21 @@ extension UsageLimit {
             if status == .failure { return "Failed" }
             return provider == .anthropic ? "Awaiting data" : "Unknown"
         }
-        if unit == .percent { return "\(remaining)% left" }
-        return "\(remaining) left"
+        let prefix = isAssumedAfterScheduledReset ? "≈" : ""
+        if unit == .percent { return "\(prefix)\(remaining)% left" }
+        return "\(prefix)\(remaining) left"
     }
 
     var widgetUsageText: String {
         if provider == .anthropic, unit == .unknown, status == .unknown {
             return "limit not reported"
         }
+        let prefix = isAssumedAfterScheduledReset ? "≈" : ""
         if unit == .percent, let used {
-            return "\(used)% used"
+            return "\(prefix)\(used)% used"
         }
         if let used, let limit {
-            return "\(used)/\(limit) used"
+            return "\(prefix)\(used)/\(limit) used"
         }
         if status == .failure { return "refresh failed" }
         return provider == .anthropic ? "awaiting data" : "unknown"
@@ -1324,6 +1326,7 @@ extension UsageLimit {
     }
 
     var widgetResetText: String? {
+        if isAssumedAfterScheduledReset { return "assumed reset" }
         guard let resetsAt else {
             if status == .failure { return "refresh failed" }
             return provider == .anthropic ? nil : "unknown reset"
@@ -1335,6 +1338,7 @@ extension UsageLimit {
     }
 
     var widgetResetConfidenceText: String? {
+        if isAssumedAfterScheduledReset { return "assumed after reset" }
         guard let resetText = widgetResetText, !resetText.isEmpty else { return nil }
         if confidence.shouldShowWidgetResetQualifier {
             return "\(resetText) · \(confidence.widgetLabel)"
@@ -1524,8 +1528,9 @@ extension MainLimitSummary {
     }
 
     var widgetRemainingHeadline: String {
+        let prefix = hasAssumedScheduledResetCapacity ? "≈" : ""
         if let remainingRatio = widgetRemainingCapacityRatio {
-            return "\(Int((remainingRatio * 100).rounded()))% left"
+            return "\(prefix)\(Int((remainingRatio * 100).rounded()))% left"
         }
         guard unit != nil, remaining != nil else {
             if status == .failure { return "Failed" }
@@ -1533,12 +1538,13 @@ extension MainLimitSummary {
             return "Unknown"
         }
         guard let remaining else { return "Unknown" }
-        return "\(remaining) left"
+        return "\(prefix)\(remaining) left"
     }
 
     var widgetUsageText: String {
+        let prefix = hasAssumedScheduledResetCapacity ? "≈" : ""
         if let usageRatio = widgetUsageRatio {
-            return "\(Int((usageRatio * 100).rounded()))% used"
+            return "\(prefix)\(Int((usageRatio * 100).rounded()))% used"
         }
         guard unit != nil, used != nil, limit != nil else {
             if provider == .anthropic, status != .failure {
@@ -1547,7 +1553,7 @@ extension MainLimitSummary {
             return status == .failure ? "refresh failed" : "unknown"
         }
         guard let used, let limit else { return "unknown" }
-        return "\(used)/\(limit) used"
+        return "\(prefix)\(used)/\(limit) used"
     }
 
     var widgetFreshnessAccessibilityLabel: String? {
@@ -1580,13 +1586,15 @@ extension MainLimitSummary {
     func widgetPressureAccessibilityValue(snapshotState: WidgetSnapshotState?) -> String {
         let statusLabel = snapshotState == .stale ? "Last known main limit status" : "Main limit status"
         var parts = [
-            widgetUsageText,
+            accessibilityQuantity(widgetUsageText),
             "\(statusLabel) \(status.widgetAccessibilityLabel)",
         ]
         if let freshness = widgetFreshnessAccessibilityLabel(snapshotState: snapshotState) {
             parts.append(freshness)
         }
-        if let reset = widgetResetConfidenceText {
+        if hasAssumedScheduledResetCapacity {
+            parts.append(UsagePresentationAssumption.scheduledReset.accessibilityText)
+        } else if let reset = widgetResetConfidenceText {
             parts.append("Reset \(reset)")
         }
         return parts.joined(separator: ". ")
@@ -1597,13 +1605,15 @@ extension MainLimitSummary {
             ? "Last known main limit status"
             : "Main limit status"
         var parts = [
-            widgetRemainingHeadline,
+            accessibilityQuantity(widgetRemainingHeadline),
             "\(statusLabel) \(status.widgetAccessibilityLabel)",
         ]
         if let freshness = widgetFreshnessAccessibilityLabel(snapshotState: snapshotState) {
             parts.append(freshness)
         }
-        if let reset = widgetResetConfidenceText {
+        if hasAssumedScheduledResetCapacity {
+            parts.append(UsagePresentationAssumption.scheduledReset.accessibilityText)
+        } else if let reset = widgetResetConfidenceText {
             parts.append("Reset \(reset)")
         }
         return parts.joined(separator: ". ")
@@ -1620,6 +1630,7 @@ extension MainLimitSummary {
     }
 
     var widgetSmallResetConfidenceText: String? {
+        if hasAssumedScheduledResetCapacity { return "≈ reset" }
         guard let resetsAt else {
             if status == .failure {
                 return "failed"
@@ -1646,6 +1657,7 @@ extension MainLimitSummary {
     }
 
     var widgetResetText: String? {
+        if hasAssumedScheduledResetCapacity { return "assumed reset" }
         guard let resetsAt else {
             if status == .failure {
                 return "refresh failed"
@@ -1662,6 +1674,7 @@ extension MainLimitSummary {
     }
 
     var widgetResetConfidenceText: String? {
+        if hasAssumedScheduledResetCapacity { return "assumed after reset" }
         guard let resetText = widgetResetText, !resetText.isEmpty else {
             return nil
         }
@@ -1669,6 +1682,11 @@ extension MainLimitSummary {
             return "\(resetText) · \(confidence.widgetLabel)"
         }
         return resetText
+    }
+
+    private func accessibilityQuantity(_ text: String) -> String {
+        guard hasAssumedScheduledResetCapacity else { return text }
+        return text.replacingOccurrences(of: "≈", with: "approximately ")
     }
 }
 

@@ -23,6 +23,45 @@ import Testing
     #expect(openAI.accountNames == ["Personal", "Work"])
 }
 
+@Test func tvRunwayPresentationMarksAssumedScheduledResetCapacity() throws {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: now.addingTimeInterval(-3_600),
+        limits: [UsageLimit(
+            id: "google:local:agy:gemini-weekly",
+            provider: .google,
+            accountID: "local",
+            accountName: "Antigravity",
+            label: "Gemini Weekly",
+            windowLabel: "Weekly",
+            modelLabel: "Gemini",
+            unit: .percent,
+            used: 0,
+            limit: 100,
+            lastUpdatedAt: now.addingTimeInterval(-3_600),
+            confidence: .estimated,
+            freshnessMode: .eventDriven,
+            presentationAssumption: .scheduledReset
+        )],
+        status: .healthy,
+        message: "Synced"
+    )
+
+    let presentation = TVRunwayPresentation(snapshot: snapshot, mode: .fullDetail, now: now)
+    let lane = try #require(presentation.sections.first?.lanes.first { $0.title == "Weekly" })
+    let metric = try #require(lane.metrics.first)
+
+    #expect(lane.isAssumedAfterScheduledReset)
+    #expect(lane.remainingPercentDisplayText == "≈100%")
+    #expect(lane.remainingPercentAccessibilityText == "approximately 100 percent left")
+    #expect(lane.resetText == "Assumed after reset")
+    #expect(lane.exactCapacityText == "≈100 of 100 points remaining")
+    #expect(metric.isAssumedAfterScheduledReset)
+    #expect(metric.remainingPercentDisplayText == "≈100%")
+    #expect(metric.remainingPercentAccessibilityText == "approximately 100 percent left")
+}
+
 @Test func tvRunwayPresentationPreservesDuplicateAccountLabelsAndSavedOrder() throws {
     let now = Date(timeIntervalSince1970: 1_750_000_000)
     let snapshot = WidgetSnapshot(

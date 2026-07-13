@@ -112,10 +112,12 @@ command as an opt-in local bridge. The signed refresh agent accepts only the
 documented quota allowlist, writes a sanitized App Group snapshot, and never
 reads Antigravity credentials or calls private Google quota endpoints. Bridge
 data updates while AGY CLI runs. Idle time alone does not make the last
-observation stale; after an explicit reset passes, Context Panel keeps the last
-known pressure conservatively and waits for the next AGY run to confirm the new
-window. AGY supports one custom status-line command, so setup is guided and
-never overwrites or chains an existing customization automatically.
+observation stale. After an explicit reset passes, Context Panel preserves the
+last observation internally while presenting `≈100%` remaining and `≈0%` used
+as an assumed reset until the next AGY run confirms the new window. Assumed
+capacity is not written into observed history or treated as high-confidence
+forecast evidence. AGY supports one custom status-line command, so setup is
+guided and never overwrites or chains an existing customization automatically.
 AGY 1.1.1 compatibility was verified against Every Code's non-interactive
 `agy --add-dir <workspace> -p <prompt>` execution: the configured callback
 publishes the documented quota payload even though no separate interactive AGY

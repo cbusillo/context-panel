@@ -219,9 +219,12 @@ pollable background data. This includes AGY agent runs launched by Every Code.
 Missing bridge data is setup-required, and empty or unrecognized data is
 unknown. Idle time alone does not make an observation stale because normal AGY
 usage invokes the callback. When an explicit reset deadline passes without a
-new observation, Context Panel removes the expired countdown, preserves the
-last known pressure as a conservative estimate, and waits for the next AGY run
-to confirm the new window. It must not manufacture a full bucket.
+new observation, Context Panel preserves the last observed pressure internally
+and presents the elapsed bucket as `≈100%` remaining and `≈0%` used. The
+approximation marker means the scheduled reset is assumed rather than observed;
+the next AGY run replaces it. This presentation inference must not be written
+into observed history or used as high-confidence forecast evidence, and it must
+not create stale or refresh-needed UI by itself.
 Every reported active bucket remains distinct. Context Panel may humanize the
 bucket ID and recognize literal `weekly` or `5h` tokens already present in that
 provider identifier, but it must not infer a window from reset timing or add

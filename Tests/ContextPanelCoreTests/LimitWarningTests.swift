@@ -162,6 +162,44 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
     #expect(recovered.state.record(for: "openai:fiveHour") == nil)
 }
 
+@Test func limitWarningEvaluationTreatsAssumedAGYResetAsRecoveredCapacity() throws {
+    let resetAt = warningNow.addingTimeInterval(60)
+    let settings = LimitWarningSettings(isEnabled: true, thresholdPercentRemaining: 10)
+    let rawSnapshot = UsageSnapshot(generatedAt: warningNow, limits: [UsageLimit(
+        id: "google:local:agy:gemini-5h",
+        provider: .google,
+        accountID: "local",
+        accountName: "Antigravity",
+        label: "Gemini 5-hour",
+        windowLabel: "5-hour",
+        modelLabel: "Gemini",
+        unit: .percent,
+        used: 95,
+        limit: 100,
+        resetsAt: resetAt,
+        lastUpdatedAt: warningNow,
+        confidence: .observed
+    )])
+    let low = LimitWarningEvaluator.evaluate(
+        settings: settings,
+        state: .empty,
+        snapshot: rawSnapshot,
+        now: warningNow
+    )
+
+    let assumedReset = LimitWarningEvaluator.evaluate(
+        settings: settings,
+        state: low.state,
+        snapshot: rawSnapshot.presented(at: resetAt.addingTimeInterval(1)),
+        now: resetAt.addingTimeInterval(1)
+    )
+
+    #expect(low.events.count == 1)
+    #expect(assumedReset.events.isEmpty)
+    #expect(assumedReset.state.record(for: "google:fiveHour") == nil)
+    #expect(rawSnapshot.limits.first?.used == 95)
+}
+
 @Test func limitWarningSnapshotResolverUsesPersistedMergedSnapshotWhenAvailable() throws {
     let persistedSnapshot = StoredUsageSnapshot(
         savedAt: warningNow,

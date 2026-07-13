@@ -334,17 +334,18 @@ private struct LimitWarningNotificationService {
             transientSnapshot: outcome.refreshResult.snapshot,
             persistedSnapshot: loadPersistedSnapshot()
         )
+        let presentationSnapshot = warningSnapshot.presented(at: outcome.savedAt)
         let result = LimitWarningEvaluator.evaluate(
             settings: settings,
             state: state,
-            snapshot: warningSnapshot,
+            snapshot: presentationSnapshot,
             now: outcome.savedAt
         )
         recordAlertEvaluation(at: outcome.savedAt, eventCount: result.events.count)
         let commitPlan = LimitWarningNotificationCommitPlan(
             currentState: state,
             targetState: result.state,
-            snapshot: warningSnapshot,
+            snapshot: presentationSnapshot,
             settings: settings
         )
         guard commitPlan.hasPendingChanges else {

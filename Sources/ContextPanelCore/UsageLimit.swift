@@ -48,6 +48,29 @@ public enum UsageConfidence: String, Codable, Equatable, Sendable {
     case unknown
 }
 
+public enum UsagePresentationAssumption: String, Codable, Equatable, Sendable {
+    case scheduledReset
+
+    public var displayText: String {
+        switch self {
+        case .scheduledReset:
+            "Assumed after scheduled reset"
+        }
+    }
+
+    public var accessibilityText: String {
+        switch self {
+        case .scheduledReset:
+            "Assumed after scheduled reset; updates with the next AGY run"
+        }
+    }
+}
+
+public enum UsageFreshnessMode: String, Codable, Equatable, Sendable {
+    case polling
+    case eventDriven
+}
+
 public enum UsageUnit: String, Codable, Equatable, Sendable {
     case percent
     case tokens
@@ -86,6 +109,8 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
     public let resetsAt: Date?
     public let lastUpdatedAt: Date?
     public let confidence: UsageConfidence
+    public let freshnessMode: UsageFreshnessMode
+    public let presentationAssumption: UsagePresentationAssumption?
     public let statusOverride: UsageStatus?
     public let note: String?
 
@@ -104,6 +129,8 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
         case resetsAt
         case lastUpdatedAt
         case confidence
+        case freshnessMode
+        case presentationAssumption
         case statusOverride
         case note
     }
@@ -123,6 +150,8 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
         resetsAt: Date? = nil,
         lastUpdatedAt: Date? = nil,
         confidence: UsageConfidence = .official,
+        freshnessMode: UsageFreshnessMode? = nil,
+        presentationAssumption: UsagePresentationAssumption? = nil,
         statusOverride: UsageStatus? = nil,
         note: String? = nil
     ) {
@@ -147,6 +176,8 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
         self.resetsAt = resetsAt
         self.lastUpdatedAt = lastUpdatedAt
         self.confidence = confidence
+        self.freshnessMode = freshnessMode ?? Self.inferredFreshnessMode(provider: provider, id: self.id)
+        self.presentationAssumption = presentationAssumption
         self.statusOverride = statusOverride
         self.note = note
     }
@@ -167,6 +198,12 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
         resetsAt = try container.decodeIfPresent(Date.self, forKey: .resetsAt)
         lastUpdatedAt = try container.decodeIfPresent(Date.self, forKey: .lastUpdatedAt)
         confidence = try container.decode(UsageConfidence.self, forKey: .confidence)
+        freshnessMode = try container.decodeIfPresent(UsageFreshnessMode.self, forKey: .freshnessMode)
+            ?? Self.inferredFreshnessMode(provider: provider, id: id)
+        presentationAssumption = try container.decodeIfPresent(
+            UsagePresentationAssumption.self,
+            forKey: .presentationAssumption
+        )
         statusOverride = try container.decodeIfPresent(UsageStatus.self, forKey: .statusOverride)
         note = try container.decodeIfPresent(String.self, forKey: .note)
     }
@@ -221,8 +258,63 @@ public struct UsageLimit: Codable, Equatable, Identifiable, Sendable {
     }
 
     public var usesEventDrivenFreshness: Bool {
+        freshnessMode == .eventDriven
+    }
+
+    public var isAssumedAfterScheduledReset: Bool {
+        presentationAssumption == .scheduledReset
+    }
+
+    public func presented(at now: Date) -> UsageLimit {
+        guard presentationAssumption == nil,
+              usesEventDrivenFreshness,
+              unit == .percent,
+              used != nil,
+              limit != nil,
+              shouldAssumeScheduledReset(at: now)
+        else {
+            return self
+        }
+
+        return UsageLimit(
+            id: id,
+            provider: provider,
+            accountID: accountID,
+            configuredAccountID: configuredAccountID,
+            accountName: accountName,
+            label: label,
+            windowLabel: windowLabel,
+            modelLabel: modelLabel,
+            unit: unit,
+            used: 0,
+            limit: limit,
+            resetsAt: nil,
+            lastUpdatedAt: lastUpdatedAt,
+            confidence: .estimated,
+            freshnessMode: freshnessMode,
+            presentationAssumption: .scheduledReset,
+            statusOverride: nil,
+            note: note
+        )
+    }
+
+    private func shouldAssumeScheduledReset(at now: Date) -> Bool {
+        if let resetsAt,
+           resetsAt <= now,
+           let lastUpdatedAt,
+           resetsAt > lastUpdatedAt {
+            return true
+        }
+
+        return resetsAt == nil && confidence == .estimated
+    }
+
+    private static func inferredFreshnessMode(provider: Provider, id: String) -> UsageFreshnessMode {
         let components = id.split(separator: ":", omittingEmptySubsequences: false)
-        return provider == .google && components.count >= 4 && components[2] == "agy"
+        if provider == .google, components.count >= 4, components[2] == "agy" {
+            return .eventDriven
+        }
+        return .polling
     }
 
     public var status: UsageStatus {
@@ -263,6 +355,13 @@ public struct UsageSnapshot: Codable, Equatable, Sendable {
     public init(generatedAt: Date, limits: [UsageLimit]) {
         self.generatedAt = generatedAt
         self.limits = limits
+    }
+
+    public func presented(at now: Date) -> UsageSnapshot {
+        UsageSnapshot(
+            generatedAt: generatedAt,
+            limits: limits.map { $0.presented(at: now) }
+        )
     }
 
     public var mostConstrainedLimits: [UsageLimit] {

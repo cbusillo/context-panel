@@ -597,6 +597,42 @@ import Testing
     )
 }
 
+@Test func watchLimitDisplayMarksAssumedScheduledResetCapacity() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: now.addingTimeInterval(-3_600),
+        limits: [
+            UsageLimit(
+                id: "google:local:agy:gemini-weekly",
+                provider: .google,
+                accountID: "local",
+                accountName: "Antigravity",
+                label: "Gemini Weekly",
+                windowLabel: "Weekly",
+                modelLabel: "Gemini",
+                unit: .percent,
+                used: 0,
+                limit: 100,
+                lastUpdatedAt: now.addingTimeInterval(-3_600),
+                confidence: .estimated,
+                presentationAssumption: .scheduledReset
+            ),
+        ],
+        status: .healthy,
+        message: "Usage data is current."
+    )
+
+    let row = try #require(WatchLimitDisplay.rows(from: snapshot, maximumCount: 1).first)
+
+    #expect(row.usedText == "≈0%")
+    #expect(row.remainingText == "≈100%")
+    #expect(row.resetText(now: now) == "assumed reset")
+    let accessibilitySentence = row.accessibilitySentence(direction: .remaining, now: now)
+    #expect(accessibilitySentence.contains("approximately 100 percent remaining"))
+    #expect(accessibilitySentence.contains("Assumed after scheduled reset"))
+}
+
 private func openAIWeeklyPercentLimit(accountID: String, used: Int) -> UsageLimit {
     UsageLimit(
         provider: .openAI,
