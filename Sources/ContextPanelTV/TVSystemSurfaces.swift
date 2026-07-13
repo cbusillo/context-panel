@@ -278,6 +278,13 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
         guard let notification = CKNotification(fromRemoteNotificationDictionary: userInfo) else {
             return nil
         }
+        guard let queryNotification = notification as? CKQueryNotification,
+              CompanionCloudKitNotificationPolicy.accepts(
+                  subscriptionID: queryNotification.subscriptionID,
+                  recordName: queryNotification.recordID?.recordName
+              ) else {
+            return nil
+        }
         return TVCloudKitNotificationMetadata(
             subscriptionID: notification.subscriptionID,
             containerIdentifier: notification.containerIdentifier,

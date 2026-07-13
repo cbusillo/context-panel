@@ -191,7 +191,11 @@ conflated.
 The tvOS app registers both its CloudKit subscription and APNs delivery on
 launch and foreground activation. Failed registration remains a recoverable
 state: the app retries when it becomes active, preserves foreground refresh, and
-never stores or logs the APNs device token.
+never stores or logs the APNs device token. The query subscription requires a
+positive `snapshotSchemaVersion`; presentation-preference records use `0`, so
+those writes do not trigger redundant background wakes. Registration saves a
+versioned subscription before removing the legacy broad subscription, and both
+app handlers reject legacy or non-`current` query notifications before reloading.
 
 Provider detail keeps the saved primary limit as the dominant answer while it
 has current capacity. If that lane is temporarily unavailable, detail promotes

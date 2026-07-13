@@ -434,6 +434,7 @@ Production contains the CloudKit-backed companion snapshot record contract:
 - `payload` as CloudKit bytes/data
 - `schemaVersion`, `documentSchemaVersion`, `snapshotSchemaVersion`, and
   `payloadByteCount` as integer/number fields
+- `snapshotSchemaVersion` marked queryable for the background-update subscription
 - `generatedAt` and `publishedAt` as date/time fields
 
 Run the offline repo contract check before packaging:
