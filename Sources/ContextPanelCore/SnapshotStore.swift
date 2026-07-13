@@ -331,17 +331,24 @@ public struct SnapshotStoreStalenessPolicy: Equatable, Sendable {
 
     public func status(for storedSnapshot: StoredUsageSnapshot?, now: Date) -> UsageStatus {
         guard let storedSnapshot else { return .unknown }
-        if now.timeIntervalSince(storedSnapshot.snapshot.generatedAt) > maximumAge {
+        if ageIsStale(in: storedSnapshot.snapshot, now: now) {
             return .stale
         }
-        if hasDueResetExpiry(in: storedSnapshot.snapshot, now: now) {
+        if !presentationResetRefreshDueLimits(in: storedSnapshot.snapshot, now: now).isEmpty {
             return .stale
         }
         return storedSnapshot.snapshot.aggregateStatus
     }
 
+    public func needsResetRefresh(for storedSnapshot: StoredUsageSnapshot?, now: Date) -> Bool {
+        guard let storedSnapshot else { return false }
+        return !resetRefreshDueLimits(in: storedSnapshot.snapshot, now: now).isEmpty
+    }
+
     public func nextStaleTransitionDate(for snapshot: UsageSnapshot, now: Date) -> Date? {
-        let ageTransition = snapshot.generatedAt.addingTimeInterval(maximumAge + 1)
+        let ageTransition = hasAgeSensitiveLimits(in: snapshot)
+            ? snapshot.generatedAt.addingTimeInterval(maximumAge + 1)
+            : nil
         let resetTransition = resetExpiryRefreshState?.nextRefreshCheckDate(for: snapshot, now: now)
             ?? snapshot.nextResetRefreshDate(now: now)
         return [ageTransition, resetTransition]
@@ -352,8 +359,8 @@ public struct SnapshotStoreStalenessPolicy: Equatable, Sendable {
 
     public func refreshAttentionSummary(for storedSnapshot: StoredUsageSnapshot?, now: Date) -> RefreshAttentionSummary? {
         guard let storedSnapshot else { return nil }
-        let ageIsStale = now.timeIntervalSince(storedSnapshot.snapshot.generatedAt) > maximumAge
-        let expiredResetLimits = resetRefreshDueLimits(in: storedSnapshot.snapshot, now: now)
+        let snapshotAgeIsStale = ageIsStale(in: storedSnapshot.snapshot, now: now)
+        let expiredResetLimits = presentationResetRefreshDueLimits(in: storedSnapshot.snapshot, now: now)
         let reconnectFailures = storedSnapshot.reports.reconnectBlockingFailures(coveredBy: storedSnapshot.snapshot.limits)
         let reports = storedSnapshot.reports.filter { report in
             if report.status == .failure {
@@ -362,9 +369,9 @@ public struct SnapshotStoreStalenessPolicy: Equatable, Sendable {
             return report.status == .stale || (report.status == .unknown && report.errorMessage != nil)
         }
 
-        guard ageIsStale || !expiredResetLimits.isEmpty || !reports.isEmpty else { return nil }
+        guard snapshotAgeIsStale || !expiredResetLimits.isEmpty || !reports.isEmpty else { return nil }
         var providerSet = Set(reports.map(\.provider) + expiredResetLimits.map(\.provider))
-        if providerSet.isEmpty, ageIsStale {
+        if providerSet.isEmpty, snapshotAgeIsStale {
             providerSet = Set(storedSnapshot.snapshot.limits.map(\.provider))
         }
         let providers = Provider.allCases.filter { providerSet.contains($0) }
@@ -372,12 +379,21 @@ public struct SnapshotStoreStalenessPolicy: Equatable, Sendable {
             providers: providers,
             reports: reports.sortedByRefreshAttention,
             expiredResetLimits: expiredResetLimits.sortedByRefreshAttention,
-            isSnapshotAgeStale: ageIsStale
+            isSnapshotAgeStale: snapshotAgeIsStale
         )
     }
 
-    private func hasDueResetExpiry(in snapshot: UsageSnapshot, now: Date) -> Bool {
-        !resetRefreshDueLimits(in: snapshot, now: now).isEmpty
+    private func ageIsStale(in snapshot: UsageSnapshot, now: Date) -> Bool {
+        hasAgeSensitiveLimits(in: snapshot)
+            && now.timeIntervalSince(snapshot.generatedAt) > maximumAge
+    }
+
+    private func hasAgeSensitiveLimits(in snapshot: UsageSnapshot) -> Bool {
+        snapshot.limits.isEmpty || snapshot.limits.contains { !$0.usesEventDrivenFreshness }
+    }
+
+    private func presentationResetRefreshDueLimits(in snapshot: UsageSnapshot, now: Date) -> [UsageLimit] {
+        resetRefreshDueLimits(in: snapshot, now: now).filter { !$0.usesEventDrivenFreshness }
     }
 
     private func resetRefreshDueLimits(in snapshot: UsageSnapshot, now: Date) -> [UsageLimit] {

@@ -22,8 +22,9 @@
   literal window tokens already present in provider bucket identifiers.
 - Revalidate that Every Code's non-interactive `agy --add-dir ... -p ...` path
   still invokes the configured status-line callback when AGY is upgraded. Treat
-  a stopped callback as stale/unavailable data, never as a reason to restore
-  credential reads or private Cloud Code Assist requests.
+  a detected stopped callback as unavailable data, never as a reason to restore
+  credential reads or private Cloud Code Assist requests. Idle time by itself
+  is not evidence that the callback stopped.
 - AGY currently supports one custom status-line command. Keep setup guided and
   non-destructive until Google documents a safe stacking mechanism.
 - Keep AI credits unavailable until AGY documents a supported exported balance,

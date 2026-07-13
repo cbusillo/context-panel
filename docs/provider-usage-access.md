@@ -216,8 +216,12 @@ replacement so malformed input cannot destroy the last good observation.
 
 Quota observations are event-driven while AGY CLI runs, not independently
 pollable background data. This includes AGY agent runs launched by Every Code.
-Missing bridge data is setup-required, empty or unrecognized data is unknown,
-and old data or a passed reset deadline is stale.
+Missing bridge data is setup-required, and empty or unrecognized data is
+unknown. Idle time alone does not make an observation stale because normal AGY
+usage invokes the callback. When an explicit reset deadline passes without a
+new observation, Context Panel removes the expired countdown, preserves the
+last known pressure as a conservative estimate, and waits for the next AGY run
+to confirm the new window. It must not manufacture a full bucket.
 Every reported active bucket remains distinct. Context Panel may humanize the
 bucket ID and recognize literal `weekly` or `5h` tokens already present in that
 provider identifier, but it must not infer a window from reset timing or add

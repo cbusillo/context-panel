@@ -111,9 +111,11 @@ For Google Antigravity, Context Panel uses AGY's documented custom status-line
 command as an opt-in local bridge. The signed refresh agent accepts only the
 documented quota allowlist, writes a sanitized App Group snapshot, and never
 reads Antigravity credentials or calls private Google quota endpoints. Bridge
-data updates while AGY CLI runs and becomes explicitly stale when it is no
-longer current. AGY supports one custom status-line command, so setup is guided
-and never overwrites or chains an existing customization automatically.
+data updates while AGY CLI runs. Idle time alone does not make the last
+observation stale; after an explicit reset passes, Context Panel keeps the last
+known pressure conservatively and waits for the next AGY run to confirm the new
+window. AGY supports one custom status-line command, so setup is guided and
+never overwrites or chains an existing customization automatically.
 AGY 1.1.1 compatibility was verified against Every Code's non-interactive
 `agy --add-dir <workspace> -p <prompt>` execution: the configured callback
 publishes the documented quota payload even though no separate interactive AGY
