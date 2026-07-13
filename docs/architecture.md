@@ -196,8 +196,12 @@ never stores or logs the APNs device token.
 Provider detail keeps the saved primary limit as the dominant answer while it
 has current capacity. If that lane is temporarily unavailable, detail promotes
 an available capacity lane and renders the missing lane as a compact supporting
-row. It shows safe account labels and per-account runway only in Full Detail.
-The approved three-provider overview remains a separate stable surface.
+row. Full Detail shows safe account labels and exact capacity; Hide Account Names
+keeps the same per-account percentage, status, and reset rows with provider-scoped
+anonymous labels reused across windows. Distinct model sublimits remain separate
+without exposing account identity. Lane summaries and metric rows are static focus targets so Siri Remote
+navigation can scroll long detail screens without implying an action. The
+approved three-provider overview remains a separate stable surface.
 
 Top Shelf is a separate TVServices extension with no provider or CloudKit
 network authority. The containing tvOS app projects its current snapshot and
@@ -207,8 +211,12 @@ to reload Top Shelf. Keeping this derived document inside the app-group Library
 domain preserves current-user access on physical tvOS while avoiding backup of
 ephemeral runway data. The extension reads that document immediately and
 generates provider cards in its own cache; missing and stale documents remain
-explicit rather than blocking the shelf on network work. CloudKit
-content-available pushes are handled only by
+explicit rather than blocking the shelf on network work. The extension presents
+those cards as one inset portfolio hero so every provider
+is visible at a glance with one privacy-safe runway action. tvOS displays this
+dynamic surface only while the Context Panel tile is focused in the Home Screen's
+top row; the app tile's icon, name, placement, and focus treatment remain
+system-controlled. CloudKit content-available pushes are handled only by
 the containing app as a best-effort refresh path and never replace foreground
 refresh or visible freshness labels. Both the app and extension run as the
 current Apple TV user so CloudKit, preferences, and the shared Top Shelf cache

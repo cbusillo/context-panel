@@ -36,8 +36,12 @@ import Testing
     #expect(projectSection.accountNames.isEmpty)
     #expect(projectLane.exactCapacityText == nil)
     #expect(projectLane.accountCountText == "2 accounts")
-    #expect(projectLane.metrics.count == 1)
-    #expect(projectLane.metrics.first?.exactCapacityText == nil)
+    #expect(projectLane.metrics.count == 2)
+    #expect(projectLane.metrics.map(\.title) == ["Account 1 · Weekly", "Account 2 · Weekly"])
+    #expect(projectLane.metrics.allSatisfy { $0.exactCapacityText == nil })
+    #expect(projectLane.metrics.map(\.remainingPercent) == [80, 60])
+    #expect(projectLane.metrics.allSatisfy { $0.resetText != nil && $0.accessibilityResetText != nil })
+    #expect(projectLane.metrics.allSatisfy { !$0.title.contains("Personal") && !$0.title.contains("Work") })
 
     let countsOnly = TVRunwayPresentation(snapshot: snapshot, mode: .countsOnly, now: now)
     let countsLane = try #require(
@@ -50,6 +54,81 @@ import Testing
     #expect(countsLane.accountCountText == nil)
     #expect(countsLane.resetText == nil)
     #expect(countsLane.metrics.isEmpty)
+}
+
+@Test func tvRunwayHiddenNamesReuseAnonymousAccountsAcrossWindowsAndSublimits() throws {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: now,
+        limits: [
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "personal",
+                accountName: "Personal",
+                label: "Claude 5-hour",
+                windowLabel: "5-hour",
+                modelLabel: "Claude",
+                unit: .percent,
+                used: 10,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(4 * 60 * 60)
+            ),
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "personal",
+                accountName: "Personal",
+                label: "Claude weekly",
+                windowLabel: "Weekly",
+                modelLabel: "Claude",
+                unit: .percent,
+                used: 20,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(4 * 24 * 60 * 60)
+            ),
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "personal",
+                accountName: "Personal",
+                label: "Claude Sonnet weekly",
+                windowLabel: "Weekly",
+                modelLabel: "Sonnet",
+                unit: .percent,
+                used: 30,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(4 * 24 * 60 * 60)
+            ),
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "work",
+                accountName: "Work",
+                label: "Claude weekly",
+                windowLabel: "Weekly",
+                modelLabel: "Claude",
+                unit: .percent,
+                used: 90,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(2 * 24 * 60 * 60)
+            ),
+        ],
+        status: .close,
+        message: "Synced"
+    )
+
+    let presentation = TVRunwayPresentation(snapshot: snapshot, mode: .projectOnly, now: now)
+    let section = try #require(presentation.sections.first { $0.provider == .anthropic })
+    let fiveHour = try #require(section.lanes.first { $0.title == "5-hour" })
+    let weekly = try #require(section.lanes.first { $0.title == "Weekly" })
+
+    #expect(fiveHour.metrics.map(\.title) == ["Account 1 · 5-hour"])
+    #expect(weekly.metrics.map(\.title) == [
+        "Account 1 · Weekly · Claude",
+        "Account 1 · Weekly · Sonnet",
+        "Account 2 · Weekly",
+    ])
+    #expect(weekly.metrics.map(\.status) == [.healthy, .healthy, .close])
+    #expect(weekly.metrics.allSatisfy { $0.exactCapacityText == nil })
+    #expect(weekly.metrics.allSatisfy { !$0.title.contains("Personal") && !$0.title.contains("Work") })
 }
 
 @Test func tvRunwayPresentationKeepsStaleDataExplicit() {
@@ -125,6 +204,12 @@ import Testing
     #expect(statusLane.status == .failure)
     #expect(statusLane.detailText == "No fresh capacity data")
     #expect(statusLane.accountNames == ["Team"])
+
+    let hiddenPresentation = TVRunwayPresentation(snapshot: partial, mode: .projectOnly, now: now)
+    let hiddenOpenAI = try #require(hiddenPresentation.sections.first { $0.provider == .openAI })
+    let hiddenStatusLane = try #require(hiddenOpenAI.lanes.first { $0.kind == .accountStatus })
+    #expect(hiddenStatusLane.title == "Account 2 status")
+    #expect(hiddenStatusLane.accountNames.isEmpty)
 }
 
 @Test func tvRunwayPresentationMakesRefreshStateExplicitWithoutDroppingSavedData() {
@@ -248,6 +333,10 @@ import Testing
     let hiddenSection = try #require(hidden.sections.first { $0.provider == .openAI })
     #expect(hiddenSection.accountNames.isEmpty)
     #expect(hiddenSection.primaryLane?.accountNames.isEmpty == true)
+    #expect(hiddenSection.primaryLane?.metrics.map(\.title) == ["Account 1 · Weekly"])
+    #expect(hiddenSection.primaryLane?.metrics.first?.remainingPercent == 90)
+    #expect(hiddenSection.primaryLane?.metrics.first?.exactCapacityText == nil)
+    #expect(hiddenSection.primaryLane?.metrics.first?.title.contains("chris@example.com") == false)
 
     let countsOnly = TVRunwayPresentation(snapshot: snapshot, mode: .countsOnly, now: now)
     let countsSection = try #require(countsOnly.sections.first { $0.provider == .openAI })
@@ -368,6 +457,14 @@ import Testing
     ])
     #expect(fallback.remainingPercent == 60)
     #expect(google.closestLane == nil)
+
+    let hiddenPresentation = TVRunwayPresentation(snapshot: snapshot, mode: .projectOnly, now: now)
+    let hiddenGoogle = try #require(hiddenPresentation.sections.first { $0.provider == .google })
+    let hiddenFallback = try #require(
+        hiddenGoogle.lanes.first { $0.title == "Account 1 · Model requests" }
+    )
+    #expect(hiddenFallback.metrics.map(\.title) == ["Account 1 · Model requests"])
+    #expect(hiddenFallback.exactCapacityText == nil)
 }
 
 @Test func tvRunwayPresentationDoesNotRestoreHiddenMainLanes() throws {
