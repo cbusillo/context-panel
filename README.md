@@ -114,6 +114,10 @@ reads Antigravity credentials or calls private Google quota endpoints. Bridge
 data updates while AGY CLI runs and becomes explicitly stale when it is no
 longer current. AGY supports one custom status-line command, so setup is guided
 and never overwrites or chains an existing customization automatically.
+AGY 1.1.1 compatibility was verified against Every Code's non-interactive
+`agy --add-dir <workspace> -p <prompt>` execution: the configured callback
+publishes the documented quota payload even though no separate interactive AGY
+session is running.
 
 The probes call the same `ContextPanelCore` connectors the app will use, so
 passing probe output is also a smoke test for the production connector runtime.
