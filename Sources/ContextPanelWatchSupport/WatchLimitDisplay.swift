@@ -21,6 +21,7 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
     private let accessibilityContext: String
     private let usedAccessibilityText: String
     private let remainingAccessibilityText: String
+    private let isAssumedAfterScheduledReset: Bool
     private let resetsAt: Date?
     private let snapshotGeneratedAt: Date
     private let snapshotState: WidgetSnapshotState
@@ -63,6 +64,7 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
     }
 
     public func resetText(now: Date) -> String? {
+        if isAssumedAfterScheduledReset { return "assumed reset" }
         guard let resetsAt else { return nil }
         return Self.compactResetText(until: resetsAt, now: now)
     }
@@ -84,7 +86,10 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
         let quantityAndStatus = isIndeterminate && status == .unknown
             ? quantity
             : "\(quantity), \(statusText)"
-        return "\(identity). \(quantityAndStatus). \(resetAccessibilityText(now: now)) \(freshnessAccessibilityText(now: now))"
+        let assumption = isAssumedAfterScheduledReset
+            ? " \(UsagePresentationAssumption.scheduledReset.accessibilityText)."
+            : ""
+        return "\(identity). \(quantityAndStatus). \(resetAccessibilityText(now: now))\(assumption) \(freshnessAccessibilityText(now: now))"
     }
 
     private func complicationText(_ quantity: String) -> String {
@@ -197,6 +202,7 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
             accessibilityContext: "No current data",
             usedAccessibilityText: "usage unknown",
             remainingAccessibilityText: "remaining capacity unknown",
+            isAssumedAfterScheduledReset: false,
             resetsAt: nil,
             snapshotGeneratedAt: snapshot.generatedAt,
             snapshotState: snapshot.state
@@ -222,14 +228,16 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
                 used: summary.used,
                 unit: summary.unit,
                 usedPercent: metrics.usedPercent,
-                isIndeterminate: metrics.used.isIndeterminate
+                isIndeterminate: metrics.used.isIndeterminate,
+                isAssumedAfterScheduledReset: summary.hasAssumedScheduledResetCapacity
             ),
             remainingText: remainingDisplayText(
                 used: summary.used,
                 limit: summary.limit,
                 unit: summary.unit,
                 remainingPercent: metrics.remainingPercent,
-                isIndeterminate: metrics.remaining.isIndeterminate
+                isIndeterminate: metrics.remaining.isIndeterminate,
+                isAssumedAfterScheduledReset: summary.hasAssumedScheduledResetCapacity
             ),
             remainingCapacity: metrics.remaining,
             usedPressure: metrics.used,
@@ -241,15 +249,18 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
                 limit: summary.limit,
                 unit: summary.unit,
                 usedPercent: metrics.usedPercent,
-                isIndeterminate: metrics.used.isIndeterminate
+                isIndeterminate: metrics.used.isIndeterminate,
+                isAssumedAfterScheduledReset: summary.hasAssumedScheduledResetCapacity
             ),
             remainingAccessibilityText: remainingAccessibilityText(
                 used: summary.used,
                 limit: summary.limit,
                 unit: summary.unit,
                 remainingPercent: metrics.remainingPercent,
-                isIndeterminate: metrics.remaining.isIndeterminate
+                isIndeterminate: metrics.remaining.isIndeterminate,
+                isAssumedAfterScheduledReset: summary.hasAssumedScheduledResetCapacity
             ),
+            isAssumedAfterScheduledReset: summary.hasAssumedScheduledResetCapacity,
             resetsAt: summary.resetsAt,
             snapshotGeneratedAt: snapshot.generatedAt,
             snapshotState: snapshot.state
@@ -277,14 +288,16 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
                 used: limit.used,
                 unit: limit.unit,
                 usedPercent: metrics.usedPercent,
-                isIndeterminate: metrics.used.isIndeterminate
+                isIndeterminate: metrics.used.isIndeterminate,
+                isAssumedAfterScheduledReset: limit.isAssumedAfterScheduledReset
             ),
             remainingText: remainingDisplayText(
                 used: limit.used,
                 limit: limit.limit,
                 unit: limit.unit,
                 remainingPercent: metrics.remainingPercent,
-                isIndeterminate: metrics.remaining.isIndeterminate
+                isIndeterminate: metrics.remaining.isIndeterminate,
+                isAssumedAfterScheduledReset: limit.isAssumedAfterScheduledReset
             ),
             remainingCapacity: metrics.remaining,
             usedPressure: metrics.used,
@@ -296,15 +309,18 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
                 limit: limit.limit,
                 unit: limit.unit,
                 usedPercent: metrics.usedPercent,
-                isIndeterminate: metrics.used.isIndeterminate
+                isIndeterminate: metrics.used.isIndeterminate,
+                isAssumedAfterScheduledReset: limit.isAssumedAfterScheduledReset
             ),
             remainingAccessibilityText: remainingAccessibilityText(
                 used: limit.used,
                 limit: limit.limit,
                 unit: limit.unit,
                 remainingPercent: metrics.remainingPercent,
-                isIndeterminate: metrics.remaining.isIndeterminate
+                isIndeterminate: metrics.remaining.isIndeterminate,
+                isAssumedAfterScheduledReset: limit.isAssumedAfterScheduledReset
             ),
+            isAssumedAfterScheduledReset: limit.isAssumedAfterScheduledReset,
             resetsAt: limit.resetsAt,
             snapshotGeneratedAt: snapshot.generatedAt,
             snapshotState: snapshot.state
@@ -363,14 +379,16 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
         used: Int?,
         unit: UsageUnit?,
         usedPercent: Int?,
-        isIndeterminate: Bool
+        isIndeterminate: Bool,
+        isAssumedAfterScheduledReset: Bool
     ) -> String {
         guard !isIndeterminate else { return "—" }
+        let prefix = isAssumedAfterScheduledReset ? "≈" : ""
         if unit == .percent {
-            return usedPercent.map { "\($0)%" } ?? "—"
+            return usedPercent.map { "\(prefix)\($0)%" } ?? "—"
         }
         guard let used else { return "—" }
-        return "\(used)"
+        return "\(prefix)\(used)"
     }
 
     private static func remainingDisplayText(
@@ -378,14 +396,16 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
         limit: Int?,
         unit: UsageUnit?,
         remainingPercent: Int?,
-        isIndeterminate: Bool
+        isIndeterminate: Bool,
+        isAssumedAfterScheduledReset: Bool
     ) -> String {
         guard !isIndeterminate else { return "—" }
+        let prefix = isAssumedAfterScheduledReset ? "≈" : ""
         if unit == .percent {
-            return remainingPercent.map { "\($0)%" } ?? "—"
+            return remainingPercent.map { "\(prefix)\($0)%" } ?? "—"
         }
         guard let used, let limit else { return "—" }
-        return "\(max(limit - used, 0))"
+        return "\(prefix)\(max(limit - used, 0))"
     }
 
     private static func usedAccessibilityText(
@@ -393,16 +413,18 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
         limit: Int?,
         unit: UsageUnit?,
         usedPercent: Int?,
-        isIndeterminate: Bool
+        isIndeterminate: Bool,
+        isAssumedAfterScheduledReset: Bool
     ) -> String {
         guard !isIndeterminate else { return "usage unknown" }
+        let prefix = isAssumedAfterScheduledReset ? "approximately " : ""
         if unit == .percent {
-            return usedPercent.map { "\($0) percent used" } ?? "usage unknown"
+            return usedPercent.map { "\(prefix)\($0) percent used" } ?? "usage unknown"
         }
         guard let used else { return "usage unknown" }
         let unitText = accessibilityUnitText(unit)
-        guard let limit else { return "\(used) \(unitText) used, total unknown" }
-        return "\(used) of \(limit) \(unitText) used"
+        guard let limit else { return "\(prefix)\(used) \(unitText) used, total unknown" }
+        return "\(prefix)\(used) of \(limit) \(unitText) used"
     }
 
     private static func remainingAccessibilityText(
@@ -410,16 +432,18 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
         limit: Int?,
         unit: UsageUnit?,
         remainingPercent: Int?,
-        isIndeterminate: Bool
+        isIndeterminate: Bool,
+        isAssumedAfterScheduledReset: Bool
     ) -> String {
         guard !isIndeterminate else { return "remaining capacity unknown" }
+        let prefix = isAssumedAfterScheduledReset ? "approximately " : ""
         if unit == .percent {
-            return remainingPercent.map { "\($0) percent remaining" } ?? "remaining capacity unknown"
+            return remainingPercent.map { "\(prefix)\($0) percent remaining" } ?? "remaining capacity unknown"
         }
         if let used, let limit {
-            return "\(max(limit - used, 0)) of \(limit) \(accessibilityUnitText(unit)) remaining"
+            return "\(prefix)\(max(limit - used, 0)) of \(limit) \(accessibilityUnitText(unit)) remaining"
         }
-        return remainingPercent.map { "\($0) percent remaining" } ?? "remaining capacity unknown"
+        return remainingPercent.map { "\(prefix)\($0) percent remaining" } ?? "remaining capacity unknown"
     }
 
     private static func accessibilityUnitText(_ unit: UsageUnit?) -> String {
@@ -457,6 +481,7 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
     }
 
     private func resetAccessibilityText(now: Date) -> String {
+        if isAssumedAfterScheduledReset { return "Scheduled reset passed." }
         guard let resetsAt else { return "Reset time unknown." }
         let seconds = Int(resetsAt.timeIntervalSince(now))
         if seconds < -60 { return "Reset just passed." }

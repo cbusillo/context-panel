@@ -607,11 +607,12 @@ public struct LimitWarningWebhookDeliveryService: Sendable {
         guard settings.isEnabled else { return [] }
         guard let webhookURL = try? secretStore.loadWebhookURL() else { return [] }
         let warningSettings = warningSettingsStore.load()
+        let presentationSnapshot = snapshot.presented(at: now)
 
         var state = stateStore.load()
-        state.removeRecords(forMissing: Set(snapshot.mainLimitSummaries.map(\.id)))
+        state.removeRecords(forMissing: Set(presentationSnapshot.mainLimitSummaries.map(\.id)))
         let events = LimitWarningWebhookEventEvaluator.events(
-            snapshot: snapshot,
+            snapshot: presentationSnapshot,
             thresholdPercentRemaining: warningSettings.thresholdPercentRemaining
         )
         var results: [LimitWarningWebhookDeliveryResult] = []

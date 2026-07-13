@@ -210,6 +210,130 @@ import Testing
     #expect(limit.usageRatio == 0.38)
 }
 
+@Test func eventDrivenLimitPresentationAssumesFullCapacityAfterScheduledReset() throws {
+    let observedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let resetAt = observedAt.addingTimeInterval(3_600)
+    let rawLimit = UsageLimit(
+        id: "google:local:agy:gemini-5h",
+        provider: .google,
+        accountID: "local",
+        accountName: "Antigravity",
+        label: "Gemini 5-hour",
+        windowLabel: "5-hour",
+        modelLabel: "Gemini",
+        unit: .percent,
+        used: 80,
+        limit: 100,
+        resetsAt: resetAt,
+        lastUpdatedAt: observedAt,
+        confidence: .observed
+    )
+    let rawSnapshot = UsageSnapshot(generatedAt: observedAt, limits: [rawLimit])
+    let presentedSnapshot = rawSnapshot.presented(at: resetAt.addingTimeInterval(1))
+    let presentedLimit = try #require(presentedSnapshot.limits.first)
+    let summary = try #require(presentedSnapshot.mainLimitSummaries.first)
+
+    #expect(rawSnapshot.limits.first?.used == 80)
+    #expect(rawSnapshot.limits.first?.presentationAssumption == nil)
+    #expect(presentedLimit.used == 0)
+    #expect(presentedLimit.remaining == 100)
+    #expect(presentedLimit.resetsAt == nil)
+    #expect(presentedLimit.lastUpdatedAt == observedAt)
+    #expect(presentedLimit.confidence == .estimated)
+    #expect(presentedLimit.presentationAssumption == .scheduledReset)
+    #expect(presentedLimit.status == .healthy)
+    #expect(summary.roundedUsedPercent == 0)
+    #expect(summary.roundedRemainingPercent == 100)
+    #expect(summary.hasAssumedScheduledResetCapacity)
+}
+
+@Test func scheduledResetPresentationOnlyAppliesToObservedAGYPercentBuckets() {
+    let observedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let resetAt = observedAt.addingTimeInterval(3_600)
+    let now = resetAt.addingTimeInterval(1)
+    let nonAGY = UsageLimit(
+        id: "google:local:other:gemini-5h",
+        provider: .google,
+        accountID: "local",
+        accountName: "Google",
+        label: "Gemini 5-hour",
+        unit: .percent,
+        used: 80,
+        limit: 100,
+        resetsAt: resetAt,
+        lastUpdatedAt: observedAt,
+        confidence: .observed
+    )
+    let expiredAtObservation = UsageLimit(
+        id: "google:local:agy:gemini-weekly",
+        provider: .google,
+        accountID: "local",
+        accountName: "Antigravity",
+        label: "Gemini Weekly",
+        unit: .percent,
+        used: 80,
+        limit: 100,
+        resetsAt: observedAt.addingTimeInterval(-1),
+        lastUpdatedAt: observedAt,
+        confidence: .observed
+    )
+    let openAI = UsageLimit(
+        id: "openai:local:codex-5h",
+        provider: .openAI,
+        accountID: "local",
+        accountName: "OpenAI",
+        label: "Codex 5-hour",
+        unit: .percent,
+        used: 80,
+        limit: 100,
+        resetsAt: resetAt,
+        lastUpdatedAt: observedAt,
+        confidence: .observed
+    )
+
+    #expect(nonAGY.presented(at: now) == nonAGY)
+    #expect(expiredAtObservation.presented(at: now) == expiredAtObservation)
+    #expect(openAI.presented(at: now) == openAI)
+}
+
+@Test func scheduledResetPresentationMigratesPreviousEstimatedAGYSnapshots() {
+    let legacyLimit = UsageLimit(
+        id: "google:local:agy:gemini-weekly",
+        provider: .google,
+        accountID: "local",
+        accountName: "Antigravity",
+        label: "Gemini Weekly",
+        unit: .percent,
+        used: 80,
+        limit: 100,
+        lastUpdatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+        confidence: .estimated
+    )
+
+    let presented = legacyLimit.presented(at: Date(timeIntervalSince1970: 1_800_000_100))
+
+    #expect(legacyLimit.used == 80)
+    #expect(presented.used == 0)
+    #expect(presented.presentationAssumption == .scheduledReset)
+
+    let nextObservation = UsageLimit(
+        id: legacyLimit.id,
+        provider: .google,
+        accountID: legacyLimit.accountID,
+        accountName: legacyLimit.accountName,
+        label: legacyLimit.label,
+        unit: .percent,
+        used: 30,
+        limit: 100,
+        resetsAt: Date(timeIntervalSince1970: 1_800_003_600),
+        lastUpdatedAt: Date(timeIntervalSince1970: 1_800_000_100),
+        confidence: .observed,
+        freshnessMode: .eventDriven
+    )
+
+    #expect(nextObservation.presented(at: Date(timeIntervalSince1970: 1_800_000_200)) == nextObservation)
+}
+
 @Test func mainLimitSummariesCollapseAccountsAndHideSparkRows() {
     let snapshot = UsageSnapshot(
         generatedAt: Date(),

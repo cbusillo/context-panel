@@ -651,9 +651,9 @@ private struct TVProviderOverviewCard: View {
 
             Spacer(minLength: 0)
 
-            if let remainingPercent = lane.remainingPercent {
+            if let remainingPercentText = lane.remainingPercentDisplayText {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text("\(remainingPercent)%")
+                    Text(remainingPercentText)
                         .font(.system(size: 92, weight: .bold, design: .rounded))
                         .monospacedDigit()
                     Text("left")
@@ -724,8 +724,8 @@ private struct TVProviderOverviewCard: View {
 
     private var accessibilityLabel: String {
         var components = [section.provider.displayName, section.status.tvStatusLabel, lane.title]
-        if let remainingPercent = lane.remainingPercent {
-            components.append("\(remainingPercent) percent left")
+        if let remainingPercentAccessibilityText = lane.remainingPercentAccessibilityText {
+            components.append(remainingPercentAccessibilityText)
         }
         if let accessibilityResetText = lane.accessibilityResetText {
             components.append(accessibilityResetText)
@@ -749,8 +749,8 @@ private struct TVProviderOverviewCard: View {
     }
 
     private func closestLimitText(_ closestLane: TVRunwayLane) -> String {
-        if let remainingPercent = closestLane.remainingPercent {
-            return "\(closestLane.title) · \(remainingPercent)% left"
+        if let remainingPercentText = closestLane.remainingPercentDisplayText {
+            return "\(closestLane.title) · \(remainingPercentText) left"
         }
         return "\(closestLane.title) · unknown"
     }
@@ -906,9 +906,9 @@ private struct TVProviderPrimaryCard: View {
             Spacer(minLength: 32)
 
             VStack(alignment: .trailing, spacing: 20) {
-                if let remainingPercent = lane.remainingPercent {
+                if let remainingPercentText = lane.remainingPercentDisplayText {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text("\(remainingPercent)%")
+                        Text(remainingPercentText)
                             .font(.system(size: mode == .countsOnly ? 92 : 86, weight: .bold, design: .rounded))
                             .monospacedDigit()
                         Text("left")
@@ -962,8 +962,8 @@ private struct TVProviderPrimaryCard: View {
 
     private var accessibilityLabel: String {
         var components = [lane.provider.displayName, lane.title, lane.statusText]
-        if let remainingPercent = lane.remainingPercent {
-            components.append("\(remainingPercent) percent left")
+        if let remainingPercentAccessibilityText = lane.remainingPercentAccessibilityText {
+            components.append(remainingPercentAccessibilityText)
         }
         if let accessibilityResetText = lane.accessibilityResetText {
             components.append(accessibilityResetText)
@@ -1005,8 +1005,8 @@ private struct TVProviderLaneRow: View {
             Spacer()
 
             VStack(alignment: .trailing, spacing: 6) {
-                if let remainingPercent = lane.remainingPercent {
-                    Text("\(remainingPercent)% left")
+                if let remainingPercentText = lane.remainingPercentDisplayText {
+                    Text("\(remainingPercentText) left")
                         .font(.title2.bold().monospacedDigit())
                 } else {
                     Text(lane.kind == .accountStatus ? "No fresh capacity" : "Unknown")
@@ -1055,8 +1055,8 @@ private struct TVProviderLaneRow: View {
 
     private var accessibilityLabel: String {
         var components = [lane.provider.displayName, lane.title, lane.statusText]
-        if let remainingPercent = lane.remainingPercent {
-            components.append("\(remainingPercent) percent left")
+        if let remainingPercentAccessibilityText = lane.remainingPercentAccessibilityText {
+            components.append(remainingPercentAccessibilityText)
         }
         if let accessibilityResetText = lane.accessibilityResetText {
             components.append(accessibilityResetText)
@@ -1172,9 +1172,9 @@ private struct TVRunwaySummaryView: View {
                 .foregroundStyle(.secondary)
             }
 
-            if let remainingPercent = lane.remainingPercent {
+            if let remainingPercentText = lane.remainingPercentDisplayText {
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    Text("\(remainingPercent)%")
+                    Text(remainingPercentText)
                         .font(.system(size: 108, weight: .bold, design: .rounded))
                         .monospacedDigit()
                     Text("left")
@@ -1221,8 +1221,8 @@ private struct TVRunwaySummaryView: View {
                     : "Saved data from \(age) ago"
             )
         }
-        if let remainingPercent = lane.remainingPercent {
-            components.append("\(remainingPercent) percent left")
+        if let remainingPercentAccessibilityText = lane.remainingPercentAccessibilityText {
+            components.append(remainingPercentAccessibilityText)
         }
         if let accessibilityResetText = lane.accessibilityResetText {
             components.append(accessibilityResetText)
@@ -1279,9 +1279,9 @@ private struct TVMetricRow: View {
 
             Spacer()
 
-            if let remainingPercent = metric.remainingPercent {
+            if let remainingPercentText = metric.remainingPercentDisplayText {
                 VStack(alignment: .trailing, spacing: 6) {
-                    Text("\(remainingPercent)% left")
+                    Text("\(remainingPercentText) left")
                         .font(.title2.bold().monospacedDigit())
                     Text(metric.status.tvStatusLabel)
                         .font(.callout.weight(.semibold))
@@ -1313,8 +1313,8 @@ private struct TVMetricRow: View {
 
     private var accessibilityValue: String {
         var components = [metric.status.tvStatusLabel]
-        if let remainingPercent = metric.remainingPercent {
-            components.append("\(remainingPercent) percent left")
+        if let remainingPercentAccessibilityText = metric.remainingPercentAccessibilityText {
+            components.append(remainingPercentAccessibilityText)
         }
         if let exactCapacityText = metric.exactCapacityText {
             components.append(exactCapacityText)

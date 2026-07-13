@@ -933,6 +933,7 @@ public struct CompanionLimit: Codable, Equatable, Sendable {
     public let resetsAt: Date?
     public let lastUpdatedAt: Date?
     public let confidence: UsageConfidence
+    public let freshnessMode: UsageFreshnessMode?
     public let status: UsageStatus
 
     public init(limit: UsageLimit) {
@@ -952,6 +953,7 @@ public struct CompanionLimit: Codable, Equatable, Sendable {
         resetsAt = limit.resetsAt
         lastUpdatedAt = limit.lastUpdatedAt
         confidence = limit.confidence
+        freshnessMode = limit.freshnessMode
         status = limit.status
     }
 
@@ -970,8 +972,13 @@ public struct CompanionLimit: Codable, Equatable, Sendable {
             resetsAt: resetsAt,
             lastUpdatedAt: lastUpdatedAt,
             confidence: confidence,
+            freshnessMode: freshnessMode ?? legacyFreshnessMode,
             statusOverride: status
         )
+    }
+
+    private var legacyFreshnessMode: UsageFreshnessMode {
+        provider == .google ? .eventDriven : .polling
     }
 }
 

@@ -612,8 +612,7 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
                 bucket: bucket,
                 account: account,
                 localAccountID: localAccountID,
-                observedAt: snapshot.observedAt,
-                now: now
+                observedAt: snapshot.observedAt
             )
         }
 
@@ -663,20 +662,11 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
         bucket: GoogleAntigravityStatusLineBucket,
         account: GoogleAntigravityAccountConfiguration,
         localAccountID: String,
-        observedAt: Date,
-        now: Date
+        observedAt: Date
     ) -> UsageLimit {
         let labels = Self.labels(for: bucket.id)
-        let elapsedReset = bucket.resetsAt.flatMap { resetsAt in
-            resetsAt > observedAt && resetsAt <= now ? resetsAt : nil
-        }
         let used = bucket.remainingFraction.map { remaining in
             Int(((1 - remaining) * 100).rounded())
-        }
-        let note = if elapsedReset == nil {
-            "source: AGY documented status-line quota export; bucket: \(bucket.id)"
-        } else {
-            "source: AGY documented status-line quota export; bucket: \(bucket.id); last observed before provider reset; next AGY run confirms current capacity"
         }
         return UsageLimit(
             id: "\(provider.rawValue):\(localAccountID):agy:\(bucket.id)",
@@ -690,11 +680,12 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
             unit: .percent,
             used: used,
             limit: 100,
-            resetsAt: bucket.resetsAt.flatMap { $0 > now ? $0 : nil },
-            lastUpdatedAt: elapsedReset ?? observedAt,
-            confidence: elapsedReset == nil ? .observed : .estimated,
+            resetsAt: bucket.resetsAt,
+            lastUpdatedAt: observedAt,
+            confidence: .observed,
+            freshnessMode: .eventDriven,
             statusOverride: used == nil ? .unknown : nil,
-            note: note
+            note: "source: AGY documented status-line quota export; bucket: \(bucket.id)"
         )
     }
 

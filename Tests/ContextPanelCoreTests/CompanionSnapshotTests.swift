@@ -1497,6 +1497,37 @@ import Testing
     #expect(decoded.observedBurnRates.isEmpty)
 }
 
+@Test func legacyGoogleCompanionLimitsRemainEventDrivenWithoutFreshnessMetadata() throws {
+    let observedAt = Date(timeIntervalSince1970: 3_333.75)
+    let companionLimit = CompanionLimit(limit: UsageLimit(
+        id: "google:local:agy:gemini-weekly",
+        provider: .google,
+        accountID: "local",
+        accountName: "Antigravity",
+        label: "Gemini Weekly",
+        windowLabel: "Weekly",
+        modelLabel: "Gemini",
+        unit: .percent,
+        used: 80,
+        limit: 100,
+        resetsAt: observedAt.addingTimeInterval(3_600),
+        lastUpdatedAt: observedAt,
+        confidence: .observed,
+        freshnessMode: .eventDriven
+    ))
+    let encoded = try JSONEncoder().encode(companionLimit)
+    var json = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    json.removeValue(forKey: "freshnessMode")
+
+    let decoded = try JSONDecoder().decode(
+        CompanionLimit.self,
+        from: JSONSerialization.data(withJSONObject: json)
+    )
+
+    #expect(decoded.freshnessMode == nil)
+    #expect(decoded.usageLimit.usesEventDrivenFreshness)
+}
+
 @Test func companionPresentationPayloadCodecRoundTripsPreferencesWithoutSnapshotData() throws {
     var preferences = WidgetDisplayPreferences.defaultPreferences
     preferences.moveMainLimits(fromOffsets: IndexSet(integer: 6), toOffset: 0)

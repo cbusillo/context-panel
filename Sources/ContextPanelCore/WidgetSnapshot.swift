@@ -120,9 +120,10 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         } else {
             .ready
         }
+        let presentationSnapshot = stored.snapshot.presented(at: now)
         let status = widgetStatus(
-            for: stored.snapshot,
-            fallback: snapshotWideStatus(for: state, snapshot: stored.snapshot)
+            for: presentationSnapshot,
+            fallback: snapshotWideStatus(for: state, snapshot: presentationSnapshot)
         )
 
         let recentPromptCacheObservations = PromptCacheTelemetryReader.filteredRecentObservations(
@@ -136,7 +137,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         return WidgetSnapshot(
             state: state,
             generatedAt: stored.snapshot.generatedAt,
-            limits: stored.snapshot.limits,
+            limits: presentationSnapshot.limits,
             reports: stored.reports,
             promptCacheObservations: recentPromptCacheObservations,
             promptCacheWidgetState: resolvedPromptCacheState,
@@ -188,9 +189,10 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         } else {
             .ready
         }
+        let presentationSnapshot = stored.snapshot.presented(at: now)
         let status = widgetStatus(
-            for: stored.snapshot,
-            fallback: snapshotWideStatus(for: state, snapshot: stored.snapshot)
+            for: presentationSnapshot,
+            fallback: snapshotWideStatus(for: state, snapshot: presentationSnapshot)
         )
         let hasProviderRefreshAttention = refreshAttentionSummary.map {
             !$0.providers.isEmpty && !$0.isSnapshotAgeStale
@@ -205,7 +207,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         return WidgetSnapshot(
             state: state,
             generatedAt: companion.generatedAt,
-            limits: limits,
+            limits: presentationSnapshot.limits,
             reports: reports,
             promptCacheObservations: promptCacheObservations,
             promptCacheWidgetState: promptCacheState,

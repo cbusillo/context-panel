@@ -25,6 +25,9 @@
   a detected stopped callback as unavailable data, never as a reason to restore
   credential reads or private Cloud Code Assist requests. Idle time by itself
   is not evidence that the callback stopped.
+- Preserve observed quota history across scheduled resets. Present an elapsed
+  AGY bucket as `≈100%` remaining with an assumed-reset marker until the next
+  observation, without feeding that inference into history or forecasts.
 - AGY currently supports one custom status-line command. Keep setup guided and
   non-destructive until Google documents a safe stacking mechanism.
 - Keep AI credits unavailable until AGY documents a supported exported balance,

@@ -346,6 +346,7 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
     public let title: String
     public let status: UsageStatus
     public let remainingPercent: Int?
+    public let isAssumedAfterScheduledReset: Bool
     public let capacityRatio: Double?
     public let resetText: String?
     public let accessibilityResetText: String?
@@ -359,6 +360,16 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
         status.tvDisplayName
     }
 
+    public var remainingPercentDisplayText: String? {
+        remainingPercent.map { "\(isAssumedAfterScheduledReset ? "≈" : "")\($0)%" }
+    }
+
+    public var remainingPercentAccessibilityText: String? {
+        remainingPercent.map {
+            "\(isAssumedAfterScheduledReset ? "approximately " : "")\($0) percent left"
+        }
+    }
+
     init(
         summary: MainLimitSummary,
         snapshotState: WidgetSnapshotState,
@@ -366,19 +377,30 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
         anonymousAccountNumbers: [String: Int],
         now: Date
     ) {
+        let assumesScheduledReset = summary.hasAssumedScheduledResetCapacity
         id = summary.id
         kind = .capacity
         provider = summary.provider
         title = summary.displayWindowName
         status = snapshotState.tvDisplayStatus(source: summary.status)
         remainingPercent = summary.roundedRemainingPercent
+        isAssumedAfterScheduledReset = assumesScheduledReset
         capacityRatio = summary.remainingCapacityRatio
-        resetText = mode == .countsOnly ? nil : summary.resetCountdownText(now: now)
+        resetText = mode == .countsOnly
+            ? nil
+            : assumesScheduledReset ? "Assumed after reset" : summary.resetCountdownText(now: now)
         accessibilityResetText = mode == .countsOnly
             ? nil
-            : Self.accessibilityResetText(until: summary.resetsAt, now: now)
+            : assumesScheduledReset
+                ? UsagePresentationAssumption.scheduledReset.accessibilityText
+                : Self.accessibilityResetText(until: summary.resetsAt, now: now)
+        let exactCapacity = Self.exactCapacityText(
+            remaining: summary.remaining,
+            limit: summary.limit,
+            unit: summary.unit
+        )
         exactCapacityText = mode == .fullDetail
-            ? Self.exactCapacityText(remaining: summary.remaining, limit: summary.limit, unit: summary.unit)
+            ? exactCapacity.map { "\(assumesScheduledReset ? "≈" : "")\($0)" }
             : nil
         accountCountText = mode == .countsOnly ? nil : Self.accountCountText(summary.accountCount)
         detailText = nil
@@ -401,6 +423,7 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
         anonymousAccountNumbers: [String: Int],
         now: Date
     ) {
+        let assumesScheduledReset = limit.isAssumedAfterScheduledReset
         id = limit.id
         kind = .capacity
         provider = limit.provider
@@ -415,13 +438,19 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
         }
         status = snapshotState.tvDisplayStatus(source: limit.status)
         remainingPercent = limit.remainingCapacityRatio.map { Int(($0 * 100).rounded()) }
+        isAssumedAfterScheduledReset = assumesScheduledReset
         capacityRatio = limit.remainingCapacityRatio
-        resetText = mode == .countsOnly ? nil : Self.compactResetText(until: limit.resetsAt, now: now)
+        resetText = mode == .countsOnly
+            ? nil
+            : assumesScheduledReset ? "Assumed after reset" : Self.compactResetText(until: limit.resetsAt, now: now)
         accessibilityResetText = mode == .countsOnly
             ? nil
-            : Self.accessibilityResetText(until: limit.resetsAt, now: now)
+            : assumesScheduledReset
+                ? UsagePresentationAssumption.scheduledReset.accessibilityText
+                : Self.accessibilityResetText(until: limit.resetsAt, now: now)
+        let exactCapacity = Self.exactCapacityText(remaining: limit.remaining, limit: limit.limit, unit: limit.unit)
         exactCapacityText = mode == .fullDetail
-            ? Self.exactCapacityText(remaining: limit.remaining, limit: limit.limit, unit: limit.unit)
+            ? exactCapacity.map { "\(assumesScheduledReset ? "≈" : "")\($0)" }
             : nil
         accountCountText = mode == .countsOnly ? nil : Self.accountCountText(1)
         detailText = nil
@@ -465,6 +494,7 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
         }
         status = snapshotState.tvDisplayStatus(source: report.status)
         remainingPercent = nil
+        isAssumedAfterScheduledReset = false
         capacityRatio = nil
         resetText = nil
         accessibilityResetText = nil
@@ -482,6 +512,7 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
         title = preference.window.displayName
         status = snapshotState.tvDisplayStatus(source: .unknown)
         remainingPercent = nil
+        isAssumedAfterScheduledReset = false
         capacityRatio = nil
         resetText = nil
         accessibilityResetText = nil
@@ -499,6 +530,7 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
         title = "No limit selected"
         status = snapshotState.tvDisplayStatus(source: .unknown)
         remainingPercent = nil
+        isAssumedAfterScheduledReset = false
         capacityRatio = nil
         resetText = nil
         accessibilityResetText = nil
@@ -551,6 +583,7 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
                     ),
                     status: snapshotState.tvDisplayStatus(source: limit.status),
                     remainingPercent: limit.remainingCapacityRatio.map { Int(($0 * 100).rounded()) },
+                    isAssumedAfterScheduledReset: limit.isAssumedAfterScheduledReset,
                     exactCapacityText: nil,
                     resetText: compactResetText(until: limit.resetsAt, now: now),
                     accessibilityResetText: accessibilityResetText(until: limit.resetsAt, now: now)
@@ -716,6 +749,7 @@ public struct TVRunwayMetric: Equatable, Identifiable, Sendable {
     public let title: String
     public let status: UsageStatus
     public let remainingPercent: Int?
+    public let isAssumedAfterScheduledReset: Bool
     public let exactCapacityText: String?
     public let resetText: String?
     public let accessibilityResetText: String?
@@ -725,6 +759,7 @@ public struct TVRunwayMetric: Equatable, Identifiable, Sendable {
         title: String,
         status: UsageStatus,
         remainingPercent: Int?,
+        isAssumedAfterScheduledReset: Bool = false,
         exactCapacityText: String?,
         resetText: String?,
         accessibilityResetText: String? = nil
@@ -733,6 +768,7 @@ public struct TVRunwayMetric: Equatable, Identifiable, Sendable {
         self.title = title
         self.status = status
         self.remainingPercent = remainingPercent
+        self.isAssumedAfterScheduledReset = isAssumedAfterScheduledReset
         self.exactCapacityText = exactCapacityText
         self.resetText = resetText
         self.accessibilityResetText = accessibilityResetText
@@ -745,6 +781,7 @@ public struct TVRunwayMetric: Equatable, Identifiable, Sendable {
         anonymousAccountNumber: Int? = nil,
         now: Date
     ) {
+        let assumesScheduledReset = limit.isAssumedAfterScheduledReset
         id = limit.id
         title = switch mode {
         case .fullDetail:
@@ -756,11 +793,31 @@ public struct TVRunwayMetric: Equatable, Identifiable, Sendable {
         }
         status = snapshotState.tvDisplayStatus(source: limit.status)
         remainingPercent = limit.remainingCapacityRatio.map { Int(($0 * 100).rounded()) }
+        isAssumedAfterScheduledReset = assumesScheduledReset
+        let exactCapacity = TVRunwayLane.exactCapacityText(
+            remaining: limit.remaining,
+            limit: limit.limit,
+            unit: limit.unit
+        )
         exactCapacityText = mode == .fullDetail
-            ? TVRunwayLane.exactCapacityText(remaining: limit.remaining, limit: limit.limit, unit: limit.unit)
+            ? exactCapacity.map { "\(assumesScheduledReset ? "≈" : "")\($0)" }
             : nil
-        resetText = TVRunwayLane.compactResetText(until: limit.resetsAt, now: now)
-        accessibilityResetText = TVRunwayLane.accessibilityResetText(until: limit.resetsAt, now: now)
+        resetText = assumesScheduledReset
+            ? "Assumed after reset"
+            : TVRunwayLane.compactResetText(until: limit.resetsAt, now: now)
+        accessibilityResetText = assumesScheduledReset
+            ? UsagePresentationAssumption.scheduledReset.accessibilityText
+            : TVRunwayLane.accessibilityResetText(until: limit.resetsAt, now: now)
+    }
+
+    public var remainingPercentDisplayText: String? {
+        remainingPercent.map { "\(isAssumedAfterScheduledReset ? "≈" : "")\($0)%" }
+    }
+
+    public var remainingPercentAccessibilityText: String? {
+        remainingPercent.map {
+            "\(isAssumedAfterScheduledReset ? "approximately " : "")\($0) percent left"
+        }
     }
 }
 

@@ -68,6 +68,62 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(widget.widgetDeepLinkURL(links: testWidgetLinks) == testWidgetLinks.overview)
 }
 
+@Test func widgetSnapshotsPresentElapsedAGYResetsAsAssumedFullCapacity() throws {
+    let observedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let resetAt = observedAt.addingTimeInterval(3_600)
+    let now = resetAt.addingTimeInterval(1)
+    let stored = StoredUsageSnapshot(
+        savedAt: observedAt,
+        snapshot: UsageSnapshot(generatedAt: observedAt, limits: [UsageLimit(
+            id: "google:local:agy:gemini-weekly",
+            provider: .google,
+            accountID: "local",
+            accountName: "Antigravity",
+            label: "Gemini Weekly",
+            windowLabel: "Weekly",
+            modelLabel: "Gemini",
+            unit: .percent,
+            used: 80,
+            limit: 100,
+            resetsAt: resetAt,
+            lastUpdatedAt: observedAt,
+            confidence: .observed
+        )])
+    )
+    let local = WidgetSnapshot.fromStore(
+        SnapshotStoreLoadResult(snapshot: stored, status: .healthy),
+        now: now
+    )
+    let companion = WidgetSnapshot.fromCompanionSync(
+        CompanionSyncLoadResult(
+            document: CompanionSyncDocument(storedSnapshot: stored, publishedAt: observedAt),
+            status: .healthy
+        ),
+        now: now
+    )
+
+    #expect(stored.snapshot.limits.first?.used == 80)
+    #expect(stored.snapshot.limits.first?.presentationAssumption == nil)
+    for widget in [local, companion] {
+        let limit = try #require(widget.limits.first)
+        let summary = try #require(widget.mainLimitSummaries.first)
+
+        #expect(widget.state == .ready)
+        #expect(widget.status == .healthy)
+        #expect(widget.widgetProblemText == nil)
+        #expect(limit.used == 0)
+        #expect(limit.presentationAssumption == .scheduledReset)
+        #expect(summary.widgetRemainingHeadline == "≈100% left")
+        #expect(summary.widgetUsageText == "≈0% used")
+        #expect(summary.widgetResetConfidenceText == "assumed after reset")
+        let accessibilityValue = summary.widgetCapacityAccessibilityValue(snapshotState: widget.state)
+        #expect(accessibilityValue.contains("approximately 100% left"))
+        #expect(accessibilityValue.contains("Assumed after scheduled reset"))
+        #expect(!accessibilityValue
+            .localizedCaseInsensitiveContains("stale"))
+    }
+}
+
 @Test func nonCredentialProviderFailureRoutesToOverview() {
     let now = Date(timeIntervalSince1970: 100)
     let widget = WidgetSnapshot(

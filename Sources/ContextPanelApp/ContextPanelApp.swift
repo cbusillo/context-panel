@@ -1783,7 +1783,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
                 guard let resetsAt = bucket.resetsAt else { return false }
                 return resetsAt > snapshot.observedAt && resetsAt <= Date()
             }) {
-                return SettingsAccountRefreshSummary(text: "Bridge active · updates with next AGY run", status: .healthy)
+                return SettingsAccountRefreshSummary(text: "Bridge active · reset assumed", status: .healthy)
             }
             let text = snapshot.planTier.map { "Bridge active · \($0)" } ?? "Bridge active"
             return SettingsAccountRefreshSummary(text: text, status: .healthy)
@@ -2318,6 +2318,7 @@ struct SidebarRateLimitRow: View {
             Text(summary.compactUsageText)
                 .font(.system(.caption2, design: .monospaced, weight: .medium))
                 .foregroundStyle(.secondary)
+                .assumedResetHelp(summary.hasAssumedScheduledResetCapacity)
         }
         .padding(.vertical, 3)
         .accessibilityElement(children: .ignore)
@@ -3561,6 +3562,7 @@ struct MainLimitDetail: View {
                         size: 140
                     )
                     .frame(width: 180)
+                    .assumedResetHelp(summary.hasAssumedScheduledResetCapacity)
 
                     DetailCard(title: "Forecast") {
                         Text(forecastCopy)
@@ -3650,6 +3652,7 @@ struct MainLimitAccountRow: View {
                 Text(usageText)
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundStyle(CPTheme.primaryText)
+                    .assumedResetHelp(limit.isAssumedAfterScheduledReset)
                 Text(limit.previewResetConfidenceText)
                     .font(.system(size: 10))
                     .foregroundStyle(CPTheme.tertiaryText)
@@ -3682,6 +3685,17 @@ struct DetailCard<Content: View>: View {
         .background(CPTheme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(CPTheme.stroke(cornerRadius: 10))
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func assumedResetHelp(_ isAssumed: Bool) -> some View {
+        if isAssumed {
+            help(UsagePresentationAssumption.scheduledReset.accessibilityText)
+        } else {
+            self
+        }
     }
 }
 
@@ -3824,8 +3838,12 @@ final class ContextPanelAppModel: ObservableObject {
         SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.appMaximumAge)
     }
 
-    var currentSnapshot: UsageSnapshot {
+    private var observedSnapshot: UsageSnapshot {
         storedSnapshot?.snapshot ?? UsageSnapshot(generatedAt: Date(), limits: [])
+    }
+
+    var currentSnapshot: UsageSnapshot {
+        observedSnapshot.presented(at: Date())
     }
 
     var fastModeForecast: FastModeCapacityPortfolioForecast {
@@ -4040,7 +4058,7 @@ final class ContextPanelAppModel: ObservableObject {
     private func refreshObservedBurnRates(now: Date = Date()) {
         observedBurnRatesTask?.cancel()
         let refreshService = refreshService
-        let currentSnapshot = currentSnapshot
+        let currentSnapshot = observedSnapshot
         let generatedAt = currentSnapshot.generatedAt
         observedBurnRatesTask = Task.detached(priority: .userInitiated) { [weak self] in
             let history = refreshService.loadHistory(
@@ -4054,7 +4072,7 @@ final class ContextPanelAppModel: ObservableObject {
             )
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                guard self?.currentSnapshot.generatedAt == generatedAt else { return }
+                guard self?.observedSnapshot.generatedAt == generatedAt else { return }
                 self?.observedBurnRates = rates
             }
         }
@@ -4252,17 +4270,18 @@ private struct AppLimitWarningNotificationService {
             transientSnapshot: outcome.refreshResult.snapshot,
             persistedSnapshot: loadPersistedSnapshot()
         )
+        let presentationSnapshot = warningSnapshot.presented(at: outcome.savedAt)
         let result = LimitWarningEvaluator.evaluate(
             settings: settings,
             state: state,
-            snapshot: warningSnapshot,
+            snapshot: presentationSnapshot,
             now: outcome.savedAt
         )
         recordAlertEvaluation(at: outcome.savedAt, eventCount: result.events.count)
         var commitPlan = LimitWarningNotificationCommitPlan(
             currentState: state,
             targetState: result.state,
-            snapshot: warningSnapshot,
+            snapshot: presentationSnapshot,
             settings: settings
         )
         guard commitPlan.hasPendingChanges else { return }
@@ -4789,9 +4808,9 @@ extension MainLimitSummary {
             if status == .failure { return "Failed" }
             return "Unknown"
         }
-        if let roundedRemainingPercent { return "\(roundedRemainingPercent)% left" }
+        if let roundedRemainingPercent { return "\(assumptionPrefix)\(roundedRemainingPercent)% left" }
         guard let remaining else { return "Unknown" }
-        return "\(remaining) left"
+        return "\(assumptionPrefix)\(remaining) left"
     }
 
     var compactUsageText: String {
@@ -4799,10 +4818,10 @@ extension MainLimitSummary {
             return status == .failure ? "—" : "?"
         }
         if let roundedUsedPercent {
-            return "\(roundedUsedPercent)% used"
+            return "\(assumptionPrefix)\(roundedUsedPercent)% used"
         }
         guard let used, let limit else { return "?" }
-        return "\(used)/\(limit)"
+        return "\(assumptionPrefix)\(used)/\(limit)"
     }
 
     var previewUsageText: String {
@@ -4810,10 +4829,10 @@ extension MainLimitSummary {
             return status == .failure ? "refresh failed" : "unknown"
         }
         if let roundedUsedPercent {
-            return "\(roundedUsedPercent)% used"
+            return "\(assumptionPrefix)\(roundedUsedPercent)% used"
         }
         guard let used, let limit else { return "unknown" }
-        return "\(used)/\(limit) used"
+        return "\(assumptionPrefix)\(used)/\(limit) used"
     }
 
     var previewWindowLine: String {
@@ -4838,6 +4857,7 @@ extension MainLimitSummary {
 
     var resetText: String {
         if status == .failure { return "refresh failed" }
+        if hasAssumedScheduledResetCapacity { return "assumed reset" }
         guard let resetsAt else { return "reset not reported" }
         if resetsAt < Date().addingTimeInterval(-60) { return "reset passed" }
         if resetsAt.shouldShowWidgetDateTime {
@@ -4847,29 +4867,36 @@ extension MainLimitSummary {
     }
 
     var previewResetConfidenceText: String {
-        "\(resetText) · \(confidence.previewText)"
+        if hasAssumedScheduledResetCapacity {
+            return UsagePresentationAssumption.scheduledReset.displayText.lowercased()
+        }
+        return "\(resetText) · \(confidence.previewText)"
     }
 
     var detailRemainingValue: String {
         if let pooledPercentCapacity {
-            return "\(pooledPercentCapacity.remainingPercent)%"
+            return "\(assumptionPrefix)\(pooledPercentCapacity.remainingPercent)%"
         }
-        return remaining.map(String.init) ?? "?"
+        return remaining.map { "\(assumptionPrefix)\($0)" } ?? "?"
     }
 
     var detailRemainingAccessibilityValue: String {
         if let pooledPercentCapacity {
-            return "\(pooledPercentCapacity.remainingPercent) percent remaining, \(status.accessibilityStatusText)"
+            let value = "\(assumptionAccessibilityPrefix)\(pooledPercentCapacity.remainingPercent) percent remaining, \(status.accessibilityStatusText)"
+            return accessibilityValueWithAssumption(value)
         }
         guard let remaining else { return "Remaining capacity unknown" }
-        return "\(remaining) \(accessibilityUnitText) remaining, \(status.accessibilityStatusText)"
+        return accessibilityValueWithAssumption(
+            "\(assumptionAccessibilityPrefix)\(remaining) \(accessibilityUnitText) remaining, \(status.accessibilityStatusText)"
+        )
     }
 
     var detailUsedValue: String {
         if let pooledPercentCapacity {
-            return "\(pooledPercentCapacity.usedPoints) pts · \(pooledPercentCapacity.usedPercent)%"
+            return "\(assumptionPrefix)\(pooledPercentCapacity.usedPoints) pts · \(pooledPercentCapacity.usedPercent)%"
         }
-        return detailValue(used)
+        let value = detailValue(used)
+        return hasAssumedScheduledResetCapacity && value != "?" ? "≈\(value)" : value
     }
 
     var detailLimitValue: String {
@@ -4881,9 +4908,10 @@ extension MainLimitSummary {
 
     var detailRemainingText: String {
         if let pooledPercentCapacity {
-            return "\(pooledPercentCapacity.remainingPoints) pts · \(pooledPercentCapacity.remainingPercent)%"
+            return "\(assumptionPrefix)\(pooledPercentCapacity.remainingPoints) pts · \(pooledPercentCapacity.remainingPercent)%"
         }
-        return detailValue(remaining)
+        let value = detailValue(remaining)
+        return hasAssumedScheduledResetCapacity && value != "?" ? "≈\(value)" : value
     }
 
     var detailPoolLabel: String {
@@ -4906,11 +4934,14 @@ extension MainLimitSummary {
     var usedPressureAccessibilityValue: String {
         let usage: String
         if let roundedUsedPercent {
-            usage = "\(roundedUsedPercent) percent used"
+            usage = "\(assumptionAccessibilityPrefix)\(roundedUsedPercent) percent used"
         } else if let used, let limit {
-            usage = "\(used) of \(limit) \(accessibilityUnitText) used"
+            usage = "\(assumptionAccessibilityPrefix)\(used) of \(limit) \(accessibilityUnitText) used"
         } else {
             usage = "Usage unknown"
+        }
+        if hasAssumedScheduledResetCapacity {
+            return "\(usage), \(accessibilityStateText). \(UsagePresentationAssumption.scheduledReset.accessibilityText)."
         }
         return "\(usage), \(accessibilityStateText). \(resetAccessibilityText). \(confidence.previewText)."
     }
@@ -4918,11 +4949,12 @@ extension MainLimitSummary {
     func pooledCapacityAccessibilityValue(updatedText: String) -> String {
         let capacity: String
         if let pooledPercentCapacity {
-            capacity = "\(pooledPercentCapacity.remainingPercent) percent remaining, \(pooledPercentCapacity.remainingPoints) of \(pooledPercentCapacity.poolPoints) points. \(pooledPercentCapacity.usedPercent) percent used"
+            capacity = "\(assumptionAccessibilityPrefix)\(pooledPercentCapacity.remainingPercent) percent remaining, \(pooledPercentCapacity.remainingPoints) of \(pooledPercentCapacity.poolPoints) points. \(assumptionAccessibilityPrefix)\(pooledPercentCapacity.usedPercent) percent used"
         } else {
             capacity = "\(detailRemainingText) remaining. \(detailUsedValue) used. \(detailLimitValue) limit"
         }
-        return "\(pooledCapacityScopeText(pooledPercentCapacity)). \(capacity). \(accessibilityStateText). Updated \(updatedText)."
+        let value = "\(pooledCapacityScopeText(pooledPercentCapacity)). \(capacity). \(accessibilityStateText). Updated \(updatedText)."
+        return accessibilityValueWithAssumption(value)
     }
 
     var pooledCapacityAccessibilityLabel: String {
@@ -4931,8 +4963,24 @@ extension MainLimitSummary {
 
     var resetAccessibilityText: String {
         if status == .failure { return "Refresh failed" }
+        if hasAssumedScheduledResetCapacity {
+            return UsagePresentationAssumption.scheduledReset.accessibilityText
+        }
         guard let resetsAt else { return "Reset not reported" }
         return resetsAt.accessibilityResetText
+    }
+
+    private var assumptionPrefix: String {
+        hasAssumedScheduledResetCapacity ? "≈" : ""
+    }
+
+    private var assumptionAccessibilityPrefix: String {
+        hasAssumedScheduledResetCapacity ? "approximately " : ""
+    }
+
+    private func accessibilityValueWithAssumption(_ value: String) -> String {
+        guard hasAssumedScheduledResetCapacity else { return value }
+        return "\(value). \(UsagePresentationAssumption.scheduledReset.accessibilityText)."
     }
 
     private var accessibilityStateText: String {
@@ -5009,8 +5057,8 @@ extension UsageLimit {
             if status == .failure { return "Failed" }
             return "Unknown"
         }
-        if unit == .percent { return "\(remaining)% left" }
-        return "\(remaining) left"
+        if unit == .percent { return "\(assumptionPrefix)\(remaining)% left" }
+        return "\(assumptionPrefix)\(remaining) left"
     }
 
     var compactUsageText: String {
@@ -5018,7 +5066,7 @@ extension UsageLimit {
             return "unknown"
         }
         guard let used, let limit else { return status == .failure ? "—" : "?" }
-        return "\(used)/\(limit)"
+        return "\(assumptionPrefix)\(used)/\(limit)"
     }
 
     var percentText: String {
@@ -5026,7 +5074,7 @@ extension UsageLimit {
             return "unknown"
         }
         guard let usageRatio else { return status == .failure ? "—" : "?" }
-        return "\(Int(usageRatio * 100))%"
+        return "\(assumptionPrefix)\(Int(usageRatio * 100))%"
     }
 
     var previewUsageText: String {
@@ -5037,10 +5085,10 @@ extension UsageLimit {
             return previewRemainingHeadline
         }
         if unit == .percent, let used {
-            return "\(used)% used"
+            return "\(assumptionPrefix)\(used)% used"
         }
         if let used, let limit {
-            return "\(used)/\(limit) used"
+            return "\(assumptionPrefix)\(used)/\(limit) used"
         }
         if status == .failure { return "refresh failed" }
         return "unknown"
@@ -5054,10 +5102,10 @@ extension UsageLimit {
             return previewRemainingHeadline
         }
         if unit == .percent, let used {
-            return "\(used)%"
+            return "\(assumptionPrefix)\(used)%"
         }
         guard let used, let limit else { return status == .failure ? "—" : "?" }
-        return "\(used)/\(limit)"
+        return "\(assumptionPrefix)\(used)/\(limit)"
     }
 
     var sidebarTitleText: String {
@@ -5136,17 +5184,23 @@ extension UsageLimit {
     var remainingCapacityAccessibilityValue: String {
         let capacity: String
         if unit == .percent, let remaining {
-            capacity = "\(remaining) percent remaining"
+            capacity = "\(assumptionAccessibilityPrefix)\(remaining) percent remaining"
         } else if let remaining {
-            capacity = "\(remaining) \(accessibilityUnitText) remaining"
+            capacity = "\(assumptionAccessibilityPrefix)\(remaining) \(accessibilityUnitText) remaining"
         } else {
             capacity = "Remaining capacity unknown"
+        }
+        if isAssumedAfterScheduledReset {
+            return "\(capacity), \(accessibilityStateText). \(UsagePresentationAssumption.scheduledReset.accessibilityText)."
         }
         return "\(capacity), \(accessibilityStateText). \(resetAccessibilityText). \(confidence.previewText)."
     }
 
     private var resetAccessibilityText: String {
         if status == .failure { return "Refresh failed" }
+        if isAssumedAfterScheduledReset {
+            return UsagePresentationAssumption.scheduledReset.accessibilityText
+        }
         guard let resetsAt else { return "Reset not reported" }
         return resetsAt.accessibilityResetText
     }
@@ -5229,6 +5283,7 @@ extension UsageLimit {
 
     var resetText: String {
         if status == .failure { return "refresh failed" }
+        if isAssumedAfterScheduledReset { return "assumed reset" }
         guard let resetsAt else { return "reset not reported" }
         if resetsAt < Date().addingTimeInterval(-60) { return "reset passed" }
         if resetsAt.shouldShowWidgetDateTime {
@@ -5238,7 +5293,18 @@ extension UsageLimit {
     }
 
     var previewResetConfidenceText: String {
-        "\(resetText) · \(confidence.previewText)"
+        if isAssumedAfterScheduledReset {
+            return UsagePresentationAssumption.scheduledReset.displayText.lowercased()
+        }
+        return "\(resetText) · \(confidence.previewText)"
+    }
+
+    private var assumptionPrefix: String {
+        isAssumedAfterScheduledReset ? "≈" : ""
+    }
+
+    private var assumptionAccessibilityPrefix: String {
+        isAssumedAfterScheduledReset ? "approximately " : ""
     }
 }
 
