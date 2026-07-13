@@ -598,7 +598,7 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
                 generatedAt: now,
                 limits: [],
                 status: .unknown,
-                errorMessage: "Antigravity bridge setup is required. Copy the setup command from Context Panel and paste it into AGY CLI."
+                errorMessage: "Antigravity bridge setup is required. Copy the setup command from Context Panel and paste it into AGY CLI once. With AGY 1.1.1, later Every Code AGY runs publish quota automatically."
             )
         }
 
@@ -643,7 +643,7 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
             generatedAt: snapshot.observedAt,
             limits: limits,
             status: nil,
-            errorMessage: hasStaleLimit ? "Antigravity quota is stale. Use AGY CLI to publish a fresh quota snapshot." : nil
+            errorMessage: hasStaleLimit ? "Antigravity quota is stale. Run an AGY-backed Every Code agent or an AGY CLI prompt to publish a fresh quota snapshot." : nil
         )
     }
 
