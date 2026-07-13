@@ -23,6 +23,55 @@ import Testing
     #expect(openAI.accountNames == ["Personal", "Work"])
 }
 
+@Test func tvRunwayPresentationPreservesDuplicateAccountLabelsAndSavedOrder() throws {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: now,
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "personal-a",
+                accountName: "Work",
+                label: "OpenAI weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 10,
+                limit: 100
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "personal-b",
+                accountName: "Work",
+                label: "OpenAI weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 20,
+                limit: 100
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "personal-c",
+                accountName: "Personal",
+                label: "OpenAI weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 30,
+                limit: 100
+            ),
+        ],
+        status: .healthy,
+        message: "Synced"
+    )
+
+    let presentation = TVRunwayPresentation(snapshot: snapshot, mode: .fullDetail, now: now)
+    let section = try #require(presentation.sections.first { $0.provider == .openAI })
+    let weekly = try #require(section.lanes.first { $0.title == "Weekly" })
+
+    #expect(section.accountNames == ["Work", "Work", "Personal"])
+    #expect(weekly.accountNames == ["Work", "Work", "Personal"])
+}
+
 @Test func tvRunwayPresentationModesRemoveSensitiveDetail() throws {
     let now = Date(timeIntervalSince1970: 1_750_000_000)
     let snapshot = makeTVSnapshot(now: now)
@@ -129,6 +178,14 @@ import Testing
     #expect(weekly.metrics.map(\.status) == [.healthy, .healthy, .close])
     #expect(weekly.metrics.allSatisfy { $0.exactCapacityText == nil })
     #expect(weekly.metrics.allSatisfy { !$0.title.contains("Personal") && !$0.title.contains("Work") })
+
+    let fullDetail = TVRunwayPresentation(snapshot: snapshot, mode: .fullDetail, now: now)
+    let fullDetailSection = try #require(fullDetail.sections.first { $0.provider == .anthropic })
+    let fullDetailFiveHour = try #require(fullDetailSection.lanes.first { $0.title == "5-hour" })
+    let fullDetailWeekly = try #require(fullDetailSection.lanes.first { $0.title == "Weekly" })
+    #expect(fullDetailSection.accountNames == ["Personal", "Work"])
+    #expect(fullDetailFiveHour.accountNames == ["Personal"])
+    #expect(fullDetailWeekly.accountNames == ["Personal", "Work"])
 }
 
 @Test func tvRunwayPresentationKeepsStaleDataExplicit() {

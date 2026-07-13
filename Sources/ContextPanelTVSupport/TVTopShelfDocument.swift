@@ -272,6 +272,10 @@ public struct TVTopShelfSharedLocations: Equatable, Sendable {
         rootDirectory.appending(path: "top-shelf.json")
     }
 
+    public var imageDirectoryURL: URL {
+        rootDirectory.appending(path: "Top Shelf", directoryHint: .isDirectory)
+    }
+
     public static func live(
         fileManager: FileManager = .default,
         appGroupID: String = ContextPanelLocations.companionAppGroupID

@@ -7,10 +7,11 @@ import UIKit
 final class ContextPanelTVTopShelfProvider: TVTopShelfContentProvider {
     override func loadTopShelfContent() async -> (any TVTopShelfContent)? {
         let now = Date()
-        let document = TVTopShelfSharedLocations.live()
-            .flatMap { TVTopShelfDocumentStore(documentURL: $0.documentURL).load() }
+        guard let locations = TVTopShelfSharedLocations.live() else { return nil }
+        let document = TVTopShelfDocumentStore(documentURL: locations.documentURL).load()
             ?? Self.missingDocument(now: now)
-        return try? TVTopShelfRenderer().content(document: document, now: now)
+        return try? TVTopShelfRenderer(imageDirectory: locations.imageDirectoryURL)
+            .content(document: document, now: now)
     }
 
     private static func missingDocument(now: Date) -> TVTopShelfDocument {
@@ -31,63 +32,58 @@ final class ContextPanelTVTopShelfProvider: TVTopShelfContentProvider {
 private struct TVTopShelfRenderer {
     private static let maximumCardCount = Provider.allCases.count
     private static let renderVersion = 3
-    private let fileManager = FileManager.default
+    private let imageDirectory: URL
+    private let fileManager: FileManager
+
+    init(imageDirectory: URL, fileManager: FileManager = .default) {
+        self.imageDirectory = imageDirectory
+        self.fileManager = fileManager
+    }
 
     func content(document: TVTopShelfDocument, now: Date) throws -> TVTopShelfInsetContent {
-        let imageDirectory = try prepareImageDirectory()
-        let existingImageURLs = Set(imageFiles(in: imageDirectory))
+        try prepareImageDirectory()
         let renderIdentifier = [
             String(Int64(document.renderedAt.timeIntervalSince1970 * 1_000)),
             freshnessCacheToken(document: document, now: now),
         ].joined(separator: "-")
         let cards = Array(document.cards.prefix(Self.maximumCardCount))
         guard !cards.isEmpty else { throw CocoaError(.fileReadCorruptFile) }
-        var currentImageURLs: [URL] = []
-        do {
-            let item = TVTopShelfItem(identifier: "provider-portfolio")
-            item.title = semanticTitle(document: document, cards: cards, now: now)
-            item.expirationDate = document.contentExpirationDate(at: now)
-            let action = TVTopShelfAction(url: TVAppRoute.runway.url)
-            item.displayAction = action
-            item.playAction = action
-            let oneXImageURL = try cachedImageURL(
-                cards: cards,
-                document: document,
-                now: now,
-                directory: imageDirectory,
-                renderIdentifier: renderIdentifier,
-                variant: "1x",
-                scale: 1
-            )
-            currentImageURLs.append(oneXImageURL)
-            let twoXImageURL = try cachedImageURL(
-                cards: cards,
-                document: document,
-                now: now,
-                directory: imageDirectory,
-                renderIdentifier: renderIdentifier,
-                variant: "2x",
-                scale: 2
-            )
-            currentImageURLs.append(twoXImageURL)
-            item.setImageURL(oneXImageURL, for: .screenScale1x)
-            item.setImageURL(twoXImageURL, for: .screenScale2x)
-            pruneImageDirectory(imageDirectory, preserving: Set(currentImageURLs))
-            return TVTopShelfInsetContent(items: [item])
-        } catch {
-            for url in currentImageURLs where !existingImageURLs.contains(url) {
-                try? fileManager.removeItem(at: url)
-            }
-            throw error
-        }
+        let item = TVTopShelfItem(identifier: "provider-portfolio")
+        item.title = semanticTitle(document: document, cards: cards, now: now)
+        item.expirationDate = document.contentExpirationDate(at: now)
+        let action = TVTopShelfAction(url: TVAppRoute.runway.url)
+        item.displayAction = action
+        item.playAction = action
+        let oneXImageURL = try cachedImageURL(
+            cards: cards,
+            document: document,
+            now: now,
+            directory: imageDirectory,
+            renderIdentifier: renderIdentifier,
+            variant: "1x",
+            scale: 1
+        )
+        let twoXImageURL = try cachedImageURL(
+            cards: cards,
+            document: document,
+            now: now,
+            directory: imageDirectory,
+            renderIdentifier: renderIdentifier,
+            variant: "2x",
+            scale: 2
+        )
+        item.setImageURL(oneXImageURL, for: .screenScale1x)
+        item.setImageURL(twoXImageURL, for: .screenScale2x)
+        pruneImageDirectory(
+            imageDirectory,
+            preserving: [oneXImageURL, twoXImageURL],
+            now: now
+        )
+        return TVTopShelfInsetContent(items: [item])
     }
 
-    private func prepareImageDirectory() throws -> URL {
-        let cachesDirectory = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first
-            ?? fileManager.temporaryDirectory
-        let directory = cachesDirectory.appending(path: "Context Panel/Top Shelf", directoryHint: .isDirectory)
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        return directory
+    private func prepareImageDirectory() throws {
+        try fileManager.createDirectory(at: imageDirectory, withIntermediateDirectories: true)
     }
 
     private func cachedImageURL(
@@ -196,16 +192,25 @@ private struct TVTopShelfRenderer {
         return String(hash, radix: 16)
     }
 
-    private func pruneImageDirectory(_ directory: URL, preserving currentURLs: Set<URL>) {
+    private func pruneImageDirectory(
+        _ directory: URL,
+        preserving currentURLs: Set<URL>,
+        now: Date
+    ) {
+        let graceCutoff = now.addingTimeInterval(-SnapshotFreshness.companionProviderMaximumAge)
         let files = imageFiles(in: directory)
             .filter { !currentURLs.contains($0) }
-            .sorted { lhs, rhs in
-                let left = try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
-                let right = try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
-                return (left ?? .distantPast) > (right ?? .distantPast)
+            .compactMap { url -> (url: URL, modifiedAt: Date)? in
+                guard let modifiedAt = try? url.resourceValues(
+                    forKeys: [.contentModificationDateKey]
+                ).contentModificationDate else {
+                    return nil
+                }
+                return modifiedAt <= graceCutoff ? (url, modifiedAt) : nil
             }
+            .sorted { $0.modifiedAt > $1.modifiedAt }
         for url in files.dropFirst(4) {
-            try? fileManager.removeItem(at: url)
+            try? fileManager.removeItem(at: url.url)
         }
     }
 

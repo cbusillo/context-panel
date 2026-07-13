@@ -1,6 +1,38 @@
 import ContextPanelCore
 import Foundation
 
+private struct TVRunwayAccountKey: Hashable {
+    let accountID: String
+    let configuredAccountID: String?
+}
+
+private func tvRunwayAccountNames(
+    limits: [UsageLimit],
+    reports: [StoredProviderReport] = []
+) -> [String] {
+    var seen: Set<TVRunwayAccountKey> = []
+    var names: [String] = []
+    for limit in limits {
+        let key = TVRunwayAccountKey(
+            accountID: limit.accountID,
+            configuredAccountID: limit.configuredAccountID
+        )
+        if seen.insert(key).inserted {
+            names.append(limit.accountName)
+        }
+    }
+    for report in reports {
+        let key = TVRunwayAccountKey(
+            accountID: report.accountID,
+            configuredAccountID: report.configuredAccountID
+        )
+        if seen.insert(key).inserted {
+            names.append(report.accountName)
+        }
+    }
+    return names
+}
+
 public enum TVPresentationMode: String, CaseIterable, Codable, Equatable, Identifiable, Sendable {
     case fullDetail
     case projectOnly
@@ -135,6 +167,7 @@ public struct TVProviderRunwaySection: Equatable, Identifiable, Sendable {
     public let lanes: [TVRunwayLane]
     public let primaryLaneID: String?
     public let closestLane: TVRunwayLane?
+    public let accountNames: [String]
 
     public var id: Provider { provider }
 
@@ -159,12 +192,6 @@ public struct TVProviderRunwaySection: Equatable, Identifiable, Sendable {
     public var detailSecondaryLanes: [TVRunwayLane] {
         guard let detailPrimaryLane else { return lanes }
         return lanes.filter { $0.id != detailPrimaryLane.id }
-    }
-
-    public var accountNames: [String] {
-        Array(Set(lanes.flatMap(\.accountNames))).sorted { lhs, rhs in
-            lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
-        }
     }
 
     init?(
@@ -276,6 +303,9 @@ public struct TVProviderRunwaySection: Equatable, Identifiable, Sendable {
             + reports.map(\.status)
         status = snapshot.state.tvDisplayStatus(source: sourceStatuses.contextPanelWorstStatus)
         self.lanes = lanes
+        accountNames = mode == .fullDetail
+            ? tvRunwayAccountNames(limits: providerLimits, reports: reports)
+            : []
         primaryLaneID = selection.primary?.id
             ?? capacityLanes.first { $0.kind == .selectionStatus }?.id
         self.closestLane = closestLane
@@ -353,9 +383,7 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
         accountCountText = mode == .countsOnly ? nil : Self.accountCountText(summary.accountCount)
         detailText = nil
         accountNames = mode == .fullDetail
-            ? Array(Set(summary.limits.map(\.accountName))).sorted { lhs, rhs in
-                lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
-            }
+            ? tvRunwayAccountNames(limits: summary.limits)
             : []
         metrics = Self.metrics(
             summary: summary,
