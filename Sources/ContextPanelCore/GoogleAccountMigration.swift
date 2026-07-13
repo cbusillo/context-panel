@@ -8,14 +8,4 @@ enum GoogleAccountMigration {
         let trimmed = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty || trimmed == "Gemini" ? "Antigravity" : trimmed
     }
-
-    static func migrateCredentials(_ store: any ProviderCredentialStoring) {
-        guard let credentials = try? store.load(accountID: oldAccountID) else { return }
-        do {
-            guard try store.load(accountID: newAccountID) == nil else { return }
-        } catch {
-            return
-        }
-        try? store.save(credentials, accountID: newAccountID)
-    }
 }

@@ -455,11 +455,14 @@ import Testing
         .appending(path: "Sources/ContextPanelRefreshAgent/ContextPanelRefreshAgent.swift")
     let source = try String(contentsOf: url, encoding: .utf8)
 
-    #expect(source.contains("allowsExternalGoogleKeychain: false"))
+    #expect(source.contains("--ingest-antigravity-status-line"))
+    #expect(source.contains("GoogleAntigravityStatusLineBridge.ingest"))
+    #expect(!source.contains("allowsExternalGoogleKeychain"))
     #expect(!source.contains("GeminiQuotaProbe"))
     #expect(!source.contains("allowsLegacyGeminiOAuth"))
     #expect(!source.contains("antigravityCredentialSource"))
     #expect(!source.contains("oauth_creds.json"))
+    #expect(!source.contains("daily-cloudcode-pa.googleapis.com"))
 }
 
 @Test func appAndRefreshAgentTargetsDoNotCarryGoogleOAuthBuildSettings() throws {

@@ -251,9 +251,10 @@ public enum AccountConnectorFactory {
         from document: AccountConfigurationDocument,
         bookmarkStore: SecureFileBookmarkStore? = nil,
         credentialStore: (any ProviderCredentialStoring)? = nil,
-        googleAntigravityCredentialLoader: (any ProviderCredentialLoading)? = nil,
+        googleAntigravitySnapshotLoader: (any GoogleAntigravityQuotaSnapshotLoading)? = nil,
         requiresBookmarkedAuthFiles: Bool = ContextPanelLocations.isRunningInAppSandbox
     ) -> [any ProviderConnector] {
+        var hasGoogleAntigravityConnector = false
         return document.accounts.compactMap { account -> (any ProviderConnector)? in
             guard account.isEnabled else { return nil }
             switch account.connectorKind {
@@ -274,14 +275,22 @@ public enum AccountConnectorFactory {
                     fileLoader: authFileLoader
                 )
             case .googleAntigravityQuota:
-                let credentialLoader: any ProviderCredentialLoading = googleAntigravityCredentialLoader
-                    ?? GenericPasswordCredentialLoader(service: GoogleAntigravityLocalAuthMetadata.credentialService)
+                guard !hasGoogleAntigravityConnector else { return nil }
+                hasGoogleAntigravityConnector = true
+                let snapshotLoader: any GoogleAntigravityQuotaSnapshotLoading
+                if let googleAntigravitySnapshotLoader {
+                    snapshotLoader = googleAntigravitySnapshotLoader
+                } else if let snapshotURL = ContextPanelLocations.googleAntigravityStatusLineSnapshotURL() {
+                    snapshotLoader = GoogleAntigravityStatusLineSnapshotStore(snapshotURL: snapshotURL)
+                } else {
+                    snapshotLoader = UnavailableGoogleAntigravitySnapshotLoader()
+                }
                 return GoogleAntigravityQuotaConnector(
                     accounts: [GoogleAntigravityAccountConfiguration(
                         accountID: account.id,
                         accountName: account.displayName
                     )],
-                    credentialLoader: credentialLoader
+                    snapshotLoader: snapshotLoader
                 )
             case .claudeOAuthUsage:
                 let effectiveCredentialStore: any ProviderCredentialStoring = credentialStore ?? ProviderCredentialStore()
@@ -341,5 +350,11 @@ public enum AccountConnectorFactory {
             return "Codex"
         }
         return fallback
+    }
+}
+
+private struct UnavailableGoogleAntigravitySnapshotLoader: GoogleAntigravityQuotaSnapshotLoading {
+    func load() throws -> GoogleAntigravityStatusLineSnapshot? {
+        throw GoogleAntigravityStatusLineStoreError.unavailable
     }
 }

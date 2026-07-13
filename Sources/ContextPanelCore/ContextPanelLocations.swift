@@ -43,6 +43,18 @@ public enum ContextPanelLocations {
             .appending(path: "Snapshots", directoryHint: .isDirectory)
     }
 
+    public static func googleAntigravityStatusLineSnapshotURL(
+        appGroupID: String = appGroupID
+    ) -> URL? {
+        guard let containerURL = appGroupContainerURL(appGroupID: appGroupID) else {
+            return nil
+        }
+        return containerURL
+            .appending(path: "Context Panel", directoryHint: .isDirectory)
+            .appending(path: "Provider Inputs", directoryHint: .isDirectory)
+            .appending(path: "antigravity-status-line.json")
+    }
+
     public static func widgetSandboxLocalSnapshotDirectory() -> URL {
         applicationSupportDirectory()
             .appending(path: "Snapshots", directoryHint: .isDirectory)
