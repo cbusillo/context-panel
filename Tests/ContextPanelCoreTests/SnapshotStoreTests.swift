@@ -35,16 +35,16 @@ import Testing
         errorMessage: "Every Code auth for this ChatGPT account is no longer authorized for Codex usage. Sign in again from Every Code or Codex, then refresh Context Panel."
     ) == .providerAuthorization)
     #expect(RefreshFailureCategory(
-        errorMessage: "Google Antigravity OAuth refresh failed with invalid_client. The OAuth client was not found. Sign in again from Settings to refresh the OAuth client session."
+        errorMessage: "Claude OAuth refresh failed with invalid_client. The OAuth client was not found. Sign in again from Settings."
     ) == .oauthInvalidClient)
     #expect(RefreshFailureCategory(
-        errorMessage: "Google Antigravity OAuth session has expired. Sign in again from Settings."
+        errorMessage: "Claude OAuth session has expired. Sign in again from Settings."
     ) == .oauthExpired)
     #expect(RefreshFailureCategory(
-        errorMessage: "Google Antigravity credentials are in an unexpected format. Sign in again from Settings."
+        errorMessage: "Claude credentials are in an unexpected format. Sign in again from Settings."
     ) == .credentialFormat)
     #expect(RefreshFailureCategory(
-        errorMessage: "Google Antigravity is connected, but Google Code Assist rejected quota access for this app or account."
+        errorMessage: "Provider rejected quota access for this app or account."
     ) == .providerAuthorization)
     #expect(RefreshFailureCategory(
         errorMessage: "Provider returned no usage records for this account."
@@ -89,56 +89,18 @@ import Testing
     #expect(!healthy.requiresCredentialReconnect)
 }
 
-@Test func googleKeychainInteractionErrorsUseReconnectGuidance() {
+@Test func googleAntigravityBridgeFailuresDoNotRequestCredentialReconnect() {
     let report = StoredProviderReport(
         provider: .google,
         accountID: "google-antigravity",
         accountName: "Antigravity",
         generatedAt: Date(timeIntervalSince1970: 100),
         status: .failure,
-        errorMessage: "Google Antigravity keychain read failed: user interaction is not allowed, status -25308."
+        errorMessage: "Antigravity bridge data could not be read. The last good quota remains available while setup is checked."
     )
 
-    #expect(report.userFacingErrorMessage?.contains("Keychain approval") == true)
-    #expect(report.userFacingErrorMessage?.contains("Click Refresh") == true)
-    #expect(report.userFacingErrorMessage?.contains("for Google") == true)
-    #expect(report.userFacingErrorMessage?.contains("Always Allow") == true)
-    #expect(report.userFacingErrorMessage?.contains("\"gemini\"") == true)
-    #expect(report.userFacingErrorMessage?.contains("-25308") == false)
-}
-
-@Test func googleAntigravityAccessTokenExpiryUsesForegroundRefreshGuidance() {
-    let report = StoredProviderReport(
-        provider: .google,
-        accountID: "google-antigravity",
-        accountName: "Antigravity",
-        generatedAt: Date(timeIntervalSince1970: 100),
-        status: .failure,
-        errorMessage: "Google Antigravity access token has expired. Open Antigravity so it can refresh its Google session, then refresh Google in Context Panel."
-    )
-
-    #expect(report.userFacingErrorMessage?.contains("access token expired") == true)
-    #expect(report.userFacingErrorMessage?.contains("Open Antigravity") == true)
-    #expect(report.userFacingErrorMessage?.contains("refresh Google in Context Panel") == true)
-    #expect(report.userFacingErrorMessage?.contains("Sign in again") == false)
-    #expect(report.userFacingErrorMessage?.contains("Reconnect") == false)
-}
-
-@Test func googleCodeAssistRejectionUsesAccountCheckGuidance() {
-    let report = StoredProviderReport(
-        provider: .google,
-        accountID: "google-antigravity",
-        accountName: "Antigravity",
-        generatedAt: Date(timeIntervalSince1970: 100),
-        status: .failure,
-        errorMessage: "Google Antigravity is connected, but Google Code Assist rejected quota access for this app or account."
-    )
-
-    #expect(report.userFacingErrorMessage?.contains("Code Assist rejected quota access") == true)
-    #expect(report.userFacingErrorMessage?.contains("Antigravity or Google account") == true)
-    #expect(report.userFacingErrorMessage?.contains("refresh Google in Context Panel") == true)
-    #expect(report.userFacingErrorMessage?.contains("OAuth") == false)
-    #expect(report.userFacingErrorMessage?.contains("Reconnect") == false)
+    #expect(!report.requiresCredentialReconnect)
+    #expect(report.userFacingErrorMessage == report.errorMessage)
 }
 
 @Test func reconnectFailuresAreNotCoveredByDifferentAccountsWithSharedConfiguredID() throws {
@@ -490,7 +452,7 @@ import Testing
                 generatedAt: second,
                 limits: [],
                 status: .failure,
-                errorMessage: "Google Antigravity credentials are in an unexpected format."
+                errorMessage: "Antigravity bridge data could not be read."
             )
         ]),
         savedAt: second
@@ -536,7 +498,7 @@ import Testing
                 generatedAt: second,
                 limits: [],
                 status: .failure,
-                errorMessage: "Google Antigravity credentials are in an unexpected format."
+                errorMessage: "Antigravity bridge data could not be read."
             )
         ]),
         savedAt: second
@@ -594,7 +556,7 @@ import Testing
                 generatedAt: second,
                 limits: [],
                 status: .failure,
-                errorMessage: "Google Antigravity is not connected."
+                errorMessage: "Antigravity bridge setup is required."
             )
         ]),
         savedAt: second
@@ -638,7 +600,7 @@ import Testing
                 generatedAt: second,
                 limits: [],
                 status: .unknown,
-                errorMessage: "Google Antigravity quota is not available yet. Legacy Gemini CLI and Code Assist quota paths have been retired."
+                errorMessage: "Antigravity bridge setup is required."
             )
         ]),
         savedAt: second
@@ -688,7 +650,7 @@ import Testing
                 generatedAt: second,
                 limits: [],
                 status: .unknown,
-                errorMessage: "Google Antigravity did not report model quota availability."
+                errorMessage: "The Antigravity bridge is active, but AGY did not report active quota buckets."
             ),
         ]),
         savedAt: second
@@ -700,12 +662,12 @@ import Testing
     #expect(current.reports.contains { $0.accountID == healthyAccountID && $0.status == .healthy })
 }
 
-@Test func jsonSnapshotStoreDropsPreviousLimitsWhenForegroundRequiredReportHasNoData() throws {
+@Test func jsonSnapshotStoreDropsPreviousLimitsWhenSetupRequiredReportHasNoData() throws {
     let root = try temporaryDirectory()
     let store = JSONSnapshotStore(rootDirectory: root)
     let first = Date(timeIntervalSince1970: 100)
     let second = Date(timeIntervalSince1970: 200)
-    let accountID = "gemini-a"
+    let accountID = "google-antigravity"
 
     try store.save(StoredUsageSnapshot(
         savedAt: first,
@@ -713,7 +675,7 @@ import Testing
             ProviderConnectorReport(
                 provider: .google,
                 accountID: accountID,
-                accountName: "Gemini A",
+                accountName: "Antigravity",
                 generatedAt: first,
                 limits: [usageLimit(provider: .google, accountID: accountID, used: 0, savedAt: first)]
             )
@@ -725,11 +687,11 @@ import Testing
             ProviderConnectorReport(
                 provider: .google,
                 accountID: accountID,
-                accountName: "Gemini A",
+                accountName: "Antigravity",
                 generatedAt: second,
                 limits: [],
                 status: .unknown,
-                errorMessage: "foreground refresh required"
+                errorMessage: "Antigravity bridge setup is required."
             )
         ]),
         savedAt: second,
@@ -740,7 +702,7 @@ import Testing
     #expect(current.snapshot.limits.filter { $0.provider == .google && $0.accountID == accountID }.isEmpty)
     let report = try #require(current.reports.first { $0.provider == .google && $0.accountID == accountID })
     #expect(report.status == .unknown)
-    #expect(report.errorMessage?.contains("foreground refresh") == true)
+    #expect(report.errorMessage?.contains("bridge setup is required") == true)
 }
 
 @Test func jsonSnapshotStorePreservesMultiAccountLimitsWhenConnectorFileRefreshFails() throws {
@@ -1328,11 +1290,11 @@ import Testing
     #expect(refreshResult.reports[0].errorMessage != "Claude is not connected. Sign in to Claude from Settings.")
 }
 
-@Test func snapshotRefreshServiceMigratesGoogleCredentialsBeforeRefreshingMigratedAccount() async throws {
+@Test func snapshotRefreshServiceMigratesLegacyGoogleAccountWithoutCopyingCredentials() throws {
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
-    let credentials = Data(#"{"accessToken":"old-google-access","refreshToken":"google-refresh","expiresAt":"2099-01-01T00:00:00Z","scopes":["https://www.googleapis.com/auth/cloud-platform"]}"#.utf8)
-    let credentialStore = InMemoryProviderCredentialStore(storage: ["gemini-code-assist-default": credentials])
+    let oldCredentials = Data("legacy-google-credential".utf8)
+    let credentialStore = InMemoryProviderCredentialStore(storage: ["gemini-code-assist-default": oldCredentials])
     let service = SnapshotRefreshService(
         accountStore: AccountConfigurationStore(configurationURL: accountURL),
         stores: SnapshotRefreshStores(primary: primary),
@@ -1352,46 +1314,46 @@ import Testing
 
     let accountDocument = service.loadConfiguredAccounts(now: savedAt).document
 
-    #expect(try credentialStore.load(accountID: "google-antigravity-default") == credentials)
-    #expect(accountDocument.accounts.contains { $0.id == "google-antigravity-default" && $0.connectorKind == .googleAntigravityQuota })
-    #expect(accountDocument.accounts.contains { $0.displayName == "Antigravity" })
+    #expect(accountDocument.accounts.contains { account in
+        account.id == "google-antigravity-default"
+            && account.connectorKind == .googleAntigravityQuota
+            && account.displayName == "Antigravity"
+    })
     #expect(!accountDocument.accounts.contains { $0.id == "gemini-code-assist-default" })
+    #expect(try credentialStore.load(accountID: "gemini-code-assist-default") == oldCredentials)
+    #expect(try credentialStore.load(accountID: "google-antigravity-default") == nil)
 }
 
-@Test func snapshotRefreshServiceSkipsGoogleAntigravityInBackgroundRefreshes() async throws {
+@Test func snapshotRefreshServiceRefreshesGoogleFromStatusLineSnapshot() async throws {
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
-    let previousAt = Date(timeIntervalSince1970: 240)
-    let googleAccountID = ConnectorRedactor.localAccountID(provider: .google, stableID: "google-antigravity-default")
-    try primary.save(StoredUsageSnapshot(savedAt: previousAt, refreshResult: ConnectorRefreshResult(
-        generatedAt: previousAt,
-        reports: [ProviderConnectorReport(
-            provider: .google,
-            accountID: googleAccountID,
-            configuredAccountID: "google-antigravity-default",
-            accountName: "Antigravity",
-            generatedAt: previousAt,
-            limits: [UsageLimit(
-                provider: .google,
-                accountID: googleAccountID,
-                configuredAccountID: "google-antigravity-default",
-                accountName: "Antigravity",
-                label: "Gemini 3.1 Pro High 5-hour",
-                windowLabel: "5-hour",
-                unit: .percent,
-                used: 7,
-                limit: 100,
-                resetsAt: previousAt.addingTimeInterval(3_600)
-            )]
-        )]
-    )))
+    let bridgeStore = GoogleAntigravityStatusLineSnapshotStore(
+        snapshotURL: try temporaryDirectory().appending(path: "antigravity-status-line.json")
+    )
+    let savedAt = Date(timeIntervalSince1970: 300)
+    try bridgeStore.save(GoogleAntigravityStatusLineSnapshot(
+        sourceVersion: "1.1.1",
+        planTier: "Google AI Pro",
+        observedAt: savedAt,
+        buckets: [
+            GoogleAntigravityStatusLineBucket(
+                id: "gemini-3.1-pro-high-5h",
+                remainingFraction: 0.93,
+                resetsAt: savedAt.addingTimeInterval(3_600)
+            ),
+            GoogleAntigravityStatusLineBucket(
+                id: "claude-sonnet-4.6-weekly",
+                remainingFraction: 0.88,
+                resetsAt: savedAt.addingTimeInterval(7 * 24 * 3_600)
+            ),
+        ]
+    ))
     let service = SnapshotRefreshService(
         accountStore: AccountConfigurationStore(configurationURL: accountURL),
         stores: SnapshotRefreshStores(primary: primary),
-        allowsExternalGoogleKeychain: false,
+        googleAntigravitySnapshotLoader: bridgeStore,
         promptCacheTelemetryReader: { _ in [] }
     )
-    let savedAt = Date(timeIntervalSince1970: 300)
     try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
         updatedAt: savedAt,
         accounts: [LocalProviderAccountConfiguration(
@@ -1408,170 +1370,30 @@ import Testing
     #expect(outcome.refreshResult.reports.first?.provider == .google)
     #expect(outcome.refreshResult.reports.first?.status == .healthy)
     #expect(outcome.refreshResult.reports.first?.errorMessage == nil)
+    #expect(outcome.refreshResult.snapshot.limits.map(\.label) == [
+        "Gemini 3.1 Pro High 5-hour",
+        "Claude Sonnet 4.6 Weekly",
+    ])
     #expect(current.reports.first?.provider == .google)
     #expect(current.reports.first?.status == .healthy)
-    #expect(current.reports.first?.errorMessage == nil)
-    #expect(current.snapshot.limits.first?.provider == .google)
-    #expect(current.snapshot.limits.first?.used == 7)
+    #expect(current.snapshot.limits.map(\.used) == [7, 12])
 }
 
-@Test func snapshotRefreshServicePreservesLegacyGoogleAntigravityDefaultsWhenBackgroundSkipsGoogle() async throws {
+@Test func snapshotRefreshServicePersistsGoogleSetupRequiredStateWhenBridgeIsMissing() async throws {
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
-    let previousAt = Date(timeIntervalSince1970: 240)
-    let legacyAccountID = ConnectorRedactor.localAccountID(provider: .google, stableID: "gemini-code-assist-default")
-    try primary.save(StoredUsageSnapshot(savedAt: previousAt, refreshResult: ConnectorRefreshResult(
-        generatedAt: previousAt,
-        reports: [ProviderConnectorReport(
-            provider: .google,
-            accountID: legacyAccountID,
-            configuredAccountID: "gemini-code-assist-default",
-            accountName: "Gemini",
-            generatedAt: previousAt,
-            limits: [UsageLimit(
-                provider: .google,
-                accountID: legacyAccountID,
-                configuredAccountID: "gemini-code-assist-default",
-                accountName: "Gemini",
-                label: "Gemini 3.1 Pro High 5-hour",
-                windowLabel: "5-hour",
-                unit: .percent,
-                used: 7,
-                limit: 100,
-                resetsAt: previousAt.addingTimeInterval(3_600)
-            )]
-        )]
-    )))
+    let missingBridgeStore = GoogleAntigravityStatusLineSnapshotStore(
+        snapshotURL: try temporaryDirectory()
+            .appending(path: "Provider Inputs", directoryHint: .isDirectory)
+            .appending(path: "missing-antigravity-status-line.json")
+    )
+    let savedAt = Date(timeIntervalSince1970: 300)
     let service = SnapshotRefreshService(
         accountStore: AccountConfigurationStore(configurationURL: accountURL),
         stores: SnapshotRefreshStores(primary: primary),
-        allowsExternalGoogleKeychain: false,
+        googleAntigravitySnapshotLoader: missingBridgeStore,
         promptCacheTelemetryReader: { _ in [] }
     )
-    let savedAt = Date(timeIntervalSince1970: 300)
-    try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
-        updatedAt: savedAt,
-        accounts: [LocalProviderAccountConfiguration(
-            id: "google-antigravity-default",
-            provider: .google,
-            connectorKind: .googleAntigravityQuota,
-            displayName: "Antigravity"
-        )]
-    ))
-
-    _ = try await service.refresh(now: savedAt)
-    let current = try #require(primary.loadCurrent().snapshot)
-
-    #expect(current.reports.first?.configuredAccountID == "google-antigravity-default")
-    #expect(current.reports.first?.accountID == ConnectorRedactor.localAccountID(provider: .google, stableID: "google-antigravity-default"))
-    #expect(current.reports.first?.status == .healthy)
-    #expect(current.snapshot.limits.first?.configuredAccountID == "google-antigravity-default")
-    #expect(current.snapshot.limits.first?.accountID == ConnectorRedactor.localAccountID(provider: .google, stableID: "google-antigravity-default"))
-    #expect(current.snapshot.limits.first?.used == 7)
-}
-
-@Test func snapshotRefreshServiceCollapsesLegacyAndMigratedGoogleAntigravityWhenBackgroundSkipsGoogle() async throws {
-    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
-    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
-    let previousAt = Date(timeIntervalSince1970: 240)
-    let legacyAccountID = ConnectorRedactor.localAccountID(provider: .google, stableID: "gemini-code-assist-default")
-    let migratedAccountID = ConnectorRedactor.localAccountID(provider: .google, stableID: "google-antigravity-default")
-    try primary.save(StoredUsageSnapshot(savedAt: previousAt, refreshResult: ConnectorRefreshResult(
-        generatedAt: previousAt,
-        reports: [
-            ProviderConnectorReport(
-                provider: .google,
-                accountID: legacyAccountID,
-                configuredAccountID: "gemini-code-assist-default",
-                accountName: "Gemini",
-                generatedAt: previousAt,
-                limits: [UsageLimit(
-                    provider: .google,
-                    accountID: legacyAccountID,
-                    configuredAccountID: "gemini-code-assist-default",
-                    accountName: "Gemini",
-                    label: "Legacy Gemini Weekly",
-                    windowLabel: "Weekly",
-                    unit: .percent,
-                    used: 7,
-                    limit: 100,
-                    resetsAt: previousAt.addingTimeInterval(3_600)
-                )]
-            ),
-            ProviderConnectorReport(
-                provider: .google,
-                accountID: migratedAccountID,
-                configuredAccountID: "google-antigravity-default",
-                accountName: "Antigravity",
-                generatedAt: previousAt,
-                limits: [UsageLimit(
-                    provider: .google,
-                    accountID: migratedAccountID,
-                    configuredAccountID: "google-antigravity-default",
-                    accountName: "Antigravity",
-                    label: "Migrated Gemini Weekly",
-                    windowLabel: "Weekly",
-                    unit: .percent,
-                    used: 5,
-                    limit: 100,
-                    resetsAt: previousAt.addingTimeInterval(3_600)
-                )]
-            ),
-        ]
-    )))
-    let service = SnapshotRefreshService(
-        accountStore: AccountConfigurationStore(configurationURL: accountURL),
-        stores: SnapshotRefreshStores(primary: primary),
-        allowsExternalGoogleKeychain: false,
-        promptCacheTelemetryReader: { _ in [] }
-    )
-    let savedAt = Date(timeIntervalSince1970: 300)
-    try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
-        updatedAt: savedAt,
-        accounts: [LocalProviderAccountConfiguration(
-            id: "google-antigravity-default",
-            provider: .google,
-            connectorKind: .googleAntigravityQuota,
-            displayName: "Antigravity"
-        )]
-    ))
-
-    _ = try await service.refresh(now: savedAt)
-    let current = try #require(primary.loadCurrent().snapshot)
-
-    #expect(current.reports.filter { $0.provider == .google }.count == 1)
-    #expect(current.reports.first?.configuredAccountID == "google-antigravity-default")
-    #expect(current.reports.first?.accountID == migratedAccountID)
-    #expect(current.snapshot.limits.map(\.configuredAccountID) == ["google-antigravity-default", "google-antigravity-default"])
-    #expect(current.snapshot.limits.map(\.accountID) == [migratedAccountID, migratedAccountID])
-    #expect(current.snapshot.limits.map(\.label) == ["Migrated Gemini Weekly", "Legacy Gemini Weekly"])
-}
-
-@Test func snapshotRefreshServicePreservesFailureOnlyGoogleAntigravityReportWhenBackgroundSkipsGoogle() async throws {
-    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
-    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
-    let previousAt = Date(timeIntervalSince1970: 240)
-    let googleAccountID = ConnectorRedactor.localAccountID(provider: .google, stableID: "google-antigravity-default")
-    try primary.save(StoredUsageSnapshot(savedAt: previousAt, refreshResult: ConnectorRefreshResult(
-        generatedAt: previousAt,
-        reports: [ProviderConnectorReport(
-            provider: .google,
-            accountID: googleAccountID,
-            configuredAccountID: "google-antigravity-default",
-            accountName: "Antigravity",
-            generatedAt: previousAt,
-            limits: [],
-            status: .failure,
-            errorMessage: "Google Antigravity quota needs macOS Keychain approval."
-        )]
-    )))
-    let service = SnapshotRefreshService(
-        accountStore: AccountConfigurationStore(configurationURL: accountURL),
-        stores: SnapshotRefreshStores(primary: primary),
-        allowsExternalGoogleKeychain: false,
-        promptCacheTelemetryReader: { _ in [] }
-    )
-    let savedAt = Date(timeIntervalSince1970: 300)
     try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
         updatedAt: savedAt,
         accounts: [LocalProviderAccountConfiguration(
@@ -1585,43 +1407,10 @@ import Testing
     let outcome = try await service.refresh(now: savedAt)
     let current = try #require(primary.loadCurrent().snapshot)
 
-    #expect(outcome.refreshResult.reports.first?.provider == .google)
-    #expect(outcome.refreshResult.reports.first?.status == .failure)
-    #expect(outcome.refreshResult.reports.first?.errorMessage?.contains("Keychain approval") == true)
-    #expect(current.reports.first?.provider == .google)
-    #expect(current.reports.first?.status == .failure)
-    #expect(current.reports.first?.errorMessage?.contains("Keychain approval") == true)
+    #expect(outcome.refreshResult.reports.first?.status == .unknown)
+    #expect(outcome.refreshResult.reports.first?.errorMessage?.contains("bridge setup is required") == true)
+    #expect(current.reports.first?.status == .unknown)
     #expect(current.snapshot.limits.isEmpty)
-}
-
-@Test func snapshotRefreshServiceDoesNotOverwriteExistingMigratedGoogleCredentials() throws {
-    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
-    let oldCredentials = Data(#"{"accessToken":"old-google-access","refreshToken":"old-refresh","expiresAt":"2099-01-01T00:00:00Z","scopes":["https://www.googleapis.com/auth/cloud-platform"]}"#.utf8)
-    let newCredentials = Data(#"{"accessToken":"new-google-access","refreshToken":"new-refresh","expiresAt":"2099-01-01T00:00:00Z","scopes":["https://www.googleapis.com/auth/cloud-platform"]}"#.utf8)
-    let credentialStore = InMemoryProviderCredentialStore(storage: [
-        "gemini-code-assist-default": oldCredentials,
-        "google-antigravity-default": newCredentials,
-    ])
-    let service = SnapshotRefreshService(
-        accountStore: AccountConfigurationStore(configurationURL: accountURL),
-        stores: SnapshotRefreshStores(primary: JSONSnapshotStore(rootDirectory: try temporaryDirectory())),
-        credentialStore: credentialStore,
-        promptCacheTelemetryReader: { _ in [] }
-    )
-    let savedAt = Date(timeIntervalSince1970: 300)
-    try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
-        updatedAt: savedAt,
-        accounts: [LocalProviderAccountConfiguration(
-            id: "gemini-code-assist-default",
-            provider: .google,
-            connectorKind: .googleAntigravityQuota,
-            displayName: "Gemini"
-        )]
-    ))
-
-    _ = service.loadConfiguredAccounts(now: savedAt)
-
-    #expect(try credentialStore.load(accountID: "google-antigravity-default") == newCredentials)
 }
 
 @Test func snapshotRefreshRunnerSkipsEmptyRefreshes() async throws {
@@ -1892,8 +1681,9 @@ import Testing
     #expect(summary.refreshNeededDetail.contains("expired"))
 }
 
-@Test func refreshAttentionSummaryUsesGoogleKeychainGuidance() throws {
+@Test func refreshAttentionSummaryUsesGoogleAntigravityBridgeReadGuidance() throws {
     let savedAt = Date(timeIntervalSince1970: 1_000)
+    let message = "Antigravity bridge data could not be read. The last good quota remains available while setup is checked."
     let stored = StoredUsageSnapshot(
         savedAt: savedAt,
         snapshot: UsageSnapshot(generatedAt: savedAt, limits: []),
@@ -1903,7 +1693,7 @@ import Testing
             accountName: "Antigravity",
             generatedAt: savedAt,
             status: .failure,
-            errorMessage: "Keychain access failed with status -25308. User interaction is not allowed."
+            errorMessage: message
         )]
     )
     let policy = SnapshotStoreStalenessPolicy(maximumAge: 5 * 60)
@@ -1912,14 +1702,13 @@ import Testing
 
     #expect(summary.refreshNeededTitle == "Google refresh needed")
     #expect(summary.refreshNeededDetail.contains("Google · Antigravity needs attention:"))
-    #expect(summary.refreshNeededDetail.contains("Refresh for Google"))
-    #expect(summary.refreshNeededDetail.contains("Always Allow"))
+    #expect(summary.refreshNeededDetail.contains(message))
     #expect(summary.refreshNeededDetail.contains("Reconnect") == false)
-    #expect(summary.refreshNeededDetail.contains("-25308") == false)
 }
 
-@Test func refreshAttentionSummaryUsesGoogleAntigravityTokenGuidance() throws {
+@Test func refreshAttentionSummaryUsesGoogleAntigravitySetupGuidance() throws {
     let savedAt = Date(timeIntervalSince1970: 1_000)
+    let message = "Antigravity bridge setup is required. Copy the setup command from Context Panel and paste it into AGY CLI."
     let stored = StoredUsageSnapshot(
         savedAt: savedAt,
         snapshot: UsageSnapshot(generatedAt: savedAt, limits: []),
@@ -1928,42 +1717,16 @@ import Testing
             accountID: "google-antigravity",
             accountName: "Antigravity",
             generatedAt: savedAt,
-            status: .failure,
-            errorMessage: "Google Antigravity access token has expired. Open Antigravity so it can refresh its Google session, then refresh Google in Context Panel."
+            status: .unknown,
+            errorMessage: message
         )]
     )
     let policy = SnapshotStoreStalenessPolicy(maximumAge: 5 * 60)
 
     let summary = try #require(policy.refreshAttentionSummary(for: stored, now: savedAt.addingTimeInterval(10)))
 
-    #expect(summary.refreshNeededDetail.contains("Google Antigravity access token expired") == true)
-    #expect(summary.refreshNeededDetail.contains("Open Antigravity") == true)
-    #expect(summary.refreshNeededDetail.contains("refresh Google in Context Panel") == true)
-    #expect(summary.refreshNeededDetail.contains("Reconnect") == false)
-}
-
-@Test func refreshAttentionSummaryUsesGoogleCodeAssistGuidance() throws {
-    let savedAt = Date(timeIntervalSince1970: 1_000)
-    let stored = StoredUsageSnapshot(
-        savedAt: savedAt,
-        snapshot: UsageSnapshot(generatedAt: savedAt, limits: []),
-        reports: [StoredProviderReport(
-            provider: .google,
-            accountID: "google-antigravity",
-            accountName: "Antigravity",
-            generatedAt: savedAt,
-            status: .failure,
-            errorMessage: "Google Antigravity is connected, but Google Code Assist rejected quota access for this app or account."
-        )]
-    )
-    let policy = SnapshotStoreStalenessPolicy(maximumAge: 5 * 60)
-
-    let summary = try #require(policy.refreshAttentionSummary(for: stored, now: savedAt.addingTimeInterval(10)))
-
-    #expect(summary.refreshNeededDetail.contains("Code Assist rejected quota access") == true)
-    #expect(summary.refreshNeededDetail.contains("Antigravity or Google account") == true)
-    #expect(summary.refreshNeededDetail.contains("refresh Google in Context Panel") == true)
-    #expect(summary.refreshNeededDetail.contains("OAuth") == false)
+    #expect(summary.refreshNeededTitle == "Google refresh needed")
+    #expect(summary.refreshNeededDetail.contains(message))
     #expect(summary.refreshNeededDetail.contains("Reconnect") == false)
 }
 

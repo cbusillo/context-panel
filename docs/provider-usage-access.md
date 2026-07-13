@@ -1,6 +1,6 @@
 # Provider Usage Access Research
 
-Last verified: 2026-05-22.
+Last verified: 2026-07-12.
 
 ## Summary
 
@@ -57,7 +57,7 @@ instead of pretending an estimate is exact.
 | OpenAI ChatGPT accounts                       | No stable public API found for general personal ChatGPT subscription pressure outside Codex. Current product surfaces no longer present a simple message counter; the useful automated signal found so far is percent-used pressure for Codex/Fast Mode.                                                                                                                                                                                                                                                                                                                                                                               | Weekly and short rolling reset windows matter. Codex/Fast Mode exposes live percent-used windows through the Codex backend usage endpoint.                                                                             | Multiple ChatGPT accounts are core. Each account needs its own reset window, plan, mode, percent/token pressure, and local observation history. | For Codex/Fast Mode, use the live Codex usage endpoint. For non-Codex ChatGPT surfaces, keep manual/assisted observations and forecast confidence until a clean provider signal exists.                                                                                                                                                                    | High for Codex percent windows; medium for visible reset clues; low for non-Codex automation                                                                                                                      |
 | Anthropic API organizations                   | Usage and Cost API can report message usage and costs by time bucket, model, workspace, API key, service tier, context window, geo, and beta fast-mode speed. API responses include rate-limit headers with remaining and reset values.                                                                                                                                                                                                                                                                                                                                                                                                | API rate limits use token bucket behavior; monthly spend limits exist by tier.                                                                                                                                         | Organization/workspace/API-key credentials. Multiple organizations and workspaces should be supported.                                          | Support official API usage/cost adapter. Capture fast-mode dimensions where available.                                                                                                                                                                                                                                                                     | High                                                                                                                                                                                                              |
 | Claude subscriptions and Claude Code seats    | Context Panel-owned Claude OAuth credentials can call `/api/oauth/usage` and return subscription utilization windows such as five-hour, seven-day, Opus, Sonnet, and OAuth-app buckets. Claude Code status-line JSON, local stats, transcripts, `ccusage`, Claude Code Keychain items, and Claude Desktop/web session storage are not runtime data sources.                                                                                                                                                                                                                                                                        | OAuth usage windows report percent utilization and may include reset timestamps. Missing windows or reset fields remain explicit unknowns rather than being filled from Claude Code local caches.           | Multiple Claude accounts/seats are possible, but account connection should be conservative.                                                     | Use only Context Panel's Claude OAuth connector for automated Claude subscription refresh. Store Context Panel-owned OAuth tokens in Keychain, refresh them in the app/background agent, and persist normalized limit snapshots. Do not read Claude Code auth, Keychain, status-line caches, `ccusage`, raw transcripts, prompts, or conversation JSONL.                            | High for OAuth-reported usage windows; unknown fields stay unknown                                                                                                                                                  |
-| Google Antigravity                            | Antigravity stores its own local Google login in the macOS Keychain. Context Panel reads that Antigravity-owned generic password item at refresh time, decodes only the current access token/expiry, and does not persist Antigravity tokens in Context Panel storage.                                                                                                                                                                                                                                                                                                         | The verified path is `daily-cloudcode-pa.googleapis.com`: call `v1internal:loadCodeAssist` with minimal `{"metadata":{"ideType":"ANTIGRAVITY"}}`, then call `v1internal:retrieveUserQuota` with the discovered project. Treat the response as an internal provider surface, not a public billing/quota contract. | Current Antigravity local auth is a single local account boundary. Keep the data model able to represent more accounts if Antigravity exposes separate local profiles later. | Use an OpenAI/Codex-style local-auth connector, not Context Panel Google OAuth. Antigravity owns login and token refresh; Context Panel reports stale/missing/expired Antigravity auth clearly and asks the user to open Antigravity when needed. Do not revive Context Panel Google OAuth, Gemini CLI OAuth files, localhost callbacks, or model-availability fallbacks for this connector. | Medium for reported Antigravity quota buckets; lower for long-term stability because this is an internal provider surface rather than a public quota API.                                                     |
+| Google Antigravity                            | AGY CLI documents a custom status-line command whose JSON can include `version`, `plan_tier`, and a `quota` dictionary. Context Panel consumes only this public extension point and never reads the Antigravity login.                                                                                                                                                                                                                                                                                                                                                                           | Each exported bucket can report remaining fraction and reset time. Observations arrive while AGY runs and become stale rather than being privately polled.                                                            | One active AGY CLI login is observed at a time. Keep the normalized model account-aware without claiming concurrent Antigravity profiles.       | Use guided `/statusline` setup targeting the signed refresh agent. Persist only a bounded, validated, privacy-filtered App Group snapshot; do not edit AGY settings automatically, chain arbitrary commands, read Keychain, or call private Cloud Code Assist endpoints.                                                                                       | Medium-high for the documented extension point; quota fields remain optional and event-driven, so unavailable and stale states must stay explicit.                                                              |
 | Google Gemini API / Google AI Studio projects | AI Studio and Cloud Billing show usage. Gemini API rate limits are project-scoped, not API-key-scoped. Service Usage API lists quota limits; Cloud Monitoring exposes quota usage metrics; Cloud Billing export to BigQuery provides detailed cost/usage data.                                                                                                                                                                                                                                                                                                                                                                         | Rate limits are RPM, input TPM, and RPD, with model/tier variation. RPD quotas reset at midnight Pacific time.                                                                                                         | Google project is the natural account boundary. Multiple Google accounts/projects should be supported.                                          | Support Google API projects after OAuth/service-account design. Use Service Usage for limits, Cloud Monitoring for quota usage, and optional Billing export for cost history.                                                                                                                                                                              | Medium-high, but setup is heavier                                                                                                                                                                                 |
 | Google consumer Gemini app subscriptions      | No stable public API for personal Gemini app subscription allowance was found in this pass.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Provider UI likely remains source of truth, and current public help describes 5-hour refreshes until a weekly limit is reached.                                                                                        | Multiple Google accounts may matter, but automation risk is high.                                                                               | Defer direct Gemini Apps automation for v1 unless a supported API emerges, but keep the shared Google/Gemini display model able to show 5-hour, daily, weekly, or unknown windows.                                                                                                                                                                          | Low for automation; high for the documented need to avoid daily-only Gemini copy                                                                                                                                   |
 
@@ -175,67 +175,48 @@ Preferred v1 connector scope:
 
 ### Google Antigravity Connector
 
-Retired Gemini CLI OAuth, Context Panel-owned Google OAuth, and legacy Code
-Assist quota support have been removed. Google Antigravity support now follows
-the OpenAI/Codex local-auth shape: Context Panel reads Antigravity's local
-Keychain login at refresh time, decodes only the access token and expiry needed
-for that refresh, and never stores Antigravity tokens in Context Panel's
-credential store.
+Retired Gemini CLI OAuth, Context Panel-owned Google OAuth, Antigravity Keychain
+reads, and private Cloud Code Assist requests have been removed. Google's FAQ
+does not permit third-party software to use an Antigravity login for access to
+Antigravity, so Context Panel must not copy, refresh, or call provider APIs with
+AGY credentials.
 
-The verified request sequence is:
+The supported integration is AGY CLI's documented custom status-line command:
 
-1. Read generic password service `gemini`, account `antigravity`.
-2. Decode the `go-keyring-base64:` JSON payload.
-3. If the token is fresh, call `POST
-   https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist` with
-   body `{"metadata":{"ideType":"ANTIGRAVITY"}}`.
-4. Use the returned `cloudaicompanionProject` to call `POST
-   /v1internal:retrieveUserQuotaSummary` with body
-   `{"project":"<discovered>"}`.
-5. If the summary endpoint is unavailable or empty, fall back to `POST
-   /v1internal:retrieveUserQuota` with the same project body.
+1. The user copies a `/statusline ...` command from Context Panel and pastes it
+   into AGY CLI.
+2. AGY invokes the signed embedded `ContextPanelRefreshAgent` executable and
+   sends status-line JSON on standard input.
+3. The early `--ingest-antigravity-status-line` utility mode enforces a 64 KiB
+   input cap and decodes only `version`, optional `plan_tier`, and the optional
+   `quota` dictionary.
+4. Context Panel validates bucket IDs, remaining fractions, disabled state, and
+   reset values, then atomically writes only that sanitized schema plus the
+   local observation time to its App Group.
+5. The normal Google connector reads the sanitized snapshot. It performs no
+   network request and has no access to Antigravity credentials.
 
-Antigravity owns sign-in and token refresh. If the local login is missing,
-expired, or rejected, Context Panel should tell the user to open Antigravity and
-refresh again. `retrieveUserQuotaSummary` is the preferred source for the
-grouped Antigravity UI lanes such as Gemini weekly and five-hour limits; do not
-call `fetchAvailableModels` for quota because it describes model availability,
-not remaining quota.
+Unknown input fields are deliberately discarded. Email, account identifiers,
+conversation/session IDs, paths, transcript metadata, prompts, raw input,
+tokens, and decoder details must never be persisted or logged. The bridge file
+lives outside the normalized provider snapshot store in a `0700` directory as a
+`0600` regular file, with bounded reads, anti-symlink checks, and atomic
+replacement so malformed input cannot destroy the last good observation.
 
-2026-06-18 app-identity correction: the legacy
-`1071006060591-...apps.googleusercontent.com` client was Antigravity's Google
-OAuth app identity, not an old Context Panel project. Its previous success is
-evidence that Google's private Cloud Code Assist API accepted Antigravity's
-first-party/partner OAuth client. Context Panel should not use Antigravity's
-OAuth client identity, should not ship a Context Panel Google OAuth fallback for
-Antigravity quota, and should not ask users to create Google OAuth clients for
-local installs.
+Quota observations are event-driven while AGY CLI runs, not independently
+pollable background data. Missing bridge data is setup-required, empty or
+unrecognized data is unknown, and old data or a passed reset deadline is stale.
+Every reported active bucket remains distinct. Context Panel may humanize the
+bucket ID and recognize literal `weekly` or `5h` tokens already present in that
+provider identifier, but it must not infer a window from reset timing or add
+per-model buckets together as account capacity. Disabled buckets remain
+sanitized source evidence but do not appear as active capacity.
 
-Diagnostic proof showed that repeated direct Antigravity Keychain reads can
-trigger repeated macOS access prompts. Read the Keychain item at most once per
-account per refresh attempt, avoid preflight `contains` calls before `load`, and
-do not retry in a loop after Keychain denial. Because the current Google
-adapter uses internal Cloud Code Assist quota surfaces, UI copy and notes should
-describe the result as reported provider data rather than a
-provider-guaranteed billing or exact quota contract.
-
-The `retrieveUserQuotaSummary` response is the current source for Google grouped
-weekly and five-hour main lanes. `retrieveUserQuota` remains a fallback for
-lower-level quota buckets, but raw per-model buckets must not be added together
-as account capacity. Do not synthesize quota windows from model availability
-responses, reset timestamps, or local Gemini usage files. If quota buckets are
-empty, Context Panel should mark the provider state as unknown/degraded instead
-of carrying forward stale healthy quota.
-
-Current public Google docs have a split contract. Gemini Apps help announced
-usage-limit changes starting 2026-05-17 and describes compute-based limits that
-refresh every 5 hours until a weekly limit is reached. Gemini for Google Cloud
-quota docs, last updated 2026-05-20, describe Gemini Code Assist and Gemini CLI
-quotas as daily request limits aggregated across model versions/families for CLI
-and agent mode. Gemini API docs, last updated 2026-05-18, describe API rate
-limits as project-scoped RPM, input TPM, and RPD, with RPD resetting at midnight
-Pacific time. Context Panel therefore treats Google/Gemini windows as observed
-quota data rather than provider-wide daily copy.
+AGY supports one custom status-line command. The first release uses guided
+setup, warns before the user could replace another customization, does not edit
+`~/.gemini/antigravity-cli/settings.json`, and does not execute or chain an
+arbitrary previous command. Teardown uses `/statusline delete`; Context Panel's
+separate Forget action deletes only its sanitized snapshot.
 
 ### Claude Subscription Connector
 
@@ -342,6 +323,9 @@ Preferred v1 connector scope:
 - [Claude Code authentication](https://code.claude.com/docs/en/authentication)
 - [Claude usage and length limits](https://support.claude.com/en/articles/11647753-how-do-usage-and-length-limits-work)
 - [Models, usage, and limits in Claude Code](https://support.claude.com/en/articles/14552983-models-usage-and-limits-in-claude-code)
+- [Antigravity custom status-line commands](https://antigravity.google/docs/cli/commands/statusline)
+- [Antigravity plans and quota windows](https://antigravity.google/docs/plans)
+- [Antigravity FAQ](https://antigravity.google/docs/faq)
 - [Gemini CLI authentication](https://google-gemini.github.io/gemini-cli/docs/get-started/authentication.html)
 - [Gemini CLI quotas and pricing](https://google-gemini.github.io/gemini-cli/docs/quota-and-pricing.html)
 - [Gemini API billing](https://ai.google.dev/gemini-api/docs/billing/)

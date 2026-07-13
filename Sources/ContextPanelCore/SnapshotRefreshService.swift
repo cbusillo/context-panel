@@ -454,20 +454,20 @@ public struct SnapshotRefreshService: Sendable {
     private let stores: SnapshotRefreshStores
     private let bookmarkStore: SecureFileBookmarkStore?
     private let credentialStore: (any ProviderCredentialStoring)?
+    private let googleAntigravitySnapshotLoader: (any GoogleAntigravityQuotaSnapshotLoading)?
     private let companionSyncPublisher: CompanionSyncPublisher?
     private let refreshDiagnosticsStore: RefreshDiagnosticsStateStore?
     private let promptCacheTelemetryMirror: @Sendable (SecureFileBookmarkStore?, [URL]) -> Void
     private let promptCacheTelemetryReader: @Sendable (Date) -> [PromptCacheObservation]
-    private let allowsExternalGoogleKeychain: Bool
 
     public init(
         accountStore: AccountConfigurationStore,
         stores: SnapshotRefreshStores,
         bookmarkStore: SecureFileBookmarkStore? = nil,
         credentialStore: (any ProviderCredentialStoring)? = nil,
+        googleAntigravitySnapshotLoader: (any GoogleAntigravityQuotaSnapshotLoading)? = nil,
         companionSyncPublisher: CompanionSyncPublisher? = nil,
         refreshDiagnosticsStore: RefreshDiagnosticsStateStore? = nil,
-        allowsExternalGoogleKeychain: Bool = true,
         promptCacheTelemetryMirror: @escaping @Sendable (SecureFileBookmarkStore?, [URL]) -> Void = { bookmarkStore, sourceDirectories in
             _ = try? PromptCacheTelemetryMirrorService.mirror(
                 bookmarkStore: bookmarkStore,
@@ -482,15 +482,14 @@ public struct SnapshotRefreshService: Sendable {
         self.stores = stores
         self.bookmarkStore = bookmarkStore
         self.credentialStore = credentialStore
+        self.googleAntigravitySnapshotLoader = googleAntigravitySnapshotLoader
         self.companionSyncPublisher = companionSyncPublisher
         self.refreshDiagnosticsStore = refreshDiagnosticsStore
         self.promptCacheTelemetryMirror = promptCacheTelemetryMirror
         self.promptCacheTelemetryReader = promptCacheTelemetryReader
-        self.allowsExternalGoogleKeychain = allowsExternalGoogleKeychain
     }
 
     public static func appDefault(
-        allowsExternalGoogleKeychain: Bool = true,
         companionRemoteStore: CompanionRemoteSyncStore? = nil
     ) -> SnapshotRefreshService {
         SnapshotRefreshService(
@@ -504,15 +503,13 @@ public struct SnapshotRefreshService: Sendable {
             companionSyncPublisher: .appDefault(remoteStore: companionRemoteStore),
             refreshDiagnosticsStore: RefreshDiagnosticsStateStore(
                 stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.appGroupID)
-            ),
-            allowsExternalGoogleKeychain: allowsExternalGoogleKeychain
+            )
         )
     }
 
     public func loadConfiguredAccounts(now: Date = Date()) -> AccountConfigurationLoadResult {
         let result = accountStore.load(now: now)
         migrateClaudeStateIfNeeded(accounts: result.document.accounts, now: now)
-        migrateGoogleStateIfNeeded()
         return result
     }
 
@@ -578,27 +575,22 @@ public struct SnapshotRefreshService: Sendable {
         importConfiguredAuthFiles(now: now)
         let accountResult = accountStore.load(now: now)
         migrateClaudeStateIfNeeded(accounts: accountResult.document.accounts, now: now)
-        migrateGoogleStateIfNeeded()
-        let skippedGoogleAntigravityAccounts = skippedGoogleAntigravityAccounts(in: accountResult.document)
-        let accountDocument = accountDocumentForRefresh(accountResult.document)
         let connectors = AccountConnectorFactory.connectors(
-            from: accountDocument,
+            from: accountResult.document,
             bookmarkStore: bookmarkStore,
             credentialStore: credentialStore,
+            googleAntigravitySnapshotLoader: googleAntigravitySnapshotLoader,
             requiresBookmarkedAuthFiles: ContextPanelLocations.isRunningInAppSandbox
         )
         RefreshDiagnostics.logRefreshStarted(
-            enabledAccountCount: accountDocument.accounts.filter(\.isEnabled).count,
+            enabledAccountCount: accountResult.document.accounts.filter(\.isEnabled).count,
             connectorCount: connectors.count
         )
         let connectorResult = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: now)
-        let refreshResult = refreshResultPreservingSkippedGoogleAntigravity(
-            ConnectorRefreshResult(
-                generatedAt: connectorResult.generatedAt,
-                reports: connectorResult.reports,
-                promptCacheObservations: connectorResult.promptCacheObservations + promptCacheObservations(now: now)
-            ),
-            skippedAccountIDs: skippedGoogleAntigravityAccounts
+        let refreshResult = ConnectorRefreshResult(
+            generatedAt: connectorResult.generatedAt,
+            reports: connectorResult.reports,
+            promptCacheObservations: connectorResult.promptCacheObservations + promptCacheObservations(now: now)
         )
         RefreshDiagnostics.logProviderReports(refreshResult.reports, previous: stores.primary.loadCurrent().snapshot)
         guard refreshResult.hasSnapshotPayload else {
@@ -652,163 +644,6 @@ public struct SnapshotRefreshService: Sendable {
         for mirror in stores.mirrors {
             try? mirror.save(storedSnapshot)
         }
-    }
-
-    private func accountDocumentForRefresh(_ document: AccountConfigurationDocument) -> AccountConfigurationDocument {
-        guard !allowsExternalGoogleKeychain else { return document }
-        return AccountConfigurationDocument(
-            updatedAt: document.updatedAt,
-            accounts: document.accounts.filter { account in
-                account.connectorKind != .googleAntigravityQuota
-            }
-        )
-    }
-
-    private func skippedGoogleAntigravityAccounts(in document: AccountConfigurationDocument) -> Set<String> {
-        guard !allowsExternalGoogleKeychain else { return [] }
-        return Set(document.accounts.compactMap { account in
-            guard account.isEnabled, account.connectorKind == .googleAntigravityQuota else { return nil }
-            return account.id
-        })
-    }
-
-    private func refreshResultPreservingSkippedGoogleAntigravity(
-        _ refreshResult: ConnectorRefreshResult,
-        skippedAccountIDs: Set<String>
-    ) -> ConnectorRefreshResult {
-        guard !skippedAccountIDs.isEmpty,
-              let current = stores.primary.loadCurrent().snapshot
-        else { return refreshResult }
-
-        let preservedReports = current.reports.compactMap { storedReport -> ProviderConnectorReport? in
-            guard storedReport.provider == .google,
-                  let configuredAccountID = storedReport.configuredAccountID,
-                  isSkippedGoogleAntigravityAccount(configuredAccountID, skippedAccountIDs: skippedAccountIDs)
-            else { return nil }
-
-            let normalizedConfiguredAccountID = normalizedSkippedGoogleAntigravityAccountID(configuredAccountID)
-            let normalizedAccountID = ConnectorRedactor.localAccountID(provider: .google, stableID: normalizedConfiguredAccountID)
-            let preservedLimits = preservedGoogleAntigravityLimits(
-                from: current.snapshot.limits,
-                configuredAccountID: configuredAccountID,
-                normalizedConfiguredAccountID: normalizedConfiguredAccountID
-            )
-
-            return ProviderConnectorReport(
-                provider: storedReport.provider,
-                accountID: normalizedAccountID,
-                configuredAccountID: normalizedConfiguredAccountID,
-                accountName: storedReport.accountName,
-                generatedAt: storedReport.generatedAt,
-                limits: preservedLimits.map { limit in
-                    limit.replacingGoogleAntigravityAccount(
-                        accountID: normalizedAccountID,
-                        configuredAccountID: normalizedConfiguredAccountID,
-                        accountName: storedReport.accountName
-                    )
-                },
-                status: storedReport.status,
-                errorMessage: storedReport.errorMessage
-            )
-        }
-
-        let deduplicatedPreservedReports = deduplicatedGoogleAntigravityReports(preservedReports)
-        guard !deduplicatedPreservedReports.isEmpty else { return refreshResult }
-        return ConnectorRefreshResult(
-            generatedAt: refreshResult.generatedAt,
-            reports: refreshResult.reports + deduplicatedPreservedReports,
-            promptCacheObservations: refreshResult.promptCacheObservations
-        )
-    }
-
-    private func isSkippedGoogleAntigravityAccount(
-        _ configuredAccountID: String?,
-        skippedAccountIDs: Set<String>
-    ) -> Bool {
-        guard let configuredAccountID else { return false }
-        if skippedAccountIDs.contains(configuredAccountID) { return true }
-        return configuredAccountID == GoogleAccountMigration.oldAccountID
-            && skippedAccountIDs.contains(GoogleAccountMigration.newAccountID)
-    }
-
-    private func normalizedSkippedGoogleAntigravityAccountID(_ configuredAccountID: String) -> String {
-        configuredAccountID == GoogleAccountMigration.oldAccountID ? GoogleAccountMigration.newAccountID : configuredAccountID
-    }
-
-    private func preservedGoogleAntigravityLimits(
-        from limits: [UsageLimit],
-        configuredAccountID: String,
-        normalizedConfiguredAccountID: String
-    ) -> [UsageLimit] {
-        let exactMatches = limits.filter { limit in
-            limit.provider == .google && limit.configuredAccountID == configuredAccountID
-        }
-        if !exactMatches.isEmpty { return exactMatches }
-
-        guard normalizedConfiguredAccountID == GoogleAccountMigration.newAccountID else { return [] }
-        return limits.filter { limit in
-            guard limit.provider == .google else { return false }
-            return limit.configuredAccountID == GoogleAccountMigration.oldAccountID
-        }
-    }
-
-    private func deduplicatedGoogleAntigravityReports(_ reports: [ProviderConnectorReport]) -> [ProviderConnectorReport] {
-        var indexesByAccountID: [String: Int] = [:]
-        var deduplicated: [ProviderConnectorReport] = []
-        for report in reports {
-            if let existingIndex = indexesByAccountID[report.accountID] {
-                let existing = deduplicated[existingIndex]
-                deduplicated[existingIndex] = mergedGoogleAntigravityReport(existing, report)
-            } else {
-                indexesByAccountID[report.accountID] = deduplicated.count
-                deduplicated.append(report)
-            }
-        }
-        return deduplicated
-    }
-
-    private func mergedGoogleAntigravityReport(
-        _ existing: ProviderConnectorReport,
-        _ candidate: ProviderConnectorReport
-    ) -> ProviderConnectorReport {
-        let preferred: ProviderConnectorReport
-        let other: ProviderConnectorReport
-        if shouldPreferGoogleAntigravityReport(candidate, over: existing) {
-            preferred = candidate
-            other = existing
-        } else {
-            preferred = existing
-            other = candidate
-        }
-
-        return ProviderConnectorReport(
-            provider: preferred.provider,
-            accountID: preferred.accountID,
-            configuredAccountID: preferred.configuredAccountID,
-            accountName: preferred.accountName,
-            generatedAt: preferred.generatedAt,
-            limits: deduplicatedGoogleAntigravityLimits(preferred.limits + other.limits),
-            status: preferred.status,
-            errorMessage: preferred.errorMessage
-        )
-    }
-
-    private func deduplicatedGoogleAntigravityLimits(_ limits: [UsageLimit]) -> [UsageLimit] {
-        var seen = Set<String>()
-        return limits.filter { limit in
-            seen.insert(limit.id).inserted
-        }
-    }
-
-    private func shouldPreferGoogleAntigravityReport(
-        _ candidate: ProviderConnectorReport,
-        over existing: ProviderConnectorReport
-    ) -> Bool {
-        if existing.limits.isEmpty, !candidate.limits.isEmpty { return true }
-        if !existing.limits.isEmpty, candidate.limits.isEmpty { return false }
-        let candidateLooksMigrated = candidate.accountName.localizedCaseInsensitiveContains("Antigravity")
-        let existingLooksMigrated = existing.accountName.localizedCaseInsensitiveContains("Antigravity")
-        return candidateLooksMigrated && !existingLooksMigrated
     }
 
     public func saveMerged(
@@ -871,11 +706,6 @@ public struct SnapshotRefreshService: Sendable {
         if migratedDocument.accounts != accounts {
             try? accountStore.save(migratedDocument)
         }
-    }
-
-    private func migrateGoogleStateIfNeeded() {
-        guard let credentialStore else { return }
-        GoogleAccountMigration.migrateCredentials(credentialStore)
     }
 }
 
@@ -1025,31 +855,5 @@ private extension AccountConnectorKind {
         case .googleAntigravityQuota, .claudeOAuthUsage:
             false
         }
-    }
-}
-
-private extension UsageLimit {
-    func replacingGoogleAntigravityAccount(
-        accountID: String,
-        configuredAccountID: String,
-        accountName: String
-    ) -> UsageLimit {
-        UsageLimit(
-            provider: provider,
-            accountID: accountID,
-            configuredAccountID: configuredAccountID,
-            accountName: accountName,
-            label: label,
-            windowLabel: windowLabel,
-            modelLabel: modelLabel,
-            unit: unit,
-            used: used,
-            limit: limit,
-            resetsAt: resetsAt,
-            lastUpdatedAt: lastUpdatedAt,
-            confidence: confidence,
-            statusOverride: statusOverride,
-            note: note
-        )
     }
 }

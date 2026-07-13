@@ -1,222 +1,595 @@
+import Darwin
 import Foundation
-import os
-
-private let googleAntigravityLogger = Logger(subsystem: "com.shinycomputers.contextpanel", category: "google-antigravity")
-
-private let googleAntigravityKeychainApprovalMessage = "Google Antigravity quota needs macOS Keychain approval. Click Refresh for Google in Context Panel, then choose Always Allow when macOS asks to access the \"gemini\" keychain item."
 
 public struct GoogleAntigravityAccountConfiguration: Equatable, Sendable {
     public let accountID: String
     public let accountName: String
-    public let credentialAccountID: String
-    public let codeAssistBaseURL: URL
-    public let userAgent: String
 
-    public init(
-        accountID: String,
-        accountName: String = "Antigravity",
-        credentialAccountID: String = GoogleAntigravityLocalAuthMetadata.credentialAccountID,
-        codeAssistBaseURL: URL = GoogleAntigravityLocalAuthMetadata.codeAssistBaseURL,
-        userAgent: String = GoogleAntigravityLocalAuthMetadata.userAgent
-    ) {
+    public init(accountID: String, accountName: String = "Antigravity") {
         self.accountID = accountID
         self.accountName = accountName
-        self.credentialAccountID = credentialAccountID
-        self.codeAssistBaseURL = codeAssistBaseURL
-        self.userAgent = userAgent
     }
 }
 
-public enum GoogleAntigravityLocalAuthMetadata {
-    public static let credentialService = "gemini"
-    public static let credentialAccountID = "antigravity"
-    public static let codeAssistBaseURL = URL(string: "https://daily-cloudcode-pa.googleapis.com")!
-    public static let userAgent = "antigravity/macos/context-panel"
-}
+public struct GoogleAntigravityStatusLineBucket: Codable, Equatable, Sendable {
+    public let id: String
+    public let remainingFraction: Double?
+    public let resetsAt: Date?
+    public let isDisabled: Bool
 
-public struct GoogleAntigravityForegroundRequiredCredentialLoader: ProviderCredentialLoading, Sendable {
-    public init() {}
-
-    public func load(accountID _: String) throws -> Data? {
-        throw ConnectorError.foregroundRefreshRequired(googleAntigravityKeychainApprovalMessage)
+    public init(id: String, remainingFraction: Double?, resetsAt: Date?, isDisabled: Bool = false) {
+        self.id = id
+        self.remainingFraction = remainingFraction
+        self.resetsAt = resetsAt
+        self.isDisabled = isDisabled
     }
 }
 
-public struct GoogleAntigravityLocalCredentials: Equatable, Sendable {
-    public let accessToken: String
-    public let tokenType: String
-    public let refreshToken: String?
-    public let expiresAt: Date?
-    public let authMethod: String?
+public struct GoogleAntigravityStatusLineSnapshot: Codable, Equatable, Sendable {
+    public static let currentSchemaVersion = 1
+
+    public let schemaVersion: Int
+    public let sourceVersion: String?
+    public let planTier: String?
+    public let observedAt: Date
+    public let buckets: [GoogleAntigravityStatusLineBucket]
 
     public init(
-        accessToken: String,
-        tokenType: String = "Bearer",
-        refreshToken: String? = nil,
-        expiresAt: Date? = nil,
-        authMethod: String? = nil
+        schemaVersion: Int = currentSchemaVersion,
+        sourceVersion: String? = nil,
+        planTier: String? = nil,
+        observedAt: Date,
+        buckets: [GoogleAntigravityStatusLineBucket]
     ) {
-        self.accessToken = accessToken
-        self.tokenType = tokenType
-        self.refreshToken = refreshToken
-        self.expiresAt = expiresAt
-        self.authMethod = authMethod
+        self.schemaVersion = schemaVersion
+        self.sourceVersion = sourceVersion
+        self.planTier = planTier
+        self.observedAt = observedAt
+        self.buckets = buckets
+    }
+}
+
+public enum GoogleAntigravityStatusLineStoreError: LocalizedError, Equatable, Sendable {
+    case unavailable
+    case unsafeDirectory
+    case unsafeFile
+    case oversizedFile
+    case unsupportedSchema(Int)
+    case invalidSnapshot
+    case writeFailed
+
+    public var errorDescription: String? {
+        switch self {
+        case .unavailable:
+            "Antigravity bridge storage is unavailable."
+        case .unsafeDirectory, .unsafeFile:
+            "Antigravity bridge storage did not pass local safety checks."
+        case .oversizedFile:
+            "Antigravity bridge data exceeded the supported size."
+        case .unsupportedSchema:
+            "Antigravity bridge data needs a newer Context Panel build."
+        case .invalidSnapshot:
+            "Antigravity bridge data is invalid."
+        case .writeFailed:
+            "Antigravity bridge data could not be saved."
+        }
+    }
+}
+
+public struct GoogleAntigravityStatusLineSnapshotStore: Sendable {
+    public static let maximumSnapshotBytes = 64 * 1_024
+
+    public let snapshotURL: URL
+
+    public init(snapshotURL: URL) {
+        self.snapshotURL = snapshotURL
     }
 
-    public static func decode(from data: Data) throws -> GoogleAntigravityLocalCredentials {
-        let payloadData = try decodedPayloadData(from: data)
+    public func load() throws -> GoogleAntigravityStatusLineSnapshot? {
+        guard Self.isValidFileName(snapshotURL.lastPathComponent) else {
+            throw GoogleAntigravityStatusLineStoreError.unsafeFile
+        }
+        guard let directoryDescriptor = try Self.openSecureDirectory(
+            snapshotURL.deletingLastPathComponent(),
+            createIfMissing: false
+        ) else {
+            return nil
+        }
+        defer { close(directoryDescriptor) }
+        guard let data = try Self.readSecureFile(
+            named: snapshotURL.lastPathComponent,
+            directoryDescriptor: directoryDescriptor,
+            maximumBytes: Self.maximumSnapshotBytes
+        ) else {
+            return nil
+        }
+
+        let snapshot: GoogleAntigravityStatusLineSnapshot
         do {
-            return try JSONDecoder.contextPanelISO8601.decode(GoogleAntigravityKeychainPayload.self, from: payloadData).credentials
+            snapshot = try JSONDecoder.contextPanelISO8601.decode(GoogleAntigravityStatusLineSnapshot.self, from: data)
         } catch {
-            throw ConnectorError.invalidAuth("Google Antigravity local login is in an unexpected format. Open Antigravity and sign in again.")
+            throw GoogleAntigravityStatusLineStoreError.invalidSnapshot
         }
+        guard snapshot.schemaVersion == GoogleAntigravityStatusLineSnapshot.currentSchemaVersion else {
+            throw GoogleAntigravityStatusLineStoreError.unsupportedSchema(snapshot.schemaVersion)
+        }
+        guard Self.isValid(snapshot: snapshot) else {
+            throw GoogleAntigravityStatusLineStoreError.invalidSnapshot
+        }
+        return snapshot
     }
 
-    private static func decodedPayloadData(from data: Data) throws -> Data {
-        let trimmed = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        let prefix = "go-keyring-base64:"
-        guard trimmed.hasPrefix(prefix) else { return data }
-
-        let encoded = String(trimmed.dropFirst(prefix.count))
-        guard let decoded = Data(base64Encoded: encoded) else {
-            throw ConnectorError.invalidAuth("Google Antigravity local login could not be decoded. Open Antigravity and sign in again.")
+    public func save(_ snapshot: GoogleAntigravityStatusLineSnapshot) throws {
+        guard snapshot.schemaVersion == GoogleAntigravityStatusLineSnapshot.currentSchemaVersion,
+              Self.isValid(snapshot: snapshot)
+        else {
+            throw GoogleAntigravityStatusLineStoreError.invalidSnapshot
         }
-        return decoded
-    }
-
-    public func validAccessToken(now: Date, expirationSkew: TimeInterval) throws -> String {
-        guard !accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw ConnectorError.missingAuth("Google Antigravity local login is missing an access token. Open Antigravity and sign in again.")
+        guard Self.isValidFileName(snapshotURL.lastPathComponent) else {
+            throw GoogleAntigravityStatusLineStoreError.unsafeFile
         }
-        if let expiresAt, expiresAt.timeIntervalSince(now) <= expirationSkew {
-            throw ConnectorError.foregroundRefreshRequired("Google Antigravity access token has expired. Open Antigravity so it can refresh its Google session, then refresh Google in Context Panel.")
+
+        let data: Data
+        do {
+            data = try Self.makeEncoder().encode(snapshot)
+        } catch {
+            throw GoogleAntigravityStatusLineStoreError.invalidSnapshot
         }
-        return accessToken
-    }
-}
+        guard data.count <= Self.maximumSnapshotBytes else {
+            throw GoogleAntigravityStatusLineStoreError.oversizedFile
+        }
 
-private struct GoogleAntigravityKeychainPayload: Decodable {
-    let token: Token
-    let authMethod: String?
-
-    enum CodingKeys: String, CodingKey {
-        case token
-        case authMethod = "auth_method"
-    }
-
-    var credentials: GoogleAntigravityLocalCredentials {
-        GoogleAntigravityLocalCredentials(
-            accessToken: token.accessToken,
-            tokenType: token.tokenType ?? "Bearer",
-            refreshToken: token.refreshToken,
-            expiresAt: token.expiry,
-            authMethod: authMethod
+        guard let directoryDescriptor = try Self.openSecureDirectory(
+            snapshotURL.deletingLastPathComponent(),
+            createIfMissing: true
+        ) else {
+            throw GoogleAntigravityStatusLineStoreError.unavailable
+        }
+        defer { close(directoryDescriptor) }
+        try Self.writeSecureFile(
+            data,
+            named: snapshotURL.lastPathComponent,
+            directoryDescriptor: directoryDescriptor
         )
     }
 
-    struct Token: Decodable {
-        let accessToken: String
-        let tokenType: String?
-        let refreshToken: String?
-        let expiry: Date?
+    public func delete() throws {
+        guard Self.isValidFileName(snapshotURL.lastPathComponent) else {
+            throw GoogleAntigravityStatusLineStoreError.unsafeFile
+        }
+        guard let directoryDescriptor = try Self.openSecureDirectory(
+            snapshotURL.deletingLastPathComponent(),
+            createIfMissing: false
+        ) else {
+            return
+        }
+        defer { close(directoryDescriptor) }
 
-        enum CodingKeys: String, CodingKey {
-            case accessToken = "access_token"
-            case tokenType = "token_type"
-            case refreshToken = "refresh_token"
-            case expiry
+        let descriptor = openat(
+            directoryDescriptor,
+            snapshotURL.lastPathComponent,
+            O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
+        )
+        if descriptor < 0, errno == ENOENT { return }
+        guard descriptor >= 0 else {
+            throw GoogleAntigravityStatusLineStoreError.unsafeFile
+        }
+        defer { close(descriptor) }
+
+        var information = stat()
+        guard fstat(descriptor, &information) == 0,
+              (information.st_mode & S_IFMT) == S_IFREG,
+              information.st_uid == geteuid(),
+              information.st_nlink == 1
+        else {
+            throw GoogleAntigravityStatusLineStoreError.unsafeFile
+        }
+        guard unlinkat(directoryDescriptor, snapshotURL.lastPathComponent, 0) == 0 else {
+            throw GoogleAntigravityStatusLineStoreError.unsafeFile
+        }
+        _ = fsync(directoryDescriptor)
+    }
+
+    private static func isValid(snapshot: GoogleAntigravityStatusLineSnapshot) -> Bool {
+        guard snapshot.buckets.count <= GoogleAntigravityStatusLineBridge.maximumBucketCount else { return false }
+        guard snapshot.sourceVersion.map(GoogleAntigravityStatusLineBridge.isValidSourceVersion) ?? true else { return false }
+        guard snapshot.planTier.map(GoogleAntigravityStatusLineBridge.isValidPlanTier) ?? true else { return false }
+        return snapshot.buckets.allSatisfy { bucket in
+            GoogleAntigravityStatusLineBridge.isValidBucketID(bucket.id)
+                && bucket.remainingFraction.map { $0.isFinite && (0 ... 1).contains($0) } ?? true
+        }
+    }
+
+    private static func isValidFileName(_ fileName: String) -> Bool {
+        !fileName.isEmpty && fileName != "." && fileName != ".." && !fileName.contains("/")
+    }
+
+    private static func openSecureDirectory(
+        _ directoryURL: URL,
+        createIfMissing: Bool
+    ) throws -> Int32? {
+        var descriptor = open(directoryURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        if descriptor < 0, errno == ENOENT, createIfMissing {
+            do {
+                try FileManager.default.createDirectory(
+                    at: directoryURL,
+                    withIntermediateDirectories: true,
+                    attributes: [.posixPermissions: 0o700]
+                )
+            } catch {
+                throw GoogleAntigravityStatusLineStoreError.unavailable
+            }
+            descriptor = open(directoryURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        }
+        if descriptor < 0, errno == ENOENT, !createIfMissing {
+            return nil
+        }
+        guard descriptor >= 0 else {
+            throw GoogleAntigravityStatusLineStoreError.unsafeDirectory
+        }
+
+        var information = stat()
+        let isSafeDirectory = fstat(descriptor, &information) == 0
+            && (information.st_mode & S_IFMT) == S_IFDIR
+            && information.st_uid == geteuid()
+            && information.st_nlink >= 1
+        guard isSafeDirectory else {
+            close(descriptor)
+            throw GoogleAntigravityStatusLineStoreError.unsafeDirectory
+        }
+
+        if createIfMissing {
+            guard fchmod(descriptor, S_IRWXU) == 0 else {
+                close(descriptor)
+                throw GoogleAntigravityStatusLineStoreError.unsafeDirectory
+            }
+        } else if information.st_mode & 0o077 != 0 {
+            close(descriptor)
+            throw GoogleAntigravityStatusLineStoreError.unsafeDirectory
+        }
+        return descriptor
+    }
+
+    private static func readSecureFile(
+        named fileName: String,
+        directoryDescriptor: Int32,
+        maximumBytes: Int
+    ) throws -> Data? {
+        let descriptor = openat(
+            directoryDescriptor,
+            fileName,
+            O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
+        )
+        if descriptor < 0, errno == ENOENT { return nil }
+        guard descriptor >= 0 else {
+            throw GoogleAntigravityStatusLineStoreError.unsafeFile
+        }
+        defer { close(descriptor) }
+
+        var information = stat()
+        guard fstat(descriptor, &information) == 0,
+              (information.st_mode & S_IFMT) == S_IFREG,
+              information.st_uid == geteuid(),
+              information.st_nlink == 1,
+              information.st_mode & 0o077 == 0,
+              information.st_size >= 0,
+              information.st_size <= maximumBytes
+        else {
+            throw information.st_size > maximumBytes
+                ? GoogleAntigravityStatusLineStoreError.oversizedFile
+                : GoogleAntigravityStatusLineStoreError.unsafeFile
+        }
+
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: min(8_192, maximumBytes + 1))
+        while true {
+            let count = read(descriptor, &buffer, buffer.count)
+            if count == 0 { break }
+            if count < 0 {
+                if errno == EINTR { continue }
+                throw GoogleAntigravityStatusLineStoreError.unsafeFile
+            }
+            data.append(contentsOf: buffer.prefix(count))
+            guard data.count <= maximumBytes else {
+                throw GoogleAntigravityStatusLineStoreError.oversizedFile
+            }
+        }
+        return data
+    }
+
+    private static func writeSecureFile(
+        _ data: Data,
+        named destinationFileName: String,
+        directoryDescriptor: Int32
+    ) throws {
+        let temporaryFileName = ".\(destinationFileName).\(UUID().uuidString).tmp"
+        let descriptor = openat(
+            directoryDescriptor,
+            temporaryFileName,
+            O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+            S_IRUSR | S_IWUSR
+        )
+        guard descriptor >= 0 else {
+            throw GoogleAntigravityStatusLineStoreError.writeFailed
+        }
+
+        var shouldRemoveTemporaryFile = true
+        defer {
+            close(descriptor)
+            if shouldRemoveTemporaryFile {
+                unlinkat(directoryDescriptor, temporaryFileName, 0)
+            }
+        }
+
+        do {
+            try data.withUnsafeBytes { rawBuffer in
+                guard let baseAddress = rawBuffer.baseAddress else { return }
+                var offset = 0
+                while offset < rawBuffer.count {
+                    let written = Darwin.write(descriptor, baseAddress.advanced(by: offset), rawBuffer.count - offset)
+                    if written <= 0 {
+                        if errno == EINTR { continue }
+                        throw GoogleAntigravityStatusLineStoreError.writeFailed
+                    }
+                    offset += written
+                }
+            }
+            guard fchmod(descriptor, S_IRUSR | S_IWUSR) == 0,
+                  fsync(descriptor) == 0,
+                  renameat(
+                      directoryDescriptor,
+                      temporaryFileName,
+                      directoryDescriptor,
+                      destinationFileName
+                  ) == 0
+            else {
+                throw GoogleAntigravityStatusLineStoreError.writeFailed
+            }
+            shouldRemoveTemporaryFile = false
+            _ = fsync(directoryDescriptor)
+        } catch {
+            throw error as? GoogleAntigravityStatusLineStoreError ?? .writeFailed
+        }
+    }
+
+    private static func makeEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }
+}
+
+public enum GoogleAntigravityStatusLineIngestResult: Equatable, Sendable {
+    case saved(GoogleAntigravityStatusLineSnapshot)
+    case ignoredMissingQuota
+    case ignoredEmptyQuota
+}
+
+public enum GoogleAntigravityStatusLineBridgeError: LocalizedError, Equatable, Sendable {
+    case oversizedInput
+    case invalidPayload
+
+    public var errorDescription: String? {
+        switch self {
+        case .oversizedInput:
+            "Antigravity status input was too large."
+        case .invalidPayload:
+            "Antigravity status input was invalid."
         }
     }
 }
 
-public enum GoogleAntigravityQuotaParser {
-    public static func usageLimits(
-        from data: Data,
-        accountID: String,
-        configuredAccountID: String?,
-        accountName: String,
-        observedAt: Date
-    ) throws -> [UsageLimit] {
-        let payload = try JSONDecoder.contextPanelISO8601.decode(GoogleAntigravityUserQuotaPayload.self, from: data)
-        return payload.limits(
-            accountID: accountID,
-            configuredAccountID: configuredAccountID,
-            accountName: accountName,
-            observedAt: observedAt
+public enum GoogleAntigravityStatusLineBridge {
+    public static let maximumInputBytes = 64 * 1_024
+    public static let maximumBucketCount = 128
+
+    public static func ingest(
+        data: Data,
+        observedAt: Date = Date(),
+        store: GoogleAntigravityStatusLineSnapshotStore
+    ) throws -> GoogleAntigravityStatusLineIngestResult {
+        guard data.count <= maximumInputBytes else {
+            throw GoogleAntigravityStatusLineBridgeError.oversizedInput
+        }
+
+        let payload: Payload
+        do {
+            payload = try JSONDecoder().decode(Payload.self, from: data)
+        } catch {
+            throw GoogleAntigravityStatusLineBridgeError.invalidPayload
+        }
+        if let version = payload.version, !isValidSourceVersion(version) {
+            throw GoogleAntigravityStatusLineBridgeError.invalidPayload
+        }
+        if let planTier = payload.planTier, !isValidPlanTier(planTier) {
+            throw GoogleAntigravityStatusLineBridgeError.invalidPayload
+        }
+        guard let quota = payload.quota else {
+            return .ignoredMissingQuota
+        }
+        guard !quota.isEmpty else {
+            return .ignoredEmptyQuota
+        }
+        guard quota.count <= maximumBucketCount else {
+            throw GoogleAntigravityStatusLineBridgeError.invalidPayload
+        }
+
+        let buckets = try quota.map { id, bucket -> GoogleAntigravityStatusLineBucket in
+            guard isValidBucketID(id) else {
+                throw GoogleAntigravityStatusLineBridgeError.invalidPayload
+            }
+            if let remainingFraction = bucket.remainingFraction,
+               !remainingFraction.isFinite || !(0 ... 1).contains(remainingFraction) {
+                throw GoogleAntigravityStatusLineBridgeError.invalidPayload
+            }
+
+            let resetsAt: Date?
+            if let resetTime = bucket.resetTime {
+                guard let parsed = ContextPanelDateFormatting.date(from: resetTime) else {
+                    throw GoogleAntigravityStatusLineBridgeError.invalidPayload
+                }
+                resetsAt = parsed
+            } else if let resetInSeconds = bucket.resetInSeconds {
+                guard resetInSeconds.isFinite,
+                      (0 ... 366 * 24 * 60 * 60).contains(resetInSeconds)
+                else {
+                    throw GoogleAntigravityStatusLineBridgeError.invalidPayload
+                }
+                resetsAt = observedAt.addingTimeInterval(resetInSeconds)
+            } else {
+                resetsAt = nil
+            }
+
+            return GoogleAntigravityStatusLineBucket(
+                id: id,
+                remainingFraction: bucket.remainingFraction,
+                resetsAt: resetsAt,
+                isDisabled: bucket.disabled ?? false
+            )
+        }.sorted { $0.id < $1.id }
+
+        let snapshot = GoogleAntigravityStatusLineSnapshot(
+            sourceVersion: payload.version,
+            planTier: payload.planTier,
+            observedAt: observedAt,
+            buckets: buckets
         )
+        try store.save(snapshot)
+        return .saved(snapshot)
     }
 
-    public static func summaryLimits(
-        from data: Data,
-        accountID: String,
-        configuredAccountID: String?,
-        accountName: String,
-        observedAt: Date
-    ) throws -> [UsageLimit] {
-        let payload = try JSONDecoder.contextPanelISO8601.decode(GoogleAntigravityQuotaSummaryPayload.self, from: data)
-        return payload.limits(
-            accountID: accountID,
-            configuredAccountID: configuredAccountID,
-            accountName: accountName,
-            observedAt: observedAt
-        )
+    public static func statusLineText(for result: GoogleAntigravityStatusLineIngestResult) -> String {
+        switch result {
+        case .ignoredMissingQuota:
+            return "Context Panel · quota pending"
+        case .ignoredEmptyQuota:
+            return "Context Panel · quota unavailable"
+        case .saved(let snapshot):
+            guard let remaining = (snapshot.buckets
+                .filter { !$0.isDisabled }
+                .compactMap(\.remainingFraction)
+                .min()) else {
+                return "Context Panel · quota unavailable"
+            }
+            return "Context Panel · \(Int((remaining * 100).rounded()))% lowest quota"
+        }
+    }
+
+    public static let failureStatusLineText = "Context Panel · quota sync unavailable"
+
+    static func isValidBucketID(_ value: String) -> Bool {
+        guard !value.isEmpty, value.utf8.count <= 128 else { return false }
+        return value.unicodeScalars.allSatisfy { scalar in
+            switch scalar.value {
+            case 45, 46, 48 ... 57, 58, 65 ... 90, 95, 97 ... 122:
+                true
+            default:
+                false
+            }
+        }
+    }
+
+    static func isValidSourceVersion(_ value: String) -> Bool {
+        guard !value.isEmpty, value.utf8.count <= 32 else { return false }
+        return value.unicodeScalars.allSatisfy { scalar in
+            switch scalar.value {
+            case 43, 45, 46, 48 ... 57, 65 ... 90, 95, 97 ... 122:
+                true
+            default:
+                false
+            }
+        }
+    }
+
+    static func isValidPlanTier(_ value: String) -> Bool {
+        guard !value.isEmpty, value.utf8.count <= 64 else { return false }
+        return value.unicodeScalars.allSatisfy { scalar in
+            switch scalar.value {
+            case 32, 43, 45, 46, 48 ... 57, 65 ... 90, 95, 97 ... 122:
+                true
+            default:
+                false
+            }
+        }
+    }
+
+    private struct Payload: Decodable {
+        let version: String?
+        let planTier: String?
+        let quota: [String: Bucket]?
+
+        private enum CodingKeys: String, CodingKey {
+            case version
+            case planTier = "plan_tier"
+            case quota
+        }
+    }
+
+    private struct Bucket: Decodable {
+        let remainingFraction: Double?
+        let resetTime: String?
+        let resetInSeconds: Double?
+        let disabled: Bool?
+
+        private enum CodingKeys: String, CodingKey {
+            case remainingFraction = "remaining_fraction"
+            case resetTime = "reset_time"
+            case resetInSeconds = "reset_in_seconds"
+            case disabled
+        }
     }
 }
+
+public protocol GoogleAntigravityQuotaSnapshotLoading: Sendable {
+    func load() throws -> GoogleAntigravityStatusLineSnapshot?
+}
+
+extension GoogleAntigravityStatusLineSnapshotStore: GoogleAntigravityQuotaSnapshotLoading {}
 
 public struct GoogleAntigravityQuotaConnector: ProviderConnector {
     public let provider: Provider = .google
 
-    private enum RequestMetadata {
-        static let apiClient = "gl-mac/1.0.0 antigravity-context-panel/1.0.0"
-
-        static var loadBody: [String: Any] {
-            ["metadata": ["ideType": "ANTIGRAVITY"]]
-        }
-
-        static func quotaBody(projectID: String) -> [String: Any] {
-            ["project": projectID]
-        }
-    }
-
     private let accounts: [GoogleAntigravityAccountConfiguration]
-    private let httpClient: any ConnectorHTTPClient
-    private let credentialLoader: any ProviderCredentialLoading
-    private let expirationSkew: TimeInterval
+    private let snapshotLoader: any GoogleAntigravityQuotaSnapshotLoading
+    private let maximumAge: TimeInterval
 
     public init(
         accounts: [GoogleAntigravityAccountConfiguration],
-        httpClient: any ConnectorHTTPClient = URLSessionConnectorHTTPClient(),
-        credentialLoader: any ProviderCredentialLoading = GenericPasswordCredentialLoader(service: GoogleAntigravityLocalAuthMetadata.credentialService),
-        expirationSkew: TimeInterval = 0
+        snapshotLoader: any GoogleAntigravityQuotaSnapshotLoading,
+        maximumAge: TimeInterval = SnapshotFreshness.appMaximumAge
     ) {
         self.accounts = accounts
-        self.httpClient = httpClient
-        self.credentialLoader = credentialLoader
-        self.expirationSkew = expirationSkew
+        self.snapshotLoader = snapshotLoader
+        self.maximumAge = maximumAge
     }
 
     public func refresh(now: Date) async -> ConnectorRefreshResult {
-        var reports: [ProviderConnectorReport] = []
-        reports.reserveCapacity(accounts.count)
-        for account in accounts {
-            reports.append(await refresh(account: account, now: now))
+        let snapshot: GoogleAntigravityStatusLineSnapshot?
+        do {
+            snapshot = try snapshotLoader.load()
+        } catch {
+            return ConnectorRefreshResult(generatedAt: now, reports: accounts.map { account in
+                failureReport(
+                    account: account,
+                    now: now,
+                    message: "Antigravity bridge data could not be read. The last good quota remains available while setup is checked."
+                )
+            })
         }
-        return ConnectorRefreshResult(generatedAt: now, reports: reports)
+
+        return ConnectorRefreshResult(generatedAt: now, reports: accounts.map { account in
+            report(account: account, snapshot: snapshot, now: now)
+        })
     }
 
-    private func refresh(account: GoogleAntigravityAccountConfiguration, now: Date) async -> ProviderConnectorReport {
+    private func report(
+        account: GoogleAntigravityAccountConfiguration,
+        snapshot: GoogleAntigravityStatusLineSnapshot?,
+        now: Date
+    ) -> ProviderConnectorReport {
         let localAccountID = ConnectorRedactor.localAccountID(provider: provider, stableID: account.accountID)
-
-        do {
-            let credentials = try loadCredentials(account: account)
-            let accessToken = try credentials.validAccessToken(now: now, expirationSkew: expirationSkew)
-            return try await quotaReport(
-                accessToken: accessToken,
-                account: account,
-                now: now,
-                localAccountID: localAccountID
-            )
-        } catch {
+        guard let snapshot else {
             return ProviderConnectorReport(
                 provider: provider,
                 accountID: localAccountID,
@@ -224,661 +597,160 @@ public struct GoogleAntigravityQuotaConnector: ProviderConnector {
                 accountName: account.accountName,
                 generatedAt: now,
                 limits: [],
-                status: .failure,
-                errorMessage: error.localizedDescription
+                status: .unknown,
+                errorMessage: "Antigravity bridge setup is required. Copy the setup command from Context Panel and paste it into AGY CLI."
             )
         }
-    }
 
-    private func quotaReport(
-        accessToken: String,
-        account: GoogleAntigravityAccountConfiguration,
-        now: Date,
-        localAccountID: String
-    ) async throws -> ProviderConnectorReport {
-        let projectID = try await projectID(accessToken: accessToken, account: account)
-        let summaryResponse = try await httpClient.data(for: ConnectorHTTPRequest(
-            url: codeAssistURL(path: "v1internal:retrieveUserQuotaSummary", baseURL: account.codeAssistBaseURL),
-            method: "POST",
-            headers: requestHeaders(accessToken: accessToken, account: account),
-            body: try JSONSerialization.data(withJSONObject: RequestMetadata.quotaBody(projectID: projectID), options: [.sortedKeys])
-        ))
-        googleAntigravityLogger.notice("quota summary response status=\(summaryResponse.statusCode, privacy: .public)")
-        if (200..<300).contains(summaryResponse.statusCode) {
-            do {
-                let limits = try GoogleAntigravityQuotaParser.summaryLimits(
-                    from: summaryResponse.data,
-                    accountID: localAccountID,
-                    configuredAccountID: account.accountID,
-                    accountName: account.accountName,
-                    observedAt: now
-                )
-                if !limits.isEmpty {
-                    return ProviderConnectorReport(
-                        provider: provider,
-                        accountID: localAccountID,
-                        configuredAccountID: account.accountID,
-                        accountName: account.accountName,
-                        generatedAt: now,
-                        limits: limits
-                    )
-                }
-                googleAntigravityLogger.notice("quota summary returned no usable limits; falling back to raw quota")
-            } catch {
-                googleAntigravityLogger.error("quota summary decode failed; falling back to raw quota")
-            }
-        } else {
-            logCodeAssistFailure(operation: "quota summary", statusCode: summaryResponse.statusCode, data: summaryResponse.data)
+        guard snapshot.observedAt <= now.addingTimeInterval(5 * 60) else {
+            return failureReport(
+                account: account,
+                now: now,
+                message: "Antigravity bridge data had an invalid observation time."
+            )
         }
 
-        let response = try await httpClient.data(for: ConnectorHTTPRequest(
-            url: codeAssistURL(path: "v1internal:retrieveUserQuota", baseURL: account.codeAssistBaseURL),
-            method: "POST",
-            headers: requestHeaders(accessToken: accessToken, account: account),
-            body: try JSONSerialization.data(withJSONObject: RequestMetadata.quotaBody(projectID: projectID), options: [.sortedKeys])
-        ))
-        googleAntigravityLogger.notice("quota response status=\(response.statusCode, privacy: .public)")
-        guard (200..<300).contains(response.statusCode) else {
-            logCodeAssistFailure(operation: "quota", statusCode: response.statusCode, data: response.data)
-            throw codeAssistAuthorizationError(operation: "Google Antigravity quota", statusCode: response.statusCode)
+        let snapshotIsStale = now.timeIntervalSince(snapshot.observedAt) > maximumAge
+        let limits = snapshot.buckets.filter { !$0.isDisabled }.map { bucket in
+            usageLimit(
+                bucket: bucket,
+                account: account,
+                localAccountID: localAccountID,
+                observedAt: snapshot.observedAt,
+                isStale: snapshotIsStale || bucket.resetsAt.map { $0 <= now } == true
+            )
         }
 
-        let limits = try GoogleAntigravityQuotaParser.usageLimits(
-            from: response.data,
-            accountID: localAccountID,
-            configuredAccountID: account.accountID,
-            accountName: account.accountName,
-            observedAt: now
-        )
+        if limits.isEmpty {
+            return ProviderConnectorReport(
+                provider: provider,
+                accountID: localAccountID,
+                configuredAccountID: account.accountID,
+                accountName: account.accountName,
+                generatedAt: snapshot.observedAt,
+                limits: [],
+                status: .unknown,
+                errorMessage: "The Antigravity bridge is active, but AGY did not report active quota buckets."
+            )
+        }
+
+        let hasStaleLimit = limits.contains { $0.status == .stale }
         return ProviderConnectorReport(
             provider: provider,
             accountID: localAccountID,
             configuredAccountID: account.accountID,
             accountName: account.accountName,
-            generatedAt: now,
+            generatedAt: snapshot.observedAt,
             limits: limits,
-            status: limits.isEmpty ? .unknown : nil,
-            errorMessage: limits.isEmpty ? "Google Antigravity did not report quota limits." : nil
+            status: nil,
+            errorMessage: hasStaleLimit ? "Antigravity quota is stale. Use AGY CLI to publish a fresh quota snapshot." : nil
         )
     }
 
-    private func projectID(accessToken: String, account: GoogleAntigravityAccountConfiguration) async throws -> String {
-        let response = try await httpClient.data(for: ConnectorHTTPRequest(
-            url: codeAssistURL(path: "v1internal:loadCodeAssist", baseURL: account.codeAssistBaseURL),
-            method: "POST",
-            headers: requestHeaders(accessToken: accessToken, account: account),
-            body: try JSONSerialization.data(withJSONObject: RequestMetadata.loadBody, options: [.sortedKeys])
-        ))
-        googleAntigravityLogger.notice("project discovery response status=\(response.statusCode, privacy: .public)")
-        guard (200..<300).contains(response.statusCode) else {
-            logCodeAssistFailure(operation: "project discovery", statusCode: response.statusCode, data: response.data)
-            throw codeAssistAuthorizationError(operation: "Google Antigravity project discovery", statusCode: response.statusCode)
-        }
-        let payload = try JSONDecoder().decode(GoogleAntigravityLoadCodeAssistPayload.self, from: response.data)
-        guard let projectID = payload.projectID else {
-            throw ConnectorError.decodingFailure("Google Antigravity did not return an active project for quota lookup.")
-        }
-        googleAntigravityLogger.notice("project discovery succeeded")
-        return projectID
-    }
-
-    private func loadCredentials(account: GoogleAntigravityAccountConfiguration) throws -> GoogleAntigravityLocalCredentials {
-        guard let data = try loadCredentialData(accountID: account.credentialAccountID) else {
-            throw ConnectorError.missingAuth("Google Antigravity local login was not found. Open Antigravity and sign in, then refresh Google in Context Panel.")
-        }
-        return try GoogleAntigravityLocalCredentials.decode(from: data)
-    }
-
-    private func loadCredentialData(accountID: String) throws -> Data? {
-        do {
-            return try credentialLoader.load(accountID: accountID)
-        } catch GenericPasswordCredentialLoader.LoadError.unhandledStatus(let status) where status == -128 {
-            throw ConnectorError.foregroundRefreshRequired(googleAntigravityKeychainApprovalMessage)
-        }
-    }
-
-    private func requestHeaders(
-        accessToken: String,
-        account: GoogleAntigravityAccountConfiguration
-    ) -> [String: String] {
-        [
-            "Authorization": "Bearer \(accessToken)",
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "X-Goog-Api-Client": RequestMetadata.apiClient,
-            "User-Agent": account.userAgent,
-        ]
-    }
-
-    private func codeAssistURL(path: String, baseURL: URL) -> URL {
-        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
-        components.percentEncodedPath = "/\(path)"
-        return components.url!
-    }
-
-    private func codeAssistAuthorizationError(operation: String, statusCode: Int) -> ConnectorError {
-        if statusCode == 401 {
-            return ConnectorError.foregroundRefreshRequired("Google Antigravity local login was rejected. Open Antigravity to refresh it, then refresh Context Panel.")
-        }
-        if statusCode == 403 {
-            return ConnectorError.invalidAuth("Google Antigravity local login is valid, but Code Assist rejected quota access for this account.")
-        }
-        return ConnectorError.httpFailure(operation: operation, statusCode: statusCode)
-    }
-
-    private func logCodeAssistFailure(operation: String, statusCode: Int, data: Data) {
-        let payload = try? JSONDecoder().decode(GoogleAPIErrorPayload.self, from: data)
-        let message = ConnectorRedactor.redact(payload?.error.message ?? "")
-        let status = ConnectorRedactor.redact(payload?.error.status ?? "")
-        let code = payload?.error.code.map(String.init) ?? ""
-        googleAntigravityLogger.error(
-            "Code Assist failure operation=\(operation, privacy: .public) status=\(statusCode, privacy: .public) errorCode=\(code, privacy: .public) errorStatus=\(status, privacy: .public) errorMessage=\(message, privacy: .public)"
+    private func failureReport(
+        account: GoogleAntigravityAccountConfiguration,
+        now: Date,
+        message: String
+    ) -> ProviderConnectorReport {
+        ProviderConnectorReport(
+            provider: provider,
+            accountID: ConnectorRedactor.localAccountID(provider: provider, stableID: account.accountID),
+            configuredAccountID: account.accountID,
+            accountName: account.accountName,
+            generatedAt: now,
+            limits: [],
+            status: .failure,
+            errorMessage: message
         )
     }
-}
 
-private struct GoogleAPIErrorPayload: Decodable {
-    let error: ErrorPayload
-
-    struct ErrorPayload: Decodable {
-        let code: Int?
-        let message: String?
-        let status: String?
-    }
-}
-
-private struct GoogleAntigravityLoadCodeAssistPayload: Decodable {
-    let cloudaicompanionProject: GoogleAntigravityProjectValue?
-
-    var projectID: String? {
-        cloudaicompanionProject?.id
-    }
-}
-
-private enum GoogleAntigravityProjectValue: Decodable, Equatable {
-    case string(String)
-    case object(String)
-
-    var id: String? {
-        switch self {
-        case .string(let value), .object(let value):
-            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
+    private func usageLimit(
+        bucket: GoogleAntigravityStatusLineBucket,
+        account: GoogleAntigravityAccountConfiguration,
+        localAccountID: String,
+        observedAt: Date,
+        isStale: Bool
+    ) -> UsageLimit {
+        let labels = Self.labels(for: bucket.id)
+        let used = bucket.remainingFraction.map { remaining in
+            Int(((1 - remaining) * 100).rounded())
         }
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if let value = try? container.decode(String.self) {
-            self = .string(value)
-            return
-        }
-        let object = try container.decode(GoogleAntigravityProjectObject.self)
-        self = .object(object.id)
-    }
-}
-
-private struct GoogleAntigravityProjectObject: Decodable, Equatable {
-    let id: String
-}
-
-private struct GoogleAntigravityUserQuotaPayload: Decodable {
-    let buckets: [GoogleAntigravityQuotaBucket]
-
-    enum CodingKeys: String, CodingKey {
-        case buckets
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        buckets = try container.decodeIfPresent([GoogleAntigravityQuotaBucket].self, forKey: .buckets) ?? []
-    }
-
-    func limits(
-        accountID: String,
-        configuredAccountID: String?,
-        accountName: String,
-        observedAt: Date
-    ) -> [UsageLimit] {
-        buckets.compactMap { bucket in
-            bucket.usageLimit(
-                accountID: accountID,
-                configuredAccountID: configuredAccountID,
-                accountName: accountName,
-                observedAt: observedAt
-            )
-        }
-    }
-}
-
-private struct GoogleAntigravityQuotaSummaryPayload: Decodable {
-    let groups: [GoogleAntigravityQuotaSummaryGroup]
-    let buckets: [GoogleAntigravityQuotaSummaryBucket]
-
-    enum CodingKeys: String, CodingKey {
-        case groups
-        case buckets
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        groups = try container.decodeIfPresent([GoogleAntigravityQuotaSummaryGroup].self, forKey: .groups) ?? []
-        buckets = try container.decodeIfPresent([GoogleAntigravityQuotaSummaryBucket].self, forKey: .buckets) ?? []
-    }
-
-    func limits(
-        accountID: String,
-        configuredAccountID: String?,
-        accountName: String,
-        observedAt: Date
-    ) -> [UsageLimit] {
-        let groupedLimits = groups.flatMap { group in
-            group.limits(
-                accountID: accountID,
-                configuredAccountID: configuredAccountID,
-                accountName: accountName,
-                observedAt: observedAt
-            )
-        }
-        let flatLimits = buckets.compactMap { bucket in
-            bucket.usageLimit(
-                groupName: nil,
-                groupDescription: nil,
-                accountID: accountID,
-                configuredAccountID: configuredAccountID,
-                accountName: accountName,
-                observedAt: observedAt
-            )
-        }
-        let allLimits = groupedLimits + flatLimits
-        let geminiLimits = allLimits.filter { limit in
-            let haystack = [limit.label, limit.modelLabel, limit.note]
-                .compactMap { $0 }
-                .joined(separator: " ")
-                .lowercased()
-            return haystack.contains("gemini")
-        }
-        return geminiLimits.isEmpty ? allLimits : geminiLimits
-    }
-}
-
-private struct GoogleAntigravityQuotaSummaryGroup: Decodable {
-    let displayName: String?
-    let description: String?
-    let buckets: [GoogleAntigravityQuotaSummaryBucket]
-
-    enum CodingKeys: String, CodingKey {
-        case displayName
-        case displayNameSnake = "display_name"
-        case description
-        case buckets
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        displayName = try container.decodeFirstPresent(String.self, forKeys: [.displayName, .displayNameSnake])
-        description = try container.decodeIfPresent(String.self, forKey: .description)
-        buckets = try container.decodeIfPresent([GoogleAntigravityQuotaSummaryBucket].self, forKey: .buckets) ?? []
-    }
-
-    func limits(
-        accountID: String,
-        configuredAccountID: String?,
-        accountName: String,
-        observedAt: Date
-    ) -> [UsageLimit] {
-        buckets.compactMap { bucket in
-            bucket.usageLimit(
-                groupName: displayName,
-                groupDescription: description,
-                accountID: accountID,
-                configuredAccountID: configuredAccountID,
-                accountName: accountName,
-                observedAt: observedAt
-            )
-        }
-    }
-}
-
-private struct GoogleAntigravityQuotaSummaryBucket: Decodable {
-    let bucketID: String?
-    let displayName: String?
-    let description: String?
-    let window: String?
-    let remainingFraction: Double?
-    let remainingAmount: Int?
-    let resetTime: Date?
-
-    enum CodingKeys: String, CodingKey {
-        case bucketID = "bucketId"
-        case bucketIDSnake = "bucket_id"
-        case displayName
-        case displayNameSnake = "display_name"
-        case description
-        case window
-        case remainingFraction
-        case remainingFractionSnake = "remaining_fraction"
-        case remainingAmount
-        case remainingAmountSnake = "remaining_amount"
-        case resetTime
-        case resetTimeSnake = "reset_time"
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        bucketID = try container.decodeFirstPresent(String.self, forKeys: [.bucketID, .bucketIDSnake])
-        displayName = try container.decodeFirstPresent(String.self, forKeys: [.displayName, .displayNameSnake])
-        description = try container.decodeIfPresent(String.self, forKey: .description)
-        window = try container.decodeIfPresent(String.self, forKey: .window)
-        remainingFraction = try GoogleAntigravityQuotaBucket.decodeFlexibleDouble(container: container, keys: [.remainingFraction, .remainingFractionSnake])
-        remainingAmount = try GoogleAntigravityQuotaBucket.decodeFlexibleInt(container: container, keys: [.remainingAmount, .remainingAmountSnake])
-        resetTime = try container.decodeFirstPresent(Date.self, forKeys: [.resetTime, .resetTimeSnake])
-    }
-
-    func usageLimit(
-        groupName: String?,
-        groupDescription: String?,
-        accountID: String,
-        configuredAccountID: String?,
-        accountName: String,
-        observedAt: Date
-    ) -> UsageLimit? {
-        let normalizedLimit: (used: Int?, limit: Int, unit: UsageUnit)?
-        if let remainingFraction {
-            let clamped = max(0, min(remainingFraction, 1))
-            normalizedLimit = (Int(((1 - clamped) * 100).rounded()), 100, .percent)
-        } else if let remainingAmount {
-            normalizedLimit = remainingAmount <= 0 ? (1, 1, .requests) : (nil, remainingAmount, .requests)
-        } else {
-            return nil
-        }
-        guard let normalizedLimit else { return nil }
-
-        let bucketName = normalized(displayName) ?? windowLabel(from: window) ?? normalized(bucketID) ?? "Quota"
-        let modelLabel = normalized(groupName)
-        let noteParts = [
-            "source: Google Antigravity quota summary",
-            normalized(groupDescription),
-            normalized(description),
-        ]
         return UsageLimit(
-            provider: .google,
-            accountID: accountID,
-            configuredAccountID: configuredAccountID,
-            accountName: accountName,
-            label: modelLabel.map { "\($0) \(bucketName)" } ?? bucketName,
-            windowLabel: windowLabel(from: window) ?? bucketName,
-            modelLabel: modelLabel,
-            unit: normalizedLimit.unit,
-            used: normalizedLimit.used,
-            limit: normalizedLimit.limit,
-            resetsAt: resetTime,
+            id: "\(provider.rawValue):\(localAccountID):agy:\(bucket.id)",
+            provider: provider,
+            accountID: localAccountID,
+            configuredAccountID: account.accountID,
+            accountName: account.accountName,
+            label: labels.label,
+            windowLabel: labels.window,
+            modelLabel: labels.model,
+            unit: .percent,
+            used: used,
+            limit: 100,
+            resetsAt: bucket.resetsAt,
             lastUpdatedAt: observedAt,
             confidence: .observed,
-            note: noteParts.compactMap { $0 }.joined(separator: "; ")
+            statusOverride: isStale ? .stale : (used == nil ? .unknown : nil),
+            note: "source: AGY documented status-line quota export; bucket: \(bucket.id)"
         )
     }
 
-    private func normalized(_ value: String?) -> String? {
-        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
-        return trimmed
-    }
-
-    private func windowLabel(from value: String?) -> String? {
-        guard let normalized = normalized(value) else { return nil }
-        switch normalized.lowercased() {
-        case "5h", "5-hour", "five-hour", "five hour":
-            return "5-hour"
-        case "week", "weekly":
-            return "Weekly"
-        case "day", "daily":
-            return "Daily"
-        default:
-            return normalized
-        }
-    }
-}
-
-private struct GoogleAntigravityQuotaBucket: Decodable {
-    let bucketID: String?
-    let displayName: String?
-    let description: String?
-    let window: String?
-    let model: String?
-    let modelName: String?
-    let modelID: String?
-    let tokenType: String?
-    let remainingFraction: Double?
-    let remainingAmount: Int?
-    let limit: Int?
-    let used: Int?
-    let disabled: Bool?
-    let resetTime: Date?
-
-    enum CodingKeys: String, CodingKey {
-        case bucketID = "bucketId"
-        case bucketIDSnake = "bucket_id"
-        case displayName
-        case displayNameSnake = "display_name"
-        case description
-        case window
-        case model
-        case modelName
-        case modelNameSnake = "model_name"
-        case modelID = "modelId"
-        case modelIDSnake = "model_id"
-        case tokenType
-        case tokenTypeSnake = "token_type"
-        case remainingFraction
-        case remainingFractionSnake = "remaining_fraction"
-        case remainingAmount
-        case remainingAmountSnake = "remaining_amount"
-        case limit
-        case used
-        case disabled
-        case resetTime
-        case resetTimeSnake = "reset_time"
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        bucketID = try container.decodeFirstPresent(String.self, forKeys: [.bucketID, .bucketIDSnake])
-        displayName = try container.decodeFirstPresent(String.self, forKeys: [.displayName, .displayNameSnake])
-        description = try container.decodeIfPresent(String.self, forKey: .description)
-        window = try container.decodeIfPresent(String.self, forKey: .window)
-        model = try container.decodeIfPresent(String.self, forKey: .model)
-        modelName = try container.decodeFirstPresent(String.self, forKeys: [.modelName, .modelNameSnake])
-        modelID = try container.decodeFirstPresent(String.self, forKeys: [.modelID, .modelIDSnake])
-        tokenType = try container.decodeFirstPresent(String.self, forKeys: [.tokenType, .tokenTypeSnake])
-        remainingFraction = try Self.decodeFlexibleDouble(container: container, keys: [.remainingFraction, .remainingFractionSnake])
-        remainingAmount = try Self.decodeFlexibleInt(container: container, keys: [.remainingAmount, .remainingAmountSnake])
-        limit = try Self.decodeFlexibleInt(container: container, keys: [.limit])
-        used = try Self.decodeFlexibleInt(container: container, keys: [.used])
-        disabled = try container.decodeIfPresent(Bool.self, forKey: .disabled)
-        resetTime = try container.decodeFirstPresent(Date.self, forKeys: [.resetTime, .resetTimeSnake])
-    }
-
-    func usageLimit(
-        accountID: String,
-        configuredAccountID: String?,
-        accountName: String,
-        observedAt: Date
-    ) -> UsageLimit? {
-        guard disabled != true else { return nil }
-
-        let normalizedLimit: (used: Int?, limit: Int, unit: UsageUnit)?
-        if let remainingFraction {
-            let clamped = max(0, min(remainingFraction, 1))
-            normalizedLimit = (Int(((1 - clamped) * 100).rounded()), 100, .percent)
-        } else if let used, let limit, limit > 0 {
-            normalizedLimit = (max(0, used), limit, .requests)
-        } else if let remainingAmount {
-            if remainingAmount <= 0 {
-                normalizedLimit = (1, 1, .requests)
-            } else {
-                normalizedLimit = (nil, remainingAmount, .requests)
-            }
-        } else {
-            return nil
-        }
-        guard let normalizedLimit else { return nil }
-
-        let inferredWindow = shouldInferMainWindow ? inferredWindow(observedAt: observedAt) : nil
-        let bucketName = normalized(displayName)
-            ?? normalized(window)
-            ?? inferredWindow?.displayName
-            ?? rawModelBucketWindowLabel(observedAt: observedAt)
-            ?? normalized(tokenType).map { "\($0) quota" }
-            ?? "Quota"
-        let modelLabel = normalized(modelName) ?? normalized(model) ?? normalized(modelID).map(Self.displayModelName(from:))
-        let noteParts = [
-            "source: Google Antigravity local auth quota",
-            normalized(description),
-        ]
-        return UsageLimit(
-            provider: .google,
-            accountID: accountID,
-            configuredAccountID: configuredAccountID,
-            accountName: accountName,
-            label: modelLabel.map { "\($0) \(bucketName)" } ?? bucketName,
-            windowLabel: normalized(window) ?? inferredWindow?.displayName ?? bucketName,
-            modelLabel: modelLabel,
-            unit: normalizedLimit.unit,
-            used: normalizedLimit.used,
-            limit: normalizedLimit.limit,
-            resetsAt: resetTime,
-            lastUpdatedAt: observedAt,
-            confidence: .observed,
-            note: noteParts.compactMap { $0 }.joined(separator: "; ")
-        )
-    }
-
-    fileprivate static func decodeFlexibleDouble<Key: CodingKey>(container: KeyedDecodingContainer<Key>, keys: [Key]) throws -> Double? {
-        try container.decodeFirstPresent(FlexibleDouble.self, forKeys: keys)?.value
-    }
-
-    fileprivate static func decodeFlexibleInt<Key: CodingKey>(container: KeyedDecodingContainer<Key>, keys: [Key]) throws -> Int? {
-        try container.decodeFirstPresent(FlexibleInt.self, forKeys: keys)?.value
-    }
-
-    private func normalized(_ value: String?) -> String? {
-        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
-        return trimmed
-    }
-
-    private func inferredWindow(observedAt: Date) -> MainLimitWindow? {
-        guard let resetTime else { return nil }
-        let interval = resetTime.timeIntervalSince(observedAt)
-        guard interval > -60 else { return nil }
-        if interval <= 6 * 60 * 60 { return .fiveHour }
-        if interval <= 36 * 60 * 60 { return .daily }
-        if interval <= 9 * 24 * 60 * 60 { return .weekly }
-        return nil
-    }
-
-    private var shouldInferMainWindow: Bool {
-        normalized(window) != nil || normalized(displayName) != nil || normalized(bucketID) != nil
-    }
-
-    private func rawModelBucketWindowLabel(observedAt: Date) -> String? {
-        guard normalized(modelID) != nil, normalized(window) == nil, normalized(displayName) == nil else { return nil }
-        guard inferredWindow(observedAt: observedAt) != nil else { return nil }
-        return "Model quota"
-    }
-
-    private static func displayModelName(from rawValue: String) -> String {
-        let normalized = rawValue
+    private static func labels(for bucketID: String) -> (label: String, window: String?, model: String?) {
+        let components = bucketID
             .replacingOccurrences(of: "_", with: "-")
             .split(separator: "-")
             .map(String.init)
-        guard !normalized.isEmpty else { return rawValue }
-        return normalized.map { part in
-            let lower = part.lowercased()
-            switch lower {
-            case "gpt":
-                return "GPT"
-            case "oss":
-                return "OSS"
-            case "ai":
-                return "AI"
-            case "claude":
-                return "Claude"
-            case "gemini":
-                return "Gemini"
-            case "flash":
-                return "Flash"
-            case "lite":
-                return "Lite"
-            case "pro":
-                return "Pro"
-            case "opus":
-                return "Opus"
-            case "sonnet":
-                return "Sonnet"
-            case "thinking":
-                return "Thinking"
-            case "agent":
-                return "Agent"
-            case "high":
-                return "High"
-            case "medium":
-                return "Medium"
-            case "low":
-                return "Low"
-            case "extra":
-                return "Extra"
-            case "preview":
-                return "Preview"
-            case "tab":
-                return "Tab"
-            case "jump":
-                return "Jump"
-            case "chat":
-                return "Chat"
-            default:
-                return part
-            }
-        }.joined(separator: " ")
-    }
-}
-
-private extension KeyedDecodingContainer {
-    func decodeFirstPresent<Value: Decodable>(_ type: Value.Type, forKeys keys: [Key]) throws -> Value? {
-        for key in keys {
-            if let value = try decodeIfPresent(type, forKey: key) {
-                return value
-            }
-        }
-        return nil
-    }
-}
-
-private struct FlexibleDouble: Decodable {
-    let value: Double?
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if let doubleValue = try? container.decode(Double.self) {
-            value = doubleValue
-        } else if let stringValue = try? container.decode(String.self) {
-            value = Double(stringValue)
+        let window: String?
+        let windowIndexes = Set(components.indices.filter { index in
+            let component = components[index].lowercased()
+            return component == "weekly" || component == "week" || component == "5h"
+        })
+        if components.contains(where: { ["weekly", "week"].contains($0.lowercased()) }) {
+            window = "Weekly"
+        } else if components.contains(where: { $0.lowercased() == "5h" }) {
+            window = "5-hour"
         } else {
-            value = nil
+            window = nil
+        }
+
+        let modelComponents = components.enumerated().compactMap { index, component in
+            windowIndexes.contains(index) ? nil : displayComponent(component)
+        }
+        let model = modelComponents.isEmpty ? nil : modelComponents.joined(separator: " ")
+        let label = [model, window].compactMap { $0 }.joined(separator: " ")
+        return (label.isEmpty ? bucketID : label, window, model)
+    }
+
+    private static func displayComponent(_ component: String) -> String {
+        switch component.lowercased() {
+        case "ai": "AI"
+        case "agy": "AGY"
+        case "gpt": "GPT"
+        case "oss": "OSS"
+        case "gemini": "Gemini"
+        case "claude": "Claude"
+        default:
+            component.prefix(1).uppercased() + component.dropFirst()
         }
     }
 }
 
-private struct FlexibleInt: Decodable {
-    let value: Int?
+public enum GoogleAntigravityStatusLineSetup {
+    public static let removeCommand = "/statusline delete"
 
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if let intValue = try? container.decode(Int.self) {
-            value = intValue
-        } else if let stringValue = try? container.decode(String.self) {
-            value = Int(stringValue)
-        } else {
-            value = nil
-        }
+    public static func setupCommand(applicationBundleURL: URL) -> String {
+        let executableURL = applicationBundleURL
+            .appending(path: "Contents", directoryHint: .isDirectory)
+            .appending(path: "Library", directoryHint: .isDirectory)
+            .appending(path: "LoginItems", directoryHint: .isDirectory)
+            .appending(path: "ContextPanelRefreshAgent.app", directoryHint: .isDirectory)
+            .appending(path: "Contents", directoryHint: .isDirectory)
+            .appending(path: "MacOS", directoryHint: .isDirectory)
+            .appending(path: "ContextPanelRefreshAgent")
+        return "/statusline \(shellQuoted(executableURL.path)) --ingest-antigravity-status-line"
+    }
+
+    static func shellQuoted(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
     }
 }

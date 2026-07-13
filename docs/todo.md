@@ -12,23 +12,19 @@
   subscription metadata without using `claude auth status --json` or other App
   Store-sensitive access.
 
-## Google Antigravity Local Auth Follow-Up
+## Google Antigravity Bridge Follow-Up
 
-- Preserve the 2026-06-18 app-identity finding: the legacy
-  `1071006060591-...apps.googleusercontent.com` client was Antigravity's OAuth
-  app identity, not a Context Panel project. Context Panel should not use that
-  client ID and should not revive a Context Panel-owned Google OAuth quota flow.
-- Keep the current connector aligned with the proven Antigravity local-auth
-  path: read Keychain service `gemini`, account `antigravity`, decode the
-  `go-keyring-base64:` payload for the current access token/expiry, call
-  `daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist`, then call
-  `v1internal:retrieveUserQuota` with the discovered project.
-- Antigravity owns sign-in and token refresh. If auth is missing, expired, or
-  rejected, ask the user to open Antigravity and refresh Context Panel. Do not
-  store Antigravity tokens in Context Panel's credential store and do not loop
-  on Keychain reads after denial.
-- Keep Google App Store/release work focused on this local-auth connector unless
-  Google later publishes a supported third-party quota API for Antigravity.
+- Keep Antigravity quota access on AGY's documented custom status-line export.
+  Do not restore Keychain reads, Antigravity OAuth identity reuse, private Cloud
+  Code Assist requests, Gemini CLI files, or terminal scraping.
+- Monitor the optional status-line quota schema and keep unknown or missing
+  fields explicit. Never infer reset windows from timestamps; only recognize
+  literal window tokens already present in provider bucket identifiers.
+- AGY currently supports one custom status-line command. Keep setup guided and
+  non-destructive until Google documents a safe stacking mechanism.
+- Keep AI credits unavailable until AGY documents a supported exported balance,
+  and describe the bridge as one active AGY CLI login rather than concurrent
+  multi-account support.
 
 ## Widget Signing And Registration Follow-Up
 

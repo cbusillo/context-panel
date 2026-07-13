@@ -91,11 +91,11 @@ MVP connectors:
   `~/.codex`, calls the live Codex usage endpoint, and normalizes primary,
   secondary, and additional percent-window buckets.
 - Google provider: retired Gemini CLI credential files, Context Panel Google
-  OAuth, and local metadata discovery are removed. The Antigravity adapter
-  follows the OpenAI/Codex local-auth pattern: read Antigravity's local Keychain
-  login once per refresh, let Antigravity own sign-in and token refresh,
-  discover the active project through `loadCodeAssist`, and call
-  `retrieveUserQuota` for reported quota buckets.
+  OAuth, Antigravity Keychain access, and private Cloud Code Assist requests are
+  removed. AGY invokes the signed refresh agent through its documented custom
+  status-line command. The utility mode strictly extracts version, plan tier,
+  and quota buckets from bounded standard input, then atomically writes a
+  sanitized App Group snapshot for the normal connector runtime.
 - Claude provider: store Context Panel-owned Claude OAuth tokens, refresh them
   through Anthropic's OAuth token endpoint when needed, call the Claude OAuth
   usage endpoint, and normalize returned utilization windows into reported
@@ -254,9 +254,10 @@ and skip intervals that cross resets.
 The MVP account configuration is also local JSON. It stores account labels,
 enabled/disabled state, connector kind, and local auth-file paths only for
 file-backed OpenAI/Codex accounts. It does not store provider secrets. Google
-Antigravity uses Antigravity's local Keychain login at refresh time and does not
-persist Antigravity tokens in Context Panel storage. Claude usage uses Context
-Panel-owned OAuth credentials stored in Keychain.
+Antigravity setup stores no credential or external path: AGY publishes a
+privacy-filtered quota observation into Context Panel's App Group through the
+signed refresh agent. Claude usage uses Context Panel-owned OAuth credentials
+stored in Keychain.
 
 Widget interactions should keep the widget simple. Tapping the widget should
 open the app to the relevant provider or account detail; mutation and setup stay
