@@ -434,6 +434,7 @@ Production contains the CloudKit-backed companion snapshot record contract:
 - `payload` as CloudKit bytes/data
 - `schemaVersion`, `documentSchemaVersion`, `snapshotSchemaVersion`, and
   `payloadByteCount` as integer/number fields
+- `snapshotSchemaVersion` marked queryable for the background-update subscription
 - `generatedAt` and `publishedAt` as date/time fields
 
 Run the offline repo contract check before packaging:
@@ -528,6 +529,14 @@ The archive must be followed by a signed Apple Vision Pro device smoke test
 before calling it TestFlight or release validated. A visionOS simulator run can
 be useful for pre-release UI smoke, but it does not validate TestFlight
 installability, App Store provisioning, or physical device runtime behavior.
+
+The unsigned companion validation helper watches for Xcode's terminal build or
+archive marker and releases a wedged Xcode 27 process after that marker appears.
+It streams the build log live and terminates only the validation process group,
+preserving the completed result without leaving compiler children or occupying
+self-hosted CI after Xcode has already reported success. Cleanup escalates from
+`SIGTERM` to `SIGKILL` on a bounded deadline so a wedged process cannot also
+wedge the validation wrapper.
 
 ### Local Apple Vision Pro Dogfood
 

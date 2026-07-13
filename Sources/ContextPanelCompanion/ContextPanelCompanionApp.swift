@@ -1,3 +1,4 @@
+@preconcurrency import CloudKit
 import ContextPanelCore
 import ContextPanelCloudKitSync
 import ContextPanelCompanionSupport
@@ -121,6 +122,16 @@ private final class CompanionAppDelegate: NSObject, UIApplicationDelegate {
         didReceiveRemoteNotification userInfo: [AnyHashable: Any],
         fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
     ) {
+        guard let notification = CKNotification(
+            fromRemoteNotificationDictionary: userInfo
+        ) as? CKQueryNotification,
+            CompanionCloudKitNotificationPolicy.accepts(
+                subscriptionID: notification.subscriptionID,
+                recordName: notification.recordID?.recordName
+            ) else {
+            completionHandler(.noData)
+            return
+        }
         Task { [remoteStore] in
             let loaded = await Task.detached(priority: .userInitiated) {
                 await CompanionSyncLoader.load(remoteStore: remoteStore)

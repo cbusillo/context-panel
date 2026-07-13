@@ -654,7 +654,8 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         record_types = {record["name"]: record for record in schema["recordTypes"]}
         record = record_types["CompanionSyncDocument"]
         self.assertEqual(record["recordName"], "current")
-        fields = {field["name"]: field["type"] for field in record["fields"]}
+        field_definitions = {field["name"]: field for field in record["fields"]}
+        fields = {name: field["type"] for name, field in field_definitions.items()}
         self.assertEqual(fields["payload"], "BYTES")
         self.assertEqual(fields["schemaVersion"], "INT64")
         self.assertEqual(fields["documentSchemaVersion"], "INT64")
@@ -662,6 +663,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertEqual(fields["generatedAt"], "TIMESTAMP")
         self.assertEqual(fields["publishedAt"], "TIMESTAMP")
         self.assertEqual(fields["payloadByteCount"], "INT64")
+        self.assertTrue(field_definitions["snapshotSchemaVersion"]["queryable"])
         for field_name in fields:
             self.assertIn(f'= "{field_name}"', remote_sync)
 
@@ -672,6 +674,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("cktool export-schema", script)
         self.assertIn("CLOUDKIT_MANAGEMENT_TOKEN", script)
         self.assertIn("live_schema_has_field_type", script)
+        self.assertIn("live_schema_field_is_queryable", script)
         self.assertIn("CompanionSyncDocument", script)
         self.assertIn("iCloud.com.shinycomputers.contextpanel", script)
         self.assertIn("CloudKit Production Schema Gate", release_docs)
@@ -684,7 +687,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
   payload BYTES;
   schemaVersion INT64;
   documentSchemaVersion INT64;
-  snapshotSchemaVersion INT64;
+  snapshotSchemaVersion INT64 QUERYABLE;
   generatedAt TIMESTAMP;
   publishedAt TIMESTAMP;
   payloadByteCount INT64;
@@ -693,7 +696,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         )
 
         self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertIn("required field types in production", result.stdout)
+        self.assertIn("queryable subscription field in production", result.stdout)
 
     def test_cloudkit_companion_schema_validator_forwards_management_token(self):
         result = self.run_cloudkit_schema_validator_with_fake_cktool(
@@ -701,7 +704,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
   payload BYTES;
   schemaVersion INT64;
   documentSchemaVersion INT64;
-  snapshotSchemaVersion INT64;
+  snapshotSchemaVersion INT64 QUERYABLE;
   generatedAt TIMESTAMP;
   publishedAt TIMESTAMP;
   payloadByteCount INT64;
@@ -730,6 +733,24 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("CompanionSyncDocument.payload BYTES", result.stdout)
+
+    def test_cloudkit_companion_schema_validator_rejects_nonqueryable_subscription_field(self):
+        result = self.run_cloudkit_schema_validator_with_fake_cktool(
+            """RECORD TYPE CompanionSyncDocument {
+  payload BYTES;
+  schemaVersion INT64;
+  documentSchemaVersion INT64;
+  snapshotSchemaVersion INT64;
+  generatedAt TIMESTAMP;
+  publishedAt TIMESTAMP;
+  payloadByteCount INT64;
+}
+"""
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("snapshotSchemaVersion", result.stdout)
+        self.assertIn("not queryable", result.stdout)
 
     def test_app_store_export_preserves_archived_build_number(self):
         upload_script = self.read("scripts/upload-app-store-connect-macos-app.sh")
@@ -817,6 +838,17 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("Validating $scheme archive for $destination", script)
         self.assertIn("-archivePath \"$archive_path\"", script)
         self.assertIn("validate_archive_contents()", script)
+        self.assertIn('marker="** BUILD SUCCEEDED **"', script)
+        self.assertIn('marker="** ARCHIVE SUCCEEDED **"', script)
+        self.assertIn("xcodebuild did not reach a terminal result within 30 minutes", script)
+        self.assertIn("xcodebuild validation requires exactly one build or archive action", script)
+        self.assertIn('| /usr/bin/tee "$log_file"', script)
+        self.assertIn('/usr/bin/tail -n 500 "$log_file"', script)
+        self.assertIn('/bin/kill -TERM "-$process_group"', script)
+        self.assertIn('/bin/kill -KILL "-$process_group"', script)
+        self.assertIn('process_group="$job_pid"', script)
+        self.assertNotIn("/bin/ps -o pgid=", script)
+        self.assertNotIn("disown -a", script)
         self.assertIn("iOS companion archive is missing embedded watch app", script)
         self.assertIn("iOS companion archive is missing embedded watch widget", script)
         self.assertIn("visionOS companion archive unexpectedly contains watch content", script)

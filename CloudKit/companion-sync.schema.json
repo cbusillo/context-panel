@@ -20,7 +20,8 @@
         },
         {
           "name": "snapshotSchemaVersion",
-          "type": "INT64"
+          "type": "INT64",
+          "queryable": true
         },
         {
           "name": "generatedAt",

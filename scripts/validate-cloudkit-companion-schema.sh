@@ -139,6 +139,29 @@ live_schema_has_field_type() {
 	' "$schema"
 }
 
+live_schema_field_is_queryable() {
+	local schema="$1"
+	local record_type="$2"
+	local field_name="$3"
+	awk -v record_type="$record_type" -v field_name="$field_name" '
+		$0 ~ "^[[:space:]]*RECORD[[:space:]]+TYPE[[:space:]]+\\\"?" record_type "\\\"?([[:space:]]|\\{|\\(|$)" {
+			inside = 1
+			next
+		}
+		inside && $0 ~ /^[[:space:]]*(\)|\};|})/ {
+			inside = 0
+		}
+		inside {
+			line = $0
+			sub(/\/\/.*/, "", line)
+			if (line ~ "^[[:space:]]*(FIELD[[:space:]]+)?\\\"?" field_name "\\\"?[[:space:]]*(:|[[:space:]])" && line ~ /(^|[[:space:]])QUERYABLE([[:space:],;}]|$)/) {
+				found = 1
+			}
+		}
+		END { exit(found ? 0 : 1) }
+	' "$schema"
+}
+
 contract_container="$(jq -r '.containerIdentifier // empty' "$schema_path")"
 contract_database="$(jq -r '.database // empty' "$schema_path")"
 if [[ "$contract_container" != "$container_id" ]]; then
@@ -172,6 +195,14 @@ for field in "${required_fields[@]}"; do
 		exit 1
 	fi
 done
+subscription_query_field="snapshotSchemaVersion"
+contract_queryable="$(jq -r --arg record "$contract_record_type" --arg field "$subscription_query_field" \
+	'.recordTypes[]? | select(.name == $record) | .fields[]? | select(.name == $field) | .queryable // false' \
+	"$schema_path")"
+if [[ "$contract_queryable" != "true" ]]; then
+	echo "schema contract field must be queryable: $contract_record_type.$subscription_query_field" >&2
+	exit 1
+fi
 
 if [[ "$live" != "true" ]]; then
 	echo "CloudKit companion schema contract OK: $schema_path"
@@ -212,5 +243,9 @@ for field in "${required_fields[@]}"; do
 		exit 1
 	fi
 done
+if ! live_schema_field_is_queryable "$live_schema" "$contract_record_type" "$subscription_query_field"; then
+	echo "live CloudKit $environment schema field is not queryable: $contract_record_type.$subscription_query_field" >&2
+	exit 1
+fi
 
-echo "CloudKit companion live schema contains $contract_record_type with required field types in $environment."
+echo "CloudKit companion live schema contains $contract_record_type with required field types and queryable subscription field in $environment."

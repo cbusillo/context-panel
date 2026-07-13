@@ -49,7 +49,10 @@ enum CompanionCloudKitSubscriptionFactory {
     static func make() -> CKQuerySubscription {
         let subscription = CKQuerySubscription(
             recordType: CompanionRemoteSync.cloudKitRecordType,
-            predicate: NSPredicate(format: "TRUEPREDICATE"),
+            predicate: NSPredicate(
+                format: "%K > 0",
+                CompanionRemoteSync.snapshotSchemaVersionFieldName
+            ),
             subscriptionID: CompanionRemoteSync.cloudKitSubscriptionID,
             options: [.firesOnRecordCreation, .firesOnRecordUpdate]
         )
@@ -210,6 +213,9 @@ private actor CompanionCloudKitClient {
         do {
             let subscription = CompanionCloudKitSubscriptionFactory.make()
             _ = try await privateDatabase.save(subscription)
+            _ = try? await privateDatabase.deleteSubscription(
+                withID: CompanionRemoteSync.cloudKitLegacySubscriptionID
+            )
             return CompanionRemoteSyncOutcome(storeRole: storeRole, succeeded: true)
         } catch {
             return CompanionRemoteSyncOutcome(
