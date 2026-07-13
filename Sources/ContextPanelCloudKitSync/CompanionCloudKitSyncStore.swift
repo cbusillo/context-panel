@@ -50,8 +50,8 @@ enum CompanionCloudKitSubscriptionFactory {
         let subscription = CKQuerySubscription(
             recordType: CompanionRemoteSync.cloudKitRecordType,
             predicate: NSPredicate(
-                format: "%K > 0",
-                CompanionRemoteSync.snapshotSchemaVersionFieldName
+                format: "recordID == %@",
+                CKRecord.ID(recordName: CompanionRemoteSync.cloudKitRecordName)
             ),
             subscriptionID: CompanionRemoteSync.cloudKitSubscriptionID,
             options: [.firesOnRecordCreation, .firesOnRecordUpdate]
@@ -60,6 +60,22 @@ enum CompanionCloudKitSubscriptionFactory {
         info.shouldSendContentAvailable = true
         subscription.notificationInfo = info
         return subscription
+    }
+}
+
+struct CompanionCloudKitSubscriptionRegistrar {
+    let currentSubscriptionExists: () async throws -> Bool
+    let saveCurrentSubscription: () async throws -> Void
+    let deleteSubscription: (String) async throws -> Void
+    let retiredSubscriptionIDs: [String]
+
+    func register() async throws {
+        if try await !currentSubscriptionExists() {
+            try await saveCurrentSubscription()
+        }
+        for subscriptionID in retiredSubscriptionIDs {
+            try? await deleteSubscription(subscriptionID)
+        }
     }
 }
 
@@ -211,11 +227,29 @@ private actor CompanionCloudKitClient {
 
     func registerSubscription() async -> CompanionRemoteSyncOutcome {
         do {
-            let subscription = CompanionCloudKitSubscriptionFactory.make()
-            _ = try await privateDatabase.save(subscription)
-            _ = try? await privateDatabase.deleteSubscription(
-                withID: CompanionRemoteSync.cloudKitLegacySubscriptionID
+            let database = privateDatabase
+            let registrar = CompanionCloudKitSubscriptionRegistrar(
+                currentSubscriptionExists: {
+                    do {
+                        _ = try await database.subscription(
+                            for: CompanionRemoteSync.cloudKitSubscriptionID
+                        )
+                        return true
+                    } catch let error as CKError where error.code == .unknownItem {
+                        return false
+                    }
+                },
+                saveCurrentSubscription: {
+                    _ = try await database.save(
+                        CompanionCloudKitSubscriptionFactory.make()
+                    )
+                },
+                deleteSubscription: { subscriptionID in
+                    _ = try await database.deleteSubscription(withID: subscriptionID)
+                },
+                retiredSubscriptionIDs: CompanionRemoteSync.cloudKitRetiredSubscriptionIDs
             )
+            try await registrar.register()
             return CompanionRemoteSyncOutcome(storeRole: storeRole, succeeded: true)
         } catch {
             return CompanionRemoteSyncOutcome(
