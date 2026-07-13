@@ -484,6 +484,8 @@ import Testing
 
     #expect(source.contains("content.badge = 0"))
     #expect(source.contains("context-panel-provider-badge-expiry"))
+    #expect(source.contains("guard badgesEnabled, badgeCount > 0 else {\n            notificationCenter.removePendingNotificationRequests"))
+    #expect(!source.contains("notificationCenter.removePendingNotificationRequests(withIdentifiers: identifiers)\n        guard badgesEnabled"))
     #expect(!source.contains("content.title"))
     #expect(!source.contains("content.body"))
     #expect(!source.contains("content.sound"))
