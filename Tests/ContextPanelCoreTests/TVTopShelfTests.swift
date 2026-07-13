@@ -307,64 +307,6 @@ import Testing
     #expect(locations.imageDirectoryURL.path == "/group/Library/Caches/Context Panel/TV/Top Shelf")
 }
 
-@Test func tvProviderAlertsCoalesceWorseningProvidersAndDeduplicateStableState() {
-    let now = Date(timeIntervalSince1970: 1_750_000_000)
-    let snapshot = makeTopShelfSnapshot(now: now)
-    let first = TVProviderAlertEvaluator.evaluate(snapshot: snapshot, previousState: .empty, now: now)
-
-    #expect(first.attentionProviders == [.openAI, .anthropic])
-    #expect(first.badgeCount == 2)
-    #expect(first.events.map(\.provider) == [.openAI, .anthropic])
-
-    let repeated = TVProviderAlertEvaluator.evaluate(
-        snapshot: snapshot,
-        previousState: first.state,
-        now: now.addingTimeInterval(60)
-    )
-    #expect(repeated.badgeCount == 2)
-    #expect(repeated.events.isEmpty)
-}
-
-@Test func tvProviderAlertsClearForRecoveredOrStaleData() {
-    let now = Date(timeIntervalSince1970: 1_750_000_000)
-    let attention = TVProviderAlertEvaluator.evaluate(
-        snapshot: makeTopShelfSnapshot(now: now),
-        previousState: .empty,
-        now: now
-    )
-    let recovered = TVProviderAlertEvaluator.evaluate(
-        snapshot: makeRecoveredTopShelfSnapshot(now: now.addingTimeInterval(60)),
-        previousState: attention.state,
-        now: now.addingTimeInterval(60)
-    )
-    #expect(recovered.badgeCount == 0)
-    #expect(recovered.events.isEmpty)
-
-    let staleSnapshot = WidgetSnapshot(
-        state: .stale,
-        generatedAt: now,
-        limits: makeTopShelfSnapshot(now: now).limits,
-        reports: makeTopShelfSnapshot(now: now).reports,
-        status: .stale,
-        message: "Saved data"
-    )
-    let stale = TVProviderAlertEvaluator.evaluate(
-        snapshot: staleSnapshot,
-        previousState: attention.state,
-        now: now.addingTimeInterval(120)
-    )
-    #expect(stale.badgeCount == 0)
-    #expect(stale.events.isEmpty)
-
-    let agedReady = TVProviderAlertEvaluator.evaluate(
-        snapshot: makeTopShelfSnapshot(now: now),
-        previousState: attention.state,
-        now: now.addingTimeInterval(SnapshotFreshness.companionProviderMaximumAge + 1)
-    )
-    #expect(agedReady.badgeCount == 0)
-    #expect(agedReady.events.isEmpty)
-}
-
 @Test func tvAsyncDeadlineReturnsWithoutWaitingForANonCooperativeOperation() async {
     let blocker = TVDeadlineBlocker()
     let clock = ContinuousClock()
@@ -477,18 +419,16 @@ import Testing
     #expect(!source.contains("fileManager.urls(for: .cachesDirectory"))
 }
 
-@Test func tvProviderBadgeExpiryUsesBadgeOnlyNotificationContent() throws {
+@Test func tvOSRetiredProviderBadgeIsClearedWithoutSchedulingReplacementNotifications() throws {
     let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         .appending(path: "Sources/ContextPanelTV/TVSystemSurfaces.swift")
     let source = try String(contentsOf: sourceURL, encoding: .utf8)
 
-    #expect(source.contains("content.badge = 0"))
-    #expect(source.contains("context-panel-provider-badge-expiry"))
-    #expect(source.contains("guard badgesEnabled, badgeCount > 0 else {\n            notificationCenter.removePendingNotificationRequests"))
-    #expect(!source.contains("notificationCenter.removePendingNotificationRequests(withIdentifiers: identifiers)\n        guard badgesEnabled"))
-    #expect(!source.contains("content.title"))
-    #expect(!source.contains("content.body"))
-    #expect(!source.contains("content.sound"))
+    #expect(source.contains("clearRetiredProviderBadge()"))
+    #expect(source.contains("notificationCenter.setBadgeCount(0)"))
+    #expect(source.contains("retiredBadgeExpiryRequestIdentifier"))
+    #expect(!source.contains("UNTimeIntervalNotificationTrigger"))
+    #expect(!source.contains("requestAuthorization(options: [.badge])"))
 }
 
 private actor TVDeadlineBlocker {

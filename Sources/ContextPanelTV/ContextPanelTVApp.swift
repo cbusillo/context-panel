@@ -18,14 +18,11 @@ struct ContextPanelTVApp: App {
 private struct TVRootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage(TVPreferenceKeys.presentationMode) private var presentationModeRawValue = TVPresentationMode.fullDetail.rawValue
-    @AppStorage(TVPreferenceKeys.providerBadgesEnabled) private var providerBadgesEnabled = false
     @AppStorage(TVPreferenceKeys.cloudKitSubscriptionError) private var subscriptionErrorMessage = ""
     @AppStorage(TVPreferenceKeys.remoteNotificationRegistrationError) private var remoteNotificationErrorMessage = ""
     @State private var model = TVSyncModel()
     @State private var navigationPath: [String] = []
     @State private var pendingProviderRawValue: String?
-    @State private var badgeAuthorizationNoticeMessage: String?
-    @State private var badgeAuthorizationTask: Task<Void, Never>?
 
     init() {
         #if DEBUG
@@ -53,15 +50,7 @@ private struct TVRootView: View {
             snapshot: model.snapshot,
             preferences: model.displayPreferences,
             version: model.displayVersion,
-            mode: presentationMode,
-            badgesEnabled: providerBadgesEnabled
-        )
-    }
-
-    private var providerBadgesBinding: Binding<Bool> {
-        Binding(
-            get: { providerBadgesEnabled },
-            set: { setProviderBadgesEnabled($0) }
+            mode: presentationMode
         )
     }
 
@@ -69,8 +58,6 @@ private struct TVRootView: View {
         model.syncNoticeMessage
             ?? backgroundUpdateNoticeMessage
             ?? model.systemSurfaceNoticeMessage
-            ?? badgeAuthorizationNoticeMessage
-            ?? model.systemSurfaceEventMessage
     }
 
     private var backgroundUpdateNoticeMessage: String? {
@@ -90,7 +77,6 @@ private struct TVRootView: View {
                             receivedAt: model.lastReceivedAt,
                             isRefreshing: model.isLoading,
                             presentationModeRawValue: $presentationModeRawValue,
-                            providerBadgesEnabled: providerBadgesBinding,
                             onRefresh: { model.reload() }
                         )
 
@@ -162,28 +148,6 @@ private struct TVRootView: View {
         navigationPath = [pendingProviderRawValue]
         self.pendingProviderRawValue = nil
     }
-
-    private func setProviderBadgesEnabled(_ enabled: Bool) {
-        badgeAuthorizationTask?.cancel()
-        guard enabled else {
-            providerBadgesEnabled = false
-            badgeAuthorizationNoticeMessage = nil
-            return
-        }
-
-        badgeAuthorizationTask = Task {
-            let authorized = await TVSystemSurfaceCoordinator.shared.requestBadgeAuthorization()
-            guard !Task.isCancelled else { return }
-            if authorized {
-                providerBadgesEnabled = true
-                badgeAuthorizationNoticeMessage = nil
-            } else {
-                providerBadgesEnabled = false
-                badgeAuthorizationNoticeMessage =
-                    "Provider badges are off. Allow badges in Apple TV Settings to enable them."
-            }
-        }
-    }
 }
 
 private struct TVSystemSurfacePublication: Equatable, Sendable {
@@ -191,7 +155,6 @@ private struct TVSystemSurfacePublication: Equatable, Sendable {
     let preferences: WidgetDisplayPreferences
     let version: TVCompanionSyncVersion?
     let mode: TVPresentationMode
-    let badgesEnabled: Bool
 }
 
 @MainActor
@@ -205,14 +168,12 @@ private final class TVSyncModel {
     private var reloadTask: Task<Void, Never>?
     private var systemSurfaceTask: Task<Void, Never>?
     private var pendingSystemSurfacePublication: TVSystemSurfacePublication?
-    private var systemSurfaceEventClearTask: Task<Void, Never>?
 
     private(set) var result: CompanionSyncLoadResult
     private(set) var displayResult: CompanionSyncLoadResult
     private(set) var snapshot: WidgetSnapshot
     private(set) var syncNoticeMessage: String?
     private(set) var systemSurfaceNoticeMessage: String?
-    private(set) var systemSurfaceEventMessage: String?
     private(set) var lastReceivedAt: Date?
     private(set) var isLoading = false
 
@@ -417,24 +378,7 @@ private final class TVSyncModel {
                 )
                 guard !Task.isCancelled else { return }
                 systemSurfaceNoticeMessage = update.noticeMessage
-                if update.badgeCount == 0 {
-                    systemSurfaceEventClearTask?.cancel()
-                    systemSurfaceEventMessage = nil
-                } else {
-                    presentSystemSurfaceEvent(update.eventMessage)
-                }
             }
-        }
-    }
-
-    private func presentSystemSurfaceEvent(_ message: String?) {
-        guard let message else { return }
-        systemSurfaceEventClearTask?.cancel()
-        systemSurfaceEventMessage = message
-        systemSurfaceEventClearTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(8))
-            guard !Task.isCancelled, self?.systemSurfaceEventMessage == message else { return }
-            self?.systemSurfaceEventMessage = nil
         }
     }
 
@@ -480,7 +424,6 @@ private struct TVHeaderView: View {
     let receivedAt: Date?
     let isRefreshing: Bool
     @Binding var presentationModeRawValue: String
-    @Binding var providerBadgesEnabled: Bool
     let onRefresh: () -> Void
 
     private var presentationMode: TVPresentationMode {
@@ -553,17 +496,10 @@ private struct TVHeaderView: View {
                             }
                         }
 
-                        Divider()
-
-                        Toggle(isOn: $providerBadgesEnabled) {
-                            Label("Provider Attention Badge", systemImage: "app.badge")
-                        }
                     } label: {
                         Label(presentationMode.displayName, systemImage: "slider.horizontal.3")
                     }
-                    .accessibilityHint(
-                        "\(presentationMode.detail) Provider badges are optional and show only limited or failed providers."
-                    )
+                    .accessibilityHint(presentationMode.detail)
                 }
             }
         }
