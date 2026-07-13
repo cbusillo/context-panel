@@ -15,6 +15,57 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def read(self, relative_path: str) -> str:
         return (REPO_ROOT / relative_path).read_text()
 
+    def run_companion_validation_watchdog_fixture(
+        self, fake_xcodebuild_body: str
+    ) -> tuple[subprocess.CompletedProcess[str], int, bool]:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            bin_path = temp_path / "bin"
+            bin_path.mkdir()
+            counter_path = temp_path / "xcodebuild-count"
+            fake_xcodebuild = bin_path / "xcodebuild"
+            fake_xcodebuild.write_text(fake_xcodebuild_body)
+            fake_xcodebuild.chmod(0o755)
+            fake_xcodegen = bin_path / "xcodegen"
+            fake_xcodegen.write_text("#!/usr/bin/env bash\nexit 0\n")
+            fake_xcodegen.chmod(0o755)
+
+            fixture_script = self.read("scripts/validate-companion-builds.sh")
+            fixture_script = fixture_script.replace("5 * 60", "1")
+            fixture_script = fixture_script.replace(
+                "/usr/bin/xcodebuild", f'"{fake_xcodebuild}"'
+            )
+            fixture_path = temp_path / "validate-companion-builds.sh"
+            fixture_path.write_text(fixture_script)
+            fixture_path.chmod(0o755)
+
+            environment = os.environ.copy()
+            environment["FAKE_XCODEBUILD_COUNTER"] = str(counter_path)
+            environment["PATH"] = f"{bin_path}:{environment.get('PATH', '')}"
+            environment["RUNNER_TEMP"] = str(temp_path)
+            environment["TMPDIR"] = str(temp_path)
+
+            sentinel = subprocess.Popen(["/bin/sleep", "30"])
+            try:
+                completed = subprocess.run(
+                    ["/bin/bash", str(fixture_path), "--configuration", "Debug", "ios"],
+                    cwd=temp_path,
+                    env=environment,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    check=False,
+                    timeout=30,
+                )
+                invocation_count = int(counter_path.read_text()) if counter_path.exists() else 0
+                sentinel_alive = sentinel.poll() is None
+            finally:
+                if sentinel.poll() is None:
+                    sentinel.terminate()
+                    sentinel.wait(timeout=5)
+
+            return completed, invocation_count, sentinel_alive
+
     def run_companion_upload_script(self, args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["/bin/bash", str(REPO_ROOT / "scripts/upload-app-store-connect-companion-app.sh"), *args],
@@ -841,14 +892,21 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn('marker="** BUILD SUCCEEDED **"', script)
         self.assertIn('marker="** ARCHIVE SUCCEEDED **"', script)
         self.assertIn("xcodebuild did not reach a terminal result within 30 minutes", script)
+        self.assertIn("xcodebuild produced no output for 5 minutes", script)
         self.assertIn("xcodebuild validation requires exactly one build or archive action", script)
+        self.assertIn("Retrying $platform validation once with isolated DerivedData", script)
+        self.assertIn("context-panel-companion-retry.XXXXXX", script)
+        self.assertIn("if ((status != 124)); then", script)
         self.assertIn('| /usr/bin/tee "$log_file"', script)
         self.assertIn('/usr/bin/tail -n 500 "$log_file"', script)
-        self.assertIn('/bin/kill -TERM "-$process_group"', script)
-        self.assertIn('/bin/kill -KILL "-$process_group"', script)
+        self.assertIn('signal_xcodebuild_processes TERM "$process_group"', script)
+        self.assertIn('signal_xcodebuild_processes KILL "$process_group"', script)
+        self.assertIn('/usr/bin/pgrep -P "$parent_pid"', script)
         self.assertIn('process_group="$job_pid"', script)
         self.assertNotIn("/bin/ps -o pgid=", script)
         self.assertNotIn("disown -a", script)
+        self.assertNotIn("killall", script)
+        self.assertNotIn("launchctl kill", script)
         self.assertIn("iOS companion archive is missing embedded watch app", script)
         self.assertIn("iOS companion archive is missing embedded watch widget", script)
         self.assertIn("visionOS companion archive unexpectedly contains watch content", script)
@@ -874,6 +932,54 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("ContextPanelWatch", script)
         self.assertIn("ContextPanelTV", script)
         self.assertIn("PATH=\"$(xcodebuild_system_path)\" /usr/bin/xcodebuild", script)
+
+    def test_companion_build_validation_retries_only_a_stalled_xcodebuild(self):
+        completed, invocation_count, sentinel_alive = self.run_companion_validation_watchdog_fixture(
+            """#!/usr/bin/env bash
+set -euo pipefail
+counter="${FAKE_XCODEBUILD_COUNTER:?}"
+count=0
+if [[ -f "$counter" ]]; then
+    count="$(cat "$counter")"
+fi
+count=$((count + 1))
+printf '%s' "$count" > "$counter"
+if ((count == 1)); then
+    echo "fake xcodebuild started"
+    set -m
+    /bin/sleep 30 &
+    wait
+fi
+echo "** BUILD SUCCEEDED **"
+"""
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout)
+        self.assertEqual(invocation_count, 2)
+        self.assertTrue(sentinel_alive)
+        self.assertIn("xcodebuild produced no output", completed.stdout)
+        self.assertIn("Retrying ios validation once with isolated DerivedData", completed.stdout)
+
+    def test_companion_build_validation_does_not_retry_a_build_failure(self):
+        completed, invocation_count, sentinel_alive = self.run_companion_validation_watchdog_fixture(
+            """#!/usr/bin/env bash
+set -euo pipefail
+counter="${FAKE_XCODEBUILD_COUNTER:?}"
+count=0
+if [[ -f "$counter" ]]; then
+    count="$(cat "$counter")"
+fi
+count=$((count + 1))
+printf '%s' "$count" > "$counter"
+echo "** BUILD FAILED **"
+exit 65
+"""
+        )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual(invocation_count, 1)
+        self.assertTrue(sentinel_alive)
+        self.assertNotIn("Retrying ios validation once with isolated DerivedData", completed.stdout)
 
     def test_companion_upload_requires_tvos_layered_app_icon(self):
         script = self.read("scripts/upload-app-store-connect-companion-app.sh")

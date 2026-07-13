@@ -109,23 +109,67 @@ xcodebuild_system_path() {
 	fi
 }
 
+xcodebuild_descendant_pids() {
+	local child_pid
+	local parent_pid="$1"
+
+	for child_pid in $(/usr/bin/pgrep -P "$parent_pid" 2>/dev/null || true); do
+		xcodebuild_descendant_pids "$child_pid"
+		printf '%s\n' "$child_pid"
+	done
+}
+
+xcodebuild_processes_are_alive() {
+	local descendant_pids="$3"
+	local job_pid="$1"
+	local process_group="$2"
+	local process_pid
+
+	if /bin/kill -0 "$job_pid" 2>/dev/null || /bin/kill -0 "-$process_group" 2>/dev/null; then
+		return 0
+	fi
+	for process_pid in $descendant_pids; do
+		if /bin/kill -0 "$process_pid" 2>/dev/null; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+signal_xcodebuild_processes() {
+	local descendant_pids="$3"
+	local process_group="$2"
+	local process_pid
+	local signal_name="$1"
+
+	for process_pid in $descendant_pids; do
+		/bin/kill -"$signal_name" "$process_pid" 2>/dev/null || true
+	done
+	/bin/kill -"$signal_name" "-$process_group" 2>/dev/null || true
+}
+
 terminate_xcodebuild_job() {
 	local job_pid="$1"
 	local process_group="$2"
 	local attempt
+	local descendant_pids
+	local remaining_descendants
 
-	/bin/kill -TERM "-$process_group" 2>/dev/null || true
+	descendant_pids="$(xcodebuild_descendant_pids "$job_pid")"
+	signal_xcodebuild_processes TERM "$process_group" "$descendant_pids"
 	for attempt in 1 2 3 4 5; do
-		if ! /bin/kill -0 "$job_pid" 2>/dev/null; then
+		if ! xcodebuild_processes_are_alive "$job_pid" "$process_group" "$descendant_pids"; then
 			wait "$job_pid" 2>/dev/null || true
 			return 0
 		fi
 		/bin/sleep 1
 	done
 
-	/bin/kill -KILL "-$process_group" 2>/dev/null || true
+	remaining_descendants="$(xcodebuild_descendant_pids "$job_pid")"
+	descendant_pids="$descendant_pids $remaining_descendants"
+	signal_xcodebuild_processes KILL "$process_group" "$descendant_pids"
 	for attempt in 1 2 3 4 5; do
-		if ! /bin/kill -0 "$job_pid" 2>/dev/null; then
+		if ! xcodebuild_processes_are_alive "$job_pid" "$process_group" "$descendant_pids"; then
 			wait "$job_pid" 2>/dev/null || true
 			return 0
 		fi
@@ -136,10 +180,27 @@ terminate_xcodebuild_job() {
 	return 1
 }
 
+wait_for_xcodebuild_exit() {
+	local job_pid="$1"
+	local attempt
+
+	for attempt in 1 2 3 4 5; do
+		if ! /bin/kill -0 "$job_pid" 2>/dev/null; then
+			wait "$job_pid" 2>/dev/null || true
+			return 0
+		fi
+		/bin/sleep 1
+	done
+	return 1
+}
+
 run_xcodebuild() {
 	local action_count=0
+	local current_log_size
 	local deadline
 	local job_pid
+	local last_log_size=0
+	local last_output_at
 	local log_file
 	local marker
 	local monitor_was_enabled=0
@@ -179,9 +240,14 @@ run_xcodebuild() {
 		set +m
 	fi
 	deadline=$((SECONDS + 30 * 60))
+	last_output_at=$SECONDS
 
 	while /bin/kill -0 "$job_pid" 2>/dev/null; do
 		if /usr/bin/tail -n 500 "$log_file" | /usr/bin/grep -Fq "$marker"; then
+			if wait_for_xcodebuild_exit "$job_pid"; then
+				/bin/rm -f "$log_file"
+				return 0
+			fi
 			if ! terminate_xcodebuild_job "$job_pid" "$process_group"; then
 				/bin/rm -f "$log_file"
 				return 1
@@ -194,11 +260,21 @@ run_xcodebuild() {
 			/bin/rm -f "$log_file"
 			return 1
 		fi
+		current_log_size="$(/usr/bin/stat -f %z "$log_file" 2>/dev/null || printf '0')"
+		if [[ "$current_log_size" != "$last_log_size" ]]; then
+			last_log_size="$current_log_size"
+			last_output_at=$SECONDS
+		elif ((SECONDS - last_output_at >= 5 * 60)); then
+			echo "xcodebuild produced no output for 5 minutes" >&2
+			terminate_xcodebuild_job "$job_pid" "$process_group" || true
+			/bin/rm -f "$log_file"
+			return 124
+		fi
 		if ((SECONDS >= deadline)); then
 			echo "xcodebuild did not reach a terminal result within 30 minutes" >&2
 			terminate_xcodebuild_job "$job_pid" "$process_group" || true
 			/bin/rm -f "$log_file"
-			return 1
+			return 124
 		fi
 		/bin/sleep 1
 	done
@@ -302,15 +378,14 @@ destination_for_platform() {
 	esac
 }
 
-require_command xcodegen
-require_command xcodebuild
+validate_platform() {
+	local archive_path
+	local derived_data_path="$2"
+	local destination
+	local platform="$1"
+	local scheme
 
-xcodegen generate --spec project.yml
-echo "companion validation DerivedData root: $derived_data_root"
-
-for platform in "${platforms[@]}"; do
 	destination="$(destination_for_platform "$platform")"
-	derived_data_path="$derived_data_root/$platform"
 	if [[ "$platform" == "watchos" ]]; then
 		if ((archive)); then
 			echo "archive validation is not supported for standalone watchOS" >&2
@@ -322,6 +397,7 @@ for platform in "${platforms[@]}"; do
 	else
 		scheme="ContextPanelCompanion"
 	fi
+
 	if ((archive)); then
 		archive_path="$derived_data_path/$scheme-$configuration.xcarchive"
 		echo "Validating $scheme archive for $destination"
@@ -334,7 +410,7 @@ for platform in "${platforms[@]}"; do
 			-derivedDataPath "$derived_data_path" \
 			-archivePath "$archive_path" \
 			CODE_SIGNING_ALLOWED=NO \
-			archive
+			archive || return $?
 		validate_archive_contents "$platform" "$archive_path"
 	else
 		echo "Validating $scheme build for $destination"
@@ -345,6 +421,36 @@ for platform in "${platforms[@]}"; do
 			-destination "$destination" \
 			-derivedDataPath "$derived_data_path" \
 			CODE_SIGNING_ALLOWED=NO \
-			build
+			build || return $?
 	fi
+}
+
+require_command xcodegen
+require_command xcodebuild
+
+xcodegen generate --spec project.yml
+echo "companion validation DerivedData root: $derived_data_root"
+
+for platform in "${platforms[@]}"; do
+	derived_data_path="$derived_data_root/$platform"
+	status=0
+	if validate_platform "$platform" "$derived_data_path"; then
+		continue
+	else
+		status=$?
+	fi
+	if ((status != 124)); then
+		exit "$status"
+	fi
+
+	retry_root="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/context-panel-companion-retry.XXXXXX")"
+	retry_derived_data_path="$retry_root/$platform"
+	echo "Retrying $platform validation once with isolated DerivedData: $retry_derived_data_path" >&2
+	/bin/sleep 2
+	if validate_platform "$platform" "$retry_derived_data_path"; then
+		continue
+	else
+		status=$?
+	fi
+	exit "$status"
 done
