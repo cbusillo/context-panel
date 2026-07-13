@@ -210,7 +210,8 @@ under `Library/Caches` in the existing companion App Group, then asks the system
 to reload Top Shelf. Keeping this derived document inside the app-group Library
 domain preserves current-user access on physical tvOS while avoiding backup of
 ephemeral runway data. The extension reads that document immediately and
-generates provider cards in its own cache; missing and stale documents remain
+generates provider cards in the same App Group cache so the Home Screen can read
+the returned image URLs; missing and stale documents remain
 explicit rather than blocking the shelf on network work. The extension presents
 those cards as one inset portfolio hero so every provider
 is visible at a glance with one privacy-safe runway action. tvOS displays this

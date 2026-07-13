@@ -304,6 +304,7 @@ import Testing
 
     #expect(locations.rootDirectory.path == "/group/Library/Caches/Context Panel/TV")
     #expect(locations.documentURL.path == "/group/Library/Caches/Context Panel/TV/top-shelf.json")
+    #expect(locations.imageDirectoryURL.path == "/group/Library/Caches/Context Panel/TV/Top Shelf")
 }
 
 @Test func tvProviderAlertsCoalesceWorseningProvidersAndDeduplicateStableState() {
@@ -470,8 +471,10 @@ import Testing
     #expect(source.contains("let requestedSize = TVTopShelfInsetContent.imageSize"))
     #expect(source.contains("let action = TVTopShelfAction(url: TVAppRoute.runway.url)"))
     #expect(source.contains("item.title = semanticTitle(document: document, cards: cards, now: now)"))
+    #expect(source.contains("TVTopShelfRenderer(imageDirectory: locations.imageDirectoryURL)"))
     #expect(!source.contains("TVTopShelfSectionedContent"))
     #expect(!source.contains("[.screenScale1x, .screenScale2x]"))
+    #expect(!source.contains("fileManager.urls(for: .cachesDirectory"))
 }
 
 @Test func tvProviderBadgeExpiryUsesBadgeOnlyNotificationContent() throws {
