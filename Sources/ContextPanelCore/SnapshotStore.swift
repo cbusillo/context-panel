@@ -166,42 +166,7 @@ public extension StoredProviderReport {
 
     var userFacingErrorMessage: String? {
         guard let errorMessage else { return nil }
-        if provider == .google {
-            if errorMessage.isGoogleKeychainApprovalError {
-                return "Google Antigravity quota needs macOS Keychain approval. Click Refresh for Google, then choose Always Allow for the \"gemini\" keychain item."
-            }
-            if errorMessage.isGoogleAntigravityAccessTokenExpiredError {
-                return "Google Antigravity access token expired. Open Antigravity so it can refresh its Google session, then refresh Google in Context Panel."
-            }
-            if errorMessage.isGoogleCodeAssistRejectedQuotaAccessError {
-                return "Google Code Assist rejected quota access for this Antigravity account. Check the Antigravity or Google account, then refresh Google in Context Panel."
-            }
-        }
         return errorMessage
-    }
-}
-
-private extension String {
-    var isGoogleKeychainApprovalError: Bool {
-        let lowercasedMessage = lowercased()
-        guard lowercasedMessage.contains("keychain") else { return false }
-        return lowercasedMessage.contains("status -128")
-            || lowercasedMessage.contains("status -25308")
-            || lowercasedMessage.contains("interaction is not allowed")
-            || lowercasedMessage.contains("user interaction")
-            || lowercasedMessage.contains("always allow")
-    }
-
-    var isGoogleAntigravityAccessTokenExpiredError: Bool {
-        let lowercasedMessage = lowercased()
-        return lowercasedMessage.contains("google antigravity access token has expired")
-            || lowercasedMessage.contains("open antigravity so it can refresh its google session")
-    }
-
-    var isGoogleCodeAssistRejectedQuotaAccessError: Bool {
-        let lowercasedMessage = lowercased()
-        return lowercasedMessage.contains("code assist rejected quota access")
-            || lowercasedMessage.contains("google antigravity local login was rejected")
     }
 }
 
@@ -300,6 +265,10 @@ public struct RefreshAttentionSummary: Codable, Equatable, Sendable {
             case .stale:
                 return "\(target) returned stale data. Refresh now, then check that provider if it persists."
             case .unknown:
+                if let errorMessage = report.userFacingErrorMessage,
+                   !errorMessage.isEmpty {
+                    return "\(target) needs attention: \(errorMessage)"
+                }
                 return "\(target) did not return a complete refresh report. Refresh now, then check that provider if it persists."
             case .failure:
                 if let errorMessage = report.userFacingErrorMessage,

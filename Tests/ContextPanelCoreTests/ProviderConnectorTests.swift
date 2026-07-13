@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 
@@ -734,474 +735,350 @@ import Testing
     #expect(http.requests.count == 1)
 }
 
-@Test func googleAntigravityLocalCredentialsDecodeGoKeyringPayload() throws {
-    let expiry = "2099-01-01T00:00:00Z"
-    let json = #"{"token":{"access_token":"access-secret","token_type":"Bearer","refresh_token":"refresh-secret","expiry":"\#(expiry)"},"auth_method":"consumer"}"#
-    let wrapped = Data("go-keyring-base64:\(Data(json.utf8).base64EncodedString())".utf8)
-
-    let credentials = try GoogleAntigravityLocalCredentials.decode(from: wrapped)
-
-    #expect(credentials.accessToken == "access-secret")
-    #expect(credentials.refreshToken == "refresh-secret")
-    #expect(credentials.authMethod == "consumer")
-    #expect(credentials.expiresAt == ISO8601DateFormatter().date(from: expiry))
-}
-
-@Test func googleAntigravityParserReadsUserQuotaBuckets() throws {
+@Test func googleAntigravityBridgePersistsOnlySanitizedQuotaFields() throws {
     let observedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let snapshotURL = try googleAntigravityTemporarySnapshotURL()
+    let store = GoogleAntigravityStatusLineSnapshotStore(snapshotURL: snapshotURL)
     let payload = #"""
     {
-      "buckets": [
-        {
-          "bucketId": "gemini-weekly",
-          "displayName": "Weekly Limit",
-          "window": "Weekly",
-          "modelName": "Gemini",
-          "remainingFraction": 0.8432,
-          "resetTime": "2026-06-18T19:32:00Z"
+      "version": "1.1.1",
+      "plan_tier": "Google AI Ultra",
+      "email": "sensitive-email@example.com",
+      "cwd": "/Users/sensitive/workspace",
+      "conversation_id": "sensitive-conversation-id",
+      "transcript_path": "/Users/sensitive/transcript.jsonl",
+      "access_token": "sensitive-access-token",
+      "quota": {
+        "gemini-3.1-pro-high-5h": {
+          "remaining_fraction": 0.75,
+          "reset_in_seconds": 3600,
+          "request_id": "sensitive-request-id"
         },
-        {
-          "bucket_id": "third-party-five-hour",
-          "display_name": "Five Hour Limit",
-          "window": "5-hour",
-          "model_name": "Claude and GPT",
-          "remaining_fraction": "0.6477",
-          "reset_time": "2026-06-21T10:00:00Z"
+        "claude-sonnet-4.6-weekly": {
+          "remaining_fraction": 0.9,
+          "reset_time": "2027-01-16T09:00:00Z"
         },
-        {
-          "display_name": "Remaining Requests",
-          "window": "Daily",
-          "remaining_amount": "12"
-        },
-        {
-          "displayName": "Disabled Lane",
-          "remainingFraction": 0.1,
+        "gpt-oss-120b-weekly": {
+          "remaining_fraction": 0.2,
           "disabled": true
         }
-      ]
+      }
     }
     """#.data(using: .utf8)!
 
-    let limits = try GoogleAntigravityQuotaParser.usageLimits(
-        from: payload,
-        accountID: "google-antigravity",
-        configuredAccountID: "google-antigravity-default",
-        accountName: "Antigravity",
-        observedAt: observedAt
+    let result = try GoogleAntigravityStatusLineBridge.ingest(
+        data: payload,
+        observedAt: observedAt,
+        store: store
+    )
+    let loadedSnapshot = try store.load()
+    let snapshot = try #require(loadedSnapshot)
+    let persisted = try String(contentsOf: snapshotURL, encoding: .utf8)
+    let filePermissions = try #require(
+        FileManager.default.attributesOfItem(atPath: snapshotURL.path)[.posixPermissions] as? NSNumber
+    )
+    let directoryPermissions = try #require(
+        FileManager.default.attributesOfItem(atPath: snapshotURL.deletingLastPathComponent().path)[.posixPermissions] as? NSNumber
     )
 
-    #expect(limits.map(\.label) == [
-        "Gemini Weekly Limit",
-        "Claude and GPT Five Hour Limit",
-        "Remaining Requests",
+    #expect(result == .saved(snapshot))
+    #expect(snapshot.sourceVersion == "1.1.1")
+    #expect(snapshot.planTier == "Google AI Ultra")
+    #expect(snapshot.observedAt == observedAt)
+    #expect(snapshot.buckets.map(\.id) == [
+        "claude-sonnet-4.6-weekly",
+        "gemini-3.1-pro-high-5h",
+        "gpt-oss-120b-weekly",
     ])
-    #expect(limits.map(\.modelLabel) == ["Gemini", "Claude and GPT", nil])
-    #expect(limits.map(\.windowLabel) == ["Weekly", "5-hour", "Daily"])
-    let expectedWindows: [MainLimitWindow?] = [.weekly, .fiveHour, .daily]
-    #expect(limits.map(\.mainLimitWindow) == expectedWindows)
-    #expect(limits.map(\.used) == [16, 35, nil])
-    #expect(limits.map(\.limit) == [100, 100, 12])
-    #expect(limits.map(\.unit) == [.percent, .percent, .requests])
-    #expect(limits[0].resetsAt == ISO8601DateFormatter().date(from: "2026-06-18T19:32:00Z"))
-    #expect(limits[1].resetsAt == ISO8601DateFormatter().date(from: "2026-06-21T10:00:00Z"))
-    #expect(limits[0].note?.contains("Google Antigravity local auth quota") == true)
+    #expect(snapshot.buckets.last?.isDisabled == true)
+    #expect(snapshot.buckets[1].resetsAt == observedAt.addingTimeInterval(3_600))
+    #expect(filePermissions.intValue & 0o777 == 0o600)
+    #expect(directoryPermissions.intValue & 0o777 == 0o700)
+    for sensitiveValue in [
+        "sensitive-email@example.com",
+        "/Users/sensitive/workspace",
+        "sensitive-conversation-id",
+        "/Users/sensitive/transcript.jsonl",
+        "sensitive-access-token",
+        "sensitive-request-id",
+        "access_token",
+        "transcript_path",
+        "conversation_id",
+    ] {
+        #expect(!persisted.contains(sensitiveValue))
+    }
 }
 
-@Test func googleAntigravityParserReadsQuotaSummaryGroups() throws {
-    let observedAt = Date(timeIntervalSince1970: 1_800_000_000)
-    let payload = #"""
-    {
-      "groups": [
-        {
-          "displayName": "Gemini Models",
-          "description": "Models within this group: Gemini Flash, Gemini Pro",
-          "buckets": [
-            {
-              "bucketId": "gemini-weekly",
-              "displayName": "Weekly Limit",
-              "window": "weekly",
-              "remainingFraction": 0.9943967,
-              "resetTime": "2026-06-25T19:32:58Z"
-            },
-            {
-              "bucketId": "gemini-5h",
-              "displayName": "Five Hour Limit",
-              "window": "5h",
-              "remainingFraction": 1,
-              "resetTime": "2026-06-19T05:51:42Z"
-            }
-          ]
-        },
-        {
-          "displayName": "Claude and GPT models",
-          "description": "Models within this group: Claude Opus, Claude Sonnet, GPT-OSS",
-          "buckets": [
-            {
-              "bucketId": "3p-weekly",
-              "displayName": "Weekly Limit",
-              "window": "weekly",
-              "remainingFraction": 0.6477488,
-              "resetTime": "2026-06-19T15:53:08Z"
-            }
-          ]
+@Test func googleAntigravityBridgePreservesLastGoodSnapshotWhenQuotaIsMissing() throws {
+    let snapshotURL = try googleAntigravityTemporarySnapshotURL()
+    let store = GoogleAntigravityStatusLineSnapshotStore(snapshotURL: snapshotURL)
+    let original = GoogleAntigravityStatusLineSnapshot(
+        sourceVersion: "1.1.0",
+        observedAt: Date(timeIntervalSince1970: 100),
+        buckets: [GoogleAntigravityStatusLineBucket(id: "gemini-weekly", remainingFraction: 0.8, resetsAt: nil)]
+    )
+    try store.save(original)
+
+    let missingResult = try GoogleAntigravityStatusLineBridge.ingest(
+        data: Data(#"{"version":"1.1.1","email":"ignored@example.com"}"#.utf8),
+        observedAt: Date(timeIntervalSince1970: 200),
+        store: store
+    )
+    let emptyResult = try GoogleAntigravityStatusLineBridge.ingest(
+        data: Data(#"{"version":"1.1.1","quota":{}}"#.utf8),
+        observedAt: Date(timeIntervalSince1970: 300),
+        store: store
+    )
+
+    #expect(missingResult == .ignoredMissingQuota)
+    #expect(emptyResult == .ignoredEmptyQuota)
+    let preservedSnapshot = try store.load()
+    #expect(preservedSnapshot == original)
+}
+
+@Test func googleAntigravityBridgeRejectsMalformedKnownFieldsAndOversizedInput() throws {
+    let store = GoogleAntigravityStatusLineSnapshotStore(snapshotURL: try googleAntigravityTemporarySnapshotURL())
+    let invalidPayloads = [
+        #"{"version":"bad version!","quota":{}}"#,
+        #"{"plan_tier":"bad/tier","quota":{}}"#,
+        #"{"quota":{"gemini-weekly":{"remaining_fraction":1.1}}}"#,
+        #"{"quota":{"gemini weekly":{"remaining_fraction":0.5}}}"#,
+        #"{"quota":{"gemini-weekly":{"reset_time":"not-a-date"}}}"#,
+        #"{"quota":{"gemini-weekly":{"reset_in_seconds":999999999}}}"#,
+    ]
+
+    for payload in invalidPayloads {
+        do {
+            _ = try GoogleAntigravityStatusLineBridge.ingest(data: Data(payload.utf8), store: store)
+            Issue.record("Expected malformed Antigravity payload to fail")
+        } catch let error as GoogleAntigravityStatusLineBridgeError {
+            #expect(error == .invalidPayload)
         }
-      ]
     }
-    """#.data(using: .utf8)!
 
-    let limits = try GoogleAntigravityQuotaParser.summaryLimits(
-        from: payload,
-        accountID: "google-antigravity",
-        configuredAccountID: "google-antigravity-default",
-        accountName: "Antigravity",
-        observedAt: observedAt
-    )
-
-    #expect(limits.map(\.label) == [
-        "Gemini Models Weekly Limit",
-        "Gemini Models Five Hour Limit",
-    ])
-    #expect(limits.map(\.modelLabel) == ["Gemini Models", "Gemini Models"])
-    #expect(limits.map(\.windowLabel) == ["Weekly", "5-hour"])
-    #expect(limits.map(\.mainLimitWindow) == [.weekly, .fiveHour])
-    #expect(limits.map(\.used) == [1, 0])
-    #expect(limits.map(\.limit) == [100, 100])
-    #expect(limits[0].note?.contains("quota summary") == true)
-    #expect(limits[0].note?.contains("Gemini Flash") == true)
-}
-
-@Test func googleAntigravityParserHandlesZeroRemainingAmountAsExhaustedBucket() throws {
-    let observedAt = Date(timeIntervalSince1970: 1_800_000_000)
-    let payload = #"""
-    {
-      "buckets": [
-        {
-          "displayName": "Five Hour Limit",
-          "window": "5-hour",
-          "remaining_amount": 0,
-          "reset_time": "2026-06-16T16:51:00Z"
-        }
-      ]
+    do {
+        _ = try GoogleAntigravityStatusLineBridge.ingest(
+            data: Data(repeating: 0, count: GoogleAntigravityStatusLineBridge.maximumInputBytes + 1),
+            store: store
+        )
+        Issue.record("Expected oversized Antigravity payload to fail")
+    } catch let error as GoogleAntigravityStatusLineBridgeError {
+        #expect(error == .oversizedInput)
     }
-    """#.data(using: .utf8)!
-
-    let limits = try GoogleAntigravityQuotaParser.usageLimits(
-        from: payload,
-        accountID: "google-antigravity",
-        configuredAccountID: "google-antigravity-default",
-        accountName: "Antigravity",
-        observedAt: observedAt
-    )
-
-    #expect(limits.map(\.label) == ["Five Hour Limit"])
-    #expect(limits.map(\.used) == [1])
-    #expect(limits.map(\.limit) == [1])
-    #expect(limits.map(\.status) == [.limited])
-    #expect(limits.map(\.mainLimitWindow) == [.fiveHour])
 }
 
-@Test func googleAntigravityParserReadsLiveModelIDQuotaBuckets() throws {
-    let observedAt = ISO8601DateFormatter().date(from: "2026-06-18T22:54:00Z")!
-    let payload = #"""
-    {
-      "buckets": [
-        { "modelId": "gemini-3.1-pro-high", "tokenType": "WTUS", "remainingFraction": 0.9346022, "resetTime": "2026-06-18T23:26:03Z" },
-        { "modelId": "claude-opus-4-6-thinking", "tokenType": "WTUS", "remainingFraction": 1, "resetTime": "2026-06-19T03:56:41Z" },
-        { "modelId": "tab_flash_lite_preview", "tokenType": "WTUS", "remainingFraction": 1 }
-      ]
+@Test func googleAntigravityStoreRejectsSymlinkSnapshots() throws {
+    let snapshotURL = try googleAntigravityTemporarySnapshotURL()
+    let directoryURL = snapshotURL.deletingLastPathComponent()
+    try FileManager.default.createDirectory(
+        at: directoryURL,
+        withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700]
+    )
+    let targetURL = directoryURL.appending(path: "target.json")
+    try Data("{}".utf8).write(to: targetURL)
+    try FileManager.default.createSymbolicLink(at: snapshotURL, withDestinationURL: targetURL)
+
+    do {
+        _ = try GoogleAntigravityStatusLineSnapshotStore(snapshotURL: snapshotURL).load()
+        Issue.record("Expected a symlink Antigravity snapshot to fail")
+    } catch let error as GoogleAntigravityStatusLineStoreError {
+        #expect(error == .unsafeFile)
     }
-    """#.data(using: .utf8)!
-
-    let limits = try GoogleAntigravityQuotaParser.usageLimits(
-        from: payload,
-        accountID: "google-antigravity",
-        configuredAccountID: "google-antigravity-default",
-        accountName: "Antigravity",
-        observedAt: observedAt
-    )
-
-    #expect(limits.map(\.label) == [
-        "Gemini 3.1 Pro High Model quota",
-        "Claude Opus 4 6 Thinking Model quota",
-        "Tab Flash Lite Preview WTUS quota",
-    ])
-    #expect(limits.map(\.modelLabel) == [
-        "Gemini 3.1 Pro High",
-        "Claude Opus 4 6 Thinking",
-        "Tab Flash Lite Preview",
-    ])
-    #expect(limits.map(\.windowLabel) == ["Model quota", "Model quota", "WTUS quota"])
-    #expect(limits.map(\.mainLimitWindow) == [nil, nil, nil])
-    #expect(limits.map(\.used) == [7, 0, 0])
 }
 
-@Test func googleAntigravityConnectorDiscoversProjectAndFetchesQuotaSummary() async throws {
-    let credentials = googleAntigravityCredentialData(
-        accessToken: "access-secret",
-        refreshToken: "refresh-secret",
-        expiresAt: Date(timeIntervalSince1970: 4_071_398_400)
+@Test func googleAntigravityStoreRejectsFIFOSnapshotsWithoutBlocking() throws {
+    let snapshotURL = try googleAntigravityTemporarySnapshotURL()
+    let directoryURL = snapshotURL.deletingLastPathComponent()
+    try FileManager.default.createDirectory(
+        at: directoryURL,
+        withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700]
     )
-    let project = #"{"cloudaicompanionProject":{"id":"project-a"}}"#.data(using: .utf8)!
-    let quota = #"""
-    {
-      "groups": [
-        {
-          "displayName": "Gemini Models",
-          "description": "Models within this group: Gemini Flash, Gemini Pro",
-          "buckets": [
-            { "bucketId": "gemini-weekly", "displayName": "Weekly Limit", "window": "weekly", "remainingFraction": 0.84, "resetTime": "2026-06-18T12:00:00Z" },
-            { "bucketId": "gemini-five-hour", "displayName": "Five Hour Limit", "window": "5h", "remainingFraction": 0.96, "resetTime": "2026-06-07T13:00:00Z" }
-          ]
-        },
-        {
-          "displayName": "Claude and GPT models",
-          "buckets": [
-            { "bucketId": "3p-weekly", "displayName": "Weekly Limit", "window": "weekly", "remainingFraction": 0.5 }
-          ]
-        }
-      ]
+    #expect(mkfifo(snapshotURL.path, S_IRUSR | S_IWUSR) == 0)
+
+    do {
+        _ = try GoogleAntigravityStatusLineSnapshotStore(snapshotURL: snapshotURL).load()
+        Issue.record("Expected a FIFO Antigravity snapshot to fail")
+    } catch let error as GoogleAntigravityStatusLineStoreError {
+        #expect(error == .unsafeFile)
     }
-    """#.data(using: .utf8)!
-    let http = StubHTTPClient(responses: [
-        ConnectorHTTPResponse(statusCode: 200, data: project),
-        ConnectorHTTPResponse(statusCode: 200, data: quota),
-    ])
-    let store = StubCredentialStore(storage: ["antigravity": credentials])
-    let connector = GoogleAntigravityQuotaConnector(
-        accounts: [googleAntigravityTestAccount()],
-        httpClient: http,
-        credentialLoader: store
-    )
-
-    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
-
-    #expect(result.reports.count == 1)
-    #expect(result.reports[0].provider == .google)
-    #expect(result.reports[0].status == .healthy)
-    #expect(result.reports[0].configuredAccountID == "google-antigravity-default")
-    #expect(result.snapshot.limits.map(\.label) == ["Gemini Models Weekly Limit", "Gemini Models Five Hour Limit"])
-    #expect(result.snapshot.limits.map(\.mainLimitWindow) == [.weekly, .fiveHour])
-    #expect(result.snapshot.limits.map(\.used) == [16, 4])
-    #expect(http.requests.map(\.url.path) == ["/v1internal:loadCodeAssist", "/v1internal:retrieveUserQuotaSummary"])
-    #expect(http.requests.map(\.url.absoluteString) == [
-        "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
-        "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
-    ])
-    #expect(http.requests[0].headers["Authorization"] == "Bearer access-secret")
-    #expect(http.requests[0].headers["X-Goog-Api-Client"] == "gl-mac/1.0.0 antigravity-context-panel/1.0.0")
-    #expect(http.requests[0].headers["X-Goog-QuotaUser"] == nil)
-    #expect(http.requests[0].headers["X-Goog-User-Project"] == nil)
-    #expect(http.requests[0].headers["Client-Metadata"] == nil)
-    #expect(http.requests[0].body.flatMap { String(data: $0, encoding: .utf8) } == #"{"metadata":{"ideType":"ANTIGRAVITY"}}"#)
-    #expect(http.requests[1].headers["X-Goog-Api-Client"] == "gl-mac/1.0.0 antigravity-context-panel/1.0.0")
-    #expect(http.requests[1].headers["X-Goog-QuotaUser"] == nil)
-    #expect(http.requests[1].headers["X-Goog-User-Project"] == nil)
-    #expect(http.requests[1].headers["Client-Metadata"] == nil)
-    #expect(http.requests[1].body.flatMap { String(data: $0, encoding: .utf8) } == #"{"project":"project-a"}"#)
-    #expect(store.savedData == nil)
 }
 
-@Test func googleAntigravityConnectorFallsBackToUserQuotaWhenSummaryUnavailable() async throws {
-    let credentials = googleAntigravityCredentialData(
-        accessToken: "access-secret",
-        refreshToken: "refresh-secret",
-        expiresAt: Date(timeIntervalSince1970: 4_071_398_400)
-    )
-    let project = #"{"cloudaicompanionProject":{"id":"project-a"}}"#.data(using: .utf8)!
-    let summaryError = #"{"error":{"code":404,"status":"NOT_FOUND","message":"unsupported"}}"#.data(using: .utf8)!
-    let quota = #"""
-    {
-      "buckets": [
-        { "bucketId": "gemini-weekly", "displayName": "Weekly Limit", "window": "Weekly", "modelName": "Gemini", "remainingFraction": 0.84, "resetTime": "2026-06-18T12:00:00Z" }
-      ]
-    }
-    """#.data(using: .utf8)!
-    let http = StubHTTPClient(responses: [
-        ConnectorHTTPResponse(statusCode: 200, data: project),
-        ConnectorHTTPResponse(statusCode: 404, data: summaryError),
-        ConnectorHTTPResponse(statusCode: 200, data: quota),
-    ])
-    let connector = GoogleAntigravityQuotaConnector(
-        accounts: [googleAntigravityTestAccount()],
-        httpClient: http,
-        credentialLoader: StubCredentialStore(storage: ["antigravity": credentials])
-    )
-
-    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
-
-    #expect(result.reports[0].status == .healthy)
-    #expect(result.snapshot.limits.map(\.label) == ["Gemini Weekly Limit"])
-    #expect(http.requests.map(\.url.path) == [
-        "/v1internal:loadCodeAssist",
-        "/v1internal:retrieveUserQuotaSummary",
-        "/v1internal:retrieveUserQuota",
-    ])
-}
-
-@Test func googleAntigravityConnectorFallsBackToUserQuotaWhenSummaryCannotDecode() async throws {
-    let credentials = googleAntigravityCredentialData(
-        accessToken: "access-secret",
-        refreshToken: "refresh-secret",
-        expiresAt: Date(timeIntervalSince1970: 4_071_398_400)
-    )
-    let project = #"{"cloudaicompanionProject":{"id":"project-a"}}"#.data(using: .utf8)!
-    let invalidSummary = #"{"groups":"unexpected"}"#.data(using: .utf8)!
-    let quota = #"""
-    {
-      "buckets": [
-        { "bucketId": "gemini-weekly", "displayName": "Weekly Limit", "window": "Weekly", "modelName": "Gemini", "remainingFraction": 0.84, "resetTime": "2026-06-18T12:00:00Z" }
-      ]
-    }
-    """#.data(using: .utf8)!
-    let http = StubHTTPClient(responses: [
-        ConnectorHTTPResponse(statusCode: 200, data: project),
-        ConnectorHTTPResponse(statusCode: 200, data: invalidSummary),
-        ConnectorHTTPResponse(statusCode: 200, data: quota),
-    ])
-    let connector = GoogleAntigravityQuotaConnector(
-        accounts: [googleAntigravityTestAccount()],
-        httpClient: http,
-        credentialLoader: StubCredentialStore(storage: ["antigravity": credentials])
-    )
-
-    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
-
-    #expect(result.reports[0].status == .healthy)
-    #expect(result.snapshot.limits.map(\.label) == ["Gemini Weekly Limit"])
-    #expect(http.requests.map(\.url.path) == [
-        "/v1internal:loadCodeAssist",
-        "/v1internal:retrieveUserQuotaSummary",
-        "/v1internal:retrieveUserQuota",
-    ])
-}
-
-@Test func googleAntigravityConnectorReportsUnexpectedCredentialFormatClearly() async throws {
-    let credentials = #"{"accessToken":"old-access","refreshToken":"refresh-secret","expiresAt":"2000-01-01T00:00:00Z","projectID":"project-a"}"#.data(using: .utf8)!
-    let connector = GoogleAntigravityQuotaConnector(
-        accounts: [googleAntigravityTestAccount()],
-        httpClient: StubHTTPClient(responses: []),
-        credentialLoader: StubCredentialStore(storage: ["antigravity": credentials])
-    )
-
-    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
-
-    #expect(result.reports.count == 1)
-    #expect(result.reports[0].status == .failure)
-    #expect(result.reports[0].errorMessage?.contains("unexpected format") == true)
-    #expect(result.reports[0].errorMessage?.contains("missing") == false)
-}
-
-@Test func googleAntigravityConnectorReportsExpiredAccessToken() async throws {
-    let credentials = googleAntigravityCredentialData(
-        accessToken: "old-access",
-        refreshToken: "refresh-secret",
-        expiresAt: Date(timeIntervalSince1970: 946_684_800)
-    )
-    let http = StubHTTPClient(responses: [])
-    let store = StubCredentialStore(storage: ["antigravity": credentials])
-    let connector = GoogleAntigravityQuotaConnector(
-        accounts: [googleAntigravityTestAccount()],
-        httpClient: http,
-        credentialLoader: store
-    )
-
-    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
-
-    #expect(result.reports[0].status == .failure)
-    #expect(result.reports[0].errorMessage?.contains("access token has expired") == true)
-    #expect(result.reports[0].errorMessage?.contains("local login has expired") == false)
-    #expect(result.reports[0].errorMessage?.contains("so it can refresh its Google session") == true)
-    #expect(http.requests.isEmpty)
-}
-
-@Test func googleAntigravityConnectorUsesAccessTokenUntilActualExpiry() async throws {
+@Test func googleAntigravityConnectorMapsFreshObservedBucketsWithoutPrivateAPIs() async throws {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
-    let credentials = googleAntigravityCredentialData(
-        accessToken: "access-secret",
-        refreshToken: "refresh-secret",
-        expiresAt: now.addingTimeInterval(25)
+    let snapshot = GoogleAntigravityStatusLineSnapshot(
+        sourceVersion: "1.1.1",
+        planTier: "Google AI Pro",
+        observedAt: now,
+        buckets: [
+            GoogleAntigravityStatusLineBucket(
+                id: "gemini-3.1-pro-high-5h",
+                remainingFraction: 0.9,
+                resetsAt: now.addingTimeInterval(3_600)
+            ),
+            GoogleAntigravityStatusLineBucket(
+                id: "claude-sonnet-4.6-weekly",
+                remainingFraction: 0.85,
+                resetsAt: now.addingTimeInterval(7 * 24 * 3_600)
+            ),
+            GoogleAntigravityStatusLineBucket(
+                id: "mystery-model",
+                remainingFraction: 0.95,
+                resetsAt: nil
+            ),
+            GoogleAntigravityStatusLineBucket(
+                id: "mystery_model",
+                remainingFraction: 0.96,
+                resetsAt: nil
+            ),
+            GoogleAntigravityStatusLineBucket(
+                id: "gpt-oss-120b-weekly",
+                remainingFraction: 0.01,
+                resetsAt: nil,
+                isDisabled: true
+            ),
+        ]
     )
-    let project = #"{"cloudaicompanionProject":"project-a"}"#.data(using: .utf8)!
-    let emptySummary = #"{"groups":[]}"#.data(using: .utf8)!
-    let quota = #"{"buckets":[{"modelId":"gemini-3.1-pro-high","remainingFraction":0.9,"resetTime":"2027-01-15T08:06:40Z"}]}"#.data(using: .utf8)!
-    let http = StubHTTPClient(responses: [
-        ConnectorHTTPResponse(statusCode: 200, data: project),
-        ConnectorHTTPResponse(statusCode: 200, data: emptySummary),
-        ConnectorHTTPResponse(statusCode: 200, data: quota),
-    ])
     let connector = GoogleAntigravityQuotaConnector(
         accounts: [googleAntigravityTestAccount()],
-        httpClient: http,
-        credentialLoader: StubCredentialStore(storage: ["antigravity": credentials])
+        snapshotLoader: StubGoogleAntigravitySnapshotLoader(snapshot: snapshot)
     )
 
     let result = await connector.refresh(now: now)
+    let report = try #require(result.reports.first)
 
-    #expect(result.reports[0].status == .healthy)
-    #expect(http.requests.map(\.url.path) == [
-        "/v1internal:loadCodeAssist",
-        "/v1internal:retrieveUserQuotaSummary",
-        "/v1internal:retrieveUserQuota",
+    #expect(report.status == .healthy)
+    #expect(report.generatedAt == now)
+    #expect(report.errorMessage == nil)
+    #expect(report.limits.map(\.label) == [
+        "Gemini 3.1 Pro High 5-hour",
+        "Claude Sonnet 4.6 Weekly",
+        "Mystery Model",
+        "Mystery Model",
     ])
+    #expect(report.limits.map(\.windowLabel) == ["5-hour", "Weekly", nil, nil])
+    #expect(report.limits.map(\.used) == [10, 15, 5, 4])
+    #expect(Set(report.limits.map(\.id)).count == 4)
+    #expect(report.limits.map(\.confidence).allSatisfy { $0 == .observed })
+    #expect(report.limits.allSatisfy { $0.note?.contains("documented status-line quota export") == true })
+    #expect(!report.limits.contains { $0.label.contains("GPT") })
 }
 
-@Test func googleAntigravityConnectorReportsProviderRejectionWithoutOAuthRetry() async throws {
-    let credentials = googleAntigravityCredentialData(
-        accessToken: "old-access",
-        refreshToken: "refresh-secret",
-        expiresAt: Date(timeIntervalSince1970: 4_071_398_400)
-    )
-    let providerError = #"{"error":{"code":403,"status":"PERMISSION_DENIED","message":"The caller does not have permission."}}"#.data(using: .utf8)!
-    let http = StubHTTPClient(responses: [
-        ConnectorHTTPResponse(statusCode: 403, data: providerError),
-    ])
-    let store = StubCredentialStore(storage: ["antigravity": credentials])
-    let connector = GoogleAntigravityQuotaConnector(
-        accounts: [googleAntigravityTestAccount()],
-        httpClient: http,
-        credentialLoader: store
-    )
+@Test func googleAntigravityConnectorMarksOldOrResetSnapshotsStale() async throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    for snapshot in [
+        GoogleAntigravityStatusLineSnapshot(
+            observedAt: now.addingTimeInterval(-901),
+            buckets: [GoogleAntigravityStatusLineBucket(
+                id: "gemini-weekly",
+                remainingFraction: 0.8,
+                resetsAt: now.addingTimeInterval(3_600)
+            )]
+        ),
+        GoogleAntigravityStatusLineSnapshot(
+            observedAt: now,
+            buckets: [
+                GoogleAntigravityStatusLineBucket(
+                    id: "gemini-5h",
+                    remainingFraction: 0.8,
+                    resetsAt: now
+                ),
+                GoogleAntigravityStatusLineBucket(
+                    id: "gemini-weekly",
+                    remainingFraction: 0.9,
+                    resetsAt: now.addingTimeInterval(7 * 24 * 3_600)
+                ),
+                GoogleAntigravityStatusLineBucket(
+                    id: "disabled-weekly",
+                    remainingFraction: 0.1,
+                    resetsAt: now.addingTimeInterval(-3_600),
+                    isDisabled: true
+                ),
+            ]
+        ),
+    ] {
+        let connector = GoogleAntigravityQuotaConnector(
+            accounts: [googleAntigravityTestAccount()],
+            snapshotLoader: StubGoogleAntigravitySnapshotLoader(snapshot: snapshot),
+            maximumAge: 900
+        )
 
-    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+        let report = try #require(await connector.refresh(now: now).reports.first)
 
-    #expect(result.reports[0].status == .failure)
-    #expect(result.reports[0].errorMessage?.contains("Code Assist rejected quota access") == true)
-    #expect(http.requests.map(\.url.host) == ["daily-cloudcode-pa.googleapis.com"])
-    #expect(http.requests.map(\.url.path) == ["/v1internal:loadCodeAssist"])
+        #expect(report.status == .stale)
+        #expect(report.errorMessage?.contains("AGY CLI") == true)
+        if report.limits.count == 1 {
+            #expect(report.limits.allSatisfy { $0.status == .stale })
+        } else {
+            #expect(report.limits.contains { $0.label == "Gemini 5-hour" && $0.status == .stale })
+            #expect(report.limits.contains { $0.label == "Gemini Weekly" && $0.status == .healthy })
+        }
+        #expect(!report.limits.contains { $0.label.contains("Disabled") })
+    }
 }
 
-@Test func googleAntigravityConnectorReportsMissingCredentialsWithoutPromptingExternalStores() async throws {
+@Test func googleAntigravityConnectorTreatsDisabledOnlySnapshotsAsUnknown() async throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
     let connector = GoogleAntigravityQuotaConnector(
         accounts: [googleAntigravityTestAccount()],
-        httpClient: StubHTTPClient(responses: []),
-        credentialLoader: StubCredentialStore(storage: [:])
+        snapshotLoader: StubGoogleAntigravitySnapshotLoader(snapshot: GoogleAntigravityStatusLineSnapshot(
+            observedAt: now,
+            buckets: [GoogleAntigravityStatusLineBucket(
+                id: "disabled-weekly",
+                remainingFraction: 0.1,
+                resetsAt: now.addingTimeInterval(-3_600),
+                isDisabled: true
+            )]
+        ))
     )
 
-    let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
+    let report = try #require(await connector.refresh(now: now).reports.first)
 
-    #expect(result.reports.count == 1)
-    #expect(result.reports[0].provider == .google)
-    #expect(result.reports[0].status == .failure)
-    #expect(result.reports[0].errorMessage == "Google Antigravity local login was not found. Open Antigravity and sign in, then refresh Google in Context Panel.")
-    #expect(result.reports[0].errorMessage?.contains("Always Allow") == false)
+    #expect(report.status == .unknown)
+    #expect(report.limits.isEmpty)
+    #expect(report.errorMessage?.contains("active quota buckets") == true)
 }
 
-@Test func googleAntigravityConnectorReportsKeychainApprovalWhenUserCancelsKeychainAccess() async throws {
-    let connector = GoogleAntigravityQuotaConnector(
-        accounts: [googleAntigravityTestAccount()],
-        httpClient: StubHTTPClient(responses: []),
-        credentialLoader: ThrowingCredentialLoader(error: GenericPasswordCredentialLoader.LoadError.unhandledStatus(-128))
+@Test func googleAntigravityConnectorReportsSetupReadAndObservationFailuresSeparately() async throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let account = googleAntigravityTestAccount()
+    let missing = GoogleAntigravityQuotaConnector(
+        accounts: [account],
+        snapshotLoader: StubGoogleAntigravitySnapshotLoader(snapshot: nil)
+    )
+    let unreadable = GoogleAntigravityQuotaConnector(
+        accounts: [account],
+        snapshotLoader: StubGoogleAntigravitySnapshotLoader(error: .unsafeFile)
+    )
+    let future = GoogleAntigravityQuotaConnector(
+        accounts: [account],
+        snapshotLoader: StubGoogleAntigravitySnapshotLoader(snapshot: GoogleAntigravityStatusLineSnapshot(
+            observedAt: now.addingTimeInterval(301),
+            buckets: [GoogleAntigravityStatusLineBucket(id: "gemini-weekly", remainingFraction: 0.8, resetsAt: nil)]
+        ))
     )
 
-    let result = await connector.refresh(now: Date(timeIntervalSince1970: 0))
+    let missingReport = try #require(await missing.refresh(now: now).reports.first)
+    let unreadableReport = try #require(await unreadable.refresh(now: now).reports.first)
+    let futureReport = try #require(await future.refresh(now: now).reports.first)
 
-    #expect(result.reports.count == 1)
-    #expect(result.reports[0].provider == .google)
-    #expect(result.reports[0].status == .failure)
-    #expect(result.reports[0].errorMessage?.contains("Click Refresh") == true)
-    #expect(result.reports[0].errorMessage?.contains("Always Allow") == true)
-    #expect(result.reports[0].errorMessage?.contains("\"gemini\"") == true)
-    #expect(result.reports[0].errorMessage?.contains("-128") == false)
+    #expect(missingReport.status == .unknown)
+    #expect(missingReport.errorMessage?.contains("setup is required") == true)
+    #expect(unreadableReport.status == .failure)
+    #expect(unreadableReport.errorMessage?.contains("could not be read") == true)
+    #expect(futureReport.status == .failure)
+    #expect(futureReport.errorMessage?.contains("invalid observation time") == true)
+}
+
+@Test func googleAntigravitySetupCommandsAreQuotedAndReversible() {
+    let bundleURL = URL(fileURLWithPath: "/Applications/Context Panel's Preview.app")
+    let command = GoogleAntigravityStatusLineSetup.setupCommand(applicationBundleURL: bundleURL)
+
+    #expect(command.hasPrefix("/statusline '"))
+    #expect(command.contains("Context Panel'\\''s Preview.app"))
+    #expect(command.hasSuffix("ContextPanelRefreshAgent' --ingest-antigravity-status-line"))
+    #expect(GoogleAntigravityStatusLineSetup.removeCommand == "/statusline delete")
 }
 
 @Test func claudeOAuthConnectorRefreshesUsageWindows() async throws {
@@ -1540,24 +1417,36 @@ private func codexUsageWithAdditionalLimits(_ limits: [(name: String, feature: S
     """.utf8)
 }
 
-private func googleAntigravityTestAccount(
-    credentialAccountID: String = "antigravity"
-) -> GoogleAntigravityAccountConfiguration {
+private func googleAntigravityTestAccount() -> GoogleAntigravityAccountConfiguration {
     GoogleAntigravityAccountConfiguration(
         accountID: "google-antigravity-default",
-        accountName: "Antigravity",
-        credentialAccountID: credentialAccountID
+        accountName: "Antigravity"
     )
 }
 
-private func googleAntigravityCredentialData(
-    accessToken: String,
-    refreshToken: String,
-    expiresAt: Date
-) -> Data {
-    let expiry = ContextPanelDateFormatting.string(from: expiresAt)
-    let payload = #"{"token":{"access_token":"\#(accessToken)","token_type":"Bearer","refresh_token":"\#(refreshToken)","expiry":"\#(expiry)"},"auth_method":"consumer"}"#
-    return Data("go-keyring-base64:\(Data(payload.utf8).base64EncodedString())".utf8)
+private func googleAntigravityTemporarySnapshotURL() throws -> URL {
+    FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-antigravity-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        .appending(path: "Provider Inputs", directoryHint: .isDirectory)
+        .appending(path: "antigravity-status-line.json")
+}
+
+private struct StubGoogleAntigravitySnapshotLoader: GoogleAntigravityQuotaSnapshotLoading {
+    let snapshot: GoogleAntigravityStatusLineSnapshot?
+    let error: GoogleAntigravityStatusLineStoreError?
+
+    init(
+        snapshot: GoogleAntigravityStatusLineSnapshot? = nil,
+        error: GoogleAntigravityStatusLineStoreError? = nil
+    ) {
+        self.snapshot = snapshot
+        self.error = error
+    }
+
+    func load() throws -> GoogleAntigravityStatusLineSnapshot? {
+        if let error { throw error }
+        return snapshot
+    }
 }
 
 private final class StubCredentialStore: ProviderCredentialStoring, @unchecked Sendable {
@@ -1577,32 +1466,6 @@ private final class StubCredentialStore: ProviderCredentialStoring, @unchecked S
         storage[accountID] = data
         savedAccountID = accountID
         savedData = data
-    }
-}
-
-private final class FailingCredentialStore: ProviderCredentialStoring, @unchecked Sendable {
-    private let storage: [String: Data]
-    private(set) var saveErrorCount = 0
-
-    init(storage: [String: Data]) {
-        self.storage = storage
-    }
-
-    func load(accountID: String) throws -> Data? {
-        storage[accountID]
-    }
-
-    func save(_ data: Data, accountID: String) throws {
-        saveErrorCount += 1
-        throw NSError(domain: "FailingCredentialStore", code: 1)
-    }
-}
-
-private struct ThrowingCredentialLoader: ProviderCredentialLoading {
-    let error: any Error
-
-    func load(accountID: String) throws -> Data? {
-        throw error
     }
 }
 

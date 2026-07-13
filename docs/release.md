@@ -48,7 +48,8 @@ The lower-level workflows remain callable for recovery and validation:
 
 The native Xcode path is the one to use for widget installability. Workflows
 that build or upload the app no longer require Google OAuth build settings;
-Google Antigravity refresh uses Antigravity's local Keychain login at runtime.
+Google Antigravity quota arrives through AGY's documented custom status-line
+command and the signed refresh agent's privacy-filtered utility mode.
 
 ## Runner And Xcode Policy
 

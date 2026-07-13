@@ -409,7 +409,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(widget.widgetDeepLinkURL(links: testWidgetLinks) == testWidgetLinks.reconnect)
 }
 
-@Test func widgetSnapshotUsesGoogleAntigravityGuidanceForStaleProviderFailures() {
+@Test func widgetSnapshotUsesGoogleAntigravityBridgeGuidanceForProviderFailures() {
     let savedAt = Date(timeIntervalSince1970: 100)
     let stored = StoredUsageSnapshot(
         savedAt: savedAt,
@@ -434,7 +434,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
                 accountName: "Antigravity",
                 generatedAt: savedAt,
                 status: .failure,
-                errorMessage: "Google Antigravity access token has expired. Open Antigravity so it can refresh its Google session, then refresh Google in Context Panel."
+                errorMessage: "Antigravity bridge data could not be read. The last good quota remains available while setup is checked."
             ),
         ]
     )
@@ -448,8 +448,8 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(widget.status == .healthy)
     #expect(widget.widgetProblemText == "Google refresh needed")
     #expect(widget.message.contains("Google · Antigravity needs attention:"))
-    #expect(widget.message.contains("Open Antigravity"))
-    #expect(widget.message.contains("refresh Google in Context Panel"))
+    #expect(widget.message.contains("bridge data could not be read"))
+    #expect(widget.message.contains("setup is checked"))
     #expect(widget.message.contains("Reconnect") == false)
     #expect(widget.widgetDeepLinkURL(links: testWidgetLinks) == testWidgetLinks.overview)
 }

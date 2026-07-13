@@ -526,6 +526,34 @@ struct SettingsPane: View {
                                 Text("Off")
                                     .font(.system(size: 11, weight: .semibold))
                                     .foregroundStyle(CPTheme.tertiaryText)
+                            } else if account.connectorKind == .googleAntigravityQuota {
+                                let authorizationSummary = model.authorizationSummary(
+                                    for: account,
+                                    storedSnapshot: appModel.storedSnapshot
+                                )
+                                HStack(spacing: 8) {
+                                    Text(authorizationSummary.text)
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundStyle(CPTheme.statusColor(authorizationSummary.status))
+                                    if model.hasSavedAuthorization(account) {
+                                        Button("Copy Remove") { model.copyAntigravityBridgeRemovalCommand() }
+                                            .buttonStyle(.bordered)
+                                            .controlSize(.small)
+                                        Button("Forget", role: .destructive) {
+                                            model.forgetAntigravityBridgeData()
+                                            refreshAfterAuthorization()
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+                                    } else {
+                                        Button("Copy Setup") { model.copyAntigravityBridgeSetupCommand() }
+                                            .buttonStyle(.borderedProminent)
+                                            .controlSize(.small)
+                                        Button("Copy Remove") { model.copyAntigravityBridgeRemovalCommand() }
+                                            .buttonStyle(.bordered)
+                                            .controlSize(.small)
+                                    }
+                                }
                             } else if model.hasSavedAuthorization(account) {
                                 let authorizationSummary = model.authorizationSummary(
                                     for: account,
@@ -544,10 +572,6 @@ struct SettingsPane: View {
                                             .buttonStyle(.bordered)
                                             .controlSize(.small)
                                         Button("Disconnect", role: .destructive) { disconnectOAuth(for: account) }
-                                            .buttonStyle(.bordered)
-                                            .controlSize(.small)
-                                    } else if account.connectorKind == .googleAntigravityQuota {
-                                        Button("Refresh") { refreshAfterAuthorization() }
                                             .buttonStyle(.bordered)
                                             .controlSize(.small)
                                     }
@@ -637,6 +661,12 @@ struct SettingsPane: View {
                     Text(errorMessage)
                         .font(.system(size: 12))
                         .foregroundStyle(CPTheme.statusColor(.failure))
+                        .textSelection(.enabled)
+                }
+                if let noticeMessage = model.noticeMessage {
+                    Text(noticeMessage)
+                        .font(.system(size: 12))
+                        .foregroundStyle(CPTheme.statusColor(.healthy))
                         .textSelection(.enabled)
                 }
             }
@@ -855,7 +885,7 @@ struct SettingsPane: View {
         case .claudeOAuthUsage:
             model.authorizeClaudeOAuth(for: account)
         case .googleAntigravityQuota:
-            refreshAfterAuthorization()
+            model.copyAntigravityBridgeSetupCommand()
         case .codexRateLimits:
             break
         }
@@ -984,6 +1014,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     @Published private(set) var lastWebhookTestSentAt: Date?
     @Published private(set) var status: UsageStatus = .unknown
     @Published private(set) var errorMessage: String?
+    @Published private(set) var noticeMessage: String?
     @Published private(set) var authorizedPaths: Set<String> = []
     @Published private(set) var missingAuthPaths: Set<String> = []
     @Published private(set) var legacyAuthPaths: Set<String> = []
@@ -1038,6 +1069,12 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.appGroupID)
     )
     private let webhookSecretStore = LimitWarningWebhookSecretStore()
+
+    private var antigravityBridgeStore: GoogleAntigravityStatusLineSnapshotStore? {
+        ContextPanelLocations.googleAntigravityStatusLineSnapshotURL().map {
+            GoogleAntigravityStatusLineSnapshotStore(snapshotURL: $0)
+        }
+    }
 
     private var widgetPreferenceStores: WidgetDisplayPreferencesStoreSet {
         WidgetDisplayPreferencesStoreSet(stores: [widgetPreferenceStore])
@@ -1604,6 +1641,43 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         saveAccounts()
     }
 
+    func copyAntigravityBridgeSetupCommand() {
+        copyAntigravityBridgeCommand(
+            GoogleAntigravityStatusLineSetup.setupCommand(applicationBundleURL: Bundle.main.bundleURL),
+            notice: "Copied the AGY bridge setup command. AGY supports one custom status-line command; paste only if you are not replacing another customization."
+        )
+    }
+
+    func copyAntigravityBridgeRemovalCommand() {
+        copyAntigravityBridgeCommand(
+            GoogleAntigravityStatusLineSetup.removeCommand,
+            notice: "Copied the AGY bridge removal command. Paste it into AGY CLI, then use Forget in Context Panel."
+        )
+    }
+
+    func forgetAntigravityBridgeData() {
+        do {
+            try antigravityBridgeStore?.delete()
+            noticeMessage = "Forgot the sanitized AGY quota snapshot."
+            errorMessage = nil
+        } catch {
+            noticeMessage = nil
+            errorMessage = "Antigravity bridge data could not be forgotten."
+        }
+    }
+
+    private func copyAntigravityBridgeCommand(_ command: String, notice: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        guard pasteboard.setString(command, forType: .string) else {
+            noticeMessage = nil
+            errorMessage = "The Antigravity bridge command could not be copied."
+            return
+        }
+        errorMessage = nil
+        noticeMessage = notice
+    }
+
     func setWidgetMainLimit(_ preference: WidgetMainLimitPreference, isVisible: Bool) {
         var updated = widgetPreferences
         updated.setMainLimit(provider: preference.provider, window: preference.window, isVisible: isVisible)
@@ -1637,8 +1711,11 @@ final class SettingsPaneModel: NSObject, ObservableObject {
 
     func needsAuthorization(_ account: LocalProviderAccountConfiguration) -> Bool {
         guard account.isEnabled else { return false }
-        if account.connectorKind == .claudeOAuthUsage || account.connectorKind == .googleAntigravityQuota {
+        if account.connectorKind == .claudeOAuthUsage {
             return !hasImportedCredential(for: account)
+        }
+        if account.connectorKind == .googleAntigravityQuota {
+            return antigravityBridgeSnapshot() == nil
         }
         guard let authPath = account.effectiveAuthPath else { return false }
         guard account.connectorKind.requiresSecurityScopedAuthFile else { return false }
@@ -1647,8 +1724,11 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     }
 
     func hasSavedAuthorization(_ account: LocalProviderAccountConfiguration) -> Bool {
-        if account.connectorKind == .claudeOAuthUsage || account.connectorKind == .googleAntigravityQuota {
+        if account.connectorKind == .claudeOAuthUsage {
             return hasImportedCredential(for: account)
+        }
+        if account.connectorKind == .googleAntigravityQuota {
+            return antigravityBridgeSnapshot() != nil
         }
         guard let authPath = account.effectiveAuthPath else { return false }
         guard account.connectorKind.requiresSecurityScopedAuthFile else { return false }
@@ -1691,6 +1771,21 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         for account: LocalProviderAccountConfiguration,
         storedSnapshot: StoredUsageSnapshot?
     ) -> SettingsAccountRefreshSummary {
+        if account.connectorKind == .googleAntigravityQuota {
+            guard let snapshot = antigravityBridgeSnapshot() else {
+                return SettingsAccountRefreshSummary(text: "Setup required", status: .unknown)
+            }
+            let activeBuckets = snapshot.buckets.filter { !$0.isDisabled }
+            if isAntigravityBridgeStale(snapshot) {
+                return SettingsAccountRefreshSummary(text: "Bridge stale", status: .stale)
+            }
+            if activeBuckets.isEmpty || activeBuckets.allSatisfy({ $0.remainingFraction == nil }) {
+                return SettingsAccountRefreshSummary(text: "Bridge active · quota unavailable", status: .unknown)
+            }
+            let text = snapshot.planTier.map { "Bridge active · \($0)" } ?? "Bridge active"
+            return SettingsAccountRefreshSummary(text: text, status: .healthy)
+        }
+
         if account.connectorKind == .claudeOAuthUsage,
            let report = storedSnapshot?.reports
             .filter({ account.matchesProviderReport($0) })
@@ -1703,11 +1798,17 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         case .claudeOAuthUsage:
             "Connected"
         case .googleAntigravityQuota:
-            "Keychain login"
+            "Setup required"
         case .codexRateLimits:
             "File saved"
         }
-        return SettingsAccountRefreshSummary(text: text, status: .healthy)
+        let status: UsageStatus = switch account.connectorKind {
+        case .googleAntigravityQuota:
+            .unknown
+        case .claudeOAuthUsage, .codexRateLimits:
+            .healthy
+        }
+        return SettingsAccountRefreshSummary(text: text, status: status)
     }
 
     func disconnectOAuth(for account: LocalProviderAccountConfiguration) {
@@ -1985,7 +2086,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     private func detailSourceLabel(for account: LocalProviderAccountConfiguration) -> String {
         switch account.connectorKind {
         case .googleAntigravityQuota:
-            return "Antigravity local login"
+            return "AGY status-line quota export"
         case .claudeOAuthUsage:
             return "Claude OAuth"
         default:
@@ -2004,7 +2105,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
             }
             return "Select the OpenAI CLI auth JSON file"
         case .googleAntigravityQuota:
-            return "Uses Antigravity's Keychain password for quota refresh. If macOS asks after Refresh, choose Always Allow"
+            return "Paste Copy Setup into AGY CLI. AGY supports one custom status-line command; Context Panel never reads its login"
         case .claudeOAuthUsage:
             return "Connect Claude with OAuth for automatic background refresh"
         }
@@ -2040,7 +2141,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     private func hasImportedCredential(for account: LocalProviderAccountConfiguration) -> Bool {
         switch account.connectorKind {
         case .googleAntigravityQuota:
-            return true
+            return antigravityBridgeSnapshot() != nil
         case .claudeOAuthUsage:
             return oauthCredentialAccountIDs(for: account).contains { accountID in
                 (try? credentialStore.load(accountID: accountID)) != nil
@@ -2048,6 +2149,19 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         case .codexRateLimits:
             return (try? credentialStore.load(accountID: account.id)) != nil
         }
+    }
+
+    private func antigravityBridgeSnapshot() -> GoogleAntigravityStatusLineSnapshot? {
+        try? antigravityBridgeStore?.load()
+    }
+
+    private func isAntigravityBridgeStale(_ snapshot: GoogleAntigravityStatusLineSnapshot, now: Date = Date()) -> Bool {
+        now.timeIntervalSince(snapshot.observedAt) > SnapshotFreshness.appMaximumAge
+            || snapshot.buckets.contains { bucket in
+                guard !bucket.isDisabled else { return false }
+                guard let resetsAt = bucket.resetsAt else { return false }
+                return resetsAt <= now
+            }
     }
 
     private static func exchangeClaudeOAuthCode(
@@ -2658,7 +2772,7 @@ private struct ReconnectAccountRow: View {
             }
             .buttonStyle(.borderedProminent)
         } else if account.connectorKind == .googleAntigravityQuota {
-            Button("Refresh") { onRefresh() }
+            Button("Copy Setup") { settingsModel.copyAntigravityBridgeSetupCommand() }
                 .buttonStyle(.borderedProminent)
         } else {
             Button("Refresh") { onRefresh() }
@@ -2683,11 +2797,8 @@ private struct ReconnectAccountRow: View {
             if attentionReport?.hasProviderConfigurationFailure == true {
                 return "Google setup is missing from this build. Check provider configuration, then refresh."
             }
-            if let errorMessage = attentionReport?.userFacingErrorMessage,
-               errorMessage.localizedCaseInsensitiveContains("keychain") || errorMessage.localizedCaseInsensitiveContains("always allow") {
-                return "Click Refresh, then choose Always Allow for the \"gemini\" keychain item."
-            }
-            return "Open Antigravity if its login expired, then refresh Google in Context Panel."
+            return attentionReport?.userFacingErrorMessage
+                ?? "Copy the bridge setup command, paste it into AGY CLI, and use AGY to publish fresh quota."
         }
         return settingsModel.detailText(for: account)
     }

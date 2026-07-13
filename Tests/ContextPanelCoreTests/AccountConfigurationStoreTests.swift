@@ -333,7 +333,7 @@ import Testing
     #expect(!result.document.accounts.contains { $0.id == "openai-code-default" })
 }
 
-@Test func accountConnectorFactoryCreatesLiveProviderConnectors() async {
+@Test func accountConnectorFactoryCreatesLiveProviderConnectors() async throws {
     let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
         LocalProviderAccountConfiguration(
             id: "codex",
@@ -360,7 +360,11 @@ import Testing
     let connectors = AccountConnectorFactory.connectors(
         from: document,
         credentialStore: InMemoryProviderCredentialStore(storage: [:]),
-        googleAntigravityCredentialLoader: InMemoryProviderCredentialStore(storage: [:])
+        googleAntigravitySnapshotLoader: GoogleAntigravityStatusLineSnapshotStore(
+            snapshotURL: try temporaryDirectory()
+                .appending(path: "Provider Inputs", directoryHint: .isDirectory)
+                .appending(path: "missing-antigravity.json")
+        )
     )
     let result = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: Date(timeIntervalSince1970: 0))
 
@@ -375,12 +379,12 @@ import Testing
     })
     #expect(result.reports.contains { report in
         report.provider == .google
-            && report.status == .failure
-            && report.errorMessage == "Google Antigravity local login was not found. Open Antigravity and sign in, then refresh Google in Context Panel."
+            && report.status == .unknown
+            && report.errorMessage?.contains("bridge setup is required") == true
     })
 }
 
-@Test func accountConnectorFactoryUsesAntigravityLoaderInsteadOfAppCredentialStoreForGoogle() async throws {
+@Test func accountConnectorFactoryUsesAntigravitySnapshotInsteadOfAppCredentialStoreForGoogle() async throws {
     let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
         LocalProviderAccountConfiguration(
             id: "google-antigravity-default",
@@ -389,10 +393,21 @@ import Testing
             displayName: "Antigravity"
         ),
     ])
+    let snapshotStore = GoogleAntigravityStatusLineSnapshotStore(
+        snapshotURL: try temporaryDirectory().appending(path: "antigravity-status-line.json")
+    )
+    try snapshotStore.save(GoogleAntigravityStatusLineSnapshot(
+        observedAt: Date(timeIntervalSince1970: 0),
+        buckets: [GoogleAntigravityStatusLineBucket(
+            id: "gemini-weekly",
+            remainingFraction: 0.8,
+            resetsAt: Date(timeIntervalSince1970: 3_600)
+        )]
+    ))
     let connectors = AccountConnectorFactory.connectors(
         from: document,
         credentialStore: InMemoryProviderCredentialStore(storage: [:]),
-        googleAntigravityCredentialLoader: InMemoryProviderCredentialStore(storage: ["antigravity": Data("not-json".utf8)]),
+        googleAntigravitySnapshotLoader: snapshotStore,
         requiresBookmarkedAuthFiles: false
     )
 
@@ -401,7 +416,50 @@ import Testing
         .reports
         .first { $0.provider == .google })
 
-    #expect(report.errorMessage?.contains("unexpected format") == true)
+    #expect(report.status == .healthy)
+    #expect(report.limits.map(\.used) == [20])
+    #expect(report.errorMessage == nil)
+}
+
+@Test func accountConnectorFactoryUsesOneActiveAntigravityAccountForSingletonBridge() async throws {
+    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
+        LocalProviderAccountConfiguration(
+            id: "google-antigravity-primary",
+            provider: .google,
+            connectorKind: .googleAntigravityQuota,
+            displayName: "Antigravity Primary"
+        ),
+        LocalProviderAccountConfiguration(
+            id: "google-antigravity-secondary",
+            provider: .google,
+            connectorKind: .googleAntigravityQuota,
+            displayName: "Antigravity Secondary"
+        ),
+    ])
+    let snapshotStore = GoogleAntigravityStatusLineSnapshotStore(
+        snapshotURL: try temporaryDirectory().appending(path: "antigravity-status-line.json")
+    )
+    try snapshotStore.save(GoogleAntigravityStatusLineSnapshot(
+        observedAt: Date(timeIntervalSince1970: 0),
+        buckets: [GoogleAntigravityStatusLineBucket(
+            id: "gemini-weekly",
+            remainingFraction: 0.8,
+            resetsAt: Date(timeIntervalSince1970: 3_600)
+        )]
+    ))
+
+    let connectors = AccountConnectorFactory.connectors(
+        from: document,
+        googleAntigravitySnapshotLoader: snapshotStore,
+        requiresBookmarkedAuthFiles: false
+    )
+    let reports = await ProviderConnectorRuntime(connectors: connectors)
+        .refreshAll(now: Date(timeIntervalSince1970: 0))
+        .reports
+
+    #expect(connectors.count == 1)
+    #expect(reports.map(\.configuredAccountID) == ["google-antigravity-primary"])
+    #expect(reports.map(\.accountName) == ["Antigravity Primary"])
 }
 
 @Test func sandboxedAuthLoaderRequiresSecurityScopedBookmark() async {

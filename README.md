@@ -107,13 +107,13 @@ OpenAI accounts. The retired Gemini CLI / legacy Code Assist probe and Claude
 status-line probe have been removed. Claude limits are refreshed through the
 Context Panel-owned Claude OAuth usage connector.
 
-For Google/Gemini, retired Gemini CLI and legacy Code Assist credential paths
-have been removed. Context Panel now uses its own Google OAuth credentials for
-the Antigravity adapter instead of reading Antigravity's Keychain item or Gemini
-CLI files. The Google surface reports quota-summary weekly and 5-hour buckets
-when Antigravity returns them, and uses model availability only as a degraded
-fallback/detail. Treat both as internal provider signals rather than a public
-billing or quota contract.
+For Google Antigravity, Context Panel uses AGY's documented custom status-line
+command as an opt-in local bridge. The signed refresh agent accepts only the
+documented quota allowlist, writes a sanitized App Group snapshot, and never
+reads Antigravity credentials or calls private Google quota endpoints. Bridge
+data updates while AGY CLI runs and becomes explicitly stale when it is no
+longer current. AGY supports one custom status-line command, so setup is guided
+and never overwrites or chains an existing customization automatically.
 
 The probes call the same `ContextPanelCore` connectors the app will use, so
 passing probe output is also a smoke test for the production connector runtime.
