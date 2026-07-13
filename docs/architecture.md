@@ -191,11 +191,17 @@ conflated.
 The tvOS app registers both its CloudKit subscription and APNs delivery on
 launch and foreground activation. Failed registration remains a recoverable
 state: the app retries when it becomes active, preserves foreground refresh, and
-never stores or logs the APNs device token. The query subscription requires a
-positive `snapshotSchemaVersion`; presentation-preference records use `0`, so
-those writes do not trigger redundant background wakes. Registration saves a
-versioned subscription before removing the legacy broad subscription, and both
-app handlers reject legacy or non-`current` query notifications before reloading.
+never stores or logs the APNs device token. The query subscription uses the
+Production-promoted `companion-sync-updates` contract and matches only the fixed
+`current` record. Registration fetches that subscription first and creates it
+only when it is missing, then removes abandoned subscription IDs after the
+promoted subscription is confirmed. Both app handlers reject retired or
+non-`current` query notifications before reloading.
+
+CloudKit does not allow a new subscription definition to be introduced directly
+from a Production runtime. Any future subscription ID or predicate change must
+first be created in Development and included in the CloudKit schema deployment
+to Production before a TestFlight or App Store build starts using it.
 
 Provider detail keeps the saved primary limit as the dominant answer while it
 has current capacity. If that lane is temporarily unavailable, detail promotes
@@ -240,6 +246,9 @@ providers currently limited or failed, is driven only by normalized snapshot
 state, and clears when providers recover or the snapshot is stale or unknown.
 A fixed badge-only local request also clears the count when the current snapshot
 reaches its freshness deadline without another background or foreground load.
+Scheduling replaces the existing request with the same identifier; removal is
+reserved for disabled, recovered, or already-expired states so an older
+asynchronous removal cannot cancel a newly scheduled deadline.
 No account identifiers, account names, provider responses, or error payloads
 are written to the Top Shelf document or badge state.
 

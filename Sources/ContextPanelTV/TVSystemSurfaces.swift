@@ -177,14 +177,19 @@ actor TVSystemSurfaceCoordinator {
         now: Date
     ) async throws {
         let identifiers = [Self.badgeExpiryRequestIdentifier]
-        notificationCenter.removePendingNotificationRequests(withIdentifiers: identifiers)
-        guard badgesEnabled, badgeCount > 0 else { return }
+        guard badgesEnabled, badgeCount > 0 else {
+            notificationCenter.removePendingNotificationRequests(withIdentifiers: identifiers)
+            return
+        }
 
         let expirationDate = TVSnapshotFreshnessPolicy.expirationDate(
             generatedAt: snapshot.generatedAt
         )
         let interval = expirationDate.timeIntervalSince(now)
-        guard interval > 0 else { return }
+        guard interval > 0 else {
+            notificationCenter.removePendingNotificationRequests(withIdentifiers: identifiers)
+            return
+        }
 
         let content = UNMutableNotificationContent()
         content.badge = 0

@@ -434,7 +434,7 @@ Production contains the CloudKit-backed companion snapshot record contract:
 - `payload` as CloudKit bytes/data
 - `schemaVersion`, `documentSchemaVersion`, `snapshotSchemaVersion`, and
   `payloadByteCount` as integer/number fields
-- `snapshotSchemaVersion` marked queryable for the background-update subscription
+- `snapshotSchemaVersion` marked queryable for transport diagnostics and schema compatibility
 - `generatedAt` and `publishedAt` as date/time fields
 
 Run the offline repo contract check before packaging:
@@ -449,10 +449,20 @@ generated from CloudKit Console settings, are scoped to the developer team and
 user, default to a one-year lifetime, and can be revoked from CloudKit Dashboard
 settings. `cktool` can then save the token securely in the Mac Keychain.
 
+The schema gate does not promote a new `CKSubscription` definition. Context
+Panel's Production companion contract currently uses subscription ID
+`companion-sync-updates` with a query for the fixed `current` record. CloudKit
+rejects subscription IDs or predicates introduced for the first time by a
+Production runtime. Before changing that contract, create the new subscription
+in Development, deploy the resulting CloudKit schema changes to Production, and
+physically verify registration from the signed TestFlight build. Do not ship a
+new subscription ID or predicate based only on the exported field schema passing.
+
 Relevant Apple references:
 
 - <https://developer.apple.com/icloud/ck-tool/>
 - <https://developer.apple.com/icloud/cloudkit/automating/>
+- <https://developer.apple.com/documentation/cloudkit/cksubscription>
 
 To get and save the token on the local operator machine:
 
