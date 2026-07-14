@@ -46,6 +46,25 @@ private let renderTestWidgetLinks = ContextPanelWidgetLinks(
                 confidence: .observed
             ),
         ],
+        promptCacheObservations: [
+            PromptCacheObservation(
+                provider: .openAI,
+                accountID: "openai-primary",
+                accountName: "OpenAI",
+                observedAt: Date(timeIntervalSince1970: 99),
+                windowLabel: "latest",
+                tokens: PromptCacheTokenSet(inputTokens: 1_000, cachedInputTokens: 960)
+            ),
+            PromptCacheObservation(
+                provider: .openAI,
+                accountID: "openai-primary",
+                accountName: "OpenAI",
+                observedAt: Date(timeIntervalSince1970: 98),
+                windowLabel: "previous",
+                tokens: PromptCacheTokenSet(inputTokens: 1_000, cachedInputTokens: 950)
+            ),
+        ],
+        promptCacheWidgetState: .available,
         status: .healthy,
         message: "All providers refreshed."
     )

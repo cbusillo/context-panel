@@ -433,7 +433,7 @@ struct ContextPanelMediumWidget: View {
                     .minimumScaleFactor(0.82)
                 Spacer(minLength: 0)
             }
-            .frame(width: 134, alignment: .leading)
+            .frame(width: 124, alignment: .leading)
 
             Divider()
 
@@ -443,7 +443,7 @@ struct ContextPanelMediumWidget: View {
                     maximumCount: 3
                 )
                 CPWSectionHeader(
-                    title: "Main Limits",
+                    title: "Limits",
                     accessory: CPWPromptCacheInlineStat(
                         state: snapshot.promptCacheWidgetState,
                         summary: snapshot.promptCacheSummary,
@@ -1110,6 +1110,8 @@ struct CPWSectionHeader: View {
                 .tracking(0.8)
                 .textCase(.uppercase)
                 .foregroundStyle(CPWTheme.tertiaryText(variant: themeVariant))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
             Spacer()
             if let accessory {
                 accessory
