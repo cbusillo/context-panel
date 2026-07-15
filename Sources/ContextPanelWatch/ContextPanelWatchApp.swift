@@ -313,8 +313,13 @@ private struct WatchSyncPresentation {
     let shouldShowDetail: Bool
 
     init(result: CompanionSyncLoadResult, snapshot: WidgetSnapshot, syncErrorMessage: String?) {
-        generatedText = result.document.map { document in
-            document.snapshot.generatedAt.formatted(.relative(presentation: .numeric))
+        generatedText = switch result.status {
+        case .healthy, .close, .limited:
+            result.document.map { document in
+                document.snapshot.generatedAt.formatted(.relative(presentation: .numeric))
+            }
+        case .stale, .failure, .loading, .unknown:
+            nil
         }
         shouldShowDetail = result.status == .failure || result.status == .stale || result.status == .unknown
 
