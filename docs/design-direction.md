@@ -66,6 +66,8 @@ stay explicitly used-pressure. In every case, the visible number, wording,
 fill, color, and accessibility sentence describe the same quantity. Keep
 unknown values indeterminate rather than substituting zero, preserve stale
 last-good values with explicit freshness language, and retain saved order.
+In the Watch app status row, show the freshness timestamp only for settled
+available states so updating, stale, and failure labels keep their full width.
 
 ## App Layout Direction
 
