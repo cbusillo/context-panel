@@ -262,11 +262,16 @@ def ensure_build(
                 f"waiting {poll_seconds}s for App Store Connect processing"
             )
         else:
-            if builds and not any(
-                build_marketing_version_and_platform(payload, build)[0] == marketing_version
+            relevant_builds = [
+                build
                 for build in builds
+                if platform is None or build_marketing_version_and_platform(payload, build)[1] == platform
+            ]
+            if relevant_builds and not any(
+                build_marketing_version_and_platform(payload, build)[0] == marketing_version
+                for build in relevant_builds
             ):
-                validate_build_marketing_version(payload, builds[0], marketing_version, build_number)
+                validate_build_marketing_version(payload, relevant_builds[0], marketing_version, build_number)
             if time.monotonic() >= deadline:
                 platform_suffix = f" for platform {platform}" if platform else ""
                 raise AppStoreConnectError(f"missing build {build_number}{platform_suffix}", payload=last_payload)
