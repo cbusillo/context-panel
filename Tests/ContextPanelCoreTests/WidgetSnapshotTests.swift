@@ -63,9 +63,24 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(widget.state == .ready)
     #expect(widget.status == .healthy)
     #expect(widget.syncErrorMessage != nil)
-    #expect(widget.widgetProblemText == "Mac sync failed")
+    #expect(widget.message == "Showing saved usage because the latest update failed.")
+    #expect(widget.widgetProblemText == "Mac update failed")
     #expect(widget.widgetProblemStatus == .failure)
     #expect(widget.widgetDeepLinkURL(links: testWidgetLinks) == testWidgetLinks.overview)
+}
+
+@Test func companionWidgetSnapshotSanitizesTransportFailureWithoutSavedUsage() {
+    let widget = WidgetSnapshot.fromCompanionSync(
+        CompanionSyncLoadResult(
+            document: nil,
+            status: .failure,
+            errorMessage: "CloudKit companion sync load failed"
+        )
+    )
+
+    #expect(widget.state == .failure)
+    #expect(widget.message == "Could not load usage from your Mac.")
+    #expect(widget.syncErrorMessage != nil)
 }
 
 @Test func widgetSnapshotsPresentElapsedAGYResetsAsAssumedFullCapacity() throws {
@@ -166,7 +181,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(widget.state == .stale)
     #expect(widget.status == .stale)
     #expect(widget.limits.count == 1)
-    #expect(widget.message.contains("snapshot is old"))
+    #expect(widget.message.contains("data is old"))
     #expect(widget.hasProviderReconnectIssue == false)
 }
 
@@ -398,7 +413,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(widget.state == .stale)
     #expect(widget.status == .stale)
     #expect(widget.limits.first?.status == .limited)
-    #expect(widget.message.contains("snapshot is old"))
+    #expect(widget.message.contains("data is old"))
 }
 
 @Test func widgetSnapshotKeepsFailureStatusWhenCachedLimitIsLimited() {

@@ -1658,7 +1658,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     func forgetAntigravityBridgeData() {
         do {
             try antigravityBridgeStore?.delete()
-            noticeMessage = "Forgot the sanitized AGY quota snapshot."
+            noticeMessage = "Forgot the saved AGY quota data."
             errorMessage = nil
         } catch {
             noticeMessage = nil
@@ -2053,7 +2053,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
                 return
             }
             guard Self.directoryLooksLikePromptCacheUsage(url) else {
-                errorMessage = "That folder does not contain Every Code usage JSON yet. Select the usage folder that contains files like usage snapshots."
+                errorMessage = "That folder does not contain Every Code usage JSON yet. Select the usage folder that contains usage records."
                 return
             }
             do {
@@ -3214,7 +3214,7 @@ struct SetupStatusStrip: View {
     var body: some View {
         HStack(spacing: 12) {
             SetupStatusItem(
-                title: "Snapshot cache",
+                title: "Saved usage",
                 value: model.storeStatus == .healthy ? "Ready" : model.storeStatus.previewStatusText.capitalized,
                 status: model.storeStatus
             )
@@ -3942,7 +3942,7 @@ final class ContextPanelAppModel: ObservableObject {
             if hasProviderReconnectIssue {
                 return "The widget is showing old percentages. Reconnect the affected account, then refresh."
             }
-            return "The widget is showing old percentages. Refresh Context Panel to update the snapshot."
+            return "The widget is showing old percentages. Refresh Context Panel to update the data."
         }
         if storeStatus == .failure {
             return "The latest refresh failed. Reconnect the affected account, then refresh."
@@ -3955,7 +3955,7 @@ final class ContextPanelAppModel: ObservableObject {
 
     var emptyAttentionActionText: String {
         if isRefreshing {
-            return "Refresh is running. This should clear when providers return a fresh snapshot."
+            return "Refresh is running. This should clear when providers return fresh data."
         }
         if storeStatus == .stale,
            refreshAttentionSummary != nil,

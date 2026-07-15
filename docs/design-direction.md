@@ -118,8 +118,8 @@ first visible saved time window stays as the large answer, a distinct
 saved order. Provider-only auxiliary capacity remains available in detail but
 does not take over the large answer when a saved time window is missing. Full
 Detail, Hide Account Names, and Percentages Only change the amount of personal
-detail, not answer selection. Visible percentages use `left`. CloudKit reads,
-last-good cache behavior, focus navigation, and deep links remain separate
+detail, not answer selection. Visible percentages use `left`. Mac-to-companion
+updates, saved-data behavior, focus navigation, and deep links remain separate
 platform concerns and must not be coupled to shared SwiftUI components.
 
 Provider drill-down uses a vertical hierarchy rather than a grid of equal-sized
@@ -220,9 +220,9 @@ Design and implementation must handle these states deliberately:
 - Empty first-run state.
 - Dense multi-account/provider data.
 - Prompt-cache unavailable, enabled, healthy, and sharply degraded states.
-- Companion sync unavailable, stale, partial, and healthy states.
-- Apple TV offline with a last-good cache, restored-live sync, and no prior
-  cached document.
+- Companion updates unavailable, stale, partial, and healthy states.
+- Apple TV offline with saved data, restored live updates, and no prior saved
+  usage.
 
 Failure and stale states should isolate to the affected account, provider, or
 transport when neighboring data is still valid. Do not blank the whole widget or

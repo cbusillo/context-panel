@@ -7,10 +7,10 @@ public struct CompanionSyncPresentation: Equatable, Sendable {
     public let usageSummary: String?
 
     public init(result: CompanionSyncLoadResult) {
-        if let error = result.errorMessage {
+        if result.errorMessage != nil {
             usageSummary = nil
-            title = "Sync failed"
-            detail = error
+            title = "Sync unavailable"
+            detail = "This device could not load your synced usage."
             symbol = "icloud.slash"
             return
         }
@@ -19,78 +19,36 @@ public struct CompanionSyncPresentation: Equatable, Sendable {
         case .healthy, .close, .limited:
             usageSummary = Self.usageSummary(for: result.document)
             title = "Synced from Mac"
-            detail = Self.syncedDetail(for: result)
+            detail = "Latest usage received from your Mac."
             symbol = Self.syncedSymbol(for: result)
         case .stale:
             usageSummary = Self.usageSummary(for: result.document)
-            title = "Mac sync is stale"
-            detail = "Open Context Panel on your Mac to publish a fresh snapshot."
+            title = "Saved usage is stale"
+            detail = "Open Context Panel on your Mac to refresh this device."
             symbol = "clock.badge.exclamationmark"
         case .failure:
             if result.document != nil {
                 usageSummary = Self.usageSummary(for: result.document)
                 title = "Synced from Mac"
-                detail = Self.syncedDetail(for: result)
+                detail = "Latest usage received from your Mac."
                 symbol = Self.syncedSymbol(for: result)
             } else {
                 usageSummary = nil
-                title = "Sync failed"
-                detail = "The companion could not read the synced snapshot."
+                title = "Sync unavailable"
+                detail = "This device could not load your synced usage."
                 symbol = "icloud.slash"
             }
         case .loading:
             usageSummary = nil
-            title = "Loading Mac sync"
-            detail = "Checking CloudKit for the latest Mac snapshot."
+            title = "Checking for updates"
+            detail = "Looking for the latest usage from your Mac."
             symbol = "arrow.clockwise.icloud"
         case .unknown:
             usageSummary = nil
-            title = "Waiting for Mac sync"
-            detail = "Open Context Panel on your Mac to publish usage lanes through CloudKit."
+            title = "Waiting for your Mac"
+            detail = "Open Context Panel on your Mac to share usage with this device."
             symbol = "icloud.and.arrow.down"
         }
-    }
-
-    private static func syncedDetail(for result: CompanionSyncLoadResult) -> String {
-        switch result.transportMetadata?.source {
-        case .cloudKit:
-            "Latest Mac snapshot received through CloudKit."
-        case .appGroup:
-            appendCloudKitStatus(
-                "Latest Mac snapshot loaded from the local mirror.",
-                result: result
-            )
-        case .iCloud:
-            appendCloudKitStatus(
-                "Latest Mac snapshot received.",
-                result: result
-            )
-        case .custom, .none:
-            appendCloudKitStatus(
-                "Latest Mac snapshot received.",
-                result: result
-            )
-        }
-    }
-
-    private static func appendCloudKitStatus(_ detail: String, result: CompanionSyncLoadResult) -> String {
-        guard result.transportMetadata?.source != .cloudKit else { return detail }
-        guard let cloudKit = result.transportStatuses.first(where: { $0.source == .cloudKit }) else {
-            return detail
-        }
-        if cloudKit.succeeded, cloudKit.loadedDocument == true {
-            return "\(detail) CloudKit healthy."
-        }
-        if cloudKit.missingRecord {
-            return "\(detail) CloudKit record not found."
-        }
-        if cloudKit.succeeded {
-            return "\(detail) CloudKit connected."
-        }
-        if !cloudKit.isAvailable {
-            return "\(detail) CloudKit unavailable."
-        }
-        return "\(detail) CloudKit retrying."
     }
 
     private static func syncedSymbol(for result: CompanionSyncLoadResult) -> String {

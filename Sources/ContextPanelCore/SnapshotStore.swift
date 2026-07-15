@@ -288,7 +288,7 @@ public struct RefreshAttentionSummary: Codable, Equatable, Sendable {
         }
 
         if isSnapshotAgeStale {
-            return "The latest snapshot is old. Refresh Context Panel to update provider data."
+            return "The latest data is old. Refresh Context Panel to update provider data."
         }
 
         return "Refresh Context Panel to update provider data."

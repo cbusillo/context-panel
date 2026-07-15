@@ -642,7 +642,7 @@ private final class CompanionSyncModel {
                     }
                 } else {
                     if self.displayPreferences == desiredPreferences {
-                        self.displayPreferencesErrorMessage = "Saved on this device, but Apple Watch sync failed."
+                        self.displayPreferencesErrorMessage = "Saved on this device, but the Apple Watch update failed."
                     }
                     if self.desiredPresentationPreferences == desiredPreferences {
                         break

@@ -109,7 +109,7 @@ public struct TVRunwayPresentation: Equatable, Sendable {
     private static func headline(state: WidgetSnapshotState, status: UsageStatus) -> String {
         switch state {
         case .setupNeeded:
-            return "Waiting for Mac sync"
+            return "Waiting for your Mac"
         case .stale:
             return "Showing saved runway"
         case .failure:
@@ -139,19 +139,19 @@ public struct TVRunwayPresentation: Equatable, Sendable {
     private static func detail(snapshot: WidgetSnapshot, isRefreshing: Bool) -> String {
         if isRefreshing {
             return snapshot.state == .setupNeeded
-                ? "Contacting CloudKit for the first Mac-published snapshot."
-                : "Refreshing provider capacity published by your Mac."
+                ? "Looking for usage from your Mac."
+                : "Refreshing usage from your Mac."
         }
         if snapshot.state == .setupNeeded {
-            return "Open Context Panel on your Mac to publish the first companion snapshot."
+            return "Open Context Panel on your Mac to share usage with this Apple TV."
         }
         if snapshot.state == .stale {
-            return "The last Mac snapshot is still available, but it may no longer reflect current usage."
+            return "Saved usage from your Mac may no longer reflect current usage."
         }
         if snapshot.state == .failure {
             return snapshot.message
         }
-        return "Provider capacity published by your Mac."
+        return "Usage from your Mac."
     }
 }
 

@@ -27,8 +27,7 @@ private struct WatchRootView: View {
 
                 if model.snapshot.limits.isEmpty {
                     WatchEmptySection(
-                        result: model.displayResult,
-                        syncErrorMessage: model.lastSyncErrorMessage
+                        result: model.displayResult
                     )
                 } else {
                     Section {
@@ -188,7 +187,6 @@ private struct WatchStatusSection: View {
 
 private struct WatchEmptySection: View {
     let result: CompanionSyncLoadResult
-    let syncErrorMessage: String?
 
     var body: some View {
         Section {
@@ -206,27 +204,25 @@ private struct WatchEmptySection: View {
 
     private var emptyTitle: String {
         switch result.status {
-        case .loading:
-            "Checking sync"
-        case .failure:
-            "Sync unavailable"
         case .stale:
-            "Showing saved sync"
+            "No saved limits"
         default:
-            "Waiting for Mac sync"
+            "No usage limits yet"
         }
     }
 
     private var emptyDetail: String {
         switch result.status {
+        case .loading:
+            "Usage limits will appear when the update finishes."
         case .failure:
-            syncErrorMessage.map { "The watch could not read the latest Mac sync snapshot: \($0)" }
-                ?? "The watch could not read the latest Mac sync snapshot."
+            "Try again after opening Context Panel on your Mac."
         case .stale:
-            syncErrorMessage.map { "Showing saved data because the latest refresh failed: \($0)" }
-                ?? "Showing saved data until your Mac publishes a fresh snapshot."
-        default:
-            "Open Context Panel on your Mac to publish usage limits through CloudKit."
+            "No limits are available in the saved usage."
+        case .unknown:
+            "Open Context Panel on your Mac to share usage with this watch."
+        case .healthy, .close, .limited:
+            "No usage limits were reported."
         }
     }
 }
@@ -322,14 +318,6 @@ private struct WatchSyncPresentation {
         }
         shouldShowDetail = result.status == .failure || result.status == .stale || result.status == .unknown
 
-        if let errorMessage = result.errorMessage ?? syncErrorMessage, result.status == .failure {
-            title = "Sync failed"
-            detail = "The watch could not read the latest Mac sync snapshot: \(errorMessage)"
-            symbol = "icloud.slash"
-            tint = .red
-            return
-        }
-
         switch result.status {
         case .healthy, .close, .limited:
             title = "Synced"
@@ -337,25 +325,25 @@ private struct WatchSyncPresentation {
             symbol = "checkmark.circle"
             tint = .green
         case .stale:
-            title = "Mac sync is stale"
-            detail = syncErrorMessage.map { "Showing saved data. Latest refresh failed: \($0)" }
-                ?? "Open Context Panel on your Mac to publish a fresh snapshot."
+            title = "Saved usage is stale"
+            detail = syncErrorMessage == nil
+                ? "Open Context Panel on your Mac to refresh this watch."
+                : "Showing saved usage because the latest update failed."
             symbol = "clock.badge.exclamationmark"
             tint = .yellow
         case .loading:
-            title = "Loading Mac sync"
-            detail = "Checking CloudKit for the latest usage limits."
+            title = "Checking for updates"
+            detail = "Looking for the latest usage from your Mac."
             symbol = "arrow.clockwise.icloud"
             tint = .secondary
         case .failure:
-            title = "Sync failed"
-            detail = syncErrorMessage.map { "The watch app could not read the synced snapshot: \($0)" }
-                ?? "The watch app could not read the synced snapshot."
+            title = "Update unavailable"
+            detail = "The watch could not load the latest usage from your Mac."
             symbol = "icloud.slash"
             tint = .red
         case .unknown:
-            title = "Waiting for Mac sync"
-            detail = "Open Context Panel on your Mac to publish usage limits through CloudKit."
+            title = "Waiting for your Mac"
+            detail = "Open Context Panel on your Mac to share usage with this watch."
             symbol = "icloud.and.arrow.down"
             tint = .secondary
         }

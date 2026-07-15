@@ -1413,7 +1413,7 @@ extension WidgetSnapshot {
     }
 
     var widgetProblemText: String? {
-        if syncErrorMessage != nil { return "Mac sync failed" }
+        if syncErrorMessage != nil { return "Mac update failed" }
         switch state {
         case .failure:
             return "Reconnect account"
