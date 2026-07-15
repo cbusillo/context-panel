@@ -163,7 +163,9 @@ private struct WatchStatusSection: View {
                     Image(systemName: presentation.symbol)
                         .foregroundStyle(presentation.tint)
                     Text(presentation.title)
-                        .lineLimit(1)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .layoutPriority(1)
                     Spacer(minLength: 2)
                     if let generatedText = presentation.generatedText {
                         Text(generatedText)
