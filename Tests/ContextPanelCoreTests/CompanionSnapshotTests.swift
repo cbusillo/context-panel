@@ -492,13 +492,13 @@ import Testing
     )
 
     #expect(presentation.title == "Synced from Mac")
-    #expect(presentation.detail == "Latest Mac snapshot received.")
+    #expect(presentation.detail == "Latest usage received from your Mac.")
     #expect(presentation.symbol == "checkmark.icloud")
     #expect(presentation.usageSummary == nil)
     #expect(presentation.title.contains("Limited") == false)
 }
 
-@Test func companionSyncPresentationNamesCloudKitDeliverySource() throws {
+@Test func companionSyncPresentationHidesCloudKitDeliverySource() throws {
     let now = Date(timeIntervalSince1970: 3_081)
     let document = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now),
@@ -519,11 +519,11 @@ import Testing
     )
 
     #expect(presentation.title == "Synced from Mac")
-    #expect(presentation.detail == "Latest Mac snapshot received through CloudKit.")
+    #expect(presentation.detail == "Latest usage received from your Mac.")
     #expect(presentation.symbol == "checkmark.icloud")
 }
 
-@Test func companionSyncPresentationShowsCloudKitHealthForLegacyICloudMetadata() throws {
+@Test func companionSyncPresentationHidesCloudKitHealthForLegacyICloudMetadata() throws {
     let now = Date(timeIntervalSince1970: 3_081.25)
     let document = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now),
@@ -552,11 +552,11 @@ import Testing
     )
 
     #expect(presentation.title == "Synced from Mac")
-    #expect(presentation.detail == "Latest Mac snapshot received. CloudKit healthy.")
+    #expect(presentation.detail == "Latest usage received from your Mac.")
     #expect(presentation.symbol == "checkmark.icloud")
 }
 
-@Test func companionSyncPresentationShowsMissingCloudKitRecordForLegacyICloudMetadata() throws {
+@Test func companionSyncPresentationHidesMissingCloudKitRecordForLegacyICloudMetadata() throws {
     let now = Date(timeIntervalSince1970: 3_081.375)
     let document = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now),
@@ -586,11 +586,11 @@ import Testing
     )
 
     #expect(presentation.title == "Synced from Mac")
-    #expect(presentation.detail == "Latest Mac snapshot received. CloudKit record not found.")
+    #expect(presentation.detail == "Latest usage received from your Mac.")
     #expect(presentation.symbol == "checkmark.icloud")
 }
 
-@Test func companionSyncPresentationNamesLocalMirrorDeliverySource() throws {
+@Test func companionSyncPresentationHidesLocalMirrorDeliverySource() throws {
     let now = Date(timeIntervalSince1970: 3_081.5)
     let document = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now),
@@ -611,7 +611,7 @@ import Testing
     )
 
     #expect(presentation.title == "Synced from Mac")
-    #expect(presentation.detail == "Latest Mac snapshot loaded from the local mirror.")
+    #expect(presentation.detail == "Latest usage received from your Mac.")
     #expect(presentation.symbol == "checkmark.circle")
 }
 
@@ -700,7 +700,7 @@ import Testing
     )
 
     #expect(presentation.title == "Synced from Mac")
-    #expect(presentation.detail == "Latest Mac snapshot received.")
+    #expect(presentation.detail == "Latest usage received from your Mac.")
     #expect(presentation.symbol == "checkmark.icloud")
     #expect(presentation.usageSummary == "1 provider needs attention on your Mac.")
 }
@@ -740,7 +740,7 @@ import Testing
     #expect(presentation.usageSummary == "2 providers need attention on your Mac.")
 }
 
-@Test func companionSyncPresentationKeepsTransportFailuresSeparate() throws {
+@Test func companionSyncPresentationSanitizesTransportFailures() throws {
     let now = Date(timeIntervalSince1970: 3_088)
     let document = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now),
@@ -755,8 +755,8 @@ import Testing
         )
     )
 
-    #expect(presentation.title == "Sync failed")
-    #expect(presentation.detail == "app group mirror could not be updated")
+    #expect(presentation.title == "Sync unavailable")
+    #expect(presentation.detail == "This device could not load your synced usage.")
     #expect(presentation.symbol == "icloud.slash")
     #expect(presentation.usageSummary == nil)
 }
@@ -768,13 +768,21 @@ import Testing
     let failure = CompanionSyncPresentation(
         result: CompanionSyncLoadResult(document: nil, status: .failure)
     )
+    let loading = CompanionSyncPresentation(
+        result: CompanionSyncLoadResult(document: nil, status: .loading)
+    )
     let unknown = CompanionSyncPresentation(
         result: CompanionSyncLoadResult(document: nil, status: .unknown)
     )
 
-    #expect(stale.title == "Mac sync is stale")
-    #expect(failure.title == "Sync failed")
-    #expect(unknown.title == "Waiting for Mac sync")
+    #expect(stale.title == "Saved usage is stale")
+    #expect(stale.detail == "Open Context Panel on your Mac to refresh this device.")
+    #expect(failure.title == "Sync unavailable")
+    #expect(failure.detail == "This device could not load your synced usage.")
+    #expect(loading.title == "Checking for updates")
+    #expect(loading.detail == "Looking for the latest usage from your Mac.")
+    #expect(unknown.title == "Waiting for your Mac")
+    #expect(unknown.detail == "Open Context Panel on your Mac to share usage with this device.")
 }
 
 @Test func companionSyncStoreStatusIsUnknownForEmptyDocument() throws {
@@ -1039,7 +1047,7 @@ import Testing
     #expect(result.document?.snapshot.generatedAt == document.snapshot.generatedAt)
     #expect(result.status == .close)
     #expect(result.transportMetadata?.source == .appGroup)
-    #expect(CompanionSyncPresentation(result: result).detail == "Latest Mac snapshot loaded from the local mirror.")
+    #expect(CompanionSyncPresentation(result: result).detail == "Latest usage received from your Mac.")
 }
 
 @Test func companionAppGroupMirrorDiagnosticsStayHealthyWithoutICloudFallback() throws {
@@ -1445,7 +1453,7 @@ import Testing
     #expect(widget.promptCacheWidgetState == .unavailable)
 }
 
-@Test func widgetSnapshotFromMissingCompanionSyncAsksForMacSync() {
+@Test func widgetSnapshotFromMissingCompanionDataAsksToOpenTheMacApp() {
     let now = Date(timeIntervalSince1970: 3_300)
 
     let widget = WidgetSnapshot.fromCompanionSync(
@@ -1455,7 +1463,7 @@ import Testing
 
     #expect(widget.state == .setupNeeded)
     #expect(widget.generatedAt == now)
-    #expect(widget.message == "Sync Context Panel from your Mac.")
+    #expect(widget.message == "Open Context Panel on your Mac to share usage.")
 }
 
 @Test func companionPayloadCodecRoundTripsSanitizedDocument() throws {
@@ -1730,7 +1738,7 @@ import Testing
             loadedDocument: true
         ),
     ])
-    #expect(CompanionSyncPresentation(result: result).detail == "Latest Mac snapshot loaded from the local mirror. CloudKit healthy.")
+    #expect(CompanionSyncPresentation(result: result).detail == "Latest usage received from your Mac.")
     #expect(CompanionSyncStore(documentURL: localURL).load().document == localDocument)
 }
 

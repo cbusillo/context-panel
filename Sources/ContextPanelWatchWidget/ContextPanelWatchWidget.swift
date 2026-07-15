@@ -69,7 +69,7 @@ struct ContextPanelWatchWidgetProvider: TimelineProvider {
             generatedAt: date,
             limits: [],
             status: .unknown,
-            message: "Waiting for Mac sync."
+            message: "Waiting for your Mac."
         )
     }
 }

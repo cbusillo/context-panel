@@ -165,7 +165,9 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
                 limits: [],
                 fastModeForecastSettings: .defaultSettings,
                 status: result.status,
-                message: result.errorMessage ?? "Sync Context Panel from your Mac.",
+                message: result.errorMessage == nil
+                    ? "Open Context Panel on your Mac to share usage."
+                    : "Could not load usage from your Mac.",
                 syncErrorMessage: result.errorMessage
             )
         }
@@ -214,11 +216,13 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             observedBurnRates: document.observedBurnRates,
             fastModeForecastSettings: document.fastModeForecastSettings,
             status: status,
-            message: result.errorMessage ?? message(
-                state: state,
-                stored: stored,
-                refreshAttentionSummary: syncDeliveryDelayed ? nil : refreshAttentionSummary
-            ),
+            message: result.errorMessage == nil
+                ? message(
+                    state: state,
+                    stored: stored,
+                    refreshAttentionSummary: syncDeliveryDelayed ? nil : refreshAttentionSummary
+                )
+                : "Showing saved usage because the latest update failed.",
             refreshAttentionSummary: syncDeliveryDelayed ? nil : refreshAttentionSummary,
             syncErrorMessage: result.errorMessage
         )

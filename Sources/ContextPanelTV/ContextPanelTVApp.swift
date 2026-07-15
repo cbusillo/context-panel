@@ -387,14 +387,14 @@ private final class TVSyncModel {
     )
 
     private static let cloudUnavailableMessage =
-        "Cloud sync is unavailable. Showing saved runway; open Context Panel on your Mac if this persists."
+        "Mac updates are unavailable. Showing saved runway; open Context Panel on your Mac if this persists."
     private static let offlineCacheUnavailableMessage =
         "Runway loaded, but it could not be saved for offline use."
     private static let syncReceiptUnavailableMessage =
         "Runway saved for offline use, but its sync time could not be recorded."
 
     private static func forcedRemoteFailureLoadResult() -> CompanionRemoteSyncLoadResult {
-        let message = "Offline validation mode"
+        let message = "Mac updates are unavailable."
         return CompanionRemoteSyncLoadResult(
             result: CompanionSyncLoadResult(
                 document: nil,
@@ -462,7 +462,7 @@ private struct TVHeaderView: View {
                         }
 
                         if presentation.state == .setupNeeded {
-                            Text(isRefreshing ? "Contacting CloudKit" : "No usage received yet")
+                            Text(isRefreshing ? "Checking for updates" : "No usage received yet")
                                 .font(.headline)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -1284,12 +1284,12 @@ private struct TVEmptyRunwayView: View {
 
     private var emptyStateTitle: String {
         if presentation.status == .loading {
-            return "Checking for Mac sync"
+            return "Checking for updates"
         }
         if presentation.state == .failure {
-            return "Check your Mac connection"
+            return "Usage unavailable"
         }
-        return "Publish from your Mac"
+        return "Open Context Panel on your Mac"
     }
 }
 

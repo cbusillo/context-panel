@@ -319,8 +319,31 @@ import Testing
 
     #expect(presentation.status == .loading)
     #expect(presentation.headline == "Checking runway")
-    #expect(presentation.detail == "Refreshing provider capacity published by your Mac.")
+    #expect(presentation.detail == "Refreshing usage from your Mac.")
     #expect(!presentation.sections.isEmpty)
+}
+
+@Test func tvRunwayPresentationUsesPlainSetupLanguage() {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let snapshot = WidgetSnapshot(
+        state: .setupNeeded,
+        generatedAt: now,
+        limits: [],
+        status: .unknown,
+        message: "Waiting"
+    )
+
+    let waiting = TVRunwayPresentation(snapshot: snapshot, mode: .fullDetail, now: now)
+    let refreshing = TVRunwayPresentation(
+        snapshot: snapshot,
+        mode: .fullDetail,
+        isRefreshing: true,
+        now: now
+    )
+
+    #expect(waiting.headline == "Waiting for your Mac")
+    #expect(waiting.detail == "Open Context Panel on your Mac to share usage with this Apple TV.")
+    #expect(refreshing.detail == "Looking for usage from your Mac.")
 }
 
 @Test func tvRunwayPresentationDoesNotCountAccountStatusAsAWindow() throws {
