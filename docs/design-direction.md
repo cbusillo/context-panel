@@ -68,6 +68,7 @@ unknown values indeterminate rather than substituting zero, preserve stale
 last-good values with explicit freshness language, and retain saved order.
 In the Watch app status row, show the freshness timestamp only for settled
 available states so updating, stale, and failure labels keep their full width.
+Allow those status labels to wrap rather than truncate at larger text sizes.
 
 ## App Layout Direction
 
