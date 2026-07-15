@@ -171,6 +171,8 @@ private struct WatchStatusSection: View {
                         Text(generatedText)
                             .foregroundStyle(.tertiary)
                             .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .accessibilityLabel(presentation.generatedAccessibilityText ?? generatedText)
                     }
                 }
                 .font(.caption2.weight(.medium))
@@ -312,16 +314,22 @@ private struct WatchSyncPresentation {
     let symbol: String
     let tint: Color
     let generatedText: String?
+    let generatedAccessibilityText: String?
     let shouldShowDetail: Bool
 
     init(result: CompanionSyncLoadResult, snapshot: WidgetSnapshot, syncErrorMessage: String?) {
-        generatedText = switch result.status {
+        switch result.status {
         case .healthy, .close, .limited:
-            result.document.map { document in
-                document.snapshot.generatedAt.formatted(.relative(presentation: .numeric))
+            if let generatedAt = result.document?.snapshot.generatedAt {
+                generatedText = SnapshotFreshness.compactAgeText(since: generatedAt)
+                generatedAccessibilityText = generatedAt.formatted(.relative(presentation: .numeric))
+            } else {
+                generatedText = nil
+                generatedAccessibilityText = nil
             }
         case .stale, .failure, .loading, .unknown:
-            nil
+            generatedText = nil
+            generatedAccessibilityText = nil
         }
         shouldShowDetail = result.status == .failure || result.status == .stale || result.status == .unknown
 
