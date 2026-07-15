@@ -215,6 +215,10 @@ The `TestFlight Beta Distribution` workflow is manually dispatched or called by
 uploaded build number. It waits until the build is visible and `VALID` in App
 Store Connect, then assigns it to TestFlight beta groups.
 
+Build numbers may be shared across Apple platforms. Distribution matches both
+the requested marketing version and platform, and keeps polling when that build
+number is visible only for a different platform.
+
 By default the workflow includes internal TestFlight beta groups. Pass
 `beta_groups` to add specific named groups as well, or disable
 `include_internal_beta_groups` when only named groups should receive the build.

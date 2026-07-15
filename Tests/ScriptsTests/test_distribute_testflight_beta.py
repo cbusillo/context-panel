@@ -129,6 +129,37 @@ def http_error(status_code: int, body: bytes = b'{"errors": []}') -> urllib.erro
     )
 
 
+def builds_payload(*builds: tuple[str, str, str, str]) -> dict[str, Any]:
+    data = []
+    included = []
+    for build_id, build_number, marketing_version, platform in builds:
+        pre_release_id = f"pre-release-{build_id}"
+        data.append(
+            {
+                "id": build_id,
+                "type": "builds",
+                "attributes": {
+                    "version": build_number,
+                    "processingState": "VALID",
+                    "usesNonExemptEncryption": False,
+                },
+                "relationships": {
+                    "preReleaseVersion": {
+                        "data": {"type": "preReleaseVersions", "id": pre_release_id}
+                    }
+                },
+            }
+        )
+        included.append(
+            {
+                "id": pre_release_id,
+                "type": "preReleaseVersions",
+                "attributes": {"version": marketing_version, "platform": platform},
+            }
+        )
+    return {"data": data, "included": included}
+
+
 class TestFlightDistributionTests(unittest.TestCase):
     def test_selects_internal_groups_by_default(self):
         client = FakeASCClient()
@@ -266,6 +297,32 @@ class TestFlightDistributionTests(unittest.TestCase):
             )
 
         self.assertIn("missing build 202606111944 for platform IOS", str(context.exception))
+
+    def test_ensure_build_waits_for_requested_platform_when_build_number_is_shared(self):
+        client = mock.Mock()
+        client.request.side_effect = [
+            builds_payload(("build-tv", "202606111944", "1.0.45", "TV_OS")),
+            builds_payload(
+                ("build-tv", "202606111944", "1.0.45", "TV_OS"),
+                ("build-mac", "202606111944", "1.0.44", "MAC_OS"),
+            ),
+        ]
+
+        with mock.patch.object(distribute_testflight_beta.time, "sleep") as sleep:
+            build = distribute_testflight_beta.ensure_build(
+                client,
+                "app-1",
+                "1.0.44",
+                "202606111944",
+                "MAC_OS",
+                False,
+                False,
+                wait_timeout_seconds=60,
+                poll_seconds=1,
+            )
+
+        self.assertEqual(build["id"], "build-mac")
+        sleep.assert_called_once_with(1)
 
     def test_parse_args_requires_platform(self):
         with mock.patch(
