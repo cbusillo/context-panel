@@ -3,6 +3,10 @@ import ContextPanelWatchSupport
 import Foundation
 import Testing
 
+@Test func watchCompanionMirrorUsesADedicatedWatchAppGroup() {
+    #expect(ContextPanelLocations.watchAppGroupID == "group.com.shinycomputers.contextpanel.watch")
+}
+
 @Test func watchCompanionMirrorSharesDocumentsAndDisplayPreferences() throws {
     let root = try watchMirrorTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -19,6 +23,21 @@ import Testing
     #expect(loaded.result.document == document)
     #expect(loaded.displayPreferences == preferences)
     #expect(FileManager.default.fileExists(atPath: mirrorURL.path))
+}
+
+@Test func watchCompanionMirrorCreatesItsFirstNestedAppGroupDirectory() throws {
+    let root = try watchMirrorTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let mirrorURL = root
+        .appending(path: "Context Panel", directoryHint: .isDirectory)
+        .appending(path: "Companion", directoryHint: .isDirectory)
+        .appending(path: "watch-mirror.json")
+    let mirror = WatchCompanionMirror(mirrorURL: mirrorURL)
+    let generatedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let document = watchMirrorDocument(generatedAt: generatedAt)
+
+    #expect(mirror.save(document: document, displayPreferences: .defaultPreferences, now: generatedAt))
+    #expect(mirror.load().result.document == document)
 }
 
 @Test func watchCompanionMirrorKeepsANewerDocumentAndItsPreferences() throws {

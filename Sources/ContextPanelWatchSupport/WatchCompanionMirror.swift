@@ -1,5 +1,11 @@
 import ContextPanelCore
 import Foundation
+import OSLog
+
+private let watchCompanionMirrorLogger = Logger(
+    subsystem: "com.shinycomputers.contextpanel",
+    category: "watch-companion-mirror"
+)
 
 public struct WatchCompanionMirrorLoadResult: Equatable, Sendable {
     public let result: CompanionSyncLoadResult
@@ -23,6 +29,7 @@ public struct WatchCompanionMirror: Sendable {
 
     public func load() -> WatchCompanionMirrorLoadResult {
         guard let mirrorURL else {
+            watchCompanionMirrorLogger.error("Watch companion mirror App Group is unavailable.")
             return WatchCompanionMirrorLoadResult(
                 result: CompanionSyncLoadResult(
                     document: nil,
@@ -54,6 +61,10 @@ public struct WatchCompanionMirror: Sendable {
                 displayPreferences: payload.displayPreferences
             )
         } catch {
+            let error = error as NSError
+            watchCompanionMirrorLogger.error(
+                "Watch companion mirror read failed: domain=\(error.domain, privacy: .public) code=\(error.code)"
+            )
             return WatchCompanionMirrorLoadResult(
                 result: CompanionSyncLoadResult(
                     document: nil,
@@ -71,7 +82,10 @@ public struct WatchCompanionMirror: Sendable {
         displayPreferences: WidgetDisplayPreferences,
         now: Date = Date()
     ) -> Bool {
-        guard let mirrorURL else { return false }
+        guard let mirrorURL else {
+            watchCompanionMirrorLogger.error("Watch companion mirror App Group is unavailable during save.")
+            return false
+        }
         do {
             let candidate = Payload(
                 document: document,
@@ -81,6 +95,10 @@ public struct WatchCompanionMirror: Sendable {
             try Self.coordinatedWrite(candidate, to: mirrorURL)
             return true
         } catch {
+            let error = error as NSError
+            watchCompanionMirrorLogger.error(
+                "Watch companion mirror save failed: domain=\(error.domain, privacy: .public) code=\(error.code)"
+            )
             return false
         }
     }

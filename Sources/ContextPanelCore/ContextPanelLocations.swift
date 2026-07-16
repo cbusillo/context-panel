@@ -4,6 +4,7 @@ import Darwin
 public enum ContextPanelLocations {
     public static let appGroupID = "MM5YXC7T6E.group.com.shinycomputers.contextpanel"
     public static let companionAppGroupID = "group.com.shinycomputers.contextpanel"
+    public static let watchAppGroupID = "group.com.shinycomputers.contextpanel.watch"
     public static let iCloudContainerID = "iCloud.com.shinycomputers.contextpanel"
     public static let appBundleID = "com.shinycomputers.contextpanel"
     public static let companionAppBundleID = "com.shinycomputers.contextpanel"
@@ -142,7 +143,7 @@ public enum ContextPanelLocations {
     }
 
     public static func watchCompanionMirrorURL(
-        appGroupID: String = companionAppGroupID
+        appGroupID: String = watchAppGroupID
     ) -> URL? {
         guard let containerURL = appGroupContainerURL(appGroupID: appGroupID) else {
             return nil
