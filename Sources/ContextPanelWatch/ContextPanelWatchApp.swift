@@ -1,6 +1,7 @@
 import ContextPanelCloudKitSync
 import ContextPanelCore
 import SwiftUI
+import WidgetKit
 
 @main
 struct ContextPanelWatchApp: App {
@@ -139,6 +140,7 @@ private final class WatchSyncModel {
                 localOverride: presentationDocument?.widgetDisplayPreferences ?? cachedDisplayPreferences,
                 synced: displayResult.document?.widgetDisplayPreferences
             )
+            WidgetCenter.shared.reloadTimelines(ofKind: ContextPanelWatchWidgetIdentity.kind)
         }
     }
 }

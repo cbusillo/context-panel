@@ -19,6 +19,10 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(ContextPanelCompanionWidgetIdentity.kind == "ContextPanelCompanionWidget")
 }
 
+@Test func watchWidgetKindMatchesSharedReloadIdentity() {
+    #expect(ContextPanelWatchWidgetIdentity.kind == "ContextPanelWatchWidget")
+}
+
 @Test func widgetSnapshotUsesSetupNeededForMissingStore() {
     let widget = WidgetSnapshot.fromStore(
         SnapshotStoreLoadResult(snapshot: nil, status: .unknown),
