@@ -460,7 +460,6 @@ targets:
       - path: Sources/ContextPanelWatchSupport
     dependencies:
       - target: ContextPanelCoreWatch
-      - target: ContextPanelCloudKitSyncWatch
     info:
       path: Config/ContextPanelWatchWidget-Info.plist
       properties:

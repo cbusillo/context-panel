@@ -170,9 +170,12 @@ publish to CloudKit or the existing local app-group mirror. CloudKit transport
 clients retain their `CKContainer` for the full client lifetime so asynchronous
 record operations cannot outlive the underlying CloudKit client.
 
-After the watchOS app finishes a companion reload, it invalidates the Context
-Panel complication timeline. The WidgetKit extension then resolves the current
-CloudKit document instead of preserving the timeline that predated the app sync.
+After the watchOS app finishes a companion reload, it atomically mirrors the
+selected companion document and effective display preferences into its shared
+App Group before invalidating the Context Panel complication timeline. The
+WidgetKit extension reads that local payload without performing CloudKit work,
+so it can always complete promptly and replace the timeline that predated the
+app sync. The timeline also includes a future stale transition.
 
 Widget display preferences use one-way defaults plus local companion ownership.
 The Mac continues publishing its preferences in `CompanionSyncDocument` for

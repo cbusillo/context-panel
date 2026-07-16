@@ -76,10 +76,6 @@ public enum ContextPanelLocations {
         applicationSupportDirectory().appending(path: "widget-display-preferences.json")
     }
 
-    public static func watchPresentationPreferencesCacheURL() -> URL {
-        applicationSupportDirectory().appending(path: "watch-presentation-preferences.json")
-    }
-
     public static func widgetSandboxLocalFastModeForecastSettingsURL() -> URL {
         applicationSupportDirectory().appending(path: "fast-mode-forecast-settings.json")
     }
@@ -143,6 +139,16 @@ public enum ContextPanelLocations {
         }
         return companionSyncDirectory(containerURL: containerURL)
             .appending(path: companionSyncDocumentFileName)
+    }
+
+    public static func watchCompanionMirrorURL(
+        appGroupID: String = companionAppGroupID
+    ) -> URL? {
+        guard let containerURL = appGroupContainerURL(appGroupID: appGroupID) else {
+            return nil
+        }
+        return companionSyncDirectory(containerURL: containerURL)
+            .appending(path: "context-panel-watch-mirror.json")
     }
 
     public static func companionSyncStoreSet(

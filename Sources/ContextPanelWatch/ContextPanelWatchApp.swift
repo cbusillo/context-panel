@@ -66,9 +66,7 @@ private struct WatchRootView: View {
 private final class WatchSyncModel {
     private let remoteStore = CompanionCloudKitSyncStoreFactory.make()
     private let presentationPreferencesRemoteStore = CompanionCloudKitSyncStoreFactory.makePresentationPreferences()
-    private let presentationPreferencesStore = WidgetDisplayPreferencesStore(
-        preferencesURL: ContextPanelLocations.watchPresentationPreferencesCacheURL()
-    )
+    private let companionMirror = WatchCompanionMirror()
     private var reloadTask: Task<Void, Never>?
     private var needsReloadAfterCurrentTask = false
 
@@ -96,9 +94,9 @@ private final class WatchSyncModel {
         result = CompanionSyncLoadResult(document: result.document, status: .loading)
         displayResult = CompanionSyncLoadResult(document: displayResult.document, status: .loading)
         lastSyncErrorMessage = nil
-        let cachedDisplayPreferences = presentationPreferencesStore.loadIfAvailable()
+        let cachedDisplayPreferences = companionMirror.load().displayPreferences
 
-        reloadTask = Task { [weak self, remoteStore, presentationPreferencesRemoteStore, presentationPreferencesStore] in
+        reloadTask = Task { [weak self, remoteStore, presentationPreferencesRemoteStore, companionMirror] in
             defer {
                 if let self {
                     isLoading = false
@@ -133,14 +131,23 @@ private final class WatchSyncModel {
                 now: now,
                 stalenessPolicy: SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
             )
-            if let presentationPreferences = presentationDocument?.widgetDisplayPreferences {
-                try? presentationPreferencesStore.save(presentationPreferences)
-            }
-            displayPreferences = WidgetDisplayPreferences.companionEffectivePreferences(
+            let effectiveDisplayPreferences = WidgetDisplayPreferences.companionEffectivePreferences(
                 localOverride: presentationDocument?.widgetDisplayPreferences ?? cachedDisplayPreferences,
                 synced: displayResult.document?.widgetDisplayPreferences
             )
-            WidgetCenter.shared.reloadTimelines(ofKind: ContextPanelWatchWidgetIdentity.kind)
+            displayPreferences = effectiveDisplayPreferences
+            let mirrorSaved = if let document = displayResult.document {
+                companionMirror.save(
+                    document: document,
+                    displayPreferences: effectiveDisplayPreferences,
+                    now: now
+                )
+            } else {
+                false
+            }
+            if mirrorSaved {
+                WidgetCenter.shared.reloadTimelines(ofKind: ContextPanelWatchWidgetIdentity.kind)
+            }
         }
     }
 }

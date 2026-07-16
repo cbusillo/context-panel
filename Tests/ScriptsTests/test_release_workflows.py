@@ -1575,7 +1575,12 @@ exit 65
             script,
         )
         self.assertIn("assert_profile_icloud_service \"$watch_profile\" \"companion watch\" \"CloudKit\"", script)
+        self.assertIn("assert_profile_app_group \"$watch_profile\" \"companion watch\"", script)
         self.assertIn(
+            "assert_profile_app_group \"$watch_widget_profile\" \"companion watch widget\"",
+            script,
+        )
+        self.assertNotIn(
             "assert_profile_icloud_service \"$watch_widget_profile\" \"companion watch widget\" \"CloudKit\"",
             script,
         )

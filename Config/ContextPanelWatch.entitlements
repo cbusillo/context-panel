@@ -10,5 +10,9 @@
 	<array>
 		<string>CloudKit</string>
 	</array>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.shinycomputers.contextpanel</string>
+	</array>
 </dict>
 </plist>
