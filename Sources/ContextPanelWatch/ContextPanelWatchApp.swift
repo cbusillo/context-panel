@@ -256,19 +256,7 @@ private struct WatchLimitRow: View {
 
             pressureTrack
 
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(limit.context)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .layoutPriority(1)
-                Spacer(minLength: 4)
-                if let resetText {
-                    Text(resetText)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.trailing)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
+            footer
             .font(.caption2)
             .foregroundStyle(.tertiary)
         }
@@ -294,6 +282,34 @@ private struct WatchLimitRow: View {
 
     private var resetText: String? {
         limit.resetText.map { "reset \($0)" }
+    }
+
+    @ViewBuilder
+    private var footer: some View {
+        if let resetText {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(limit.context)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                    Spacer(minLength: 4)
+                    Text(resetText)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(limit.context)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(resetText)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+            }
+        } else {
+            Text(limit.context)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private var statusColor: Color {

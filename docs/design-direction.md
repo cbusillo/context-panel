@@ -71,8 +71,9 @@ available states so updating, stale, and failure labels keep their full width.
 Allow those status labels to wrap rather than truncate at larger text sizes.
 Keep settled-state freshness visually compact while preserving the full elapsed
 duration for accessibility output.
-Keep Watch limit footers on one line when they fit, preserve the account context,
-and let longer reset text reflow to a second trailing line instead of truncating.
+Keep Watch limit footers on one line when they fit. When they do not, allow the
+account context to wrap and move the reset to a separate trailing line instead
+of truncating either value.
 
 ## App Layout Direction
 
