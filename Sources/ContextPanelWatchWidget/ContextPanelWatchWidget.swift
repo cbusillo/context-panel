@@ -323,7 +323,7 @@ struct WatchCornerComplication: View {
 }
 
 struct ContextPanelWatchWidget: Widget {
-    let kind = "ContextPanelWatchWidget"
+    let kind = ContextPanelWatchWidgetIdentity.kind
 
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: ContextPanelWatchWidgetProvider()) { entry in
