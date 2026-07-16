@@ -1,4 +1,3 @@
-import ContextPanelCloudKitSync
 import ContextPanelCore
 import SwiftUI
 import WidgetKit
@@ -20,47 +19,17 @@ struct ContextPanelWatchWidgetProvider: TimelineProvider {
     }
 
     func getSnapshot(in context: Context, completion: @escaping (ContextPanelWatchWidgetEntry) -> Void) {
-        let completion = WidgetCompletion(completion)
-        Task {
-            completion.call(await entry(date: Date()))
-        }
+        WatchWidgetLoadQueue.load(date: Date(), completion: completion)
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<ContextPanelWatchWidgetEntry>) -> Void) {
         let date = Date()
-        let completion = WidgetCompletion(completion)
-        Task {
-            completion.call(Timeline(
-                entries: [await entry(date: date)],
+        WatchWidgetLoadQueue.loadTimeline(date: date) { entries in
+            completion(Timeline(
+                entries: entries,
                 policy: .after(date.addingTimeInterval(15 * 60))
             ))
         }
-    }
-
-    private func entry(date: Date) async -> ContextPanelWatchWidgetEntry {
-        let presentationPreferencesStore = WidgetDisplayPreferencesStore(
-            preferencesURL: ContextPanelLocations.watchPresentationPreferencesCacheURL()
-        )
-        let cachedDisplayPreferences = presentationPreferencesStore.loadIfAvailable()
-        async let loadedSnapshot = CompanionCloudKitSyncStoreFactory.make().load(now: date)
-        async let loadedPresentation = CompanionCloudKitSyncStoreFactory.makePresentationPreferences().load()
-        let result = await loadedSnapshot.result
-        let presentationDocument = await loadedPresentation.document
-        if let presentationPreferences = presentationDocument?.widgetDisplayPreferences {
-            try? presentationPreferencesStore.save(presentationPreferences)
-        }
-        return ContextPanelWatchWidgetEntry(
-            date: date,
-            snapshot: WidgetSnapshot.fromCompanionSync(
-                result,
-                now: date,
-                stalenessPolicy: SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
-            ),
-            displayPreferences: WidgetDisplayPreferences.companionEffectivePreferences(
-                localOverride: presentationDocument?.widgetDisplayPreferences ?? cachedDisplayPreferences,
-                synced: result.document?.widgetDisplayPreferences
-            )
-        )
     }
 
     private func placeholderSnapshot(date: Date) -> WidgetSnapshot {
@@ -74,15 +43,63 @@ struct ContextPanelWatchWidgetProvider: TimelineProvider {
     }
 }
 
-private struct WidgetCompletion<Value>: @unchecked Sendable {
-    private let completion: (Value) -> Void
+private enum WatchWidgetLoadQueue {
+    private static let queue = DispatchQueue(
+        label: "com.shinycomputers.contextpanel.watch-widget-load",
+        qos: .utility
+    )
 
-    init(_ completion: @escaping (Value) -> Void) {
-        self.completion = completion
+    static func load(date: Date, completion: @escaping (ContextPanelWatchWidgetEntry) -> Void) {
+        queue.async {
+            completion(entry(date: date, stalenessPolicy: stalenessPolicy))
+        }
     }
 
-    func call(_ value: Value) {
-        completion(value)
+    static func loadTimeline(
+        date: Date,
+        completion: @escaping ([ContextPanelWatchWidgetEntry]) -> Void
+    ) {
+        queue.async {
+            let currentEntry = entry(date: date, stalenessPolicy: stalenessPolicy)
+            guard currentEntry.snapshot.state == .ready,
+                  let staleDate = stalenessPolicy.nextStaleTransitionDate(
+                    for: currentEntry.snapshot.usageSnapshot,
+                    now: date
+                  )
+            else {
+                completion([currentEntry])
+                return
+            }
+            completion([
+                currentEntry,
+                entry(date: staleDate, stalenessPolicy: stalenessPolicy),
+            ])
+        }
+    }
+
+    private static var stalenessPolicy: SnapshotStoreStalenessPolicy {
+        SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
+    }
+
+    private static func entry(
+        date: Date,
+        stalenessPolicy: SnapshotStoreStalenessPolicy
+    ) -> ContextPanelWatchWidgetEntry {
+        let mirror = WatchCompanionMirror()
+        let mirrored = mirror.load()
+        let result = mirrored.result
+        return ContextPanelWatchWidgetEntry(
+            date: date,
+            snapshot: WidgetSnapshot.fromCompanionSync(
+                result,
+                now: date,
+                stalenessPolicy: stalenessPolicy
+            ),
+            displayPreferences: WidgetDisplayPreferences.companionEffectivePreferences(
+                localOverride: mirrored.displayPreferences,
+                synced: result.document?.widgetDisplayPreferences
+            )
+        )
     }
 }
 

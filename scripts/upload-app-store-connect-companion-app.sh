@@ -666,7 +666,8 @@ if [[ "$platform" == "ios" ]]; then
 	assert_profile_platform_any "$watch_profile" "companion watch" iOS watchOS
 	assert_profile_platform_any "$watch_widget_profile" "companion watch widget" iOS watchOS
 	assert_profile_icloud_service "$watch_profile" "companion watch" "CloudKit"
-	assert_profile_icloud_service "$watch_widget_profile" "companion watch widget" "CloudKit"
+	assert_profile_app_group "$watch_profile" "companion watch"
+	assert_profile_app_group "$watch_widget_profile" "companion watch widget"
 fi
 if [[ "$platform" == "tvos" ]]; then
 	assert_profile_bundle_id "$tv_top_shelf_profile" "tvOS Top Shelf" "com.shinycomputers.contextpanel.topshelf"
