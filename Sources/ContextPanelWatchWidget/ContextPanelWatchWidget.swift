@@ -1,3 +1,4 @@
+import ContextPanelCloudKitSync
 import ContextPanelCore
 import SwiftUI
 import WidgetKit
@@ -19,17 +20,12 @@ struct ContextPanelWatchWidgetProvider: TimelineProvider {
     }
 
     func getSnapshot(in context: Context, completion: @escaping (ContextPanelWatchWidgetEntry) -> Void) {
-        WatchWidgetLoadQueue.load(date: Date(), completion: completion)
+        WatchWidgetLoadQueue.loadSnapshot(date: Date(), completion: completion)
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<ContextPanelWatchWidgetEntry>) -> Void) {
         let date = Date()
-        WatchWidgetLoadQueue.loadTimeline(date: date) { entries in
-            completion(Timeline(
-                entries: entries,
-                policy: .after(date.addingTimeInterval(15 * 60))
-            ))
-        }
+        WatchWidgetLoadQueue.loadTimeline(date: date, completion: completion)
     }
 
     private func placeholderSnapshot(date: Date) -> WidgetSnapshot {
@@ -48,32 +44,66 @@ private enum WatchWidgetLoadQueue {
         label: "com.shinycomputers.contextpanel.watch-widget-load",
         qos: .utility
     )
+    private static let cache = WatchCompanionCache()
+    private static let loader: WatchCompanionLoader = {
+        let remoteStore = CompanionCloudKitSyncStoreFactory.make()
+        let presentationStore = CompanionCloudKitSyncStoreFactory.makePresentationPreferences()
+        return WatchCompanionLoader(
+            cache: cache,
+            loadDocument: { now in await remoteStore.load(now: now) },
+            loadPresentation: { await presentationStore.load() }
+        )
+    }()
 
-    static func load(date: Date, completion: @escaping (ContextPanelWatchWidgetEntry) -> Void) {
+    static func loadSnapshot(date: Date, completion: @escaping (ContextPanelWatchWidgetEntry) -> Void) {
         queue.async {
-            completion(entry(date: date, stalenessPolicy: stalenessPolicy))
+            completion(entry(
+                date: date,
+                loaded: cache.load(),
+                stalenessPolicy: stalenessPolicy
+            ))
         }
     }
 
     static func loadTimeline(
         date: Date,
-        completion: @escaping ([ContextPanelWatchWidgetEntry]) -> Void
+        completion: @escaping (Timeline<ContextPanelWatchWidgetEntry>) -> Void
     ) {
-        queue.async {
-            let currentEntry = entry(date: date, stalenessPolicy: stalenessPolicy)
+        let completion = WatchWidgetCompletion(completion)
+        Task.detached(priority: .utility) {
+            let loaded = await loader.load(now: date)
+            let currentEntry = entry(
+                date: date,
+                loaded: loaded,
+                stalenessPolicy: stalenessPolicy
+            )
+            let refreshInterval: TimeInterval = switch loaded.result.status {
+            case .failure, .stale:
+                5 * 60
+            case .healthy, .close, .limited, .unknown, .loading:
+                15 * 60
+            }
+            let refreshPolicy = TimelineReloadPolicy.after(date.addingTimeInterval(refreshInterval))
             guard currentEntry.snapshot.state == .ready,
                   let staleDate = stalenessPolicy.nextStaleTransitionDate(
                     for: currentEntry.snapshot.usageSnapshot,
                     now: date
                   )
             else {
-                completion([currentEntry])
+                completion.call(Timeline(entries: [currentEntry], policy: refreshPolicy))
                 return
             }
-            completion([
-                currentEntry,
-                entry(date: staleDate, stalenessPolicy: stalenessPolicy),
-            ])
+            completion.call(Timeline(
+                entries: [
+                    currentEntry,
+                    entry(
+                        date: staleDate,
+                        loaded: loaded,
+                        stalenessPolicy: stalenessPolicy
+                    ),
+                ],
+                policy: refreshPolicy
+            ))
         }
     }
 
@@ -83,11 +113,10 @@ private enum WatchWidgetLoadQueue {
 
     private static func entry(
         date: Date,
+        loaded: WatchCompanionCacheLoadResult,
         stalenessPolicy: SnapshotStoreStalenessPolicy
     ) -> ContextPanelWatchWidgetEntry {
-        let mirror = WatchCompanionMirror()
-        let mirrored = mirror.load()
-        let result = mirrored.result
+        let result = loaded.result
         return ContextPanelWatchWidgetEntry(
             date: date,
             snapshot: WidgetSnapshot.fromCompanionSync(
@@ -96,10 +125,22 @@ private enum WatchWidgetLoadQueue {
                 stalenessPolicy: stalenessPolicy
             ),
             displayPreferences: WidgetDisplayPreferences.companionEffectivePreferences(
-                localOverride: mirrored.displayPreferences,
+                localOverride: loaded.displayPreferences,
                 synced: result.document?.widgetDisplayPreferences
             )
         )
+    }
+}
+
+private final class WatchWidgetCompletion<Value>: @unchecked Sendable {
+    private let completion: (Value) -> Void
+
+    init(_ completion: @escaping (Value) -> Void) {
+        self.completion = completion
+    }
+
+    func call(_ value: Value) {
+        completion(value)
     }
 }
 

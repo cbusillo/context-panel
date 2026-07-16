@@ -306,6 +306,24 @@ assert_profile_icloud_service() {
 	rm -f "$plist"
 }
 
+assert_profile_icloud_environment() {
+	local profile="$1"
+	local label="$2"
+	local environment="$3"
+	local plist
+	local configured_environment
+	plist="$(mktemp)"
+	security cms -D -i "$profile" -o "$plist"
+	configured_environment="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.icloud-container-environment' "$plist" 2>/dev/null || true)"
+	if [[ "$configured_environment" != "$environment" ]] \
+		&& ! plist_array_contains_value "$plist" 'Entitlements:com.apple.developer.icloud-container-environment' "$environment"; then
+		rm -f "$plist"
+		echo "$label provisioning profile does not authorize iCloud environment: $environment" >&2
+		exit 1
+	fi
+	rm -f "$plist"
+}
+
 assert_profile_ubiquity_container() {
 	local profile="$1"
 	local label="$2"
@@ -584,24 +602,6 @@ assert_tvos_archive_ready() {
 	fi
 }
 
-plist_array_value_count() {
-	local plist="$1"
-	local key="$2"
-	local values
-	local value
-	local count=0
-	if ! values="$(/usr/libexec/PlistBuddy -c "Print :$key" "$plist" 2>/dev/null)"; then
-		return 1
-	fi
-	while IFS= read -r value; do
-		value="${value#"${value%%[![:space:]]*}"}"
-		value="${value%"${value##*[![:space:]]}"}"
-		[[ -n "$value" && "$value" != "Array {" && "$value" != "}" ]] || continue
-		count=$((count + 1))
-	done <<<"$values"
-	printf '%s' "$count"
-}
-
 extract_signed_entitlements() {
 	local bundle="$1"
 	local label="$2"
@@ -616,21 +616,6 @@ extract_signed_entitlements() {
 	fi
 }
 
-assert_signed_app_group_exact() {
-	local entitlements="$1"
-	local label="$2"
-	local app_group="$3"
-	local count
-	if ! count="$(plist_array_value_count "$entitlements" 'com.apple.security.application-groups')"; then
-		echo "$label signed entitlements are missing application groups" >&2
-		exit 1
-	fi
-	if [[ "$count" != "1" ]] || ! plist_array_contains_value "$entitlements" 'com.apple.security.application-groups' "$app_group"; then
-		echo "$label signed entitlements must contain only app group: $app_group" >&2
-		exit 1
-	fi
-}
-
 assert_signed_entitlement_array_value() {
 	local entitlements="$1"
 	local label="$2"
@@ -638,6 +623,19 @@ assert_signed_entitlement_array_value() {
 	local value="$4"
 	if ! plist_array_contains_value "$entitlements" "$key" "$value"; then
 		echo "$label signed entitlements do not contain $key value: $value" >&2
+		exit 1
+	fi
+}
+
+assert_signed_entitlement_value() {
+	local entitlements="$1"
+	local label="$2"
+	local key="$3"
+	local expected_value="$4"
+	local actual_value
+	actual_value="$(/usr/libexec/PlistBuddy -c "Print :$key" "$entitlements" 2>/dev/null || true)"
+	if [[ "$actual_value" != "$expected_value" ]]; then
+		echo "$label signed entitlements have $key value '$actual_value', expected '$expected_value'" >&2
 		exit 1
 	fi
 }
@@ -658,7 +656,6 @@ assert_ios_watch_archive_ready() {
 	local entitlements_dir
 	local watch_app_entitlements
 	local watch_widget_entitlements
-	local watch_app_group="group.com.shinycomputers.contextpanel.watch"
 	if [[ ! -d "$watch_app_path" ]]; then
 		echo "iOS archive is missing the embedded Watch app: $watch_app_path" >&2
 		exit 1
@@ -672,16 +669,22 @@ assert_ios_watch_archive_ready() {
 	watch_widget_entitlements="$entitlements_dir/watch-widget.plist"
 	extract_signed_entitlements "$watch_app_path" "companion Watch app" "$watch_app_entitlements"
 	extract_signed_entitlements "$watch_widget_path" "companion Watch widget" "$watch_widget_entitlements"
-	assert_signed_app_group_exact "$watch_app_entitlements" "companion Watch app" "$watch_app_group"
+	assert_signed_entitlement_absent "$watch_app_entitlements" "companion Watch app" \
+		'com.apple.security.application-groups'
+	assert_signed_entitlement_array_value "$watch_app_entitlements" "companion Watch app" \
+		'com.apple.developer.icloud-container-identifiers' 'iCloud.com.shinycomputers.contextpanel'
 	assert_signed_entitlement_array_value "$watch_app_entitlements" "companion Watch app" \
 		'com.apple.developer.icloud-services' 'CloudKit'
-	assert_signed_app_group_exact "$watch_widget_entitlements" "companion Watch widget" "$watch_app_group"
+	assert_signed_entitlement_value "$watch_app_entitlements" "companion Watch app" \
+		'com.apple.developer.icloud-container-environment' 'Production'
 	assert_signed_entitlement_absent "$watch_widget_entitlements" "companion Watch widget" \
-		'com.apple.developer.icloud-container-identifiers'
-	assert_signed_entitlement_absent "$watch_widget_entitlements" "companion Watch widget" \
-		'com.apple.developer.icloud-container-environment'
-	assert_signed_entitlement_absent "$watch_widget_entitlements" "companion Watch widget" \
-		'com.apple.developer.icloud-services'
+		'com.apple.security.application-groups'
+	assert_signed_entitlement_array_value "$watch_widget_entitlements" "companion Watch widget" \
+		'com.apple.developer.icloud-container-identifiers' 'iCloud.com.shinycomputers.contextpanel'
+	assert_signed_entitlement_array_value "$watch_widget_entitlements" "companion Watch widget" \
+		'com.apple.developer.icloud-services' 'CloudKit'
+	assert_signed_entitlement_value "$watch_widget_entitlements" "companion Watch widget" \
+		'com.apple.developer.icloud-container-environment' 'Production'
 	rm -rf "$entitlements_dir"
 }
 
@@ -767,8 +770,9 @@ if [[ "$platform" == "ios" ]]; then
 	assert_profile_platform_any "$watch_profile" "companion watch" iOS watchOS
 	assert_profile_platform_any "$watch_widget_profile" "companion watch widget" iOS watchOS
 	assert_profile_icloud_service "$watch_profile" "companion watch" "CloudKit"
-	assert_profile_app_group "$watch_profile" "companion watch" "group.com.shinycomputers.contextpanel.watch"
-	assert_profile_app_group "$watch_widget_profile" "companion watch widget" "group.com.shinycomputers.contextpanel.watch"
+	assert_profile_icloud_service "$watch_widget_profile" "companion watch widget" "CloudKit"
+	assert_profile_icloud_environment "$watch_profile" "companion watch" "Production"
+	assert_profile_icloud_environment "$watch_widget_profile" "companion watch widget" "Production"
 fi
 if [[ "$platform" == "tvos" ]]; then
 	assert_profile_bundle_id "$tv_top_shelf_profile" "tvOS Top Shelf" "com.shinycomputers.contextpanel.topshelf"

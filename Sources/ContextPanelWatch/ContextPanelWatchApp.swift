@@ -64,9 +64,7 @@ private struct WatchRootView: View {
 @MainActor
 @Observable
 private final class WatchSyncModel {
-    private let remoteStore = CompanionCloudKitSyncStoreFactory.make()
-    private let presentationPreferencesRemoteStore = CompanionCloudKitSyncStoreFactory.makePresentationPreferences()
-    private let companionMirror = WatchCompanionMirror()
+    private let companionLoader: WatchCompanionLoader
     private var reloadTask: Task<Void, Never>?
     private var needsReloadAfterCurrentTask = false
 
@@ -75,10 +73,20 @@ private final class WatchSyncModel {
     private(set) var snapshot = WidgetSnapshot.fromCompanionSync(
         CompanionSyncLoadResult(document: nil, status: .unknown)
     )
-    private var lastGoodDocument: CompanionSyncDocument?
     private(set) var displayPreferences = WidgetDisplayPreferences.defaultPreferences
     private(set) var lastSyncErrorMessage: String?
     private(set) var isLoading = false
+
+    init() {
+        let cache = WatchCompanionCache()
+        let remoteStore = CompanionCloudKitSyncStoreFactory.make()
+        let presentationStore = CompanionCloudKitSyncStoreFactory.makePresentationPreferences()
+        companionLoader = WatchCompanionLoader(
+            cache: cache,
+            loadDocument: { now in await remoteStore.load(now: now) },
+            loadPresentation: { await presentationStore.load() }
+        )
+    }
 
     var displayLimits: [WatchLimitDisplay] {
         WatchLimitDisplay.rows(from: snapshot, maximumCount: 8)
@@ -94,9 +102,8 @@ private final class WatchSyncModel {
         result = CompanionSyncLoadResult(document: result.document, status: .loading)
         displayResult = CompanionSyncLoadResult(document: displayResult.document, status: .loading)
         lastSyncErrorMessage = nil
-        let cachedDisplayPreferences = companionMirror.load().displayPreferences
 
-        reloadTask = Task { [weak self, remoteStore, presentationPreferencesRemoteStore, companionMirror] in
+        reloadTask = Task { [weak self, companionLoader] in
             defer {
                 if let self {
                     isLoading = false
@@ -106,46 +113,26 @@ private final class WatchSyncModel {
                     }
                 }
             }
-            async let loadedSnapshot = remoteStore.load(now: now)
-            async let loadedPresentation = presentationPreferencesRemoteStore.load()
-            let loaded = await loadedSnapshot.result
-            let presentationDocument = await loadedPresentation.document
+            let loaded = await companionLoader.load(now: now)
             guard !Task.isCancelled else { return }
             guard let self else { return }
-            if let document = loaded.document {
-                lastGoodDocument = document
-            }
-            let displayResult = loaded.document == nil && loaded.status == .failure
-                ? CompanionSyncLoadResult(
-                    document: lastGoodDocument,
-                    status: lastGoodDocument == nil ? .failure : .stale,
-                    errorMessage: lastGoodDocument == nil ? loaded.errorMessage : nil,
-                    transportStatuses: lastGoodDocument == nil ? loaded.transportStatuses : []
-                )
-                : loaded
-            result = loaded
-            self.displayResult = displayResult
-            lastSyncErrorMessage = loaded.status == .failure ? loaded.errorMessage : nil
+            result = loaded.result
+            displayResult = loaded.result
+            lastSyncErrorMessage = loaded.result.status == .failure
+                ? loaded.result.errorMessage
+                : nil
             snapshot = WidgetSnapshot.fromCompanionSync(
-                displayResult,
+                loaded.result,
                 now: now,
                 stalenessPolicy: SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
             )
             let effectiveDisplayPreferences = WidgetDisplayPreferences.companionEffectivePreferences(
-                localOverride: presentationDocument?.widgetDisplayPreferences ?? cachedDisplayPreferences,
-                synced: displayResult.document?.widgetDisplayPreferences
+                localOverride: loaded.displayPreferences,
+                synced: loaded.result.document?.widgetDisplayPreferences
             )
             displayPreferences = effectiveDisplayPreferences
-            let mirrorSaved = if let document = displayResult.document {
-                companionMirror.save(
-                    document: document,
-                    displayPreferences: effectiveDisplayPreferences,
-                    now: now
-                )
-            } else {
-                false
-            }
-            if mirrorSaved {
+            if loaded.result.document != nil,
+               loaded.result.transportMetadata?.source == .cloudKit {
                 WidgetCenter.shared.reloadTimelines(ofKind: ContextPanelWatchWidgetIdentity.kind)
             }
         }

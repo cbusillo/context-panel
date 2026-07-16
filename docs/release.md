@@ -401,23 +401,25 @@ CloudKit, or APNs entitlements; it reads only the app-group mirror written by th
 companion app.
 
 For iOS companion uploads, the watch app profile must authorize bundle ID
-`com.shinycomputers.contextpanel.watch`, App Group
-`group.com.shinycomputers.contextpanel.watch`, and the Context Panel CloudKit
-container. The watch complication profile must authorize bundle ID
-`com.shinycomputers.contextpanel.watch.widget` and the same Watch-only App Group; the
-complication reads the local mirror written by the watch app and does not need
-CloudKit access. App Store Connect may report `iOS` platform metadata for the
-embedded watch profiles because the watch app and complication extension are
-exported as part of the iOS companion archive. The watch app is embedded only in
-the iOS companion package; native visionOS companion builds deliberately exclude
-watchOS content. The upload script stops before export if the archived Watch app
-or complication is not signed for exactly the dedicated Watch App Group, if the
-Watch app lacks CloudKit, or if the complication unexpectedly carries CloudKit.
+`com.shinycomputers.contextpanel.watch` and the Context Panel CloudKit container.
+The watch complication profile must authorize bundle ID
+`com.shinycomputers.contextpanel.watch.widget` and the same CloudKit container;
+the watch complication reads Production CloudKit directly and keeps a last-good
+cache in its own sandbox. Neither Watch target should request an App Group.
+Debug targets use Development CloudKit entitlements, while Release targets use
+the dedicated Watch App Store entitlement files that require Production.
+App Store Connect may report `iOS` platform metadata for the embedded watch
+profiles because the watch app and complication extension are exported as part
+of the iOS companion archive. The watch app is embedded only in the iOS companion
+package; native visionOS companion builds deliberately exclude watchOS content.
+The upload script stops before export if either archived Watch target carries an
+App Group or lacks its required Production CloudKit container and entitlements.
 
-After an upgrade that introduces or changes the Watch App Group, the local mirror
-starts empty. Launch the Watch app and require one successful CloudKit refresh
-before evaluating the complication; it may show unknown until that first refresh
-writes the new mirror. Do not fall back to a previously denied App Group.
+For physical TestFlight validation, exercise both a cold complication load and a
+cached degraded load. A cold load must render current Production CloudKit data
+without first launching the Watch app. After one successful load, temporarily
+removing network access should preserve last-good numbers as stale rather than
+returning setup-only or silently healthy output.
 
 The tvOS app profile is separate from the iOS/visionOS companion app profile
 even though it uses the same bundle ID. It must support `tvOS`, authorize
@@ -677,6 +679,9 @@ Panel.app`.
    copy.
 7. Add the companion widget and confirm the small/medium/large widget layouts
    render current lanes and preserve useful degraded states.
+   For watchOS, add the complication before launching the Watch app and confirm
+   it reads the Production CloudKit snapshot directly. Then launch the Watch app
+   and confirm its explicit timeline reload preserves the same answer.
 8. Reopen the Mac Diagnostics view and confirm companion load/readback state is
    explainable: healthy, stale, unavailable, partial, or failed.
 9. Exercise degraded cases when practical: CloudKit disabled or unavailable,
@@ -827,7 +832,10 @@ group or a same-team wildcard. Companion iOS and visionOS uploads require the
 companion app profile to authorize the Context Panel iCloud container,
 iCloud Documents, CloudKit, ubiquity container access, and production APNs. The
 companion widget profile should authorize only the App Group and selected
-platform because the widget reads the companion app's app-group mirror.
+platform because the companion widget reads the companion app's app-group
+mirror. The embedded watch app and watch complication profiles must both
+authorize the Context Panel CloudKit container; neither Watch target should
+carry an App Group entitlement.
 
 ## Build The Native App And Widget
 

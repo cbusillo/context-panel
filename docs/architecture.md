@@ -164,19 +164,21 @@ projection or a stricter descendant, not `StoredUsageSnapshot`.
 CloudKit is the remote companion transport. Companion apps load the
 Mac-published CloudKit record when available and mirror the sanitized companion
 document into their local App Group store for app launch and WidgetKit timeline
-reads. The legacy iCloud Drive companion document is no longer part of the
-default companion runtime load path; recovery should come from a fresh Mac
-publish to CloudKit or the existing local app-group mirror. CloudKit transport
-clients retain their `CKContainer` for the full client lifetime so asynchronous
-record operations cannot outlive the underlying CloudKit client.
+reads on iPhone, iPad, and visionOS. The legacy iCloud Drive companion document
+is no longer part of the default companion runtime load path; recovery should
+come from a fresh Mac publish to CloudKit or the existing local app-group mirror.
+CloudKit transport clients retain their `CKContainer` for the full client
+lifetime so asynchronous record operations cannot outlive the underlying
+CloudKit client.
 
-After the watchOS app finishes a companion reload, it atomically mirrors the
-selected companion document and effective display preferences into the
-Watch-only App Group `group.com.shinycomputers.contextpanel.watch` before
-invalidating the Context Panel complication timeline. The
-WidgetKit extension reads that local payload without performing CloudKit work,
-so it can always complete promptly and replace the timeline that predated the
-app sync. The timeline also includes a future stale transition.
+The watchOS app and complication each read the same sanitized Production
+CloudKit records directly. Each process caches the latest document and effective
+display preferences in its own sandbox, so the complication can complete from a
+last-good local value when CloudKit is delayed or unavailable. Opening the Watch
+app still invalidates the complication timeline after a successful CloudKit read,
+and the timeline includes a future stale transition. The watch targets do not
+depend on App Group storage because physical TestFlight validation on watchOS 27
+rejected otherwise valid App Group entitlements at runtime.
 
 Widget display preferences use one-way defaults plus local companion ownership.
 The Mac continues publishing its preferences in `CompanionSyncDocument` for
