@@ -166,7 +166,9 @@ Mac-published CloudKit record when available and mirror the sanitized companion
 document into their local App Group store for app launch and WidgetKit timeline
 reads. The legacy iCloud Drive companion document is no longer part of the
 default companion runtime load path; recovery should come from a fresh Mac
-publish to CloudKit or the existing local app-group mirror.
+publish to CloudKit or the existing local app-group mirror. CloudKit transport
+clients retain their `CKContainer` for the full client lifetime so asynchronous
+record operations cannot outlive the underlying CloudKit client.
 
 Widget display preferences use one-way defaults plus local companion ownership.
 The Mac continues publishing its preferences in `CompanionSyncDocument` for

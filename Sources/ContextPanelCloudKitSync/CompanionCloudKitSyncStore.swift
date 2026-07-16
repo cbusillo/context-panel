@@ -80,12 +80,12 @@ struct CompanionCloudKitSubscriptionRegistrar {
 }
 
 private actor CompanionCloudKitClient {
-    private let containerIdentifier: String
+    private let container: CKContainer
     private let recordName: String
     private let storeRole: String
 
     init(containerIdentifier: String, recordName: String, storeRole: String) {
-        self.containerIdentifier = containerIdentifier
+        container = CKContainer(identifier: containerIdentifier)
         self.recordName = recordName
         self.storeRole = storeRole
     }
@@ -262,7 +262,7 @@ private actor CompanionCloudKitClient {
     }
 
     private var privateDatabase: CKDatabase {
-        CKContainer(identifier: containerIdentifier).privateCloudDatabase
+        container.privateCloudDatabase
     }
 
     private var recordID: CKRecord.ID {
