@@ -1575,9 +1575,12 @@ exit 65
             script,
         )
         self.assertIn("assert_profile_icloud_service \"$watch_profile\" \"companion watch\" \"CloudKit\"", script)
-        self.assertIn("assert_profile_app_group \"$watch_profile\" \"companion watch\"", script)
         self.assertIn(
-            "assert_profile_app_group \"$watch_widget_profile\" \"companion watch widget\"",
+            "assert_profile_app_group \"$watch_profile\" \"companion watch\" \"group.com.shinycomputers.contextpanel.watch\"",
+            script,
+        )
+        self.assertIn(
+            "assert_profile_app_group \"$watch_widget_profile\" \"companion watch widget\" \"group.com.shinycomputers.contextpanel.watch\"",
             script,
         )
         self.assertNotIn(
@@ -1595,6 +1598,22 @@ exit 65
         self.assertNotIn("assert_profile_icloud_service \"$widget_profile\"", script)
         self.assertNotIn("assert_profile_ubiquity_container \"$widget_profile\"", script)
         self.assertNotIn("assert_profile_push_notifications \"$widget_profile\"", script)
+
+    def test_companion_upload_validates_signed_watch_archive_entitlements_before_export(self):
+        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
+
+        self.assertIn("assert_ios_watch_archive_ready()", script)
+        self.assertIn("/usr/bin/codesign -d --entitlements - --xml", script)
+        self.assertIn("assert_signed_app_group_exact", script)
+        self.assertIn("group.com.shinycomputers.contextpanel.watch", script)
+        self.assertIn("'com.apple.developer.icloud-services' 'CloudKit'", script)
+        self.assertIn("'com.apple.developer.icloud-container-identifiers'", script)
+        self.assertIn("'com.apple.developer.icloud-container-environment'", script)
+        archive_index = script.index('run_xcodebuild "${archive_args[@]}" archive')
+        validation_index = script.index("\tassert_ios_watch_archive_ready\n", archive_index)
+        export_index = script.index("\t-exportArchive", validation_index)
+        self.assertLess(archive_index, validation_index)
+        self.assertLess(validation_index, export_index)
 
     def test_release_docs_describe_cloudkit_companion_testflight_validation(self):
         release_docs = self.read("docs/release.md")

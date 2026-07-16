@@ -256,7 +256,7 @@ assert_profile_bundle_id() {
 assert_profile_app_group() {
 	local profile="$1"
 	local label="$2"
-	local app_group="group.com.shinycomputers.contextpanel"
+	local app_group="${3:-group.com.shinycomputers.contextpanel}"
 	local plist
 	plist="$(mktemp)"
 	security cms -D -i "$profile" -o "$plist"
@@ -584,6 +584,107 @@ assert_tvos_archive_ready() {
 	fi
 }
 
+plist_array_value_count() {
+	local plist="$1"
+	local key="$2"
+	local values
+	local value
+	local count=0
+	if ! values="$(/usr/libexec/PlistBuddy -c "Print :$key" "$plist" 2>/dev/null)"; then
+		return 1
+	fi
+	while IFS= read -r value; do
+		value="${value#"${value%%[![:space:]]*}"}"
+		value="${value%"${value##*[![:space:]]}"}"
+		[[ -n "$value" && "$value" != "Array {" && "$value" != "}" ]] || continue
+		count=$((count + 1))
+	done <<<"$values"
+	printf '%s' "$count"
+}
+
+extract_signed_entitlements() {
+	local bundle="$1"
+	local label="$2"
+	local destination="$3"
+	if ! /usr/bin/codesign -d --entitlements - --xml "$bundle" >"$destination" 2>/dev/null; then
+		echo "could not read signed entitlements from $label: $bundle" >&2
+		exit 1
+	fi
+	if ! /usr/bin/plutil -lint "$destination" >/dev/null; then
+		echo "$label signed entitlements are not a valid property list" >&2
+		exit 1
+	fi
+}
+
+assert_signed_app_group_exact() {
+	local entitlements="$1"
+	local label="$2"
+	local app_group="$3"
+	local count
+	if ! count="$(plist_array_value_count "$entitlements" 'com.apple.security.application-groups')"; then
+		echo "$label signed entitlements are missing application groups" >&2
+		exit 1
+	fi
+	if [[ "$count" != "1" ]] || ! plist_array_contains_value "$entitlements" 'com.apple.security.application-groups' "$app_group"; then
+		echo "$label signed entitlements must contain only app group: $app_group" >&2
+		exit 1
+	fi
+}
+
+assert_signed_entitlement_array_value() {
+	local entitlements="$1"
+	local label="$2"
+	local key="$3"
+	local value="$4"
+	if ! plist_array_contains_value "$entitlements" "$key" "$value"; then
+		echo "$label signed entitlements do not contain $key value: $value" >&2
+		exit 1
+	fi
+}
+
+assert_signed_entitlement_absent() {
+	local entitlements="$1"
+	local label="$2"
+	local key="$3"
+	if /usr/libexec/PlistBuddy -c "Print :$key" "$entitlements" >/dev/null 2>&1; then
+		echo "$label signed entitlements unexpectedly contain: $key" >&2
+		exit 1
+	fi
+}
+
+assert_ios_watch_archive_ready() {
+	local watch_app_path="$archive_path/Products/Applications/Context Panel.app/Watch/Context Panel.app"
+	local watch_widget_path="$watch_app_path/PlugIns/ContextPanelWatchWidgetExtension.appex"
+	local entitlements_dir
+	local watch_app_entitlements
+	local watch_widget_entitlements
+	local watch_app_group="group.com.shinycomputers.contextpanel.watch"
+	if [[ ! -d "$watch_app_path" ]]; then
+		echo "iOS archive is missing the embedded Watch app: $watch_app_path" >&2
+		exit 1
+	fi
+	if [[ ! -d "$watch_widget_path" ]]; then
+		echo "iOS archive is missing the embedded Watch complication extension: $watch_widget_path" >&2
+		exit 1
+	fi
+	entitlements_dir="$(mktemp -d)"
+	watch_app_entitlements="$entitlements_dir/watch-app.plist"
+	watch_widget_entitlements="$entitlements_dir/watch-widget.plist"
+	extract_signed_entitlements "$watch_app_path" "companion Watch app" "$watch_app_entitlements"
+	extract_signed_entitlements "$watch_widget_path" "companion Watch widget" "$watch_widget_entitlements"
+	assert_signed_app_group_exact "$watch_app_entitlements" "companion Watch app" "$watch_app_group"
+	assert_signed_entitlement_array_value "$watch_app_entitlements" "companion Watch app" \
+		'com.apple.developer.icloud-services' 'CloudKit'
+	assert_signed_app_group_exact "$watch_widget_entitlements" "companion Watch widget" "$watch_app_group"
+	assert_signed_entitlement_absent "$watch_widget_entitlements" "companion Watch widget" \
+		'com.apple.developer.icloud-container-identifiers'
+	assert_signed_entitlement_absent "$watch_widget_entitlements" "companion Watch widget" \
+		'com.apple.developer.icloud-container-environment'
+	assert_signed_entitlement_absent "$watch_widget_entitlements" "companion Watch widget" \
+		'com.apple.developer.icloud-services'
+	rm -rf "$entitlements_dir"
+}
+
 validate_marketing_version
 
 if [[ ! -f "$app_profile" ]]; then
@@ -666,8 +767,8 @@ if [[ "$platform" == "ios" ]]; then
 	assert_profile_platform_any "$watch_profile" "companion watch" iOS watchOS
 	assert_profile_platform_any "$watch_widget_profile" "companion watch widget" iOS watchOS
 	assert_profile_icloud_service "$watch_profile" "companion watch" "CloudKit"
-	assert_profile_app_group "$watch_profile" "companion watch"
-	assert_profile_app_group "$watch_widget_profile" "companion watch widget"
+	assert_profile_app_group "$watch_profile" "companion watch" "group.com.shinycomputers.contextpanel.watch"
+	assert_profile_app_group "$watch_widget_profile" "companion watch widget" "group.com.shinycomputers.contextpanel.watch"
 fi
 if [[ "$platform" == "tvos" ]]; then
 	assert_profile_bundle_id "$tv_top_shelf_profile" "tvOS Top Shelf" "com.shinycomputers.contextpanel.topshelf"
@@ -786,6 +887,8 @@ rm -rf "$archive_path" "$derived_data_path" "$export_path"
 run_xcodebuild "${archive_args[@]}" archive
 if [[ "$platform" == "tvos" ]]; then
 	assert_tvos_archive_ready
+elif [[ "$platform" == "ios" ]]; then
+	assert_ios_watch_archive_ready
 fi
 
 run_xcodebuild \

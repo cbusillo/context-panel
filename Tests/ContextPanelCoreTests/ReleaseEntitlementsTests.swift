@@ -125,7 +125,7 @@ import Testing
     #expect(services == ["CloudKit"])
     #expect(
         appEntitlements["com.apple.security.application-groups"] as? [String]
-            == ["group.com.shinycomputers.contextpanel"]
+            == ["group.com.shinycomputers.contextpanel.watch"]
     )
     #expect(appEntitlements["aps-environment"] == nil)
     #expect(appEntitlements["keychain-access-groups"] == nil)
@@ -134,7 +134,7 @@ import Testing
     let widgetEntitlements = try loadEntitlements("Config/ContextPanelWatchWidget.entitlements")
     #expect(
         widgetEntitlements["com.apple.security.application-groups"] as? [String]
-            == ["group.com.shinycomputers.contextpanel"]
+            == ["group.com.shinycomputers.contextpanel.watch"]
     )
     #expect(widgetEntitlements["com.apple.developer.icloud-container-identifiers"] == nil)
     #expect(widgetEntitlements["com.apple.developer.icloud-services"] == nil)

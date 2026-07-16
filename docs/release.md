@@ -402,15 +402,22 @@ companion app.
 
 For iOS companion uploads, the watch app profile must authorize bundle ID
 `com.shinycomputers.contextpanel.watch`, App Group
-`group.com.shinycomputers.contextpanel`, and the Context Panel CloudKit
+`group.com.shinycomputers.contextpanel.watch`, and the Context Panel CloudKit
 container. The watch complication profile must authorize bundle ID
-`com.shinycomputers.contextpanel.watch.widget` and the same App Group; the
+`com.shinycomputers.contextpanel.watch.widget` and the same Watch-only App Group; the
 complication reads the local mirror written by the watch app and does not need
 CloudKit access. App Store Connect may report `iOS` platform metadata for the
 embedded watch profiles because the watch app and complication extension are
 exported as part of the iOS companion archive. The watch app is embedded only in
 the iOS companion package; native visionOS companion builds deliberately exclude
-watchOS content.
+watchOS content. The upload script stops before export if the archived Watch app
+or complication is not signed for exactly the dedicated Watch App Group, if the
+Watch app lacks CloudKit, or if the complication unexpectedly carries CloudKit.
+
+After an upgrade that introduces or changes the Watch App Group, the local mirror
+starts empty. Launch the Watch app and require one successful CloudKit refresh
+before evaluating the complication; it may show unknown until that first refresh
+writes the new mirror. Do not fall back to a previously denied App Group.
 
 The tvOS app profile is separate from the iOS/visionOS companion app profile
 even though it uses the same bundle ID. It must support `tvOS`, authorize

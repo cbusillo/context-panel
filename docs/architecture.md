@@ -171,8 +171,9 @@ clients retain their `CKContainer` for the full client lifetime so asynchronous
 record operations cannot outlive the underlying CloudKit client.
 
 After the watchOS app finishes a companion reload, it atomically mirrors the
-selected companion document and effective display preferences into its shared
-App Group before invalidating the Context Panel complication timeline. The
+selected companion document and effective display preferences into the
+Watch-only App Group `group.com.shinycomputers.contextpanel.watch` before
+invalidating the Context Panel complication timeline. The
 WidgetKit extension reads that local payload without performing CloudKit work,
 so it can always complete promptly and replace the timeline that predated the
 app sync. The timeline also includes a future stale transition.
