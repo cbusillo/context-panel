@@ -256,13 +256,17 @@ private struct WatchLimitRow: View {
 
             pressureTrack
 
-            HStack(spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(limit.context)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .layoutPriority(1)
                 Spacer(minLength: 4)
                 if let resetText {
                     Text(resetText)
-                        .lineLimit(1)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.trailing)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .font(.caption2)
