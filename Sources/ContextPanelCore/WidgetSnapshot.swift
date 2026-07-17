@@ -173,8 +173,13 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         }
 
         let companion = document.snapshot
-        let limits = companion.limits.map(\.usageLimit)
-        let reports = companion.providerStatuses.map(\.storedProviderReport)
+        let companionUsage = CompanionUsagePresentation(
+            snapshot: companion,
+            now: now,
+            maximumAge: stalenessPolicy.maximumAge
+        )
+        let limits = companionUsage.limits
+        let reports = companionUsage.reports
         let promptCacheObservations = PromptCacheTelemetryReader.filteredRecentObservations(
             companion.promptCacheSummaries.map(\.promptCacheObservation),
             now: now
@@ -216,7 +221,12 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             reports: reports,
             promptCacheObservations: promptCacheObservations,
             promptCacheWidgetState: promptCacheState,
-            observedBurnRates: document.observedBurnRates,
+            observedBurnRates: compatibleObservedBurnRates(
+                document.observedBurnRates,
+                sourceLimits: companion.limits.map(\.usageLimit),
+                presentedLimits: limits,
+                generatedAt: companion.generatedAt
+            ),
             fastModeForecastSettings: document.fastModeForecastSettings,
             status: status,
             message: result.errorMessage == nil
@@ -339,6 +349,27 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         return ContextPanelLocations.normalizedPath(usageDirectory.path)
     }
 
+    private static func compatibleObservedBurnRates(
+        _ observedBurnRates: [String: ObservedBurnRate],
+        sourceLimits: [UsageLimit],
+        presentedLimits: [UsageLimit],
+        generatedAt: Date
+    ) -> [String: ObservedBurnRate] {
+        let sourceSnapshot = UsageSnapshot(generatedAt: generatedAt, limits: sourceLimits)
+        let presentedSnapshot = UsageSnapshot(generatedAt: generatedAt, limits: presentedLimits)
+        return observedBurnRates.filter { rateID, _ in
+            let sourcePool = burnRatePool(for: rateID, in: sourceSnapshot)
+            return !sourcePool.isEmpty && sourcePool == burnRatePool(for: rateID, in: presentedSnapshot)
+        }
+    }
+
+    private static func burnRatePool(for rateID: String, in snapshot: UsageSnapshot) -> Set<String> {
+        guard let summary = snapshot.mainLimitSummaries.first(where: { $0.id == rateID }) else {
+            return []
+        }
+        return Set(summary.liveLimits.map(\.id))
+    }
+
     private func capacityRatio(for limits: [UsageLimit]) -> Double {
         let ratios = limits.compactMap(\.usageRatio)
         guard !ratios.isEmpty else { return 0 }
@@ -346,7 +377,98 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     }
 }
 
+private struct CompanionUsagePresentation {
+    let limits: [UsageLimit]
+    let reports: [StoredProviderReport]
+
+    init(snapshot: CompanionSnapshot, now: Date, maximumAge: TimeInterval) {
+        var accountStates: [CompanionUsageAccountKey: CompanionUsageAccountState] = [:]
+        for limit in snapshot.limits {
+            let key = CompanionUsageAccountKey(limit: limit)
+            var state = accountStates[key, default: CompanionUsageAccountState()]
+            state.hasLimits = true
+            state.hasAgeSensitiveLimits = state.hasAgeSensitiveLimits || !limit.usageLimit.usesEventDrivenFreshness
+            state.observe(limit.lastUpdatedAt)
+            accountStates[key] = state
+        }
+        for status in snapshot.providerStatuses {
+            let key = CompanionUsageAccountKey(status: status)
+            var state = accountStates[key, default: CompanionUsageAccountState()]
+            state.observe(status.generatedAt)
+            accountStates[key] = state
+        }
+
+        let staleAccounts = Set(accountStates.compactMap { key, state in
+            let isAgeSensitive = !state.hasLimits || state.hasAgeSensitiveLimits
+            let observedAt = state.observedAt ?? snapshot.generatedAt
+            return isAgeSensitive && now.timeIntervalSince(observedAt) > maximumAge ? key : nil
+        })
+
+        limits = snapshot.limits.map { companionLimit in
+            let limit = companionLimit.usageLimit
+            let key = CompanionUsageAccountKey(limit: companionLimit)
+            guard staleAccounts.contains(key), limit.status.canAgeToStale else { return limit }
+            return limit.replacingStatusOverride(with: .stale)
+        }
+        reports = snapshot.providerStatuses.map { companionStatus in
+            let report = companionStatus.storedProviderReport
+            let key = CompanionUsageAccountKey(status: companionStatus)
+            guard staleAccounts.contains(key), report.status.canAgeToStale else { return report }
+            return report.replacingStatus(with: .stale)
+        }
+    }
+}
+
+private struct CompanionUsageAccountState {
+    var observedAt: Date?
+    var hasLimits = false
+    var hasAgeSensitiveLimits = false
+
+    mutating func observe(_ date: Date?) {
+        guard let date else { return }
+        observedAt = observedAt.map { max($0, date) } ?? date
+    }
+}
+
+private struct CompanionUsageAccountKey: Hashable {
+    let provider: Provider
+    let companionAccountID: String
+
+    init(limit: CompanionLimit) {
+        provider = limit.provider
+        companionAccountID = limit.companionAccountID
+    }
+
+    init(status: CompanionProviderStatus) {
+        provider = status.provider
+        companionAccountID = status.companionAccountID
+    }
+}
+
 private extension UsageLimit {
+    func replacingStatusOverride(with status: UsageStatus) -> UsageLimit {
+        UsageLimit(
+            id: id,
+            provider: provider,
+            accountID: accountID,
+            configuredAccountID: configuredAccountID,
+            accountName: accountName,
+            label: label,
+            windowLabel: windowLabel,
+            modelLabel: modelLabel,
+            unit: unit,
+            used: used,
+            limit: limit,
+            resetsAt: resetsAt,
+            lastUpdatedAt: lastUpdatedAt,
+            confidence: confidence,
+            freshnessMode: freshnessMode,
+            presentationAssumption: presentationAssumption,
+            statusOverride: status,
+            note: note
+        )
+    }
+
     var isAnthropicStatuslinePlaceholder: Bool {
         provider == .anthropic
             && label.localizedCaseInsensitiveContains("status")
@@ -354,6 +476,31 @@ private extension UsageLimit {
             && used == nil
             && limit == nil
             && resetsAt == nil
+    }
+}
+
+private extension StoredProviderReport {
+    func replacingStatus(with status: UsageStatus) -> StoredProviderReport {
+        StoredProviderReport(
+            provider: provider,
+            accountID: accountID,
+            configuredAccountID: configuredAccountID,
+            accountName: accountName,
+            generatedAt: generatedAt,
+            status: status,
+            errorMessage: errorMessage
+        )
+    }
+}
+
+private extension UsageStatus {
+    var canAgeToStale: Bool {
+        switch self {
+        case .healthy, .close, .limited, .loading:
+            true
+        case .failure, .stale, .unknown:
+            false
+        }
     }
 }
 

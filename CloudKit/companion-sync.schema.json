@@ -4,7 +4,7 @@
   "recordTypes": [
     {
       "name": "CompanionSyncDocument",
-      "recordName": "current",
+      "recordName": "current-v2",
       "fields": [
         {
           "name": "payload",

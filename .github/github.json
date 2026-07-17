@@ -25,6 +25,7 @@
     },
     "validate": {
       "default": "scripts/commit-gate.sh",
+      "cloudKitCompanionSchema": "scripts/validate-cloudkit-companion-schema.sh",
       "companionIOSArchive": "scripts/validate-companion-builds.sh --configuration Release --archive ios",
       "companionVisionOSArchive": "scripts/validate-companion-builds.sh --configuration Release --archive visionos",
       "companionWatchBuild": "scripts/validate-companion-builds.sh --configuration Release watchos",

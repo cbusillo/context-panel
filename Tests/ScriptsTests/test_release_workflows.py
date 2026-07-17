@@ -704,7 +704,10 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertEqual(schema["database"], "private")
         record_types = {record["name"]: record for record in schema["recordTypes"]}
         record = record_types["CompanionSyncDocument"]
-        self.assertEqual(record["recordName"], "current")
+        self.assertEqual(record["recordName"], "current-v2")
+        self.assertIn('cloudKitRecordName = "current-v2"', remote_sync)
+        self.assertIn('cloudKitLegacyRecordNames = ["current"]', remote_sync)
+        self.assertIn('cloudKitSubscriptionID = "companion-sync-updates-v3"', remote_sync)
         field_definitions = {field["name"]: field for field in record["fields"]}
         fields = {name: field["type"] for name, field in field_definitions.items()}
         self.assertEqual(fields["payload"], "BYTES")
