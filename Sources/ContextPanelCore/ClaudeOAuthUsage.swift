@@ -159,6 +159,93 @@ public enum ClaudeOAuthFlow {
     }
 }
 
+public struct ClaudeOAuthCodeExchangeService: Sendable {
+    private let httpClient: any ConnectorHTTPClient
+    private let credentialStore: any ProviderCredentialStoring
+    private let lock: SnapshotRefreshLock
+
+    public init(
+        httpClient: any ConnectorHTTPClient = URLSessionConnectorHTTPClient(),
+        credentialStore: any ProviderCredentialStoring,
+        lock: SnapshotRefreshLock = .appDefault()
+    ) {
+        self.httpClient = httpClient
+        self.credentialStore = credentialStore
+        self.lock = lock
+    }
+
+    public func exchangeAndSave(
+        authorizationCode: ClaudeOAuthAuthorizationCode,
+        codeVerifier: String,
+        state: String,
+        redirectURI: String = ClaudeOAuthFlow.manualRedirectURI,
+        accountID: String,
+        now: Date = Date()
+    ) async throws -> ClaudeOAuthCredentials {
+        try await exchangeAndCommit(
+            authorizationCode: authorizationCode,
+            codeVerifier: codeVerifier,
+            state: state,
+            redirectURI: redirectURI,
+            now: now
+        ) { encodedCredentials in
+            try credentialStore.save(encodedCredentials, accountID: accountID)
+        }
+    }
+
+    public func exchangeAndCommit(
+        authorizationCode: ClaudeOAuthAuthorizationCode,
+        codeVerifier: String,
+        state: String,
+        redirectURI: String = ClaudeOAuthFlow.manualRedirectURI,
+        now: Date = Date(),
+        commit: @escaping @Sendable (Data) async throws -> Void
+    ) async throws -> ClaudeOAuthCredentials {
+        try Task.checkCancellation()
+        guard let credentials = try await lock.withLock({
+            try Task.checkCancellation()
+            let response = try await httpClient.data(for: ConnectorHTTPRequest(
+                url: ClaudeOAuthMetadata.tokenEndpoint,
+                method: "POST",
+                headers: [
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "anthropic-beta": ClaudeOAuthMetadata.oauthBetaHeader,
+                    "User-Agent": "context-panel",
+                ],
+                body: try ClaudeOAuthFlow.authorizationCodeTokenRequestBody(
+                    code: authorizationCode,
+                    codeVerifier: codeVerifier,
+                    state: state,
+                    redirectURI: redirectURI
+                )
+            ))
+            try Task.checkCancellation()
+            guard (200..<300).contains(response.statusCode) else {
+                throw ConnectorError.redactedHTTPFailure(
+                    operation: "Claude OAuth token exchange",
+                    statusCode: response.statusCode
+                )
+            }
+            let token = try JSONDecoder().decode(ClaudeOAuthTokenResponse.self, from: response.data)
+            let credentials = ClaudeOAuthCredentials(
+                accessToken: token.accessToken,
+                refreshToken: token.refreshToken,
+                expiresAt: token.expiresIn.map { now.addingTimeInterval(TimeInterval($0)) },
+                scopes: token.scopes
+            )
+            try Task.checkCancellation()
+            try await commit(encodeClaudeOAuthCredentials(credentials))
+            return credentials
+        }) else {
+            throw ConnectorError.foregroundRefreshRequired(
+                "Claude usage is already refreshing. Try signing in again in a moment."
+            )
+        }
+        return credentials
+    }
+}
+
 public struct ClaudeOAuthUsageConnector: ProviderConnector {
     public let provider: Provider = .anthropic
 
@@ -289,10 +376,7 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
     }
 
     private func saveCredentials(_ credentials: ClaudeOAuthCredentials, accountID: String) throws {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-        try credentialStore.save(try encoder.encode(credentials), accountID: accountID)
+        try credentialStore.save(try encodeClaudeOAuthCredentials(credentials), accountID: accountID)
     }
 
     private func accessToken(
@@ -371,6 +455,13 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
         return message.contains("refresh token")
             && (message.contains("invalid") || message.contains("expired") || message.contains("revoked"))
     }
+}
+
+private func encodeClaudeOAuthCredentials(_ credentials: ClaudeOAuthCredentials) throws -> Data {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    encoder.dateEncodingStrategy = .iso8601
+    return try encoder.encode(credentials)
 }
 
 public enum ClaudeOAuthMetadata {

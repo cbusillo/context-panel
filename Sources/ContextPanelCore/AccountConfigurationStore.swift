@@ -119,7 +119,7 @@ public struct AccountConfigurationLoadResult: Equatable, Sendable {
     public init(document: AccountConfigurationDocument, status: UsageStatus, errorMessage: String? = nil) {
         self.document = document
         self.status = status
-        self.errorMessage = errorMessage.map(ConnectorRedactor.redact)
+        self.errorMessage = errorMessage.map(ConnectorRedactor.safeErrorDescription)
     }
 }
 

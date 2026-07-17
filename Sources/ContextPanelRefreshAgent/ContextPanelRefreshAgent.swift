@@ -67,7 +67,7 @@ struct ContextPanelRefreshAgent {
                 }
             } catch {
                 recordRefreshFailed(diagnosticsStore, runID: runID, finishedAt: Date(), error: error)
-                fputs("ContextPanelRefreshAgent: \(ConnectorRedactor.redact(error.localizedDescription))\n", stderr)
+                fputs("ContextPanelRefreshAgent: \(ConnectorRedactor.safeErrorDescription(error))\n", stderr)
             }
             Foundation.exit(0)
         }
@@ -96,7 +96,7 @@ struct ContextPanelRefreshAgent {
                 }
             } catch {
                 recordRefreshFailed(diagnosticsStore, runID: runID, finishedAt: Date(), error: error)
-                fputs("ContextPanelRefreshAgent: \(ConnectorRedactor.redact(error.localizedDescription))\n", stderr)
+                fputs("ContextPanelRefreshAgent: \(ConnectorRedactor.safeErrorDescription(error))\n", stderr)
             }
 
             do {
@@ -254,7 +254,7 @@ struct ContextPanelRefreshAgent {
             print("Context Panel provider credentials cleared")
             Foundation.exit(0)
         } catch {
-            fputs("ContextPanelRefreshAgent: provider credential cleanup failed: \(error.localizedDescription)\n", stderr)
+            fputs("ContextPanelRefreshAgent: provider credential cleanup failed: \(ConnectorRedactor.safeErrorDescription(error))\n", stderr)
             Foundation.exit(1)
         }
     }
@@ -268,7 +268,7 @@ struct ContextPanelRefreshAgent {
             print("Context Panel provider credentials are absent")
             Foundation.exit(0)
         } catch {
-            fputs("ContextPanelRefreshAgent: provider credential check failed: \(error.localizedDescription)\n", stderr)
+            fputs("ContextPanelRefreshAgent: provider credential check failed: \(ConnectorRedactor.safeErrorDescription(error))\n", stderr)
             Foundation.exit(1)
         }
     }
@@ -279,7 +279,7 @@ struct ContextPanelRefreshAgent {
             print("Context Panel webhook credentials cleared")
             Foundation.exit(0)
         } catch {
-            fputs("ContextPanelRefreshAgent: webhook credential cleanup failed: \(error.localizedDescription)\n", stderr)
+            fputs("ContextPanelRefreshAgent: webhook credential cleanup failed: \(ConnectorRedactor.safeErrorDescription(error))\n", stderr)
             Foundation.exit(1)
         }
     }
@@ -293,7 +293,7 @@ struct ContextPanelRefreshAgent {
             print("Context Panel webhook credentials are absent")
             Foundation.exit(0)
         } catch {
-            fputs("ContextPanelRefreshAgent: webhook credential check failed: \(error.localizedDescription)\n", stderr)
+            fputs("ContextPanelRefreshAgent: webhook credential check failed: \(ConnectorRedactor.safeErrorDescription(error))\n", stderr)
             Foundation.exit(1)
         }
     }
@@ -335,6 +335,7 @@ private struct LimitWarningNotificationService {
             persistedSnapshot: loadPersistedSnapshot()
         )
         let presentationSnapshot = warningSnapshot.presented(at: outcome.savedAt)
+        prunePendingNotifications(for: presentationSnapshot)
         let result = LimitWarningEvaluator.evaluate(
             settings: settings,
             state: state,
@@ -355,7 +356,7 @@ private struct LimitWarningNotificationService {
             do {
                 try stateStore.save(commitPlan.persistedState)
             } catch {
-                fputs("ContextPanelRefreshAgent: limit warning state save failed: \(error.localizedDescription)\n", stderr)
+                fputs("ContextPanelRefreshAgent: limit warning state save failed: \(ConnectorRedactor.safeErrorDescription(error))\n", stderr)
             }
         }
         if result.events.isEmpty {
@@ -381,7 +382,7 @@ private struct LimitWarningNotificationService {
                 eventCount: result.events.count,
                 errorMessage: error.localizedDescription
             )
-            fputs("ContextPanelRefreshAgent: limit warning queue failed: \(error.localizedDescription)\n", stderr)
+            fputs("ContextPanelRefreshAgent: limit warning queue failed: \(ConnectorRedactor.safeErrorDescription(error))\n", stderr)
         }
     }
 
@@ -391,19 +392,28 @@ private struct LimitWarningNotificationService {
         }
     }
 
+    private func prunePendingNotifications(for snapshot: UsageSnapshot) {
+        do {
+            var queue = pendingNotificationStore.load()
+            let previousCount = queue.notifications.count
+            queue.removeNotifications(forMissing: Set(snapshot.mainLimitSummaries.map(\.id)))
+            guard queue.notifications.count != previousCount else { return }
+            try pendingNotificationStore.save(queue)
+        } catch {
+            fputs("ContextPanelRefreshAgent: limit warning queue pruning failed: \(ConnectorRedactor.safeErrorDescription(error))\n", stderr)
+        }
+    }
+
     private func recordWebhookDiagnostics(_ results: [LimitWarningWebhookDeliveryResult], attemptedAt: Date) {
-        guard !results.isEmpty else { return }
-        let succeeded = results.contains(where: \.succeeded)
-        let latestStatus = results.reversed().compactMap(\.statusCode).first
-        let latestError = results.reversed().compactMap(\.errorMessage).first
+        guard let summary = LimitWarningWebhookDeliverySummary(results: results) else { return }
         try? diagnosticsStore.update { state in
             state.recordAlert(RefreshDiagnosticsAlertRecord(
                 channel: .webhook,
                 attemptedAt: attemptedAt,
-                succeededAt: succeeded ? attemptedAt : nil,
-                eventCount: results.count,
-                lastHTTPStatus: latestStatus,
-                errorMessage: latestError
+                succeededAt: summary.succeeded ? attemptedAt : nil,
+                eventCount: summary.eventCount,
+                lastHTTPStatus: summary.lastHTTPStatus,
+                errorMessage: summary.errorMessage
             ))
         }
     }
@@ -447,7 +457,7 @@ private struct LimitWarningNotificationService {
         await withCheckedContinuation { continuation in
             NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { _, error in
                 if let error {
-                    fputs("ContextPanelRefreshAgent: Context Panel app launch failed for pending limit warnings: \(error.localizedDescription)\n", stderr)
+                    fputs("ContextPanelRefreshAgent: Context Panel app launch failed for pending limit warnings: \(ConnectorRedactor.safeErrorDescription(error))\n", stderr)
                 }
                 continuation.resume()
             }

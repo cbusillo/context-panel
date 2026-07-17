@@ -93,7 +93,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         self.accountName = accountName
         self.generatedAt = generatedAt
         self.status = status
-        self.errorMessage = errorMessage.map(ConnectorRedactor.redact)
+        self.errorMessage = errorMessage.map(ConnectorRedactor.safeErrorDescription)
     }
 
     public init(report: ProviderConnectorReport) {
@@ -222,7 +222,7 @@ public struct SnapshotStoreLoadResult: Equatable, Sendable {
     public init(snapshot: StoredUsageSnapshot?, status: UsageStatus, errorMessage: String? = nil) {
         self.snapshot = snapshot
         self.status = status
-        self.errorMessage = errorMessage.map(ConnectorRedactor.redact)
+        self.errorMessage = errorMessage.map(ConnectorRedactor.safeErrorDescription)
     }
 }
 
@@ -568,10 +568,18 @@ public struct JSONSnapshotStore: Sendable {
         let isPromptCacheOnlySnapshot = refreshResult.reports.isEmpty
             && (current?.snapshot.limits.isEmpty ?? true)
             && (current?.reports.isEmpty ?? true)
+        let isAuthoritativeEmptySnapshot = refreshResult.reports.isEmpty
+            && !preservesUnreportedAccounts
+        let mergedGeneratedAt: Date
+        if isAuthoritativeEmptySnapshot {
+            mergedGeneratedAt = refreshResult.generatedAt
+        } else if refreshResult.reports.isEmpty && !isPromptCacheOnlySnapshot {
+            mergedGeneratedAt = current?.snapshot.generatedAt ?? refreshResult.generatedAt
+        } else {
+            mergedGeneratedAt = refreshResult.generatedAt
+        }
         let mergedSnapshot = UsageSnapshot(
-            generatedAt: refreshResult.reports.isEmpty && !isPromptCacheOnlySnapshot
-                ? (current?.snapshot.generatedAt ?? refreshResult.generatedAt)
-                : refreshResult.generatedAt,
+            generatedAt: mergedGeneratedAt,
             limits: (preservedLimits + preservedFailureLimits + refreshResult.snapshot.limits).deduplicatedByID()
         )
         let mergedReports = preservedReports + refreshResult.reports.map(StoredProviderReport.init(report:))

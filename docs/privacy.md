@@ -30,7 +30,10 @@ values when known, reset time, event time, and app version. Webhook alerts do
 not intentionally include provider tokens, webhook URLs, prompts, transcripts,
 raw provider responses, account IDs, email addresses, organization identifiers,
 project identifiers, or local auth paths. Webhook URLs are stored in the macOS
-Keychain and are not written to JSON settings, diagnostics, or logs.
+Keychain and are not written to JSON settings, diagnostics, or logs. Context
+Panel rejects explicit local, private, and link-local webhook destinations and
+follows only same-origin HTTPS redirects that preserve the POST method and body.
+Regular DNS hostnames remain subject to the operating system's DNS resolution.
 
 When a user connects local provider accounts, Context Panel may read local
 provider credential files or call provider services to refresh usage-limit

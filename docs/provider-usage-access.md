@@ -163,6 +163,11 @@ Preferred v1 connector scope:
   do not appear as usable limits. Treat that availability lookup as a display
   filter only: if it fails or returns no usable model identifiers, keep the
   usage endpoint's additional buckets rather than hiding possible active limits.
+  The private catalog can expose a standalone GPT major/minor family while the
+  usage endpoint reports a Codex-specific variant such as
+  `GPT-5.3-Codex-Spark`. Match that narrow Codex variant to the standalone
+  family, but do not use arbitrary substring matching or treat major-only and
+  full sibling model names as family aliases.
 - Keep auth handling isolated and redacted; never log tokens, cookies,
   authorization headers, account IDs, emails, or raw response bodies.
 - Expose a diagnostic probe that reports only sanitized structure, percentages,

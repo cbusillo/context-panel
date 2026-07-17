@@ -108,6 +108,30 @@ import Testing
     #expect(snapshots.map(\.displayName) == ["Codex", "GPT-5.5 Thinking", "Workspace review"])
 }
 
+@Test func codexUsagePayloadParserKeepsCodexVariantWhenStandaloneGPTFamilyIsAvailable() throws {
+    let json = codexUsagePayloadWithAdditionalLimits([
+        ("GPT-5.3-Codex-Spark", "codex_bengalfox", 1),
+        ("GPT-5.2-Codex-Legacy", "codex_legacy", 2),
+        ("GPT-5.3 Thinking", "gpt-5-3-thinking", 3),
+    ])
+    let availability = CodexModelAvailability(identifiers: ["gpt-5-3", "GPT-5.3"])
+
+    let snapshots = try CodexUsagePayloadParser.snapshots(from: Data(json.utf8), modelAvailability: availability)
+
+    #expect(snapshots.map(\.displayName) == ["Codex", "GPT-5.3-Codex-Spark"])
+}
+
+@Test func codexUsagePayloadParserDoesNotTreatMajorOrFullModelNamesAsGPTFamilies() throws {
+    let json = codexUsagePayloadWithAdditionalLimits([
+        ("GPT-5.3-Codex-Spark", "codex_bengalfox", 1),
+    ])
+    let availability = CodexModelAvailability(identifiers: ["GPT-5", "GPT-5.3 Instant"])
+
+    let snapshots = try CodexUsagePayloadParser.snapshots(from: Data(json.utf8), modelAvailability: availability)
+
+    #expect(snapshots.map(\.displayName) == ["Codex"])
+}
+
 @Test func codexUsagePayloadParserKeepsActiveModelAdditionalLimitsByMeteredFeature() throws {
     let json = codexUsagePayloadWithAdditionalLimits([
         ("Daily Thinking", "gpt-5-5-thinking", 2),
@@ -118,6 +142,40 @@ import Testing
     let snapshots = try CodexUsagePayloadParser.snapshots(from: Data(json.utf8), modelAvailability: availability)
 
     #expect(snapshots.map(\.displayName) == ["Codex", "Daily Thinking"])
+}
+
+@Test func codexUsagePayloadParserKeepsCodexFamilyAdditionalLimitsByMeteredFeature() throws {
+    let json = codexUsagePayloadWithAdditionalLimits([
+        ("Daily Spark", "gpt-5-3-codex-spark", 1),
+        ("Daily Thinking", "gpt-5-3-thinking", 2),
+    ])
+    let availability = CodexModelAvailability(identifiers: ["gpt-5-3"])
+
+    let snapshots = try CodexUsagePayloadParser.snapshots(from: Data(json.utf8), modelAvailability: availability)
+
+    #expect(snapshots.map(\.displayName) == ["Codex", "Daily Spark"])
+}
+
+@Test func codexUsagePayloadParserRequiresCodexImmediatelyAfterGPTFamily() throws {
+    let json = codexUsagePayloadWithAdditionalLimits([
+        ("GPT-5.3-Non-Codex", "daily_non_codex", 1),
+    ])
+    let availability = CodexModelAvailability(identifiers: ["gpt-5-3"])
+
+    let snapshots = try CodexUsagePayloadParser.snapshots(from: Data(json.utf8), modelAvailability: availability)
+
+    #expect(snapshots.map(\.displayName) == ["Codex"])
+}
+
+@Test func codexUsagePayloadParserDoesNotFamilyMatchNonASCIIVersions() throws {
+    let json = codexUsagePayloadWithAdditionalLimits([
+        ("GPT-５.３-Codex-Spark", "codex_bengalfox", 1),
+    ])
+    let availability = CodexModelAvailability(identifiers: ["gpt-5-3"])
+
+    let snapshots = try CodexUsagePayloadParser.snapshots(from: Data(json.utf8), modelAvailability: availability)
+
+    #expect(snapshots.map(\.displayName) == ["Codex"])
 }
 
 @Test func codexUsagePayloadParserDropsRetiredModelAdditionalLimitsByMeteredFeature() throws {

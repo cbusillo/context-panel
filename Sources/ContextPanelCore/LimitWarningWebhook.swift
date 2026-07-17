@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public enum LimitWarningWebhookPreset: String, CaseIterable, Codable, Equatable, Identifiable, Sendable {
@@ -154,7 +155,7 @@ public struct LimitWarningWebhookDeliveryRecord: Codable, Equatable, Sendable {
         self.lastAttemptedAt = lastAttemptedAt
         self.lastSucceededAt = lastSucceededAt
         self.lastHTTPStatus = lastHTTPStatus
-        self.lastError = lastError.map { ConnectorRedactor.redact($0) }
+        self.lastError = lastError.map(ConnectorRedactor.safeErrorDescription)
     }
 
     public var succeeded: Bool { lastSucceededAt != nil }
@@ -328,16 +329,7 @@ public struct LimitWarningWebhookSecretStore: LimitWarningWebhookSecretStoring {
     }
 
     public static func validatedWebhookURL(_ value: String) -> URL? {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard
-            let url = URL(string: trimmed),
-            let scheme = url.scheme?.lowercased(),
-            scheme == "https",
-            url.host?.isEmpty == false
-        else {
-            return nil
-        }
-        return url
+        LimitWarningWebhookURLPolicy.validatedURL(value)
     }
 
     public enum SecretError: LocalizedError, Sendable {
@@ -346,9 +338,130 @@ public struct LimitWarningWebhookSecretStore: LimitWarningWebhookSecretStoring {
         public var errorDescription: String? {
             switch self {
             case .invalidURL:
-                "Webhook URL must be a valid https URL."
+                "Webhook URL must be a non-local https URL."
             }
         }
+    }
+}
+
+public enum LimitWarningWebhookURLPolicy {
+    public static func validatedURL(_ value: String) -> URL? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard
+            let url = URL(string: trimmed),
+            url.scheme?.lowercased() == "https",
+            url.user == nil,
+            url.password == nil,
+            let host = normalizedHost(url.host),
+            isPublicHost(host)
+        else {
+            return nil
+        }
+        return url
+    }
+
+    public static func allowsRedirect(
+        statusCode: Int,
+        from sourceURL: URL,
+        to destinationURL: URL
+    ) -> Bool {
+        guard
+            statusCode == 307 || statusCode == 308,
+            let validatedDestination = validatedURL(destinationURL.absoluteString),
+            let sourceHost = normalizedHost(sourceURL.host),
+            let destinationHost = normalizedHost(validatedDestination.host)
+        else {
+            return false
+        }
+        return sourceURL.scheme?.lowercased() == "https"
+            && sourceHost == destinationHost
+            && effectivePort(sourceURL) == effectivePort(validatedDestination)
+    }
+
+    private static func normalizedHost(_ host: String?) -> String? {
+        guard let host else { return nil }
+        let normalized = host
+            .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return normalized.isEmpty ? nil : normalized
+    }
+
+    private static func effectivePort(_ url: URL) -> Int {
+        url.port ?? 443
+    }
+
+    private static func isPublicHost(_ host: String) -> Bool {
+        let hostWithoutTrailingDot = host.hasSuffix(".") ? String(host.dropLast()) : host
+        guard hostWithoutTrailingDot != "localhost",
+              !hostWithoutTrailingDot.hasSuffix(".localhost"),
+              !hostWithoutTrailingDot.hasSuffix(".local"),
+              hostWithoutTrailingDot != "metadata.google.internal"
+        else {
+            return false
+        }
+        if let bytes = ipv4Bytes(hostWithoutTrailingDot) {
+            return isPublicIPv4(bytes)
+        }
+        if let bytes = ipv6Bytes(hostWithoutTrailingDot) {
+            return isPublicIPv6(bytes)
+        }
+        return hostWithoutTrailingDot.contains(".")
+    }
+
+    private static func ipv4Bytes(_ host: String) -> [UInt8]? {
+        var address = in_addr()
+        guard inet_aton(host, &address) == 1 else { return nil }
+        return withUnsafeBytes(of: &address) { Array($0) }
+    }
+
+    private static func ipv6Bytes(_ host: String) -> [UInt8]? {
+        var address = in6_addr()
+        guard inet_pton(AF_INET6, host, &address) == 1 else { return nil }
+        return withUnsafeBytes(of: &address) { Array($0) }
+    }
+
+    private static func isPublicIPv4(_ bytes: [UInt8]) -> Bool {
+        guard bytes.count == 4 else { return false }
+        return switch (bytes[0], bytes[1]) {
+        case (0, _), (10, _), (127, _), (169, 254), (192, 168):
+            false
+        case (100, 64...127):
+            false
+        case (172, 16...31):
+            false
+        case (192, 0), (192, 2), (192, 88):
+            false
+        case (198, 18...19), (198, 51), (203, 0):
+            false
+        case (224...255, _):
+            false
+        default:
+            true
+        }
+    }
+
+    private static func isPublicIPv6(_ bytes: [UInt8]) -> Bool {
+        guard bytes.count == 16 else { return false }
+        if bytes.allSatisfy({ $0 == 0 }) {
+            return false
+        }
+        if bytes.dropLast().allSatisfy({ $0 == 0 }), bytes.last == 1 {
+            return false
+        }
+        if bytes[0] & 0xFE == 0xFC || bytes[0] == 0xFF {
+            return false
+        }
+        if bytes[0] == 0xFE,
+           bytes[1] & 0xC0 == 0x80 || bytes[1] & 0xC0 == 0xC0 {
+            return false
+        }
+        if bytes.prefix(10).allSatisfy({ $0 == 0 }),
+           bytes[10] == 0xFF,
+           bytes[11] == 0xFF {
+            return isPublicIPv4(Array(bytes.suffix(4)))
+        }
+        return true
     }
 }
 
@@ -524,32 +637,94 @@ public struct LimitWarningWebhookDeliveryResult: Equatable, Sendable {
     }
 }
 
+public struct LimitWarningWebhookDeliverySummary: Equatable, Sendable {
+    public let succeeded: Bool
+    public let eventCount: Int
+    public let lastHTTPStatus: Int?
+    public let errorMessage: String?
+
+    public init?(results: [LimitWarningWebhookDeliveryResult]) {
+        guard !results.isEmpty else { return nil }
+        succeeded = results.allSatisfy(\.succeeded)
+        eventCount = results.count
+        lastHTTPStatus = results.reversed().compactMap(\.statusCode).first
+        errorMessage = results.reversed().compactMap(\.errorMessage).first
+    }
+}
+
 public protocol LimitWarningWebhookPosting: Sendable {
     func post(payload: LimitWarningWebhookPayload, to url: URL, timeoutSeconds: Double) async throws -> Int
 }
 
 public struct URLSessionLimitWarningWebhookPoster: LimitWarningWebhookPosting {
-    public init() {}
+    private let session: URLSession
+
+    public init() {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpCookieAcceptPolicy = .never
+        configuration.httpShouldSetCookies = false
+        session = URLSession(
+            configuration: configuration,
+            delegate: LimitWarningWebhookRedirectDelegate(),
+            delegateQueue: nil
+        )
+    }
 
     public func post(payload: LimitWarningWebhookPayload, to url: URL, timeoutSeconds: Double) async throws -> Int {
+        guard LimitWarningWebhookURLPolicy.validatedURL(url.absoluteString) != nil else {
+            throw LimitWarningWebhookSecretStore.SecretError.invalidURL
+        }
         var request = URLRequest(url: url, timeoutInterval: timeoutSeconds)
         request.httpMethod = "POST"
         request.httpBody = payload.data
         request.setValue(payload.contentType, forHTTPHeaderField: "Content-Type")
         request.setValue("Context Panel", forHTTPHeaderField: "User-Agent")
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else { return 0 }
         return httpResponse.statusCode
     }
 }
 
+private final class LimitWarningWebhookRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest
+    ) async -> URLRequest? {
+        guard
+            let sourceURL = task.currentRequest?.url,
+            let destinationURL = request.url,
+            LimitWarningWebhookURLPolicy.allowsRedirect(
+                statusCode: response.statusCode,
+                from: sourceURL,
+                to: destinationURL
+            )
+        else {
+            return nil
+        }
+        return request
+    }
+}
+
 public struct LimitWarningWebhookDeliveryService: Sendable {
+    public enum ConfigurationError: LocalizedError, Sendable {
+        case lockTimedOut
+
+        public var errorDescription: String? {
+            "Another webhook delivery is still running. Try again in a moment."
+        }
+    }
+
     public let warningSettingsStore: LimitWarningSettingsStore
     public let settingsStore: LimitWarningWebhookSettingsStore
     public let stateStore: LimitWarningWebhookDeliveryStateStore
     public let secretStore: any LimitWarningWebhookSecretLoading
     public let poster: any LimitWarningWebhookPosting
     public let appVersion: String
+    public let deliveryLock: SnapshotRefreshLock
+    public let lockWaitDuration: Duration
+    public let lockRetryInterval: Duration
 
     public init(
         warningSettingsStore: LimitWarningSettingsStore,
@@ -557,7 +732,10 @@ public struct LimitWarningWebhookDeliveryService: Sendable {
         stateStore: LimitWarningWebhookDeliveryStateStore,
         secretStore: any LimitWarningWebhookSecretLoading,
         poster: any LimitWarningWebhookPosting = URLSessionLimitWarningWebhookPoster(),
-        appVersion: String = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
+        appVersion: String = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0",
+        deliveryLock: SnapshotRefreshLock? = nil,
+        lockWaitDuration: Duration = .seconds(30),
+        lockRetryInterval: Duration = .milliseconds(50)
     ) {
         self.warningSettingsStore = warningSettingsStore
         self.settingsStore = settingsStore
@@ -565,6 +743,11 @@ public struct LimitWarningWebhookDeliveryService: Sendable {
         self.secretStore = secretStore
         self.poster = poster
         self.appVersion = appVersion
+        self.deliveryLock = deliveryLock ?? SnapshotRefreshLock(
+            lockURL: stateStore.stateURL.appendingPathExtension("lock")
+        )
+        self.lockWaitDuration = lockWaitDuration
+        self.lockRetryInterval = lockRetryInterval
     }
 
     public static func appDefault(appGroupID: String = ContextPanelLocations.appGroupID) -> LimitWarningWebhookDeliveryService {
@@ -580,6 +763,23 @@ public struct LimitWarningWebhookDeliveryService: Sendable {
             ),
             secretStore: LimitWarningWebhookSecretStore()
         )
+    }
+
+    public func updateConfiguration(_ operation: @escaping @Sendable () throws -> Void) async throws {
+        let startedAt = ContinuousClock.now
+        while !Task.isCancelled {
+            if let _ = try await deliveryLock.withLock({
+                try operation()
+                try stateStore.save(.empty)
+            }) {
+                return
+            }
+            guard startedAt.duration(to: ContinuousClock.now) < lockWaitDuration else {
+                throw ConfigurationError.lockTimedOut
+            }
+            try await Task.sleep(for: lockRetryInterval)
+        }
+        throw CancellationError()
     }
 
     public func deliverIfNeeded(
@@ -603,14 +803,24 @@ public struct LimitWarningWebhookDeliveryService: Sendable {
         snapshot: UsageSnapshot,
         now: Date = Date()
     ) async -> [LimitWarningWebhookDeliveryResult] {
+        await withDeliveryLock {
+            await deliverIfNeededWhileLocked(snapshot: snapshot, now: now)
+        } ?? []
+    }
+
+    private func deliverIfNeededWhileLocked(
+        snapshot: UsageSnapshot,
+        now: Date
+    ) async -> [LimitWarningWebhookDeliveryResult] {
+        let presentationSnapshot = snapshot.presented(at: now)
+        var state = stateStore.load()
+        state.removeRecords(forMissing: Set(presentationSnapshot.mainLimitSummaries.map(\.id)))
+        defer { try? stateStore.save(state) }
+
         let settings = settingsStore.load()
         guard settings.isEnabled else { return [] }
         guard let webhookURL = try? secretStore.loadWebhookURL() else { return [] }
         let warningSettings = warningSettingsStore.load()
-        let presentationSnapshot = snapshot.presented(at: now)
-
-        var state = stateStore.load()
-        state.removeRecords(forMissing: Set(presentationSnapshot.mainLimitSummaries.map(\.id)))
         let events = LimitWarningWebhookEventEvaluator.events(
             snapshot: presentationSnapshot,
             thresholdPercentRemaining: warningSettings.thresholdPercentRemaining
@@ -629,12 +839,22 @@ public struct LimitWarningWebhookDeliveryService: Sendable {
             )
             results.append(result)
         }
-        try? stateStore.save(state)
         return results
     }
 
     @discardableResult
     public func sendTest(now: Date = Date()) async -> LimitWarningWebhookDeliveryResult {
+        await withDeliveryLock {
+            await sendTestWhileLocked(now: now)
+        } ?? LimitWarningWebhookDeliveryResult(
+            attempted: false,
+            succeeded: false,
+            statusCode: nil,
+            errorMessage: "Another webhook delivery is in progress. Try again in a moment."
+        )
+    }
+
+    private func sendTestWhileLocked(now: Date) async -> LimitWarningWebhookDeliveryResult {
         var settings = settingsStore.load()
         settings.isEnabled = true
         guard let webhookURL = try? secretStore.loadWebhookURL() else {
@@ -658,6 +878,28 @@ public struct LimitWarningWebhookDeliveryService: Sendable {
         )
         try? stateStore.save(state)
         return result
+    }
+
+    private func withDeliveryLock<T>(_ operation: () async -> T) async -> T? {
+        let startedAt = ContinuousClock.now
+        while !Task.isCancelled {
+            do {
+                if let value = try await deliveryLock.withLock(operation) {
+                    return value
+                }
+            } catch {
+                return nil
+            }
+            guard startedAt.duration(to: ContinuousClock.now) < lockWaitDuration else {
+                return nil
+            }
+            do {
+                try await Task.sleep(for: lockRetryInterval)
+            } catch {
+                return nil
+            }
+        }
+        return nil
     }
 
     private func deliver(
@@ -697,7 +939,7 @@ public struct LimitWarningWebhookDeliveryService: Sendable {
                 errorMessage: succeeded ? nil : "HTTP \(statusCode)"
             )
         } catch {
-            let message = ConnectorRedactor.redact(error.localizedDescription)
+            let message = ConnectorRedactor.safeErrorDescription(error)
             state.upsert(LimitWarningWebhookDeliveryRecord(
                 deliveryKey: deliveryKey,
                 laneID: event.laneID,

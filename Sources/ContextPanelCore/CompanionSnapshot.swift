@@ -117,7 +117,7 @@ public struct CompanionSyncLoadResult: Equatable, Sendable {
     ) {
         self.document = document
         self.status = status
-        self.errorMessage = errorMessage.map(ConnectorRedactor.redact)
+        self.errorMessage = errorMessage.map(ConnectorRedactor.safeErrorDescription)
         self.transportMetadata = transportMetadata
         self.transportStatuses = transportStatuses
     }
@@ -151,7 +151,7 @@ public struct CompanionSyncStoreFailure: Equatable, Sendable {
 
     private init(documentURL: URL, errorMessage: String, errorDomain: String, errorCode: Int) {
         self.documentURL = documentURL
-        self.errorMessage = ConnectorRedactor.redact(errorMessage)
+        self.errorMessage = ConnectorRedactor.safeErrorDescription(errorMessage)
         self.errorDomain = ConnectorRedactor.redact(errorDomain)
         self.errorCode = errorCode
     }
@@ -325,7 +325,7 @@ public struct CompanionSyncStoreOutcome: Equatable, Sendable {
         self.storeRole = ConnectorRedactor.redact(storeRole)
         self.isAvailable = isAvailable
         self.succeeded = succeeded
-        self.errorMessage = errorMessage.map { ConnectorRedactor.redact($0) }
+        self.errorMessage = errorMessage.map(ConnectorRedactor.safeErrorDescription)
     }
 }
 

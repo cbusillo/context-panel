@@ -30,10 +30,16 @@ public struct SnapshotRefreshStores: Sendable {
 public struct SnapshotRefreshOutcome: Equatable, Sendable {
     public let savedAt: Date
     public let refreshResult: ConnectorRefreshResult
+    public let didSaveSnapshot: Bool
 
-    public init(savedAt: Date, refreshResult: ConnectorRefreshResult) {
+    public init(
+        savedAt: Date,
+        refreshResult: ConnectorRefreshResult,
+        didSaveSnapshot: Bool = true
+    ) {
         self.savedAt = savedAt
         self.refreshResult = refreshResult
+        self.didSaveSnapshot = didSaveSnapshot
     }
 }
 
@@ -79,17 +85,9 @@ public enum SnapshotRefreshRunDecision: Equatable, Sendable {
 
 public struct SnapshotRefreshLock: Sendable {
     public let lockURL: URL
-    public let staleAfter: TimeInterval
-    public let legacyLockGracePeriod: TimeInterval
 
-    public init(
-        lockURL: URL,
-        staleAfter: TimeInterval = 10 * 60,
-        legacyLockGracePeriod: TimeInterval = 60
-    ) {
+    public init(lockURL: URL) {
         self.lockURL = lockURL
-        self.staleAfter = staleAfter
-        self.legacyLockGracePeriod = legacyLockGracePeriod
     }
 
     public static func appDefault() -> SnapshotRefreshLock {
@@ -99,86 +97,24 @@ public struct SnapshotRefreshLock: Sendable {
         )
     }
 
-    public func withLock<T>(now: Date = Date(), _ operation: () async throws -> T) async throws -> T? {
+    public func withLock<T>(_ operation: () async throws -> T) async throws -> T? {
         let fileManager = FileManager.default
         try fileManager.createDirectory(at: lockURL.deletingLastPathComponent(), withIntermediateDirectories: true)
 
-        if fileManager.fileExists(atPath: lockURL.path) {
-            if shouldPreserveExistingLock(fileManager: fileManager, now: now) {
+        let descriptor = open(lockURL.path, O_CREAT | O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        defer { close(descriptor) }
+
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            if errno == EWOULDBLOCK {
                 return nil
             }
-            try? fileManager.removeItem(at: lockURL)
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
-
-        let descriptor = open(lockURL.path, O_CREAT | O_EXCL | O_WRONLY, S_IRUSR | S_IWUSR)
-        guard descriptor >= 0 else {
-            return nil
-        }
-        do {
-            try writeLockMetadata(to: descriptor)
-            close(descriptor)
-        } catch {
-            close(descriptor)
-            try? fileManager.removeItem(at: lockURL)
-            throw error
-        }
-        defer { try? fileManager.removeItem(at: lockURL) }
+        defer { flock(descriptor, LOCK_UN) }
         return try await operation()
-    }
-
-    private func shouldPreserveExistingLock(fileManager: FileManager, now: Date) -> Bool {
-        guard let attributes = try? fileManager.attributesOfItem(atPath: lockURL.path),
-              let modifiedAt = attributes[.modificationDate] as? Date
-        else { return false }
-        let age = max(now.timeIntervalSince(modifiedAt), 0)
-        guard age <= staleAfter else { return false }
-
-        guard let data = try? Data(contentsOf: lockURL), !data.isEmpty else {
-            return age <= legacyLockGracePeriod
-        }
-        guard let metadata = try? SnapshotRefreshLockMetadata.makeDecoder().decode(
-            SnapshotRefreshLockMetadata.self,
-            from: data
-        ) else {
-            return age <= legacyLockGracePeriod
-        }
-        return Self.processIsRunning(metadata.processID)
-    }
-
-    private func writeLockMetadata(to descriptor: Int32) throws {
-        let metadata = SnapshotRefreshLockMetadata(processID: getpid())
-        let data = try SnapshotRefreshLockMetadata.makeEncoder().encode(metadata)
-        try data.withUnsafeBytes { rawBuffer in
-            guard let baseAddress = rawBuffer.baseAddress else { return }
-            var written = 0
-            while written < rawBuffer.count {
-                let result = Darwin.write(descriptor, baseAddress.advanced(by: written), rawBuffer.count - written)
-                guard result > 0 else {
-                    throw POSIXError(.EIO)
-                }
-                written += result
-            }
-        }
-    }
-
-    private static func processIsRunning(_ processID: Int32) -> Bool {
-        guard processID > 0 else { return false }
-        if kill(processID, 0) == 0 { return true }
-        return errno == EPERM
-    }
-}
-
-private struct SnapshotRefreshLockMetadata: Codable {
-    let processID: Int32
-
-    static func makeEncoder() -> JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        return encoder
-    }
-
-    static func makeDecoder() -> JSONDecoder {
-        JSONDecoder()
     }
 }
 
@@ -244,13 +180,13 @@ public struct SnapshotRefreshRunner: Sendable {
     public func refresh(now: Date = Date()) async throws -> SnapshotRefreshRunDecision {
         let previousSnapshot = service.loadCurrent().snapshot?.snapshot
         if let lock {
-            guard let outcome = try await lock.withLock(now: now, {
+            guard let outcome = try await lock.withLock({
                 try await service.refresh(now: now)
             }) else {
                 deferResetExpiryRefreshAfterLockContention(previousSnapshot: previousSnapshot, savedAt: now)
                 return .skippedAlreadyRunning
             }
-            guard outcome.refreshResult.hasSnapshotPayload else {
+            guard outcome.didSaveSnapshot else {
                 recordResetExpiryRefreshAttemptWithoutSnapshot(
                     previousSnapshot: previousSnapshot,
                     savedAt: outcome.savedAt
@@ -267,7 +203,7 @@ public struct SnapshotRefreshRunner: Sendable {
         }
 
         let outcome = try await service.refresh(now: now)
-        guard outcome.refreshResult.hasSnapshotPayload else {
+        guard outcome.didSaveSnapshot else {
             recordResetExpiryRefreshAttemptWithoutSnapshot(previousSnapshot: previousSnapshot, savedAt: outcome.savedAt)
             return .skippedNoReports
         }
@@ -346,7 +282,7 @@ public struct SnapshotRefreshRunner: Sendable {
         guard refreshResult.hasSnapshotPayload else { return .skippedNoReports }
         let previousSnapshot = service.loadCurrent().snapshot?.snapshot
         if let lock {
-            guard let outcome = try await lock.withLock(now: savedAt, {
+            guard let outcome = try await lock.withLock({
                 try await service.saveMergedAsync(
                     refreshResult: refreshResult,
                     savedAt: savedAt,
@@ -581,6 +517,8 @@ public struct SnapshotRefreshService: Sendable {
     public func refresh(now: Date = Date()) async throws -> SnapshotRefreshOutcome {
         importConfiguredAuthFiles(now: now)
         let accountResult = accountStore.load(now: now)
+        let enabledAccountCount = accountResult.document.accounts.filter(\.isEnabled).count
+        let previousStoredSnapshot = stores.primary.loadCurrent().snapshot
         migrateClaudeStateIfNeeded(accounts: accountResult.document.accounts, now: now)
         let connectors = AccountConnectorFactory.connectors(
             from: accountResult.document,
@@ -590,7 +528,7 @@ public struct SnapshotRefreshService: Sendable {
             requiresBookmarkedAuthFiles: ContextPanelLocations.isRunningInAppSandbox
         )
         RefreshDiagnostics.logRefreshStarted(
-            enabledAccountCount: accountResult.document.accounts.filter(\.isEnabled).count,
+            enabledAccountCount: enabledAccountCount,
             connectorCount: connectors.count
         )
         let connectorResult = await ProviderConnectorRuntime(connectors: connectors).refreshAll(now: now)
@@ -601,8 +539,17 @@ public struct SnapshotRefreshService: Sendable {
         )
         RefreshDiagnostics.logProviderReports(refreshResult.reports, previous: stores.primary.loadCurrent().snapshot)
         guard refreshResult.hasSnapshotPayload else {
+            if accountResult.status == .healthy,
+               enabledAccountCount == 0,
+               previousStoredSnapshot != nil {
+                return try await saveMergedAsync(
+                    refreshResult: refreshResult,
+                    savedAt: now,
+                    preservesUnreportedAccounts: false
+                )
+            }
             RefreshDiagnostics.logRefreshSkippedNoPayload(reportCount: refreshResult.reports.count)
-            return SnapshotRefreshOutcome(savedAt: now, refreshResult: refreshResult)
+            return SnapshotRefreshOutcome(savedAt: now, refreshResult: refreshResult, didSaveSnapshot: false)
         }
         return try await saveMergedAsync(refreshResult: refreshResult, savedAt: now)
     }

@@ -53,7 +53,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         self.status = status
         self.message = message
         self.refreshAttentionSummary = refreshAttentionSummary
-        self.syncErrorMessage = syncErrorMessage.map(ConnectorRedactor.redact)
+        self.syncErrorMessage = syncErrorMessage.map(ConnectorRedactor.safeErrorDescription)
     }
 
     public var usageSnapshot: UsageSnapshot {

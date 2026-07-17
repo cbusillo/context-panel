@@ -74,7 +74,7 @@ private enum RefreshAgentRegistration {
                 contextPanelLogger.notice("refresh agent registration repair succeeded status=\(String(describing: service.status), privacy: .public) build=\(currentBuild, privacy: .public)")
             } catch {
                 UserDefaults.standard.removeObject(forKey: repairedBuildKey)
-                contextPanelLogger.error("refresh agent registration repair failed error=\(error.localizedDescription, privacy: .public)")
+                contextPanelLogger.error("refresh agent registration repair failed error=\(ConnectorRedactor.safeErrorDescription(error), privacy: .private)")
             }
         }
     }
@@ -97,7 +97,7 @@ private enum RefreshAgentRegistration {
                 try service.register()
                 shouldMarkReconciled = true
             } catch {
-                contextPanelLogger.error("refresh agent non-destructive registration refresh failed error=\(error.localizedDescription, privacy: .public)")
+                contextPanelLogger.error("refresh agent non-destructive registration refresh failed error=\(ConnectorRedactor.safeErrorDescription(error), privacy: .private)")
             }
         }
 
@@ -892,8 +892,10 @@ struct SettingsPane: View {
     }
 
     private func disconnectOAuth(for account: LocalProviderAccountConfiguration) {
-        model.disconnectOAuth(for: account)
-        Task { await appModel.refreshLocalConnectors() }
+        Task {
+            guard await model.disconnectOAuth(for: account) else { return }
+            await appModel.refreshLocalConnectors()
+        }
     }
 
     private func refreshAfterAuthorization() {
@@ -939,6 +941,7 @@ struct ClaudeOAuthCodeSheet: View {
                     model.cancelClaudeOAuth()
                     dismiss()
                 }
+                .disabled(model.isCompletingClaudeOAuth)
                 Spacer()
                 Button(model.isCompletingClaudeOAuth ? "Connecting" : "Connect") {
                     model.completeClaudeOAuth(code: code) {
@@ -952,6 +955,7 @@ struct ClaudeOAuthCodeSheet: View {
         }
         .padding(20)
         .frame(width: 420)
+        .interactiveDismissDisabled(model.isCompletingClaudeOAuth)
     }
 }
 
@@ -1030,9 +1034,11 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     private var recentlyVerifiedPromptCacheUsagePaths: Set<String> = []
     private var pendingClaudeOAuth: PendingClaudeOAuth?
     private var completingClaudeOAuthState: String?
+    private var claudeOAuthCompletionTask: Task<Void, Never>?
     private var webhookTestCooldownTask: Task<Void, Never>?
 
     deinit {
+        claudeOAuthCompletionTask?.cancel()
         webhookTestCooldownTask?.cancel()
     }
 
@@ -1069,6 +1075,15 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.appGroupID)
     )
     private let webhookSecretStore = LimitWarningWebhookSecretStore()
+
+    private var webhookDeliveryService: LimitWarningWebhookDeliveryService {
+        LimitWarningWebhookDeliveryService(
+            warningSettingsStore: limitWarningSettingsStore,
+            settingsStore: webhookSettingsStore,
+            stateStore: webhookDeliveryStateStore,
+            secretStore: webhookSecretStore
+        )
+    }
 
     private var antigravityBridgeStore: GoogleAntigravityStatusLineSnapshotStore? {
         ContextPanelLocations.googleAntigravityStatusLineSnapshotURL().map {
@@ -1433,9 +1448,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     func setWebhookPreset(_ preset: LimitWarningWebhookPreset) {
         var updated = webhookSettings
         updated.preset = preset
-        if saveWebhookSettings(updated) {
-            clearWebhookDeliveryState()
-        }
+        saveWebhookSettingsAndResetState(updated)
     }
 
     func setWebhookDestinationLabel(_ label: String) {
@@ -1456,24 +1469,32 @@ final class SettingsPaneModel: NSObject, ObservableObject {
             errorMessage = "Webhook URL must be a valid https URL."
             return
         }
-        do {
-            try webhookSecretStore.saveWebhookURL(url)
-            webhookURLInputText = ""
-            webhookURLDisplayText = Self.redactedWebhookURL(url)
-            clearWebhookDeliveryState()
-        } catch {
-            errorMessage = "Webhook URL could not be saved: \(error.localizedDescription)"
+        let service = webhookDeliveryService
+        let secretStore = webhookSecretStore
+        Task { @MainActor [weak self] in
+            do {
+                try await service.updateConfiguration { try secretStore.saveWebhookURL(url) }
+                self?.webhookURLInputText = ""
+                self?.webhookURLDisplayText = Self.redactedWebhookURL(url)
+                self?.webhookDeliveryState = .empty
+            } catch {
+                self?.errorMessage = "Webhook URL could not be saved: \(error.localizedDescription)"
+            }
         }
     }
 
     func clearWebhookURL() {
-        do {
-            try webhookSecretStore.deleteWebhookURL()
-            webhookURLDisplayText = ""
-            webhookURLInputText = ""
-            clearWebhookDeliveryState()
-        } catch {
-            errorMessage = "Webhook URL could not be cleared: \(error.localizedDescription)"
+        let service = webhookDeliveryService
+        let secretStore = webhookSecretStore
+        Task { @MainActor [weak self] in
+            do {
+                try await service.updateConfiguration { try secretStore.deleteWebhookURL() }
+                self?.webhookURLDisplayText = ""
+                self?.webhookURLInputText = ""
+                self?.webhookDeliveryState = .empty
+            } catch {
+                self?.errorMessage = "Webhook URL could not be cleared: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -1481,12 +1502,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         guard canSendWebhookTest else { return }
         isSendingWebhookTest = true
         Task {
-            let service = LimitWarningWebhookDeliveryService(
-                warningSettingsStore: limitWarningSettingsStore,
-                settingsStore: webhookSettingsStore,
-                stateStore: webhookDeliveryStateStore,
-                secretStore: webhookSecretStore
-            )
+            let service = webhookDeliveryService
             let result = await service.sendTest()
             await MainActor.run {
                 webhookDeliveryState = webhookDeliveryStateStore.load()
@@ -1541,6 +1557,20 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         }
     }
 
+    private func saveWebhookSettingsAndResetState(_ updated: LimitWarningWebhookSettings) {
+        let service = webhookDeliveryService
+        let settingsStore = webhookSettingsStore
+        Task { @MainActor [weak self] in
+            do {
+                try await service.updateConfiguration { try settingsStore.save(updated) }
+                self?.webhookSettings = updated
+                self?.webhookDeliveryState = .empty
+            } catch {
+                self?.errorMessage = error.localizedDescription
+            }
+        }
+    }
+
     private func refreshWebhookURLDisplayText() {
         do {
             if let url = try webhookSecretStore.loadWebhookURL() {
@@ -1562,15 +1592,6 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         do {
             try limitWarningStateStore.save(.empty)
             try limitWarningPendingNotificationStore.save(.empty)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private func clearWebhookDeliveryState() {
-        do {
-            try webhookDeliveryStateStore.save(.empty)
-            webhookDeliveryState = .empty
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -1814,21 +1835,51 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         return SettingsAccountRefreshSummary(text: text, status: status)
     }
 
-    func disconnectOAuth(for account: LocalProviderAccountConfiguration) {
-        guard canManageOAuth(for: account) else { return }
+    func disconnectOAuth(for account: LocalProviderAccountConfiguration) async -> Bool {
+        guard canManageOAuth(for: account) else { return false }
+        if pendingClaudeOAuth?.accountID == account.id {
+            cancelClaudeOAuth()
+        }
+        let accountIDs = oauthCredentialAccountIDs(for: account)
+        let credentialStore = credentialStore
         do {
-            if pendingClaudeOAuth?.accountID == account.id {
-                cancelClaudeOAuth()
-            }
-            for accountID in oauthCredentialAccountIDs(for: account) {
-                try credentialStore.delete(accountID: accountID)
+            guard try await Self.deleteOAuthCredentials(
+                accountIDs: accountIDs,
+                credentialStore: credentialStore
+            ) else {
+                errorMessage = "Another refresh is still running. Try disconnecting again in a moment."
+                return false
             }
             errorMessage = nil
             load()
             reloadContextPanelWidgetTimeline()
+            return true
         } catch {
             errorMessage = error.localizedDescription
         }
+        return false
+    }
+
+    private nonisolated static func deleteOAuthCredentials(
+        accountIDs: [String],
+        credentialStore: ProviderCredentialStore
+    ) async throws -> Bool {
+        let lock = SnapshotRefreshLock.appDefault()
+        let startedAt = ContinuousClock.now
+        while !Task.isCancelled {
+            if let _ = try await lock.withLock({
+                for accountID in accountIDs {
+                    try credentialStore.delete(accountID: accountID)
+                }
+            }) {
+                return true
+            }
+            guard startedAt.duration(to: ContinuousClock.now) < .seconds(30) else {
+                return false
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        throw CancellationError()
     }
 
     private func oauthCredentialAccountIDs(for account: LocalProviderAccountConfiguration) -> [String] {
@@ -1902,24 +1953,28 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     func authorizeClaudeOAuth(for account: LocalProviderAccountConfiguration) {
         guard account.connectorKind == .claudeOAuthUsage else { return }
         do {
+            claudeOAuthCompletionTask?.cancel()
+            claudeOAuthCompletionTask = nil
             let flow = try PendingClaudeOAuth(accountID: account.id)
             pendingClaudeOAuth = flow
             completingClaudeOAuthState = nil
             isCompletingClaudeOAuth = false
             isClaudeOAuthCodeSheetPresented = true
-            contextPanelLogger.info("Claude OAuth connect clicked for accountID=\(account.id, privacy: .public)")
+            contextPanelLogger.info("Claude OAuth connect clicked for accountID=\(account.id, privacy: .private)")
             let opened = NSWorkspace.shared.open(flow.authorizationURL)
             contextPanelLogger.info("Claude OAuth authorization URL open result=\(opened, privacy: .public)")
             if !opened {
                 errorMessage = "Claude authorization did not open automatically. Use the link in the Connect Claude sheet."
             }
         } catch {
-            contextPanelLogger.error("Claude OAuth connect failed: \(error.localizedDescription, privacy: .public)")
+            contextPanelLogger.error("Claude OAuth connect failed: \(ConnectorRedactor.safeErrorDescription(error), privacy: .private)")
             errorMessage = error.localizedDescription
         }
     }
 
     func cancelClaudeOAuth() {
+        claudeOAuthCompletionTask?.cancel()
+        claudeOAuthCompletionTask = nil
         pendingClaudeOAuth = nil
         completingClaudeOAuthState = nil
         isCompletingClaudeOAuth = false
@@ -1932,13 +1987,25 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         isCompletingClaudeOAuth = true
         completingClaudeOAuthState = flow.state
         contextPanelLogger.info("Claude OAuth code exchange started")
-        Task { [weak self] in
+        let exchangeService = ClaudeOAuthCodeExchangeService(credentialStore: credentialStore)
+        let flowAccountID = flow.accountID
+        let flowState = flow.state
+        claudeOAuthCompletionTask?.cancel()
+        claudeOAuthCompletionTask = Task { [weak self] in
             do {
-                let credentials = try await Self.exchangeClaudeOAuthCode(authorizationCode: authorizationCode, flow: flow)
-                let encoder = JSONEncoder()
-                encoder.outputFormatting = [.sortedKeys]
-                encoder.dateEncodingStrategy = .iso8601
-                let encodedCredentials = try encoder.encode(credentials)
+                _ = try await exchangeService.exchangeAndCommit(
+                    authorizationCode: authorizationCode,
+                    codeVerifier: flow.pkce.verifier,
+                    state: flow.state,
+                    redirectURI: flow.redirectURI
+                ) { [weak self] encodedCredentials in
+                    guard let self else { throw CancellationError() }
+                    try await self.commitClaudeOAuthCredentials(
+                        encodedCredentials,
+                        accountID: flowAccountID,
+                        state: flowState
+                    )
+                }
                 await MainActor.run {
                     guard let self else { return }
                     guard self.pendingClaudeOAuth?.accountID == flow.accountID,
@@ -1951,19 +2018,9 @@ final class SettingsPaneModel: NSObject, ObservableObject {
                         }
                         return
                     }
-                    do {
-                        try self.credentialStore.save(encodedCredentials, accountID: flow.accountID)
-                    } catch {
-                        contextPanelLogger.error("Claude OAuth credential save failed: \(error.localizedDescription, privacy: .public)")
-                        if self.completingClaudeOAuthState == flow.state {
-                            self.isCompletingClaudeOAuth = false
-                            self.completingClaudeOAuthState = nil
-                        }
-                        self.errorMessage = error.localizedDescription
-                        return
-                    }
                     contextPanelLogger.info("Claude OAuth code exchange succeeded")
                     self.pendingClaudeOAuth = nil
+                    self.claudeOAuthCompletionTask = nil
                     self.isCompletingClaudeOAuth = false
                     self.completingClaudeOAuthState = nil
                     self.isClaudeOAuthCodeSheetPresented = false
@@ -1973,9 +2030,10 @@ final class SettingsPaneModel: NSObject, ObservableObject {
                 }
             } catch {
                 await MainActor.run {
-                    contextPanelLogger.error("Claude OAuth code exchange failed: \(error.localizedDescription, privacy: .public)")
+                    contextPanelLogger.error("Claude OAuth code exchange failed: \(ConnectorRedactor.safeErrorDescription(error), privacy: .private)")
                     guard let self else { return }
                     if self.completingClaudeOAuthState == flow.state {
+                        self.claudeOAuthCompletionTask = nil
                         self.isCompletingClaudeOAuth = false
                         self.completingClaudeOAuthState = nil
                         self.errorMessage = error.localizedDescription
@@ -1983,6 +2041,17 @@ final class SettingsPaneModel: NSObject, ObservableObject {
                 }
             }
         }
+    }
+
+    private func commitClaudeOAuthCredentials(_ data: Data, accountID: String, state: String) throws {
+        guard !Task.isCancelled,
+              pendingClaudeOAuth?.accountID == accountID,
+              pendingClaudeOAuth?.state == state,
+              completingClaudeOAuthState == state
+        else {
+            throw CancellationError()
+        }
+        try credentialStore.save(data, accountID: accountID)
     }
 
     func authorizeAuthFile(for account: LocalProviderAccountConfiguration, onVerified: @escaping () -> Void = {}) {
@@ -2158,41 +2227,6 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         try? antigravityBridgeStore?.load()
     }
 
-    private static func exchangeClaudeOAuthCode(
-        authorizationCode: ClaudeOAuthAuthorizationCode,
-        flow: PendingClaudeOAuth
-    ) async throws -> ClaudeOAuthCredentials {
-        let body = try ClaudeOAuthFlow.authorizationCodeTokenRequestBody(
-            code: authorizationCode,
-            codeVerifier: flow.pkce.verifier,
-            state: flow.state,
-            redirectURI: flow.redirectURI
-        )
-        var request = URLRequest(url: ClaudeOAuthMetadata.tokenEndpoint)
-        request.httpMethod = "POST"
-        request.httpBody = body
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue(ClaudeOAuthMetadata.oauthBetaHeader, forHTTPHeaderField: "anthropic-beta")
-        request.setValue("context-panel", forHTTPHeaderField: "User-Agent")
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw ConnectorError.nonHTTPResponse("Claude OAuth token exchange returned a non-HTTP response")
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            let rawBody = String(data: data, encoding: .utf8) ?? ""
-            let redactedBody = ConnectorRedactor.redact(rawBody)
-            throw ConnectorError.invalidAuth("Claude OAuth token exchange returned HTTP \(http.statusCode): \(redactedBody)")
-        }
-        let token = try JSONDecoder().decode(ClaudeOAuthTokenResponse.self, from: data)
-        return ClaudeOAuthCredentials(
-            accessToken: token.accessToken,
-            refreshToken: token.refreshToken,
-            expiresAt: token.expiresIn.map { Date().addingTimeInterval(TimeInterval($0)) },
-            scopes: token.scopes
-        )
-    }
 }
 
 private struct PendingClaudeOAuth {
@@ -4168,7 +4202,7 @@ final class ContextPanelAppModel: ObservableObject {
 
     func setError(_ message: String) {
         storeStatus = .failure
-        errorMessage = ConnectorRedactor.redact(message)
+        errorMessage = ConnectorRedactor.safeErrorDescription(message)
     }
 
     func relativeTime(_ date: Date) -> String {
@@ -4241,6 +4275,7 @@ private struct AppLimitWarningNotificationService {
     let settingsStore: LimitWarningSettingsStore
     let stateStore: LimitWarningStateStore
     let pendingNotificationStore: LimitWarningPendingNotificationStore
+    let webhookService: LimitWarningWebhookDeliveryService
     let notificationCenter: UNUserNotificationCenter
     let diagnosticsStore: RefreshDiagnosticsStateStore
 
@@ -4255,6 +4290,7 @@ private struct AppLimitWarningNotificationService {
             pendingNotificationStore: LimitWarningPendingNotificationStore(
                 queueURL: ContextPanelLocations.limitWarningPendingNotificationsURL(appGroupID: ContextPanelLocations.appGroupID)
             ),
+            webhookService: .appDefault(),
             notificationCenter: .current(),
             diagnosticsStore: RefreshDiagnosticsStateStore(
                 stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.appGroupID)
@@ -4263,6 +4299,8 @@ private struct AppLimitWarningNotificationService {
     }
 
     func notifyIfNeeded(decision: SnapshotRefreshRunDecision) async {
+        let webhookResults = await webhookService.deliverIfNeeded(decision: decision)
+        recordWebhookDiagnostics(webhookResults, attemptedAt: Date())
         guard case let .refreshed(outcome) = decision else { return }
         let settings = settingsStore.load()
         let state = stateStore.load()
@@ -4271,6 +4309,7 @@ private struct AppLimitWarningNotificationService {
             persistedSnapshot: loadPersistedSnapshot()
         )
         let presentationSnapshot = warningSnapshot.presented(at: outcome.savedAt)
+        prunePendingNotifications(for: presentationSnapshot)
         let result = LimitWarningEvaluator.evaluate(
             settings: settings,
             state: state,
@@ -4289,7 +4328,7 @@ private struct AppLimitWarningNotificationService {
             do {
                 try stateStore.save(commitPlan.persistedState)
             } catch {
-                contextPanelLogger.error("limit warning state save failed: \(error.localizedDescription, privacy: .public)")
+                contextPanelLogger.error("limit warning state save failed: \(ConnectorRedactor.safeErrorDescription(error), privacy: .private)")
             }
         }
         if result.events.isEmpty {
@@ -4321,7 +4360,7 @@ private struct AppLimitWarningNotificationService {
             do {
                 try stateStore.save(commitPlan.persistedState)
             } catch {
-                contextPanelLogger.error("limit warning state save failed: \(error.localizedDescription, privacy: .public)")
+                contextPanelLogger.error("limit warning state save failed: \(ConnectorRedactor.safeErrorDescription(error), privacy: .private)")
             }
         }
         recordLocalNotificationDiagnostics(
@@ -4361,7 +4400,8 @@ private struct AppLimitWarningNotificationService {
             currentState: state,
             targetState: pendingTargetState(from: pendingNotifications, currentState: state),
             snapshot: pendingSnapshot(from: pendingNotifications),
-            settings: settingsStore.load()
+            settings: settingsStore.load(),
+            prunesMissingLanes: false
         )
         for notification in pendingNotifications {
             if await deliver(event: notification.event, playsSound: notification.playsSound) {
@@ -4372,7 +4412,7 @@ private struct AppLimitWarningNotificationService {
                     commitPlan = deliveredCommitPlan
                     deliveredNotifications.append(notification)
                 } catch {
-                    contextPanelLogger.error("limit warning state save failed: \(error.localizedDescription, privacy: .public)")
+                    contextPanelLogger.error("limit warning state save failed: \(ConnectorRedactor.safeErrorDescription(error), privacy: .private)")
                 }
             }
         }
@@ -4408,6 +4448,20 @@ private struct AppLimitWarningNotificationService {
         }
     }
 
+    private func recordWebhookDiagnostics(_ results: [LimitWarningWebhookDeliveryResult], attemptedAt: Date) {
+        guard let summary = LimitWarningWebhookDeliverySummary(results: results) else { return }
+        try? diagnosticsStore.update { state in
+            state.recordAlert(RefreshDiagnosticsAlertRecord(
+                channel: .webhook,
+                attemptedAt: attemptedAt,
+                succeededAt: summary.succeeded ? attemptedAt : nil,
+                eventCount: summary.eventCount,
+                lastHTTPStatus: summary.lastHTTPStatus,
+                errorMessage: summary.errorMessage
+            ))
+        }
+    }
+
     private func removePendingNotifications(_ notifications: [LimitWarningPendingNotification]) {
         guard !notifications.isEmpty else { return }
         do {
@@ -4415,7 +4469,19 @@ private struct AppLimitWarningNotificationService {
             updatedQueue.remove(notifications)
             try pendingNotificationStore.save(updatedQueue)
         } catch {
-            contextPanelLogger.error("pending limit warning queue update failed: \(error.localizedDescription, privacy: .public)")
+            contextPanelLogger.error("pending limit warning queue update failed: \(ConnectorRedactor.safeErrorDescription(error), privacy: .private)")
+        }
+    }
+
+    private func prunePendingNotifications(for snapshot: UsageSnapshot) {
+        do {
+            var queue = pendingNotificationStore.load()
+            let previousCount = queue.notifications.count
+            queue.removeNotifications(forMissing: Set(snapshot.mainLimitSummaries.map(\.id)))
+            guard queue.notifications.count != previousCount else { return }
+            try pendingNotificationStore.save(queue)
+        } catch {
+            contextPanelLogger.error("pending limit warning queue pruning failed: \(ConnectorRedactor.safeErrorDescription(error), privacy: .private)")
         }
     }
 
@@ -4477,7 +4543,7 @@ private struct AppLimitWarningNotificationService {
             try await notificationCenter.add(request)
             return true
         } catch {
-            contextPanelLogger.error("limit warning notification failed: \(error.localizedDescription, privacy: .public)")
+            contextPanelLogger.error("limit warning notification failed: \(ConnectorRedactor.safeErrorDescription(error), privacy: .private)")
             return false
         }
     }

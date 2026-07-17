@@ -617,6 +617,35 @@ import Testing
     #expect(result.snapshot.limits.map(\.label) == ["Codex 5-hour", "GPT-5.5 Thinking 5-hour"])
 }
 
+@Test func codexConnectorKeepsCodexVariantWhenChatGPTModelsExposeStandaloneFamily() async throws {
+    let auth = #"{"tokens":{"access_token":"token-secret","account_id":"account-a"}}"#.data(using: .utf8)!
+    let usage = codexUsageWithAdditionalLimits([
+        ("GPT-5.3-Codex-Spark", "codex_bengalfox", 1),
+        ("GPT-5.2-Codex-Legacy", "codex_legacy", 2),
+    ])
+    let models = #"""
+    {
+      "models": [
+        { "slug": "gpt-5-3", "title": "GPT-5.3" }
+      ]
+    }
+    """#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: usage),
+        ConnectorHTTPResponse(statusCode: 200, data: models),
+    ])
+    let connector = CodexRateLimitConnector(
+        accounts: [CodexAccountConfiguration(authPath: "/tmp/openai.json", accountName: "OpenAI")],
+        httpClient: http,
+        fileLoader: { _ in auth }
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+
+    #expect(http.requests.map { $0.url.path } == ["/backend-api/wham/usage", "/backend-api/models"])
+    #expect(result.snapshot.limits.map(\.label) == ["Codex 5-hour", "GPT-5.3-Codex-Spark 5-hour"])
+}
+
 @Test func codexConnectorKeepsAdditionalModelLimitsWhenAvailabilityFetchFails() async throws {
     let auth = #"{"tokens":{"access_token":"token-secret","account_id":"account-a"}}"#.data(using: .utf8)!
     let usage = codexUsageWithAdditionalLimits([
@@ -695,6 +724,19 @@ import Testing
     #expect(result.reports[0].errorMessage?.contains("raw body redacted") == true)
     #expect(result.reports[0].errorMessage?.contains("secret body") == false)
     #expect(result.snapshot.limits.isEmpty)
+}
+
+@Test func connectorSafeErrorDescriptionRedactsSecretsURLsAndLocalPaths() {
+    let message = "failed for user@example.com with bearer sk-secret-token at /Users/example/.code/auth.json via https://hooks.example.com/private"
+
+    let redacted = ConnectorRedactor.safeErrorDescription(message)
+
+    #expect(!redacted.contains("user@example.com"))
+    #expect(!redacted.contains("sk-secret-token"))
+    #expect(!redacted.contains("/Users/example/.code/auth.json"))
+    #expect(!redacted.contains("hooks.example.com"))
+    #expect(redacted.contains("[local path]"))
+    #expect(redacted.contains("[url redacted]"))
 }
 
 @Test func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithoutRefreshToken() async {
@@ -1172,6 +1214,59 @@ import Testing
     #expect(result.snapshot.limits.allSatisfy { $0.note?.contains("statusline") != true })
 }
 
+@Test func claudeOAuthConnectorTreatsSuccessfulEmptyUsageAsAuthoritativeUnknown() async throws {
+    let credentials = try claudeCredentialsData(
+        accessToken: "access-secret",
+        refreshToken: "refresh-secret",
+        expiresAt: Date(timeIntervalSince1970: 2_000_000_000)
+    )
+    let usage = Data(#"{"five_hour":null,"seven_day":{"utilization":null}}"#.utf8)
+    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
+    let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
+    let connector = ClaudeOAuthUsageConnector(
+        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
+        httpClient: http,
+        credentialStore: store
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].status == .unknown)
+    #expect(result.reports[0].limits.isEmpty)
+    #expect(result.snapshot.limits.isEmpty)
+}
+
+@Test func claudeOAuthConnectorRedactsMalformedAndFailedUsageResponses() async throws {
+    let credentials = try claudeCredentialsData(
+        accessToken: "access-secret",
+        refreshToken: "refresh-secret",
+        expiresAt: Date(timeIntervalSince1970: 2_000_000_000)
+    )
+    let cases: [(Int, Data)] = [
+        (200, Data(#"{"five_hour":"malformed-secret"}"#.utf8)),
+        (429, Data(#"{"request_id":"request-secret","message":"rate body secret"}"#.utf8)),
+        (503, Data(#"{"request_id":"request-secret","message":"service body secret"}"#.utf8)),
+    ]
+
+    for (statusCode, body) in cases {
+        let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: statusCode, data: body)])
+        let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
+        let connector = ClaudeOAuthUsageConnector(
+            accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
+            httpClient: http,
+            credentialStore: store
+        )
+
+        let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+
+        #expect(result.reports[0].status == .failure)
+        #expect(result.reports[0].limits.isEmpty)
+        #expect(result.reports[0].errorMessage?.contains("request-secret") == false)
+        #expect(result.reports[0].errorMessage?.contains("body secret") == false)
+    }
+}
+
 @Test func claudeOAuthFlowBuildsClaudeCodeAuthorizeURL() throws {
     let url = try ClaudeOAuthFlow.authorizationURL(codeChallenge: "challenge-value", state: "state-value")
     let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
@@ -1260,6 +1355,95 @@ import Testing
     #expect(store.savedData.flatMap { try? JSONDecoder.contextPanelISO8601.decode(ClaudeOAuthCredentials.self, from: $0) }?.refreshToken == "new-refresh")
 }
 
+@Test func claudeOAuthConnectorUsesExpirationSkewBoundary() async throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let usage = Data(#"{"five_hour":{"utilization":1}}"#.utf8)
+    let validCredentials = try claudeCredentialsData(
+        accessToken: "current-access",
+        refreshToken: "refresh-secret",
+        expiresAt: now.addingTimeInterval(301)
+    )
+    let validHTTP = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
+    let validConnector = ClaudeOAuthUsageConnector(
+        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
+        httpClient: validHTTP,
+        credentialStore: StubCredentialStore(storage: ["claude-oauth-default": validCredentials])
+    )
+
+    _ = await validConnector.refresh(now: now)
+
+    #expect(validHTTP.requests.map(\.method) == ["GET"])
+    #expect(validHTTP.requests[0].headers["Authorization"] == "Bearer current-access")
+
+    let boundaryCredentials = try claudeCredentialsData(
+        accessToken: "old-access",
+        refreshToken: "refresh-secret",
+        expiresAt: now.addingTimeInterval(300)
+    )
+    let token = Data(#"{"access_token":"new-access","expires_in":3600}"#.utf8)
+    let boundaryHTTP = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: token),
+        ConnectorHTTPResponse(statusCode: 200, data: usage),
+    ])
+    let boundaryConnector = ClaudeOAuthUsageConnector(
+        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
+        httpClient: boundaryHTTP,
+        credentialStore: StubCredentialStore(storage: ["claude-oauth-default": boundaryCredentials])
+    )
+
+    _ = await boundaryConnector.refresh(now: now)
+
+    #expect(boundaryHTTP.requests.map(\.method) == ["POST", "GET"])
+    #expect(boundaryHTTP.requests[1].headers["Authorization"] == "Bearer new-access")
+}
+
+@Test func claudeOAuthConnectorRequiresRefreshTokenWhenAccessTokenIsExpired() async throws {
+    let credentials = try claudeCredentialsData(
+        accessToken: "old-access",
+        refreshToken: nil,
+        expiresAt: Date(timeIntervalSince1970: 1_700_000_000)
+    )
+    let http = StubHTTPClient(responses: [])
+    let connector = ClaudeOAuthUsageConnector(
+        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
+        httpClient: http,
+        credentialStore: StubCredentialStore(storage: ["claude-oauth-default": credentials])
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+
+    #expect(http.requests.isEmpty)
+    #expect(result.reports[0].status == .failure)
+    #expect(result.reports[0].errorMessage?.contains("do not contain a refresh token") == true)
+}
+
+@Test func claudeOAuthConnectorPreservesRefreshTokenWhenRotationOmitsIt() async throws {
+    let credentials = try claudeCredentialsData(
+        accessToken: "old-access",
+        refreshToken: "refresh-secret",
+        expiresAt: Date(timeIntervalSince1970: 1_700_000_000)
+    )
+    let token = Data(#"{"access_token":"new-access","expires_in":3600}"#.utf8)
+    let usage = Data(#"{"five_hour":{"utilization":1}}"#.utf8)
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: token),
+        ConnectorHTTPResponse(statusCode: 200, data: usage),
+    ])
+    let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
+    let connector = ClaudeOAuthUsageConnector(
+        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
+        httpClient: http,
+        credentialStore: store
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+    let savedData = try #require(store.savedData)
+    let savedCredentials = try JSONDecoder.contextPanelISO8601.decode(ClaudeOAuthCredentials.self, from: savedData)
+
+    #expect(result.reports[0].status == .healthy)
+    #expect(savedCredentials.refreshToken == "refresh-secret")
+}
+
 @Test func claudeOAuthConnectorRefreshesWhenUsageCallRejectsAccessToken() async throws {
     for statusCode in [401, 403] {
         let credentials = #"{"accessToken":"old-access","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
@@ -1287,6 +1471,251 @@ import Testing
         #expect(http.requests[2].headers["anthropic-beta"] == ClaudeOAuthMetadata.oauthBetaHeader)
         #expect(store.savedAccountID == "claude-oauth-default")
     }
+}
+
+@Test func claudeOAuthConnectorReportsSecondUnauthorizedUsageWithoutLeakingBody() async throws {
+    let credentials = try claudeCredentialsData(
+        accessToken: "old-access",
+        refreshToken: "refresh-secret",
+        expiresAt: Date(timeIntervalSince1970: 2_000_000_000)
+    )
+    let token = Data(#"{"access_token":"new-access","expires_in":3600}"#.utf8)
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 401, data: Data(#"{"request_id":"first-secret"}"#.utf8)),
+        ConnectorHTTPResponse(statusCode: 200, data: token),
+        ConnectorHTTPResponse(statusCode: 401, data: Data(#"{"request_id":"second-secret"}"#.utf8)),
+    ])
+    let connector = ClaudeOAuthUsageConnector(
+        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
+        httpClient: http,
+        credentialStore: StubCredentialStore(storage: ["claude-oauth-default": credentials])
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+
+    #expect(http.requests.map(\.method) == ["GET", "POST", "GET"])
+    #expect(result.reports[0].status == .failure)
+    #expect(result.reports[0].errorMessage == "Claude usage was not authorized. Reauthorize this account and try again.")
+    #expect(result.reports[0].errorMessage?.contains("second-secret") == false)
+}
+
+@Test func claudeOAuthConnectorKeepsMultiAccountFailuresIsolated() async throws {
+    let credentials = try claudeCredentialsData(
+        accessToken: "access-secret",
+        refreshToken: "refresh-secret",
+        expiresAt: Date(timeIntervalSince1970: 2_000_000_000)
+    )
+    let usage = Data(#"{"five_hour":{"utilization":8}}"#.utf8)
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: usage),
+        ConnectorHTTPResponse(statusCode: 503, data: Data(#"{"request_id":"second-secret"}"#.utf8)),
+    ])
+    let store = StubCredentialStore(storage: [
+        "claude-a": credentials,
+        "claude-b": credentials,
+    ])
+    let connector = ClaudeOAuthUsageConnector(
+        accounts: [
+            ClaudeOAuthAccountConfiguration(accountID: "claude-a", accountName: "Claude A"),
+            ClaudeOAuthAccountConfiguration(accountID: "claude-b", accountName: "Claude B"),
+        ],
+        httpClient: http,
+        credentialStore: store
+    )
+
+    let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+
+    #expect(result.reports.map(\.status) == [.healthy, .failure])
+    #expect(result.reports[0].limits.count == 1)
+    #expect(result.reports[1].limits.isEmpty)
+    #expect(result.reports[0].accountID != result.reports[1].accountID)
+}
+
+@Test func claudeOAuthTokenRotationIsSerializedBySharedSnapshotRefreshLock() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-claude-lock-tests")
+        .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+    let now = Date()
+    let credentials = try claudeCredentialsData(
+        accessToken: "expired-access",
+        refreshToken: "refresh-secret",
+        expiresAt: now.addingTimeInterval(-60)
+    )
+    let http = GatedClaudeHTTPClient()
+    let store = CountingCredentialStore(storage: ["claude-oauth-default": credentials])
+    let connector = ClaudeOAuthUsageConnector(
+        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
+        httpClient: http,
+        credentialStore: store
+    )
+    let lock = SnapshotRefreshLock(lockURL: directory.appending(path: "refresh.lock"))
+
+    let firstRefresh = Task {
+        try await lock.withLock {
+            await connector.refresh(now: now)
+        }
+    }
+    guard await http.waitUntilFirstTokenPOSTStarts() else {
+        await http.releaseFirstTokenPOST()
+        firstRefresh.cancel()
+        _ = try? await firstRefresh.value
+        Issue.record("first Claude token POST did not start before the test deadline")
+        return
+    }
+
+    let secondRefresh: ConnectorRefreshResult?
+    do {
+        secondRefresh = try await lock.withLock {
+            await connector.refresh(now: now)
+        }
+    } catch {
+        await http.releaseFirstTokenPOST()
+        _ = try? await firstRefresh.value
+        throw error
+    }
+
+    await http.releaseFirstTokenPOST()
+    let firstResult = try await firstRefresh.value
+
+    #expect(firstResult?.reports.first?.status == .healthy)
+    #expect(secondRefresh == nil)
+    #expect(await http.tokenPOSTCount == 1)
+    #expect(store.saveCount == 1)
+    let savedData = try #require(store.data(accountID: "claude-oauth-default"))
+    let savedCredentials = try JSONDecoder.contextPanelISO8601.decode(ClaudeOAuthCredentials.self, from: savedData)
+    #expect(savedCredentials.refreshToken == "rotated-refresh")
+    #expect(try await lock.withLock { true } == true)
+}
+
+@Test func claudeOAuthCodeExchangeRedactsFailureBody() async throws {
+    let directory = try temporaryProviderConnectorDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(
+        statusCode: 500,
+        data: Data(#"{"access_token":"must-not-leak"}"#.utf8)
+    )])
+    let service = ClaudeOAuthCodeExchangeService(
+        httpClient: http,
+        credentialStore: CountingCredentialStore(storage: [:]),
+        lock: SnapshotRefreshLock(lockURL: directory.appending(path: "refresh.lock"))
+    )
+
+    await #expect(throws: ConnectorError.redactedHTTPFailure(
+        operation: "Claude OAuth token exchange",
+        statusCode: 500
+    )) {
+        try await service.exchangeAndSave(
+            authorizationCode: ClaudeOAuthAuthorizationCode(code: "code", state: nil),
+            codeVerifier: "verifier",
+            state: "state",
+            accountID: "claude-oauth-default"
+        )
+    }
+}
+
+@Test func claudeOAuthCodeExchangeDoesNotConsumeCodeWhileRefreshLockIsHeld() async throws {
+    let directory = try temporaryProviderConnectorDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let lock = SnapshotRefreshLock(lockURL: directory.appending(path: "refresh.lock"))
+    let gate = SnapshotLockTestGate()
+    let holder = Task {
+        try await lock.withLock {
+            await gate.markStarted()
+            await gate.waitForRelease()
+        }
+    }
+    #expect(await gate.waitUntilStarted())
+    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(
+        statusCode: 200,
+        data: Data(#"{"access_token":"new-access","refresh_token":"new-refresh"}"#.utf8)
+    )])
+    let store = CountingCredentialStore(storage: [:])
+    let service = ClaudeOAuthCodeExchangeService(httpClient: http, credentialStore: store, lock: lock)
+
+    await #expect(throws: ConnectorError.foregroundRefreshRequired(
+        "Claude usage is already refreshing. Try signing in again in a moment."
+    )) {
+        try await service.exchangeAndSave(
+            authorizationCode: ClaudeOAuthAuthorizationCode(code: "code", state: nil),
+            codeVerifier: "verifier",
+            state: "state",
+            accountID: "claude-oauth-default"
+        )
+    }
+    #expect(http.requests.isEmpty)
+    #expect(store.saveCount == 0)
+
+    await gate.release()
+    _ = try await holder.value
+}
+
+@Test func claudeOAuthCodeExchangeCancellationDoesNotSaveCredentials() async throws {
+    let directory = try temporaryProviderConnectorDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let lock = SnapshotRefreshLock(lockURL: directory.appending(path: "refresh.lock"))
+    let http = GatedClaudeHTTPClient()
+    let store = CountingCredentialStore(storage: [:])
+    let service = ClaudeOAuthCodeExchangeService(httpClient: http, credentialStore: store, lock: lock)
+    let exchange = Task {
+        try await service.exchangeAndSave(
+            authorizationCode: ClaudeOAuthAuthorizationCode(code: "code", state: nil),
+            codeVerifier: "verifier",
+            state: "state",
+            accountID: "claude-oauth-default"
+        )
+    }
+    guard await http.waitUntilFirstTokenPOSTStarts() else {
+        exchange.cancel()
+        await http.releaseFirstTokenPOST()
+        Issue.record("Claude authorization-code POST did not start before the test deadline")
+        return
+    }
+
+    exchange.cancel()
+    await http.releaseFirstTokenPOST()
+    do {
+        _ = try await exchange.value
+        Issue.record("canceled Claude code exchange unexpectedly succeeded")
+    } catch is CancellationError {
+    } catch {
+        Issue.record("canceled Claude code exchange failed with unexpected error: \(error)")
+    }
+
+    #expect(store.saveCount == 0)
+    #expect(try await lock.withLock { true } == true)
+}
+
+@Test func claudeOAuthCodeExchangeCommitCanRejectStaleFlow() async throws {
+    let directory = try temporaryProviderConnectorDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = CountingCredentialStore(storage: [:])
+    let service = ClaudeOAuthCodeExchangeService(
+        httpClient: StubHTTPClient(responses: [ConnectorHTTPResponse(
+            statusCode: 200,
+            data: Data(#"{"access_token":"new-access","refresh_token":"new-refresh"}"#.utf8)
+        )]),
+        credentialStore: store,
+        lock: SnapshotRefreshLock(lockURL: directory.appending(path: "refresh.lock"))
+    )
+
+    do {
+        _ = try await service.exchangeAndCommit(
+            authorizationCode: ClaudeOAuthAuthorizationCode(code: "code", state: nil),
+            codeVerifier: "verifier",
+            state: "state"
+        ) { _ in
+            throw CancellationError()
+        }
+        Issue.record("stale Claude OAuth flow unexpectedly committed credentials")
+    } catch is CancellationError {
+    } catch {
+        Issue.record("stale Claude OAuth flow failed with unexpected error: \(error)")
+    }
+
+    #expect(store.saveCount == 0)
 }
 
 @Test func claudeOAuthConnectorTreatsInvalidRefreshRequestAsHTTPFailure() async throws {
@@ -1393,6 +1822,90 @@ private final class StubHTTPClient: ConnectorHTTPClient, @unchecked Sendable {
     }
 }
 
+private actor GatedClaudeHTTPClient: ConnectorHTTPClient {
+    private var firstTokenPOSTStarted = false
+    private var firstTokenPOSTReleased = false
+    private var firstTokenPOSTReleaseWaiter: CheckedContinuation<Void, Never>?
+    private(set) var tokenPOSTCount = 0
+
+    func data(for request: ConnectorHTTPRequest) async throws -> ConnectorHTTPResponse {
+        if request.method == "POST", request.url == ClaudeOAuthMetadata.tokenEndpoint {
+            tokenPOSTCount += 1
+            if tokenPOSTCount == 1 {
+                firstTokenPOSTStarted = true
+                if !firstTokenPOSTReleased {
+                    await withCheckedContinuation { continuation in
+                        firstTokenPOSTReleaseWaiter = continuation
+                    }
+                }
+            }
+            return ConnectorHTTPResponse(
+                statusCode: 200,
+                data: Data(#"{"access_token":"new-access","refresh_token":"rotated-refresh","expires_in":3600}"#.utf8)
+            )
+        }
+
+        guard request.method == "GET", request.url.absoluteString == "https://api.anthropic.com/api/oauth/usage" else {
+            return ConnectorHTTPResponse(statusCode: 404, data: Data())
+        }
+        return ConnectorHTTPResponse(
+            statusCode: 200,
+            data: Data(#"{"five_hour":{"utilization":1}}"#.utf8)
+        )
+    }
+
+    func waitUntilFirstTokenPOSTStarts() async -> Bool {
+        for _ in 0..<200 {
+            if firstTokenPOSTStarted {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return firstTokenPOSTStarted
+    }
+
+    func releaseFirstTokenPOST() {
+        firstTokenPOSTReleased = true
+        firstTokenPOSTReleaseWaiter?.resume()
+        firstTokenPOSTReleaseWaiter = nil
+    }
+}
+
+private actor SnapshotLockTestGate {
+    private var started = false
+    private var released = false
+
+    func markStarted() {
+        started = true
+    }
+
+    func waitUntilStarted() async -> Bool {
+        for _ in 0..<200 {
+            if started { return true }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return started
+    }
+
+    func waitForRelease() async {
+        while !released {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
+    func release() {
+        released = true
+    }
+}
+
+private func temporaryProviderConnectorDirectory() throws -> URL {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-provider-connector-tests")
+        .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return directory
+}
+
 private func codexUsageWithAdditionalLimits(_ limits: [(name: String, feature: String, used: Int)]) -> Data {
     let additional = limits.map { limit in
         """
@@ -1421,6 +1934,22 @@ private func codexUsageWithAdditionalLimits(_ limits: [(name: String, feature: S
       ]
     }
     """.utf8)
+}
+
+private func claudeCredentialsData(
+    accessToken: String?,
+    refreshToken: String?,
+    expiresAt: Date?,
+    scopes: [String] = ["user:profile", "user:inference"]
+) throws -> Data {
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    return try encoder.encode(ClaudeOAuthCredentials(
+        accessToken: accessToken,
+        refreshToken: refreshToken,
+        expiresAt: expiresAt,
+        scopes: scopes
+    ))
 }
 
 private func googleAntigravityTestAccount() -> GoogleAntigravityAccountConfiguration {
@@ -1472,6 +2001,41 @@ private final class StubCredentialStore: ProviderCredentialStoring, @unchecked S
         storage[accountID] = data
         savedAccountID = accountID
         savedData = data
+    }
+}
+
+private final class CountingCredentialStore: ProviderCredentialStoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [String: Data]
+    private var storedSaveCount = 0
+
+    init(storage: [String: Data]) {
+        self.storage = storage
+    }
+
+    var saveCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedSaveCount
+    }
+
+    func load(accountID: String) throws -> Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage[accountID]
+    }
+
+    func save(_ data: Data, accountID: String) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        storage[accountID] = data
+        storedSaveCount += 1
+    }
+
+    func data(accountID: String) -> Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage[accountID]
     }
 }
 

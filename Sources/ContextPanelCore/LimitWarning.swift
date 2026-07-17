@@ -349,6 +349,10 @@ public struct LimitWarningPendingNotificationQueue: Codable, Equatable, Sendable
         }
     }
 
+    public mutating func removeNotifications(forMissing laneIDs: Set<String>) {
+        notifications.removeAll { !laneIDs.contains($0.id) }
+    }
+
     private static func normalized(_ notifications: [LimitWarningPendingNotification]) -> [LimitWarningPendingNotification] {
         notifications
             .reduce(into: [String: LimitWarningPendingNotification]()) { result, notification in
@@ -441,12 +445,17 @@ public struct LimitWarningNotificationCommitPlan: Equatable, Sendable {
         currentState: LimitWarningState,
         targetState: LimitWarningState,
         snapshot: UsageSnapshot,
-        settings: LimitWarningSettings
+        settings: LimitWarningSettings,
+        prunesMissingLanes: Bool = true
     ) {
         self.currentState = currentState
         self.targetState = targetState
         persistedState = currentState
-        pruneRecoveredRecords(using: snapshot, settings: settings)
+        pruneRecoveredRecords(
+            using: snapshot,
+            settings: settings,
+            prunesMissingLanes: prunesMissingLanes
+        )
     }
 
     public var hasPendingChanges: Bool {
@@ -464,7 +473,8 @@ public struct LimitWarningNotificationCommitPlan: Equatable, Sendable {
 
     private mutating func pruneRecoveredRecords(
         using snapshot: UsageSnapshot,
-        settings: LimitWarningSettings
+        settings: LimitWarningSettings,
+        prunesMissingLanes: Bool
     ) {
         guard settings.isEnabled else {
             persistedState = .empty
@@ -472,7 +482,12 @@ public struct LimitWarningNotificationCommitPlan: Equatable, Sendable {
         }
         let summariesByID = Dictionary(uniqueKeysWithValues: snapshot.mainLimitSummaries.map { ($0.id, $0) })
         for record in persistedState.records {
-            guard let summary = summariesByID[record.laneID] else { continue }
+            guard let summary = summariesByID[record.laneID] else {
+                if prunesMissingLanes {
+                    persistedState.removeRecord(for: record.laneID)
+                }
+                continue
+            }
             guard let usageRatio = summary.usageRatio else {
                 persistedState.removeRecord(for: record.laneID)
                 continue

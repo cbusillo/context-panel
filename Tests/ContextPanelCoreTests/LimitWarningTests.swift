@@ -260,6 +260,51 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
     #expect(plan.persistedState == evaluation.state)
 }
 
+@Test func limitWarningCommitPlanPrunesLanesMissingFromAuthoritativeSnapshot() {
+    let existingState = LimitWarningState(records: [
+        LimitWarningRecord(
+            laneID: "openai:fiveHour",
+            lastThresholdPercentRemaining: 10,
+            lastNotifiedAt: warningNow,
+            lastCapacityRatio: 0.05,
+            resetIdentity: nil
+        ),
+    ])
+
+    let plan = LimitWarningNotificationCommitPlan(
+        currentState: existingState,
+        targetState: .empty,
+        snapshot: UsageSnapshot(generatedAt: warningNow, limits: []),
+        settings: LimitWarningSettings(isEnabled: true)
+    )
+
+    #expect(plan.hasPersistedStateChanges)
+    #expect(plan.persistedState.records.isEmpty)
+}
+
+@Test func limitWarningCommitPlanPreservesUnrepresentedLanesForPendingDelivery() {
+    let existingState = LimitWarningState(records: [
+        LimitWarningRecord(
+            laneID: "openai:fiveHour",
+            lastThresholdPercentRemaining: 10,
+            lastNotifiedAt: warningNow,
+            lastCapacityRatio: 0.05,
+            resetIdentity: nil
+        ),
+    ])
+
+    let plan = LimitWarningNotificationCommitPlan(
+        currentState: existingState,
+        targetState: existingState,
+        snapshot: UsageSnapshot(generatedAt: warningNow, limits: []),
+        settings: LimitWarningSettings(isEnabled: true),
+        prunesMissingLanes: false
+    )
+
+    #expect(!plan.hasPersistedStateChanges)
+    #expect(plan.persistedState == existingState)
+}
+
 @Test func limitWarningCommitPlanPreservesStillLowSuppressionAcrossPartialRefresh() throws {
     let settings = LimitWarningSettings(isEnabled: true, thresholdPercentRemaining: 10)
     let existingState = LimitWarningState(records: [
@@ -286,7 +331,8 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
         currentState: existingState,
         targetState: existingState,
         snapshot: stillLowPartialSnapshot,
-        settings: settings
+        settings: settings,
+        prunesMissingLanes: false
     )
 
     #expect(plan.hasPendingChanges == false)
@@ -491,6 +537,63 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
     #expect(LimitWarningWebhookSecretStore.validatedWebhookURL("https://example.com/hook") != nil)
 }
 
+@Test func limitWarningWebhookSecretValidationRejectsLocalAndPrivateDestinations() {
+    let rejectedURLs = [
+        "https://localhost/hook",
+        "https://service.local/hook",
+        "https://internal/hook",
+        "https://127.0.0.1/hook",
+        "https://127.1/hook",
+        "https://10.0.0.1/hook",
+        "https://100.64.0.1/hook",
+        "https://172.16.0.1/hook",
+        "https://192.168.1.1/hook",
+        "https://169.254.169.254/latest/meta-data",
+        "https://[::1]/hook",
+        "https://[fd00::1]/hook",
+        "https://[fe80::1]/hook",
+        "https://[::ffff:127.0.0.1]/hook",
+        "https://metadata.google.internal/computeMetadata/v1",
+        "https://user:password@example.com/hook",
+    ]
+
+    for value in rejectedURLs {
+        #expect(LimitWarningWebhookSecretStore.validatedWebhookURL(value) == nil)
+    }
+    #expect(LimitWarningWebhookSecretStore.validatedWebhookURL("https://discord.com/api/webhooks/example") != nil)
+    #expect(LimitWarningWebhookSecretStore.validatedWebhookURL("https://8.8.8.8/hook") != nil)
+}
+
+@Test func limitWarningWebhookRedirectPolicyAllowsOnlyBodyPreservingSameOriginHTTPS() {
+    let source = URL(string: "https://hooks.example.com/path")!
+
+    #expect(LimitWarningWebhookURLPolicy.allowsRedirect(
+        statusCode: 307,
+        from: source,
+        to: URL(string: "https://hooks.example.com/updated")!
+    ))
+    #expect(!LimitWarningWebhookURLPolicy.allowsRedirect(
+        statusCode: 302,
+        from: source,
+        to: URL(string: "https://hooks.example.com/updated")!
+    ))
+    #expect(!LimitWarningWebhookURLPolicy.allowsRedirect(
+        statusCode: 307,
+        from: source,
+        to: URL(string: "https://other.example.com/updated")!
+    ))
+    #expect(!LimitWarningWebhookURLPolicy.allowsRedirect(
+        statusCode: 307,
+        from: source,
+        to: URL(string: "https://127.0.0.1/internal")!
+    ))
+    #expect(!LimitWarningWebhookURLPolicy.allowsRedirect(
+        statusCode: 307,
+        from: source,
+        to: URL(string: "http://hooks.example.com/updated")!
+    ))
+}
+
 @Test func limitWarningWebhookDeliveryRetriesAfterFailureUntilSuccess() async throws {
     let directory = try temporaryWarningDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -522,6 +625,36 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
     #expect(succeeded.first?.succeeded == true)
     #expect(suppressed.isEmpty)
     #expect(await poster.postCount == 2)
+}
+
+@Test func limitWarningWebhookDeliveryRedactsThrownErrorDetails() async throws {
+    let directory = try temporaryWarningDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let settingsStore = LimitWarningWebhookSettingsStore(settingsURL: directory.appending(path: "webhook-settings.json"))
+    let warningSettingsStore = LimitWarningSettingsStore(settingsURL: directory.appending(path: "warning-settings.json"))
+    let stateStore = LimitWarningWebhookDeliveryStateStore(stateURL: directory.appending(path: "webhook-state.json"))
+    try settingsStore.save(LimitWarningWebhookSettings(isEnabled: true, preset: .genericJSON))
+    try warningSettingsStore.save(LimitWarningSettings(isEnabled: true, thresholdPercentRemaining: 10))
+    let service = LimitWarningWebhookDeliveryService(
+        warningSettingsStore: warningSettingsStore,
+        settingsStore: settingsStore,
+        stateStore: stateStore,
+        secretStore: StaticWebhookSecretStore(url: URL(string: "https://example.com/hook")),
+        poster: ThrowingWebhookPoster(),
+        appVersion: "1.0.test"
+    )
+    let snapshot = UsageSnapshot(generatedAt: warningNow, limits: [
+        warningLimit(provider: .anthropic, accountID: "claude", label: "Claude Weekly", used: 93, limit: 100),
+    ])
+
+    let result = await service.deliverIfNeeded(snapshot: snapshot, now: warningNow)
+    let storedError = stateStore.load().latestRecord?.lastError
+
+    #expect(result.first?.succeeded == false)
+    #expect(result.first?.errorMessage?.contains("/Users/example/.code/auth.json") == false)
+    #expect(result.first?.errorMessage?.contains("hooks.example.com") == false)
+    #expect(storedError?.contains("/Users/example/.code/auth.json") == false)
+    #expect(storedError?.contains("hooks.example.com") == false)
 }
 
 @Test func limitWarningWebhookDeliveryStateKeepsOneLiveRecordPerLaneAndSeparateTestRecord() {
@@ -594,6 +727,161 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
 
     #expect(state.records.map(\.laneID).sorted() == ["anthropic:weekly", "test:fiveHour"])
     #expect(state.latestTestRecord?.deliveryKey == "test:123")
+}
+
+@Test func limitWarningWebhookDeliveryPrunesMissingLanesBeforeEligibilityGuards() async throws {
+    let directory = try temporaryWarningDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let settingsStore = LimitWarningWebhookSettingsStore(settingsURL: directory.appending(path: "webhook-settings.json"))
+    let warningSettingsStore = LimitWarningSettingsStore(settingsURL: directory.appending(path: "warning-settings.json"))
+    let stateStore = LimitWarningWebhookDeliveryStateStore(stateURL: directory.appending(path: "webhook-state.json"))
+    let staleRecord = LimitWarningWebhookDeliveryRecord(
+        deliveryKey: "primary-webhook:openai:fiveHour:no-reset:10",
+        laneID: "openai:fiveHour",
+        lastAttemptedAt: warningNow,
+        lastSucceededAt: warningNow,
+        lastHTTPStatus: 204,
+        lastError: nil
+    )
+    let emptySnapshot = UsageSnapshot(generatedAt: warningNow, limits: [])
+
+    try settingsStore.save(LimitWarningWebhookSettings(isEnabled: false, preset: .genericJSON))
+    try stateStore.save(LimitWarningWebhookDeliveryState(records: [staleRecord]))
+    let disabledService = LimitWarningWebhookDeliveryService(
+        warningSettingsStore: warningSettingsStore,
+        settingsStore: settingsStore,
+        stateStore: stateStore,
+        secretStore: StaticWebhookSecretStore(url: URL(string: "https://example.com/hook")),
+        poster: FakeWebhookPoster(statusCodes: []),
+        appVersion: "1.0.test"
+    )
+
+    #expect(await disabledService.deliverIfNeeded(snapshot: emptySnapshot, now: warningNow).isEmpty)
+    #expect(stateStore.load().records.isEmpty)
+
+    try settingsStore.save(LimitWarningWebhookSettings(isEnabled: true, preset: .genericJSON))
+    try stateStore.save(LimitWarningWebhookDeliveryState(records: [staleRecord]))
+    let missingSecretService = LimitWarningWebhookDeliveryService(
+        warningSettingsStore: warningSettingsStore,
+        settingsStore: settingsStore,
+        stateStore: stateStore,
+        secretStore: StaticWebhookSecretStore(url: nil),
+        poster: FakeWebhookPoster(statusCodes: []),
+        appVersion: "1.0.test"
+    )
+
+    #expect(await missingSecretService.deliverIfNeeded(snapshot: emptySnapshot, now: warningNow).isEmpty)
+    #expect(stateStore.load().records.isEmpty)
+}
+
+@Test func limitWarningWebhookDeliverySerializesConcurrentStateWriters() async throws {
+    let directory = try temporaryWarningDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let settingsStore = LimitWarningWebhookSettingsStore(settingsURL: directory.appending(path: "webhook-settings.json"))
+    let warningSettingsStore = LimitWarningSettingsStore(settingsURL: directory.appending(path: "warning-settings.json"))
+    let stateStore = LimitWarningWebhookDeliveryStateStore(stateURL: directory.appending(path: "webhook-state.json"))
+    try settingsStore.save(LimitWarningWebhookSettings(isEnabled: true, preset: .genericJSON))
+    try warningSettingsStore.save(LimitWarningSettings(isEnabled: true, thresholdPercentRemaining: 10))
+    try stateStore.save(LimitWarningWebhookDeliveryState(records: [LimitWarningWebhookDeliveryRecord(
+        deliveryKey: "primary-webhook:google:stale:no-reset:10",
+        laneID: "google:stale",
+        lastAttemptedAt: warningNow,
+        lastSucceededAt: warningNow,
+        lastHTTPStatus: 204,
+        lastError: nil
+    )]))
+    let poster = GatedWebhookPoster()
+    let service = LimitWarningWebhookDeliveryService(
+        warningSettingsStore: warningSettingsStore,
+        settingsStore: settingsStore,
+        stateStore: stateStore,
+        secretStore: StaticWebhookSecretStore(url: URL(string: "https://example.com/hook")),
+        poster: poster,
+        appVersion: "1.0.test",
+        lockWaitDuration: .seconds(2),
+        lockRetryInterval: .milliseconds(5)
+    )
+    let snapshot = UsageSnapshot(generatedAt: warningNow, limits: [
+        warningLimit(provider: .openAI, accountID: "codex", label: "Codex 5-hour", used: 95, limit: 100),
+    ])
+    let liveDelivery = Task {
+        await service.deliverIfNeeded(snapshot: snapshot, now: warningNow)
+    }
+    guard await poster.waitUntilFirstPostStarts() else {
+        liveDelivery.cancel()
+        await poster.releaseFirstPost()
+        Issue.record("live webhook POST did not start before the test deadline")
+        return
+    }
+    let testDelivery = Task {
+        await service.sendTest(now: warningNow.addingTimeInterval(1))
+    }
+    try await Task.sleep(for: .milliseconds(50))
+
+    #expect(await poster.postCount == 1)
+    await poster.releaseFirstPost()
+    let liveResults = await liveDelivery.value
+    let testResult = await testDelivery.value
+    let state = stateStore.load()
+
+    #expect(liveResults.first?.succeeded == true)
+    #expect(testResult.succeeded == true)
+    #expect(await poster.postCount == 2)
+    #expect(!state.records.contains(where: { $0.laneID == "google:stale" }))
+    #expect(state.latestRecord != nil)
+    #expect(state.latestTestRecord != nil)
+}
+
+@Test func limitWarningWebhookDeliverySummaryRequiresWholeBatchSuccess() throws {
+    let summary = try #require(LimitWarningWebhookDeliverySummary(results: [
+        LimitWarningWebhookDeliveryResult(
+            attempted: true,
+            succeeded: true,
+            statusCode: 204,
+            errorMessage: nil
+        ),
+        LimitWarningWebhookDeliveryResult(
+            attempted: true,
+            succeeded: false,
+            statusCode: 500,
+            errorMessage: "HTTP 500"
+        ),
+    ]))
+
+    #expect(summary.succeeded == false)
+    #expect(summary.eventCount == 2)
+    #expect(summary.lastHTTPStatus == 500)
+    #expect(summary.errorMessage == "HTTP 500")
+    #expect(LimitWarningWebhookDeliverySummary(results: []) == nil)
+}
+
+@Test func limitWarningWebhookConfigurationResetWaitsForInFlightDelivery() async throws {
+    let directory = try temporaryWarningDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let settingsStore = LimitWarningWebhookSettingsStore(settingsURL: directory.appending(path: "webhook-settings.json"))
+    let warningSettingsStore = LimitWarningSettingsStore(settingsURL: directory.appending(path: "warning-settings.json"))
+    let stateStore = LimitWarningWebhookDeliveryStateStore(stateURL: directory.appending(path: "webhook-state.json"))
+    try settingsStore.save(LimitWarningWebhookSettings(isEnabled: true, preset: .genericJSON))
+    try warningSettingsStore.save(LimitWarningSettings(isEnabled: true, thresholdPercentRemaining: 10))
+    let poster = GatedWebhookPoster()
+    let service = LimitWarningWebhookDeliveryService(
+        warningSettingsStore: warningSettingsStore,
+        settingsStore: settingsStore,
+        stateStore: stateStore,
+        secretStore: StaticWebhookSecretStore(url: URL(string: "https://example.com/hook")),
+        poster: poster,
+        lockWaitDuration: .seconds(2),
+        lockRetryInterval: .milliseconds(5)
+    )
+    let delivery = Task { await service.deliverIfNeeded(snapshot: UsageSnapshot(generatedAt: warningNow, limits: [
+        warningLimit(provider: .openAI, accountID: "codex", label: "Codex 5-hour", used: 95, limit: 100),
+    ]), now: warningNow) }
+    #expect(await poster.waitUntilFirstPostStarts())
+    let reset = Task { try await service.updateConfiguration {} }
+    await poster.releaseFirstPost()
+    _ = await delivery.value
+    try await reset.value
+    #expect(stateStore.load().records.isEmpty)
 }
 
 @Test func limitWarningWebhookSendTestWritesSeparateTestStatus() async throws {
@@ -681,6 +969,25 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
     try store.save(loaded)
 
     #expect(store.load().notifications.map(\.id) == ["anthropic:weekly"])
+}
+
+@Test func limitWarningPendingNotificationQueuePrunesMissingLanes() {
+    var queue = LimitWarningPendingNotificationQueue(notifications: [
+        LimitWarningPendingNotification(
+            event: warningEvent(laneID: "openai:weekly", capacityRatio: 0.05),
+            queuedAt: warningNow,
+            playsSound: true
+        ),
+        LimitWarningPendingNotification(
+            event: warningEvent(laneID: "anthropic:weekly", provider: .anthropic, capacityRatio: 0.08),
+            queuedAt: warningNow,
+            playsSound: true
+        ),
+    ])
+
+    queue.removeNotifications(forMissing: ["anthropic:weekly"])
+
+    #expect(queue.notifications.map(\.id) == ["anthropic:weekly"])
 }
 
 @Test func limitWarningNotificationPresentationUsesStableLaneIdentifierAndContent() {
@@ -829,5 +1136,46 @@ private actor FakeWebhookPoster: LimitWarningWebhookPosting {
     func post(payload: LimitWarningWebhookPayload, to url: URL, timeoutSeconds: Double) async throws -> Int {
         postCount += 1
         return statusCodes.isEmpty ? 204 : statusCodes.removeFirst()
+    }
+}
+
+private actor GatedWebhookPoster: LimitWarningWebhookPosting {
+    private var firstPostStarted = false
+    private var firstPostReleased = false
+    private(set) var postCount = 0
+
+    func post(payload: LimitWarningWebhookPayload, to url: URL, timeoutSeconds: Double) async throws -> Int {
+        postCount += 1
+        if postCount == 1 {
+            firstPostStarted = true
+            while !firstPostReleased {
+                try? await Task.sleep(for: .milliseconds(5))
+            }
+        }
+        return 204
+    }
+
+    func waitUntilFirstPostStarts() async -> Bool {
+        for _ in 0..<200 {
+            if firstPostStarted { return true }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return firstPostStarted
+    }
+
+    func releaseFirstPost() {
+        firstPostReleased = true
+    }
+}
+
+private struct ThrowingWebhookPoster: LimitWarningWebhookPosting {
+    func post(payload: LimitWarningWebhookPayload, to url: URL, timeoutSeconds: Double) async throws -> Int {
+        throw NSError(
+            domain: "WebhookTest",
+            code: 1,
+            userInfo: [
+                NSLocalizedDescriptionKey: "failed at /Users/example/.code/auth.json via https://hooks.example.com/private",
+            ]
+        )
     }
 }
