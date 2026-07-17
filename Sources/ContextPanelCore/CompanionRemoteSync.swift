@@ -21,6 +21,7 @@ public enum CompanionSyncSource: String, Codable, Equatable, Sendable {
     case appGroup
     case iCloud
     case cloudKit
+    case localCache
     case custom
 }
 

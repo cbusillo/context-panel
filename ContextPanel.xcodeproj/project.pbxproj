@@ -26,6 +26,7 @@
 		14C59B107CD9A78888D316F6 /* libContextPanelCoreWatch.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 934D321CC0D5C25A3369D023 /* libContextPanelCoreWatch.a */; };
 		15F3A62CFA13DDC406C99EA5 /* libContextPanelCoreCompanion.a in Frameworks */ = {isa = PBXBuildFile; fileRef = DBD0BD51B5F5AD8D24CA217D /* libContextPanelCoreCompanion.a */; };
 		1695D451B4BF8B580643EE2E /* libContextPanelCloudKitSync.a in Frameworks */ = {isa = PBXBuildFile; fileRef = F7E0CE227A384064BE08DD1D /* libContextPanelCloudKitSync.a */; };
+		16F29EE0F21C2D066452F841 /* WatchCompanionCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17D5840405C58759B27E26F7 /* WatchCompanionCache.swift */; };
 		170EC1421ABCDAF9C4612460 /* ClaudeOAuthUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 895A979571D5E5C14830B41D /* ClaudeOAuthUsage.swift */; };
 		188E64070A38D747957C4332 /* ContextPanelCompanionWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 97822BE5E66CA9D319A09950 /* ContextPanelCompanionWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		1899D45682D3ACB2525FC6AA /* BackgroundRefreshSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15DC14CB07B8BA4756DAB731 /* BackgroundRefreshSettings.swift */; };
@@ -75,6 +76,7 @@
 		4BA8FE73012AF7F7900B5D4E /* OAuthPKCE.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB0E4D0FF6DD744B87D215B9 /* OAuthPKCE.swift */; };
 		4C21A68400F35036382C1798 /* GoogleAccountMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25E82B6087974E01B972918C /* GoogleAccountMigration.swift */; };
 		4D18521AC1976FEE23EDA160 /* GoogleAccountMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25E82B6087974E01B972918C /* GoogleAccountMigration.swift */; };
+		4D3042ECC2194F1B0FE482FE /* WatchCompanionLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C18341F829AEDD53F6289C5 /* WatchCompanionLoader.swift */; };
 		4ED761C343B83F3202C3618B /* GoogleAccountMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25E82B6087974E01B972918C /* GoogleAccountMigration.swift */; };
 		4F90AB206119E2201E8F0C70 /* libContextPanelCloudKitSyncTV.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 400B0794690F91F5C3029A21 /* libContextPanelCloudKitSyncTV.a */; };
 		50076A9A7443826CAA1C9561 /* SnapshotFreshness.swift in Sources */ = {isa = PBXBuildFile; fileRef = D03C19BEA1C610711A048EB7 /* SnapshotFreshness.swift */; };
@@ -89,7 +91,6 @@
 		5D8378E4CD9964F003CB078B /* SecureFileBookmark.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FA0C66F95091A96B8F7CBF4 /* SecureFileBookmark.swift */; };
 		5E2DAB0CB4FC93483B6C0E8D /* CompanionAppearanceSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 696876833ECD43AEF639C9B2 /* CompanionAppearanceSettings.swift */; };
 		5F2ABF0B8566DC46BBEC6615 /* BurnRateEstimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FB4BEA57ACE8B84CAE71E75 /* BurnRateEstimator.swift */; };
-		606AEC9784A786D35F157A8C /* WatchCompanionMirror.swift in Sources */ = {isa = PBXBuildFile; fileRef = B99E0B43D07719507A790FBA /* WatchCompanionMirror.swift */; };
 		61016C04BC25FB490A10B2EB /* ProviderConnector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 350ED5589FB23C42ED32704A /* ProviderConnector.swift */; };
 		6234444D0DD8D8136CB59A1F /* ClaudeAccountMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BBC1080557704B2EF023A7B /* ClaudeAccountMigration.swift */; };
 		642684C666F2BEC487CEB7A2 /* SecureFileBookmark.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FA0C66F95091A96B8F7CBF4 /* SecureFileBookmark.swift */; };
@@ -111,7 +112,6 @@
 		7D389D52287E9778C1742B44 /* ResetExpiryRefreshState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58B71A183966EEC56B955CD3 /* ResetExpiryRefreshState.swift */; };
 		7FD021610CC3841DE13AD70E /* ContextPanelCompanionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E29EEFA73267A8346212E7A /* ContextPanelCompanionApp.swift */; };
 		8121EE15127A2C78EED0D4B8 /* AccountConfigurationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 186D607FE2EEFDFFE2E70446 /* AccountConfigurationStore.swift */; };
-		81372714671052C4C9D4E3D9 /* WatchCompanionMirror.swift in Sources */ = {isa = PBXBuildFile; fileRef = B99E0B43D07719507A790FBA /* WatchCompanionMirror.swift */; };
 		828DEBC58258F34231E2D514 /* TVCloudKitNotificationPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25038A5D95D954F0AB88FEA2 /* TVCloudKitNotificationPolicy.swift */; };
 		82DACD9AA1B106010E5C492F /* CompanionCloudKitNotificationPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED98452A7C68BF1FAE2A2DBC /* CompanionCloudKitNotificationPolicy.swift */; };
 		85EBA57F3F1633F2D6E54103 /* ContextPanelWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 07D959D621E594C0CFC2CEF5 /* ContextPanelWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -141,6 +141,7 @@
 		A101488BBBE552136B8CDF4E /* MetricProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B5621100867602BDE8B426A /* MetricProgress.swift */; };
 		A1DB7CDCDD4A29AF1B157B83 /* UsageLimit.swift in Sources */ = {isa = PBXBuildFile; fileRef = D459054C90410A784EBD308B /* UsageLimit.swift */; };
 		A1E12E6C1FA3E1356F93519B /* PromptCacheTelemetryMirrorService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3B93DAA06AE42D89A02C5EE /* PromptCacheTelemetryMirrorService.swift */; };
+		A4B76105A6FA2C709A418147 /* WatchAsyncDeadline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14572C20D47B490CFD13D719 /* WatchAsyncDeadline.swift */; };
 		A78C35127BB0471865FD6A8B /* WidgetDisplayPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBDCF9F49A90CA3576BF2792 /* WidgetDisplayPreferences.swift */; };
 		A83D074D710D28DEF7375292 /* libContextPanelCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = F09182E1FD96DAEEC38F3909 /* libContextPanelCore.a */; };
 		A9464088796B38105C01F7D3 /* MainLimitSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FC2DAEDD38483FC3A5D4880 /* MainLimitSummary.swift */; };
@@ -164,6 +165,7 @@
 		BC7BFAA044934E062E089E6A /* ContextPanelWatchWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DB3BCB79852FD08BC8D3AA1 /* ContextPanelWatchWidget.swift */; };
 		BE436BB00AADD314F73FDF4C /* CodexRateLimits.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FA8FE4CC9BE058D8F46FBA2 /* CodexRateLimits.swift */; };
 		BE7F8E276624C8E6D93BC329 /* libContextPanelCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = F09182E1FD96DAEEC38F3909 /* libContextPanelCore.a */; };
+		C0416171CA071AD95E1D5AB3 /* WatchCompanionLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C18341F829AEDD53F6289C5 /* WatchCompanionLoader.swift */; };
 		C0DD7394E058BEE84E20AA43 /* ProviderCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A625CCDC97920B24B000C170 /* ProviderCredentialStore.swift */; };
 		C1B226368839368E93FC0AA7 /* ContextPanelTVTopShelfExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 3682A52E7297D6D89A6749AC /* ContextPanelTVTopShelfExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		C1DF7B59257060AC0A6AF44D /* ContextPanelLocations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23E9C71457F4E1F101132FCF /* ContextPanelLocations.swift */; };
@@ -191,12 +193,14 @@
 		DCB0158E13E48709027C8AB8 /* WidgetDisplayPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBDCF9F49A90CA3576BF2792 /* WidgetDisplayPreferences.swift */; };
 		DD6CB227B5A063BB614BA45B /* ContextPanelCompanionWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FFE6BBDF595A795C1DC34D9 /* ContextPanelCompanionWidget.swift */; };
 		DF3FC5B0066366171DBBA651 /* CapacityPool.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8862B929FE544FCB2C3D06B /* CapacityPool.swift */; };
+		DF6E7994A6F1F3286183C0A3 /* WatchCompanionCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17D5840405C58759B27E26F7 /* WatchCompanionCache.swift */; };
 		E223E001AF708A36F7976205 /* WidgetDisplayPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBDCF9F49A90CA3576BF2792 /* WidgetDisplayPreferences.swift */; };
 		E2B670421533CDFE9945B193 /* CompanionAppearanceSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 696876833ECD43AEF639C9B2 /* CompanionAppearanceSettings.swift */; };
 		E36B495CD69B94CCE29B8101 /* ContextPanelWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E49D3D1313F47F05FC0F33D /* ContextPanelWatchApp.swift */; };
 		E3A8EF704692B59DF4727D9A /* RefreshDiagnosticsState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DAF08B3CB69404A37DECA39 /* RefreshDiagnosticsState.swift */; };
 		E3F82D291A06A0393BD1B9F3 /* TVRunwayPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAC6B24F1876E6D7627E2B82 /* TVRunwayPresentation.swift */; };
 		E531B1C3F49F941A7EA36603 /* LimitProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */; };
+		E70AD1A5A7E4480E6FBBE046 /* libContextPanelCloudKitSyncWatch.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 41278A75CCCF83C9E0220F40 /* libContextPanelCloudKitSyncWatch.a */; };
 		E755DFF9AC42460A40C2102E /* SecureFileBookmark.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FA0C66F95091A96B8F7CBF4 /* SecureFileBookmark.swift */; };
 		E77C3B3D8985239A004E8CDC /* AccountConfigurationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 186D607FE2EEFDFFE2E70446 /* AccountConfigurationStore.swift */; };
 		E82A16143A1C2988E5D28335 /* CompanionCloudKitNotificationPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED98452A7C68BF1FAE2A2DBC /* CompanionCloudKitNotificationPolicy.swift */; };
@@ -218,6 +222,7 @@
 		F565AD4A356528D70BB11EF5 /* MainLimitSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FC2DAEDD38483FC3A5D4880 /* MainLimitSummary.swift */; };
 		F580D80FAE446345CD137F91 /* CompanionCloudKitNotificationPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED98452A7C68BF1FAE2A2DBC /* CompanionCloudKitNotificationPolicy.swift */; };
 		F697EDAA2739E3F27FDC885B /* CompanionRemoteSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = E97D64E1F32386FD74AA335F /* CompanionRemoteSync.swift */; };
+		FB73AB378A4E7CD8E733BA7A /* WatchAsyncDeadline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14572C20D47B490CFD13D719 /* WatchAsyncDeadline.swift */; };
 		FCA6C462A0AE82045D52B0AF /* CodexRateLimits.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FA8FE4CC9BE058D8F46FBA2 /* CodexRateLimits.swift */; };
 		FD07565A26FDB7E969EDD110 /* MetricProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B5621100867602BDE8B426A /* MetricProgress.swift */; };
 		FD57113FA34F28EE0EE9CAF0 /* libContextPanelCloudKitSync.a in Frameworks */ = {isa = PBXBuildFile; fileRef = F7E0CE227A384064BE08DD1D /* libContextPanelCloudKitSync.a */; };
@@ -343,6 +348,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 6806463975484B2D6192D905;
 			remoteInfo = ContextPanelCoreWatch;
+		};
+		608FBEE77145DF1BCC8B73E9 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 194387DBD3D0F10E17F284F9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5203F970E6FB03F11A2D2B64;
+			remoteInfo = ContextPanelCloudKitSyncWatch;
 		};
 		750DFBE4E8553D8A1914CDA1 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -583,8 +595,10 @@
 		0B2F27D01900C53EC77A72BC /* TVAssets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = TVAssets.xcassets; sourceTree = "<group>"; };
 		0B5621100867602BDE8B426A /* MetricProgress.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetricProgress.swift; sourceTree = "<group>"; };
 		1161DC4C994F71A1E6CEE608 /* LimitWarning.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LimitWarning.swift; sourceTree = "<group>"; };
+		14572C20D47B490CFD13D719 /* WatchAsyncDeadline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchAsyncDeadline.swift; sourceTree = "<group>"; };
 		15DC14CB07B8BA4756DAB731 /* BackgroundRefreshSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundRefreshSettings.swift; sourceTree = "<group>"; };
 		1687FD0F688491B244523D6B /* libContextPanelSettingsUI.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libContextPanelSettingsUI.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		17D5840405C58759B27E26F7 /* WatchCompanionCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchCompanionCache.swift; sourceTree = "<group>"; };
 		186D607FE2EEFDFFE2E70446 /* AccountConfigurationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountConfigurationStore.swift; sourceTree = "<group>"; };
 		1973426645A7260EC4F9B396 /* ContextPanelWidgetViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelWidgetViews.swift; sourceTree = "<group>"; };
 		1E49D3D1313F47F05FC0F33D /* ContextPanelWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelWatchApp.swift; sourceTree = "<group>"; };
@@ -616,6 +630,7 @@
 		53708C425CC9029A9300FA79 /* CompanionRefreshSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionRefreshSettings.swift; sourceTree = "<group>"; };
 		544FE80ADC4650CDB85B4640 /* TVSyncReceipt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVSyncReceipt.swift; sourceTree = "<group>"; };
 		58B71A183966EEC56B955CD3 /* ResetExpiryRefreshState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResetExpiryRefreshState.swift; sourceTree = "<group>"; };
+		5C18341F829AEDD53F6289C5 /* WatchCompanionLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchCompanionLoader.swift; sourceTree = "<group>"; };
 		60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LimitProbe.swift; sourceTree = "<group>"; };
 		696876833ECD43AEF639C9B2 /* CompanionAppearanceSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionAppearanceSettings.swift; sourceTree = "<group>"; };
 		6DB3BCB79852FD08BC8D3AA1 /* ContextPanelWatchWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelWatchWidget.swift; sourceTree = "<group>"; };
@@ -645,7 +660,6 @@
 		B0DC574A48A772716FE09735 /* TVAppRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVAppRoute.swift; sourceTree = "<group>"; };
 		B8862B929FE544FCB2C3D06B /* CapacityPool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapacityPool.swift; sourceTree = "<group>"; };
 		B95F7CCD196F66458CB50E82 /* CompanionLayoutPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionLayoutPolicy.swift; sourceTree = "<group>"; };
-		B99E0B43D07719507A790FBA /* WatchCompanionMirror.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchCompanionMirror.swift; sourceTree = "<group>"; };
 		BAC6B24F1876E6D7627E2B82 /* TVRunwayPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVRunwayPresentation.swift; sourceTree = "<group>"; };
 		C95FE0723637833124642C79 /* ContextPanelWatchWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ContextPanelWatchWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		CBE12DB626526BF3E6CFBBEB /* ContextPanelCompanion.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = ContextPanelCompanion.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -712,6 +726,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				14C59B107CD9A78888D316F6 /* libContextPanelCoreWatch.a in Frameworks */,
+				E70AD1A5A7E4480E6FBBE046 /* libContextPanelCloudKitSyncWatch.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -951,7 +966,9 @@
 		A93B1963F1919BC89E97F6C8 /* ContextPanelWatchSupport */ = {
 			isa = PBXGroup;
 			children = (
-				B99E0B43D07719507A790FBA /* WatchCompanionMirror.swift */,
+				14572C20D47B490CFD13D719 /* WatchAsyncDeadline.swift */,
+				17D5840405C58759B27E26F7 /* WatchCompanionCache.swift */,
+				5C18341F829AEDD53F6289C5 /* WatchCompanionLoader.swift */,
 				47D628E750682BA2235D68F3 /* WatchLimitDisplay.swift */,
 			);
 			name = ContextPanelWatchSupport;
@@ -1345,6 +1362,7 @@
 			);
 			dependencies = (
 				8C1F9B8554AE5E9EE94132C2 /* PBXTargetDependency */,
+				F904660B86A4B03D1E3444D7 /* PBXTargetDependency */,
 			);
 			name = ContextPanelWatchWidgetExtension;
 			packageProductDependencies = (
@@ -2024,7 +2042,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				E36B495CD69B94CCE29B8101 /* ContextPanelWatchApp.swift in Sources */,
-				81372714671052C4C9D4E3D9 /* WatchCompanionMirror.swift in Sources */,
+				A4B76105A6FA2C709A418147 /* WatchAsyncDeadline.swift in Sources */,
+				16F29EE0F21C2D066452F841 /* WatchCompanionCache.swift in Sources */,
+				4D3042ECC2194F1B0FE482FE /* WatchCompanionLoader.swift in Sources */,
 				B32B9A08B17CEA125482D04F /* WatchLimitDisplay.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -2194,7 +2214,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				BC7BFAA044934E062E089E6A /* ContextPanelWatchWidget.swift in Sources */,
-				606AEC9784A786D35F157A8C /* WatchCompanionMirror.swift in Sources */,
+				FB73AB378A4E7CD8E733BA7A /* WatchAsyncDeadline.swift in Sources */,
+				DF6E7994A6F1F3286183C0A3 /* WatchCompanionCache.swift in Sources */,
+				C0416171CA071AD95E1D5AB3 /* WatchCompanionLoader.swift in Sources */,
 				DAB797026E0937A4294CEB05 /* WatchLimitDisplay.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -2456,6 +2478,11 @@
 			isa = PBXTargetDependency;
 			target = 18FFE1CC3AFF82A64DE43484 /* ContextPanelTVSupport */;
 			targetProxy = 0ABA8948466116D465D57441 /* PBXContainerItemProxy */;
+		};
+		F904660B86A4B03D1E3444D7 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5203F970E6FB03F11A2D2B64 /* ContextPanelCloudKitSyncWatch */;
+			targetProxy = 608FBEE77145DF1BCC8B73E9 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -3243,7 +3270,7 @@
 		BE90A226194E842BD0E4B9D3 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = Config/ContextPanelWatchWidget.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Config/ContextPanelWatchWidgetAppStore.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -3440,7 +3467,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = Config/ContextPanelWatch.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Config/ContextPanelWatchAppStore.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = NO;

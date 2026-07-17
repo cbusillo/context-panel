@@ -186,7 +186,10 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             promptCacheObservations: promptCacheObservations
         )
         let refreshAttentionSummary = stalenessPolicy.refreshAttentionSummary(for: stored, now: now)
-        let state: WidgetSnapshotState = if refreshAttentionSummary?.isSnapshotAgeStale == true {
+        let usesStaleLocalCache = result.status == .stale
+            && result.transportMetadata?.source == .localCache
+        let state: WidgetSnapshotState = if usesStaleLocalCache
+            || refreshAttentionSummary?.isSnapshotAgeStale == true {
             .stale
         } else {
             .ready

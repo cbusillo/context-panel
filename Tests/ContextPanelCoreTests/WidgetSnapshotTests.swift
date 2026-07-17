@@ -73,6 +73,41 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(widget.widgetDeepLinkURL(links: testWidgetLinks) == testWidgetLinks.overview)
 }
 
+@Test func companionStaleLoadMarksAFreshDocumentStale() {
+    let now = Date(timeIntervalSince1970: 100)
+    let document = CompanionSyncDocument(storedSnapshot: StoredUsageSnapshot(
+        savedAt: now,
+        snapshot: UsageSnapshot(generatedAt: now, limits: [UsageLimit(
+            provider: .openAI,
+            accountID: "openai",
+            accountName: "OpenAI",
+            label: "Codex weekly",
+            windowLabel: "Weekly",
+            unit: .percent,
+            used: 20,
+            limit: 100,
+            resetsAt: now.addingTimeInterval(86_400),
+            lastUpdatedAt: now,
+            confidence: .observed
+        )])
+    ), publishedAt: now)
+
+    let widget = WidgetSnapshot.fromCompanionSync(
+        CompanionSyncLoadResult(
+            document: document,
+            status: .stale,
+            transportMetadata: CompanionSyncTransportMetadata(
+                source: .localCache,
+                deliveryStatus: .delayed
+            )
+        ),
+        now: now
+    )
+
+    #expect(widget.state == .stale)
+    #expect(widget.status == .stale)
+}
+
 @Test func companionWidgetSnapshotSanitizesTransportFailureWithoutSavedUsage() {
     let widget = WidgetSnapshot.fromCompanionSync(
         CompanionSyncLoadResult(
