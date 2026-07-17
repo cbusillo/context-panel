@@ -173,8 +173,8 @@ if [[ "$contract_database" != "private" ]]; then
 	exit 1
 fi
 contract_record_name="$(jq -r --arg name "$contract_record_type" '.recordTypes[]? | select(.name == $name) | .recordName // empty' "$schema_path")"
-if [[ "$contract_record_name" != "current" ]]; then
-	echo "schema contract record name mismatch: expected current, found ${contract_record_name:-missing}" >&2
+if [[ "$contract_record_name" != "current-v2" ]]; then
+	echo "schema contract record name mismatch: expected current-v2, found ${contract_record_name:-missing}" >&2
 	exit 1
 fi
 if ! jq -e --arg name "$contract_record_type" '.recordTypes[]? | select(.name == $name)' "$schema_path" >/dev/null; then

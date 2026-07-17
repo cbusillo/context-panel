@@ -449,7 +449,8 @@ Before companion TestFlight distribution or App Store Review, validate that
 Production contains the CloudKit-backed companion snapshot record contract:
 
 - private database record type `CompanionSyncDocument`
-- fixed record name `current`
+- fixed versioned record name `current-v2`; current clients also read the
+  legacy `current` record during rolling upgrades
 - `payload` as CloudKit bytes/data
 - `schemaVersion`, `documentSchemaVersion`, `snapshotSchemaVersion`, and
   `payloadByteCount` as integer/number fields
@@ -470,7 +471,9 @@ settings. `cktool` can then save the token securely in the Mac Keychain.
 
 The schema gate does not promote a new `CKSubscription` definition. Context
 Panel's Production companion contract currently uses subscription ID
-`companion-sync-updates` with a query for the fixed `current` record. CloudKit
+`companion-sync-updates-v3` with a query for the fixed `current-v2` record.
+`companion-sync-updates` and `companion-sync-updates-v2` are retired after the
+new subscription is confirmed. CloudKit
 rejects subscription IDs or predicates introduced for the first time by a
 Production runtime. Before changing that contract, create the new subscription
 in Development, deploy the resulting CloudKit schema changes to Production, and
@@ -687,6 +690,19 @@ Panel.app`.
 9. Exercise degraded cases when practical: CloudKit disabled or unavailable,
    missing CloudKit record, stale local mirror, missing Mac publish, delayed
    notification, and app group mirror failure.
+10. For multi-Mac validation, use two Macs signed into the same iCloud account
+    with at least one OpenAI account available on only one Mac. Publish from the
+    fully authenticated Mac, then refresh and publish from the partial Mac.
+    Confirm iOS and watchOS retain healthy OpenAI lanes, include healthy lanes
+    unique to either Mac, preserve their original observation times, and do not
+    accumulate duplicate companion account IDs. Reverse the publish order and
+    repeat so CloudKit conflict retry and account-level freshness both have
+    coverage.
+11. During the rolling-upgrade test, leave one Mac on the previous release and
+    update the other Mac plus iOS/watchOS companions. Confirm the new companion
+    clients merge the legacy `current` record with the versioned usage record,
+    and confirm repeated legacy publishes cannot erase lanes already preserved
+    in the versioned record.
 
 If the companion app or widget is stale but diagnostics show healthy Mac publish
 and readable CloudKit state, investigate the companion receive/mirror/reload path
