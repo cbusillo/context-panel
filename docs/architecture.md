@@ -122,6 +122,12 @@ and the refresh agent own connector refreshes through the same
 `SnapshotRefreshService` in `ContextPanelCore`; account setup, diagnostics, and
 future migration from JSON to a richer store stay in the app.
 
+A healthy account configuration with no enabled accounts is authoritative. If
+provider state was previously stored, the refresh service writes and publishes
+an empty snapshot rather than treating the refresh as a no-op. That clears stale
+app, widget, companion, reset-retry, warning, webhook, and pending-notification
+lanes while preserving generic no-report skips for unexpected connector output.
+
 Refresh diagnostics are persisted as redacted App Group JSON so Settings can
 show the last app or agent refresh decision, provider failure counts, limit
 warning evaluation, and local/webhook alert delivery breadcrumbs. The record is
@@ -271,6 +277,11 @@ payloads must contain only normalized warning data such as provider, main-limit
 window, percent remaining, remaining/limit values, reset time, and app version.
 They must not include account IDs, emails, provider organization/project IDs,
 auth paths, prompts, raw provider responses, tokens, or the webhook URL itself.
+Webhook destinations must be non-local HTTPS URLs. Explicit loopback, private,
+link-local, multicast, and reserved address forms are rejected. Redirects are
+accepted only for same-origin 307/308 responses so the warning POST method and
+body are preserved. Regular DNS hostnames remain subject to the operating
+system's DNS resolution.
 The refresh agent may queue local warnings, but only the main app records local
 notification delivery success after `UNUserNotificationCenter` accepts the
 notification.

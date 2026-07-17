@@ -497,6 +497,42 @@ import Testing
     #expect(!source.contains("daily-cloudcode-pa.googleapis.com"))
 }
 
+@Test func appAndRefreshAgentDoNotWriteRawErrorsToPublicLogs() throws {
+    let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    let appSource = try String(
+        contentsOf: root.appending(path: "Sources/ContextPanelApp/ContextPanelApp.swift"),
+        encoding: .utf8
+    )
+    let refreshAgentSource = try String(
+        contentsOf: root.appending(path: "Sources/ContextPanelRefreshAgent/ContextPanelRefreshAgent.swift"),
+        encoding: .utf8
+    )
+
+    #expect(!appSource.contains("error.localizedDescription, privacy: .public"))
+    #expect(!refreshAgentSource.contains(#"\(error.localizedDescription)\n\", stderr"#))
+    #expect(appSource.contains("ConnectorRedactor.safeErrorDescription(error)"))
+    #expect(refreshAgentSource.contains("ConnectorRedactor.safeErrorDescription(error)"))
+}
+
+@Test func appRefreshRoutesWebhookWarningsAndProtectsActiveClaudeExchange() throws {
+    let source = try String(
+        contentsOf: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appending(path: "Sources/ContextPanelApp/ContextPanelApp.swift"),
+        encoding: .utf8
+    )
+
+    #expect(source.contains("let webhookService: LimitWarningWebhookDeliveryService"))
+    #expect(source.contains("webhookService: .appDefault()"))
+    #expect(source.contains("await webhookService.deliverIfNeeded(decision: decision)"))
+    #expect(source.contains("recordWebhookDiagnostics(webhookResults"))
+    #expect(source.contains(".interactiveDismissDisabled(model.isCompletingClaudeOAuth)"))
+    #expect(source.contains("claudeOAuthCompletionTask?.cancel()"))
+    #expect(source.contains("exchangeService.exchangeAndCommit("))
+    #expect(source.contains("commitClaudeOAuthCredentials("))
+    #expect(source.contains("deleteOAuthCredentials("))
+    #expect(source.contains("service.updateConfiguration"))
+}
+
 @Test func appAndRefreshAgentTargetsDoNotCarryGoogleOAuthBuildSettings() throws {
     let project = try loadProjectYAML()
 

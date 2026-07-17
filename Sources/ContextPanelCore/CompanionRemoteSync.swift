@@ -73,7 +73,7 @@ public struct CompanionSyncTransportStatus: Equatable, Sendable {
         self.succeeded = succeeded
         self.loadedDocument = loadedDocument
         self.missingRecord = missingRecord
-        self.errorMessage = errorMessage.map(ConnectorRedactor.redact)
+        self.errorMessage = errorMessage.map(ConnectorRedactor.safeErrorDescription)
     }
 }
 
@@ -95,7 +95,7 @@ public struct CompanionRemoteSyncOutcome: Equatable, Sendable {
         self.isAvailable = isAvailable
         self.succeeded = succeeded
         self.missingRecord = missingRecord
-        self.errorMessage = errorMessage.map(ConnectorRedactor.redact)
+        self.errorMessage = errorMessage.map(ConnectorRedactor.safeErrorDescription)
     }
 
     public var storeOutcome: CompanionSyncStoreOutcome {

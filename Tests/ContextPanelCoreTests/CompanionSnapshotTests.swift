@@ -1950,6 +1950,52 @@ import Testing
     #expect(diagnostics.lastCompanionLoad?.loadedDocument == true)
 }
 
+@Test func snapshotRefreshServicePublishesEmptyCompanionStateAfterDisablingAllAccounts() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let previousAt = Date(timeIntervalSince1970: 3_500)
+    let savedAt = Date(timeIntervalSince1970: 3_600)
+    let accountURL = root.appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: root.appending(path: "snapshots", directoryHint: .isDirectory))
+    let companionURL = root.appending(path: "companion.json")
+    let publisher = CompanionSyncPublisher(
+        stores: CompanionSyncStoreSet(stores: [CompanionSyncStore(documentURL: companionURL)]),
+        widgetPreferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "preferences.json")),
+        fastModeForecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "forecast.json"))
+    )
+    let previous = companionStoredSnapshot(generatedAt: previousAt)
+    try primary.save(previous)
+    _ = publisher.publish(storedSnapshot: previous, publishedAt: previousAt)
+    try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
+        updatedAt: savedAt,
+        accounts: []
+    ))
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary),
+        companionSyncPublisher: publisher,
+        promptCacheTelemetryReader: { _ in [] }
+    )
+
+    let outcome = try await service.refresh(now: savedAt)
+    let companion = CompanionSyncStore(documentURL: companionURL).load().document
+
+    #expect(outcome.didSaveSnapshot == true)
+    #expect(primary.loadCurrent().snapshot?.snapshot.limits.isEmpty == true)
+    #expect(companion?.snapshot.publishedAt == savedAt)
+    #expect(companion?.snapshot.limits.isEmpty == true)
+
+    _ = publisher.publish(storedSnapshot: previous, publishedAt: previousAt)
+    let retryAt = savedAt.addingTimeInterval(60)
+    let retryOutcome = try await service.refresh(now: retryAt)
+    let retriedCompanion = CompanionSyncStore(documentURL: companionURL).load().document
+
+    #expect(retryOutcome.didSaveSnapshot == true)
+    #expect(primary.loadCurrent().snapshot?.snapshot.generatedAt == retryAt)
+    #expect(retriedCompanion?.snapshot.publishedAt == retryAt)
+    #expect(retriedCompanion?.snapshot.limits.isEmpty == true)
+}
+
 private func companionStoredSnapshot(generatedAt: Date) -> StoredUsageSnapshot {
     StoredUsageSnapshot(
         savedAt: generatedAt,

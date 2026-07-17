@@ -61,7 +61,7 @@ public struct ProviderConnectorReport: Equatable, Sendable {
         self.generatedAt = generatedAt
         self.limits = limits
         self.status = status ?? UsageSnapshot(generatedAt: generatedAt, limits: limits).aggregateStatus
-        self.errorMessage = errorMessage.map(ConnectorRedactor.redact)
+        self.errorMessage = errorMessage.map(ConnectorRedactor.safeErrorDescription)
     }
 }
 
@@ -311,6 +311,24 @@ public struct URLSessionConnectorHTTPClient: ConnectorHTTPClient {
 public enum ConnectorRedactor {
     public static func redact(_ value: String) -> String {
         EvidenceRedactor.redact(value)
+    }
+
+    public static func safeErrorDescription(_ error: Error) -> String {
+        safeErrorDescription(error.localizedDescription)
+    }
+
+    public static func safeErrorDescription(_ value: String) -> String {
+        EvidenceRedactor.redact(value)
+            .replacingOccurrences(
+                of: #"https?://[^\s]+"#,
+                with: "[url redacted]",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .replacingOccurrences(
+                of: #"(?<![:/])/(?:[^/\s]+/)*[^/\s]+"#,
+                with: "[local path]",
+                options: .regularExpression
+            )
     }
 
     public static func redactedPath(_ path: String) -> String {

@@ -60,7 +60,7 @@ public struct RefreshDiagnosticsRun: Codable, Equatable, Sendable {
         self.failureCount = failureCount
         self.limitCount = limitCount
         self.savedSnapshotAt = savedSnapshotAt
-        self.errorMessage = errorMessage.map { ConnectorRedactor.redact($0) }
+        self.errorMessage = errorMessage.map(ConnectorRedactor.safeErrorDescription)
     }
 }
 
@@ -85,7 +85,7 @@ public struct RefreshDiagnosticsAlertRecord: Codable, Equatable, Sendable {
         self.succeededAt = succeededAt
         self.eventCount = eventCount
         self.lastHTTPStatus = lastHTTPStatus
-        self.errorMessage = errorMessage.map { ConnectorRedactor.redact($0) }
+        self.errorMessage = errorMessage.map(ConnectorRedactor.safeErrorDescription)
     }
 
     public var succeeded: Bool { succeededAt != nil }
@@ -146,7 +146,7 @@ public struct CompanionSyncDiagnosticsRecord: Codable, Equatable, Sendable {
         self.loadedDocument = loadedDocument
         self.mirroredDocument = mirroredDocument
         self.stale = stale
-        self.errorMessage = errorMessage.map { ConnectorRedactor.redact($0) }
+        self.errorMessage = errorMessage.map(ConnectorRedactor.safeErrorDescription)
     }
 }
 
@@ -232,7 +232,7 @@ public struct RefreshDiagnosticsState: Codable, Equatable, Sendable {
         run.failureCount = failureCount ?? run.failureCount
         run.limitCount = limitCount ?? run.limitCount
         run.savedSnapshotAt = savedSnapshotAt
-        run.errorMessage = errorMessage.map { ConnectorRedactor.redact($0) }
+        run.errorMessage = errorMessage.map(ConnectorRedactor.safeErrorDescription)
         lastRun = run
         if decision == .refreshed {
             lastSuccessfulRun = run

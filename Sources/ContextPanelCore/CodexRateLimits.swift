@@ -67,9 +67,12 @@ public struct CodexRateLimitSnapshot: Codable, Equatable, Identifiable, Sendable
 
 public struct CodexModelAvailability: Equatable, Sendable {
     private let normalizedIdentifiers: Set<String>
+    private let standaloneGPTFamilies: Set<GPTFamily>
 
     public init(identifiers: some Sequence<String>) {
-        normalizedIdentifiers = Set(identifiers.map(Self.normalize).filter { !$0.isEmpty })
+        let identifierValues = Array(identifiers)
+        normalizedIdentifiers = Set(identifierValues.map(Self.normalize).filter { !$0.isEmpty })
+        standaloneGPTFamilies = Set(identifierValues.compactMap(Self.standaloneGPTFamily))
     }
 
     public var isEmpty: Bool {
@@ -84,6 +87,15 @@ public struct CodexModelAvailability: Equatable, Sendable {
         contains(identifier: limitName)
     }
 
+    fileprivate func containsAdditionalLimit(limitName: String, meteredFeature: String) -> Bool {
+        if contains(identifier: limitName) || contains(identifier: meteredFeature) {
+            return true
+        }
+        guard let family = Self.codexGPTFamily(limitName: limitName, meteredFeature: meteredFeature)
+        else { return false }
+        return standaloneGPTFamilies.contains(family)
+    }
+
     fileprivate static func isModelSpecificLimitName(_ value: String) -> Bool {
         let normalized = normalize(value)
         return normalized.contains("gpt")
@@ -93,6 +105,64 @@ public struct CodexModelAvailability: Equatable, Sendable {
 
     private static func normalize(_ value: String) -> String {
         value.lowercased().filter { $0.isLetter || $0.isNumber }
+    }
+
+    private static func codexGPTFamily(limitName: String, meteredFeature: String) -> GPTFamily? {
+        if let family = explicitlyCodexGPTFamily(in: limitName) {
+            return family
+        }
+        if let family = explicitlyCodexGPTFamily(in: meteredFeature) {
+            return family
+        }
+        let featureTokens = tokens(in: meteredFeature)
+        guard featureTokens.first == "codex" else { return nil }
+        return leadingGPTFamily(in: limitName)
+    }
+
+    private static func explicitlyCodexGPTFamily(in value: String) -> GPTFamily? {
+        let components = tokens(in: value)
+        guard components.count >= 4,
+              components[3] == "codex"
+        else { return nil }
+        return gptFamily(from: Array(components.prefix(3)))
+    }
+
+    private static func standaloneGPTFamily(_ value: String) -> GPTFamily? {
+        let components = tokens(in: value)
+        guard components.count == 3 else { return nil }
+        return gptFamily(from: components)
+    }
+
+    private static func leadingGPTFamily(in value: String) -> GPTFamily? {
+        let components = tokens(in: value)
+        guard components.count >= 3 else { return nil }
+        return gptFamily(from: Array(components.prefix(3)))
+    }
+
+    private static func gptFamily(from components: [String]) -> GPTFamily? {
+        guard components.count == 3,
+              components[0] == "gpt",
+              isASCIIDigits(components[1]),
+              isASCIIDigits(components[2])
+        else { return nil }
+        return GPTFamily(major: components[1], minor: components[2])
+    }
+
+    private static func isASCIIDigits(_ value: String) -> Bool {
+        !value.isEmpty && value.allSatisfy { character in
+            character >= "0" && character <= "9"
+        }
+    }
+
+    private static func tokens(in value: String) -> [String] {
+        value.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+    }
+
+    private struct GPTFamily: Hashable {
+        let major: String
+        let minor: String
     }
 }
 
@@ -493,8 +563,10 @@ public enum CodexUsagePayloadParser {
             guard CodexModelAvailability.isModelSpecificLimitName(additional.limitName)
                 || CodexModelAvailability.isModelSpecificLimitName(additional.meteredFeature)
             else { return true }
-            return modelAvailability.contains(identifier: additional.limitName)
-                || modelAvailability.contains(identifier: additional.meteredFeature)
+            return modelAvailability.containsAdditionalLimit(
+                limitName: additional.limitName,
+                meteredFeature: additional.meteredFeature
+            )
         }
 
         snapshots.append(contentsOf: additionalRateLimits.map { additional in

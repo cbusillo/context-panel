@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import Testing
 
 @testable import ContextPanelCore
@@ -1046,13 +1047,15 @@ import Testing
         generatedAt: Date(timeIntervalSince1970: 0),
         limits: [],
         status: .failure,
-        errorMessage: "failed for user@example.com with bearer sk-secret"
+        errorMessage: "failed for user@example.com with bearer sk-secret at /Users/example/.code/auth.json via https://hooks.example.com/private"
     )
 
     let stored = StoredProviderReport(report: report)
 
     #expect(stored.errorMessage?.contains("user@example.com") == false)
     #expect(stored.errorMessage?.contains("sk-secret") == false)
+    #expect(stored.errorMessage?.contains("/Users/example/.code/auth.json") == false)
+    #expect(stored.errorMessage?.contains("hooks.example.com") == false)
 }
 
 @Test func snapshotRefreshServiceDoesNotSaveEmptyRefreshWhenNoAccountsAreEnabled() async throws {
@@ -1080,8 +1083,68 @@ import Testing
 
     #expect(outcome.savedAt == savedAt)
     #expect(outcome.refreshResult.reports.isEmpty)
+    #expect(outcome.didSaveSnapshot == false)
     #expect(primary.loadCurrent().snapshot == nil)
     #expect(primary.loadHistory().isEmpty)
+}
+
+@Test func snapshotRefreshServiceClearsStoredProviderStateWhenAllAccountsAreDisabled() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let widgetMirror = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let previousAt = Date(timeIntervalSince1970: 200)
+    let savedAt = previousAt.addingTimeInterval(901)
+    let previous = StoredUsageSnapshot(
+        savedAt: previousAt,
+        refreshResult: ConnectorRefreshResult(
+            generatedAt: previousAt,
+            reports: [ProviderConnectorReport(
+                provider: .openAI,
+                accountID: "openai-primary",
+                accountName: "OpenAI",
+                generatedAt: previousAt,
+                limits: [usageLimit(
+                    provider: .openAI,
+                    accountID: "openai-primary",
+                    used: 20,
+                    savedAt: previousAt
+                )],
+                status: .healthy
+            )]
+        )
+    )
+    try primary.save(previous)
+    try widgetMirror.save(previous)
+    try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
+        updatedAt: savedAt,
+        accounts: [LocalProviderAccountConfiguration(
+            id: "disabled-openai",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "OpenAI",
+            isEnabled: false,
+            authPath: "/tmp/missing-auth.json"
+        )]
+    ))
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary, mirrors: [widgetMirror]),
+        promptCacheTelemetryReader: { _ in [] }
+    )
+
+    let outcome = try await service.refresh(now: savedAt)
+    let current = try #require(primary.loadCurrent().snapshot)
+    let mirrored = try #require(widgetMirror.loadCurrent().snapshot)
+
+    #expect(outcome.didSaveSnapshot == true)
+    #expect(outcome.refreshResult.reports.isEmpty)
+    #expect(current.savedAt == savedAt)
+    #expect(current.snapshot.generatedAt == savedAt)
+    #expect(current.snapshot.limits.isEmpty)
+    #expect(current.reports.isEmpty)
+    #expect(mirrored == current)
+    #expect(primary.loadHistory().count == 2)
+    #expect(SnapshotStoreStalenessPolicy(maximumAge: 900).status(for: current, now: savedAt) == .unknown)
 }
 
 @Test func snapshotRefreshServiceMirrorsSavedSnapshotToWidgetFallbackStore() async throws {
@@ -1440,6 +1503,94 @@ import Testing
     #expect(decision == .skippedNoReports)
     #expect(primary.loadCurrent().snapshot == nil)
     #expect(primary.loadHistory().isEmpty)
+}
+
+@Test func snapshotRefreshRunnerPublishesAuthoritativeEmptyRefreshAfterDisablingAllAccounts() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let previousAt = Date(timeIntervalSince1970: 200)
+    let savedAt = Date(timeIntervalSince1970: 300)
+    try primary.save(StoredUsageSnapshot(
+        savedAt: previousAt,
+        refreshResult: ConnectorRefreshResult(
+            generatedAt: previousAt,
+            reports: [ProviderConnectorReport(
+                provider: .anthropic,
+                accountID: "claude-primary",
+                accountName: "Claude",
+                generatedAt: previousAt,
+                limits: [usageLimit(
+                    provider: .anthropic,
+                    accountID: "claude-primary",
+                    used: 40,
+                    savedAt: previousAt
+                )],
+                status: .healthy
+            )]
+        )
+    ))
+    try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
+        updatedAt: savedAt,
+        accounts: []
+    ))
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary),
+        promptCacheTelemetryReader: { _ in [] }
+    )
+    let runner = SnapshotRefreshRunner(service: service, lock: nil)
+
+    let decision = try await runner.refresh(now: savedAt)
+
+    if case let .refreshed(outcome) = decision {
+        #expect(outcome.didSaveSnapshot == true)
+        #expect(outcome.refreshResult.reports.isEmpty)
+        #expect(primary.loadCurrent().snapshot?.snapshot.limits.isEmpty == true)
+        #expect(primary.loadCurrent().snapshot?.reports.isEmpty == true)
+    } else {
+        Issue.record("expected an authoritative empty refresh after disabling all accounts")
+    }
+}
+
+@Test func snapshotRefreshRunnerRetriesAuthoritativeEmptyPublicationWhenPrimaryIsAlreadyEmpty() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let widgetMirror = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let previousAt = Date(timeIntervalSince1970: 200)
+    let savedAt = Date(timeIntervalSince1970: 300)
+    try primary.save(StoredUsageSnapshot(
+        savedAt: previousAt,
+        snapshot: UsageSnapshot(generatedAt: previousAt, limits: [])
+    ))
+    try widgetMirror.save(StoredUsageSnapshot(
+        savedAt: previousAt,
+        snapshot: UsageSnapshot(generatedAt: previousAt, limits: [usageLimit(
+            provider: .openAI,
+            accountID: "stale-openai",
+            used: 20,
+            savedAt: previousAt
+        )])
+    ))
+    try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
+        updatedAt: savedAt,
+        accounts: []
+    ))
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary, mirrors: [widgetMirror]),
+        promptCacheTelemetryReader: { _ in [] }
+    )
+    let runner = SnapshotRefreshRunner(service: service, lock: nil)
+
+    let decision = try await runner.refresh(now: savedAt)
+
+    if case .refreshed = decision {
+        #expect(primary.loadCurrent().snapshot?.snapshot.generatedAt == savedAt)
+        #expect(widgetMirror.loadCurrent().snapshot?.snapshot.limits.isEmpty == true)
+        #expect(widgetMirror.loadCurrent().snapshot?.savedAt == savedAt)
+    } else {
+        Issue.record("expected authoritative empty publication to retry while an empty primary exists")
+    }
 }
 
 @Test func snapshotRefreshRunnerSavesPromptCacheOnlyRefreshes() async throws {
@@ -1930,8 +2081,12 @@ import Testing
 
     let decision = try await runner.refreshIfNeeded(now: resetAt.addingTimeInterval(10))
 
-    #expect(decision == .skippedNoReports)
-    #expect(resetStateStore.load().records.count == 1)
+    if case .refreshed = decision {
+        #expect(primary.loadCurrent().snapshot?.snapshot.limits.isEmpty == true)
+        #expect(resetStateStore.load().records.isEmpty)
+    } else {
+        Issue.record("expected an authoritative empty refresh to clear expired reset state")
+    }
 }
 
 @Test func snapshotRefreshRunnerRefreshesElapsedAGYResetWithoutVisibleStaleState() async throws {
@@ -1978,8 +2133,12 @@ import Testing
     #expect(policy.status(for: primary.loadCurrent().snapshot, now: now) == .healthy)
     let decision = try await runner.refreshIfNeeded(now: now)
 
-    #expect(decision == .skippedNoReports)
-    #expect(resetStateStore.load().records.count == 1)
+    if case .refreshed = decision {
+        #expect(primary.loadCurrent().snapshot?.snapshot.limits.isEmpty == true)
+        #expect(resetStateStore.load().records.isEmpty)
+    } else {
+        Issue.record("expected AGY state to clear when no accounts remain configured")
+    }
 }
 
 @Test func resetExpiryRefreshStateSuppressesImmediateRetryForSameExpiredWindow() throws {
@@ -2114,7 +2273,8 @@ import Testing
     let resetStateStore = ResetExpiryRefreshStateStore(stateURL: try temporaryDirectory().appending(path: "reset-state.json"))
     let lockURL = try temporaryDirectory().appending(path: "refresh.lock")
     try FileManager.default.createDirectory(at: lockURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-    FileManager.default.createFile(atPath: lockURL.path, contents: Data())
+    let heldLock = try HeldFileLock(url: lockURL)
+    defer { heldLock.release() }
     let savedAt = Date(timeIntervalSince1970: 1_000)
     let resetAt = savedAt.addingTimeInterval(60)
     try primary.save(StoredUsageSnapshot(savedAt: savedAt, snapshot: UsageSnapshot(
@@ -2129,7 +2289,7 @@ import Testing
     let runner = SnapshotRefreshRunner(
         service: service,
         resetExpiryRefreshStore: resetStateStore,
-        lock: SnapshotRefreshLock(lockURL: lockURL, staleAfter: 60)
+        lock: SnapshotRefreshLock(lockURL: lockURL)
     )
     let now = resetAt.addingTimeInterval(10)
 
@@ -2190,14 +2350,15 @@ import Testing
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
     let lockURL = try temporaryDirectory().appending(path: "refresh.lock")
     try FileManager.default.createDirectory(at: lockURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-    FileManager.default.createFile(atPath: lockURL.path, contents: Data())
+    let heldLock = try HeldFileLock(url: lockURL)
+    defer { heldLock.release() }
     let service = SnapshotRefreshService(
         accountStore: AccountConfigurationStore(configurationURL: accountURL),
         stores: SnapshotRefreshStores(primary: primary)
     )
     let runner = SnapshotRefreshRunner(
         service: service,
-        lock: SnapshotRefreshLock(lockURL: lockURL, staleAfter: 60)
+        lock: SnapshotRefreshLock(lockURL: lockURL)
     )
 
     let decision = try await runner.refresh(now: Date(timeIntervalSince1970: 600))
@@ -2211,14 +2372,14 @@ import Testing
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
     let lockURL = try temporaryDirectory().appending(path: "refresh.lock")
     try FileManager.default.createDirectory(at: lockURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-    FileManager.default.createFile(atPath: lockURL.path, contents: Data())
+    let heldLock = try HeldFileLock(url: lockURL)
     let service = SnapshotRefreshService(
         accountStore: AccountConfigurationStore(configurationURL: accountURL),
         stores: SnapshotRefreshStores(primary: primary)
     )
     let runner = SnapshotRefreshRunner(
         service: service,
-        lock: SnapshotRefreshLock(lockURL: lockURL, staleAfter: 60)
+        lock: SnapshotRefreshLock(lockURL: lockURL)
     )
     let savedAt = Date(timeIntervalSince1970: 800)
     let report = ProviderConnectorReport(
@@ -2231,7 +2392,7 @@ import Testing
     )
 
     DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + .milliseconds(100)) {
-        try? FileManager.default.removeItem(at: lockURL)
+        heldLock.release()
     }
 
     let decision = try await runner.saveMerged(
@@ -2245,7 +2406,7 @@ import Testing
     #expect(primary.loadCurrent().snapshot?.snapshot.limits.first?.accountID == "claude-local")
 }
 
-@Test func snapshotRefreshRunnerClearsOrphanedRefreshLock() async throws {
+@Test func snapshotRefreshRunnerReusesUnlockedRefreshLockFile() async throws {
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
     let lockURL = try temporaryDirectory().appending(path: "refresh.lock")
@@ -2257,7 +2418,7 @@ import Testing
     )
     let runner = SnapshotRefreshRunner(
         service: service,
-        lock: SnapshotRefreshLock(lockURL: lockURL, staleAfter: 60)
+        lock: SnapshotRefreshLock(lockURL: lockURL)
     )
     let savedAt = Date(timeIntervalSince1970: 900)
     let report = ProviderConnectorReport(
@@ -2276,7 +2437,7 @@ import Testing
 
     #expect(decision != .skippedAlreadyRunning)
     #expect(primary.loadCurrent().snapshot?.savedAt == savedAt)
-    #expect(!FileManager.default.fileExists(atPath: lockURL.path))
+    #expect(FileManager.default.fileExists(atPath: lockURL.path))
 }
 
 @Test func snapshotRefreshRunnerSerializesManualSavesWithRefreshLock() async throws {
@@ -2284,14 +2445,15 @@ import Testing
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
     let lockURL = try temporaryDirectory().appending(path: "refresh.lock")
     try FileManager.default.createDirectory(at: lockURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-    FileManager.default.createFile(atPath: lockURL.path, contents: Data())
+    let heldLock = try HeldFileLock(url: lockURL)
+    defer { heldLock.release() }
     let service = SnapshotRefreshService(
         accountStore: AccountConfigurationStore(configurationURL: accountURL),
         stores: SnapshotRefreshStores(primary: primary)
     )
     let runner = SnapshotRefreshRunner(
         service: service,
-        lock: SnapshotRefreshLock(lockURL: lockURL, staleAfter: 60)
+        lock: SnapshotRefreshLock(lockURL: lockURL)
     )
     let savedAt = Date(timeIntervalSince1970: 700)
     let report = ProviderConnectorReport(
@@ -2310,6 +2472,38 @@ import Testing
 
     #expect(decision == .skippedAlreadyRunning)
     #expect(primary.loadCurrent().snapshot == nil)
+}
+
+private final class HeldFileLock: @unchecked Sendable {
+    private let stateLock = NSLock()
+    private var descriptor: Int32
+
+    init(url: URL) throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        descriptor = open(url.path, O_CREAT | O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        guard flock(descriptor, LOCK_EX) == 0 else {
+            let error = POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            close(descriptor)
+            descriptor = -1
+            throw error
+        }
+    }
+
+    func release() {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard descriptor >= 0 else { return }
+        flock(descriptor, LOCK_UN)
+        close(descriptor)
+        descriptor = -1
+    }
+
+    deinit {
+        release()
+    }
 }
 
 private func usageLimit(

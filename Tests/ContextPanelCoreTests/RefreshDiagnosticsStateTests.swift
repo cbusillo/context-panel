@@ -64,7 +64,7 @@ import Testing
         id: "app-run",
         decision: .failed,
         finishedAt: now,
-        errorMessage: "OpenAI failed for user@example.com with bearer sk-secret"
+        errorMessage: "OpenAI failed for user@example.com with bearer sk-secret at /Users/example/.code/auth.json via https://hooks.example.com/private"
     )
     state.recordAlert(RefreshDiagnosticsAlertRecord(
         channel: .localNotification,
@@ -75,6 +75,8 @@ import Testing
 
     #expect(state.lastRun?.errorMessage?.contains("user@example.com") == false)
     #expect(state.lastRun?.errorMessage?.contains("sk-secret") == false)
+    #expect(state.lastRun?.errorMessage?.contains("/Users/example/.code/auth.json") == false)
+    #expect(state.lastRun?.errorMessage?.contains("hooks.example.com") == false)
     #expect(state.lastLocalNotification?.errorMessage?.contains("user@example.com") == false)
 }
 
