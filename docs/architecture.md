@@ -34,6 +34,19 @@ Context Panel is expected to split into a few native boundaries:
   a third-party URL, with secrets stored in Keychain and normalized payloads
   built from `LimitWarningEvent`.
 
+Multiple Macs may collect different local account subsets while signed into the
+same iCloud account. Credentials and account setup remain local to each Mac, but
+the CloudKit companion publisher merges the shared `current-v2` document by
+sanitized provider/account identity before saving. Newer healthy account data
+replaces the same account, accounts not reported by that Mac remain available,
+and a degraded or unauthenticated collector cannot erase healthy lanes published
+by another Mac. CloudKit change tags and conflict retries protect concurrent
+publishers. Preserved observations retain their original timestamps so companion
+clients can mark them stale instead of presenting them as freshly collected. A
+versioned usage record isolates this behavior from older whole-document
+publishers; current clients also read and merge the legacy record during rollout
+so an older Mac can contribute data without erasing the versioned account set.
+
 Local limit-warning notifications use app-group state. The refresh agent records
 warning state and writes pending notification events to shared storage, then
 wakes the running app with a distributed notification. The main app drains that
@@ -210,11 +223,11 @@ The tvOS app registers both its CloudKit subscription and APNs delivery on
 launch and foreground activation. Failed registration remains a recoverable
 state: the app retries when it becomes active, preserves foreground refresh, and
 never stores or logs the APNs device token. The query subscription uses the
-Production-promoted `companion-sync-updates` contract and matches only the fixed
-`current` record. Registration fetches that subscription first and creates it
+Production-promoted `companion-sync-updates-v3` contract and matches only the
+fixed `current-v2` record. Registration fetches that subscription first and creates it
 only when it is missing, then removes abandoned subscription IDs after the
 promoted subscription is confirmed. Both app handlers reject retired or
-non-`current` query notifications before reloading.
+non-`current-v2` query notifications before reloading.
 
 CloudKit does not allow a new subscription definition to be introduced directly
 from a Production runtime. Any future subscription ID or predicate change must

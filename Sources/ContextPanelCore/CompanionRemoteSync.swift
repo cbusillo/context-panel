@@ -4,10 +4,11 @@ public enum CompanionRemoteSync {
     public static let cloudKitStoreRole = "cloudkit"
     public static let cloudKitPresentationStoreRole = "cloudkit-presentation"
     public static let cloudKitRecordType = "CompanionSyncDocument"
-    public static let cloudKitRecordName = "current"
+    public static let cloudKitRecordName = "current-v2"
+    public static let cloudKitLegacyRecordNames = ["current"]
     public static let cloudKitPresentationRecordName = "companion-presentation"
-    public static let cloudKitSubscriptionID = "companion-sync-updates"
-    public static let cloudKitRetiredSubscriptionIDs = ["companion-sync-updates-v2"]
+    public static let cloudKitSubscriptionID = "companion-sync-updates-v3"
+    public static let cloudKitRetiredSubscriptionIDs = ["companion-sync-updates", "companion-sync-updates-v2"]
     public static let payloadFieldName = "payload"
     public static let schemaVersionFieldName = "schemaVersion"
     public static let documentSchemaVersionFieldName = "documentSchemaVersion"
