@@ -55,7 +55,7 @@ enum CompanionCloudKitSubscriptionFactory {
             recordType: CompanionRemoteSync.cloudKitRecordType,
             predicate: NSPredicate(
                 format: "recordID == %@",
-                CKRecord.ID(recordName: CompanionRemoteSync.cloudKitRecordName)
+                CKRecord.ID(recordName: CompanionRemoteSync.cloudKitSubscriptionRecordName)
             ),
             subscriptionID: CompanionRemoteSync.cloudKitSubscriptionID,
             options: [.firesOnRecordCreation, .firesOnRecordUpdate]
@@ -107,7 +107,7 @@ struct CompanionCloudKitRecordBuilder {
     func makeRecord(
         incomingDocument: CompanionSyncDocument,
         existingRecord: CKRecord?
-    ) throws -> (record: CKRecord, payload: Data) {
+    ) throws -> (record: CKRecord, payload: Data, document: CompanionSyncDocument) {
         let existingDocument = try existingRecord.map(decodeDocument(from:))
         let document = incomingDocument.mergingForRemotePublish(existing: existingDocument)
         let payload = try CompanionSyncPayloadCodec.encode(document)
@@ -122,7 +122,7 @@ struct CompanionCloudKitRecordBuilder {
         record[CompanionRemoteSync.generatedAtFieldName] = document.snapshot.generatedAt as CKRecordValue
         record[CompanionRemoteSync.publishedAtFieldName] = document.snapshot.publishedAt as CKRecordValue
         record[CompanionRemoteSync.payloadByteCountFieldName] = payload.count as CKRecordValue
-        return (record, payload)
+        return (record, payload, document)
     }
 
     private func decodeDocument(from record: CKRecord) throws -> CompanionSyncDocument {
@@ -164,17 +164,38 @@ private actor CompanionCloudKitClient {
     }
 
     func save(_ document: CompanionSyncDocument) async -> CompanionRemoteSyncOutcome {
+        let authoritativeSave: (record: CKRecord, payload: Data, document: CompanionSyncDocument)
         do {
             let legacyDocuments = try await loadDocuments(recordNames: legacyRecordNames)
             let migrationDocument = CompanionCloudKitDocumentSet.merged(legacyDocuments + [document]) ?? document
-            let (savedRecord, payload) = try await saveMergedRecord(migrationDocument)
-            try verifyPublishedRecord(savedRecord, expectedPayload: payload)
+            authoritativeSave = try await saveMergedRecord(
+                migrationDocument,
+                recordName: recordName
+            )
+            try verifyPublishedRecord(authoritativeSave.record, expectedPayload: authoritativeSave.payload)
         } catch {
             return CompanionRemoteSyncOutcome(
                 storeRole: storeRole,
                 isAvailable: isCloudKitAvailable(error),
                 succeeded: false,
-                errorMessage: diagnosticMessage(operation: "publish", error: error)
+                errorMessage: diagnosticMessage(operation: "authoritative publish", error: error)
+            )
+        }
+
+        do {
+            for legacyRecordName in legacyRecordNames {
+                let wakeSave = try await saveMergedRecord(
+                    authoritativeSave.document,
+                    recordName: legacyRecordName
+                )
+                try verifyPublishedRecord(wakeSave.record, expectedPayload: wakeSave.payload)
+            }
+        } catch {
+            return CompanionRemoteSyncOutcome(
+                storeRole: storeRole,
+                isAvailable: isCloudKitAvailable(error),
+                succeeded: false,
+                errorMessage: diagnosticMessage(operation: "wake mirror publish", error: error)
             )
         }
 
@@ -331,9 +352,13 @@ private actor CompanionCloudKitClient {
         CKRecord.ID(recordName: recordName)
     }
 
-    private func saveMergedRecord(_ incomingDocument: CompanionSyncDocument) async throws -> (CKRecord, Data) {
-        var currentRecord = try await loadCurrentRecord()
-        let recordBuilder = CompanionCloudKitRecordBuilder(recordID: recordID)
+    private func saveMergedRecord(
+        _ incomingDocument: CompanionSyncDocument,
+        recordName targetRecordName: String
+    ) async throws -> (record: CKRecord, payload: Data, document: CompanionSyncDocument) {
+        let targetRecordID = CKRecord.ID(recordName: targetRecordName)
+        var currentRecord = try await loadRecord(recordName: targetRecordName)
+        let recordBuilder = CompanionCloudKitRecordBuilder(recordID: targetRecordID)
 
         for attempt in 0..<Self.maximumSaveAttempts {
             let pendingSave = try recordBuilder.makeRecord(
@@ -342,8 +367,11 @@ private actor CompanionCloudKitClient {
             )
 
             do {
-                let savedRecord = try await saveRecord(pendingSave.record)
-                return (savedRecord, pendingSave.payload)
+                let savedRecord = try await saveRecord(
+                    pendingSave.record,
+                    recordID: targetRecordID
+                )
+                return (savedRecord, pendingSave.payload, pendingSave.document)
             } catch {
                 guard attempt + 1 < Self.maximumSaveAttempts,
                       CompanionCloudKitRecordConflict.isRetryable(error)
@@ -352,17 +380,13 @@ private actor CompanionCloudKitClient {
                 if let serverRecord = CompanionCloudKitRecordConflict.serverRecord(from: error) {
                     currentRecord = serverRecord
                 } else {
-                    guard let reloadedRecord = try await loadCurrentRecord() else { throw error }
+                    guard let reloadedRecord = try await loadRecord(recordName: targetRecordName) else { throw error }
                     currentRecord = reloadedRecord
                 }
             }
         }
 
         throw SnapshotStoreError.corruptStore("CloudKit companion sync publish exhausted conflict retries.")
-    }
-
-    private func loadCurrentRecord() async throws -> CKRecord? {
-        try await loadRecord(recordName: recordName)
     }
 
     private func loadDocuments(recordNames: [String]) async throws -> [CompanionSyncDocument] {
@@ -382,7 +406,7 @@ private actor CompanionCloudKitClient {
         }
     }
 
-    private func saveRecord(_ record: CKRecord) async throws -> CKRecord {
+    private func saveRecord(_ record: CKRecord, recordID: CKRecord.ID) async throws -> CKRecord {
         let saveResult = try await privateDatabase.modifyRecords(
             saving: [record],
             deleting: [],
