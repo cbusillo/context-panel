@@ -210,12 +210,12 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
     }
 
     private static func row(from summary: MainLimitSummary, snapshot: WidgetSnapshot) -> WatchLimitDisplay? {
-        guard summary.pooledLimit != nil else { return nil }
+        guard let pooledLimit = summary.pooledLimit ?? summary.lastKnownPooledLimit else { return nil }
         let accountText = summary.accountCount == 1 ? "1 account" : "\(summary.accountCount) accounts"
         let status = displayStatus(source: summary.status, snapshotState: snapshot.state)
         let metrics = metricValues(
-            remainingRatio: summary.remainingCapacityRatio,
-            usedRatio: summary.usageRatio,
+            remainingRatio: pooledLimit.remainingCapacityRatio,
+            usedRatio: pooledLimit.usageRatio,
             status: status
         )
         return WatchLimitDisplay(
@@ -225,19 +225,19 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
             subtitle: summary.compactDisplayWindowName,
             context: accountText,
             usedText: usedDisplayText(
-                used: summary.used,
-                unit: summary.unit,
+                used: pooledLimit.used,
+                unit: pooledLimit.unit,
                 usedPercent: metrics.usedPercent,
                 isIndeterminate: metrics.used.isIndeterminate,
-                isAssumedAfterScheduledReset: summary.hasAssumedScheduledResetCapacity
+                isAssumedAfterScheduledReset: pooledLimit.isAssumedAfterScheduledReset
             ),
             remainingText: remainingDisplayText(
-                used: summary.used,
-                limit: summary.limit,
-                unit: summary.unit,
+                used: pooledLimit.used,
+                limit: pooledLimit.limit,
+                unit: pooledLimit.unit,
                 remainingPercent: metrics.remainingPercent,
                 isIndeterminate: metrics.remaining.isIndeterminate,
-                isAssumedAfterScheduledReset: summary.hasAssumedScheduledResetCapacity
+                isAssumedAfterScheduledReset: pooledLimit.isAssumedAfterScheduledReset
             ),
             remainingCapacity: metrics.remaining,
             usedPressure: metrics.used,
@@ -245,23 +245,23 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
             accessibilityWindow: summary.displayWindowName,
             accessibilityContext: accountText,
             usedAccessibilityText: usedAccessibilityText(
-                used: summary.used,
-                limit: summary.limit,
-                unit: summary.unit,
+                used: pooledLimit.used,
+                limit: pooledLimit.limit,
+                unit: pooledLimit.unit,
                 usedPercent: metrics.usedPercent,
                 isIndeterminate: metrics.used.isIndeterminate,
-                isAssumedAfterScheduledReset: summary.hasAssumedScheduledResetCapacity
+                isAssumedAfterScheduledReset: pooledLimit.isAssumedAfterScheduledReset
             ),
             remainingAccessibilityText: remainingAccessibilityText(
-                used: summary.used,
-                limit: summary.limit,
-                unit: summary.unit,
+                used: pooledLimit.used,
+                limit: pooledLimit.limit,
+                unit: pooledLimit.unit,
                 remainingPercent: metrics.remainingPercent,
                 isIndeterminate: metrics.remaining.isIndeterminate,
-                isAssumedAfterScheduledReset: summary.hasAssumedScheduledResetCapacity
+                isAssumedAfterScheduledReset: pooledLimit.isAssumedAfterScheduledReset
             ),
-            isAssumedAfterScheduledReset: summary.hasAssumedScheduledResetCapacity,
-            resetsAt: summary.resetsAt,
+            isAssumedAfterScheduledReset: pooledLimit.isAssumedAfterScheduledReset,
+            resetsAt: pooledLimit.resetsAt,
             snapshotGeneratedAt: snapshot.generatedAt,
             snapshotState: snapshot.state
         )

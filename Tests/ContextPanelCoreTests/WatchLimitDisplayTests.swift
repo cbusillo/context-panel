@@ -39,6 +39,35 @@ import Testing
     #expect(rows.filter { $0.provider == .openAI && $0.subtitle == "1w" }.count == 1)
 }
 
+@Test func watchComplicationKeepsLastKnownPoolWhenCachedAccountsAgeToStale() throws {
+    let snapshot = WidgetSnapshot(
+        state: .stale,
+        generatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+        limits: [
+            openAIWeeklyPercentLimit(accountID: "primary", used: 100, statusOverride: .stale),
+            openAIWeeklyPercentLimit(accountID: "secondary", used: 2, statusOverride: .stale),
+            openAIWeeklyPercentLimit(accountID: "tertiary", used: 77, statusOverride: .stale),
+        ],
+        status: .stale,
+        message: "Saved usage is stale."
+    )
+
+    let row = try #require(WatchLimitDisplay.mainLaneRows(
+        from: snapshot,
+        preferences: .defaultPreferences,
+        maximumCount: 1
+    ).first)
+
+    #expect(row.id == "summary:openai:weekly")
+    #expect(row.context == "3 accounts")
+    #expect(row.usedText == "60%")
+    #expect(row.remainingText == "40%")
+    #expect(row.remainingComplicationText == "40% left · stale")
+    #expect(row.usedPressure.ratio == 0.5966666666666667)
+    #expect(row.remainingCapacity.ratio == 0.4033333333333333)
+    #expect(row.status == .stale)
+}
+
 @Test func watchLimitDisplayShowsPercentUsedFromThePressureRatio() throws {
     let snapshot = WidgetSnapshot(
         state: .ready,
@@ -633,7 +662,11 @@ import Testing
     #expect(accessibilitySentence.contains("Assumed after scheduled reset"))
 }
 
-private func openAIWeeklyPercentLimit(accountID: String, used: Int) -> UsageLimit {
+private func openAIWeeklyPercentLimit(
+    accountID: String,
+    used: Int,
+    statusOverride: UsageStatus? = nil
+) -> UsageLimit {
     UsageLimit(
         provider: .openAI,
         accountID: accountID,
@@ -644,7 +677,8 @@ private func openAIWeeklyPercentLimit(accountID: String, used: Int) -> UsageLimi
         used: used,
         limit: 100,
         resetsAt: Date(timeIntervalSince1970: 1_800_604_800),
-        confidence: .observed
+        confidence: .observed,
+        statusOverride: statusOverride
     )
 }
 
