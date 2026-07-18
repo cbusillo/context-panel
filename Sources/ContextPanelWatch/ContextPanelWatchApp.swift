@@ -26,9 +26,10 @@ private struct WatchRootView: View {
                     syncErrorMessage: model.lastSyncErrorMessage
                 )
 
-                if model.snapshot.limits.isEmpty {
+                if model.displayLimits.isEmpty {
                     WatchEmptySection(
-                        result: model.displayResult
+                        result: model.displayResult,
+                        hasSourceLimits: !model.snapshot.limits.isEmpty
                     )
                 } else {
                     Section {
@@ -89,7 +90,11 @@ private final class WatchSyncModel {
     }
 
     var displayLimits: [WatchLimitDisplay] {
-        WatchLimitDisplay.rows(from: snapshot, maximumCount: 8)
+        WatchLimitDisplay.mainLaneRows(
+            from: snapshot,
+            preferences: displayPreferences,
+            maximumCount: 8
+        )
     }
 
     func reload(now: Date = Date()) {
@@ -131,8 +136,7 @@ private final class WatchSyncModel {
                 synced: loaded.result.document?.widgetDisplayPreferences
             )
             displayPreferences = effectiveDisplayPreferences
-            if loaded.result.document != nil,
-               loaded.result.transportMetadata?.source == .cloudKit {
+            if WatchComplicationTimelineReloadPolicy.shouldReload(after: loaded) {
                 WidgetCenter.shared.reloadTimelines(ofKind: ContextPanelWatchWidgetIdentity.kind)
             }
         }
@@ -187,6 +191,7 @@ private struct WatchStatusSection: View {
 
 private struct WatchEmptySection: View {
     let result: CompanionSyncLoadResult
+    let hasSourceLimits: Bool
 
     var body: some View {
         Section {
@@ -203,7 +208,10 @@ private struct WatchEmptySection: View {
     }
 
     private var emptyTitle: String {
-        switch result.status {
+        if hasSourceLimits {
+            return "No limits selected"
+        }
+        return switch result.status {
         case .stale:
             "No saved limits"
         default:
@@ -212,7 +220,10 @@ private struct WatchEmptySection: View {
     }
 
     private var emptyDetail: String {
-        switch result.status {
+        if hasSourceLimits {
+            return "Choose visible limits in Context Panel on your Mac."
+        }
+        return switch result.status {
         case .loading:
             "Usage limits will appear when the update finishes."
         case .failure:

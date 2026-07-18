@@ -143,3 +143,9 @@ public actor WatchCompanionLoader {
         )
     }
 }
+
+public enum WatchComplicationTimelineReloadPolicy {
+    public static func shouldReload(after loaded: WatchCompanionCacheLoadResult) -> Bool {
+        loaded.result.document != nil
+    }
+}

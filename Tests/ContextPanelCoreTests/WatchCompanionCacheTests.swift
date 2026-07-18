@@ -7,6 +7,28 @@ import Testing
     #expect(ContextPanelLocations.watchCompanionCacheURL().lastPathComponent == "context-panel-watch-cache.json")
 }
 
+@Test func watchComplicationTimelineReloadsForAnyUsableDocument() {
+    let generatedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let cached = WatchCompanionCacheLoadResult(
+        result: CompanionSyncLoadResult(
+            document: watchCacheDocument(generatedAt: generatedAt),
+            status: .stale,
+            transportMetadata: CompanionSyncTransportMetadata(
+                source: .localCache,
+                deliveryStatus: .delayed
+            )
+        ),
+        displayPreferences: .defaultPreferences
+    )
+    let missing = WatchCompanionCacheLoadResult(
+        result: CompanionSyncLoadResult(document: nil, status: .failure),
+        displayPreferences: nil
+    )
+
+    #expect(WatchComplicationTimelineReloadPolicy.shouldReload(after: cached))
+    #expect(!WatchComplicationTimelineReloadPolicy.shouldReload(after: missing))
+}
+
 @Test func watchCompanionCacheRoundTripsDocumentsAndDisplayPreferences() throws {
     let root = try watchCacheTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
