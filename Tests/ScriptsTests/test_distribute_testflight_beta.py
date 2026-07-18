@@ -194,6 +194,66 @@ class TestFlightDistributionTests(unittest.TestCase):
         post_requests = [request for request in client.requests if request[0] == "POST"]
         self.assertEqual(len(post_requests), 1)
 
+    def test_all_builds_group_waits_for_actual_build_membership(self):
+        client = FakeASCClient()
+        group = {
+            "id": "group-internal",
+            "attributes": {
+                "name": "Internal Testers",
+                "hasAccessToAllBuilds": True,
+            },
+        }
+        build = {"id": "build-1", "attributes": {}}
+
+        with (
+            mock.patch.object(
+                distribute_testflight_beta,
+                "group_has_build",
+                side_effect=[False, True],
+            ),
+            mock.patch.object(distribute_testflight_beta.time, "monotonic", side_effect=[0, 0]),
+            mock.patch.object(distribute_testflight_beta.time, "sleep") as sleep,
+        ):
+            result = distribute_testflight_beta.add_build_to_group(
+                client,
+                build,
+                group,
+                False,
+                wait_timeout_seconds=60,
+                poll_seconds=3,
+            )
+
+        self.assertEqual(result, "already-present")
+        sleep.assert_called_once_with(3)
+        self.assertFalse(any(request[0] == "POST" for request in client.requests))
+
+    def test_all_builds_group_times_out_when_membership_never_appears(self):
+        client = FakeASCClient()
+        group = {
+            "id": "group-internal",
+            "attributes": {
+                "name": "Internal Testers",
+                "hasAccessToAllBuilds": True,
+            },
+        }
+        build = {"id": "build-1", "attributes": {}}
+
+        with (
+            mock.patch.object(distribute_testflight_beta, "group_has_build", return_value=False),
+            mock.patch.object(distribute_testflight_beta.time, "monotonic", side_effect=[0, 61]),
+        ):
+            with self.assertRaises(distribute_testflight_beta.AppStoreConnectError) as context:
+                distribute_testflight_beta.add_build_to_group(
+                    client,
+                    build,
+                    group,
+                    False,
+                    wait_timeout_seconds=60,
+                    poll_seconds=3,
+                )
+
+        self.assertIn("propagation timed out", str(context.exception))
+
     def test_conflict_only_succeeds_when_follow_up_read_confirms_membership(self):
         client = FakeASCClient()
         client.conflict_on_add = True

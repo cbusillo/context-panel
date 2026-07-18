@@ -296,6 +296,9 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
             ?? numericLimits.compactMap(\.resetsAt).min()
         let lastUpdatedAt = numericLimits.compactMap(\.lastUpdatedAt).max()
         let hasAssumedScheduledResetCapacity = numericLimits.contains(where: \.isAssumedAfterScheduledReset)
+        let presentationStatus: UsageStatus = numericLimits.count > liveNumericLimits.count
+            ? .stale
+            : status
         return UsageLimit(
             id: "\(id):last-known-pooled",
             provider: provider,
@@ -313,7 +316,7 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
                 ? .polling
                 : .eventDriven,
             presentationAssumption: hasAssumedScheduledResetCapacity ? .scheduledReset : nil,
-            statusOverride: status
+            statusOverride: presentationStatus
         )
     }
 

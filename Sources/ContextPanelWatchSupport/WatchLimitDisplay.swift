@@ -210,9 +210,9 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
     }
 
     private static func row(from summary: MainLimitSummary, snapshot: WidgetSnapshot) -> WatchLimitDisplay? {
-        guard let pooledLimit = summary.pooledLimit ?? summary.lastKnownPooledLimit else { return nil }
+        guard let pooledLimit = summary.lastKnownPooledLimit ?? summary.pooledLimit else { return nil }
         let accountText = summary.accountCount == 1 ? "1 account" : "\(summary.accountCount) accounts"
-        let status = displayStatus(source: summary.status, snapshotState: snapshot.state)
+        let status = displayStatus(source: pooledLimit.status, snapshotState: snapshot.state)
         let metrics = metricValues(
             remainingRatio: pooledLimit.remainingCapacityRatio,
             usedRatio: pooledLimit.usageRatio,

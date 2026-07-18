@@ -24,7 +24,7 @@ from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
 
 API_BASE = "https://api.appstoreconnect.apple.com/v1"
 DEFAULT_BUNDLE_ID = "com.shinycomputers.contextpanel"
-DEFAULT_BUILD_WAIT_TIMEOUT_SECONDS = 10 * 60
+DEFAULT_BUILD_WAIT_TIMEOUT_SECONDS = 60 * 60
 DEFAULT_BUILD_POLL_SECONDS = 20
 REQUEST_TIMEOUT_SECONDS = 60
 TRANSIENT_ATTEMPTS = 4
@@ -377,12 +377,33 @@ def group_has_build(client: ASCClient, group_id: str, build_id: str) -> bool:
     return any(build.get("id") == build_id for build in payload.get("data") or [])
 
 
-def add_build_to_group(client: ASCClient, build: dict[str, Any], group: dict[str, Any], dry_run: bool) -> str:
+def add_build_to_group(
+    client: ASCClient,
+    build: dict[str, Any],
+    group: dict[str, Any],
+    dry_run: bool,
+    wait_timeout_seconds: int = 0,
+    poll_seconds: int = DEFAULT_BUILD_POLL_SECONDS,
+) -> str:
     build_id = build["id"]
     group_id = group["id"]
     group_name = group["attributes"].get("name", group_id)
     if group["attributes"].get("hasAccessToAllBuilds") is True:
-        print(f"TestFlight group {group_name} already has access to all builds: {group_id}")
+        deadline = time.monotonic() + max(0, wait_timeout_seconds)
+        while not group_has_build(client, group_id, build_id):
+            if dry_run:
+                print(f"Dry run: TestFlight group {group_name} has not received the build yet")
+                return "dry-run"
+            if time.monotonic() >= deadline:
+                raise AppStoreConnectError(
+                    f"TestFlight group {group_name} has access to all builds, but build propagation timed out"
+                )
+            print(
+                f"TestFlight group {group_name} has access to all builds; "
+                f"waiting {poll_seconds}s for build propagation"
+            )
+            time.sleep(max(1, poll_seconds))
+        print(f"Build is available to all-builds TestFlight group {group_name}: {group_id}")
         return "already-present"
     if group_has_build(client, group_id, build_id):
         print(f"Build already available to TestFlight group {group_name}: {group_id}")
@@ -481,7 +502,17 @@ def main() -> int:
             comma_separated_values(args.beta_group),
             include_internal=not args.skip_internal_beta_groups,
         )
-        results = [add_build_to_group(client, build, group, args.dry_run) for group in groups]
+        results = [
+            add_build_to_group(
+                client,
+                build,
+                group,
+                args.dry_run,
+                wait_timeout_seconds=args.wait_timeout_seconds,
+                poll_seconds=args.poll_seconds,
+            )
+            for group in groups
+        ]
         added_count = sum(1 for result in results if result == "added")
         already_count = sum(1 for result in results if result == "already-present")
         dry_run_count = sum(1 for result in results if result == "dry-run")
