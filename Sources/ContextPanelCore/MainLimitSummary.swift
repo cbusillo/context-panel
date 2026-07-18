@@ -282,6 +282,41 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
         )
     }
 
+    public var lastKnownPooledLimit: UsageLimit? {
+        let numericLimits = lastKnownCapacityLimits
+        guard
+            let unit = numericLimits.first?.unit,
+            numericLimits.allSatisfy({ $0.unit == unit })
+        else {
+            return nil
+        }
+        let used = numericLimits.reduce(0) { $0 + ($1.used ?? 0) }
+        let limit = numericLimits.reduce(0) { $0 + ($1.limit ?? 0) }
+        let resetsAt = CapacityPool(limits: numericLimits).nextReset(after: generatedAt)
+            ?? numericLimits.compactMap(\.resetsAt).min()
+        let lastUpdatedAt = numericLimits.compactMap(\.lastUpdatedAt).max()
+        let hasAssumedScheduledResetCapacity = numericLimits.contains(where: \.isAssumedAfterScheduledReset)
+        return UsageLimit(
+            id: "\(id):last-known-pooled",
+            provider: provider,
+            accountID: "\(provider.rawValue)-\(window.rawValue)-last-known-pool",
+            accountName: "\(provider.displayName) \(window.displayName) pool",
+            label: "\(provider.displayName) \(window.displayName)",
+            windowLabel: window.displayName,
+            unit: unit,
+            used: used,
+            limit: limit,
+            resetsAt: resetsAt,
+            lastUpdatedAt: lastUpdatedAt,
+            confidence: confidence,
+            freshnessMode: numericLimits.contains(where: { !$0.usesEventDrivenFreshness })
+                ? .polling
+                : .eventDriven,
+            presentationAssumption: hasAssumedScheduledResetCapacity ? .scheduledReset : nil,
+            statusOverride: status
+        )
+    }
+
     init(
         provider: Provider,
         window: MainLimitWindow,

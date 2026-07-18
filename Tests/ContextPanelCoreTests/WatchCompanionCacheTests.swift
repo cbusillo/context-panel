@@ -209,6 +209,54 @@ import Testing
     await blocker.resume(returning: 1)
 }
 
+@Test func watchCompanionTimeoutKeepsPooledCapacityForStaleComplication() async throws {
+    let root = try watchCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cache = WatchCompanionCache(cacheURL: root.appending(path: "watch-cache.json"))
+    let generatedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let displayDate = generatedAt.addingTimeInterval(SnapshotFreshness.widgetMaximumAge + 60)
+    let document = watchCacheDocument(
+        generatedAt: generatedAt,
+        limits: [
+            watchOpenAIWeeklyLimit(accountID: "primary", used: 100, generatedAt: generatedAt),
+            watchOpenAIWeeklyLimit(accountID: "secondary", used: 2, generatedAt: generatedAt),
+            watchOpenAIWeeklyLimit(accountID: "tertiary", used: 77, generatedAt: generatedAt),
+        ]
+    )
+    #expect(cache.save(document: document, displayPreferences: .defaultPreferences, now: generatedAt))
+    let blocker = WatchDeadlineBlocker()
+    let loader = WatchCompanionLoader(
+        cache: cache,
+        timeout: .milliseconds(20),
+        loadDocument: { _ in
+            _ = await blocker.wait()
+            return watchRemoteLoad(document: document, receivedAt: displayDate)
+        },
+        loadPresentation: { watchPresentationLoad() }
+    )
+
+    let loaded = await loader.load(now: displayDate)
+    let snapshot = WidgetSnapshot.fromCompanionSync(
+        loaded.result,
+        now: displayDate,
+        stalenessPolicy: SnapshotStoreStalenessPolicy.appDefault(
+            maximumAge: SnapshotFreshness.widgetMaximumAge
+        )
+    )
+    let row = try #require(WatchLimitDisplay.mainLaneRows(
+        from: snapshot,
+        preferences: loaded.displayPreferences ?? .defaultPreferences,
+        maximumCount: 1
+    ).first)
+
+    #expect(loaded.result.status == .stale)
+    #expect(row.id == "summary:openai:weekly")
+    #expect(row.context == "3 accounts")
+    #expect(row.usedText == "60%")
+    #expect(row.remainingComplicationText == "40% left · stale")
+    await blocker.resume(returning: 1)
+}
+
 @Test func watchCompanionLoaderCoalescesOverlappingCloudKitLoads() async throws {
     let root = try watchCacheTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -348,14 +396,37 @@ import Testing
     await blocker.resume(returning: 42)
 }
 
-private func watchCacheDocument(generatedAt: Date) -> CompanionSyncDocument {
+private func watchCacheDocument(
+    generatedAt: Date,
+    limits: [UsageLimit] = []
+) -> CompanionSyncDocument {
     CompanionSyncDocument(snapshot: CompanionSnapshot(
         generatedAt: generatedAt,
         publishedAt: generatedAt.addingTimeInterval(5),
-        limits: [],
+        limits: limits.map(CompanionLimit.init),
         providerStatuses: [],
         promptCacheSummaries: []
     ))
+}
+
+private func watchOpenAIWeeklyLimit(
+    accountID: String,
+    used: Int,
+    generatedAt: Date
+) -> UsageLimit {
+    UsageLimit(
+        provider: .openAI,
+        accountID: accountID,
+        accountName: accountID.capitalized,
+        label: "Weekly",
+        windowLabel: "Weekly",
+        unit: .percent,
+        used: used,
+        limit: 100,
+        resetsAt: generatedAt.addingTimeInterval(7 * 24 * 60 * 60),
+        lastUpdatedAt: generatedAt,
+        confidence: .observed
+    )
 }
 
 private func watchCachePreferences(provider: Provider) -> WidgetDisplayPreferences {
