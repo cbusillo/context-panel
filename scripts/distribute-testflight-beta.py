@@ -15,7 +15,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, utils
@@ -61,8 +61,9 @@ def make_token(key_path: Path, key_id: str, issuer_id: str) -> str:
 
 
 class ASCClient:
-    def __init__(self, token: str):
+    def __init__(self, token: str, token_factory: Callable[[], str] | None = None):
         self.token = token
+        self.token_factory = token_factory
 
     def request(
         self,
@@ -76,13 +77,14 @@ class ASCClient:
         if params:
             url += "?" + urllib.parse.urlencode(params, doseq=True)
         data = json.dumps(body).encode() if body is not None else None
-        headers = {"Authorization": f"Bearer {self.token}", "Accept": "application/json"}
-        if body is not None:
-            headers["Content-Type"] = "application/json"
-        request = urllib.request.Request(url, data=data, method=method, headers=headers)
         attempt = 1
+        refreshed_token = False
         try:
             while True:
+                headers = {"Authorization": f"Bearer {self.token}", "Accept": "application/json"}
+                if body is not None:
+                    headers["Content-Type"] = "application/json"
+                request = urllib.request.Request(url, data=data, method=method, headers=headers)
                 try:
                     with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
                         raw = response.read()
@@ -103,6 +105,10 @@ class ASCClient:
                         payload = json.loads(raw)
                     except json.JSONDecodeError:
                         payload = {"raw": raw}
+                    if error.code == 401 and self.token_factory is not None and not refreshed_token:
+                        self.token = self.token_factory()
+                        refreshed_token = True
+                        continue
                     if error.code in RETRYABLE_HTTP_STATUS_CODES and attempt < TRANSIENT_ATTEMPTS:
                         self.wait_before_retry(method, path, attempt, f"HTTP {error.code}")
                         attempt += 1
@@ -477,7 +483,8 @@ def main() -> int:
         key_path, temporary_key_path = expanded_key_path(args)
         if not key_path.exists():
             raise AppStoreConnectError(f"App Store Connect API key not found: {key_path}")
-        client = ASCClient(make_token(key_path, args.api_key_id, args.api_issuer_id))
+        token_factory = lambda: make_token(key_path, args.api_key_id, args.api_issuer_id)
+        client = ASCClient(token_factory(), token_factory=token_factory)
         app_payload = client.request(
             "GET",
             "/apps",

@@ -414,6 +414,23 @@ class TestFlightDistributionTests(unittest.TestCase):
         self.assertEqual(urlopen.call_count, 2)
         sleep.assert_called_once_with(distribute_testflight_beta.TRANSIENT_BACKOFF_SECONDS)
 
+    def test_request_refreshes_expired_token_once(self):
+        token_factory = mock.Mock(return_value="fresh-token")
+        client = distribute_testflight_beta.ASCClient("expired-token", token_factory=token_factory)
+
+        with mock.patch.object(
+            distribute_testflight_beta.urllib.request,
+            "urlopen",
+            side_effect=[http_error(401), FakeResponse()],
+        ) as urlopen:
+            payload = client.request("GET", "/apps/app-1/betaGroups")
+
+        self.assertEqual(payload, {"data": []})
+        self.assertEqual(urlopen.call_count, 2)
+        token_factory.assert_called_once_with()
+        refreshed_request = urlopen.call_args_list[1].args[0]
+        self.assertEqual(refreshed_request.get_header("Authorization"), "Bearer fresh-token")
+
     def test_request_retries_transient_http_failures_before_failing_closed(self):
         client = distribute_testflight_beta.ASCClient("token")
 
