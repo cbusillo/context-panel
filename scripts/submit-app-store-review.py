@@ -210,6 +210,29 @@ def version_state(resource: dict[str, Any]) -> str | None:
     return attributes.get("appStoreState") or attributes.get("appVersionState")
 
 
+def review_submission_item_ids(submission: dict[str, Any]) -> list[str]:
+    return [
+        item["id"]
+        for item in submission.get("relationships", {}).get("items", {}).get("data", [])
+    ]
+
+
+def is_orphan_ready_for_sale_review_draft(
+    submission: dict[str, Any],
+    app_store_version: dict[str, Any] | None,
+) -> bool:
+    attributes = submission.get("attributes", {})
+    return (
+        attributes.get("state") == "READY_FOR_REVIEW"
+        and attributes.get("platform") is None
+        and attributes.get("submittedDate") is None
+        and relationship_id(submission, "appStoreVersionForReview") is not None
+        and not review_submission_item_ids(submission)
+        and app_store_version is not None
+        and version_state(app_store_version) == "READY_FOR_SALE"
+    )
+
+
 def expanded_key_path(args: argparse.Namespace) -> tuple[Path, Path | None]:
     if args.api_key:
         return Path(args.api_key).expanduser(), None
@@ -301,8 +324,9 @@ def active_review_version_ids(client: ASCClient, app_id: str, platform: str = "M
             "filter[app]": app_id,
             "filter[platform]": platform,
             "include": "items,appStoreVersionForReview",
-            "fields[reviewSubmissions]": "platform,state,items,appStoreVersionForReview",
+            "fields[reviewSubmissions]": "platform,state,submittedDate,items,appStoreVersionForReview",
             "fields[reviewSubmissionItems]": "state,appStoreVersion",
+            "fields[appStoreVersions]": "versionString,appStoreState,appVersionState,platform",
         },
         limit=20,
     )
@@ -313,9 +337,12 @@ def active_review_version_ids(client: ASCClient, app_id: str, platform: str = "M
         if state not in ACTIVE_REVIEW_SUBMISSION_STATES:
             continue
         submission_version_id = relationship_id(submission, "appStoreVersionForReview")
+        submission_version = included.get(submission_version_id or "")
+        if is_orphan_ready_for_sale_review_draft(submission, submission_version):
+            continue
         if submission_version_id:
             version_ids.add(submission_version_id)
-        item_ids = [item["id"] for item in submission.get("relationships", {}).get("items", {}).get("data", [])]
+        item_ids = review_submission_item_ids(submission)
         for item_id in item_ids:
             item_version_id = relationship_id(included.get(item_id, {}), "appStoreVersion")
             if item_version_id:
@@ -426,7 +453,7 @@ def remove_active_review_version(
             "filter[app]": app_id,
             "filter[platform]": platform,
             "include": "items,appStoreVersionForReview",
-            "fields[reviewSubmissions]": "platform,state,items,appStoreVersionForReview",
+            "fields[reviewSubmissions]": "platform,state,submittedDate,items,appStoreVersionForReview",
             "fields[reviewSubmissionItems]": "state,appStoreVersion",
         },
         limit=20,
@@ -439,7 +466,7 @@ def remove_active_review_version(
         submission_version_id = relationship_id(submission, "appStoreVersionForReview")
         if submission_version_id not in (None, version_id):
             continue
-        item_ids = [item["id"] for item in submission.get("relationships", {}).get("items", {}).get("data", [])]
+        item_ids = review_submission_item_ids(submission)
         for item_id in item_ids:
             item = included.get(item_id, {})
             item_version_id = relationship_id(item, "appStoreVersion")
@@ -469,6 +496,9 @@ def remove_active_review_version(
                         "that review submission in App Store Connect before retrying"
                     ) from submitted_item_error
                 return
+        if submission_version_id == version_id and is_orphan_ready_for_sale_review_draft(submission, version):
+            cancel_review_submission(client, submission["id"], version_string, dry_run=dry_run)
+            return
     state = version_state(version)
     if state in BLOCKING_REVIEW_VERSION_STATES:
         raise AppStoreConnectError(
@@ -501,7 +531,7 @@ def cancel_review_submission(
     client: ASCClient, submission_id: str, version_string: str, dry_run: bool = False
 ) -> None:
     if dry_run:
-        print(f"Dry run: would cancel submitted App Store version {version_string} review: {submission_id}")
+        print(f"Dry run: would cancel App Store version {version_string} review submission: {submission_id}")
         return
     client.request(
         "PATCH",
@@ -514,7 +544,7 @@ def cancel_review_submission(
             }
         },
     )
-    print(f"Canceled submitted App Store version {version_string} review: {submission_id}")
+    print(f"Canceled App Store version {version_string} review submission: {submission_id}")
 
 
 def cancel_app_store_version_submission(

@@ -148,6 +148,55 @@ class FakeASCClient:
         raise AssertionError(f"unexpected request: {method} {path}")
 
 
+class OrphanReadyForReviewClient:
+    def __init__(self, app_store_state="READY_FOR_SALE"):
+        self.app_store_state = app_store_state
+        self.requests: list[tuple[Any, ...]] = []
+
+    def request(self, method, path, params=None, body=None, allowed=(200,)):
+        self.requests.append((method, path, params, body, allowed))
+        if method == "GET" and path == "/apps/app-id/appStoreVersions":
+            return {
+                "data": [{
+                    "id": "version-1-0-13",
+                    "attributes": {
+                        "versionString": "1.0.13",
+                        "appStoreState": self.app_store_state,
+                    },
+                }]
+            }
+        if method == "GET" and path == "/reviewSubmissions":
+            version = {
+                "id": "version-1-0-13",
+                "type": "appStoreVersions",
+                "attributes": {
+                    "versionString": "1.0.13",
+                    "appStoreState": self.app_store_state,
+                    "platform": "IOS",
+                },
+            }
+            return {
+                "data": [{
+                    "id": "orphan-submission",
+                    "attributes": {
+                        "state": "READY_FOR_REVIEW",
+                        "platform": None,
+                        "submittedDate": None,
+                    },
+                    "relationships": {
+                        "items": {"data": []},
+                        "appStoreVersionForReview": {
+                            "data": {"type": "appStoreVersions", "id": "version-1-0-13"}
+                        },
+                    },
+                }],
+                "included": [version],
+            }
+        if method == "PATCH" and path == "/reviewSubmissions/orphan-submission":
+            return {"data": {"id": "orphan-submission", "type": "reviewSubmissions"}}
+        raise AssertionError(f"unexpected request: {method} {path}")
+
+
 class SubmittedReviewItemClient(FakeASCClient):
     def request(self, method, path, params=None, body=None, allowed=(200,)):
         if method == "DELETE" and path == "/reviewSubmissionItems/item-1":
@@ -383,6 +432,52 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         submit_app_store_review.remove_active_review_version(client, "app-id", "1.0.13", dry_run=True)
 
         self.assertEqual(client.deleted_paths, [])
+
+    def test_dry_run_cancels_orphan_ready_for_sale_review_draft(self):
+        client = OrphanReadyForReviewClient()
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            submit_app_store_review.remove_active_review_version(
+                client,
+                "app-id",
+                "1.0.13",
+                platform="IOS",
+                dry_run=True,
+            )
+
+        self.assertIn("would cancel App Store version 1.0.13 review submission", output.getvalue())
+        self.assertFalse(any(request[0] in {"DELETE", "PATCH"} for request in client.requests))
+
+    def test_apply_cancels_orphan_ready_for_sale_review_draft(self):
+        client = OrphanReadyForReviewClient()
+
+        submit_app_store_review.remove_active_review_version(
+            client,
+            "app-id",
+            "1.0.13",
+            platform="IOS",
+        )
+
+        mutations = [request for request in client.requests if request[0] in {"DELETE", "PATCH"}]
+        self.assertEqual([(request[0], request[1]) for request in mutations], [
+            ("PATCH", "/reviewSubmissions/orphan-submission"),
+        ])
+        self.assertEqual(mutations[0][3]["data"]["attributes"], {"canceled": True})
+
+    def test_active_review_ids_ignore_orphan_ready_for_sale_review_draft(self):
+        client = OrphanReadyForReviewClient()
+
+        version_ids = submit_app_store_review.active_review_version_ids(client, "app-id", "TV_OS")
+
+        self.assertEqual(version_ids, set())
+
+    def test_active_review_ids_keep_direct_draft_for_non_live_version(self):
+        client = OrphanReadyForReviewClient(app_store_state="WAITING_FOR_REVIEW")
+
+        version_ids = submit_app_store_review.active_review_version_ids(client, "app-id", "TV_OS")
+
+        self.assertEqual(version_ids, {"version-1-0-13"})
 
     def test_deletes_when_submission_version_relationship_is_missing(self):
         client = FakeASCClient(include_submission_version=False)
