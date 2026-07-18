@@ -198,9 +198,10 @@ app still invalidates the complication timeline after a successful CloudKit read
 and the timeline includes a future stale transition. The watch targets do not
 depend on App Group storage because physical TestFlight validation on watchOS 27
 rejected otherwise valid App Group entitlements at runtime.
-When a cached multi-account limit ages to stale, Watch presentation preserves
-the pooled last-known capacity and labels it stale instead of falling back to one
-exhausted account lane.
+When any cached lane in a multi-account limit becomes stale or unavailable,
+Watch presentation preserves the complete pooled last-known capacity and labels
+it stale instead of recalculating from only the remaining current lanes or
+falling back to one exhausted account.
 
 Widget display preferences use one-way defaults plus local companion ownership.
 The Mac continues publishing its preferences in `CompanionSyncDocument` for

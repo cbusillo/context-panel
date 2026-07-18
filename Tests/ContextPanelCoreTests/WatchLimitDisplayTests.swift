@@ -68,6 +68,62 @@ import Testing
     #expect(row.status == .stale)
 }
 
+@Test func watchDisplaysKeepCompletePoolWhenOneAccountNeedsRefresh() throws {
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+        limits: [
+            openAIWeeklyPercentLimit(accountID: "primary", used: 2, statusOverride: .stale),
+            openAIWeeklyPercentLimit(accountID: "secondary", used: 100),
+            openAIWeeklyPercentLimit(accountID: "tertiary", used: 5),
+        ],
+        status: .stale,
+        message: "One account needs refresh."
+    )
+
+    let appRow = try #require(WatchLimitDisplay.rows(from: snapshot, maximumCount: 1).first)
+    let complicationRow = try #require(WatchLimitDisplay.mainLaneRows(
+        from: snapshot,
+        preferences: .defaultPreferences,
+        maximumCount: 1
+    ).first)
+
+    for row in [appRow, complicationRow] {
+        #expect(row.id == "summary:openai:weekly")
+        #expect(row.context == "3 accounts")
+        #expect(row.usedText == "36%")
+        #expect(row.remainingText == "64%")
+        #expect(row.status == .stale)
+    }
+}
+
+@Test func watchComplicationDoesNotCollapseToOnlyCurrentExhaustedAccount() throws {
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+        limits: [
+            openAIWeeklyPercentLimit(accountID: "primary", used: 2, statusOverride: .stale),
+            openAIWeeklyPercentLimit(accountID: "secondary", used: 100),
+            openAIWeeklyPercentLimit(accountID: "tertiary", used: 5, statusOverride: .stale),
+        ],
+        status: .stale,
+        message: "Saved usage is partial."
+    )
+
+    let row = try #require(WatchLimitDisplay.mainLaneRows(
+        from: snapshot,
+        preferences: .defaultPreferences,
+        maximumCount: 1
+    ).first)
+
+    #expect(row.id == "summary:openai:weekly")
+    #expect(row.context == "3 accounts")
+    #expect(row.usedText == "36%")
+    #expect(row.remainingText == "64%")
+    #expect(row.remainingComplicationText == "64% left · stale")
+    #expect(row.status == .stale)
+}
+
 @Test func watchLimitDisplayShowsPercentUsedFromThePressureRatio() throws {
     let snapshot = WidgetSnapshot(
         state: .ready,

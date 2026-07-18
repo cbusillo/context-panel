@@ -213,7 +213,10 @@ canonical runtime receipt without modifying or re-signing the exported app.
 The `TestFlight Beta Distribution` workflow is manually dispatched or called by
 `Ship`. It requires App Store Connect API credentials and consumes an already
 uploaded build number. It waits until the build is visible and `VALID` in App
-Store Connect, then assigns it to TestFlight beta groups.
+Store Connect, then assigns it to TestFlight beta groups. For groups configured
+with access to all builds, distribution also waits until the build appears in
+the group's actual build relationship; the group-level flag alone is not proof
+that a newly uploaded build is visible in TestFlight.
 
 Build numbers may be shared across Apple platforms. Distribution matches both
 the requested marketing version and platform, and keeps polling when that build
