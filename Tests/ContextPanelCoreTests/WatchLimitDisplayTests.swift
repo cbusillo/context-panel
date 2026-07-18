@@ -461,6 +461,43 @@ import Testing
     )
 }
 
+@Test func watchMainLaneRowsExcludeAuxiliarySparkLimits() throws {
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "spark",
+                accountName: "Spark",
+                label: "GPT-5.3-Codex-Spark",
+                modelLabel: "GPT-5.3-Codex-Spark",
+                unit: .percent,
+                used: 90,
+                limit: 100
+            ),
+            openAIWeeklyPercentLimit(accountID: "weekly", used: 5),
+        ],
+        status: .healthy,
+        message: "Synced"
+    )
+    var preferences = WidgetDisplayPreferences.defaultPreferences
+    for index in preferences.mainLimits.indices {
+        preferences.mainLimits[index].isVisible = preferences.mainLimits[index].provider == .openAI
+            && preferences.mainLimits[index].window == .weekly
+    }
+
+    let row = try #require(WatchLimitDisplay.mainLaneRows(
+        from: snapshot,
+        preferences: preferences,
+        maximumCount: 8
+    ).first)
+
+    #expect(row.id == "summary:openai:weekly")
+    #expect(row.subtitle == "1w")
+    #expect(row.usedText == "5%")
+}
+
 @Test func watchLimitDisplayUsesPressureRatioForPooledRows() throws {
     let snapshot = WidgetSnapshot(
         state: .ready,

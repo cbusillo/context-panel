@@ -194,8 +194,11 @@ The watchOS app and complication each read the same sanitized Production
 CloudKit records directly. Each process caches the latest document and effective
 display preferences in its own sandbox, so the complication can complete from a
 last-good local value when CloudKit is delayed or unavailable. Opening the Watch
-app still invalidates the complication timeline after a successful CloudKit read,
-and the timeline includes a future stale transition. The watch targets do not
+app invalidates the complication timeline whenever it has a usable document,
+including a confirmed local-cache value after an app update, and the timeline
+includes a future stale transition. The watch app list follows the synced saved
+main-limit visibility and order instead of promoting auxiliary provider buckets.
+The watch targets do not
 depend on App Group storage because physical TestFlight validation on watchOS 27
 rejected otherwise valid App Group entitlements at runtime.
 When any cached lane in a multi-account limit becomes stale or unavailable,

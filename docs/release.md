@@ -687,7 +687,9 @@ Panel.app`.
    render current lanes and preserve useful degraded states.
    For watchOS, add the complication before launching the Watch app and confirm
    it reads the Production CloudKit snapshot directly. Then launch the Watch app
-   and confirm its explicit timeline reload preserves the same answer.
+   and confirm its explicit timeline reload preserves the same answer. Repeat
+   after an in-place TestFlight update and require the complication to refresh
+   without uninstalling or reinstalling the Watch app.
 8. Reopen the Mac Diagnostics view and confirm companion load/readback state is
    explainable: healthy, stale, unavailable, partial, or failed.
 9. Exercise degraded cases when practical: CloudKit disabled or unavailable,

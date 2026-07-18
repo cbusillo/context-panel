@@ -62,7 +62,9 @@ remain one-value surfaces. Inline may show the stable answer plus a useful
 closest limit when both fit, otherwise it shows the next saved limit or falls
 back to one clear value. Rectangular bars and inline copy use the remaining
 ratio and explicit `left` language. Watch app rows remain detail surfaces and
-stay explicitly used-pressure. In every case, the visible number, wording,
+stay explicitly used-pressure while following saved main-limit visibility and
+order; auxiliary provider buckets such as Spark remain in the larger app detail
+views. In every case, the visible number, wording,
 fill, color, and accessibility sentence describe the same quantity. Keep
 unknown values indeterminate rather than substituting zero, preserve stale
 last-good values with explicit freshness language, and retain saved order.
