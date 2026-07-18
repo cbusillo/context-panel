@@ -12,12 +12,12 @@ version:
 
 Companion iOS/iPadOS, visionOS, and tvOS distribution use the same App Store
 Connect and TestFlight building blocks, but each platform is deliberately
-opt-in from `Ship` until its signed device path is proven. The tvOS App Store
-Connect platform is active for version `1.0.44`; signed Apple TV and Production
-CloudKit evidence are still required before App Store submission. visionOS
-currently has build scaffolding and a generic no-sign compile check only; do not
-treat the `visionos` upload options as evidence that a validated visionOS
-product exists.
+opt-in from `Ship`. The native visionOS app is published and its signed physical
+Vision Pro path is proven. The tvOS app passed its signed Production TestFlight
+matrix on physical Apple TV hardware; its first App Store version still needs
+the approved tvOS metadata and screenshot set uploaded before review. Fresh
+visionOS or tvOS trains still require the platform-specific signed device smoke
+gate described below.
 
 App Store Review submission is intentionally separate from `Ship`. Run it only
 after the TestFlight build has been validated and the App Store release decision
@@ -301,50 +301,27 @@ Before treating the first tvOS TestFlight build as release evidence:
 - validate dynamic Top Shelf, retired-badge cleanup, and all presentation modes
   on the same signed candidate used for release evidence.
 
-The approved screenshot uploader does not yet contain a tvOS screenshot set.
-Capture and approve the Apple TV marketing frames under #379, then either upload
-the first set directly in App Store Connect or extend the uploader with the
-approved files and Apple TV display type before review submission.
+The approved tvOS screenshot set now lives under
+`Resources/AppStore/Screenshots/tvos/`. The screenshot uploader does not yet
+declare the Apple TV display type, and the editable first tvOS App Store version
+does not yet contain a screenshot set or complete description. Upload the
+approved frames directly in App Store Connect or extend the uploader before
+review submission.
 
-### visionOS Reality Check
+### visionOS Release State
 
-The companion project includes visionOS-capable targets and
-`scripts/validate-companion-builds.sh visionos` can prove that the shared
-companion sources compile for `generic/platform=visionOS` with signing disabled.
-That is a compiler/project compatibility gate only. It does not prove that
-Context Panel has a designed, signed, uploaded, installed, or user-validated
-visionOS app or widget.
+The native visionOS companion is published: App Store version `1.0.42` is
+`READY_FOR_SALE`, and signed TestFlight `1.0.43 (202607091626)` passed physical
+Apple Vision Pro launch and synced-state validation on July 9, 2026. The product
+page has approved visionOS screenshots, privacy metadata, age rating, review
+details that explain the Mac-to-companion CloudKit dependency, and App Motion
+Information.
 
-For issue #168, the first visionOS deliverable is app-first: a native visionOS
-read-only companion app that receives the Mac-published CloudKit companion
-snapshot, mirrors it into the app group, and shows current, stale, no-Mac, and
-degraded sync states. Do not use the compatible iPhone/iPad-on-Apple-Vision-Pro
-App Store fallback as #231 release evidence unless that becomes an explicit
-product decision.
-
-Before using `--platform visionos` as release evidence, complete #230 under
-parent plan #168:
-
-- configure App Store Connect for the native visionOS platform for Context
-  Panel, not only compatible iPhone/iPad availability on Apple Vision Pro;
-- provide Apple Distribution provisioning profiles whose platform includes
-  `visionOS` or `xrOS` and whose entitlements match the companion app/widget
-  split: app profile with App Group, iCloud container, iCloud Documents,
-  CloudKit, ubiquity container access, and production APNs; widget profile with
-  App Group only;
-- provide separate profiles for both bundle IDs because the current signed
-  package embeds `ContextPanelCompanionWidgetExtension`:
-  `com.shinycomputers.contextpanel` and
-  `com.shinycomputers.contextpanel.widget`;
-- add real visionOS-specific icon assets. Apple treats native visionOS app icons
-  as layered circular 3D assets, not the same flat iPhone/iPad icon set;
-- keep first-pass validation app-first. The widget extension may remain embedded
-  in the signed package, but do not call the visionOS widget surface validated
-  until #231 smoke-tests adding and rendering it on Apple Vision Pro;
-- prepare App Store Connect visionOS product-page metadata, including screenshots
-  or app previews, privacy nutrition details, age rating, review notes for the
-  Mac-to-companion CloudKit dependency, and required Apple Vision Pro app motion
-  information before App Review submission.
+For a fresh visionOS update, `scripts/validate-companion-builds.sh visionos`
+remains only the unsigned compiler gate. Release evidence also requires a signed
+upload from `main`, the live Production CloudKit schema gate, TestFlight
+distribution, and a physical Vision Pro smoke check of launch, synced data,
+stale/degraded presentation, and widget rendering when that surface changed.
 
 The required visionOS app icon asset should live under:
 
@@ -783,6 +760,13 @@ whose active review should be withdrawn. That path exits after cancellation and
 cannot submit a replacement build as a side effect, so it does not require a
 build number or release notes. Use `dry_run: true` first to verify the target
 review/version.
+
+App Store Connect can retain an itemless `READY_FOR_REVIEW` draft that points to
+an already released version and has no platform or submission date. The helper
+does not treat that proven orphan shape as an active cross-platform review
+blocker. Cancel-only recovery can cancel the draft review submission directly;
+other direct-version review submissions remain blocking unless their normal
+review item or submission state is explicitly removed.
 
 When submitting a replacement version, `remove_active_review_version` is not
 cancel-only. It allows the submit script to remove or reuse an existing blocked
