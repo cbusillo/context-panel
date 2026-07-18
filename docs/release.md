@@ -429,7 +429,8 @@ Production contains the CloudKit-backed companion snapshot record contract:
 
 - private database record type `CompanionSyncDocument`
 - fixed versioned record name `current-v2`; current clients also read the
-  legacy `current` record during rolling upgrades
+  legacy `current` record during rolling upgrades, and current publishers mirror
+  the merged document there as a compatibility wake record
 - `payload` as CloudKit bytes/data
 - `schemaVersion`, `documentSchemaVersion`, `snapshotSchemaVersion`, and
   `payloadByteCount` as integer/number fields
@@ -450,14 +451,27 @@ settings. `cktool` can then save the token securely in the Mac Keychain.
 
 The schema gate does not promote a new `CKSubscription` definition. Context
 Panel's Production companion contract currently uses subscription ID
-`companion-sync-updates-v3` with a query for the fixed `current-v2` record.
-`companion-sync-updates` and `companion-sync-updates-v2` are retired after the
-new subscription is confirmed. CloudKit
+`companion-sync-updates` with a query for the fixed legacy `current` wake record.
+The versioned `current-v2` record remains authoritative, while clients reload and
+merge both records after a wake notification. Keep any existing
+`companion-sync-updates-v2` or `companion-sync-updates-v3` subscriptions during
+the internal rolling-upgrade bridge; older builds may still rely on them while
+replacement builds are installing. Do not deploy the abandoned `v3` definition
+to Production while this compatibility contract is active. CloudKit
 rejects subscription IDs or predicates introduced for the first time by a
 Production runtime. Before changing that contract, create the new subscription
 in Development, deploy the resulting CloudKit schema changes to Production, and
 physically verify registration from the signed TestFlight build. Do not ship a
 new subscription ID or predicate based only on the exported field schema passing.
+
+When replacing a build that attempted the abandoned `v3` subscription, upload
+new builds for the Mac publisher and every companion platform under the same
+editable marketing version. Install and validate the Mac publisher first so it
+writes both `current-v2` and the `current` wake mirror, then update iOS/watchOS,
+visionOS, and tvOS. This order keeps both subscription generations live during
+the internal rollout. Accurate per-account stale-state presentation requires the
+replacement companions; older clients consume the mirror only as a compatibility
+bridge.
 
 Relevant Apple references:
 

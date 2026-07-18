@@ -46,6 +46,10 @@ clients can mark them stale instead of presenting them as freshly collected. A
 versioned usage record isolates this behavior from older whole-document
 publishers; current clients also read and merge the legacy record during rollout
 so an older Mac can contribute data without erasing the versioned account set.
+After each authoritative `current-v2` save, current publishers mirror the merged
+document to legacy `current`. That mirror remains a compatibility wake channel
+for the Production-promoted CloudKit subscription and for older clients; it is
+not the authoritative multi-Mac source of truth.
 
 Local limit-warning notifications use app-group state. The refresh agent records
 warning state and writes pending notification events to shared storage, then
@@ -230,16 +234,22 @@ The tvOS app registers both its CloudKit subscription and APNs delivery on
 launch and foreground activation. Failed registration remains a recoverable
 state: the app retries when it becomes active, preserves foreground refresh, and
 never stores or logs the APNs device token. The query subscription uses the
-Production-promoted `companion-sync-updates-v3` contract and matches only the
-fixed `current-v2` record. Registration fetches that subscription first and creates it
-only when it is missing, then removes abandoned subscription IDs after the
-promoted subscription is confirmed. Both app handlers reject retired or
-non-`current-v2` query notifications before reloading.
+Production-promoted `companion-sync-updates` contract and matches the legacy
+`current` wake record. Registration fetches that subscription first and creates
+it only when it is missing. The `v2` and `v3` subscription IDs are deliberately
+left in place during the internal rolling-upgrade bridge so older builds do not
+lose their wake channel. App handlers accept only their own generation's wake
+notification, then reload and merge `current-v2` with legacy `current`.
+Roll out the bridge publisher first: the replacement Mac writes both records,
+so existing `v3` companions and replacement `current` companions continue to
+receive wakes while device updates propagate.
 
 CloudKit does not allow a new subscription definition to be introduced directly
 from a Production runtime. Any future subscription ID or predicate change must
 first be created in Development and included in the CloudKit schema deployment
 to Production before a TestFlight or App Store build starts using it.
+Do not deploy the abandoned `v3` definition while the legacy-wake bridge is the
+release contract.
 
 Provider detail keeps the saved primary limit as the dominant answer while it
 has current capacity. If that lane is temporarily unavailable, detail promotes

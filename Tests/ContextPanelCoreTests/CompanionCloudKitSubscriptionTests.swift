@@ -3,36 +3,34 @@ import CloudKit
 import ContextPanelCore
 import Testing
 
-@Test func companionCloudKitSubscriptionUsesPromotedProductionQuery() throws {
+@Test func companionCloudKitSubscriptionUsesPromotedProductionWakeQuery() throws {
     let subscription = CompanionCloudKitSubscriptionFactory.make()
 
     #expect(subscription.subscriptionID == CompanionRemoteSync.cloudKitSubscriptionID)
-    #expect(subscription.subscriptionID == "companion-sync-updates-v3")
+    #expect(subscription.subscriptionID == "companion-sync-updates")
     #expect(CompanionRemoteSync.cloudKitRecordName == "current-v2")
-    #expect(CompanionRemoteSync.cloudKitLegacyRecordNames == ["current"])
-    #expect(CompanionRemoteSync.cloudKitRetiredSubscriptionIDs == [
-        "companion-sync-updates",
-        "companion-sync-updates-v2",
-    ])
+    #expect(CompanionRemoteSync.cloudKitSubscriptionRecordName == "current")
+    #expect(CompanionRemoteSync.cloudKitLegacyRecordNames == [CompanionRemoteSync.cloudKitSubscriptionRecordName])
+    #expect(CompanionRemoteSync.cloudKitRetiredSubscriptionIDs.isEmpty)
     #expect(subscription.recordType == CompanionRemoteSync.cloudKitRecordType)
     let comparison = try #require(subscription.predicate as? NSComparisonPredicate)
     #expect(comparison.leftExpression.keyPath == "recordID")
     #expect(comparison.predicateOperatorType == .equalTo)
     let recordID = try #require(comparison.rightExpression.constantValue as? CKRecord.ID)
-    #expect(recordID.recordName == CompanionRemoteSync.cloudKitRecordName)
+    #expect(recordID.recordName == CompanionRemoteSync.cloudKitSubscriptionRecordName)
     #expect(subscription.querySubscriptionOptions.contains(.firesOnRecordCreation))
     #expect(subscription.querySubscriptionOptions.contains(.firesOnRecordUpdate))
     #expect(subscription.notificationInfo?.shouldSendContentAvailable == true)
 }
 
-@Test func companionCloudKitNotificationPolicyRejectsRetiredAndPresentationUpdates() {
+@Test func companionCloudKitNotificationPolicyRejectsOtherGenerationAndPresentationUpdates() {
     #expect(CompanionCloudKitNotificationPolicy.accepts(
         subscriptionID: CompanionRemoteSync.cloudKitSubscriptionID,
-        recordName: CompanionRemoteSync.cloudKitRecordName
+        recordName: CompanionRemoteSync.cloudKitSubscriptionRecordName
     ))
     #expect(!CompanionCloudKitNotificationPolicy.accepts(
-        subscriptionID: CompanionRemoteSync.cloudKitRetiredSubscriptionIDs[0],
-        recordName: CompanionRemoteSync.cloudKitRecordName
+        subscriptionID: "companion-sync-updates-v3",
+        recordName: CompanionRemoteSync.cloudKitSubscriptionRecordName
     ))
     #expect(!CompanionCloudKitNotificationPolicy.accepts(
         subscriptionID: CompanionRemoteSync.cloudKitSubscriptionID,
@@ -40,7 +38,7 @@ import Testing
     ))
     #expect(!CompanionCloudKitNotificationPolicy.accepts(
         subscriptionID: CompanionRemoteSync.cloudKitSubscriptionID,
-        recordName: CompanionRemoteSync.cloudKitLegacyRecordNames[0]
+        recordName: CompanionRemoteSync.cloudKitRecordName
     ))
     #expect(!CompanionCloudKitNotificationPolicy.accepts(
         subscriptionID: nil,
@@ -54,11 +52,7 @@ import Testing
 
     try await registrar.register()
 
-    #expect(await recorder.events == [
-        "fetch",
-        "delete:companion-sync-updates",
-        "delete:companion-sync-updates-v2",
-    ])
+    #expect(await recorder.events == ["fetch"])
 }
 
 @Test func companionCloudKitSubscriptionRegistrarCreatesMissingSubscription() async throws {
@@ -67,12 +61,7 @@ import Testing
 
     try await registrar.register()
 
-    #expect(await recorder.events == [
-        "fetch",
-        "save",
-        "delete:companion-sync-updates",
-        "delete:companion-sync-updates-v2",
-    ])
+    #expect(await recorder.events == ["fetch", "save"])
 }
 
 @Test func companionCloudKitSubscriptionRegistrarStopsAfterFetchFailure() async {
@@ -104,15 +93,15 @@ import Testing
     let registrar = makeRegistrar(
         recorder: recorder,
         currentSubscriptionExists: true,
-        deleteError: .failed
+        deleteError: .failed,
+        retiredSubscriptionIDs: ["legacy-subscription"]
     )
 
     try await registrar.register()
 
     #expect(await recorder.events == [
         "fetch",
-        "delete:companion-sync-updates",
-        "delete:companion-sync-updates-v2",
+        "delete:legacy-subscription",
     ])
 }
 
@@ -176,9 +165,29 @@ import Testing
     let mergedDocument = try CompanionSyncPayloadCodec.decode(pendingSave.payload)
 
     #expect(pendingSave.record === record)
+    #expect(pendingSave.document == mergedDocument)
     #expect(mergedDocument.snapshot.limits.map(\.accountName) == ["OpenAI A", "OpenAI B"])
     #expect(mergedDocument.snapshot.limits.first { $0.accountName == "OpenAI A" }?.used == 30)
     #expect(mergedDocument.snapshot.limits.first { $0.accountName == "OpenAI B" }?.used == 40)
+}
+
+@Test func companionCloudKitRecordBuilderCreatesLegacyWakeMirror() throws {
+    let generatedAt = Date(timeIntervalSince1970: 75_000)
+    let recordID = CKRecord.ID(recordName: CompanionRemoteSync.cloudKitSubscriptionRecordName)
+    let document = cloudKitDocument(
+        generatedAt: generatedAt,
+        accounts: [("OpenAI A", "openai-a", 25)]
+    )
+
+    let pendingSave = try CompanionCloudKitRecordBuilder(recordID: recordID).makeRecord(
+        incomingDocument: document,
+        existingRecord: nil
+    )
+    let mirroredDocument = try CompanionSyncPayloadCodec.decode(pendingSave.payload)
+
+    #expect(pendingSave.record.recordID.recordName == CompanionRemoteSync.cloudKitSubscriptionRecordName)
+    #expect(pendingSave.document == mirroredDocument)
+    #expect(mirroredDocument.snapshot.limits.map(\.accountName) == ["OpenAI A"])
 }
 
 @Test func companionCloudKitDocumentSetMergesLegacyAndCurrentRecords() {
@@ -259,7 +268,8 @@ private func makeRegistrar(
     currentSubscriptionExists: Bool = true,
     fetchError: CompanionCloudKitSubscriptionTestError? = nil,
     saveError: CompanionCloudKitSubscriptionTestError? = nil,
-    deleteError: CompanionCloudKitSubscriptionTestError? = nil
+    deleteError: CompanionCloudKitSubscriptionTestError? = nil,
+    retiredSubscriptionIDs: [String] = CompanionRemoteSync.cloudKitRetiredSubscriptionIDs
 ) -> CompanionCloudKitSubscriptionRegistrar {
     CompanionCloudKitSubscriptionRegistrar(
         currentSubscriptionExists: {
@@ -275,6 +285,6 @@ private func makeRegistrar(
             await recorder.record("delete:\(subscriptionID)")
             if let deleteError { throw deleteError }
         },
-        retiredSubscriptionIDs: CompanionRemoteSync.cloudKitRetiredSubscriptionIDs
+        retiredSubscriptionIDs: retiredSubscriptionIDs
     )
 }
