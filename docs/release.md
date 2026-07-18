@@ -301,12 +301,11 @@ Before treating the first tvOS TestFlight build as release evidence:
 - validate dynamic Top Shelf, retired-badge cleanup, and all presentation modes
   on the same signed candidate used for release evidence.
 
-The approved tvOS screenshot set now lives under
-`Resources/AppStore/Screenshots/tvos/`. The screenshot uploader does not yet
-declare the Apple TV display type, and the editable first tvOS App Store version
-does not yet contain a screenshot set or complete description. Upload the
-approved frames directly in App Store Connect or extend the uploader before
-review submission.
+The approved tvOS screenshot set lives under
+`Resources/AppStore/Screenshots/tvos/`. Upload it with the `tvos` screenshot set;
+the uploader maps those approved 1920-by-1080 frames to App Store Connect display
+type `APP_APPLE_TV`. The editable first tvOS App Store version still needs its
+description and screenshots populated before review submission.
 
 ### visionOS Release State
 

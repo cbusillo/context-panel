@@ -516,11 +516,14 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("- ipad", workflow)
         self.assertIn("- watch", workflow)
         self.assertIn("- visionpro", workflow)
+        self.assertIn("- tvos", workflow)
         self.assertIn('"ipad": "IOS"', script)
         self.assertIn('"watch": "IOS"', script)
+        self.assertIn('"tvos": "TV_OS"', script)
         self.assertIn("APP_IPAD_PRO_3GEN_129", script)
         self.assertIn("APP_WATCH_ULTRA", script)
         self.assertIn("APP_APPLE_VISION_PRO", script)
+        self.assertIn("APP_APPLE_TV", script)
         self.assertIn("context-panel-appstore-5-glance-detail-redacted.png", script)
 
     def test_app_store_review_workflow_supports_prepare_only(self):

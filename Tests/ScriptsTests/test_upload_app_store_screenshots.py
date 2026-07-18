@@ -352,6 +352,7 @@ class UploadAppStoreScreenshotsTests(unittest.TestCase):
         self.assertEqual(upload_app_store_screenshots.inferred_platform(["ipad"], None), "IOS")
         self.assertEqual(upload_app_store_screenshots.inferred_platform(["watch"], None), "IOS")
         self.assertEqual(upload_app_store_screenshots.inferred_platform(["visionpro"], None), "VISION_OS")
+        self.assertEqual(upload_app_store_screenshots.inferred_platform(["tvos"], None), "TV_OS")
 
     def test_macos_approved_set_contains_all_five_approved_screenshots(self):
         macos_assets = upload_app_store_screenshots.APPROVED_SETS["macos"]
@@ -379,6 +380,20 @@ class UploadAppStoreScreenshotsTests(unittest.TestCase):
             [
                 "ipad-12-9-app-light-synced.png",
                 "ipad-12-9-app-dark-synced.png",
+            ],
+        )
+
+    def test_tvos_approved_set_contains_current_approved_screenshots(self):
+        tvos_assets = upload_app_store_screenshots.APPROVED_SETS["tvos"]
+
+        self.assertEqual(len(tvos_assets), 3)
+        self.assertEqual({asset.display_type for asset in tvos_assets}, {"APP_APPLE_TV"})
+        self.assertEqual(
+            [asset.path.name for asset in tvos_assets],
+            [
+                "tvos-1-runway-full-detail.png",
+                "tvos-2-provider-hide-account-names.png",
+                "tvos-3-runway-percentages-only.png",
             ],
         )
 

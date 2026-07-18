@@ -19,6 +19,7 @@ name: Upload App Store Screenshots
           - ipad
           - watch
           - visionpro
+          - tvos
       platform:
         description: Optional App Store Connect platform override.
         required: false

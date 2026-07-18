@@ -95,6 +95,11 @@ APPROVED_SETS: dict[str, tuple[ScreenshotAsset, ...]] = {
         ScreenshotAsset("APP_APPLE_VISION_PRO", Path("visionpro/visionpro-widget-medium-healthy-light-rendered.png")),
         ScreenshotAsset("APP_APPLE_VISION_PRO", Path("visionpro/visionpro-widget-medium-healthy-dark-rendered.png")),
     ),
+    "tvos": (
+        ScreenshotAsset("APP_APPLE_TV", Path("tvos/tvos-1-runway-full-detail.png")),
+        ScreenshotAsset("APP_APPLE_TV", Path("tvos/tvos-2-provider-hide-account-names.png")),
+        ScreenshotAsset("APP_APPLE_TV", Path("tvos/tvos-3-runway-percentages-only.png")),
+    ),
 }
 
 PLATFORM_FOR_SET = {
@@ -105,12 +110,14 @@ PLATFORM_FOR_SET = {
     "watch": "IOS",
     "ios": "IOS",
     "visionpro": "VISION_OS",
+    "tvos": "TV_OS",
 }
 
 FULL_PLATFORM_DISPLAY_TYPES = {
     "MAC_OS": {"APP_DESKTOP"},
     "IOS": {"APP_IPHONE_61", "APP_IPHONE_65", "APP_IPAD_PRO_3GEN_129", "APP_WATCH_ULTRA"},
     "VISION_OS": {"APP_APPLE_VISION_PRO"},
+    "TV_OS": {"APP_APPLE_TV"},
 }
 
 
@@ -653,7 +660,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--platform",
-        choices=("MAC_OS", "IOS", "VISION_OS"),
+        choices=("MAC_OS", "IOS", "TV_OS", "VISION_OS"),
         help="Override the App Store Connect platform. Inferred when one set is selected.",
     )
     return parser.parse_args()
