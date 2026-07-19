@@ -189,9 +189,37 @@ private extension StoredProviderReport {
 }
 
 private extension UsageLimit {
+    func markingPreservedFailure() -> UsageLimit {
+        UsageLimit(
+            id: id,
+            provider: provider,
+            accountID: accountID,
+            configuredAccountID: configuredAccountID,
+            accountName: accountName,
+            label: label,
+            windowLabel: windowLabel,
+            modelLabel: modelLabel,
+            unit: unit,
+            used: used,
+            limit: limit,
+            resetsAt: resetsAt,
+            lastUpdatedAt: lastUpdatedAt,
+            confidence: confidence,
+            freshnessMode: .polling,
+            presentationAssumption: presentationAssumption,
+            statusOverride: .stale,
+            note: note
+        )
+    }
+
     func coversReconnectFailure(_ report: StoredProviderReport) -> Bool {
-        guard provider == report.provider else { return false }
-        return accountID == report.accountID
+        guard provider == report.provider,
+              accountID == report.accountID,
+              status.coversProviderFreshness,
+              let lastUpdatedAt,
+              lastUpdatedAt >= report.generatedAt
+        else { return false }
+        return true
     }
 }
 
@@ -548,7 +576,9 @@ public struct JSONSnapshotStore: Sendable {
         )
         let successfulProviders = Set(refreshResult.reports.filter { !$0.limits.isEmpty }.map(\.provider))
         let preservedFailureLimits = current?.snapshot.limits.filter { limit in
-            refreshResult.reports.contains { report in
+            let limitKey = ProviderAccountKey(provider: limit.provider, accountID: limit.accountID)
+            guard !replacementAccounts.contains(limitKey) else { return false }
+            return refreshResult.reports.contains { report in
                 guard report.status == .failure, report.limits.isEmpty, report.provider == limit.provider else {
                     return false
                 }
@@ -563,7 +593,18 @@ public struct JSONSnapshotStore: Sendable {
                        accountID: limit.accountID,
                        configuredAccountID: limit.configuredAccountID,
                        legacyAccountIDs: legacyGoogleDefaultAccountIDs
-                   ) {
+                ) {
+                    return false
+                }
+                if let configuredAccountID = report.configuredAccountID {
+                    if limit.configuredAccountID == configuredAccountID {
+                        return true
+                    }
+                    if report.provider == .google,
+                       configuredAccountID == "google-antigravity-default",
+                       limit.configuredAccountID == nil {
+                        return true
+                    }
                     return false
                 }
                 return !successfulProviders.contains(report.provider)
@@ -585,7 +626,8 @@ public struct JSONSnapshotStore: Sendable {
         }
         let mergedSnapshot = UsageSnapshot(
             generatedAt: mergedGeneratedAt,
-            limits: (preservedLimits + preservedFailureLimits + refreshResult.snapshot.limits).deduplicatedByID()
+            limits: (preservedFailureLimits.map { $0.markingPreservedFailure() } + preservedLimits + refreshResult.snapshot.limits)
+                .deduplicatedByID()
         )
         let mergedReports = preservedReports + refreshResult.reports.map(StoredProviderReport.init(report:))
         let preservedPromptCacheObservations = current?.promptCacheObservations.filter { observation in
