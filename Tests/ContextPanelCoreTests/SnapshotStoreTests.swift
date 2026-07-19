@@ -161,6 +161,36 @@ import Testing
     #expect([report].reconnectBlockingFailures(coveredBy: limits).isEmpty)
 }
 
+@Test func reconnectFailureIsNotCoveredByOlderLimitForSameAccount() throws {
+    let previousRefresh = Date(timeIntervalSince1970: 100)
+    let failedRefresh = Date(timeIntervalSince1970: 200)
+    let report = StoredProviderReport(
+        provider: .openAI,
+        accountID: "openai-account-failed",
+        configuredAccountID: "openai-code-default",
+        accountName: "OpenAI",
+        generatedAt: failedRefresh,
+        status: .failure,
+        errorMessage: "Every Code auth for this ChatGPT account is no longer authorized for Codex usage."
+    )
+    let limits = [UsageLimit(
+        provider: .openAI,
+        accountID: "openai-account-failed",
+        configuredAccountID: "openai-code-default",
+        accountName: "OpenAI",
+        label: "Codex Weekly",
+        windowLabel: "Weekly",
+        unit: .percent,
+        used: 2,
+        limit: 100,
+        resetsAt: failedRefresh.addingTimeInterval(60),
+        lastUpdatedAt: previousRefresh,
+        confidence: .observed
+    )]
+
+    #expect([report].reconnectBlockingFailures(coveredBy: limits).map(\.accountID) == ["openai-account-failed"])
+}
+
 @Test func reconnectFailureIsNotCoveredByDifferentLimitAccountWithSharedConfiguredID() throws {
     let savedAt = Date(timeIntervalSince1970: 100)
     let report = StoredProviderReport(
@@ -407,9 +437,70 @@ import Testing
     let limits = current.snapshot.limits.filter { $0.provider == .google && $0.accountID == accountID }
     #expect(limits.count == 1)
     #expect(limits[0].used == 10)
+    #expect(limits[0].status == .stale)
     let report = try #require(current.reports.first { $0.provider == .google && $0.accountID == accountID })
     #expect(report.status == .failure)
     #expect(report.errorMessage?.contains("permission") == true)
+    #expect(current.reports.reconnectBlockingFailures(coveredBy: current.snapshot.limits).map(\.accountID) == [accountID])
+}
+
+@Test func jsonSnapshotStoreKeepsPreservedStaleAGYLimitStaleAfterScheduledReset() throws {
+    let root = try temporaryDirectory()
+    let store = JSONSnapshotStore(rootDirectory: root)
+    let observedAt = Date(timeIntervalSince1970: 100)
+    let failedAt = Date(timeIntervalSince1970: 120)
+    let resetAt = Date(timeIntervalSince1970: 150)
+    let accountID = "google-antigravity"
+    let limit = UsageLimit(
+        id: "google:local:agy:gemini-5h",
+        provider: .google,
+        accountID: accountID,
+        accountName: "Antigravity",
+        label: "Gemini 5-hour",
+        windowLabel: "5-hour",
+        modelLabel: "Gemini",
+        unit: .percent,
+        used: 80,
+        limit: 100,
+        resetsAt: resetAt,
+        lastUpdatedAt: observedAt,
+        confidence: .observed
+    )
+
+    try store.save(StoredUsageSnapshot(
+        savedAt: observedAt,
+        refreshResult: ConnectorRefreshResult(generatedAt: observedAt, reports: [
+            ProviderConnectorReport(
+                provider: .google,
+                accountID: accountID,
+                accountName: "Antigravity",
+                generatedAt: observedAt,
+                limits: [limit]
+            )
+        ])
+    ))
+    try store.saveMerged(
+        refreshResult: ConnectorRefreshResult(generatedAt: failedAt, reports: [
+            ProviderConnectorReport(
+                provider: .google,
+                accountID: accountID,
+                accountName: "Antigravity",
+                generatedAt: failedAt,
+                limits: [],
+                status: .failure,
+                errorMessage: "bridge unavailable"
+            )
+        ]),
+        savedAt: failedAt
+    )
+
+    let stored = try #require(store.loadCurrent().snapshot?.snapshot.limits.first)
+    let presented = stored.presented(at: resetAt.addingTimeInterval(1))
+    #expect(stored.status == .stale)
+    #expect(stored.freshnessMode == .polling)
+    #expect(presented == stored)
+    #expect(presented.used == 80)
+    #expect(presented.presentationAssumption == nil)
 }
 
 @Test func jsonSnapshotStoreDoesNotPreserveOldGoogleLimitsWhenNewAccountIDFails() throws {
@@ -506,7 +597,9 @@ import Testing
     )
 
     let current = try #require(store.loadCurrent().snapshot)
-    #expect(current.snapshot.limits.contains { $0.provider == .google && $0.accountID == otherAccountID })
+    #expect(current.snapshot.limits.contains {
+        $0.provider == .google && $0.accountID == otherAccountID && $0.status == .stale
+    })
     #expect(current.reports.contains { $0.provider == .google && $0.accountID == otherAccountID })
     #expect(current.reports.contains { $0.accountID == newAccountID && $0.status == .failure })
 }
@@ -750,7 +843,86 @@ import Testing
 
     let current = try #require(store.loadCurrent().snapshot)
     #expect(current.snapshot.limits.map(\.accountID).sorted() == ["openai-a", "openai-b"])
+    #expect(current.snapshot.limits.allSatisfy { $0.status == .stale })
     #expect(current.reports.map(\.accountID) == ["openai-auth-file"])
+}
+
+@Test func jsonSnapshotStoreMarksOnlyFailedOpenAIAccountStaleDuringPartialRefresh() throws {
+    let root = try temporaryDirectory()
+    let store = JSONSnapshotStore(rootDirectory: root)
+    let first = Date(timeIntervalSince1970: 100)
+    let second = Date(timeIntervalSince1970: 200)
+
+    try store.save(StoredUsageSnapshot(
+        savedAt: first,
+        refreshResult: ConnectorRefreshResult(generatedAt: first, reports: [
+            ProviderConnectorReport(
+                provider: .openAI,
+                accountID: "openai-available",
+                accountName: "Available",
+                generatedAt: first,
+                limits: [usageLimit(provider: .openAI, accountID: "openai-available", used: 1, savedAt: first)]
+            ),
+            ProviderConnectorReport(
+                provider: .openAI,
+                accountID: "openai-failed",
+                accountName: "Failed",
+                generatedAt: first,
+                limits: [usageLimit(provider: .openAI, accountID: "openai-failed", used: 2, savedAt: first)]
+            ),
+            ProviderConnectorReport(
+                provider: .openAI,
+                accountID: "openai-limited",
+                accountName: "Limited",
+                generatedAt: first,
+                limits: [usageLimit(provider: .openAI, accountID: "openai-limited", used: 100, savedAt: first)]
+            ),
+        ])
+    ))
+
+    try store.saveMerged(
+        refreshResult: ConnectorRefreshResult(generatedAt: second, reports: [
+            ProviderConnectorReport(
+                provider: .openAI,
+                accountID: "openai-available",
+                accountName: "Available",
+                generatedAt: second,
+                limits: [usageLimit(provider: .openAI, accountID: "openai-available", used: 1, savedAt: second)]
+            ),
+            ProviderConnectorReport(
+                provider: .openAI,
+                accountID: "openai-failed",
+                accountName: "Failed",
+                generatedAt: second,
+                limits: [],
+                status: .failure,
+                errorMessage: "Every Code auth for this ChatGPT account is no longer authorized for Codex usage."
+            ),
+            ProviderConnectorReport(
+                provider: .openAI,
+                accountID: "openai-limited",
+                accountName: "Limited",
+                generatedAt: second,
+                limits: [usageLimit(provider: .openAI, accountID: "openai-limited", used: 100, savedAt: second)]
+            ),
+        ]),
+        savedAt: second,
+        preservesUnreportedAccounts: false
+    )
+
+    let current = try #require(store.loadCurrent().snapshot)
+    let available = try #require(current.snapshot.limits.first { $0.accountID == "openai-available" })
+    let failed = try #require(current.snapshot.limits.first { $0.accountID == "openai-failed" })
+    let limited = try #require(current.snapshot.limits.first { $0.accountID == "openai-limited" })
+    #expect(available.status == .healthy)
+    #expect(available.lastUpdatedAt == second)
+    #expect(failed.status == .stale)
+    #expect(failed.used == 2)
+    #expect(failed.lastUpdatedAt == first)
+    #expect(!failed.isLiveCapacityBucket(at: second))
+    #expect(limited.status == .limited)
+    #expect(limited.lastUpdatedAt == second)
+    #expect(current.reports.reconnectBlockingFailures(coveredBy: current.snapshot.limits).map(\.accountID) == ["openai-failed"])
 }
 
 @Test func jsonSnapshotStoreDoesNotPreserveStaleSiblingsWhenProviderPartlySucceeds() throws {
@@ -807,6 +979,101 @@ import Testing
     #expect(current.snapshot.limits.first?.used == 30)
 }
 
+@Test func jsonSnapshotStoreScopesConnectorFileFailureToConfiguredAccount() throws {
+    let root = try temporaryDirectory()
+    let store = JSONSnapshotStore(rootDirectory: root)
+    let first = Date(timeIntervalSince1970: 100)
+    let second = Date(timeIntervalSince1970: 200)
+
+    try store.save(StoredUsageSnapshot(
+        savedAt: first,
+        refreshResult: ConnectorRefreshResult(generatedAt: first, reports: [
+            ProviderConnectorReport(
+                provider: .openAI,
+                accountID: "openai-a-1",
+                configuredAccountID: "openai-config-a",
+                accountName: "A1",
+                generatedAt: first,
+                limits: [usageLimit(
+                    provider: .openAI,
+                    accountID: "openai-a-1",
+                    configuredAccountID: "openai-config-a",
+                    used: 10,
+                    savedAt: first
+                )]
+            ),
+            ProviderConnectorReport(
+                provider: .openAI,
+                accountID: "openai-a-2",
+                configuredAccountID: "openai-config-a",
+                accountName: "A2",
+                generatedAt: first,
+                limits: [usageLimit(
+                    provider: .openAI,
+                    accountID: "openai-a-2",
+                    configuredAccountID: "openai-config-a",
+                    used: 20,
+                    savedAt: first
+                )]
+            ),
+            ProviderConnectorReport(
+                provider: .openAI,
+                accountID: "openai-b",
+                configuredAccountID: "openai-config-b",
+                accountName: "B",
+                generatedAt: first,
+                limits: [usageLimit(
+                    provider: .openAI,
+                    accountID: "openai-b",
+                    configuredAccountID: "openai-config-b",
+                    used: 30,
+                    savedAt: first
+                )]
+            ),
+        ])
+    ))
+
+    try store.saveMerged(
+        refreshResult: ConnectorRefreshResult(generatedAt: second, reports: [
+            ProviderConnectorReport(
+                provider: .openAI,
+                accountID: "openai-auth-file-a",
+                configuredAccountID: "openai-config-a",
+                accountName: "A",
+                generatedAt: second,
+                limits: [],
+                status: .failure,
+                errorMessage: "permission denied"
+            ),
+            ProviderConnectorReport(
+                provider: .openAI,
+                accountID: "openai-b",
+                configuredAccountID: "openai-config-b",
+                accountName: "B",
+                generatedAt: second,
+                limits: [usageLimit(
+                    provider: .openAI,
+                    accountID: "openai-b",
+                    configuredAccountID: "openai-config-b",
+                    used: 40,
+                    savedAt: second
+                )]
+            ),
+        ]),
+        savedAt: second,
+        preservesUnreportedAccounts: false
+    )
+
+    let current = try #require(store.loadCurrent().snapshot)
+    let configALimits = current.snapshot.limits.filter { $0.configuredAccountID == "openai-config-a" }
+    let configBLimits = current.snapshot.limits.filter { $0.configuredAccountID == "openai-config-b" }
+    #expect(configALimits.map(\.accountID).sorted() == ["openai-a-1", "openai-a-2"])
+    #expect(configALimits.allSatisfy { $0.status == .stale })
+    #expect(configBLimits.map(\.accountID) == ["openai-b"])
+    #expect(configBLimits.first?.used == 40)
+    #expect(configBLimits.first?.status == .healthy)
+}
+
 @Test func jsonSnapshotStorePreservesOnlyFailedAccountLimitWhenSiblingNamesMatch() throws {
     let root = try temporaryDirectory()
     let store = JSONSnapshotStore(rootDirectory: root)
@@ -852,6 +1119,7 @@ import Testing
     let current = try #require(store.loadCurrent().snapshot)
     #expect(current.snapshot.limits.map(\.accountID) == ["openai-a"])
     #expect(current.snapshot.limits.first?.used == 10)
+    #expect(current.snapshot.limits.first?.status == .stale)
 }
 
 @Test func jsonSnapshotStoreCanDropUnreportedAccountsDuringFullRefresh() throws {
