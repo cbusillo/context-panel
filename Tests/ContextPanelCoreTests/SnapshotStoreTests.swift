@@ -2083,6 +2083,72 @@ import Testing
     #expect(policy.status(for: stored, now: resetAt.addingTimeInterval(10)) == .stale)
 }
 
+@Test func snapshotStoreStalenessPolicyCacheLoadsOnlyOnReload() {
+    let initialPolicy = SnapshotStoreStalenessPolicy(maximumAge: 60)
+    var loadCount = 0
+    let cache = SnapshotStoreStalenessPolicyCache(
+        initialPolicy: initialPolicy,
+        loadPolicy: {
+            loadCount += 1
+            return SnapshotStoreStalenessPolicy(maximumAge: 120)
+        }
+    )
+
+    #expect(loadCount == 0)
+    #expect(cache.policy == initialPolicy)
+
+    let reloadedPolicy = cache.reload()
+
+    #expect(loadCount == 1)
+    #expect(reloadedPolicy.maximumAge == 120)
+    #expect(cache.policy == reloadedPolicy)
+
+    _ = cache.policy.status(for: nil, now: Date(timeIntervalSince1970: 1_000))
+    _ = cache.policy.refreshAttentionSummary(for: nil, now: Date(timeIntervalSince1970: 1_000))
+
+    #expect(loadCount == 1)
+
+    cache.reload()
+
+    #expect(loadCount == 2)
+}
+
+@Test func snapshotStoreStalenessPolicyCacheAdoptsUpdatedResetStateOnReload() throws {
+    let savedAt = Date(timeIntervalSince1970: 1_000)
+    let resetAt = savedAt.addingTimeInterval(60)
+    let now = resetAt.addingTimeInterval(20)
+    let staleSnapshot = UsageSnapshot(generatedAt: savedAt, limits: [
+        usageLimit(provider: .google, accountID: "Antigravity", used: 0, savedAt: savedAt, resetsAt: resetAt),
+    ])
+    let stored = StoredUsageSnapshot(savedAt: resetAt.addingTimeInterval(10), snapshot: staleSnapshot)
+    var loadedState: ResetExpiryRefreshState?
+    let cache = SnapshotStoreStalenessPolicyCache(
+        initialPolicy: SnapshotStoreStalenessPolicy(maximumAge: 5 * 60),
+        loadPolicy: {
+            SnapshotStoreStalenessPolicy(
+                maximumAge: 5 * 60,
+                resetExpiryRefreshState: loadedState
+            )
+        }
+    )
+
+    #expect(cache.policy.refreshAttentionSummary(for: stored, now: now) != nil)
+
+    var suppressingState = ResetExpiryRefreshState()
+    suppressingState.recordAttempt(
+        previousSnapshot: staleSnapshot,
+        refreshedSnapshot: staleSnapshot,
+        attemptedAt: resetAt.addingTimeInterval(10)
+    )
+    loadedState = suppressingState
+
+    #expect(cache.policy.refreshAttentionSummary(for: stored, now: now) != nil)
+
+    cache.reload()
+
+    #expect(cache.policy.refreshAttentionSummary(for: stored, now: now) == nil)
+}
+
 @Test func snapshotStalenessPolicyKeepsEventDrivenAGYLimitsFreshWhileIdle() throws {
     let generatedAt = Date(timeIntervalSince1970: 1_000)
     let now = generatedAt.addingTimeInterval(24 * 3_600)

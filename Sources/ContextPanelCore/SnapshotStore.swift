@@ -442,6 +442,26 @@ public struct SnapshotStoreStalenessPolicy: Equatable, Sendable {
     }
 }
 
+public final class SnapshotStoreStalenessPolicyCache {
+    public private(set) var policy: SnapshotStoreStalenessPolicy
+    private let loadPolicy: () -> SnapshotStoreStalenessPolicy
+
+    public init(
+        initialPolicy: SnapshotStoreStalenessPolicy,
+        loadPolicy: @escaping () -> SnapshotStoreStalenessPolicy
+    ) {
+        policy = initialPolicy
+        self.loadPolicy = loadPolicy
+    }
+
+    @discardableResult
+    public func reload() -> SnapshotStoreStalenessPolicy {
+        let policy = loadPolicy()
+        self.policy = policy
+        return policy
+    }
+}
+
 private extension Array where Element == StoredProviderReport {
     var sortedByRefreshAttention: [StoredProviderReport] {
         sorted { lhs, rhs in
