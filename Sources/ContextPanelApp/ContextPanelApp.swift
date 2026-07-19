@@ -3867,10 +3867,12 @@ final class ContextPanelAppModel: ObservableObject {
         stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.appGroupID)
     )
     private let limitWarningNotificationService = AppLimitWarningNotificationService.appDefault()
-
-    private var refreshAttentionPolicy: SnapshotStoreStalenessPolicy {
-        SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.appMaximumAge)
-    }
+    private let refreshAttentionPolicyCache = SnapshotStoreStalenessPolicyCache(
+        initialPolicy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.appMaximumAge),
+        loadPolicy: {
+            SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.appMaximumAge)
+        }
+    )
 
     private var observedSnapshot: UsageSnapshot {
         storedSnapshot?.snapshot ?? UsageSnapshot(generatedAt: Date(), limits: [])
@@ -4000,7 +4002,7 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     var refreshAttentionSummary: RefreshAttentionSummary? {
-        refreshAttentionPolicy.refreshAttentionSummary(for: storedSnapshot, now: Date())
+        refreshAttentionPolicyCache.policy.refreshAttentionSummary(for: storedSnapshot, now: Date())
     }
 
     var providerReportsNeedingAttention: [StoredProviderReport] {
@@ -4067,6 +4069,7 @@ final class ContextPanelAppModel: ObservableObject {
         widgetPreferences = widgetPreferencesStore.load()
         let accounts = refreshService.loadConfiguredAccounts().document.accounts
         configuredAccounts = accounts
+        let refreshAttentionPolicy = refreshAttentionPolicyCache.reload()
         let result = refreshService.loadCurrent(
             policy: refreshAttentionPolicy,
             now: Date()
