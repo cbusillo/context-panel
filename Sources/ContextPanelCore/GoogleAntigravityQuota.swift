@@ -79,6 +79,9 @@ public enum GoogleAntigravityStatusLineStoreError: LocalizedError, Equatable, Se
 public struct GoogleAntigravityStatusLineSnapshotStore: Sendable {
     public static let maximumSnapshotBytes = 64 * 1_024
 
+    private static let canonicalSnapshotFileName = "antigravity-status-line.json"
+    private static let staleTemporaryFileAge: TimeInterval = 24 * 60 * 60
+
     public let snapshotURL: URL
 
     public init(snapshotURL: URL) {
@@ -146,6 +149,11 @@ public struct GoogleAntigravityStatusLineSnapshotStore: Sendable {
             throw GoogleAntigravityStatusLineStoreError.unavailable
         }
         defer { close(directoryDescriptor) }
+        Self.removeStaleTemporaryFiles(
+            for: snapshotURL.lastPathComponent,
+            directoryDescriptor: directoryDescriptor,
+            now: Date()
+        )
         try Self.writeSecureFile(
             data,
             named: snapshotURL.lastPathComponent,
@@ -295,6 +303,129 @@ public struct GoogleAntigravityStatusLineSnapshotStore: Sendable {
             }
         }
         return data
+    }
+
+    private static func removeStaleTemporaryFiles(
+        for destinationFileName: String,
+        directoryDescriptor: Int32,
+        now: Date
+    ) {
+        guard destinationFileName == canonicalSnapshotFileName else { return }
+
+        let enumerationDescriptor = openat(
+            directoryDescriptor,
+            ".",
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        )
+        guard enumerationDescriptor >= 0 else { return }
+        guard let directory = fdopendir(enumerationDescriptor) else {
+            close(enumerationDescriptor)
+            return
+        }
+        defer { closedir(directory) }
+
+        var removedFile = false
+        while let entry = readdir(directory) {
+            guard let fileName = directoryEntryName(entry),
+                  isCanonicalTemporaryFileName(fileName),
+                  removeStaleTemporaryFile(
+                      named: fileName,
+                      directoryDescriptor: directoryDescriptor,
+                      now: now
+                  )
+            else {
+                continue
+            }
+            removedFile = true
+        }
+        if removedFile {
+            _ = fsync(directoryDescriptor)
+        }
+    }
+
+    private static func directoryEntryName(_ entry: UnsafeMutablePointer<dirent>) -> String? {
+        let length = Int(entry.pointee.d_namlen)
+        let capacity = MemoryLayout.size(ofValue: entry.pointee.d_name)
+        guard length > 0, length < capacity else { return nil }
+        return withUnsafePointer(to: entry.pointee.d_name) { name in
+            name.withMemoryRebound(to: UInt8.self, capacity: length) { bytes in
+                String(bytes: UnsafeBufferPointer(start: bytes, count: length), encoding: .utf8)
+            }
+        }
+    }
+
+    private static func isCanonicalTemporaryFileName(_ fileName: String) -> Bool {
+        let prefix = ".\(canonicalSnapshotFileName)."
+        let suffix = ".tmp"
+        guard fileName.hasPrefix(prefix), fileName.hasSuffix(suffix) else { return false }
+
+        let identifier = fileName.dropFirst(prefix.count).dropLast(suffix.count)
+        guard identifier.count == 36,
+              let uuid = UUID(uuidString: String(identifier))
+        else {
+            return false
+        }
+        return uuid.uuidString == identifier
+    }
+
+    private static func removeStaleTemporaryFile(
+        named fileName: String,
+        directoryDescriptor: Int32,
+        now: Date
+    ) -> Bool {
+        var pathInformation = stat()
+        guard fstatat(directoryDescriptor, fileName, &pathInformation, AT_SYMLINK_NOFOLLOW) == 0,
+              isEligibleStaleTemporaryFile(pathInformation, now: now)
+        else {
+            return false
+        }
+
+        let descriptor = openat(
+            directoryDescriptor,
+            fileName,
+            O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
+        )
+        guard descriptor >= 0 else { return false }
+        defer { close(descriptor) }
+
+        var descriptorInformation = stat()
+        guard fstat(descriptor, &descriptorInformation) == 0,
+              isSameFile(pathInformation, descriptorInformation),
+              isEligibleStaleTemporaryFile(descriptorInformation, now: now)
+        else {
+            return false
+        }
+
+        var finalPathInformation = stat()
+        guard fstatat(directoryDescriptor, fileName, &finalPathInformation, AT_SYMLINK_NOFOLLOW) == 0,
+              isSameFile(descriptorInformation, finalPathInformation),
+              isEligibleStaleTemporaryFile(finalPathInformation, now: now)
+        else {
+            return false
+        }
+        return unlinkat(directoryDescriptor, fileName, 0) == 0
+    }
+
+    static func isEligibleStaleTemporaryFile(_ information: stat, now: Date) -> Bool {
+        guard (information.st_mode & S_IFMT) == S_IFREG,
+              information.st_uid == geteuid(),
+              information.st_nlink == 1,
+              (information.st_mode & 0o7777) == (S_IRUSR | S_IWUSR),
+              information.st_size >= 0,
+              information.st_size <= maximumSnapshotBytes,
+              information.st_mtimespec.tv_nsec >= 0,
+              information.st_mtimespec.tv_nsec < 1_000_000_000
+        else {
+            return false
+        }
+
+        let modificationTime = TimeInterval(information.st_mtimespec.tv_sec)
+            + TimeInterval(information.st_mtimespec.tv_nsec) / 1_000_000_000
+        return now.timeIntervalSince1970 - modificationTime >= staleTemporaryFileAge
+    }
+
+    private static func isSameFile(_ first: stat, _ second: stat) -> Bool {
+        first.st_dev == second.st_dev && first.st_ino == second.st_ino
     }
 
     private static func writeSecureFile(

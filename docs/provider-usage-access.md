@@ -218,6 +218,12 @@ tokens, and decoder details must never be persisted or logged. The bridge file
 lives outside the normalized provider snapshot store in a `0700` directory as a
 `0600` regular file, with bounded reads, anti-symlink checks, and atomic
 replacement so malformed input cannot destroy the last good observation.
+Before each new bridge write, best-effort cleanup considers only the writer's
+exact canonical temporary-file names once they are at least 24 hours old. It
+uses the already-open directory descriptor and removes only bounded `0600`
+regular files owned by the effective user with one link; unsafe entries and all
+cleanup failures are ignored so ingestion and the last good snapshot remain
+independent of housekeeping.
 
 Quota observations are event-driven while AGY CLI runs, not independently
 pollable background data. This includes AGY agent runs launched by Every Code.

@@ -834,8 +834,8 @@ import Testing
     ])
     #expect(snapshot.buckets.last?.isDisabled == true)
     #expect(snapshot.buckets[1].resetsAt == observedAt.addingTimeInterval(3_600))
-    #expect(filePermissions.intValue & 0o777 == 0o600)
-    #expect(directoryPermissions.intValue & 0o777 == 0o700)
+    #expect(filePermissions.intValue & 0o7777 == 0o600)
+    #expect(directoryPermissions.intValue & 0o7777 == 0o700)
     for sensitiveValue in [
         "sensitive-email@example.com",
         "/Users/sensitive/workspace",
@@ -945,6 +945,262 @@ import Testing
     } catch let error as GoogleAntigravityStatusLineStoreError {
         #expect(error == .unsafeFile)
     }
+}
+
+@Test func googleAntigravityStoreRemovesOnlyStaleCanonicalTemporaryFilesBeforeSave() throws {
+    let snapshotURL = try googleAntigravityTemporarySnapshotURL()
+    let testDirectoryURL = snapshotURL.deletingLastPathComponent().deletingLastPathComponent()
+    defer { try? FileManager.default.removeItem(at: testDirectoryURL) }
+
+    let store = GoogleAntigravityStatusLineSnapshotStore(snapshotURL: snapshotURL)
+    let original = googleAntigravityTestSnapshot(observedAt: Date(timeIntervalSince1970: 100))
+    let updated = googleAntigravityTestSnapshot(observedAt: Date(timeIntervalSince1970: 200))
+    try store.save(original)
+
+    let directoryURL = snapshotURL.deletingLastPathComponent()
+    let staleTemporaryURL = googleAntigravityTemporaryFileURL(in: directoryURL)
+    let recentTemporaryURL = googleAntigravityTemporaryFileURL(in: directoryURL)
+    let malformedTemporaryURL = directoryURL.appending(
+        path: ".antigravity-status-line.json.not-a-uuid.tmp"
+    )
+    let lowercaseUUIDTemporaryURL = directoryURL.appending(
+        path: ".antigravity-status-line.json.01234567-89ab-cdef-0123-456789abcdef.tmp"
+    )
+    let unrelatedURL = directoryURL.appending(path: "unrelated.tmp")
+
+    for url in [
+        staleTemporaryURL,
+        recentTemporaryURL,
+        malformedTemporaryURL,
+        lowercaseUUIDTemporaryURL,
+        unrelatedURL,
+    ] {
+        try writeGoogleAntigravityTestFile(Data("temporary".utf8), to: url)
+    }
+    let staleDate = Date().addingTimeInterval(-48 * 60 * 60)
+    for url in [
+        staleTemporaryURL,
+        malformedTemporaryURL,
+        lowercaseUUIDTemporaryURL,
+        unrelatedURL,
+    ] {
+        try setGoogleAntigravityTestModificationDate(staleDate, for: url)
+    }
+
+    #expect(try store.load() == original)
+    #expect(FileManager.default.fileExists(atPath: staleTemporaryURL.path))
+
+    try store.save(updated)
+
+    #expect(!FileManager.default.fileExists(atPath: staleTemporaryURL.path))
+    #expect(FileManager.default.fileExists(atPath: recentTemporaryURL.path))
+    #expect(FileManager.default.fileExists(atPath: malformedTemporaryURL.path))
+    #expect(FileManager.default.fileExists(atPath: lowercaseUUIDTemporaryURL.path))
+    #expect(FileManager.default.fileExists(atPath: unrelatedURL.path))
+    #expect(try store.load() == updated)
+}
+
+@Test func googleAntigravityStoreCleansTemporaryFilesOnlyForCanonicalSnapshot() throws {
+    let canonicalSnapshotURL = try googleAntigravityTemporarySnapshotURL()
+    let testDirectoryURL = canonicalSnapshotURL.deletingLastPathComponent().deletingLastPathComponent()
+    defer { try? FileManager.default.removeItem(at: testDirectoryURL) }
+
+    let directoryURL = canonicalSnapshotURL.deletingLastPathComponent()
+    try FileManager.default.createDirectory(
+        at: directoryURL,
+        withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700]
+    )
+    let staleCanonicalTemporaryURL = googleAntigravityTemporaryFileURL(in: directoryURL)
+    try writeGoogleAntigravityTestFile(Data("stale".utf8), to: staleCanonicalTemporaryURL)
+    try setGoogleAntigravityTestModificationDate(
+        Date().addingTimeInterval(-48 * 60 * 60),
+        for: staleCanonicalTemporaryURL
+    )
+
+    let customSnapshotURL = directoryURL.appending(path: "custom-status-line.json")
+    let customStore = GoogleAntigravityStatusLineSnapshotStore(snapshotURL: customSnapshotURL)
+    let snapshot = googleAntigravityTestSnapshot(observedAt: Date(timeIntervalSince1970: 200))
+    try customStore.save(snapshot)
+
+    #expect(FileManager.default.fileExists(atPath: staleCanonicalTemporaryURL.path))
+    #expect(try customStore.load() == snapshot)
+}
+
+@Test func googleAntigravityStorePreservesUnsafeStaleTemporaryEntries() throws {
+    let snapshotURL = try googleAntigravityTemporarySnapshotURL()
+    let testDirectoryURL = snapshotURL.deletingLastPathComponent().deletingLastPathComponent()
+    defer { try? FileManager.default.removeItem(at: testDirectoryURL) }
+
+    let store = GoogleAntigravityStatusLineSnapshotStore(snapshotURL: snapshotURL)
+    try store.save(googleAntigravityTestSnapshot(observedAt: Date(timeIntervalSince1970: 100)))
+
+    let directoryURL = snapshotURL.deletingLastPathComponent()
+    let staleDate = Date().addingTimeInterval(-48 * 60 * 60)
+    let sentinelURL = directoryURL.appending(path: "sentinel")
+    let symlinkURL = googleAntigravityTemporaryFileURL(in: directoryURL)
+    let fifoURL = googleAntigravityTemporaryFileURL(in: directoryURL)
+    let directoryEntryURL = googleAntigravityTemporaryFileURL(in: directoryURL)
+    let permissiveURL = googleAntigravityTemporaryFileURL(in: directoryURL)
+    let oversizedURL = googleAntigravityTemporaryFileURL(in: directoryURL)
+    let hardLinkSourceURL = directoryURL.appending(path: "hard-link-source")
+    let hardLinkURL = googleAntigravityTemporaryFileURL(in: directoryURL)
+
+    try Data("sentinel".utf8).write(to: sentinelURL)
+    try FileManager.default.createSymbolicLink(at: symlinkURL, withDestinationURL: sentinelURL)
+    #expect(mkfifo(fifoURL.path, S_IRUSR | S_IWUSR) == 0)
+    try FileManager.default.createDirectory(at: directoryEntryURL, withIntermediateDirectories: false)
+    try writeGoogleAntigravityTestFile(Data("permissive".utf8), to: permissiveURL, permissions: 0o644)
+    try writeGoogleAntigravityTestFile(
+        Data(repeating: 0x41, count: GoogleAntigravityStatusLineSnapshotStore.maximumSnapshotBytes + 1),
+        to: oversizedURL
+    )
+    try writeGoogleAntigravityTestFile(Data("hard link".utf8), to: hardLinkSourceURL)
+    #expect(link(hardLinkSourceURL.path, hardLinkURL.path) == 0)
+
+    for url in [
+        symlinkURL,
+        fifoURL,
+        directoryEntryURL,
+        permissiveURL,
+        oversizedURL,
+        hardLinkURL,
+    ] {
+        try setGoogleAntigravityTestModificationDate(staleDate, for: url, noFollow: url == symlinkURL)
+    }
+
+    try store.save(googleAntigravityTestSnapshot(observedAt: Date(timeIntervalSince1970: 200)))
+
+    for url in [
+        symlinkURL,
+        fifoURL,
+        directoryEntryURL,
+        permissiveURL,
+        oversizedURL,
+        hardLinkURL,
+    ] {
+        #expect(FileManager.default.fileExists(atPath: url.path))
+    }
+    #expect(try Data(contentsOf: sentinelURL) == Data("sentinel".utf8))
+    #expect(try Data(contentsOf: hardLinkSourceURL) == Data("hard link".utf8))
+}
+
+@Test func googleAntigravityTemporaryCleanupRequiresSafeOwnerModeLinkSizeAndAge() {
+    let now = Date(timeIntervalSince1970: 2_000_000_000)
+    var safeInformation = stat()
+    safeInformation.st_mode = S_IFREG | S_IRUSR | S_IWUSR
+    safeInformation.st_uid = geteuid()
+    safeInformation.st_nlink = 1
+    safeInformation.st_size = off_t(GoogleAntigravityStatusLineSnapshotStore.maximumSnapshotBytes)
+    safeInformation.st_mtimespec = timespec(
+        tv_sec: Int(now.timeIntervalSince1970 - 25 * 60 * 60),
+        tv_nsec: 0
+    )
+
+    #expect(GoogleAntigravityStatusLineSnapshotStore.isEligibleStaleTemporaryFile(safeInformation, now: now))
+
+    var wrongOwner = safeInformation
+    wrongOwner.st_uid = safeInformation.st_uid == 0 ? 1 : 0
+    #expect(!GoogleAntigravityStatusLineSnapshotStore.isEligibleStaleTemporaryFile(wrongOwner, now: now))
+
+    var permissive = safeInformation
+    permissive.st_mode |= S_IRGRP
+    #expect(!GoogleAntigravityStatusLineSnapshotStore.isEligibleStaleTemporaryFile(permissive, now: now))
+
+    var hardLinked = safeInformation
+    hardLinked.st_nlink = 2
+    #expect(!GoogleAntigravityStatusLineSnapshotStore.isEligibleStaleTemporaryFile(hardLinked, now: now))
+
+    var oversized = safeInformation
+    oversized.st_size += 1
+    #expect(!GoogleAntigravityStatusLineSnapshotStore.isEligibleStaleTemporaryFile(oversized, now: now))
+
+    var recent = safeInformation
+    recent.st_mtimespec = timespec(
+        tv_sec: Int(now.timeIntervalSince1970 - 23 * 60 * 60),
+        tv_nsec: 0
+    )
+    #expect(!GoogleAntigravityStatusLineSnapshotStore.isEligibleStaleTemporaryFile(recent, now: now))
+
+    var exactBoundary = safeInformation
+    exactBoundary.st_mtimespec = timespec(
+        tv_sec: Int(now.timeIntervalSince1970 - 24 * 60 * 60),
+        tv_nsec: 0
+    )
+    #expect(GoogleAntigravityStatusLineSnapshotStore.isEligibleStaleTemporaryFile(exactBoundary, now: now))
+
+    var specialModeBits = safeInformation
+    specialModeBits.st_mode |= S_ISUID
+    #expect(!GoogleAntigravityStatusLineSnapshotStore.isEligibleStaleTemporaryFile(specialModeBits, now: now))
+
+    var negativeNanoseconds = safeInformation
+    negativeNanoseconds.st_mtimespec.tv_nsec = -1
+    #expect(!GoogleAntigravityStatusLineSnapshotStore.isEligibleStaleTemporaryFile(negativeNanoseconds, now: now))
+
+    var excessiveNanoseconds = safeInformation
+    excessiveNanoseconds.st_mtimespec.tv_nsec = 1_000_000_000
+    #expect(!GoogleAntigravityStatusLineSnapshotStore.isEligibleStaleTemporaryFile(excessiveNanoseconds, now: now))
+
+    var fifo = safeInformation
+    fifo.st_mode = S_IFIFO | S_IRUSR | S_IWUSR
+    #expect(!GoogleAntigravityStatusLineSnapshotStore.isEligibleStaleTemporaryFile(fifo, now: now))
+}
+
+@Test func googleAntigravityStoreIgnoresTemporaryCleanupFailures() throws {
+    let snapshotURL = try googleAntigravityTemporarySnapshotURL()
+    let testDirectoryURL = snapshotURL.deletingLastPathComponent().deletingLastPathComponent()
+    defer { try? FileManager.default.removeItem(at: testDirectoryURL) }
+
+    let store = GoogleAntigravityStatusLineSnapshotStore(snapshotURL: snapshotURL)
+    try store.save(googleAntigravityTestSnapshot(observedAt: Date(timeIntervalSince1970: 100)))
+
+    let temporaryURL = googleAntigravityTemporaryFileURL(in: snapshotURL.deletingLastPathComponent())
+    try writeGoogleAntigravityTestFile(Data("immutable".utf8), to: temporaryURL)
+    try setGoogleAntigravityTestModificationDate(
+        Date().addingTimeInterval(-48 * 60 * 60),
+        for: temporaryURL
+    )
+    #expect(chflags(temporaryURL.path, UInt32(UF_IMMUTABLE)) == 0)
+    defer { _ = chflags(temporaryURL.path, 0) }
+
+    let updated = googleAntigravityTestSnapshot(observedAt: Date(timeIntervalSince1970: 200))
+    try store.save(updated)
+
+    #expect(FileManager.default.fileExists(atPath: temporaryURL.path))
+    #expect(try store.load() == updated)
+}
+
+@Test func googleAntigravityStoreConcurrentSavesRemainAtomicWhileCleaning() async throws {
+    let snapshotURL = try googleAntigravityTemporarySnapshotURL()
+    let testDirectoryURL = snapshotURL.deletingLastPathComponent().deletingLastPathComponent()
+    defer { try? FileManager.default.removeItem(at: testDirectoryURL) }
+
+    let store = GoogleAntigravityStatusLineSnapshotStore(snapshotURL: snapshotURL)
+    try store.save(googleAntigravityTestSnapshot(observedAt: Date(timeIntervalSince1970: 100)))
+
+    let staleTemporaryURL = googleAntigravityTemporaryFileURL(in: snapshotURL.deletingLastPathComponent())
+    try writeGoogleAntigravityTestFile(Data("stale".utf8), to: staleTemporaryURL)
+    try setGoogleAntigravityTestModificationDate(
+        Date().addingTimeInterval(-48 * 60 * 60),
+        for: staleTemporaryURL
+    )
+    let snapshots = (0 ..< 12).map { offset in
+        googleAntigravityTestSnapshot(observedAt: Date(timeIntervalSince1970: 1_000 + Double(offset)))
+    }
+
+    try await withThrowingTaskGroup(of: Void.self) { group in
+        for snapshot in snapshots {
+            group.addTask {
+                try store.save(snapshot)
+            }
+        }
+        try await group.waitForAll()
+    }
+
+    let loaded = try store.load()
+    let loadedSnapshot = try #require(loaded)
+    #expect(snapshots.contains(loadedSnapshot))
+    #expect(!FileManager.default.fileExists(atPath: staleTemporaryURL.path))
 }
 
 @Test func googleAntigravityConnectorMapsFreshObservedBucketsWithoutPrivateAPIs() async throws {
@@ -1964,6 +2220,59 @@ private func googleAntigravityTemporarySnapshotURL() throws -> URL {
         .appending(path: "context-panel-antigravity-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
         .appending(path: "Provider Inputs", directoryHint: .isDirectory)
         .appending(path: "antigravity-status-line.json")
+}
+
+private func googleAntigravityTemporaryFileURL(in directoryURL: URL) -> URL {
+    directoryURL.appending(path: ".antigravity-status-line.json.\(UUID().uuidString).tmp")
+}
+
+private func googleAntigravityTestSnapshot(observedAt: Date) -> GoogleAntigravityStatusLineSnapshot {
+    GoogleAntigravityStatusLineSnapshot(
+        sourceVersion: "1.1.3",
+        planTier: "Google AI Pro",
+        observedAt: observedAt,
+        buckets: [
+            GoogleAntigravityStatusLineBucket(
+                id: "gemini-3.1-pro-high-5h",
+                remainingFraction: 0.75,
+                resetsAt: observedAt.addingTimeInterval(3_600)
+            ),
+        ]
+    )
+}
+
+private func writeGoogleAntigravityTestFile(
+    _ data: Data,
+    to url: URL,
+    permissions: mode_t = S_IRUSR | S_IWUSR
+) throws {
+    try data.write(to: url)
+    guard chmod(url.path, permissions) == 0 else {
+        throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+    }
+}
+
+private func setGoogleAntigravityTestModificationDate(
+    _ date: Date,
+    for url: URL,
+    noFollow: Bool = false
+) throws {
+    let seconds = Int(date.timeIntervalSince1970)
+    let timestamps = [
+        timespec(tv_sec: seconds, tv_nsec: 0),
+        timespec(tv_sec: seconds, tv_nsec: 0),
+    ]
+    let result = timestamps.withUnsafeBufferPointer { buffer in
+        utimensat(
+            AT_FDCWD,
+            url.path,
+            buffer.baseAddress,
+            noFollow ? AT_SYMLINK_NOFOLLOW : 0
+        )
+    }
+    guard result == 0 else {
+        throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+    }
 }
 
 private struct StubGoogleAntigravitySnapshotLoader: GoogleAntigravityQuotaSnapshotLoading {
