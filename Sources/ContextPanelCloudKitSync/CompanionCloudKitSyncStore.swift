@@ -215,9 +215,12 @@ private actor CompanionCloudKitClient {
                     )
                 )
             }
-            let status = now.timeIntervalSince(document.snapshot.generatedAt) > SnapshotFreshness.companionProviderMaximumAge
-                ? UsageStatus.stale
-                : document.companionStatus
+            let status = document.companionStatus(
+                now: now,
+                stalenessPolicy: SnapshotStoreStalenessPolicy(
+                    maximumAge: SnapshotFreshness.companionProviderMaximumAge
+                )
+            )
             let result = CompanionSyncLoadResult(
                 document: document,
                 status: status,

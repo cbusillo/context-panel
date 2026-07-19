@@ -724,6 +724,7 @@ private func makeTVDocument(now: Date) -> CompanionSyncDocument {
             used: 20,
             limit: 100,
             resetsAt: now.addingTimeInterval(3 * 24 * 60 * 60),
+            lastUpdatedAt: now,
             confidence: .official
         ),
         UsageLimit(
@@ -737,6 +738,7 @@ private func makeTVDocument(now: Date) -> CompanionSyncDocument {
             used: 40,
             limit: 100,
             resetsAt: now.addingTimeInterval(4 * 24 * 60 * 60),
+            lastUpdatedAt: now,
             confidence: .official
         ),
         UsageLimit(
@@ -750,6 +752,7 @@ private func makeTVDocument(now: Date) -> CompanionSyncDocument {
             used: 82,
             limit: 100,
             resetsAt: now.addingTimeInterval(2 * 60 * 60),
+            lastUpdatedAt: now,
             confidence: .official
         ),
     ]

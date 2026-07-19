@@ -24,7 +24,7 @@ public actor WatchCompanionLoader {
         if let inFlightLoad {
             return await inFlightLoad.value
         }
-        let cached = cache.load()
+        let cached = cache.load(now: now)
         let timeout = timeout
         let loadDocument = loadDocument
         let loadPresentation = loadPresentation
@@ -67,7 +67,12 @@ public actor WatchCompanionLoader {
             )
         }
         if documentLoad.outcome.missingRecord {
-            cache.remove()
+            if case let .keptCurrent(current) = cache.removeIfCurrent(
+                cached.result.document,
+                now: now
+            ) {
+                return current
+            }
             return WatchCompanionCacheLoadResult(
                 result: documentLoad.result,
                 displayPreferences: presentationLoad?.document?.widgetDisplayPreferences
@@ -88,12 +93,22 @@ public actor WatchCompanionLoader {
             )
         }
 
-        let keepsCachedDocument = WatchCompanionCache.shouldKeepCurrent(
-            cached.result.document,
-            over: document
-        )
-        let selectedDocument = keepsCachedDocument ? cached.result.document! : document
-        let selectedResult = keepsCachedDocument ? cached.result : documentLoad.result
+        let selectedDocument = document.mergingForRemotePublish(existing: cached.result.document)
+        let selectedResult: CompanionSyncLoadResult
+        if selectedDocument == cached.result.document {
+            selectedResult = cached.result
+        } else {
+            selectedResult = CompanionSyncLoadResult(
+                document: selectedDocument,
+                status: selectedDocument.companionStatus(
+                    now: now,
+                    maximumAge: SnapshotFreshness.companionProviderMaximumAge
+                ),
+                errorMessage: documentLoad.result.errorMessage,
+                transportMetadata: documentLoad.result.transportMetadata,
+                transportStatuses: documentLoad.result.transportStatuses
+            )
+        }
         let displayPreferences = WidgetDisplayPreferences.companionEffectivePreferences(
             localOverride: presentationLoad?.document?.widgetDisplayPreferences
                 ?? cached.displayPreferences,
@@ -104,8 +119,13 @@ public actor WatchCompanionLoader {
             displayPreferences: displayPreferences,
             now: now
         )
-        if case let .keptCurrent(current) = saveOutcome {
+        switch saveOutcome {
+        case let .keptCurrent(current):
             return current
+        case let .saved(saved) where saved.result.document != selectedDocument:
+            return saved
+        case .saved, .failed:
+            break
         }
         return WatchCompanionCacheLoadResult(
             result: selectedResult,

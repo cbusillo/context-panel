@@ -163,6 +163,59 @@ import Testing
     #expect(cache.load().result.document == newerDocument)
 }
 
+@Test func watchCompanionLoaderUsesNewerAccountObservationFromOlderRemoteDocument() async throws {
+    let root = try watchCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cache = WatchCompanionCache(cacheURL: root.appending(path: "watch-cache.json"))
+    let cachedObservation = Date(timeIntervalSince1970: 1_800_000_000)
+    let remoteObservation = cachedObservation.addingTimeInterval(100)
+    let cachedFailureDate = remoteObservation.addingTimeInterval(100)
+    let cachedDocument = watchCacheDocument(
+        generatedAt: cachedFailureDate,
+        limits: [watchOpenAIWeeklyLimit(
+            accountID: "shared",
+            used: 7,
+            generatedAt: cachedObservation
+        )],
+        reports: [StoredProviderReport(
+            provider: .openAI,
+            accountID: "shared",
+            accountName: "Shared",
+            generatedAt: cachedFailureDate,
+            status: .failure,
+            errorMessage: "Authentication unavailable"
+        )]
+    )
+    let remoteDocument = watchCacheDocument(
+        generatedAt: remoteObservation,
+        limits: [watchOpenAIWeeklyLimit(
+            accountID: "shared",
+            used: 34,
+            generatedAt: remoteObservation
+        )]
+    )
+    #expect(cache.save(
+        document: cachedDocument,
+        displayPreferences: .defaultPreferences,
+        now: cachedFailureDate
+    ))
+    let loader = WatchCompanionLoader(
+        cache: cache,
+        timeout: .seconds(1),
+        loadDocument: { _ in watchRemoteLoad(document: remoteDocument, receivedAt: cachedFailureDate) },
+        loadPresentation: { watchPresentationLoad() }
+    )
+
+    let loaded = await loader.load(now: cachedFailureDate)
+
+    #expect(loaded.result.document?.snapshot.generatedAt == cachedFailureDate)
+    #expect(loaded.result.document?.snapshot.limits.first?.used == 34)
+    #expect(loaded.result.document?.snapshot.providerStatuses.isEmpty == true)
+    #expect(loaded.result.status == .healthy)
+    #expect(loaded.result.transportMetadata?.source == .cloudKit)
+    #expect(cache.load().result.document == loaded.result.document)
+}
+
 @Test func watchCompanionLoaderKeepsNewerUsageWrittenDuringCloudKitLoad() async throws {
     let root = try watchCacheTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -196,6 +249,88 @@ import Testing
 
     #expect(loaded.result.document == newerDocument)
     #expect(loaded.result.transportMetadata?.source == .localCache)
+    #expect(cache.load().result.document == newerDocument)
+}
+
+@Test func watchCompanionLoaderMergesRemoteAccountsWithNewerConcurrentCacheWrite() async throws {
+    let root = try watchCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cache = WatchCompanionCache(cacheURL: root.appending(path: "watch-cache.json"))
+    let remoteDate = Date(timeIntervalSince1970: 1_800_000_000)
+    let concurrentDate = remoteDate.addingTimeInterval(100)
+    let remoteDocument = watchCacheDocument(
+        generatedAt: remoteDate,
+        limits: [watchOpenAIWeeklyLimit(accountID: "remote", used: 20, generatedAt: remoteDate)]
+    )
+    let concurrentDocument = watchCacheDocument(
+        generatedAt: concurrentDate,
+        limits: [watchOpenAIWeeklyLimit(accountID: "concurrent", used: 40, generatedAt: concurrentDate)]
+    )
+    let probe = WatchRemoteLoadProbe()
+    let loader = WatchCompanionLoader(
+        cache: cache,
+        timeout: .seconds(1),
+        loadDocument: { _ in await probe.load() },
+        loadPresentation: { watchPresentationLoad() }
+    )
+    let loadTask = Task { await loader.load(now: concurrentDate) }
+    while await probe.count() == 0 {
+        await Task.yield()
+    }
+    #expect(cache.save(
+        document: concurrentDocument,
+        displayPreferences: .defaultPreferences,
+        now: concurrentDate
+    ))
+
+    await probe.resume(returning: watchRemoteLoad(document: remoteDocument, receivedAt: concurrentDate))
+    let loaded = await loadTask.value
+    let accountNames = Set(try #require(loaded.result.document).snapshot.limits.map(\.accountName))
+
+    #expect(accountNames == ["Remote", "Concurrent"])
+    #expect(cache.load().result.document == loaded.result.document)
+}
+
+@Test func watchCompanionLoaderPreservesNewerConcurrentCacheWhenCloudKitRecordDisappears() async throws {
+    let root = try watchCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cache = WatchCompanionCache(cacheURL: root.appending(path: "watch-cache.json"))
+    let initialDate = Date(timeIntervalSince1970: 1_800_000_000)
+    let newerDate = initialDate.addingTimeInterval(100)
+    let initialDocument = watchCacheDocument(generatedAt: initialDate)
+    let newerDocument = watchCacheDocument(
+        generatedAt: newerDate,
+        limits: [watchOpenAIWeeklyLimit(accountID: "newer", used: 20, generatedAt: newerDate)]
+    )
+    #expect(cache.save(
+        document: initialDocument,
+        displayPreferences: .defaultPreferences,
+        now: initialDate
+    ))
+    let probe = WatchRemoteLoadProbe()
+    let loader = WatchCompanionLoader(
+        cache: cache,
+        timeout: .seconds(1),
+        loadDocument: { _ in await probe.load() },
+        loadPresentation: { watchPresentationLoad() }
+    )
+    let loadTask = Task { await loader.load(now: newerDate) }
+    while await probe.count() == 0 {
+        await Task.yield()
+    }
+    #expect(cache.save(
+        document: newerDocument,
+        displayPreferences: .defaultPreferences,
+        now: newerDate
+    ))
+    await probe.resume(returning: CompanionRemoteSyncLoadResult(
+        result: CompanionSyncLoadResult(document: nil, status: .unknown),
+        outcome: CompanionRemoteSyncOutcome(succeeded: true, missingRecord: true)
+    ))
+
+    let loaded = await loadTask.value
+
+    #expect(loaded.result.document == newerDocument)
     #expect(cache.load().result.document == newerDocument)
 }
 
@@ -275,7 +410,7 @@ import Testing
     #expect(row.id == "summary:openai:weekly")
     #expect(row.context == "3 accounts")
     #expect(row.usedText == "60%")
-    #expect(row.remainingComplicationText == "40% left · stale")
+    #expect(row.remainingComplicationText == "40% left · saved")
     await blocker.resume(returning: 1)
 }
 
@@ -420,13 +555,14 @@ import Testing
 
 private func watchCacheDocument(
     generatedAt: Date,
-    limits: [UsageLimit] = []
+    limits: [UsageLimit] = [],
+    reports: [StoredProviderReport] = []
 ) -> CompanionSyncDocument {
     CompanionSyncDocument(snapshot: CompanionSnapshot(
         generatedAt: generatedAt,
         publishedAt: generatedAt.addingTimeInterval(5),
         limits: limits.map(CompanionLimit.init),
-        providerStatuses: [],
+        providerStatuses: reports.map(CompanionProviderStatus.init),
         promptCacheSummaries: []
     ))
 }

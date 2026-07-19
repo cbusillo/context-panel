@@ -383,9 +383,7 @@ public struct CompanionSyncStore: Sendable {
     public func load(policy: SnapshotStoreStalenessPolicy, now: Date = Date()) -> CompanionSyncLoadResult {
         let result = load()
         guard let document = result.document else { return result }
-        let status = now.timeIntervalSince(document.snapshot.generatedAt) > policy.maximumAge
-            ? .stale
-            : document.companionStatus
+        let status = document.companionStatus(now: now, stalenessPolicy: policy)
         return CompanionSyncLoadResult(
             document: document,
             status: status,
@@ -452,9 +450,7 @@ public struct CompanionSyncStore: Sendable {
 
         do {
             let document = try decodeDocument(from: try Data(contentsOf: documentURL))
-            let status = now.timeIntervalSince(document.snapshot.generatedAt) > policy.maximumAge
-                ? .stale
-                : document.companionStatus
+            let status = document.companionStatus(now: now, stalenessPolicy: policy)
             return CompanionSyncLoadResult(
                 document: document,
                 status: status,
@@ -1080,10 +1076,82 @@ private extension Array where Element == CompanionLimit {
 public extension CompanionSyncDocument {
     var companionStatus: UsageStatus {
         let limitStatuses = snapshot.limits.map(\.status)
+        if !limitStatuses.isEmpty {
+            return limitStatuses.contextPanelWorstStatus
+        }
         let providerStatuses = snapshot.providerStatuses.map(\.status)
-        let statuses = limitStatuses + providerStatuses
-        guard !statuses.isEmpty else { return .unknown }
-        return statuses.contextPanelWorstStatus
+        guard !providerStatuses.isEmpty else { return .unknown }
+        return providerStatuses.contextPanelWorstStatus
+    }
+
+    func companionStatus(now: Date, maximumAge: TimeInterval) -> UsageStatus {
+        companionStatus(
+            now: now,
+            stalenessPolicy: SnapshotStoreStalenessPolicy(maximumAge: maximumAge)
+        )
+    }
+
+    func companionStatus(
+        now: Date,
+        stalenessPolicy: SnapshotStoreStalenessPolicy
+    ) -> UsageStatus {
+        let statusesByAccount = Dictionary(grouping: snapshot.providerStatuses) {
+            CompanionStatusAccountKey(status: $0)
+        }
+        let limitGroups = Dictionary(grouping: snapshot.limits) {
+            CompanionStatusAccountKey(limit: $0)
+        }
+        guard !limitGroups.isEmpty else { return companionStatus }
+
+        let accountStatuses = limitGroups.map { key, limits -> UsageStatus in
+            let hasAgeSensitiveLimits = limits.contains { !$0.usageLimit.usesEventDrivenFreshness }
+            let hasExpiredPollingReset = limits.contains {
+                stalenessPolicy.presentationResetRefreshIsDue(for: $0.usageLimit, now: now)
+            }
+            if hasExpiredPollingReset {
+                return .stale
+            }
+            let limitObservedAt = limits.compactMap(\.lastUpdatedAt).max()
+            let statusObservedAt = statusesByAccount[key]?
+                .filter { $0.status.isCompanionObservationStatus }
+                .map(\.generatedAt)
+                .max()
+            if hasAgeSensitiveLimits {
+                guard let observedAt = limitObservedAt ?? statusObservedAt else { return .stale }
+                if now.timeIntervalSince(observedAt) > stalenessPolicy.maximumAge {
+                    return .stale
+                }
+            }
+            return limits.map(\.status).contextPanelWorstStatus
+        }
+        let currentStatuses = accountStatuses.filter { $0 != .stale }
+        return (currentStatuses.isEmpty ? accountStatuses : currentStatuses).contextPanelWorstStatus
+    }
+}
+
+private struct CompanionStatusAccountKey: Hashable {
+    let provider: Provider
+    let companionAccountID: String
+
+    init(limit: CompanionLimit) {
+        provider = limit.provider
+        companionAccountID = limit.companionAccountID
+    }
+
+    init(status: CompanionProviderStatus) {
+        provider = status.provider
+        companionAccountID = status.companionAccountID
+    }
+}
+
+extension UsageStatus {
+    var isCompanionObservationStatus: Bool {
+        switch self {
+        case .healthy, .close, .limited:
+            true
+        case .failure, .loading, .stale, .unknown:
+            false
+        }
     }
 }
 

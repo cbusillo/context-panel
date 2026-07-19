@@ -119,7 +119,7 @@ private let renderTestWidgetLinks = ContextPanelWidgetLinks(
 }
 
 @MainActor
-@Test func providerRefreshAttentionKeepsHealthyLaneColors() throws {
+@Test func companionProviderFailureDoesNotTintHealthyLanesWhenUsageExists() throws {
     let now = Date()
     let expiredLimit = UsageLimit(
         provider: .openAI,
@@ -192,6 +192,10 @@ private let renderTestWidgetLinks = ContextPanelWidgetLinks(
         CompanionSyncLoadResult(document: document, status: document.companionStatus),
         now: now
     )
+    #expect(snapshot.status == .healthy)
+    #expect(snapshot.refreshAttentionSummary == nil)
+    #expect(snapshot.limits.first { $0.accountName == "Expired OpenAI" }?.status == .stale)
+    #expect(snapshot.limits.first { $0.accountName == "Current OpenAI" }?.status == .healthy)
     let view = ContextPanelWidgetContentView(
         family: .systemLarge,
         snapshot: snapshot,

@@ -49,7 +49,7 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
     public var exceptionalStatusText: String? {
         switch status {
         case .stale:
-            "stale"
+            "saved"
         case .failure:
             "failed"
         case .loading:

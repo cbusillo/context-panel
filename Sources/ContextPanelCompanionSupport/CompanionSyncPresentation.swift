@@ -8,10 +8,17 @@ public struct CompanionSyncPresentation: Equatable, Sendable {
 
     public init(result: CompanionSyncLoadResult) {
         if result.errorMessage != nil {
-            usageSummary = nil
-            title = "Sync unavailable"
-            detail = "This device could not load your synced usage."
-            symbol = "icloud.slash"
+            if result.document != nil {
+                usageSummary = Self.usageSummary(for: result.document)
+                title = "Showing saved usage"
+                detail = "The latest sync failed. Saved usage may not reflect current Mac activity."
+                symbol = "clock.badge.exclamationmark"
+            } else {
+                usageSummary = nil
+                title = "Sync unavailable"
+                detail = "This device could not load your synced usage."
+                symbol = "icloud.slash"
+            }
             return
         }
 
@@ -63,10 +70,13 @@ public struct CompanionSyncPresentation: Equatable, Sendable {
     private static func usageSummary(for document: CompanionSyncDocument?) -> String? {
         guard let document else { return nil }
         let snapshot = document.snapshot
+        let providersWithLimits = Set(snapshot.limits.map(\.provider))
 
-        let failedCount = snapshot.providerStatuses.filter { $0.status == .failure }.count
-        if failedCount == 1 { return "1 provider needs attention on your Mac." }
-        if failedCount > 1 { return "\(failedCount) providers need attention on your Mac." }
+        let failedCount = snapshot.providerStatuses.filter {
+            $0.status == .failure && !providersWithLimits.contains($0.provider)
+        }.count
+        if failedCount == 1 { return "1 provider needs attention." }
+        if failedCount > 1 { return "\(failedCount) providers need attention." }
 
         return nil
     }

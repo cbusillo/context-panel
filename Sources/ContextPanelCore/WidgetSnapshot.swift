@@ -176,7 +176,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         let companionUsage = CompanionUsagePresentation(
             snapshot: companion,
             now: now,
-            maximumAge: stalenessPolicy.maximumAge
+            stalenessPolicy: stalenessPolicy
         )
         let limits = companionUsage.limits
         let reports = companionUsage.reports
@@ -190,11 +190,14 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             reports: reports,
             promptCacheObservations: promptCacheObservations
         )
-        let refreshAttentionSummary = stalenessPolicy.refreshAttentionSummary(for: stored, now: now)
+        let rawRefreshAttentionSummary = stalenessPolicy.refreshAttentionSummary(for: stored, now: now)
+        let refreshAttentionSummary = companionRefreshAttentionSummary(from: rawRefreshAttentionSummary)
+        let companionStatus = document.companionStatus(now: now, stalenessPolicy: stalenessPolicy)
         let usesStaleLocalCache = result.status == .stale
             && result.transportMetadata?.source == .localCache
         let state: WidgetSnapshotState = if usesStaleLocalCache
-            || refreshAttentionSummary?.isSnapshotAgeStale == true {
+            || companionStatus == .stale
+            || rawRefreshAttentionSummary?.isSnapshotAgeStale == true {
             .stale
         } else {
             .ready
@@ -202,7 +205,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         let presentationSnapshot = stored.snapshot.presented(at: now)
         let status = widgetStatus(
             for: presentationSnapshot,
-            fallback: snapshotWideStatus(for: state, snapshot: presentationSnapshot)
+            fallback: snapshotWideStatus(for: state, snapshot: presentationSnapshot),
+            prefersCurrentOverStale: state == .ready
         )
         let hasProviderRefreshAttention = refreshAttentionSummary.map {
             !$0.providers.isEmpty && !$0.isSnapshotAgeStale
@@ -230,7 +234,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             fastModeForecastSettings: document.fastModeForecastSettings,
             status: status,
             message: result.errorMessage == nil
-                ? message(
+                ? companionMessage(
                     state: state,
                     stored: stored,
                     refreshAttentionSummary: syncDeliveryDelayed ? nil : refreshAttentionSummary
@@ -296,6 +300,34 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         }
     }
 
+    private static func companionMessage(
+        state: WidgetSnapshotState,
+        stored: StoredUsageSnapshot,
+        refreshAttentionSummary: RefreshAttentionSummary?
+    ) -> String {
+        if state == .stale, refreshAttentionSummary == nil {
+            return "Showing saved usage from your Mac."
+        }
+        return message(
+            state: state,
+            stored: stored,
+            refreshAttentionSummary: refreshAttentionSummary
+        )
+    }
+
+    private static func companionRefreshAttentionSummary(
+        from summary: RefreshAttentionSummary?
+    ) -> RefreshAttentionSummary? {
+        guard let summary, !summary.reports.isEmpty else { return nil }
+        let providerSet = Set(summary.reports.map(\.provider))
+        return RefreshAttentionSummary(
+            providers: Provider.allCases.filter { providerSet.contains($0) },
+            reports: summary.reports,
+            expiredResetLimits: [],
+            isSnapshotAgeStale: false
+        )
+    }
+
     private static func snapshotWideStatus(
         for state: WidgetSnapshotState,
         snapshot: UsageSnapshot
@@ -310,16 +342,33 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         }
     }
 
-    private static func widgetStatus(for snapshot: UsageSnapshot, fallback: UsageStatus) -> UsageStatus {
+    private static func widgetStatus(
+        for snapshot: UsageSnapshot,
+        fallback: UsageStatus,
+        prefersCurrentOverStale: Bool = false
+    ) -> UsageStatus {
         switch fallback {
-        case .failure, .stale:
+        case .failure:
+            return fallback
+        case .stale where !prefersCurrentOverStale:
             return fallback
         case .healthy, .close, .limited, .unknown, .loading:
             break
+        case .stale:
+            break
         }
 
-        let summaries = snapshot.mainLimitSummaries
-        let nonMainStatuses = snapshot.limits.compactMap { limit -> UsageStatus? in
+        let statusSnapshot: UsageSnapshot
+        if prefersCurrentOverStale {
+            let currentLimits = snapshot.limits.filter { $0.status != .stale }
+            statusSnapshot = currentLimits.isEmpty
+                ? snapshot
+                : UsageSnapshot(generatedAt: snapshot.generatedAt, limits: currentLimits)
+        } else {
+            statusSnapshot = snapshot
+        }
+        let summaries = statusSnapshot.mainLimitSummaries
+        let nonMainStatuses = statusSnapshot.limits.compactMap { limit -> UsageStatus? in
             guard !limit.isMainLimit else { return nil }
             if limit.provider == .anthropic,
                limit.isAnthropicStatuslinePlaceholder
@@ -381,27 +430,38 @@ private struct CompanionUsagePresentation {
     let limits: [UsageLimit]
     let reports: [StoredProviderReport]
 
-    init(snapshot: CompanionSnapshot, now: Date, maximumAge: TimeInterval) {
+    init(
+        snapshot: CompanionSnapshot,
+        now: Date,
+        stalenessPolicy: SnapshotStoreStalenessPolicy
+    ) {
         var accountStates: [CompanionUsageAccountKey: CompanionUsageAccountState] = [:]
+        let providersWithLimits = Set(snapshot.limits.map(\.provider))
         for limit in snapshot.limits {
             let key = CompanionUsageAccountKey(limit: limit)
             var state = accountStates[key, default: CompanionUsageAccountState()]
             state.hasLimits = true
             state.hasAgeSensitiveLimits = state.hasAgeSensitiveLimits || !limit.usageLimit.usesEventDrivenFreshness
+            state.hasResetRefreshDue = state.hasResetRefreshDue
+                || stalenessPolicy.presentationResetRefreshIsDue(for: limit.usageLimit, now: now)
             state.observe(limit.lastUpdatedAt)
             accountStates[key] = state
         }
         for status in snapshot.providerStatuses {
             let key = CompanionUsageAccountKey(status: status)
             var state = accountStates[key, default: CompanionUsageAccountState()]
-            state.observe(status.generatedAt)
+            if !state.hasLimits || status.status.isCompanionObservationStatus {
+                state.observe(status.generatedAt)
+            }
             accountStates[key] = state
         }
 
         let staleAccounts = Set(accountStates.compactMap { key, state in
+            if state.hasResetRefreshDue { return key }
             let isAgeSensitive = !state.hasLimits || state.hasAgeSensitiveLimits
-            let observedAt = state.observedAt ?? snapshot.generatedAt
-            return isAgeSensitive && now.timeIntervalSince(observedAt) > maximumAge ? key : nil
+            guard isAgeSensitive else { return nil }
+            guard let observedAt = state.observedAt else { return key }
+            return now.timeIntervalSince(observedAt) > stalenessPolicy.maximumAge ? key : nil
         })
 
         limits = snapshot.limits.map { companionLimit in
@@ -410,9 +470,21 @@ private struct CompanionUsagePresentation {
             guard staleAccounts.contains(key), limit.status.canAgeToStale else { return limit }
             return limit.replacingStatusOverride(with: .stale)
         }
-        reports = snapshot.providerStatuses.map { companionStatus in
+        reports = snapshot.providerStatuses.compactMap { companionStatus in
             let report = companionStatus.storedProviderReport
             let key = CompanionUsageAccountKey(status: companionStatus)
+            let accountState = accountStates[key, default: CompanionUsageAccountState()]
+            if accountState.hasLimits, !companionStatus.status.isCompanionObservationStatus {
+                return nil
+            }
+            if !accountState.hasLimits,
+               !companionStatus.status.isCompanionObservationStatus,
+               providersWithLimits.contains(companionStatus.provider) {
+                return nil
+            }
+            if accountState.hasLimits {
+                return report
+            }
             guard staleAccounts.contains(key), report.status.canAgeToStale else { return report }
             return report.replacingStatus(with: .stale)
         }
@@ -423,6 +495,7 @@ private struct CompanionUsageAccountState {
     var observedAt: Date?
     var hasLimits = false
     var hasAgeSensitiveLimits = false
+    var hasResetRefreshDue = false
 
     mutating func observe(_ date: Date?) {
         guard let date else { return }

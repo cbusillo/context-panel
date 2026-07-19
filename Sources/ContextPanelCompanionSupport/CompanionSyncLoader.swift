@@ -287,9 +287,7 @@ public enum CompanionSyncLoader {
         policy: SnapshotStoreStalenessPolicy,
         now: Date
     ) -> UsageStatus {
-        now.timeIntervalSince(document.snapshot.generatedAt) > policy.maximumAge
-            ? .stale
-            : document.companionStatus
+        document.companionStatus(now: now, stalenessPolicy: policy)
     }
 
     private static func transportStatuses(remoteLoad: CompanionRemoteSyncLoadResult?) -> [CompanionSyncTransportStatus] {
