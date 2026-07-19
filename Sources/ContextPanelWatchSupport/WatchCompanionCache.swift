@@ -21,7 +21,13 @@ public struct WatchCompanionCacheLoadResult: Equatable, Sendable {
 }
 
 enum WatchCompanionCacheSaveOutcome: Equatable, Sendable {
-    case saved
+    case saved(WatchCompanionCacheLoadResult)
+    case keptCurrent(WatchCompanionCacheLoadResult)
+    case failed
+}
+
+enum WatchCompanionCacheRemoveOutcome: Equatable, Sendable {
+    case removed
     case keptCurrent(WatchCompanionCacheLoadResult)
     case failed
 }
@@ -35,7 +41,7 @@ public final class WatchCompanionCache: @unchecked Sendable {
         self.cacheURL = cacheURL
     }
 
-    public func load() -> WatchCompanionCacheLoadResult {
+    public func load(now: Date? = nil) -> WatchCompanionCacheLoadResult {
         Self.fileLock.lock()
         defer { Self.fileLock.unlock() }
         guard FileManager.default.fileExists(atPath: cacheURL.path) else {
@@ -47,7 +53,7 @@ public final class WatchCompanionCache: @unchecked Sendable {
 
         do {
             let payload = try Self.decodePayload(from: Data(contentsOf: cacheURL))
-            return Self.loadResult(from: payload)
+            return Self.loadResult(from: payload, now: now)
         } catch {
             let error = error as NSError
             watchCompanionCacheLogger.error(
@@ -90,22 +96,31 @@ public final class WatchCompanionCache: @unchecked Sendable {
         Self.fileLock.lock()
         defer { Self.fileLock.unlock() }
         do {
-            let candidate = Payload(
-                document: document,
-                displayPreferences: displayPreferences,
-                cachedAt: now
-            )
             try FileManager.default.createDirectory(
                 at: cacheURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
+            var selectedDocument = document
+            var selectedDisplayPreferences = displayPreferences
+            var selectedCachedAt = now
             if FileManager.default.fileExists(atPath: cacheURL.path),
-               let current = try? Self.decodePayload(from: Data(contentsOf: cacheURL)),
-               Self.shouldKeepCurrent(current.document, over: document) {
-                return .keptCurrent(Self.loadResult(from: current))
+               let current = try? Self.decodePayload(from: Data(contentsOf: cacheURL)) {
+                selectedDocument = document.mergingForRemotePublish(existing: current.document)
+                if selectedDocument == current.document {
+                    return .keptCurrent(Self.loadResult(from: current, now: now))
+                }
+                if current.cachedAt > now {
+                    selectedDisplayPreferences = current.displayPreferences
+                    selectedCachedAt = current.cachedAt
+                }
             }
+            let candidate = Payload(
+                document: selectedDocument,
+                displayPreferences: selectedDisplayPreferences,
+                cachedAt: selectedCachedAt
+            )
             try Self.makeEncoder().encode(candidate).write(to: cacheURL, options: .atomic)
-            return .saved
+            return .saved(Self.loadResult(from: candidate, now: now))
         } catch {
             let error = error as NSError
             watchCompanionCacheLogger.error(
@@ -132,6 +147,29 @@ public final class WatchCompanionCache: @unchecked Sendable {
         }
     }
 
+    func removeIfCurrent(
+        _ expectedDocument: CompanionSyncDocument?,
+        now: Date
+    ) -> WatchCompanionCacheRemoveOutcome {
+        Self.fileLock.lock()
+        defer { Self.fileLock.unlock() }
+        guard FileManager.default.fileExists(atPath: cacheURL.path) else { return .removed }
+        do {
+            let current = try Self.decodePayload(from: Data(contentsOf: cacheURL))
+            guard current.document == expectedDocument else {
+                return .keptCurrent(Self.loadResult(from: current, now: now))
+            }
+            try FileManager.default.removeItem(at: cacheURL)
+            return .removed
+        } catch {
+            let error = error as NSError
+            watchCompanionCacheLogger.error(
+                "Watch companion cache conditional removal failed: domain=\(error.domain, privacy: .public) code=\(error.code)"
+            )
+            return .failed
+        }
+    }
+
     static func shouldKeepCurrent(
         _ current: CompanionSyncDocument?,
         over candidate: CompanionSyncDocument
@@ -143,11 +181,18 @@ public final class WatchCompanionCache: @unchecked Sendable {
         return current.snapshot.publishedAt > candidate.snapshot.publishedAt
     }
 
-    private static func loadResult(from payload: Payload) -> WatchCompanionCacheLoadResult {
+    private static func loadResult(from payload: Payload, now: Date?) -> WatchCompanionCacheLoadResult {
         WatchCompanionCacheLoadResult(
             result: CompanionSyncLoadResult(
                 document: payload.document,
-                status: payload.document.companionStatus,
+                status: now.map {
+                    payload.document.companionStatus(
+                        now: $0,
+                        stalenessPolicy: SnapshotStoreStalenessPolicy(
+                            maximumAge: SnapshotFreshness.companionProviderMaximumAge
+                        )
+                    )
+                } ?? payload.document.companionStatus,
                 transportMetadata: CompanionSyncTransportMetadata(
                     source: .localCache,
                     mirroredAt: payload.cachedAt,

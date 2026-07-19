@@ -67,7 +67,9 @@ order; auxiliary provider buckets such as Spark remain in the larger app detail
 views. In every case, the visible number, wording,
 fill, color, and accessibility sentence describe the same quantity. Keep
 unknown values indeterminate rather than substituting zero, preserve stale
-last-good values with explicit freshness language, and retain saved order.
+last-good values with explicit freshness language, and retain saved order. Use
+`Saved` in complication text for a last-good value; the Watch app and
+accessibility description may use the more explicit stale explanation.
 In the Watch app status row, show the freshness timestamp only for settled
 available states so updating, stale, and failure labels keep their full width.
 Allow those status labels to wrap rather than truncate at larger text sizes.
@@ -110,6 +112,9 @@ The read-only iPhone, iPad, and visionOS companion uses an adaptive composition:
   reading order.
 - The companion remains a focused read-only utility. Do not turn regular width
   into a collector dashboard, navigation sidebar, or denser telemetry surface.
+- Companion status follows selected account observations. A Mac-local auth
+  failure does not create a provider-wide warning when another Mac has usable
+  data; saved account values remain visible with freshness language instead.
 
 Mutation belongs in the app, not the widget: adding logins, reconnecting,
 naming accounts, disabling or removing accounts, saving bookmarks, choosing

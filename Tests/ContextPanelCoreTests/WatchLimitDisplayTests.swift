@@ -62,7 +62,7 @@ import Testing
     #expect(row.context == "3 accounts")
     #expect(row.usedText == "60%")
     #expect(row.remainingText == "40%")
-    #expect(row.remainingComplicationText == "40% left · stale")
+    #expect(row.remainingComplicationText == "40% left · saved")
     #expect(row.usedPressure.ratio == 0.5966666666666667)
     #expect(row.remainingCapacity.ratio == 0.4033333333333333)
     #expect(row.status == .stale)
@@ -120,7 +120,7 @@ import Testing
     #expect(row.context == "3 accounts")
     #expect(row.usedText == "36%")
     #expect(row.remainingText == "64%")
-    #expect(row.remainingComplicationText == "64% left · stale")
+    #expect(row.remainingComplicationText == "64% left · saved")
     #expect(row.status == .stale)
 }
 
@@ -678,7 +678,7 @@ import Testing
 
     #expect(row.usedTextLabeled == "35 used")
     #expect(row.remainingText == "65")
-    #expect(row.remainingComplicationText == "65 left · stale")
+    #expect(row.remainingComplicationText == "65 left · saved")
     #expect(row.status == .stale)
     #expect(row.resetText(now: now) == "2h")
     #expect(

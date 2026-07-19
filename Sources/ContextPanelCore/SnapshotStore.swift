@@ -393,19 +393,24 @@ public struct SnapshotStoreStalenessPolicy: Equatable, Sendable {
     }
 
     private func presentationResetRefreshDueLimits(in snapshot: UsageSnapshot, now: Date) -> [UsageLimit] {
-        resetRefreshDueLimits(in: snapshot, now: now).filter { !$0.usesEventDrivenFreshness }
+        snapshot.limits.filter { presentationResetRefreshIsDue(for: $0, now: now) }
     }
 
     private func resetRefreshDueLimits(in snapshot: UsageSnapshot, now: Date) -> [UsageLimit] {
-        let dueLimits = snapshot.limits.filter { $0.isResetRefreshDue(now: now) }
-        guard !dueLimits.isEmpty else { return [] }
-        guard let resetExpiryRefreshState else { return dueLimits }
-        return dueLimits.filter { limit in
-            guard let key = ResetExpiryRefreshKey(limit: limit) else { return false }
-            guard let record = resetExpiryRefreshState.record(for: key) else { return true }
-            guard let nextRetryAt = record.nextRetryAt else { return false }
-            return nextRetryAt <= now
-        }
+        snapshot.limits.filter { resetRefreshIsDue(for: $0, now: now) }
+    }
+
+    func presentationResetRefreshIsDue(for limit: UsageLimit, now: Date) -> Bool {
+        !limit.usesEventDrivenFreshness && resetRefreshIsDue(for: limit, now: now)
+    }
+
+    private func resetRefreshIsDue(for limit: UsageLimit, now: Date) -> Bool {
+        guard limit.isResetRefreshDue(now: now) else { return false }
+        guard let resetExpiryRefreshState else { return true }
+        guard let key = ResetExpiryRefreshKey(limit: limit) else { return false }
+        guard let record = resetExpiryRefreshState.record(for: key) else { return true }
+        guard let nextRetryAt = record.nextRetryAt else { return false }
+        return nextRetryAt <= now
     }
 }
 

@@ -1418,7 +1418,7 @@ extension WidgetSnapshot {
         case .failure:
             return "Reconnect account"
         case .stale:
-            return requiresProviderReconnect ? widgetReconnectTitle : refreshAttentionSummary?.refreshNeededTitle ?? "Refresh needed"
+            return requiresProviderReconnect ? widgetReconnectTitle : refreshAttentionSummary?.refreshNeededTitle ?? "Saved usage"
         case .setupNeeded:
             return limits.isEmpty ? nil : "Setup needed"
         case .ready:
@@ -1428,7 +1428,7 @@ extension WidgetSnapshot {
             }
             if status == .failure { return "Provider refresh needed" }
             if status == .stale {
-                return requiresProviderReconnect ? widgetReconnectTitle : refreshAttentionSummary?.refreshNeededTitle ?? "Refresh needed"
+                return requiresProviderReconnect ? widgetReconnectTitle : refreshAttentionSummary?.refreshNeededTitle ?? "Saved usage"
             }
             if status == .unknown { return "Awaiting data" }
             return nil

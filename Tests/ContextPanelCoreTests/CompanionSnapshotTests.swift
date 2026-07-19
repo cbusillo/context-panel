@@ -247,7 +247,8 @@ import Testing
                 windowLabel: "5-hour",
                 unit: .percent,
                 used: 60,
-                limit: 100
+                limit: 100,
+                lastUpdatedAt: generatedAt
             ),
             UsageLimit(
                 provider: .openAI,
@@ -258,7 +259,8 @@ import Testing
                 windowLabel: "Weekly",
                 unit: .percent,
                 used: 100,
-                limit: 100
+                limit: 100,
+                lastUpdatedAt: generatedAt
             ),
             UsageLimit(
                 provider: .openAI,
@@ -269,7 +271,8 @@ import Testing
                 windowLabel: "5-hour",
                 unit: .percent,
                 used: 5,
-                limit: 100
+                limit: 100,
+                lastUpdatedAt: generatedAt
             ),
             UsageLimit(
                 provider: .openAI,
@@ -280,7 +283,8 @@ import Testing
                 windowLabel: "Weekly",
                 unit: .percent,
                 used: 22,
-                limit: 100
+                limit: 100,
+                lastUpdatedAt: generatedAt
             ),
         ])
     ), publishedAt: generatedAt)
@@ -639,7 +643,7 @@ import Testing
         result: CompanionSyncLoadResult(document: document, status: .limited)
     )
 
-    #expect(presentation.usageSummary == "1 provider needs attention on your Mac.")
+    #expect(presentation.usageSummary == nil)
 }
 
 @Test func companionSyncPresentationOmitsMultipleLimitedLanesFromStatusSummary() throws {
@@ -702,7 +706,7 @@ import Testing
     #expect(presentation.title == "Synced from Mac")
     #expect(presentation.detail == "Latest usage received from your Mac.")
     #expect(presentation.symbol == "checkmark.icloud")
-    #expect(presentation.usageSummary == "1 provider needs attention on your Mac.")
+    #expect(presentation.usageSummary == "1 provider needs attention.")
 }
 
 @Test func companionSyncPresentationPluralizesProviderFailures() throws {
@@ -737,7 +741,7 @@ import Testing
         result: CompanionSyncLoadResult(document: document, status: .failure)
     )
 
-    #expect(presentation.usageSummary == "2 providers need attention on your Mac.")
+    #expect(presentation.usageSummary == "2 providers need attention.")
 }
 
 @Test func companionSyncPresentationSanitizesTransportFailures() throws {
@@ -755,9 +759,9 @@ import Testing
         )
     )
 
-    #expect(presentation.title == "Sync unavailable")
-    #expect(presentation.detail == "This device could not load your synced usage.")
-    #expect(presentation.symbol == "icloud.slash")
+    #expect(presentation.title == "Showing saved usage")
+    #expect(presentation.detail == "The latest sync failed. Saved usage may not reflect current Mac activity.")
+    #expect(presentation.symbol == "clock.badge.exclamationmark")
     #expect(presentation.usageSummary == nil)
 }
 
@@ -1410,9 +1414,45 @@ import Testing
 
     #expect(widget.state == .ready)
     #expect(widget.status == .healthy)
-    #expect(widget.refreshAttentionSummary?.providers == [.openAI])
-    #expect(widget.refreshAttentionSummary?.isSnapshotAgeStale == false)
+    #expect(widget.limits.first { $0.accountName == "Expired OpenAI" }?.status == .stale)
+    #expect(widget.limits.first { $0.accountName == "Current OpenAI" }?.status == .healthy)
+    #expect(widget.refreshAttentionSummary == nil)
     #expect(widget.promptCacheWidgetState == .unavailable)
+}
+
+@Test func companionWidgetShowsOnlyExpiredPollingUsageAsSaved() {
+    let now = Date(timeIntervalSince1970: 3_275)
+    let document = CompanionSyncDocument(
+        storedSnapshot: StoredUsageSnapshot(
+            savedAt: now,
+            snapshot: UsageSnapshot(generatedAt: now, limits: [UsageLimit(
+                provider: .openAI,
+                accountID: "expired-openai",
+                accountName: "Expired OpenAI",
+                label: "Codex 5-hour",
+                windowLabel: "5-hour",
+                unit: .percent,
+                used: 34,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(-60),
+                lastUpdatedAt: now.addingTimeInterval(-300),
+                confidence: .observed
+            )])
+        ),
+        publishedAt: now
+    )
+
+    let widget = WidgetSnapshot.fromCompanionSync(
+        CompanionSyncLoadResult(document: document, status: document.companionStatus),
+        now: now
+    )
+
+    #expect(document.companionStatus(now: now, maximumAge: SnapshotFreshness.companionProviderMaximumAge) == .stale)
+    #expect(widget.state == .stale)
+    #expect(widget.status == .stale)
+    #expect(widget.limits.first?.status == .stale)
+    #expect(widget.refreshAttentionSummary == nil)
+    #expect(widget.message == "Showing saved usage from your Mac.")
 }
 
 @Test func companionWidgetDropsExpiredPromptCacheObservationsIndependently() {
@@ -1797,8 +1837,8 @@ import Testing
     #expect(widget.state == .stale)
     #expect(widget.status == .stale)
     #expect(widget.promptCacheWidgetState == .available)
-    #expect(widget.refreshAttentionSummary != nil)
-    #expect(widget.message != "Usage data is current.")
+    #expect(widget.refreshAttentionSummary == nil)
+    #expect(widget.message == "Showing saved usage from your Mac.")
 }
 
 @Test func companionWidgetSnapshotKeepsProviderStaleEvenWhenTransportIsDelayed() {
@@ -1826,7 +1866,8 @@ import Testing
 
     #expect(widget.state == .stale)
     #expect(widget.promptCacheWidgetState == .available)
-    #expect(widget.refreshAttentionSummary != nil)
+    #expect(widget.refreshAttentionSummary == nil)
+    #expect(widget.message == "Showing saved usage from your Mac.")
 }
 
 @Test func companionSyncPublisherIncludesCurrentPreferencesAndForecastSettings() throws {

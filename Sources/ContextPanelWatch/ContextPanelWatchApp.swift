@@ -123,9 +123,7 @@ private final class WatchSyncModel {
             guard let self else { return }
             result = loaded.result
             displayResult = loaded.result
-            lastSyncErrorMessage = loaded.result.status == .failure
-                ? loaded.result.errorMessage
-                : nil
+            lastSyncErrorMessage = loaded.result.errorMessage
             snapshot = WidgetSnapshot.fromCompanionSync(
                 loaded.result,
                 now: now,

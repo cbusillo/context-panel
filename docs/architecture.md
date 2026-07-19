@@ -40,12 +40,21 @@ the CloudKit companion publisher merges the shared `current-v2` document by
 sanitized provider/account identity before saving. Newer healthy account data
 replaces the same account, accounts not reported by that Mac remain available,
 and a degraded or unauthenticated collector cannot erase healthy lanes published
-by another Mac. CloudKit change tags and conflict retries protect concurrent
-publishers. Preserved observations retain their original timestamps so companion
-clients can mark them stale instead of presenting them as freshly collected. A
-versioned usage record isolates this behavior from older whole-document
-publishers; current clients also read and merge the legacy record during rollout
-so an older Mac can contribute data without erasing the versioned account set.
+by another Mac. Companion truth is selected per logical account observation,
+not from the worst collector attempt: a failed attempt does not advance the
+observation timestamp, and a matching saved value remains available without
+sharing that Mac's credential failure. Status-only failures are omitted when
+another Mac has usable data for the provider. CloudKit change tags and conflict
+retries protect concurrent publishers. Preserved observations retain their
+original timestamps so companion clients can mark only those lanes stale instead
+of presenting them as freshly collected. Fresh lanes keep the companion ready;
+saved lanes remain visible but do not participate in pooled capacity or burn
+forecasts while current lanes are available. When every lane is saved, constrained
+glance surfaces may preserve the complete last-known pool as explicitly stale
+context rather than inventing a partial current total. A versioned usage record isolates this behavior from older
+whole-document publishers; current clients also read and merge the legacy record
+during rollout so an older Mac can contribute data without erasing the versioned
+account set.
 After each authoritative `current-v2` save, current publishers mirror the merged
 document to legacy `current`. That mirror remains a compatibility wake channel
 for the Production-promoted CloudKit subscription and for older clients; it is
@@ -200,8 +209,13 @@ display preferences in its own sandbox, so the complication can complete from a
 last-good local value when CloudKit is delayed or unavailable. Opening the Watch
 app invalidates the complication timeline whenever it has a usable document,
 including a confirmed local-cache value after an app update, and the timeline
-includes a future stale transition. The watch app list follows the synced saved
-main-limit visibility and order instead of promoting auxiliary provider buckets.
+includes a future stale transition. Successful Watch CloudKit reads merge with
+the process-local cache per account observation rather than choosing a whole
+document by its envelope timestamp. The watch app requests one kind-specific
+timeline reload after every usable refresh because its cache cannot reveal
+whether the complication's separate cache has converged. The watch app list
+follows the synced saved main-limit visibility and order instead of promoting
+auxiliary provider buckets.
 The watch targets do not
 depend on App Group storage because physical TestFlight validation on watchOS 27
 rejected otherwise valid App Group entitlements at runtime.
