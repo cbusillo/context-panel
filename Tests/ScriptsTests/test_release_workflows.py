@@ -6,6 +6,9 @@ import tempfile
 import os
 import json
 import shlex
+import hashlib
+import shutil
+import textwrap
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -14,6 +17,186 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 class ReleaseWorkflowTests(unittest.TestCase):
     def read(self, relative_path: str) -> str:
         return (REPO_ROOT / relative_path).read_text()
+
+    def expected_checkout_cache_key(self, checkout_root: Path) -> str:
+        physical_root = str(checkout_root.resolve())
+        return hashlib.sha256(f"{physical_root}\0".encode()).hexdigest()[:16]
+
+    def run_commit_gate_cache_fixture(
+        self,
+        checkout_root: Path,
+        artifact_cache_root: Path,
+        *,
+        invocation_root: Path | None = None,
+        scratch_override: Path | None = None,
+        include_standard_path: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        scripts_path = checkout_root / "scripts"
+        scripts_path.mkdir(parents=True, exist_ok=True)
+        fixture_path = scripts_path / "commit-gate.sh"
+        fixture_path.write_text(self.read("scripts/commit-gate.sh"))
+        fixture_path.chmod(0o755)
+
+        bin_path = checkout_root / ".test-bin"
+        bin_path.mkdir(exist_ok=True)
+        fake_swift = bin_path / "swift"
+        fake_swift.write_text('#!/bin/bash\nprintf \'swift %s\\n\' "$*"\n')
+        fake_swift.chmod(0o755)
+
+        path_entries = [str(bin_path)]
+        if include_standard_path:
+            path_entries.append(os.environ.get("PATH", ""))
+        else:
+            for command in ("dirname", "mkdir"):
+                command_path = shutil.which(command)
+                if command_path is None:
+                    self.fail(f"required fixture command not found: {command}")
+                fixture_command = bin_path / command
+                if not fixture_command.exists():
+                    fixture_command.symlink_to(command_path)
+
+        environment = os.environ.copy()
+        environment["CONTEXT_PANEL_ARTIFACT_CACHE_ROOT"] = str(artifact_cache_root)
+        environment.pop("CONTEXT_PANEL_SWIFTPM_SCRATCH_PATH", None)
+        if scratch_override is not None:
+            environment["CONTEXT_PANEL_SWIFTPM_SCRATCH_PATH"] = str(scratch_override)
+        environment["PATH"] = ":".join(path_entries)
+
+        invoked_root = invocation_root or checkout_root
+        return subprocess.run(
+            ["/bin/bash", str(invoked_root / "scripts/commit-gate.sh")],
+            cwd=invoked_root,
+            env=environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+
+    def run_companion_cache_fixture(
+        self,
+        checkout_root: Path,
+        artifact_cache_root: Path,
+        *,
+        derived_data_override: Path | None = None,
+        cli_derived_data_root: Path | None = None,
+        invocation_root: Path | None = None,
+        working_directory: Path | None = None,
+        include_standard_path: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        scripts_path = checkout_root / "scripts"
+        scripts_path.mkdir(parents=True, exist_ok=True)
+        bin_path = checkout_root / ".test-bin"
+        bin_path.mkdir(exist_ok=True)
+
+        fake_xcodebuild = bin_path / "xcodebuild"
+        fake_xcodebuild.write_text(
+            "#!/bin/bash\nprintf '** BUILD SUCCEEDED **\\n'\n"
+        )
+        fake_xcodebuild.chmod(0o755)
+        fake_xcodegen = bin_path / "xcodegen"
+        fake_xcodegen.write_text("#!/bin/bash\nexit 0\n")
+        fake_xcodegen.chmod(0o755)
+
+        fixture_script = self.read("scripts/validate-companion-builds.sh")
+        fixture_script = fixture_script.replace(
+            "/usr/bin/xcodebuild", f'"{fake_xcodebuild}"'
+        )
+        fixture_path = scripts_path / "validate-companion-builds.sh"
+        fixture_path.write_text(fixture_script)
+        fixture_path.chmod(0o755)
+
+        temp_path = checkout_root / ".runner-temp"
+        temp_path.mkdir(exist_ok=True)
+        environment = os.environ.copy()
+        environment["CONTEXT_PANEL_ARTIFACT_CACHE_ROOT"] = str(artifact_cache_root)
+        environment.pop("CONTEXT_PANEL_COMPANION_DERIVED_DATA_ROOT", None)
+        if derived_data_override is not None:
+            environment["CONTEXT_PANEL_COMPANION_DERIVED_DATA_ROOT"] = str(
+                derived_data_override
+            )
+        path_entries = [str(bin_path)]
+        if include_standard_path:
+            path_entries.append(environment.get("PATH", ""))
+        else:
+            for command in ("dirname", "mktemp"):
+                command_path = shutil.which(command)
+                if command_path is None:
+                    self.fail(f"required fixture command not found: {command}")
+                fixture_command = bin_path / command
+                if not fixture_command.exists():
+                    fixture_command.symlink_to(command_path)
+        environment["PATH"] = ":".join(path_entries)
+        environment["RUNNER_TEMP"] = str(temp_path)
+        environment["TMPDIR"] = str(temp_path)
+
+        invoked_root = invocation_root or checkout_root
+        arguments = [
+            "/bin/bash",
+            str(invoked_root / "scripts/validate-companion-builds.sh"),
+        ]
+        if cli_derived_data_root is not None:
+            arguments.extend(["--derived-data-root", str(cli_derived_data_root)])
+        arguments.append("ios")
+        return subprocess.run(
+            arguments,
+            cwd=working_directory or invoked_root,
+            env=environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+            timeout=30,
+        )
+
+    def run_codeql_cache_fixture(
+        self,
+        checkout_root: Path,
+        artifact_cache_root: Path,
+        *,
+        trusted_run: bool,
+        include_standard_path: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        workflow = self.read(".github/workflows/codeql.yml")
+        build_step = re.search(
+            r"      - name: Build\n.*?        run: \|\n(?P<body>.*?)(?=\n      - name:)",
+            workflow,
+            re.S,
+        )
+        self.assertIsNotNone(build_step)
+        assert build_step is not None
+
+        bin_path = checkout_root / ".test-bin"
+        bin_path.mkdir(parents=True, exist_ok=True)
+        fake_swift = bin_path / "swift"
+        fake_swift.write_text('#!/bin/bash\nprintf \'swift %s\\n\' "$*"\n')
+        fake_swift.chmod(0o755)
+
+        path_entries = [str(bin_path)]
+        if include_standard_path:
+            path_entries.append(os.environ.get("PATH", ""))
+        else:
+            for command in ("dirname", "mkdir"):
+                command_path = shutil.which(command)
+                if command_path is None:
+                    self.fail(f"required fixture command not found: {command}")
+                fixture_command = bin_path / command
+                if not fixture_command.exists():
+                    fixture_command.symlink_to(command_path)
+
+        environment = os.environ.copy()
+        environment["CONTEXT_PANEL_ARTIFACT_CACHE_ROOT"] = str(artifact_cache_root)
+        environment["TRUSTED_RUN"] = "true" if trusted_run else "false"
+        environment["PATH"] = ":".join(path_entries)
+        return subprocess.run(
+            ["/bin/bash", "-c", textwrap.dedent(build_step.group("body"))],
+            cwd=checkout_root,
+            env=environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
 
     def run_companion_validation_watchdog_fixture(
         self, fake_xcodebuild_body: str
@@ -883,6 +1066,249 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 self.assertIn("PATH=\"$(xcodebuild_system_path)\" /usr/bin/xcodebuild", script)
                 self.assertNotRegex(script, r"(?m)^xcodebuild \\")
 
+    def test_commit_gate_namespaces_artifact_cache_by_physical_checkout(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            artifact_cache_root = temp_path / "artifact cache"
+            artifact_cache_root.mkdir()
+            first_checkout = temp_path / "checkout one"
+            second_checkout = temp_path / "checkout two"
+
+            first = self.run_commit_gate_cache_fixture(
+                first_checkout, artifact_cache_root
+            )
+            second = self.run_commit_gate_cache_fixture(
+                second_checkout, artifact_cache_root
+            )
+
+            first_scratch = (
+                artifact_cache_root
+                / "checkouts"
+                / self.expected_checkout_cache_key(first_checkout)
+                / "swiftpm"
+            )
+            second_scratch = (
+                artifact_cache_root
+                / "checkouts"
+                / self.expected_checkout_cache_key(second_checkout)
+                / "swiftpm"
+            )
+            self.assertEqual(first.returncode, 0, first.stdout)
+            self.assertEqual(second.returncode, 0, second.stdout)
+            self.assertIn(
+                f"commit gate SwiftPM scratch path: {first_scratch}", first.stdout
+            )
+            self.assertIn(
+                f"commit gate SwiftPM scratch path: {second_scratch}", second.stdout
+            )
+            self.assertNotEqual(first_scratch, second_scratch)
+
+            checkout_alias = temp_path / "checkout alias"
+            checkout_alias.symlink_to(first_checkout, target_is_directory=True)
+            through_alias = self.run_commit_gate_cache_fixture(
+                first_checkout,
+                artifact_cache_root,
+                invocation_root=checkout_alias,
+            )
+            self.assertEqual(through_alias.returncode, 0, through_alias.stdout)
+            self.assertIn(
+                f"commit gate SwiftPM scratch path: {first_scratch}",
+                through_alias.stdout,
+            )
+
+            case_alias = first_checkout.with_name(first_checkout.name.upper())
+            if case_alias.exists():
+                through_case_alias = self.run_commit_gate_cache_fixture(
+                    first_checkout,
+                    artifact_cache_root,
+                    invocation_root=case_alias,
+                )
+                self.assertEqual(
+                    through_case_alias.returncode, 0, through_case_alias.stdout
+                )
+                self.assertIn(
+                    f"commit gate SwiftPM scratch path: {first_scratch}",
+                    through_case_alias.stdout,
+                )
+
+    def test_commit_gate_preserves_override_and_falls_back_without_hash_tool(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            artifact_cache_root = temp_path / "artifact cache"
+            artifact_cache_root.mkdir()
+            checkout_root = temp_path / "checkout"
+            scratch_override = temp_path / "explicit SwiftPM scratch"
+
+            explicit = self.run_commit_gate_cache_fixture(
+                checkout_root,
+                artifact_cache_root,
+                scratch_override=scratch_override,
+            )
+            fallback = self.run_commit_gate_cache_fixture(
+                checkout_root,
+                artifact_cache_root,
+                include_standard_path=False,
+            )
+
+            self.assertEqual(explicit.returncode, 0, explicit.stdout)
+            self.assertIn(
+                f"commit gate SwiftPM scratch path: {scratch_override}",
+                explicit.stdout,
+            )
+            self.assertEqual(fallback.returncode, 0, fallback.stdout)
+            self.assertIn(
+                f"commit gate SwiftPM scratch path: {checkout_root.resolve() / '.build'}",
+                fallback.stdout,
+            )
+
+    def test_companion_validation_namespaces_derived_data_and_preserves_overrides(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            artifact_cache_root = temp_path / "artifact cache"
+            artifact_cache_root.mkdir()
+            first_checkout = temp_path / "checkout one"
+            second_checkout = temp_path / "checkout two"
+
+            first = self.run_companion_cache_fixture(
+                first_checkout, artifact_cache_root
+            )
+            second = self.run_companion_cache_fixture(
+                second_checkout, artifact_cache_root
+            )
+            first_root = (
+                artifact_cache_root
+                / "checkouts"
+                / self.expected_checkout_cache_key(first_checkout)
+                / "derived-data"
+                / "companion-build-validation"
+            )
+            second_root = (
+                artifact_cache_root
+                / "checkouts"
+                / self.expected_checkout_cache_key(second_checkout)
+                / "derived-data"
+                / "companion-build-validation"
+            )
+            self.assertEqual(first.returncode, 0, first.stdout)
+            self.assertEqual(second.returncode, 0, second.stdout)
+            self.assertIn(
+                f"companion validation DerivedData root: {first_root}", first.stdout
+            )
+            self.assertIn(
+                f"companion validation DerivedData root: {second_root}", second.stdout
+            )
+            self.assertNotEqual(first_root, second_root)
+
+            checkout_alias = temp_path / "checkout alias"
+            checkout_alias.symlink_to(first_checkout, target_is_directory=True)
+            through_alias = self.run_companion_cache_fixture(
+                first_checkout,
+                artifact_cache_root,
+                invocation_root=checkout_alias,
+            )
+            self.assertEqual(through_alias.returncode, 0, through_alias.stdout)
+            self.assertIn(
+                f"companion validation DerivedData root: {first_root}",
+                through_alias.stdout,
+            )
+
+            case_alias = first_checkout.with_name(first_checkout.name.upper())
+            if case_alias.exists():
+                through_case_alias = self.run_companion_cache_fixture(
+                    first_checkout,
+                    artifact_cache_root,
+                    invocation_root=case_alias,
+                )
+                self.assertEqual(
+                    through_case_alias.returncode, 0, through_case_alias.stdout
+                )
+                self.assertIn(
+                    f"companion validation DerivedData root: {first_root}",
+                    through_case_alias.stdout,
+                )
+
+            fallback = self.run_companion_cache_fixture(
+                first_checkout,
+                artifact_cache_root,
+                working_directory=temp_path,
+                include_standard_path=False,
+            )
+            self.assertEqual(fallback.returncode, 0, fallback.stdout)
+            self.assertIn(
+                "companion validation DerivedData root: "
+                f"{first_checkout.resolve() / '.build/companion-build-validation'}",
+                fallback.stdout,
+            )
+
+            environment_override = temp_path / "explicit DerivedData"
+            explicit = self.run_companion_cache_fixture(
+                first_checkout,
+                artifact_cache_root,
+                derived_data_override=environment_override,
+            )
+            cli_override = temp_path / "CLI DerivedData"
+            cli = self.run_companion_cache_fixture(
+                first_checkout,
+                artifact_cache_root,
+                derived_data_override=environment_override,
+                cli_derived_data_root=cli_override,
+            )
+            self.assertEqual(explicit.returncode, 0, explicit.stdout)
+            self.assertIn(
+                f"companion validation DerivedData root: {environment_override}",
+                explicit.stdout,
+            )
+            self.assertEqual(cli.returncode, 0, cli.stdout)
+            self.assertIn(
+                f"companion validation DerivedData root: {cli_override}", cli.stdout
+            )
+
+    def test_codeql_namespaces_trusted_swiftpm_cache_by_checkout(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            artifact_cache_root = temp_path / "artifact cache"
+            artifact_cache_root.mkdir()
+            checkout_root = temp_path / "checkout"
+            checkout_root.mkdir()
+
+            trusted = self.run_codeql_cache_fixture(
+                checkout_root, artifact_cache_root, trusted_run=True
+            )
+            trusted_scratch = (
+                artifact_cache_root
+                / "checkouts"
+                / self.expected_checkout_cache_key(checkout_root)
+                / "codeql-swiftpm"
+            )
+            self.assertEqual(trusted.returncode, 0, trusted.stdout)
+            self.assertIn(
+                f"CodeQL SwiftPM scratch path: {trusted_scratch}", trusted.stdout
+            )
+
+            untrusted = self.run_codeql_cache_fixture(
+                checkout_root, artifact_cache_root, trusted_run=False
+            )
+            local_scratch = checkout_root.resolve() / ".build"
+            self.assertEqual(untrusted.returncode, 0, untrusted.stdout)
+            self.assertIn(
+                f"CodeQL SwiftPM scratch path: {local_scratch}", untrusted.stdout
+            )
+            self.assertNotIn(str(artifact_cache_root / "checkouts"), untrusted.stdout)
+
+            missing_hash_tool = self.run_codeql_cache_fixture(
+                checkout_root,
+                artifact_cache_root,
+                trusted_run=True,
+                include_standard_path=False,
+            )
+            self.assertEqual(
+                missing_hash_tool.returncode, 0, missing_hash_tool.stdout
+            )
+            self.assertIn(
+                f"CodeQL SwiftPM scratch path: {local_scratch}",
+                missing_hash_tool.stdout,
+            )
+
     def test_companion_build_validation_supports_ios_visionos_watchos_and_tvos_without_signing(self):
         workflow = self.read(".github/workflows/ci.yml")
         script = self.read("scripts/validate-companion-builds.sh")
@@ -905,7 +1331,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("Retrying $platform validation once with isolated DerivedData", script)
         self.assertIn("context-panel-companion-retry.XXXXXX", script)
         self.assertIn("if ((status != 124)); then", script)
-        self.assertIn('| /usr/bin/tee "$log_file"', script)
+        self.assertIn('/usr/bin/tee "$log_file"', script)
         self.assertIn('/usr/bin/tail -n 500 "$log_file"', script)
         self.assertIn('signal_xcodebuild_processes TERM "$process_group"', script)
         self.assertIn('signal_xcodebuild_processes KILL "$process_group"', script)
@@ -1870,6 +2296,76 @@ exit 65
         self.assertIn("derived-data/companion-build-validation", script)
         self.assertIn("derived-data/companion-build-validation", companion_validator)
         self.assertNotIn("quarantine_stale_runtime_bundles", check_function.group("body"))
+
+    def test_runtime_baseline_discovers_legacy_and_namespaced_companion_caches(self):
+        script = self.read("scripts/context-panel-runtime-baseline.sh")
+        root_function = re.search(
+            r"artifact_cache_companion_build_validation_root\(\) \{(?P<body>.*?)\n\}",
+            script,
+            re.S,
+        )
+        self.assertIsNotNone(root_function)
+        assert root_function is not None
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            artifact_cache_root = temp_path / "artifact cache"
+            legacy_root = (
+                artifact_cache_root
+                / "derived-data"
+                / "companion-build-validation"
+            )
+            first_namespaced_root = (
+                artifact_cache_root
+                / "checkouts"
+                / "1111111111111111"
+                / "derived-data"
+                / "companion-build-validation"
+            )
+            second_namespaced_root = (
+                artifact_cache_root
+                / "checkouts"
+                / "2222222222222222"
+                / "derived-data"
+                / "companion-build-validation"
+            )
+            explicit_root = temp_path / "explicit DerivedData"
+            for path in (
+                legacy_root,
+                first_namespaced_root,
+                second_namespaced_root,
+                explicit_root,
+            ):
+                path.mkdir(parents=True)
+
+            shell_script = "\n".join(
+                [
+                    "set -euo pipefail",
+                    f"artifact_cache_root={shlex.quote(str(artifact_cache_root))}",
+                    f"companion_derived_data_root={shlex.quote(str(explicit_root))}",
+                    root_function.group(0),
+                    "artifact_cache_companion_build_validation_root",
+                ]
+            )
+            completed = subprocess.run(
+                ["/bin/bash", "-c", shell_script],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stdout)
+            discovered_roots = set(completed.stdout.splitlines())
+            self.assertTrue(
+                {
+                    str(explicit_root),
+                    str(legacy_root),
+                    str(first_namespaced_root),
+                    str(second_namespaced_root),
+                }.issubset(discovered_roots),
+                completed.stdout,
+            )
 
     def test_runtime_baseline_omits_historical_local_cleanup_paths(self):
         script = self.read("scripts/context-panel-runtime-baseline.sh")

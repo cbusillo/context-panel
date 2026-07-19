@@ -4,6 +4,7 @@ set -euo pipefail
 scheme="ContextPanelCompanion"
 configuration="Debug"
 archive=0
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && /bin/pwd -P)"
 artifact_cache_root="${CONTEXT_PANEL_ARTIFACT_CACHE_ROOT:-}"
 derived_data_root=""
 platforms=()
@@ -15,13 +16,30 @@ artifact_cache_root_is_available() {
 	[[ -d "$artifact_cache_root" || -d "$cache_namespace" ]]
 }
 
+checkout_cache_key() {
+	local digest
+	command -v shasum >/dev/null 2>&1 || return 1
+	digest="$(
+		printf '%s\0' "$repo_root" |
+			shasum -a 256 |
+			awk '{ print substr($1, 1, 16) }'
+	)" || return 1
+	[[ "$digest" =~ ^[0-9a-f]{16}$ ]] || return 1
+	printf '%s' "$digest"
+}
+
 default_derived_data_root() {
+	local cache_key
 	if [[ -n "${CONTEXT_PANEL_COMPANION_DERIVED_DATA_ROOT:-}" ]]; then
 		printf '%s' "$CONTEXT_PANEL_COMPANION_DERIVED_DATA_ROOT"
 	elif [[ -n "$artifact_cache_root" ]] && artifact_cache_root_is_available; then
-		printf '%s' "$artifact_cache_root/derived-data/companion-build-validation"
+		if cache_key="$(checkout_cache_key)"; then
+			printf '%s' "$artifact_cache_root/checkouts/$cache_key/derived-data/companion-build-validation"
+		else
+			printf '%s' "$repo_root/.build/companion-build-validation"
+		fi
 	else
-		printf '%s' ".build/companion-build-validation"
+		printf '%s' "$repo_root/.build/companion-build-validation"
 	fi
 }
 
@@ -50,7 +68,7 @@ Options:
   --archive                   Archive iOS/visionOS/tvOS companion apps instead
                               of building them. Not supported for watchOS.
   --configuration VALUE       Xcode configuration. Default: Debug.
-  --derived-data-root PATH    DerivedData root. Default: artifact cache when mounted,
+  --derived-data-root PATH    DerivedData root. Default: checkout-scoped artifact cache when mounted,
                               otherwise .build/companion-build-validation.
   -h, --help                  Show this help.
 USAGE
@@ -157,7 +175,7 @@ terminate_xcodebuild_job() {
 
 	descendant_pids="$(xcodebuild_descendant_pids "$job_pid")"
 	signal_xcodebuild_processes TERM "$process_group" "$descendant_pids"
-	for attempt in 1 2 3 4 5; do
+	for ((attempt = 0; attempt < 5; attempt++)); do
 		if ! xcodebuild_processes_are_alive "$job_pid" "$process_group" "$descendant_pids"; then
 			wait "$job_pid" 2>/dev/null || true
 			return 0
@@ -168,7 +186,7 @@ terminate_xcodebuild_job() {
 	remaining_descendants="$(xcodebuild_descendant_pids "$job_pid")"
 	descendant_pids="$descendant_pids $remaining_descendants"
 	signal_xcodebuild_processes KILL "$process_group" "$descendant_pids"
-	for attempt in 1 2 3 4 5; do
+	for ((attempt = 0; attempt < 5; attempt++)); do
 		if ! xcodebuild_processes_are_alive "$job_pid" "$process_group" "$descendant_pids"; then
 			wait "$job_pid" 2>/dev/null || true
 			return 0
@@ -184,7 +202,7 @@ wait_for_xcodebuild_exit() {
 	local job_pid="$1"
 	local attempt
 
-	for attempt in 1 2 3 4 5; do
+	for ((attempt = 0; attempt < 5; attempt++)); do
 		if ! /bin/kill -0 "$job_pid" 2>/dev/null; then
 			wait "$job_pid" 2>/dev/null || true
 			return 0
@@ -231,8 +249,8 @@ run_xcodebuild() {
 	set -m
 	(
 		set -o pipefail
-		PATH="$(xcodebuild_system_path)" /usr/bin/xcodebuild "$@" 2>&1 \
-			| /usr/bin/tee "$log_file"
+		PATH="$(xcodebuild_system_path)" /usr/bin/xcodebuild "$@" 2>&1 |
+			/usr/bin/tee "$log_file"
 	) &
 	job_pid=$!
 	process_group="$job_pid"
@@ -333,8 +351,8 @@ validate_archive_contents() {
 			echo "tvOS companion archive is missing embedded Top Shelf extension: $top_shelf_path" >&2
 			exit 1
 		fi
-		if ! /usr/bin/plutil -extract UIRequiredDeviceCapabilities json -o - "$top_shelf_path/Info.plist" 2>/dev/null \
-			| /usr/bin/grep -q '"arm64"'; then
+		if ! /usr/bin/plutil -extract UIRequiredDeviceCapabilities json -o - "$top_shelf_path/Info.plist" 2>/dev/null |
+			/usr/bin/grep -q '"arm64"'; then
 			echo "tvOS Top Shelf extension is missing the required arm64 device capability" >&2
 			exit 1
 		fi

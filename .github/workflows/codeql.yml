@@ -58,7 +58,20 @@ jobs:
               github.event.pull_request.head.repo.full_name == github.repository
             }}
         run: |
+          checkout_root="$(/bin/pwd -P)"
           swift_args=()
+
+          checkout_cache_key() {
+            local digest
+            command -v shasum >/dev/null 2>&1 || return 1
+            digest="$(
+              printf '%s\0' "$checkout_root" |
+                shasum -a 256 |
+                awk '{ print substr($1, 1, 16) }'
+            )" || return 1
+            [[ "$digest" =~ ^[0-9a-f]{16}$ ]] || return 1
+            printf '%s' "$digest"
+          }
 
           if [[ "$TRUSTED_RUN" == "true" && \
             -n "${CONTEXT_PANEL_ARTIFACT_CACHE_ROOT:-}" ]]; then
@@ -72,10 +85,18 @@ jobs:
             -n "${CONTEXT_PANEL_ARTIFACT_CACHE_ROOT:-}" && \
             ( -d "$CONTEXT_PANEL_ARTIFACT_CACHE_ROOT" || \
               -d "$cache_namespace" ) ]]; then
-            swiftpm_scratch_path="$CONTEXT_PANEL_ARTIFACT_CACHE_ROOT/codeql-swiftpm"
-            mkdir -p "$swiftpm_scratch_path"
-            swift_args+=(--scratch-path "$swiftpm_scratch_path")
+            if cache_key="$(checkout_cache_key)"; then
+              swiftpm_scratch_path="$CONTEXT_PANEL_ARTIFACT_CACHE_ROOT/checkouts/$cache_key/codeql-swiftpm"
+            else
+              swiftpm_scratch_path="$checkout_root/.build"
+            fi
+          else
+            swiftpm_scratch_path="$checkout_root/.build"
           fi
+
+          mkdir -p "$swiftpm_scratch_path"
+          swift_args+=(--scratch-path "$swiftpm_scratch_path")
+          echo "CodeQL SwiftPM scratch path: $swiftpm_scratch_path"
 
           swift build --target ContextPanelCore "${swift_args[@]}"
 

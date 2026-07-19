@@ -66,7 +66,13 @@ routine Swift validation and CodeQL. Fork pull requests must stay on an explicit
 GitHub-hosted macOS image so untrusted PR code does not run on the persistent
 self-hosted machine. Persistent SwiftPM and DerivedData cache roots belong in
 runner-local environment configuration, not in tracked workflows or scripts;
-tracked jobs must fall back cleanly when that cache root is unavailable.
+tracked jobs namespace mutable cache content under
+`checkouts/<physical-checkout-path-hash>/` so concurrent checkouts do not share
+build state. Explicit SwiftPM and companion DerivedData path overrides remain
+exact, and tracked jobs fall back to checkout-local build directories when the
+runner cache or path-hashing tool is unavailable. Runtime install/reset cleanup
+continues to inspect both the legacy shared companion DerivedData layout and all
+checkout-scoped layouts.
 
 Release, App Store Connect upload, and companion upload jobs should use explicit
 GitHub-hosted `macos-26` while App Store Connect accepts the Xcode 26 train. The
@@ -437,7 +443,8 @@ Production contains the CloudKit-backed companion snapshot record contract:
 - `payload` as CloudKit bytes/data
 - `schemaVersion`, `documentSchemaVersion`, `snapshotSchemaVersion`, and
   `payloadByteCount` as integer/number fields
-- `snapshotSchemaVersion` marked queryable for transport diagnostics and schema compatibility
+- `snapshotSchemaVersion` marked queryable for transport diagnostics and schema
+  compatibility
 - `generatedAt` and `publishedAt` as date/time fields
 
 Run the offline repo contract check before packaging:
@@ -639,8 +646,9 @@ iPhone/iPad.
 
 Use `companion_platform=tvos` for issue #379 after both tvOS profile secrets are
 present. The signed candidate includes Couch Mode, the dynamic Top Shelf
-extension, and upgrade cleanup for the retired provider badge; App Store submission still requires
-physical Apple TV, screenshot, metadata, privacy, and review evidence.
+extension, and upgrade cleanup for the retired provider badge; App Store
+submission still requires physical Apple TV, screenshot, metadata, privacy, and
+review evidence.
 
 Do not set `testflight_beta_source=macos` when the intent is companion device
 validation; that distributes the Mac App Store build instead of the companion

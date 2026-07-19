@@ -89,6 +89,7 @@ built_app_path="$derived_data_path/Build/Products/Debug/Context Panel.app"
 built_widget_path="$built_app_path/Contents/PlugIns/ContextPanelWidgetExtension.appex"
 built_refresh_agent_path="$built_app_path/Contents/Library/LoginItems/ContextPanelRefreshAgent.app"
 artifact_cache_root="${CONTEXT_PANEL_ARTIFACT_CACHE_ROOT:-}"
+companion_derived_data_root="${CONTEXT_PANEL_COMPANION_DERIVED_DATA_ROOT:-}"
 app_path="/Applications/Context Panel.app"
 widget_path="$app_path/Contents/PlugIns/ContextPanelWidgetExtension.appex"
 refresh_agent_path="$app_path/Contents/Library/LoginItems/ContextPanelRefreshAgent.app"
@@ -372,16 +373,25 @@ local_build_bundles() {
 }
 
 artifact_cache_companion_build_validation_root() {
-	local roots=()
+	local path root roots=()
 	if [[ -n "$artifact_cache_root" ]]; then
 		roots+=("$artifact_cache_root")
 	fi
 	roots+=("/Volumes/Developer-Artifacts/github-actions/cache/cbusillo/context-panel")
-	printf '%s\n' "${roots[@]}" |
-		awk 'NF && !seen[$0]++' |
-		while IFS= read -r root; do
-			printf '%s\n' "$root/derived-data/companion-build-validation"
-		done
+	{
+		if [[ -n "$companion_derived_data_root" ]]; then
+			printf '%s\n' "$companion_derived_data_root"
+		fi
+		printf '%s\n' "${roots[@]}" |
+			awk 'NF && !seen[$0]++' |
+			while IFS= read -r root; do
+				printf '%s\n' "$root/derived-data/companion-build-validation"
+				for path in "$root"/checkouts/*/derived-data/companion-build-validation; do
+					[[ -d "$path" ]] || continue
+					printf '%s\n' "$path"
+				done
+			done
+	} | awk 'NF && !seen[$0]++'
 }
 
 artifact_cache_companion_build_validation_bundles() {
