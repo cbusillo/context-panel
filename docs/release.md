@@ -379,14 +379,18 @@ The companion app profile must authorize:
 - bundle ID `com.shinycomputers.contextpanel`
 - App Group `group.com.shinycomputers.contextpanel`
 - iCloud container `iCloud.com.shinycomputers.contextpanel`
-- iCloud Documents, CloudKit, ubiquity container access, and APNs background notifications
+- Production CloudKit environment
+- iCloud Documents, CloudKit, ubiquity container access, and APNs background
+  notifications
 - the selected platform: iOS for iPhone/iPad, or visionOS/xrOS for visionOS
 
-The companion widget profile must authorize App Group
-`group.com.shinycomputers.contextpanel` and the selected platform for bundle ID
-`com.shinycomputers.contextpanel.widget`. The widget must not require iCloud,
-CloudKit, or APNs entitlements; it reads only the app-group mirror written by the
-companion app.
+The companion widget profile must authorize bundle ID
+`com.shinycomputers.contextpanel.widget`, App Group
+`group.com.shinycomputers.contextpanel`, CloudKit container
+`iCloud.com.shinycomputers.contextpanel`, the Production CloudKit environment,
+and the selected platform. It should not authorize iCloud Documents, ubiquity,
+or APNs. The companion widget timeline reads Production CloudKit directly with
+a bounded deadline and uses the app-group mirror as its last-good fallback.
 
 For iOS companion uploads, the watch app profile must authorize bundle ID
 `com.shinycomputers.contextpanel.watch` and the Context Panel CloudKit container.
@@ -672,8 +676,7 @@ Panel.app`.
    modes build a local Development-CloudKit runtime and refuse to replace the
    signed Production publisher.
 3. Trigger a Mac refresh that publishes the sanitized companion snapshot to
-   CloudKit and updates the companion app-group mirror used by the app and
-   widget runtimes.
+   CloudKit.
 4. Open the app Diagnostics view and confirm `Companion publish` is healthy or,
    if degraded, names the failing store without raw paths or account data.
 5. Install the companion build from TestFlight on the target device. For the
@@ -681,11 +684,12 @@ Panel.app`.
    visionOS lane, release evidence requires Apple Vision Pro after #168
    packaging requirements are satisfied. A visionOS simulator can be used for a
    separate pre-release UI smoke check, but not as TestFlight/device validation.
-6. Launch the companion app and confirm it renders current lanes from the
-   CloudKit-backed companion snapshot rather than setup-only, stale, or no-Mac
-   copy.
-7. Add the companion widget and confirm the small/medium/large widget layouts
-   render current lanes and preserve useful degraded states.
+6. Before launching the companion app, add the companion widget and confirm its
+   small/medium/large layouts render current lanes directly from Production
+   CloudKit rather than setup-only, stale, or no-Mac state.
+7. Launch the companion app and confirm it renders the same current lanes,
+   mirrors the selected snapshot into the App Group, and preserves useful
+   degraded states in both app and widget.
    For watchOS, add the complication before launching the Watch app and confirm
    it reads the Production CloudKit snapshot directly. Then launch the Watch app
    and confirm its explicit timeline reload preserves the same answer. Repeat
@@ -712,7 +716,7 @@ Panel.app`.
 
 If the companion app or widget is stale but diagnostics show healthy Mac publish
 and readable CloudKit state, investigate the companion receive/mirror/reload path
-under #274 before treating provider refresh as the cause.
+under #456 before treating provider refresh as the cause.
 
 ## App Store Review Submission
 
@@ -860,11 +864,13 @@ Group; App Store profiles may express that authorization as either the exact app
 group or a same-team wildcard. Companion iOS and visionOS uploads require the
 companion app profile to authorize the Context Panel iCloud container,
 iCloud Documents, CloudKit, ubiquity container access, and production APNs. The
-companion widget profile should authorize only the App Group and selected
-platform because the companion widget reads the companion app's app-group
-mirror. The embedded watch app and watch complication profiles must both
-authorize the Context Panel CloudKit container; neither Watch target should
-carry an App Group entitlement.
+companion widget profile must authorize the App Group, selected platform,
+Context Panel CloudKit container, and Production CloudKit environment because
+the widget reads CloudKit directly and keeps the app-group mirror as fallback.
+It should not carry iCloud Documents, ubiquity, or APNs entitlements. The
+embedded watch app and watch complication profiles must both authorize the
+Context Panel CloudKit container; neither Watch target should carry an App Group
+entitlement.
 
 ## Build The Native App And Widget
 

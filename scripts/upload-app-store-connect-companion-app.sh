@@ -627,6 +627,17 @@ assert_signed_entitlement_array_value() {
 	fi
 }
 
+assert_signed_entitlement_array_value_absent() {
+	local entitlements="$1"
+	local label="$2"
+	local key="$3"
+	local value="$4"
+	if plist_array_contains_value "$entitlements" "$key" "$value"; then
+		echo "$label signed entitlements unexpectedly contain $key value: $value" >&2
+		exit 1
+	fi
+}
+
 assert_signed_entitlement_value() {
 	local entitlements="$1"
 	local label="$2"
@@ -685,6 +696,34 @@ assert_ios_watch_archive_ready() {
 		'com.apple.developer.icloud-services' 'CloudKit'
 	assert_signed_entitlement_value "$watch_widget_entitlements" "companion Watch widget" \
 		'com.apple.developer.icloud-container-environment' 'Production'
+	rm -rf "$entitlements_dir"
+}
+
+assert_companion_widget_archive_ready() {
+	local widget_path="$archive_path/Products/Applications/Context Panel.app/PlugIns/ContextPanelCompanionWidgetExtension.appex"
+	local entitlements_dir
+	local widget_entitlements
+	if [[ ! -d "$widget_path" ]]; then
+		echo "companion archive is missing the embedded widget extension: $widget_path" >&2
+		exit 1
+	fi
+	entitlements_dir="$(mktemp -d)"
+	widget_entitlements="$entitlements_dir/companion-widget.plist"
+	extract_signed_entitlements "$widget_path" "companion widget" "$widget_entitlements"
+	assert_signed_entitlement_array_value "$widget_entitlements" "companion widget" \
+		'com.apple.security.application-groups' 'group.com.shinycomputers.contextpanel'
+	assert_signed_entitlement_array_value "$widget_entitlements" "companion widget" \
+		'com.apple.developer.icloud-container-identifiers' 'iCloud.com.shinycomputers.contextpanel'
+	assert_signed_entitlement_array_value "$widget_entitlements" "companion widget" \
+		'com.apple.developer.icloud-services' 'CloudKit'
+	assert_signed_entitlement_array_value_absent "$widget_entitlements" "companion widget" \
+		'com.apple.developer.icloud-services' 'CloudDocuments'
+	assert_signed_entitlement_value "$widget_entitlements" "companion widget" \
+		'com.apple.developer.icloud-container-environment' 'Production'
+	assert_signed_entitlement_absent "$widget_entitlements" "companion widget" \
+		'com.apple.developer.ubiquity-container-identifiers'
+	assert_signed_entitlement_absent "$widget_entitlements" "companion widget" \
+		'aps-environment'
 	rm -rf "$entitlements_dir"
 }
 
@@ -763,6 +802,8 @@ assert_profile_platform_any "$app_profile" "companion app" "${profile_platforms[
 if [[ "$platform" != "tvos" ]]; then
 	assert_profile_bundle_id "$widget_profile" "companion widget" "com.shinycomputers.contextpanel.widget"
 	assert_profile_platform_any "$widget_profile" "companion widget" "${profile_platforms[@]}"
+	assert_profile_icloud_service "$widget_profile" "companion widget" "CloudKit"
+	assert_profile_icloud_environment "$widget_profile" "companion widget" "Production"
 fi
 if [[ "$platform" == "ios" ]]; then
 	assert_profile_bundle_id "$watch_profile" "companion watch" "com.shinycomputers.contextpanel.watch"
@@ -779,6 +820,7 @@ if [[ "$platform" == "tvos" ]]; then
 	assert_profile_platform_any "$tv_top_shelf_profile" "tvOS Top Shelf" tvOS
 fi
 assert_profile_icloud_service "$app_profile" "companion app" "CloudKit"
+assert_profile_icloud_environment "$app_profile" "companion app" "Production"
 assert_profile_push_notifications "$app_profile" "companion app" "production"
 if [[ "$platform" == "tvos" ]]; then
 	assert_profile_app_group "$app_profile" "tvOS app"
@@ -891,8 +933,11 @@ rm -rf "$archive_path" "$derived_data_path" "$export_path"
 run_xcodebuild "${archive_args[@]}" archive
 if [[ "$platform" == "tvos" ]]; then
 	assert_tvos_archive_ready
-elif [[ "$platform" == "ios" ]]; then
-	assert_ios_watch_archive_ready
+else
+	assert_companion_widget_archive_ready
+	if [[ "$platform" == "ios" ]]; then
+		assert_ios_watch_archive_ready
+	fi
 fi
 
 run_xcodebuild \

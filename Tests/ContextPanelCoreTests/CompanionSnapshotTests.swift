@@ -1612,6 +1612,330 @@ import Testing
     #expect(CompanionSyncStore(documentURL: localURL).load().document == nil)
 }
 
+@Test func companionWidgetTimelineLoadsFreshRemoteWhenMirrorIsMissing() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 4_334)
+    let localURL = root.appending(path: "local-companion.json")
+    let remoteDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    )
+    let remoteStore = companionRemoteStore { _ in
+        CompanionRemoteSyncLoadResult(
+            result: CompanionSyncLoadResult(document: remoteDocument, status: .healthy),
+            outcome: CompanionRemoteSyncOutcome(succeeded: true)
+        )
+    }
+
+    let result = await CompanionSyncLoader.loadWidgetTimeline(
+        localMirrorURL: localURL,
+        remoteStore: remoteStore,
+        timeout: .seconds(1),
+        now: now
+    )
+
+    #expect(result.document == remoteDocument)
+    #expect(result.transportMetadata?.source == .cloudKit)
+    #expect(result.transportMetadata?.mirroredAt == now)
+    #expect(CompanionSyncStore(documentURL: localURL).load().document == remoteDocument)
+}
+
+@Test func companionWidgetTimelineReplacesStaleMirrorWithFreshRemote() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 4_335)
+    let localURL = root.appending(path: "local-companion.json")
+    let staleGeneratedAt = now.addingTimeInterval(-SnapshotFreshness.companionProviderMaximumAge - 60)
+    let staleDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: staleGeneratedAt),
+        publishedAt: staleGeneratedAt
+    )
+    let remoteDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    )
+    try CompanionSyncStore(documentURL: localURL).save(staleDocument)
+    let remoteStore = companionRemoteStore { _ in
+        CompanionRemoteSyncLoadResult(
+            result: CompanionSyncLoadResult(document: remoteDocument, status: .healthy),
+            outcome: CompanionRemoteSyncOutcome(succeeded: true)
+        )
+    }
+
+    let result = await CompanionSyncLoader.loadWidgetTimeline(
+        localMirrorURL: localURL,
+        remoteStore: remoteStore,
+        timeout: .seconds(1),
+        now: now
+    )
+
+    #expect(result.document == remoteDocument)
+    #expect(result.status != .stale)
+    #expect(CompanionSyncStore(documentURL: localURL).load().document == remoteDocument)
+}
+
+@Test func companionWidgetTimelineFallsBackToSavedDataWhenCloudKitIsUnavailable() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 4_336)
+    let localURL = root.appending(path: "local-companion.json")
+    let savedDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    )
+    try CompanionSyncStore(documentURL: localURL).save(savedDocument)
+    let remoteStore = companionRemoteStore { _ in
+        CompanionRemoteSyncLoadResult(
+            result: CompanionSyncLoadResult(
+                document: nil,
+                status: .failure,
+                errorMessage: "CloudKit is unavailable."
+            ),
+            outcome: CompanionRemoteSyncOutcome(
+                isAvailable: false,
+                succeeded: false,
+                errorMessage: "CloudKit is unavailable."
+            )
+        )
+    }
+
+    let result = await CompanionSyncLoader.loadWidgetTimeline(
+        localMirrorURL: localURL,
+        remoteStore: remoteStore,
+        timeout: .seconds(1),
+        now: now
+    )
+
+    #expect(result.document == savedDocument)
+    #expect(result.status != .failure)
+    #expect(result.errorMessage == "CloudKit is unavailable.")
+    #expect(result.transportStatuses == [
+        CompanionSyncTransportStatus(
+            source: .cloudKit,
+            isAvailable: false,
+            succeeded: false,
+            loadedDocument: false,
+            errorMessage: "CloudKit is unavailable."
+        ),
+    ])
+}
+
+@Test func companionWidgetTimelineClearsSavedDataWhenCloudKitRecordIsMissing() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 4_337)
+    let localURL = root.appending(path: "local-companion.json")
+    let savedDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    )
+    try CompanionSyncStore(documentURL: localURL).save(savedDocument)
+    let remoteStore = companionRemoteStore { _ in
+        CompanionRemoteSyncLoadResult(
+            result: CompanionSyncLoadResult(document: nil, status: .unknown),
+            outcome: CompanionRemoteSyncOutcome(
+                succeeded: true,
+                missingRecord: true
+            )
+        )
+    }
+
+    let result = await CompanionSyncLoader.loadWidgetTimeline(
+        localMirrorURL: localURL,
+        remoteStore: remoteStore,
+        timeout: .seconds(1),
+        now: now
+    )
+
+    #expect(result.document == nil)
+    #expect(result.status == .unknown)
+    #expect(result.transportStatuses.first?.missingRecord == true)
+    #expect(CompanionSyncStore(documentURL: localURL).load().document == nil)
+}
+
+@Test func companionWidgetTimelineDoesNotClearMirrorWhenMissingRecordLoadFails() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 4_338)
+    let localURL = root.appending(path: "local-companion.json")
+    let savedDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    )
+    try CompanionSyncStore(documentURL: localURL).save(savedDocument)
+    let remoteStore = companionRemoteStore { _ in
+        CompanionRemoteSyncLoadResult(
+            result: CompanionSyncLoadResult(
+                document: nil,
+                status: .failure,
+                errorMessage: "CloudKit load failed."
+            ),
+            outcome: CompanionRemoteSyncOutcome(
+                succeeded: false,
+                missingRecord: true,
+                errorMessage: "CloudKit load failed."
+            )
+        )
+    }
+
+    let result = await CompanionSyncLoader.loadWidgetTimeline(
+        localMirrorURL: localURL,
+        remoteStore: remoteStore,
+        timeout: .seconds(1),
+        now: now
+    )
+
+    #expect(result.document == savedDocument)
+    #expect(result.errorMessage == "CloudKit load failed.")
+    #expect(result.transportStatuses.first?.missingRecord == true)
+    #expect(CompanionSyncStore(documentURL: localURL).load().document == savedDocument)
+}
+
+@Test func companionWidgetTimelineKeepsMirrorWrittenWhileMissingRecordLoads() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 4_339)
+    let localURL = root.appending(path: "local-companion.json")
+    let localStore = CompanionSyncStore(documentURL: localURL)
+    let originalDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now.addingTimeInterval(-60)),
+        publishedAt: now.addingTimeInterval(-60)
+    )
+    let concurrentDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    )
+    try localStore.save(originalDocument)
+    let remoteStore = companionRemoteStore { _ in
+        _ = localStore.saveResult(concurrentDocument)
+        return CompanionRemoteSyncLoadResult(
+            result: CompanionSyncLoadResult(document: nil, status: .unknown),
+            outcome: CompanionRemoteSyncOutcome(
+                succeeded: true,
+                missingRecord: true
+            )
+        )
+    }
+
+    let result = await CompanionSyncLoader.loadWidgetTimeline(
+        localMirrorURL: localURL,
+        remoteStore: remoteStore,
+        timeout: .seconds(1),
+        now: now
+    )
+
+    #expect(result.document == concurrentDocument)
+    #expect(result.transportStatuses.first?.missingRecord == true)
+    #expect(localStore.load().document == concurrentDocument)
+}
+
+@Test func companionWidgetTimelineKeepsFirstMirrorWrittenWhileMissingRecordLoads() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 4_340)
+    let localURL = root.appending(path: "local-companion.json")
+    let localStore = CompanionSyncStore(documentURL: localURL)
+    let concurrentDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    )
+    let remoteStore = companionRemoteStore { _ in
+        _ = localStore.saveResult(concurrentDocument)
+        return CompanionRemoteSyncLoadResult(
+            result: CompanionSyncLoadResult(document: nil, status: .unknown),
+            outcome: CompanionRemoteSyncOutcome(
+                succeeded: true,
+                missingRecord: true
+            )
+        )
+    }
+
+    let result = await CompanionSyncLoader.loadWidgetTimeline(
+        localMirrorURL: localURL,
+        remoteStore: remoteStore,
+        timeout: .seconds(1),
+        now: now
+    )
+
+    #expect(result.document == concurrentDocument)
+    #expect(result.transportStatuses.first?.missingRecord == true)
+    #expect(localStore.load().document == concurrentDocument)
+}
+
+@Test func companionWidgetTimelinePreservesFutureSchemaMirrorWrittenDuringMissingRecordLoad() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 4_341)
+    let localURL = root.appending(path: "local-companion.json")
+    let concurrentDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    )
+    let encoded = try JSONEncoder.contextPanelCompanionEncoder.encode(concurrentDocument)
+    var futureSchemaJSON = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    futureSchemaJSON["schemaVersion"] = CompanionSyncDocument.schemaVersion + 1
+    let futureSchemaData = try JSONSerialization.data(withJSONObject: futureSchemaJSON)
+    let remoteStore = companionRemoteStore { _ in
+        try? futureSchemaData.write(to: localURL, options: .atomic)
+        return CompanionRemoteSyncLoadResult(
+            result: CompanionSyncLoadResult(document: nil, status: .unknown),
+            outcome: CompanionRemoteSyncOutcome(
+                succeeded: true,
+                missingRecord: true
+            )
+        )
+    }
+
+    let result = await CompanionSyncLoader.loadWidgetTimeline(
+        localMirrorURL: localURL,
+        remoteStore: remoteStore,
+        timeout: .seconds(1),
+        now: now
+    )
+
+    #expect(result.document == nil)
+    #expect(result.status == .failure)
+    #expect(result.transportStatuses.first?.missingRecord == true)
+    #expect(FileManager.default.fileExists(atPath: localURL.path))
+    let preservedJSON = try #require(
+        JSONSerialization.jsonObject(with: Data(contentsOf: localURL)) as? [String: Any]
+    )
+    #expect(preservedJSON["schemaVersion"] as? Int == CompanionSyncDocument.schemaVersion + 1)
+}
+
+@Test func companionWidgetTimelineBoundsRemoteLoadAndFallsBackToSavedData() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 4_342)
+    let localURL = root.appending(path: "local-companion.json")
+    let savedDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    )
+    try CompanionSyncStore(documentURL: localURL).save(savedDocument)
+    let remoteStore = companionRemoteStore { _ in
+        try? await Task.sleep(for: .seconds(30))
+        return CompanionRemoteSyncLoadResult(
+            result: CompanionSyncLoadResult(document: nil, status: .unknown),
+            outcome: CompanionRemoteSyncOutcome(succeeded: true)
+        )
+    }
+    let clock = ContinuousClock()
+    let startedAt = clock.now
+
+    let result = await CompanionSyncLoader.loadWidgetTimeline(
+        localMirrorURL: localURL,
+        remoteStore: remoteStore,
+        timeout: .milliseconds(25),
+        now: now
+    )
+
+    #expect(clock.now - startedAt < .seconds(1))
+    #expect(result.document == savedDocument)
+    #expect(result.errorMessage == "Context Panel widget timed out while refreshing usage.")
+}
+
 @Test func companionLoaderMirrorsFreshRemoteCloudKitDocument() throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -2093,6 +2417,15 @@ private func companionUsageLimit(status: UsageStatus, accountID: String) -> Usag
         used: status == .limited ? 100 : 90,
         limit: 100,
         statusOverride: status
+    )
+}
+
+private func companionRemoteStore(
+    loadDocument: @escaping @Sendable (Date) async -> CompanionRemoteSyncLoadResult
+) -> CompanionRemoteSyncStore {
+    CompanionRemoteSyncStore(
+        saveDocument: { _ in CompanionRemoteSyncOutcome(succeeded: true) },
+        loadDocument: loadDocument
     )
 }
 

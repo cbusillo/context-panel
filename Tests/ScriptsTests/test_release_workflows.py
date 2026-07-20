@@ -1981,7 +1981,7 @@ exit 65
         self.assertNotIn("visionOS companion packaging is blocked", result.stdout)
         self.assertNotIn("no visionOS layered app icon is present", result.stdout)
 
-    def test_companion_upload_preflights_cloudkit_app_and_watch_widget_profiles(self):
+    def test_companion_upload_preflights_cloudkit_app_widget_and_watch_profiles(self):
         script = self.read("scripts/upload-app-store-connect-companion-app.sh")
 
         self.assertIn("assert_profile_icloud_service()", script)
@@ -1990,6 +1990,10 @@ exit 65
         self.assertIn("assert_profile_push_notifications()", script)
         self.assertIn("assert_profile_icloud_service \"$app_profile\" \"companion app\" \"CloudDocuments\"", script)
         self.assertIn("assert_profile_icloud_service \"$app_profile\" \"companion app\" \"CloudKit\"", script)
+        self.assertIn(
+            "assert_profile_icloud_environment \"$app_profile\" \"companion app\" \"Production\"",
+            script,
+        )
         self.assertIn("assert_profile_ubiquity_container \"$app_profile\" \"companion app\"", script)
         self.assertIn("assert_profile_push_notifications \"$app_profile\" \"companion app\" \"production\"", script)
         self.assertIn("--watch-profile PATH", script)
@@ -2038,15 +2042,24 @@ exit 65
         )
         self.assertIn("<key>com.shinycomputers.contextpanel.watch</key>", script)
         self.assertIn("<key>com.shinycomputers.contextpanel.watch.widget</key>", script)
-        self.assertNotIn("assert_profile_icloud_service \"$widget_profile\"", script)
+        self.assertIn(
+            "assert_profile_icloud_service \"$widget_profile\" \"companion widget\" \"CloudKit\"",
+            script,
+        )
+        self.assertIn(
+            "assert_profile_icloud_environment \"$widget_profile\" \"companion widget\" \"Production\"",
+            script,
+        )
         self.assertNotIn("assert_profile_ubiquity_container \"$widget_profile\"", script)
         self.assertNotIn("assert_profile_push_notifications \"$widget_profile\"", script)
 
-    def test_companion_upload_validates_signed_watch_archive_entitlements_before_export(self):
+    def test_companion_upload_validates_signed_widget_and_watch_entitlements_before_export(self):
         script = self.read("scripts/upload-app-store-connect-companion-app.sh")
 
+        self.assertIn("assert_companion_widget_archive_ready()", script)
         self.assertIn("assert_ios_watch_archive_ready()", script)
         self.assertIn("/usr/bin/codesign -d --entitlements - --xml", script)
+        self.assertIn("assert_signed_entitlement_array_value_absent()", script)
         self.assertIn("assert_signed_entitlement_value()", script)
         self.assertNotIn("assert_signed_app_group_exact", script)
         self.assertNotIn("group.com.shinycomputers.contextpanel.watch", script)
@@ -2060,22 +2073,28 @@ exit 65
         )
         self.assertIn("'com.apple.developer.icloud-services' 'CloudKit'", script)
         self.assertIn(
+            "'com.apple.developer.icloud-services' 'CloudDocuments'",
+            script,
+        )
+        self.assertIn(
             "'com.apple.developer.icloud-container-identifiers' 'iCloud.com.shinycomputers.contextpanel'",
             script,
         )
         self.assertEqual(
             script.count("'com.apple.developer.icloud-container-identifiers' 'iCloud.com.shinycomputers.contextpanel'"),
-            2,
+            3,
         )
         self.assertEqual(
             script.count("'com.apple.developer.icloud-container-environment' 'Production'"),
-            2,
+            3,
         )
         archive_index = script.index('run_xcodebuild "${archive_args[@]}" archive')
-        validation_index = script.index("\tassert_ios_watch_archive_ready\n", archive_index)
-        export_index = script.index("\t-exportArchive", validation_index)
-        self.assertLess(archive_index, validation_index)
-        self.assertLess(validation_index, export_index)
+        widget_validation_index = script.index("\tassert_companion_widget_archive_ready\n", archive_index)
+        watch_validation_index = script.index("\t\tassert_ios_watch_archive_ready\n", widget_validation_index)
+        export_index = script.index("\t-exportArchive", watch_validation_index)
+        self.assertLess(archive_index, widget_validation_index)
+        self.assertLess(widget_validation_index, watch_validation_index)
+        self.assertLess(watch_validation_index, export_index)
 
     def test_release_docs_describe_cloudkit_companion_testflight_validation(self):
         release_docs = self.read("docs/release.md")
@@ -2089,13 +2108,15 @@ exit 65
         self.assertIn("CloudKit-backed companion snapshot", release_docs)
         self.assertIn("check --require-production-runtime", release_docs)
         self.assertIn("run that as separate `Ship` dispatches", release_docs)
+        self.assertIn("companion widget timeline reads Production CloudKit directly", release_docs)
+        self.assertIn("Production CloudKit environment", release_docs)
+        self.assertIn("Before launching the companion app", release_docs)
         self.assertIn("watch complication reads Production CloudKit directly", release_docs)
         self.assertIn("`COMPANION_APP_STORE_TV_PROVISIONING_PROFILE_BASE64`", release_docs)
         self.assertIn("`platform=TV_OS` for tvOS builds", release_docs)
         self.assertIn("`platform: TV_OS`", release_docs)
         self.assertNotIn("issue #174", release_docs)
         self.assertNotIn("Mac-published iCloud companion document", release_docs)
-        self.assertNotIn("companion app and widget profiles to authorize the Context Panel iCloud", release_docs)
         self.assertNotIn("read-only companion surfaces can sync fresh snapshots", release_docs)
         self.assertNotIn("runtime-baseline.sh install --launch` or", release_docs)
         self.assertNotIn("--version 1.0.32", release_docs)

@@ -203,8 +203,15 @@ projection or a stricter descendant, not `StoredUsageSnapshot`.
 
 CloudKit is the remote companion transport. Companion apps load the
 Mac-published CloudKit record when available and mirror the sanitized companion
-document into their local App Group store for app launch and WidgetKit timeline
-reads on iPhone, iPad, and visionOS. The legacy iCloud Drive companion document
+document into their local App Group store. Companion WidgetKit timelines also
+read the CloudKit record directly, bounded by a five-second deadline, select the
+freshest remote or local document, and preserve the selected remote document in
+the App Group mirror. This keeps a cold widget correct without requiring a
+foreground companion-app launch; app push and foreground hydration remain
+optimizations. Snapshot previews and CloudKit failures use the existing local
+mirror as the last-good fallback. An authoritative missing-record response
+conditionally removes only the mirror observed before the remote load, so a
+concurrent newer mirror is preserved. The legacy iCloud Drive companion document
 is no longer part of the default companion runtime load path; recovery should
 come from a fresh Mac publish to CloudKit or the existing local app-group mirror.
 CloudKit transport clients retain their `CKContainer` for the full client

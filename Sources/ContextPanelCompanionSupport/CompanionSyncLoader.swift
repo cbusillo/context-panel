@@ -28,6 +28,67 @@ public enum CompanionSyncLoader {
         )
     }
 
+    public static func loadWidgetTimeline(
+        remoteStore: CompanionRemoteSyncStore?,
+        timeout: Duration = .seconds(5),
+        now: Date = Date()
+    ) async -> CompanionSyncLoadResult {
+        await loadWidgetTimeline(
+            localMirrorURL: ContextPanelLocations.companionAppGroupSyncDocumentURL(),
+            remoteStore: remoteStore,
+            timeout: timeout,
+            now: now
+        )
+    }
+
+    static func loadWidgetTimeline(
+        localMirrorURL: URL?,
+        remoteStore: CompanionRemoteSyncStore?,
+        timeout: Duration,
+        now: Date
+    ) async -> CompanionSyncLoadResult {
+        guard let remoteStore else {
+            return loadWidgetMirror(localMirrorURL: localMirrorURL, now: now)
+        }
+
+        let localAtStart = loadWidgetMirror(localMirrorURL: localMirrorURL, now: now)
+        let remoteLoad = await CompanionAsyncDeadline.value(timeout: timeout) {
+            await remoteStore.load(now: now)
+        } ?? timedOutRemoteLoad()
+        if remoteLoad.outcome.succeeded,
+           remoteLoad.outcome.missingRecord,
+           remoteLoad.result.document == nil,
+           remoteLoad.result.status == .unknown,
+           remoteLoad.result.errorMessage == nil {
+            return removeMissingWidgetMirror(
+                localMirrorURL: localMirrorURL,
+                expectedDocument: localAtStart.document,
+                remoteLoad: remoteLoad,
+                now: now
+            )
+        }
+        let result = load(
+            localMirrorURL: localMirrorURL,
+            remoteLoad: remoteLoad,
+            mirrorLoadedDocument: remoteLoad.result.document != nil,
+            diagnosticsStore: nil,
+            now: now
+        )
+        guard !remoteLoad.outcome.succeeded else {
+            return result
+        }
+        return CompanionSyncLoadResult(
+            document: result.document,
+            status: result.document == nil ? .failure : result.status,
+            errorMessage: result.errorMessage
+                ?? remoteLoad.result.errorMessage
+                ?? remoteLoad.outcome.errorMessage
+                ?? "Context Panel widget could not refresh usage.",
+            transportMetadata: result.transportMetadata,
+            transportStatuses: result.transportStatuses
+        )
+    }
+
     static func load(
         localMirrorURL: URL?,
         remoteLoad: CompanionRemoteSyncLoadResult? = nil,
@@ -254,6 +315,59 @@ public enum CompanionSyncLoader {
             return "Context Panel iOS app group mirror could not be updated."
         }
         return "Context Panel iOS app group mirror could not be updated: \(failure.errorMessage)"
+    }
+
+    private static func timedOutRemoteLoad() -> CompanionRemoteSyncLoadResult {
+        let message = "Context Panel widget timed out while refreshing usage."
+        return CompanionRemoteSyncLoadResult(
+            result: CompanionSyncLoadResult(
+                document: nil,
+                status: .failure,
+                errorMessage: message
+            ),
+            outcome: CompanionRemoteSyncOutcome(
+                succeeded: false,
+                errorMessage: message
+            )
+        )
+    }
+
+    private static func removeMissingWidgetMirror(
+        localMirrorURL: URL?,
+        expectedDocument: CompanionSyncDocument?,
+        remoteLoad: CompanionRemoteSyncLoadResult,
+        now: Date
+    ) -> CompanionSyncLoadResult {
+        let transportStatuses = transportStatuses(remoteLoad: remoteLoad)
+        guard let localMirrorURL else {
+            return CompanionSyncLoadResult(
+                document: nil,
+                status: .failure,
+                errorMessage: "Context Panel iOS app group is unavailable.",
+                transportStatuses: transportStatuses
+            )
+        }
+
+        let policy = SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.companionProviderMaximumAge)
+        let localStore = CompanionSyncStore(documentURL: localMirrorURL)
+        switch localStore.removeIfCurrent(expectedDocument, policy: policy, now: now) {
+        case .removed:
+            return CompanionSyncLoadResult(
+                document: nil,
+                status: remoteLoad.result.status,
+                errorMessage: remoteLoad.result.errorMessage,
+                transportStatuses: transportStatuses
+            )
+        case let .keptCurrent(current):
+            return withTransportStatuses(current, transportStatuses)
+        case let .failed(errorMessage):
+            return CompanionSyncLoadResult(
+                document: nil,
+                status: .failure,
+                errorMessage: errorMessage,
+                transportStatuses: transportStatuses
+            )
+        }
     }
 
     private static func shouldKeepLocalMirror(
