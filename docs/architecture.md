@@ -176,6 +176,14 @@ provider checks DRY across app-initiated and background refreshes. A simple
 file lock in the App Group snapshot directory prevents the app and agent from
 writing overlapping refresh results.
 
+The app treats the saved background-refresh preference and the live
+`SMAppService` registration status as separate state. If an enabled login item
+does not launch after a grace period, the app performs one unregister operation
+and then uses bounded registration retries. It writes build repair markers only
+after the service reports `enabled`, stops immediately when the user disables
+background refresh, and surfaces approval, missing-helper, or exhausted-retry
+diagnostics in Settings instead of reporting a healthy background schedule.
+
 The WidgetKit implementation uses a `WidgetSnapshot` projection from the stored
 snapshot. That projection owns setup-needed, stale, failure, provider-summary,
 and most-constrained row selection. `ContextPanelWidgetUI` renders the shared

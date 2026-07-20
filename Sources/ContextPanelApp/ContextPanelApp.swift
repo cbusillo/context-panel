@@ -2,6 +2,7 @@ import ContextPanelCore
 import ContextPanelCloudKitSync
 import ContextPanelSettingsUI
 import AppKit
+import Combine
 import os
 import ServiceManagement
 import SwiftUI
@@ -12,133 +13,6 @@ private let contextPanelLogger = Logger(subsystem: "com.shinycomputers.contextpa
 
 private func reloadContextPanelWidgetTimeline() {
     WidgetCenter.shared.reloadTimelines(ofKind: ContextPanelWidgetIdentity.kind)
-}
-
-private enum RefreshAgentRegistration {
-    private static let reconciledBuildKey = "ContextPanelRefreshAgentReconciledBuild"
-    private static let repairedBuildKey = "ContextPanelRefreshAgentRepairedBuild"
-    private static let repairGraceSeconds: UInt64 = 8
-    @MainActor private static var pendingRepairTask: Task<Void, Never>?
-
-    static func reconcile(settings: BackgroundRefreshSettings) throws {
-        let service = SMAppService.loginItem(identifier: ContextPanelLocations.refreshAgentBundleID)
-        if settings.isEnabled {
-            try register(service: service)
-        } else {
-            try unregister(service: service)
-        }
-    }
-
-    @MainActor
-    static func repairIfEnabledAgentDoesNotLaunch(settingsStore: BackgroundRefreshSettingsStore) {
-        pendingRepairTask?.cancel()
-        pendingRepairTask = nil
-        guard settingsStore.load().isEnabled else { return }
-        let currentBuild = currentBuild()
-        guard UserDefaults.standard.string(forKey: repairedBuildKey) != currentBuild else { return }
-
-        contextPanelLogger.notice("refresh agent repair scheduled build=\(currentBuild, privacy: .public)")
-        pendingRepairTask = Task { @MainActor in
-            defer { pendingRepairTask = nil }
-            try? await Task.sleep(nanoseconds: repairGraceSeconds * 1_000_000_000)
-            guard !Task.isCancelled else { return }
-            guard settingsStore.load().isEnabled else { return }
-            let service = SMAppService.loginItem(identifier: ContextPanelLocations.refreshAgentBundleID)
-            guard service.status == .enabled else {
-                contextPanelLogger.notice(
-                    "refresh agent repair skipped status=\(String(describing: service.status), privacy: .public) build=\(currentBuild, privacy: .public)"
-                )
-                return
-            }
-            guard !isRefreshAgentRunning() else {
-                let lastReconciledBuild = UserDefaults.standard.string(forKey: reconciledBuildKey)
-                contextPanelLogger.notice(
-                    "refresh agent repair skipped because agent is running build=\(currentBuild, privacy: .public) reconciled=\(lastReconciledBuild ?? "none", privacy: .public)"
-                )
-                if lastReconciledBuild == currentBuild {
-                    UserDefaults.standard.set(currentBuild, forKey: repairedBuildKey)
-                }
-                return
-            }
-
-            contextPanelLogger.notice("refresh agent enabled but not running; repairing registration build=\(currentBuild, privacy: .public)")
-            do {
-                try await service.unregister()
-                guard settingsStore.load().isEnabled else {
-                    contextPanelLogger.notice("refresh agent repair stopped after unregister because background refresh was disabled build=\(currentBuild, privacy: .public)")
-                    return
-                }
-                try service.register()
-                UserDefaults.standard.set(currentBuild, forKey: reconciledBuildKey)
-                UserDefaults.standard.set(currentBuild, forKey: repairedBuildKey)
-                contextPanelLogger.notice("refresh agent registration repair succeeded status=\(String(describing: service.status), privacy: .public) build=\(currentBuild, privacy: .public)")
-            } catch {
-                UserDefaults.standard.removeObject(forKey: repairedBuildKey)
-                contextPanelLogger.error("refresh agent registration repair failed error=\(ConnectorRedactor.safeErrorDescription(error), privacy: .private)")
-            }
-        }
-    }
-
-    @MainActor
-    static func cancelPendingRepair() {
-        pendingRepairTask?.cancel()
-        pendingRepairTask = nil
-    }
-
-    private static func register(service: SMAppService) throws {
-        let currentBuild = currentBuild()
-        let lastReconciledBuild = UserDefaults.standard.string(forKey: reconciledBuildKey)
-        var shouldMarkReconciled = lastReconciledBuild == currentBuild
-        if lastReconciledBuild != currentBuild, service.status == .enabled {
-            contextPanelLogger.notice(
-                "refresh agent registration build changed previous=\(lastReconciledBuild ?? "none", privacy: .public) current=\(currentBuild, privacy: .public); refreshing enabled login item"
-            )
-            do {
-                try service.register()
-                shouldMarkReconciled = true
-            } catch {
-                contextPanelLogger.error("refresh agent non-destructive registration refresh failed error=\(ConnectorRedactor.safeErrorDescription(error), privacy: .private)")
-            }
-        }
-
-        if service.status != .enabled {
-            try service.register()
-            shouldMarkReconciled = true
-        }
-        if shouldMarkReconciled {
-            UserDefaults.standard.set(currentBuild, forKey: reconciledBuildKey)
-        } else {
-            contextPanelLogger.notice("refresh agent registration left unreconciled status=\(String(describing: service.status), privacy: .public) build=\(currentBuild, privacy: .public)")
-        }
-        contextPanelLogger.notice("refresh agent registration status=\(String(describing: service.status), privacy: .public) build=\(currentBuild, privacy: .public)")
-    }
-
-    private static func unregister(service: SMAppService) throws {
-        if service.status != .notRegistered {
-            try service.unregister()
-        }
-        UserDefaults.standard.removeObject(forKey: reconciledBuildKey)
-        UserDefaults.standard.removeObject(forKey: repairedBuildKey)
-        contextPanelLogger.notice("refresh agent registration disabled status=\(String(describing: service.status), privacy: .public)")
-    }
-
-    private static func currentBuild() -> String {
-        if let fingerprintURL = Bundle.main.url(
-            forResource: "ContextPanelBuildFingerprint",
-            withExtension: "txt"
-        ),
-           let fingerprint = try? String(contentsOf: fingerprintURL, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-           !fingerprint.isEmpty {
-            return fingerprint
-        }
-
-        return Bundle.main.object(forInfoDictionaryKey: kCFBundleVersionKey as String) as? String ?? "unknown"
-    }
-
-    private static func isRefreshAgentRunning() -> Bool {
-        !NSRunningApplication.runningApplications(withBundleIdentifier: ContextPanelLocations.refreshAgentBundleID).isEmpty
-    }
 }
 
 @main
@@ -345,6 +219,7 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
         let service = SMAppService.loginItem(identifier: ContextPanelLocations.refreshAgentBundleID)
         do {
             try service.unregister()
+            RefreshAgentRegistration.clearPersistedState()
         } catch {
             model.setError("Background refresh could not be disabled: \(error.localizedDescription)")
         }
@@ -356,9 +231,15 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
         let settings = backgroundRefreshSettingsStore.load()
         do {
             try RefreshAgentRegistration.reconcile(settings: settings)
-            RefreshAgentRegistration.repairIfEnabledAgentDoesNotLaunch(settingsStore: backgroundRefreshSettingsStore)
         } catch {
             model.setError("Background refresh could not be updated: \(error.localizedDescription)")
+        }
+        RefreshAgentRegistration.repairIfEnabledAgentDoesNotLaunch(
+            settingsStore: backgroundRefreshSettingsStore
+        ) { [weak self] diagnostic in
+            if let diagnostic {
+                self?.model.setError(diagnostic.userFacingMessage)
+            }
         }
     }
 
@@ -828,6 +709,13 @@ struct SettingsPane: View {
         .onChange(of: model.authorizationRefreshCounter) { _, _ in
             refreshAfterAuthorization()
         }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: .contextPanelRefreshAgentRegistrationDiagnosticDidChange
+            )
+        ) { _ in
+            model.reloadBackgroundRefreshRegistrationDiagnostic()
+        }
     }
 
     private var widgetMainLimitListHeight: CGFloat {
@@ -1009,6 +897,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     @Published private(set) var accounts: [LocalProviderAccountConfiguration] = []
     @Published private(set) var widgetPreferences: WidgetDisplayPreferences = .defaultPreferences
     @Published private(set) var backgroundRefreshSettings: BackgroundRefreshSettings = .defaultSettings
+    @Published private(set) var backgroundRefreshRegistrationDiagnostic: RefreshAgentRegistrationDiagnostic?
     @Published private(set) var limitWarningSettings: LimitWarningSettings = .defaultSettings
     @Published private(set) var webhookSettings: LimitWarningWebhookSettings = .defaultSettings
     @Published private(set) var webhookDeliveryState: LimitWarningWebhookDeliveryState = .empty
@@ -1036,6 +925,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     private var completingClaudeOAuthState: String?
     private var claudeOAuthCompletionTask: Task<Void, Never>?
     private var webhookTestCooldownTask: Task<Void, Never>?
+    private var backgroundRefreshRegistrationErrorMessage: String?
 
     deinit {
         claudeOAuthCompletionTask?.cancel()
@@ -1121,6 +1011,9 @@ final class SettingsPaneModel: NSObject, ObservableObject {
 
     var backgroundRefreshStatusText: String {
         if backgroundRefreshSettings.isEnabled {
+            if let backgroundRefreshRegistrationDiagnostic {
+                return backgroundRefreshRegistrationDiagnostic.userFacingMessage
+            }
             return "Updates run every \(backgroundRefreshSettings.intervalMinutes) minutes in the background."
         }
         return "Background updates are off. Manual refresh still works."
@@ -1384,6 +1277,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
 
         widgetPreferences = widgetPreferenceStores.load()
         backgroundRefreshSettings = backgroundRefreshSettingsStore.load()
+        reloadBackgroundRefreshRegistrationDiagnostic()
         limitWarningSettings = limitWarningSettingsStore.load()
         webhookSettings = webhookSettingsStore.load()
         webhookDeliveryState = webhookDeliveryStateStore.load()
@@ -1400,7 +1294,11 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         if saveBackgroundRefreshSettings(updated) {
             reconcileRefreshAgentRegistration(settings: updated)
             if updated.isEnabled {
-                RefreshAgentRegistration.repairIfEnabledAgentDoesNotLaunch(settingsStore: backgroundRefreshSettingsStore)
+                RefreshAgentRegistration.repairIfEnabledAgentDoesNotLaunch(
+                    settingsStore: backgroundRefreshSettingsStore
+                ) { [weak self] _ in
+                    self?.reloadBackgroundRefreshRegistrationDiagnostic()
+                }
             }
         }
     }
@@ -1651,8 +1549,30 @@ final class SettingsPaneModel: NSObject, ObservableObject {
     private func reconcileRefreshAgentRegistration(settings: BackgroundRefreshSettings) {
         do {
             try RefreshAgentRegistration.reconcile(settings: settings)
+            reloadBackgroundRefreshRegistrationDiagnostic()
         } catch {
-            errorMessage = "Background refresh could not be updated: \(error.localizedDescription)"
+            let diagnostic = RefreshAgentRegistration.currentDiagnostic
+            backgroundRefreshRegistrationDiagnostic = diagnostic
+            setBackgroundRefreshRegistrationError(
+                diagnostic?.userFacingMessage ??
+                    "Background refresh could not be updated: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    func reloadBackgroundRefreshRegistrationDiagnostic() {
+        let diagnostic = RefreshAgentRegistration.currentDiagnostic
+        backgroundRefreshRegistrationDiagnostic = diagnostic
+        setBackgroundRefreshRegistrationError(diagnostic?.userFacingMessage)
+    }
+
+    private func setBackgroundRefreshRegistrationError(_ message: String?) {
+        if errorMessage == backgroundRefreshRegistrationErrorMessage {
+            errorMessage = nil
+        }
+        backgroundRefreshRegistrationErrorMessage = message
+        if let message {
+            errorMessage = message
         }
     }
 
