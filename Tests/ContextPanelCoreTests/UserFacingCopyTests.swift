@@ -29,6 +29,14 @@ import Testing
             "fresh snapshot",
             "publish usage limits",
         ],
+        "Sources/ContextPanelWatchSupport/WatchSyncPresentation.swift": [
+            "Checking CloudKit",
+            "Mac sync",
+            "sync snapshot",
+            "synced snapshot",
+            "fresh snapshot",
+            "publish usage limits",
+        ],
         "Sources/ContextPanelTV/ContextPanelTVApp.swift": [
             "Cloud sync is unavailable",
             "Contacting CloudKit",

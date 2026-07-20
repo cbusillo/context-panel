@@ -1,6 +1,6 @@
 # Design Direction
 
-Last updated: 2026-07-11.
+Last updated: 2026-07-20.
 
 ## Accepted Direction
 
@@ -75,6 +75,10 @@ available states so updating, stale, and failure labels keep their full width.
 Allow those status labels to wrap rather than truncate at larger text sizes.
 Keep settled-state freshness visually compact while preserving the full elapsed
 duration for accessibility output.
+When a Watch sync fails without saved usage, keep the plain-language failure
+sentence primary and allow one quieter, bounded, sanitized diagnostic line for
+troubleshooting. Let both lines wrap at large text sizes, provide explicit sync
+error context to VoiceOver, and never surface that diagnostic in complications.
 Keep Watch limit footers on one line when they fit. When they do not, allow the
 account context to wrap and move the reset to a separate trailing line instead
 of truncating either value.

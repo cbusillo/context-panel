@@ -234,6 +234,14 @@ auxiliary provider buckets.
 The watch targets do not
 depend on App Group storage because physical TestFlight validation on watchOS 27
 rejected otherwise valid App Group entitlements at runtime.
+The Watch app may show one bounded operational detail from a failed sync after
+reapplying the shared connector redaction boundary. That boundary removes C0,
+C1, and standalone Unicode format controls before final matching so they cannot
+split credential labels or values, while preserving emoji joiners. Presentation
+then normalizes whitespace and limits the result to 120 user-perceived
+characters. The generic status sentence remains primary, the detail is not
+persisted separately, and complications continue to discard transport error
+text.
 When any cached lane in a multi-account limit becomes stale or unavailable,
 Watch presentation preserves the complete pooled last-known capacity and labels
 it stale instead of recalculating from only the remaining current lanes or

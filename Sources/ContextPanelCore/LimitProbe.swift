@@ -251,9 +251,40 @@ public enum LimitProbeScanner {
 }
 
 public enum EvidenceRedactor {
+    private static let controlMarker = "\u{E000}"
+    private static let controlMarkerPattern = NSRegularExpression.escapedPattern(for: controlMarker)
+    private static let controlAwareRedactionPatterns: [(String, String)] = {
+        let gap = "[\\s\(controlMarkerPattern)]"
+        let remainingText = "[\\s\\S]+"
+        let authorization = controlTolerantKeyword("authorization")
+        let bearer = controlTolerantKeyword("bearer")
+        let basic = controlTolerantKeyword("basic")
+
+        func fieldPattern(_ field: String) -> String {
+            "(?i)\\b\(controlTolerantKeyword(field))\(gap)*[:=]\(gap)*\(remainingText)"
+        }
+
+        return [
+            (
+                "(?i)\\b\(authorization)\(gap)*[:=]\(gap)*(?:\(bearer)|\(basic))\(gap)+\(remainingText)",
+                "authorization=[redacted]"
+            ),
+            ("(?i)\\b\(authorization)\(gap)*[:=]\(gap)*\(remainingText)", "authorization=[redacted]"),
+            ("(?i)\\b\(bearer)\(gap)+\(remainingText)", "bearer [redacted]"),
+            ("(?i)\\b\(basic)\(gap)+\(remainingText)", "basic [redacted]"),
+            (fieldPattern("cookie"), "cookie=[redacted]"),
+            (fieldPattern("set-cookie"), "set-cookie=[redacted]"),
+            (fieldPattern("csrf"), "csrf=[redacted]"),
+            (fieldPattern("session"), "session=[redacted]"),
+            (fieldPattern("token"), "token=[redacted]")
+        ]
+    }()
     private static let redactionPatterns: [(String, String)] = [
-        (#"(?i)bearer\s+[a-z0-9._\-]+"#, "bearer [redacted]"),
-        (#"(?i)(authorization|cookie|set-cookie|csrf|session|token)[:=]\s*[^\s,;]+"#, "$1=[redacted]"),
+        (#"(?i)\bauthorization\s*[:=]\s*(?:bearer|basic)\s+[^\s,;]+"#, "authorization=[redacted]"),
+        (#"(?i)\bauthorization\s*[:=]\s*[^\s,;]+"#, "authorization=[redacted]"),
+        (#"(?i)\bbearer\s+[^\s,;]+"#, "bearer [redacted]"),
+        (#"(?i)\bbasic\s+[^\s,;]+"#, "basic [redacted]"),
+        (#"(?i)(cookie|set-cookie|csrf|session|token)[:=]\s*[^\r\n]+"#, "$1=[redacted]"),
         (#"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}"#, "[email redacted]"),
         (#"\bsk-[A-Za-z0-9_\-]{12,}\b"#, "[api key redacted]"),
         (#"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"#, "[id]"),
@@ -261,7 +292,17 @@ public enum EvidenceRedactor {
     ]
 
     public static func redact(_ value: String) -> String {
-        var redacted = value
+        var redacted = markingUnsafeControlScalars(in: value)
+        if redacted.contains(controlMarker) {
+            for (pattern, replacement) in controlAwareRedactionPatterns {
+                redacted = redacted.replacingOccurrences(
+                    of: pattern,
+                    with: replacement,
+                    options: [.regularExpression, .caseInsensitive]
+                )
+            }
+        }
+        redacted = redacted.replacingOccurrences(of: controlMarker, with: "")
         for (pattern, replacement) in redactionPatterns {
             redacted = redacted.replacingOccurrences(
                 of: pattern,
@@ -270,6 +311,28 @@ public enum EvidenceRedactor {
             )
         }
         return redacted
+    }
+
+    private static func markingUnsafeControlScalars(in value: String) -> String {
+        value.map { character in
+            let containsEmoji = character.unicodeScalars.contains { $0.properties.isEmoji }
+            return character.unicodeScalars.map { scalar in
+                if scalar.value == 0x200D, containsEmoji {
+                    return String(scalar)
+                }
+                if CharacterSet.controlCharacters.contains(scalar)
+                    || scalar.properties.generalCategory == .format {
+                    return controlMarker
+                }
+                return String(scalar)
+            }.joined()
+        }.joined()
+    }
+
+    private static func controlTolerantKeyword(_ keyword: String) -> String {
+        keyword
+            .map { NSRegularExpression.escapedPattern(for: String($0)) }
+            .joined(separator: "\(controlMarkerPattern)*")
     }
 
     public static func redactPath(_ value: String) -> String {

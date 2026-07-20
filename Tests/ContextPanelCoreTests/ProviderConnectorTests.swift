@@ -739,6 +739,49 @@ import Testing
     #expect(redacted.contains("[url redacted]"))
 }
 
+@Test func connectorSafeErrorDescriptionRedactsCompleteAuthorizationCredentials() {
+    let cases: [(message: String, marker: String, secrets: [String])] = [
+        ("Bearer abc~def+/==", "bearer [redacted]", ["abc~def+/=="]),
+        ("Basic c3RhbmRhbG9uZTpwYXNzd29yZA==", "basic [redacted]", ["c3RhbmRhbG9uZTpwYXNzd29yZA=="]),
+        ("Authorization: Basic dXNlcjpwYXNz", "authorization=[redacted]", ["dXNlcjpwYXNz"]),
+        (
+            "Cookie: session=secret-value; secondary=secret-two",
+            "Cookie=[redacted]",
+            ["secret-value", "secret-two"]
+        )
+    ]
+
+    for testCase in cases {
+        let redacted = ConnectorRedactor.safeErrorDescription(testCase.message)
+
+        #expect(redacted.contains(testCase.marker))
+        for secret in testCase.secrets {
+            #expect(!redacted.contains(secret))
+        }
+    }
+}
+
+@Test func connectorSafeErrorDescriptionRedactsControlObfuscatedCredentials() {
+    let cases: [(message: String, secrets: [String])] = [
+        ("Be\u{200D}arer abc\u{0007}def", ["abc", "def"]),
+        ("Ba\u{200B}sic dXNl\u{0085}cjpwYXNz", ["dXNl", "cjpwYXNz"]),
+        ("Author\u{009D}ization: Basic dXNl\u{0009}cjpwYXNz", ["dXNl", "cjpwYXNz"]),
+        ("Coo\u{009D}kie: session=secret-value", ["secret-value"])
+    ]
+
+    for testCase in cases {
+        let redacted = ConnectorRedactor.safeErrorDescription(testCase.message)
+
+        for secret in testCase.secrets {
+            #expect(!redacted.contains(secret))
+        }
+        #expect(!redacted.unicodeScalars.contains { scalar in
+            CharacterSet.controlCharacters.contains(scalar)
+                || scalar.properties.generalCategory == .format
+        })
+    }
+}
+
 @Test func codexConnectorReportsAccountReauthWhenUsageIsUnauthorizedWithoutRefreshToken() async {
     let auth = #"{"tokens":{"access_token":"token-secret","account_id":"account-a"}}"#.data(using: .utf8)!
     let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 401, data: Data("secret body".utf8))])
