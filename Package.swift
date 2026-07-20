@@ -114,6 +114,7 @@ let package = Package(
         .testTarget(
             name: "ContextPanelCoreTests",
             dependencies: [
+                "ContextPanelApp",
                 "ContextPanelCore",
                 "ContextPanelCloudKitSync",
                 "ContextPanelCompanionSupport",

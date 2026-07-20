@@ -499,10 +499,13 @@ import Testing
 
 @Test func appAndRefreshAgentDoNotWriteRawErrorsToPublicLogs() throws {
     let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-    let appSource = try String(
-        contentsOf: root.appending(path: "Sources/ContextPanelApp/ContextPanelApp.swift"),
-        encoding: .utf8
+    let appSource = try FileManager.default.contentsOfDirectory(
+        at: root.appending(path: "Sources/ContextPanelApp"),
+        includingPropertiesForKeys: nil
     )
+    .filter { $0.pathExtension == "swift" }
+    .map { try String(contentsOf: $0, encoding: .utf8) }
+    .joined(separator: "\n")
     let refreshAgentSource = try String(
         contentsOf: root.appending(path: "Sources/ContextPanelRefreshAgent/ContextPanelRefreshAgent.swift"),
         encoding: .utf8
