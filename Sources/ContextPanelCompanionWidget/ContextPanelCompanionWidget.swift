@@ -1,3 +1,4 @@
+import ContextPanelCloudKitSync
 import ContextPanelCore
 import ContextPanelCompanionSupport
 import ContextPanelWidgetUI
@@ -27,13 +28,7 @@ struct ContextPanelCompanionTimelineProvider: TimelineProvider {
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<ContextPanelCompanionWidgetEntry>) -> Void) {
-        let now = Date()
-        CompanionWidgetLoadQueue.loadTimeline(date: now) { entries in
-            let settings = ContextPanelLocations.companionRefreshSettingsURL()
-                .map { CompanionRefreshSettingsStore(settingsURL: $0).load() }
-                ?? .defaultSettings
-            completion(Timeline(entries: entries, policy: .after(now.addingTimeInterval(settings.widgetInterval))))
-        }
+        CompanionWidgetLoadQueue.loadTimeline(date: Date(), completion: completion)
     }
 
     private func loadEntry(
@@ -49,11 +44,14 @@ private enum CompanionWidgetLoadQueue {
         label: "com.shinycomputers.contextpanel.companion-widget-load",
         qos: .utility
     )
+    private static let remoteStore = CompanionCloudKitSyncStoreFactory.make()
 
     static func load(date: Date, completion: @escaping (ContextPanelCompanionWidgetEntry) -> Void) {
+        let completion = CompanionWidgetCompletion(completion)
         queue.async {
-            completion(entry(
+            completion.call(entry(
                 date: date,
+                result: CompanionSyncLoader.loadWidgetMirror(now: date),
                 stalenessPolicy: SnapshotStoreStalenessPolicy.appDefault(
                     maximumAge: SnapshotFreshness.widgetMaximumAge
                 )
@@ -63,29 +61,47 @@ private enum CompanionWidgetLoadQueue {
 
     static func loadTimeline(
         date: Date,
-        completion: @escaping ([ContextPanelCompanionWidgetEntry]) -> Void
+        completion: @escaping (Timeline<ContextPanelCompanionWidgetEntry>) -> Void
     ) {
-        queue.async {
+        let completion = CompanionWidgetCompletion(completion)
+        Task.detached(priority: .utility) {
             let policy = SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
-            let currentEntry = entry(date: date, stalenessPolicy: policy)
+            let result = await CompanionSyncLoader.loadWidgetTimeline(
+                remoteStore: remoteStore,
+                now: date
+            )
+            let currentEntry = entry(date: date, result: result, stalenessPolicy: policy)
+            let settings = ContextPanelLocations.companionRefreshSettingsURL()
+                .map { CompanionRefreshSettingsStore(settingsURL: $0).load() }
+                ?? .defaultSettings
+            let refreshInterval = shouldRetrySoon(result)
+                ? SnapshotFreshness.widgetTimelineInterval
+                : settings.widgetInterval
+            let refreshPolicy = TimelineReloadPolicy.after(date.addingTimeInterval(refreshInterval))
             guard currentEntry.snapshot.state == .ready,
                   let staleDate = policy.nextStaleTransitionDate(
                     for: currentEntry.snapshot.usageSnapshot,
                     now: date
                   )
             else {
-                completion([currentEntry])
+                completion.call(Timeline(entries: [currentEntry], policy: refreshPolicy))
                 return
             }
-            completion([currentEntry, entry(date: staleDate, stalenessPolicy: policy)])
+            completion.call(Timeline(
+                entries: [
+                    currentEntry,
+                    entry(date: staleDate, result: result, stalenessPolicy: policy),
+                ],
+                policy: refreshPolicy
+            ))
         }
     }
 
     private static func entry(
         date: Date,
+        result: CompanionSyncLoadResult,
         stalenessPolicy: SnapshotStoreStalenessPolicy
     ) -> ContextPanelCompanionWidgetEntry {
-        let result = CompanionSyncLoader.loadWidgetMirror(now: date)
         let appearanceSettings = ContextPanelLocations.companionAppearanceSettingsURL()
             .map { CompanionAppearanceSettingsStore(settingsURL: $0).load() }
             ?? .defaultSettings
@@ -104,6 +120,26 @@ private enum CompanionWidgetLoadQueue {
             ),
             appearanceSettings: appearanceSettings
         )
+    }
+
+    private static func shouldRetrySoon(_ result: CompanionSyncLoadResult) -> Bool {
+        result.document == nil
+            || result.status == .failure
+            || result.status == .stale
+            || result.transportStatuses.contains(where: \.missingRecord)
+            || result.transportStatuses.contains { !$0.succeeded }
+    }
+}
+
+private final class CompanionWidgetCompletion<Value>: @unchecked Sendable {
+    private let completion: (Value) -> Void
+
+    init(_ completion: @escaping (Value) -> Void) {
+        self.completion = completion
+    }
+
+    func call(_ value: Value) {
+        completion(value)
     }
 }
 

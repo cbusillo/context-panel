@@ -391,6 +391,7 @@ targets:
       - target: ContextPanelCoreCompanion
       - target: ContextPanelWidgetUICompanion
       - target: ContextPanelCompanionSupport
+      - target: ContextPanelCloudKitSyncCompanion
     info:
       path: Config/ContextPanelCompanionWidget-Info.plist
       properties:
@@ -415,6 +416,8 @@ targets:
       configs:
         Release:
           CODE_SIGN_IDENTITY: Apple Distribution
+          CODE_SIGN_ENTITLEMENTS: >-
+            Config/ContextPanelCompanionWidgetAppStore.entitlements
           PROVISIONING_PROFILE_SPECIFIER: >-
             $(CONTEXT_PANEL_APP_STORE_COMPANION_WIDGET_PROFILE_SPECIFIER)
 

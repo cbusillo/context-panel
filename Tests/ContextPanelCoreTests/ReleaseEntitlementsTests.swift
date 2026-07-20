@@ -94,7 +94,7 @@ import Testing
     #expect(entitlements["com.apple.security.files.bookmarks.document-scope"] == nil)
 }
 
-@Test func companionEntitlementsMirrorICloudIntoIOSSuite() throws {
+@Test func companionEntitlementsSupportCloudKitAndSharedMirror() throws {
     let appEntitlements = try loadEntitlements("Config/ContextPanelCompanion.entitlements")
     try expectICloudDocumentAndCloudKitEntitlements(appEntitlements)
     #expect(appEntitlements["aps-environment"] as? String == "$(APS_ENVIRONMENT)")
@@ -110,9 +110,39 @@ import Testing
     #expect(widgetEntitlements["com.apple.security.app-sandbox"] == nil)
     #expect(widgetEntitlements["com.apple.security.network.client"] == nil)
     #expect(widgetEntitlements["keychain-access-groups"] == nil)
-    #expect(widgetEntitlements["com.apple.developer.icloud-container-identifiers"] == nil)
-    #expect(widgetEntitlements["com.apple.developer.icloud-services"] == nil)
+    #expect(
+        widgetEntitlements["com.apple.developer.icloud-container-identifiers"] as? [String]
+            == ["iCloud.com.shinycomputers.contextpanel"]
+    )
+    #expect(widgetEntitlements["com.apple.developer.icloud-services"] as? [String] == ["CloudKit"])
+    #expect(
+        widgetEntitlements["com.apple.developer.icloud-container-environment"] as? String
+            == "Development"
+    )
     #expect(widgetEntitlements["com.apple.developer.ubiquity-container-identifiers"] == nil)
+    #expect(widgetEntitlements["aps-environment"] == nil)
+
+    let appStoreWidgetEntitlements = try loadEntitlements(
+        "Config/ContextPanelCompanionWidgetAppStore.entitlements"
+    )
+    #expect(
+        appStoreWidgetEntitlements["com.apple.security.application-groups"] as? [String]
+            == ["group.com.shinycomputers.contextpanel"]
+    )
+    #expect(
+        appStoreWidgetEntitlements["com.apple.developer.icloud-container-identifiers"] as? [String]
+            == ["iCloud.com.shinycomputers.contextpanel"]
+    )
+    #expect(
+        appStoreWidgetEntitlements["com.apple.developer.icloud-services"] as? [String]
+            == ["CloudKit"]
+    )
+    #expect(
+        appStoreWidgetEntitlements["com.apple.developer.icloud-container-environment"] as? String
+            == "Production"
+    )
+    #expect(appStoreWidgetEntitlements["com.apple.developer.ubiquity-container-identifiers"] == nil)
+    #expect(appStoreWidgetEntitlements["aps-environment"] == nil)
 }
 
 @Test func watchAppAndWidgetReadCloudKitWithoutSharedAppGroupStorage() throws {
@@ -219,6 +249,10 @@ import Testing
     )
     #expect(widgetReleaseSettings["CODE_SIGN_IDENTITY"] as? String == "Apple Distribution")
     #expect(
+        widgetReleaseSettings["CODE_SIGN_ENTITLEMENTS"] as? String
+            == "Config/ContextPanelCompanionWidgetAppStore.entitlements"
+    )
+    #expect(
         widgetReleaseSettings["PROVISIONING_PROFILE_SPECIFIER"] as? String
             == "$(CONTEXT_PANEL_APP_STORE_COMPANION_WIDGET_PROFILE_SPECIFIER)"
     )
@@ -235,7 +269,7 @@ import Testing
     #expect(widgetDependencies.contains("ContextPanelCoreCompanion"))
     #expect(widgetDependencies.contains("ContextPanelWidgetUICompanion"))
     #expect(widgetDependencies.contains("ContextPanelCompanionSupport"))
-    #expect(!widgetDependencies.contains("ContextPanelCloudKitSyncCompanion"))
+    #expect(widgetDependencies.contains("ContextPanelCloudKitSyncCompanion"))
 
     let plist = try loadInfoPlist("Config/ContextPanelCompanion-Info.plist")
     let backgroundModes = try #require(plist["UIBackgroundModes"] as? [String])

@@ -256,6 +256,12 @@ public enum CompanionSyncConditionalSaveResult: Equatable, Sendable {
     case keptCurrent(CompanionSyncLoadResult)
 }
 
+public enum CompanionSyncConditionalRemoveResult: Equatable, Sendable {
+    case removed
+    case keptCurrent(CompanionSyncLoadResult)
+    case failed(String)
+}
+
 public struct CompanionSyncLoadDiagnosticsResult: Equatable, Sendable {
     public let result: CompanionSyncLoadResult
     public let storeOutcomes: [CompanionSyncStoreOutcome]
@@ -424,6 +430,26 @@ public struct CompanionSyncStore: Sendable {
         }
     }
 
+    public func removeIfCurrent(
+        _ expectedDocument: CompanionSyncDocument?,
+        policy: SnapshotStoreStalenessPolicy,
+        now: Date = Date()
+    ) -> CompanionSyncConditionalRemoveResult {
+        do {
+            return try coordinatedRemove(
+                expectedDocument: expectedDocument,
+                policy: policy,
+                now: now
+            )
+        } catch {
+            return .failed(CompanionSyncStoreFailure.diagnosticErrorMessage(
+                storeRole: CompanionSyncStoreFailure.storeRole(for: documentURL),
+                operation: "remove",
+                error: error
+            ))
+        }
+    }
+
     private func loadDocument() throws -> CompanionSyncDocument {
         try Self.decodeDocument(from: try coordinatedRead())
     }
@@ -563,6 +589,47 @@ public struct CompanionSyncStore: Sendable {
         if let writeError { throw writeError }
         if let coordinatorError { throw coordinatorError }
         return keptCurrentResult
+    }
+
+    private func coordinatedRemove(
+        expectedDocument: CompanionSyncDocument?,
+        policy: SnapshotStoreStalenessPolicy,
+        now: Date
+    ) throws -> CompanionSyncConditionalRemoveResult {
+        var removalResult: CompanionSyncConditionalRemoveResult?
+        var removalError: Error?
+        var coordinatorError: NSError?
+        NSFileCoordinator(filePresenter: nil).coordinate(
+            writingItemAt: documentURL,
+            options: .forDeleting,
+            error: &coordinatorError
+        ) { coordinatedURL in
+            do {
+                let currentFileExists = FileManager.default.fileExists(atPath: coordinatedURL.path)
+                let currentResult = Self.loadResult(at: coordinatedURL, policy: policy, now: now)
+                if currentFileExists, currentResult.document == nil {
+                    removalResult = .keptCurrent(currentResult)
+                    return
+                }
+                guard currentResult.document == expectedDocument else {
+                    removalResult = .keptCurrent(currentResult)
+                    return
+                }
+                if currentFileExists {
+                    try FileManager.default.removeItem(at: coordinatedURL)
+                }
+                removalResult = .removed
+            } catch {
+                removalError = error
+            }
+        }
+
+        if let removalError { throw removalError }
+        if let coordinatorError { throw coordinatorError }
+        guard let removalResult else {
+            throw SnapshotStoreError.corruptStore("Companion sync document removal did not complete.")
+        }
+        return removalResult
     }
 
     private static func successfulSaveResult(for documentURL: URL) -> CompanionSyncSaveResult {
