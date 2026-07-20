@@ -4,6 +4,7 @@ import Darwin
 public enum ContextPanelLocations {
     public static let appGroupID = "MM5YXC7T6E.group.com.shinycomputers.contextpanel"
     public static let companionAppGroupID = "group.com.shinycomputers.contextpanel"
+    public static let watchAppGroupID = companionAppGroupID
     public static let iCloudContainerID = "iCloud.com.shinycomputers.contextpanel"
     public static let appBundleID = "com.shinycomputers.contextpanel"
     public static let companionAppBundleID = "com.shinycomputers.contextpanel"
@@ -142,6 +143,27 @@ public enum ContextPanelLocations {
     }
 
     public static func watchCompanionCacheURL() -> URL {
+        watchCompanionAppGroupCacheURL() ?? watchCompanionProcessCacheURL()
+    }
+
+    public static func watchCompanionAppGroupCacheURL(
+        appGroupID: String = watchAppGroupID
+    ) -> URL? {
+        watchCompanionAppGroupCacheURL(appGroupID: appGroupID) {
+            appGroupContainerURL(appGroupID: $0)
+        }
+    }
+
+    static func watchCompanionAppGroupCacheURL(
+        appGroupID: String,
+        containerURL: (String) -> URL?
+    ) -> URL? {
+        guard let containerURL = containerURL(appGroupID) else { return nil }
+        return companionSyncDirectory(containerURL: containerURL)
+            .appending(path: "context-panel-watch-cache.json")
+    }
+
+    public static func watchCompanionProcessCacheURL() -> URL {
         applicationSupportDirectory()
             .appending(path: "Companion", directoryHint: .isDirectory)
             .appending(path: "context-panel-watch-cache.json")

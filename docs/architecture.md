@@ -219,21 +219,20 @@ lifetime so asynchronous record operations cannot outlive the underlying
 CloudKit client.
 
 The watchOS app and complication each read the same sanitized Production
-CloudKit records directly. Each process caches the latest document and effective
-display preferences in its own sandbox, so the complication can complete from a
-last-good local value when CloudKit is delayed or unavailable. Opening the Watch
-app invalidates the complication timeline whenever it has a usable document,
-including a confirmed local-cache value after an app update, and the timeline
-includes a future stale transition. Successful Watch CloudKit reads merge with
-the process-local cache per account observation rather than choosing a whole
-document by its envelope timestamp. The watch app requests one kind-specific
-timeline reload after every usable refresh because its cache cannot reveal
-whether the complication's separate cache has converged. The watch app list
-follows the synced saved main-limit visibility and order instead of promoting
-auxiliary provider buckets.
-The watch targets do not
-depend on App Group storage because physical TestFlight validation on watchOS 27
-rejected otherwise valid App Group entitlements at runtime.
+CloudKit records directly. Both processes also use the same Watch-device App
+Group cache for the latest document and effective display preferences, so a
+successful refresh by either process becomes the other's last-good value when
+CloudKit is delayed or unavailable. This App Group is local to the Watch; using
+the same identifier on iPhone does not move files between devices. Reads,
+read-merge-writes, and removals are coordinated across processes, and each
+target's former process-local cache is merged into the shared cache once before
+being retired. Successful Watch CloudKit reads merge with the shared cache per
+account observation rather than choosing a whole document by its envelope
+timestamp. Direct CloudKit remains the cold-start and repair path when the shared
+cache is empty or damaged. Opening the Watch app invalidates the complication
+timeline whenever it has a usable document, and the timeline includes a future
+stale transition. The watch app list follows the synced saved main-limit
+visibility and order instead of promoting auxiliary provider buckets.
 When any cached lane in a multi-account limit becomes stale or unavailable,
 Watch presentation preserves the complete pooled last-known capacity and labels
 it stale instead of recalculating from only the remaining current lanes or
