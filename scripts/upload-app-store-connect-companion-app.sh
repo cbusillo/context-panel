@@ -680,16 +680,16 @@ assert_ios_watch_archive_ready() {
 	watch_widget_entitlements="$entitlements_dir/watch-widget.plist"
 	extract_signed_entitlements "$watch_app_path" "companion Watch app" "$watch_app_entitlements"
 	extract_signed_entitlements "$watch_widget_path" "companion Watch widget" "$watch_widget_entitlements"
-	assert_signed_entitlement_absent "$watch_app_entitlements" "companion Watch app" \
-		'com.apple.security.application-groups'
+	assert_signed_entitlement_array_value "$watch_app_entitlements" "companion Watch app" \
+		'com.apple.security.application-groups' 'group.com.shinycomputers.contextpanel'
 	assert_signed_entitlement_array_value "$watch_app_entitlements" "companion Watch app" \
 		'com.apple.developer.icloud-container-identifiers' 'iCloud.com.shinycomputers.contextpanel'
 	assert_signed_entitlement_array_value "$watch_app_entitlements" "companion Watch app" \
 		'com.apple.developer.icloud-services' 'CloudKit'
 	assert_signed_entitlement_value "$watch_app_entitlements" "companion Watch app" \
 		'com.apple.developer.icloud-container-environment' 'Production'
-	assert_signed_entitlement_absent "$watch_widget_entitlements" "companion Watch widget" \
-		'com.apple.security.application-groups'
+	assert_signed_entitlement_array_value "$watch_widget_entitlements" "companion Watch widget" \
+		'com.apple.security.application-groups' 'group.com.shinycomputers.contextpanel'
 	assert_signed_entitlement_array_value "$watch_widget_entitlements" "companion Watch widget" \
 		'com.apple.developer.icloud-container-identifiers' 'iCloud.com.shinycomputers.contextpanel'
 	assert_signed_entitlement_array_value "$watch_widget_entitlements" "companion Watch widget" \
@@ -814,6 +814,8 @@ if [[ "$platform" == "ios" ]]; then
 	assert_profile_icloud_service "$watch_widget_profile" "companion watch widget" "CloudKit"
 	assert_profile_icloud_environment "$watch_profile" "companion watch" "Production"
 	assert_profile_icloud_environment "$watch_widget_profile" "companion watch widget" "Production"
+	assert_profile_app_group "$watch_profile" "companion watch"
+	assert_profile_app_group "$watch_widget_profile" "companion watch widget"
 fi
 if [[ "$platform" == "tvos" ]]; then
 	assert_profile_bundle_id "$tv_top_shelf_profile" "tvOS Top Shelf" "com.shinycomputers.contextpanel.topshelf"

@@ -1,10 +1,39 @@
-import ContextPanelCore
-import ContextPanelWatchSupport
+@testable import ContextPanelCore
+@testable import ContextPanelWatchSupport
 import Foundation
 import Testing
 
-@Test func watchCompanionCacheUsesProcessLocalApplicationSupport() {
-    #expect(ContextPanelLocations.watchCompanionCacheURL().lastPathComponent == "context-panel-watch-cache.json")
+@Test func watchCompanionCacheUsesSharedAppGroupWhenAvailable() throws {
+    let root = try watchCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    var requestedAppGroupID: String?
+
+    let cacheURL = ContextPanelLocations.watchCompanionAppGroupCacheURL(
+        appGroupID: ContextPanelLocations.watchAppGroupID
+    ) { appGroupID in
+        requestedAppGroupID = appGroupID
+        return root
+    }
+
+    #expect(ContextPanelLocations.watchAppGroupID == ContextPanelLocations.companionAppGroupID)
+    #expect(requestedAppGroupID == "group.com.shinycomputers.contextpanel")
+    #expect(cacheURL?.path == root
+        .appending(path: "Context Panel", directoryHint: .isDirectory)
+        .appending(path: "Companion", directoryHint: .isDirectory)
+        .appending(path: "context-panel-watch-cache.json")
+        .path)
+}
+
+@Test func watchCompanionCacheUsesProcessLocalFallbackWhenAppGroupIsUnavailable() {
+    let cacheURL = ContextPanelLocations.watchCompanionAppGroupCacheURL(
+        appGroupID: ContextPanelLocations.watchAppGroupID
+    ) { _ in nil }
+
+    #expect(cacheURL == nil)
+    #expect(
+        ContextPanelLocations.watchCompanionProcessCacheURL().lastPathComponent
+            == "context-panel-watch-cache.json"
+    )
 }
 
 @Test func watchComplicationTimelineReloadsForAnyUsableDocument() {
@@ -103,6 +132,267 @@ import Testing
     #expect(loaded.result.document == nil)
     #expect(loaded.result.status == .failure)
     #expect(loaded.displayPreferences == nil)
+}
+
+@Test func watchCompanionCacheMigratesLegacyPayloadIntoSharedCache() throws {
+    let root = try watchCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let sharedURL = root.appending(path: "shared.json")
+    let legacyURL = root.appending(path: "legacy.json")
+    let generatedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let document = watchCacheDocument(generatedAt: generatedAt)
+    let preferences = watchCachePreferences(provider: .anthropic)
+    try writeWatchLegacyCachePayload(
+        to: legacyURL,
+        document: document,
+        displayPreferences: preferences,
+        cachedAt: generatedAt
+    )
+    let cache = WatchCompanionCache(
+        cacheURL: sharedURL,
+        legacyCacheURL: legacyURL,
+        source: .appGroup
+    )
+
+    let loaded = cache.load()
+
+    #expect(loaded.result.document == document)
+    #expect(loaded.result.transportMetadata?.source == .appGroup)
+    #expect(loaded.displayPreferences == preferences)
+    #expect(FileManager.default.fileExists(atPath: sharedURL.path))
+    #expect(!FileManager.default.fileExists(atPath: legacyURL.path))
+}
+
+@Test func watchCompanionCacheMergesLegacyPayloadIntoExistingSharedCache() throws {
+    let root = try watchCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let sharedURL = root.appending(path: "shared.json")
+    let legacyURL = root.appending(path: "legacy.json")
+    let sharedDate = Date(timeIntervalSince1970: 1_800_000_000)
+    let legacyDate = sharedDate.addingTimeInterval(100)
+    let sharedDocument = watchCacheDocument(
+        generatedAt: sharedDate,
+        limits: [watchOpenAIWeeklyLimit(accountID: "shared", used: 100, generatedAt: sharedDate)]
+    )
+    let legacyDocument = watchCacheDocument(
+        generatedAt: legacyDate,
+        limits: [watchOpenAIWeeklyLimit(accountID: "legacy", used: 62, generatedAt: legacyDate)]
+    )
+    let sharedCache = WatchCompanionCache(cacheURL: sharedURL, source: .appGroup)
+    #expect(sharedCache.save(
+        document: sharedDocument,
+        displayPreferences: .defaultPreferences,
+        now: sharedDate
+    ))
+    try writeWatchLegacyCachePayload(
+        to: legacyURL,
+        document: legacyDocument,
+        displayPreferences: .defaultPreferences,
+        cachedAt: legacyDate
+    )
+    let convergedCache = WatchCompanionCache(
+        cacheURL: sharedURL,
+        legacyCacheURL: legacyURL,
+        source: .appGroup
+    )
+
+    let loaded = convergedCache.load()
+    let accountNames = Set(try #require(loaded.result.document).snapshot.limits.map(\.accountName))
+
+    #expect(accountNames == ["Shared", "Legacy"])
+    #expect(loaded.result.transportMetadata?.source == .appGroup)
+    #expect(!FileManager.default.fileExists(atPath: legacyURL.path))
+}
+
+@Test func watchCompanionCacheMergesAppAndWidgetLegacySeeds() throws {
+    let root = try watchCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let sharedURL = root.appending(path: "shared.json")
+    let appLegacyURL = root.appending(path: "app-legacy.json")
+    let widgetLegacyURL = root.appending(path: "widget-legacy.json")
+    let appDate = Date(timeIntervalSince1970: 1_800_000_000)
+    let widgetDate = appDate.addingTimeInterval(100)
+    try writeWatchLegacyCachePayload(
+        to: appLegacyURL,
+        document: watchCacheDocument(
+            generatedAt: appDate,
+            limits: [watchOpenAIWeeklyLimit(accountID: "app", used: 100, generatedAt: appDate)]
+        ),
+        displayPreferences: .defaultPreferences,
+        cachedAt: appDate
+    )
+    try writeWatchLegacyCachePayload(
+        to: widgetLegacyURL,
+        document: watchCacheDocument(
+            generatedAt: widgetDate,
+            limits: [watchOpenAIWeeklyLimit(accountID: "widget", used: 62, generatedAt: widgetDate)]
+        ),
+        displayPreferences: .defaultPreferences,
+        cachedAt: widgetDate
+    )
+    let appCache = WatchCompanionCache(
+        cacheURL: sharedURL,
+        legacyCacheURL: appLegacyURL,
+        source: .appGroup
+    )
+    let widgetCache = WatchCompanionCache(
+        cacheURL: sharedURL,
+        legacyCacheURL: widgetLegacyURL,
+        source: .appGroup
+    )
+
+    #expect(appCache.load().result.document != nil)
+    let loaded = widgetCache.load()
+    let accountNames = Set(try #require(loaded.result.document).snapshot.limits.map(\.accountName))
+
+    #expect(accountNames == ["App", "Widget"])
+    #expect(!FileManager.default.fileExists(atPath: appLegacyURL.path))
+    #expect(!FileManager.default.fileExists(atPath: widgetLegacyURL.path))
+}
+
+@Test func watchCompanionCacheDoesNotResurrectMigratedLegacyPayload() throws {
+    let root = try watchCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let sharedURL = root.appending(path: "shared.json")
+    let legacyURL = root.appending(path: "legacy.json")
+    let generatedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    try writeWatchLegacyCachePayload(
+        to: legacyURL,
+        document: watchCacheDocument(generatedAt: generatedAt),
+        displayPreferences: .defaultPreferences,
+        cachedAt: generatedAt
+    )
+    let cache = WatchCompanionCache(
+        cacheURL: sharedURL,
+        legacyCacheURL: legacyURL,
+        source: .appGroup
+    )
+
+    #expect(cache.load().result.document != nil)
+    #expect(cache.remove())
+    #expect(cache.load().result.document == nil)
+    #expect(!FileManager.default.fileExists(atPath: legacyURL.path))
+}
+
+@Test func watchCompanionCacheUpdatesPreferencesWhenDocumentIsUnchanged() throws {
+    let root = try watchCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cache = WatchCompanionCache(cacheURL: root.appending(path: "watch-cache.json"))
+    let documentDate = Date(timeIntervalSince1970: 1_800_000_000)
+    let preferenceDate = documentDate.addingTimeInterval(100)
+    let document = watchCacheDocument(generatedAt: documentDate)
+    let initialPreferences = watchCachePreferences(provider: .openAI)
+    let updatedPreferences = watchCachePreferences(provider: .google)
+
+    #expect(cache.save(
+        document: document,
+        displayPreferences: initialPreferences,
+        displayPreferencesUpdatedAt: documentDate,
+        now: documentDate
+    ))
+    #expect(cache.save(
+        document: document,
+        displayPreferences: updatedPreferences,
+        displayPreferencesUpdatedAt: preferenceDate,
+        now: preferenceDate
+    ))
+
+    let loaded = cache.load()
+    #expect(loaded.displayPreferences == updatedPreferences)
+    #expect(loaded.displayPreferencesUpdatedAt == preferenceDate)
+}
+
+@Test func watchCompanionCacheDoesNotRegressNewerPreferencesFromAnOlderWriter() throws {
+    let root = try watchCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cache = WatchCompanionCache(cacheURL: root.appending(path: "watch-cache.json"))
+    let initialDate = Date(timeIntervalSince1970: 1_800_000_000)
+    let newerPreferenceDate = initialDate.addingTimeInterval(200)
+    let laterWriteDate = newerPreferenceDate.addingTimeInterval(100)
+    let newerPreferences = watchCachePreferences(provider: .google)
+    let olderPreferences = watchCachePreferences(provider: .openAI)
+    #expect(cache.save(
+        document: watchCacheDocument(generatedAt: initialDate),
+        displayPreferences: newerPreferences,
+        displayPreferencesUpdatedAt: newerPreferenceDate,
+        now: newerPreferenceDate
+    ))
+
+    #expect(cache.save(
+        document: watchCacheDocument(generatedAt: laterWriteDate),
+        displayPreferences: olderPreferences,
+        displayPreferencesUpdatedAt: initialDate,
+        now: laterWriteDate
+    ))
+
+    let loaded = cache.load()
+    #expect(loaded.result.document?.snapshot.generatedAt == laterWriteDate)
+    #expect(loaded.displayPreferences == newerPreferences)
+    #expect(loaded.displayPreferencesUpdatedAt == newerPreferenceDate)
+}
+
+@Test func watchCompanionCacheConditionalRemoveRequiresExactPayloadRevision() throws {
+    let root = try watchCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cache = WatchCompanionCache(cacheURL: root.appending(path: "watch-cache.json"))
+    let generatedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let preferenceDate = generatedAt.addingTimeInterval(100)
+    let document = watchCacheDocument(generatedAt: generatedAt)
+    #expect(cache.save(
+        document: document,
+        displayPreferences: watchCachePreferences(provider: .openAI),
+        displayPreferencesUpdatedAt: generatedAt,
+        now: generatedAt
+    ))
+    let expected = cache.load()
+    let newerPreferences = watchCachePreferences(provider: .anthropic)
+    #expect(cache.save(
+        document: document,
+        displayPreferences: newerPreferences,
+        displayPreferencesUpdatedAt: preferenceDate,
+        now: preferenceDate
+    ))
+
+    let outcome = cache.removeIfCurrent(expected, now: preferenceDate)
+
+    guard case let .keptCurrent(current) = outcome else {
+        Issue.record("Expected the newer shared payload to survive conditional removal")
+        return
+    }
+    #expect(current.displayPreferences == newerPreferences)
+    #expect(cache.load().displayPreferences == newerPreferences)
+}
+
+@Test func watchCompanionCacheMergesWritesFromIndependentCacheInstances() async throws {
+    let root = try watchCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cacheURL = root.appending(path: "shared.json")
+    let appCache = WatchCompanionCache(cacheURL: cacheURL, source: .appGroup)
+    let widgetCache = WatchCompanionCache(cacheURL: cacheURL, source: .appGroup)
+    let appDate = Date(timeIntervalSince1970: 1_800_000_000)
+    let widgetDate = appDate.addingTimeInterval(100)
+    let appDocument = watchCacheDocument(
+        generatedAt: appDate,
+        limits: [watchOpenAIWeeklyLimit(accountID: "app", used: 100, generatedAt: appDate)]
+    )
+    let widgetDocument = watchCacheDocument(
+        generatedAt: widgetDate,
+        limits: [watchOpenAIWeeklyLimit(accountID: "widget", used: 62, generatedAt: widgetDate)]
+    )
+
+    let appTask = Task.detached {
+        appCache.save(document: appDocument, displayPreferences: .defaultPreferences, now: appDate)
+    }
+    let widgetTask = Task.detached {
+        widgetCache.save(document: widgetDocument, displayPreferences: .defaultPreferences, now: widgetDate)
+    }
+    #expect(await appTask.value)
+    #expect(await widgetTask.value)
+
+    let loaded = appCache.load()
+    let accountNames = Set(try #require(loaded.result.document).snapshot.limits.map(\.accountName))
+    #expect(accountNames == ["App", "Widget"])
+    #expect(loaded.result.transportMetadata?.source == .appGroup)
 }
 
 @Test func watchCompanionLoaderCachesFreshCloudKitUsage() async throws {
@@ -366,6 +656,50 @@ import Testing
     await blocker.resume(returning: 1)
 }
 
+@Test func watchCompanionLoaderPreservesAppGroupSourceWhenCloudKitTimesOut() async throws {
+    let root = try watchCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cache = WatchCompanionCache(
+        cacheURL: root.appending(path: "watch-cache.json"),
+        source: .appGroup
+    )
+    let generatedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let document = watchCacheDocument(
+        generatedAt: generatedAt,
+        limits: [watchOpenAIWeeklyLimit(accountID: "shared", used: 20, generatedAt: generatedAt)]
+    )
+    #expect(cache.save(
+        document: document,
+        displayPreferences: .defaultPreferences,
+        now: generatedAt
+    ))
+    let blocker = WatchDeadlineBlocker()
+    let loader = WatchCompanionLoader(
+        cache: cache,
+        timeout: .milliseconds(20),
+        loadDocument: { _ in
+            _ = await blocker.wait()
+            return watchRemoteLoad(document: document, receivedAt: generatedAt)
+        },
+        loadPresentation: { watchPresentationLoad() }
+    )
+
+    let loaded = await loader.load(now: generatedAt.addingTimeInterval(100))
+    let snapshot = WidgetSnapshot.fromCompanionSync(
+        loaded.result,
+        now: generatedAt.addingTimeInterval(100),
+        stalenessPolicy: SnapshotStoreStalenessPolicy(maximumAge: 1_000)
+    )
+
+    #expect(loaded.result.document == document)
+    #expect(loaded.result.status == .stale)
+    #expect(loaded.result.transportMetadata?.source == .appGroup)
+    #expect(loaded.result.transportMetadata?.deliveryStatus == .delayed)
+    #expect(snapshot.state == .stale)
+    #expect(snapshot.status == .stale)
+    await blocker.resume(returning: 1)
+}
+
 @Test func watchCompanionTimeoutKeepsPooledCapacityForStaleComplication() async throws {
     let root = try watchCacheTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -482,6 +816,38 @@ import Testing
     await blocker.resume(returning: 1)
 }
 
+@Test func watchCompanionLoaderClearsCachedOverrideWhenPresentationRecordIsMissing() async throws {
+    let root = try watchCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cache = WatchCompanionCache(cacheURL: root.appending(path: "watch-cache.json"))
+    let generatedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let refreshedAt = generatedAt.addingTimeInterval(100)
+    let syncedPreferences = watchCachePreferences(provider: .google)
+    let cachedOverride = watchCachePreferences(provider: .openAI)
+    let document = watchCacheDocument(
+        generatedAt: generatedAt,
+        widgetDisplayPreferences: syncedPreferences
+    )
+    #expect(cache.save(
+        document: document,
+        displayPreferences: cachedOverride,
+        displayPreferencesUpdatedAt: generatedAt,
+        now: generatedAt
+    ))
+    let loader = WatchCompanionLoader(
+        cache: cache,
+        timeout: .seconds(1),
+        loadDocument: { _ in watchRemoteLoad(document: document, receivedAt: refreshedAt) },
+        loadPresentation: { watchPresentationLoad() }
+    )
+
+    let loaded = await loader.load(now: refreshedAt)
+
+    #expect(loaded.displayPreferences == syncedPreferences)
+    #expect(cache.load().displayPreferences == syncedPreferences)
+    #expect(cache.load().displayPreferencesUpdatedAt == refreshedAt)
+}
+
 @Test func watchCompanionLoaderClearsCacheWhenCloudKitRecordIsMissing() async throws {
     let root = try watchCacheTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -508,6 +874,44 @@ import Testing
     #expect(loaded.result.document == nil)
     #expect(loaded.result.status == .unknown)
     #expect(cache.load().result.document == nil)
+}
+
+@Test func watchCompanionLoaderKeepsCachedUsageWhenMissingRecordRemovalFails() async throws {
+    let root = try watchCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cacheURL = root.appending(path: "watch-cache.json")
+    let cache = WatchCompanionCache(cacheURL: cacheURL)
+    let generatedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let refreshedAt = generatedAt.addingTimeInterval(100)
+    let document = watchCacheDocument(generatedAt: generatedAt)
+    #expect(cache.save(
+        document: document,
+        displayPreferences: .defaultPreferences,
+        now: generatedAt
+    ))
+    let probe = WatchRemoteLoadProbe()
+    let loader = WatchCompanionLoader(
+        cache: cache,
+        timeout: .seconds(1),
+        loadDocument: { _ in await probe.load() },
+        loadPresentation: { watchPresentationLoad() }
+    )
+    let loadTask = Task { await loader.load(now: refreshedAt) }
+    while await probe.count() == 0 {
+        await Task.yield()
+    }
+    try Data("not-json".utf8).write(to: cacheURL, options: .atomic)
+    await probe.resume(returning: CompanionRemoteSyncLoadResult(
+        result: CompanionSyncLoadResult(document: nil, status: .unknown),
+        outcome: CompanionRemoteSyncOutcome(succeeded: true, missingRecord: true)
+    ))
+
+    let loaded = await loadTask.value
+
+    #expect(loaded.result.document == document)
+    #expect(loaded.result.status == .stale)
+    #expect(loaded.result.errorMessage == "Context Panel Watch could not clear saved usage.")
+    #expect(try String(decoding: Data(contentsOf: cacheURL), as: UTF8.self) == "not-json")
 }
 
 @Test func watchCompanionLoaderReportsFailureWithoutCache() async throws {
@@ -556,15 +960,19 @@ import Testing
 private func watchCacheDocument(
     generatedAt: Date,
     limits: [UsageLimit] = [],
-    reports: [StoredProviderReport] = []
+    reports: [StoredProviderReport] = [],
+    widgetDisplayPreferences: WidgetDisplayPreferences = .defaultPreferences
 ) -> CompanionSyncDocument {
-    CompanionSyncDocument(snapshot: CompanionSnapshot(
-        generatedAt: generatedAt,
-        publishedAt: generatedAt.addingTimeInterval(5),
-        limits: limits.map(CompanionLimit.init),
-        providerStatuses: reports.map(CompanionProviderStatus.init),
-        promptCacheSummaries: []
-    ))
+    CompanionSyncDocument(
+        snapshot: CompanionSnapshot(
+            generatedAt: generatedAt,
+            publishedAt: generatedAt.addingTimeInterval(5),
+            limits: limits.map(CompanionLimit.init),
+            providerStatuses: reports.map(CompanionProviderStatus.init),
+            promptCacheSummaries: []
+        ),
+        widgetDisplayPreferences: widgetDisplayPreferences
+    )
 }
 
 private func watchOpenAIWeeklyLimit(
@@ -627,6 +1035,30 @@ private func watchCacheTemporaryDirectory() throws -> URL {
         .appending(path: "context-panel-watch-cache-\(UUID().uuidString)", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     return url
+}
+
+private func writeWatchLegacyCachePayload(
+    to url: URL,
+    document: CompanionSyncDocument,
+    displayPreferences: WidgetDisplayPreferences,
+    cachedAt: Date
+) throws {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+    encoder.dateEncodingStrategy = .iso8601
+    try encoder.encode(WatchLegacyCachePayload(
+        schemaVersion: 1,
+        document: document,
+        displayPreferences: displayPreferences,
+        cachedAt: cachedAt
+    )).write(to: url, options: .atomic)
+}
+
+private struct WatchLegacyCachePayload: Encodable {
+    let schemaVersion: Int
+    let document: CompanionSyncDocument
+    let displayPreferences: WidgetDisplayPreferences
+    let cachedAt: Date
 }
 
 private actor WatchDeadlineBlocker {

@@ -145,7 +145,7 @@ import Testing
     #expect(appStoreWidgetEntitlements["aps-environment"] == nil)
 }
 
-@Test func watchAppAndWidgetReadCloudKitWithoutSharedAppGroupStorage() throws {
+@Test func watchAppAndWidgetShareLocalCacheAndReadCloudKit() throws {
     let appEntitlements = try loadEntitlements("Config/ContextPanelWatch.entitlements")
     let iCloudContainers = try #require(
         appEntitlements["com.apple.developer.icloud-container-identifiers"] as? [String]
@@ -154,13 +154,19 @@ import Testing
     let services = try #require(appEntitlements["com.apple.developer.icloud-services"] as? [String])
     #expect(services == ["CloudKit"])
     #expect(appEntitlements["com.apple.developer.icloud-container-environment"] as? String == "Development")
-    #expect(appEntitlements["com.apple.security.application-groups"] == nil)
+    #expect(
+        appEntitlements["com.apple.security.application-groups"] as? [String]
+            == ["group.com.shinycomputers.contextpanel"]
+    )
     #expect(appEntitlements["aps-environment"] == nil)
     #expect(appEntitlements["keychain-access-groups"] == nil)
     #expect(appEntitlements["com.apple.developer.ubiquity-container-identifiers"] == nil)
 
     let widgetEntitlements = try loadEntitlements("Config/ContextPanelWatchWidget.entitlements")
-    #expect(widgetEntitlements["com.apple.security.application-groups"] == nil)
+    #expect(
+        widgetEntitlements["com.apple.security.application-groups"] as? [String]
+            == ["group.com.shinycomputers.contextpanel"]
+    )
     #expect(
         widgetEntitlements["com.apple.developer.icloud-container-identifiers"] as? [String]
             == ["iCloud.com.shinycomputers.contextpanel"]
@@ -176,7 +182,10 @@ import Testing
         appStoreAppEntitlements["com.apple.developer.icloud-container-environment"] as? String
             == "Production"
     )
-    #expect(appStoreAppEntitlements["com.apple.security.application-groups"] == nil)
+    #expect(
+        appStoreAppEntitlements["com.apple.security.application-groups"] as? [String]
+            == ["group.com.shinycomputers.contextpanel"]
+    )
 
     let appStoreWidgetEntitlements = try loadEntitlements(
         "Config/ContextPanelWatchWidgetAppStore.entitlements"
@@ -185,7 +194,10 @@ import Testing
         appStoreWidgetEntitlements["com.apple.developer.icloud-container-environment"] as? String
             == "Production"
     )
-    #expect(appStoreWidgetEntitlements["com.apple.security.application-groups"] == nil)
+    #expect(
+        appStoreWidgetEntitlements["com.apple.security.application-groups"] as? [String]
+            == ["group.com.shinycomputers.contextpanel"]
+    )
 }
 
 @Test func tvEntitlementsSupportCloudKitPushAndTopShelfSharing() throws {
