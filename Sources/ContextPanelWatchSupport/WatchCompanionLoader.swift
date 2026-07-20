@@ -67,11 +67,19 @@ public actor WatchCompanionLoader {
             )
         }
         if documentLoad.outcome.missingRecord {
-            if case let .keptCurrent(current) = cache.removeIfCurrent(
-                cached.result.document,
+            switch cache.removeIfCurrent(
+                cached,
                 now: now
             ) {
+            case let .keptCurrent(current):
                 return current
+            case .failed:
+                return fallback(
+                    cached: cached,
+                    errorMessage: "Context Panel Watch could not clear saved usage."
+                )
+            case .removed:
+                break
             }
             return WatchCompanionCacheLoadResult(
                 result: documentLoad.result,
@@ -109,14 +117,29 @@ public actor WatchCompanionLoader {
                 transportStatuses: documentLoad.result.transportStatuses
             )
         }
-        let displayPreferences = WidgetDisplayPreferences.companionEffectivePreferences(
-            localOverride: presentationLoad?.document?.widgetDisplayPreferences
-                ?? cached.displayPreferences,
-            synced: selectedDocument.widgetDisplayPreferences
-        )
+        let displayPreferences: WidgetDisplayPreferences
+        let displayPreferencesUpdatedAt: Date?
+        if let presentationDocument = presentationLoad?.document {
+            displayPreferences = WidgetDisplayPreferences.companionEffectivePreferences(
+                localOverride: presentationDocument.widgetDisplayPreferences,
+                synced: selectedDocument.widgetDisplayPreferences
+            )
+            displayPreferencesUpdatedAt = presentationDocument.updatedAt
+        } else if presentationLoad?.outcome.succeeded == true,
+                  presentationLoad?.outcome.missingRecord == true {
+            displayPreferences = selectedDocument.widgetDisplayPreferences
+            displayPreferencesUpdatedAt = now
+        } else {
+            displayPreferences = WidgetDisplayPreferences.companionEffectivePreferences(
+                localOverride: cached.displayPreferences,
+                synced: selectedDocument.widgetDisplayPreferences
+            )
+            displayPreferencesUpdatedAt = cached.displayPreferencesUpdatedAt
+        }
         let saveOutcome = cache.saveSelectingNewest(
             document: selectedDocument,
             displayPreferences: displayPreferences,
+            displayPreferencesUpdatedAt: displayPreferencesUpdatedAt,
             now: now
         )
         switch saveOutcome {
@@ -153,7 +176,7 @@ public actor WatchCompanionLoader {
                 status: .stale,
                 errorMessage: errorMessage,
                 transportMetadata: CompanionSyncTransportMetadata(
-                    source: .localCache,
+                    source: cached.result.transportMetadata?.source ?? .localCache,
                     receivedAt: cached.result.transportMetadata?.receivedAt,
                     mirroredAt: cached.result.transportMetadata?.mirroredAt,
                     deliveryStatus: .delayed

@@ -2026,11 +2026,11 @@ exit 65
             "assert_profile_icloud_environment \"$watch_widget_profile\" \"companion watch widget\" \"Production\"",
             script,
         )
-        self.assertNotIn(
+        self.assertIn(
             "assert_profile_app_group \"$watch_profile\" \"companion watch\"",
             script,
         )
-        self.assertNotIn(
+        self.assertIn(
             "assert_profile_app_group \"$watch_widget_profile\" \"companion watch widget\"",
             script,
         )
@@ -2064,12 +2064,16 @@ exit 65
         self.assertNotIn("assert_signed_app_group_exact", script)
         self.assertNotIn("group.com.shinycomputers.contextpanel.watch", script)
         self.assertIn(
-            "assert_signed_entitlement_absent \"$watch_app_entitlements\" \"companion Watch app\" \\",
+            "assert_signed_entitlement_array_value \"$watch_app_entitlements\" \"companion Watch app\" \\",
             script,
         )
         self.assertIn(
-            "assert_signed_entitlement_absent \"$watch_widget_entitlements\" \"companion Watch widget\" \\",
+            "assert_signed_entitlement_array_value \"$watch_widget_entitlements\" \"companion Watch widget\" \\",
             script,
+        )
+        self.assertGreaterEqual(
+            script.count("'com.apple.security.application-groups' 'group.com.shinycomputers.contextpanel'"),
+            3,
         )
         self.assertIn("'com.apple.developer.icloud-services' 'CloudKit'", script)
         self.assertIn(
@@ -2111,7 +2115,8 @@ exit 65
         self.assertIn("companion widget timeline reads Production CloudKit directly", release_docs)
         self.assertIn("Production CloudKit environment", release_docs)
         self.assertIn("Before launching the companion app", release_docs)
-        self.assertIn("watch complication reads Production CloudKit directly", release_docs)
+        self.assertIn("Watch app and complication both read Production CloudKit", release_docs)
+        self.assertIn("coordinate one Watch-local App Group cache", release_docs)
         self.assertIn("`COMPANION_APP_STORE_TV_PROVISIONING_PROFILE_BASE64`", release_docs)
         self.assertIn("`platform=TV_OS` for tvOS builds", release_docs)
         self.assertIn("`platform: TV_OS`", release_docs)

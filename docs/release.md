@@ -393,25 +393,27 @@ or APNs. The companion widget timeline reads Production CloudKit directly with
 a bounded deadline and uses the app-group mirror as its last-good fallback.
 
 For iOS companion uploads, the watch app profile must authorize bundle ID
-`com.shinycomputers.contextpanel.watch` and the Context Panel CloudKit container.
+`com.shinycomputers.contextpanel.watch`, App Group
+`group.com.shinycomputers.contextpanel`, and the Context Panel CloudKit container.
 The watch complication profile must authorize bundle ID
-`com.shinycomputers.contextpanel.watch.widget` and the same CloudKit container;
-the watch complication reads Production CloudKit directly and keeps a last-good
-cache in its own sandbox. Neither Watch target should request an App Group.
+`com.shinycomputers.contextpanel.watch.widget`, the same App Group, and the same
+CloudKit container. The Watch app and complication both read Production CloudKit
+directly and coordinate one Watch-local App Group cache as their last-good value.
 Debug targets use Development CloudKit entitlements, while Release targets use
 the dedicated Watch App Store entitlement files that require Production.
 App Store Connect may report `iOS` platform metadata for the embedded watch
 profiles because the watch app and complication extension are exported as part
 of the iOS companion archive. The watch app is embedded only in the iOS companion
 package; native visionOS companion builds deliberately exclude watchOS content.
-The upload script stops before export if either archived Watch target carries an
-App Group or lacks its required Production CloudKit container and entitlements.
+The upload script stops before export if either archived Watch target lacks the
+shared App Group or its required Production CloudKit container and entitlements.
 
 For physical TestFlight validation, exercise both a cold complication load and a
 cached degraded load. A cold load must render current Production CloudKit data
-without first launching the Watch app. After one successful load, temporarily
-removing network access should preserve last-good numbers as stale rather than
-returning setup-only or silently healthy output.
+without first launching the Watch app. After either the Watch app or complication
+refreshes, the other process must read the same account values from the shared
+cache. Temporarily removing network access should preserve those last-good
+numbers as stale rather than returning setup-only or silently healthy output.
 
 The tvOS app profile is separate from the iOS/visionOS companion app profile
 even though it uses the same bundle ID. It must support `tvOS`, authorize

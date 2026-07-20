@@ -193,9 +193,10 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         let rawRefreshAttentionSummary = stalenessPolicy.refreshAttentionSummary(for: stored, now: now)
         let refreshAttentionSummary = companionRefreshAttentionSummary(from: rawRefreshAttentionSummary)
         let companionStatus = document.companionStatus(now: now, stalenessPolicy: stalenessPolicy)
-        let usesStaleLocalCache = result.status == .stale
-            && result.transportMetadata?.source == .localCache
-        let state: WidgetSnapshotState = if usesStaleLocalCache
+        let usesStaleSavedCache = result.status == .stale
+            && (result.transportMetadata?.source == .localCache
+                || result.transportMetadata?.source == .appGroup)
+        let state: WidgetSnapshotState = if usesStaleSavedCache
             || companionStatus == .stale
             || rawRefreshAttentionSummary?.isSnapshotAgeStale == true {
             .stale
