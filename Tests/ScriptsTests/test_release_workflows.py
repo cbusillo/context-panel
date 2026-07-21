@@ -7,6 +7,7 @@ import os
 import json
 import shlex
 import hashlib
+import plistlib
 import shutil
 import textwrap
 
@@ -2058,6 +2059,32 @@ exit 65
 
         self.assertIn("assert_companion_widget_archive_ready()", script)
         self.assertIn("assert_ios_watch_archive_ready()", script)
+        self.assertIn("assert_bundle_version()", script)
+        self.assertIn("assert_bundle_info_value()", script)
+        self.assertIn("assert_code_signature_valid()", script)
+        self.assertIn("write_ios_watch_archive_receipt()", script)
+        self.assertIn('assert_bundle_version "$companion_app_path" "iOS companion app"', script)
+        self.assertIn('assert_bundle_version "$watch_app_path" "companion Watch app"', script)
+        self.assertIn('assert_bundle_version "$watch_widget_path" "companion Watch widget"', script)
+        self.assertIn("companion_sha256=", script)
+        self.assertIn("watch_app_sha256=", script)
+        self.assertIn("watch_widget_sha256=", script)
+        self.assertIn("ContextPanelWatchUpgradeCanary", script)
+        self.assertIn("canary_marker=A", script)
+        self.assertIn("'WKApplication' 'true'", script)
+        self.assertIn(
+            "'WKCompanionAppBundleIdentifier' 'com.shinycomputers.contextpanel'",
+            script,
+        )
+        self.assertIn(
+            "'NSExtension:NSExtensionPointIdentifier' 'com.apple.widgetkit-extension'",
+            script,
+        )
+        self.assertIn('rm -f "$watch_archive_receipt_path"', script)
+        self.assertIn(
+            'assert_code_signature_valid "$watch_widget_path" "companion Watch widget"',
+            script,
+        )
         self.assertIn("/usr/bin/codesign -d --entitlements - --xml", script)
         self.assertIn("assert_signed_entitlement_array_value_absent()", script)
         self.assertIn("assert_signed_entitlement_value()", script)
@@ -2099,6 +2126,16 @@ exit 65
         self.assertLess(archive_index, widget_validation_index)
         self.assertLess(widget_validation_index, watch_validation_index)
         self.assertLess(watch_validation_index, export_index)
+
+        workflow = self.read(".github/workflows/app-store-connect-companion-upload.yml")
+        self.assertIn("WatchArchiveReceipt-*.txt", workflow)
+
+        with (REPO_ROOT / "Config/ContextPanelWatch-Info.plist").open("rb") as handle:
+            watch_info = plistlib.load(handle)
+        with (REPO_ROOT / "Config/ContextPanelWatchWidget-Info.plist").open("rb") as handle:
+            watch_widget_info = plistlib.load(handle)
+        self.assertEqual(watch_info["ContextPanelWatchUpgradeCanary"], "A")
+        self.assertEqual(watch_widget_info["ContextPanelWatchUpgradeCanary"], "A")
 
     def test_release_docs_describe_cloudkit_companion_testflight_validation(self):
         release_docs = self.read("docs/release.md")

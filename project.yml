@@ -473,6 +473,7 @@ targets:
         CFBundleDisplayName: Context Panel
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        ContextPanelWatchUpgradeCanary: A
         ITSAppUsesNonExemptEncryption: false
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension

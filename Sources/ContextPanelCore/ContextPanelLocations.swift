@@ -169,6 +169,23 @@ public enum ContextPanelLocations {
             .appending(path: "context-panel-watch-cache.json")
     }
 
+    public static func watchUpgradeCanaryDirectoryURL(
+        appGroupID: String = watchAppGroupID
+    ) -> URL? {
+        watchUpgradeCanaryDirectoryURL(appGroupID: appGroupID) {
+            appGroupContainerURL(appGroupID: $0)
+        }
+    }
+
+    static func watchUpgradeCanaryDirectoryURL(
+        appGroupID: String,
+        containerURL: (String) -> URL?
+    ) -> URL? {
+        guard let containerURL = containerURL(appGroupID) else { return nil }
+        return companionSyncDirectory(containerURL: containerURL)
+            .appending(path: "Watch Upgrade Canary", directoryHint: .isDirectory)
+    }
+
     public static func companionSyncStoreSet(
         appGroupID: String? = appGroupID,
         iCloudContainerID: String? = iCloudContainerID

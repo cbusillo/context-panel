@@ -20,6 +20,12 @@ private struct WatchRootView: View {
     var body: some View {
         NavigationStack {
             List {
+                WatchUpgradeCanarySection(
+                    snapshot: model.canarySnapshot,
+                    identity: model.canaryIdentity,
+                    sessionID: model.canarySessionID
+                )
+
                 WatchStatusSection(
                     result: model.displayResult,
                     snapshot: model.snapshot,
@@ -66,8 +72,13 @@ private struct WatchRootView: View {
 @Observable
 private final class WatchSyncModel {
     private let companionLoader: WatchCompanionLoader
+    private let canaryStore: WatchUpgradeCanaryReceiptStore?
     private var reloadTask: Task<Void, Never>?
+    private var canaryObservationTask: Task<Void, Never>?
     private var needsReloadAfterCurrentTask = false
+
+    let canaryIdentity = WatchUpgradeCanaryBuildIdentity.current()
+    let canarySessionID = UUID()
 
     private(set) var result = CompanionSyncLoadResult(document: nil, status: .unknown)
     private(set) var displayResult = CompanionSyncLoadResult(document: nil, status: .unknown)
@@ -76,9 +87,11 @@ private final class WatchSyncModel {
     )
     private(set) var displayPreferences = WidgetDisplayPreferences.defaultPreferences
     private(set) var lastSyncErrorMessage: String?
+    private(set) var canarySnapshot = WatchUpgradeCanarySnapshot.empty
     private(set) var isLoading = false
 
     init() {
+        canaryStore = WatchUpgradeCanaryReceiptStore()
         let cache = WatchCompanionCache()
         let remoteStore = CompanionCloudKitSyncStoreFactory.make()
         let presentationStore = CompanionCloudKitSyncStoreFactory.makePresentationPreferences()
@@ -87,6 +100,7 @@ private final class WatchSyncModel {
             loadDocument: { now in await remoteStore.load(now: now) },
             loadPresentation: { await presentationStore.load() }
         )
+        startCanarySession()
     }
 
     var displayLimits: [WatchLimitDisplay] {
@@ -136,8 +150,171 @@ private final class WatchSyncModel {
             displayPreferences = effectiveDisplayPreferences
             if WatchComplicationTimelineReloadPolicy.shouldReload(after: loaded) {
                 WidgetCenter.shared.reloadTimelines(ofKind: ContextPanelWatchWidgetIdentity.kind)
+                observeCanaryTimeline()
+            }
+            refreshCanarySnapshot()
+        }
+    }
+
+    private func startCanarySession(now: Date = Date()) {
+        guard let canaryStore else { return }
+        let identity = canaryIdentity
+        let sessionID = canarySessionID
+        Task { [weak self] in
+            let snapshot = await Task.detached(priority: .utility) {
+                _ = canaryStore.record(
+                    component: .app,
+                    event: .appLaunch,
+                    identity: identity,
+                    sessionID: sessionID,
+                    now: now
+                )
+                return canaryStore.loadSnapshot()
+            }.value
+            guard let self else { return }
+            canarySnapshot = snapshot
+            WidgetCenter.shared.reloadTimelines(ofKind: ContextPanelWatchWidgetIdentity.kind)
+            observeCanaryTimeline()
+        }
+    }
+
+    private func observeCanaryTimeline() {
+        guard let canaryStore else { return }
+        let identity = canaryIdentity
+        let sessionID = canarySessionID
+        canaryObservationTask?.cancel()
+        canaryObservationTask = Task { [weak self] in
+            var previousOffset = 0
+            for offset in [0, 2, 5, 15, 60] {
+                let delay = offset - previousOffset
+                if delay > 0 {
+                    do {
+                        try await Task.sleep(for: .seconds(delay))
+                    } catch {
+                        return
+                    }
+                }
+                let snapshot = await Task.detached(priority: .utility) {
+                    canaryStore.loadSnapshot()
+                }.value
+                guard let self, !Task.isCancelled else { return }
+                canarySnapshot = snapshot
+                if snapshot.widgetTimelineCompleted?.belongsToCanaryRun(
+                    marketingVersion: identity.marketingVersion,
+                    buildNumber: identity.buildNumber,
+                    sessionID: sessionID
+                ) == true {
+                    return
+                }
+                previousOffset = offset
             }
         }
+    }
+
+    private func refreshCanarySnapshot() {
+        guard let canaryStore else { return }
+        Task { [weak self] in
+            let snapshot = await Task.detached(priority: .utility) {
+                canaryStore.loadSnapshot()
+            }.value
+            self?.canarySnapshot = snapshot
+        }
+    }
+}
+
+private struct WatchUpgradeCanarySection: View {
+    let snapshot: WatchUpgradeCanarySnapshot
+    let identity: WatchUpgradeCanaryBuildIdentity
+    let sessionID: UUID
+
+    var body: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Upgrade canary \(WatchUpgradeCanary.marker)")
+                    .font(.caption.weight(.semibold))
+                appRow
+                observationRow(
+                    label: "Timeline",
+                    current: currentTimelineReceipt,
+                    previous: latestTimelineReceipt
+                )
+                observationRow(
+                    label: "Snapshot",
+                    current: currentReceipt(snapshot.widgetSnapshot),
+                    previous: snapshot.widgetSnapshot
+                )
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    @ViewBuilder
+    private var appRow: some View {
+        if let app = currentReceipt(snapshot.app) {
+            Text("App \(app.marker) · \(app.buildNumber)")
+                .font(.caption2)
+        } else {
+            Text("App starting this launch")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func observationRow(
+        label: String,
+        current: WatchUpgradeCanaryReceipt?,
+        previous: WatchUpgradeCanaryReceipt?
+    ) -> some View {
+        HStack(spacing: 4) {
+            Text(label)
+            if let current {
+                Text(current.event == .widgetTimelineStarted ? "started" : "current")
+                Text("·")
+                Text(current.observedAt, style: .relative)
+            } else if let previous {
+                Text(previousLabel(previous))
+                Text("·")
+                Text(previous.observedAt, style: .relative)
+            } else {
+                Text("not observed this launch")
+            }
+        }
+        .font(.caption2)
+        .foregroundStyle(current == nil ? .secondary : .primary)
+    }
+
+    private func previousLabel(_ receipt: WatchUpgradeCanaryReceipt) -> String {
+        if receipt.marker == WatchUpgradeCanary.marker,
+           receipt.marketingVersion == identity.marketingVersion,
+           receipt.buildNumber == identity.buildNumber {
+            return "before this launch"
+        }
+        return "older \(receipt.marker) · \(receipt.buildNumber)"
+    }
+
+    private var currentTimelineReceipt: WatchUpgradeCanaryReceipt? {
+        currentReceipt(snapshot.widgetTimelineCompleted)
+            ?? currentReceipt(snapshot.widgetTimelineStarted)
+    }
+
+    private var latestTimelineReceipt: WatchUpgradeCanaryReceipt? {
+        [snapshot.widgetTimelineStarted, snapshot.widgetTimelineCompleted]
+            .compactMap { $0 }
+            .max { $0.observedAt < $1.observedAt }
+    }
+
+    private func currentReceipt(
+        _ receipt: WatchUpgradeCanaryReceipt?
+    ) -> WatchUpgradeCanaryReceipt? {
+        guard let receipt,
+              receipt.belongsToCanaryRun(
+                marketingVersion: identity.marketingVersion,
+                buildNumber: identity.buildNumber,
+                sessionID: sessionID
+              )
+        else { return nil }
+        return receipt
     }
 }
 

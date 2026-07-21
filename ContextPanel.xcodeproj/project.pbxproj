@@ -185,11 +185,13 @@
 		C7E610078DC1A53FA187AC66 /* WidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5233BBC86AE8057D749F71CD /* WidgetSnapshot.swift */; };
 		C93316DEA0FF5C307DC09F07 /* CompanionSyncLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E12E941B0706B6DA759F0C8 /* CompanionSyncLoader.swift */; };
 		C99333FAE7BBD2E81B18EEE3 /* ContextPanelWidgetIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 735462CA7931BEFE526B5B51 /* ContextPanelWidgetIdentity.swift */; };
+		CAE1BC06552F9E27717C393C /* WatchUpgradeCanary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43D5EB658BB1F4941D1E5D82 /* WatchUpgradeCanary.swift */; };
 		CB01FA4ABEFE2CFC8A60CBBE /* ContextPanelWidgetViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1973426645A7260EC4F9B396 /* ContextPanelWidgetViews.swift */; };
 		CF2652EE9B1FEC94AC1AB387 /* MetricProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B5621100867602BDE8B426A /* MetricProgress.swift */; };
 		D15F2194BB1A43604A1E2D52 /* PromptCacheTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96C85B770C80B786EAE068CF /* PromptCacheTelemetry.swift */; };
 		D1AE42202229297FD0665FDC /* ClaudeAccountMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BBC1080557704B2EF023A7B /* ClaudeAccountMigration.swift */; };
 		D4F01BFAED925D24A37BEB89 /* SnapshotStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32D8515D047F5A8117DB762C /* SnapshotStore.swift */; };
+		D52C8CB78214EAFDC6AC0ED1 /* WatchUpgradeCanary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43D5EB658BB1F4941D1E5D82 /* WatchUpgradeCanary.swift */; };
 		D576C47E63484116DD45FC7D /* CapacityPool.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8862B929FE544FCB2C3D06B /* CapacityPool.swift */; };
 		D6488317105C434A6894A732 /* TVAsyncDeadline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AE89FE10368B8714C3F0798 /* TVAsyncDeadline.swift */; };
 		D75323A888BC8BC683D2F6AA /* LimitProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */; };
@@ -633,6 +635,7 @@
 		3FC2DAEDD38483FC3A5D4880 /* MainLimitSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainLimitSummary.swift; sourceTree = "<group>"; };
 		400B0794690F91F5C3029A21 /* libContextPanelCloudKitSyncTV.a */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = archive.ar; path = libContextPanelCloudKitSyncTV.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		41278A75CCCF83C9E0220F40 /* libContextPanelCloudKitSyncWatch.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libContextPanelCloudKitSyncWatch.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		43D5EB658BB1F4941D1E5D82 /* WatchUpgradeCanary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchUpgradeCanary.swift; sourceTree = "<group>"; };
 		44FF54AE4BAF0EF490CAD694 /* libContextPanelTVSupport.a */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = archive.ar; path = libContextPanelTVSupport.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		45E8D3C3E45C1B6B3FACE828 /* SnapshotRefreshService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotRefreshService.swift; sourceTree = "<group>"; };
 		47D628E750682BA2235D68F3 /* WatchLimitDisplay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchLimitDisplay.swift; sourceTree = "<group>"; };
@@ -993,6 +996,7 @@
 				5C18341F829AEDD53F6289C5 /* WatchCompanionLoader.swift */,
 				47D628E750682BA2235D68F3 /* WatchLimitDisplay.swift */,
 				A5B65339825AC1B0BB414797 /* WatchSyncPresentation.swift */,
+				43D5EB658BB1F4941D1E5D82 /* WatchUpgradeCanary.swift */,
 			);
 			name = ContextPanelWatchSupport;
 			path = Sources/ContextPanelWatchSupport;
@@ -2073,6 +2077,7 @@
 				4D3042ECC2194F1B0FE482FE /* WatchCompanionLoader.swift in Sources */,
 				B32B9A08B17CEA125482D04F /* WatchLimitDisplay.swift in Sources */,
 				7F3B4D8E43F64F798DEA1ED4 /* WatchSyncPresentation.swift in Sources */,
+				D52C8CB78214EAFDC6AC0ED1 /* WatchUpgradeCanary.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2249,6 +2254,7 @@
 				DF6E7994A6F1F3286183C0A3 /* WatchCompanionCache.swift in Sources */,
 				C0416171CA071AD95E1D5AB3 /* WatchCompanionLoader.swift in Sources */,
 				DAB797026E0937A4294CEB05 /* WatchLimitDisplay.swift in Sources */,
+				CAE1BC06552F9E27717C393C /* WatchUpgradeCanary.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

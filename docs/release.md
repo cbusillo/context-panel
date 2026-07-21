@@ -716,6 +716,53 @@ Panel.app`.
     and confirm repeated legacy publishes cannot erase lanes already preserved
     in the versioned record.
 
+### Watch Upgrade Canary
+
+Issue #420 uses two temporary internal TestFlight canaries to distinguish an
+old Watch widget extension from a stale WidgetKit render. Canary A shows a small
+`A` on the circular complication and adds an Upgrade Canary section to the
+Watch app. Opening the Watch app starts a fresh diagnostic session and requests
+one WidgetKit timeline reload. The section reports the Watch app build plus
+separate snapshot, timeline-started, and timeline-completed observations. Only
+widget receipts carrying the current app session and build are labeled current;
+same-build receipts observed before the app opened are labeled before this
+launch, while receipts from another build are labeled older. The Watch app
+rechecks the receipts at 0, 2, 5, 15, and 60 seconds after requesting the reload,
+so a delayed WidgetKit callback updates the section without manual refresh.
+
+The app and widget extension write event-specific, privacy-safe JSON receipts in
+the shared Watch App Group. The receipts contain only bundle identity, marketing
+version, build number, canary marker, ephemeral session UUID, provider event,
+and timestamp. They never contain account identifiers, usage values,
+credentials, or provider payloads.
+
+For Canary A validation:
+
+1. Keep the existing Watch app and complication installed.
+2. Update the iOS TestFlight app in place and wait for the Watch app to become
+   launchable.
+3. Open the Watch app. Confirm it reports app canary `A`, then record whether
+   Timeline becomes current/completed for this launch before changing the watch
+   face or installation. A current timeline receipt proves the Canary A widget
+   extension generated a timeline after the app opened; the visible `A` proves
+   the watch face rendered that new timeline.
+4. Observe the existing circular complication at 2, 5, 15, and 60 minutes.
+5. If the complication remains on the prior code, remove and re-add only the
+   complication, then reboot the Watch if necessary. Uninstall/reinstall is the
+   final diagnostic step.
+6. Preserve Watch Console logs for the `watch-upgrade-canary` category when the
+   paired device is available to Xcode.
+
+The signed iOS archive workflow also emits `WatchArchiveReceipt-iOS.txt`. Require
+matching iOS app, Watch app, and Watch widget build numbers before distribution,
+require Canary A markers in both nested Watch bundles, and retain all three
+bundle identifiers, versions, build numbers, and executable SHA-256 values with
+the workflow evidence. The archive gate also verifies each code signature and
+the Watch app, companion-app, and WidgetKit extension role metadata. It deletes
+any prior receipt before archiving so a failed run cannot upload stale evidence.
+Canary B changes the marker and one temporary render detail only. Remove all
+canary UI and receipts after the in-place upgrade path is explained and fixed.
+
 If the companion app or widget is stale but diagnostics show healthy Mac publish
 and readable CloudKit state, investigate the companion receive/mirror/reload path
 under #456 before treating provider refresh as the cause.
@@ -871,8 +918,9 @@ Context Panel CloudKit container, and Production CloudKit environment because
 the widget reads CloudKit directly and keeps the app-group mirror as fallback.
 It should not carry iCloud Documents, ubiquity, or APNs entitlements. The
 embedded watch app and watch complication profiles must both authorize the
-Context Panel CloudKit container; neither Watch target should carry an App Group
-entitlement.
+Context Panel CloudKit container and the shared
+`group.com.shinycomputers.contextpanel` App Group used for Watch-local cache and
+upgrade-canary receipts.
 
 ## Build The Native App And Widget
 

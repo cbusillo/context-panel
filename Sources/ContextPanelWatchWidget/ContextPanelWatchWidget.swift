@@ -24,8 +24,7 @@ struct ContextPanelWatchWidgetProvider: TimelineProvider {
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<ContextPanelWatchWidgetEntry>) -> Void) {
-        let date = Date()
-        WatchWidgetLoadQueue.loadTimeline(date: date, completion: completion)
+        WatchWidgetLoadQueue.loadTimeline(date: Date(), completion: completion)
     }
 
     private func placeholderSnapshot(date: Date) -> WidgetSnapshot {
@@ -45,6 +44,7 @@ private enum WatchWidgetLoadQueue {
         qos: .utility
     )
     private static let cache = WatchCompanionCache()
+    private static let canaryStore = WatchUpgradeCanaryReceiptStore()
     private static let loader: WatchCompanionLoader = {
         let remoteStore = CompanionCloudKitSyncStoreFactory.make()
         let presentationStore = CompanionCloudKitSyncStoreFactory.makePresentationPreferences()
@@ -56,8 +56,17 @@ private enum WatchWidgetLoadQueue {
     }()
 
     static func loadSnapshot(date: Date, completion: @escaping (ContextPanelWatchWidgetEntry) -> Void) {
+        let completion = WatchWidgetCompletion(completion)
         queue.async {
-            completion(entry(
+            if let canaryStore {
+                let sessionID = canaryStore.captureWidgetSessionID()
+                _ = canaryStore.recordWidget(
+                    event: .widgetSnapshot,
+                    sessionID: sessionID,
+                    now: date
+                )
+            }
+            completion.call(entry(
                 date: date,
                 loaded: cache.load(),
                 stalenessPolicy: stalenessPolicy
@@ -71,6 +80,12 @@ private enum WatchWidgetLoadQueue {
     ) {
         let completion = WatchWidgetCompletion(completion)
         Task.detached(priority: .utility) {
+            let sessionID = canaryStore?.captureWidgetSessionID()
+            _ = canaryStore?.recordWidget(
+                event: .widgetTimelineStarted,
+                sessionID: sessionID,
+                now: date
+            )
             let loaded = await loader.load(now: date)
             let currentEntry = entry(
                 date: date,
@@ -90,9 +105,17 @@ private enum WatchWidgetLoadQueue {
                     now: date
                   )
             else {
+                _ = canaryStore?.recordWidget(
+                    event: .widgetTimelineCompleted,
+                    sessionID: sessionID
+                )
                 completion.call(Timeline(entries: [currentEntry], policy: refreshPolicy))
                 return
             }
+            _ = canaryStore?.recordWidget(
+                event: .widgetTimelineCompleted,
+                sessionID: sessionID
+            )
             completion.call(Timeline(
                 entries: [
                     currentEntry,
@@ -195,40 +218,59 @@ struct WatchCircularComplication: View {
     @ViewBuilder
     var body: some View {
         if let limit, let ratio = limit.remainingCapacity.ratio {
-            Gauge(value: ratio) {
-                EmptyView()
-            } currentValueLabel: {
-                Text(limit.compactCircularQuantity)
-                    .font(.system(size: 19, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.5)
-                    .overlay(alignment: .bottomTrailing) {
-                        if let symbol = watchExceptionalStatusSymbol(limit.status) {
-                            Image(systemName: symbol)
-                                .font(.system(size: 7, weight: .semibold))
-                                .offset(x: 3, y: 3)
-                                .accessibilityHidden(true)
+            ZStack(alignment: .top) {
+                Gauge(value: ratio) {
+                    EmptyView()
+                } currentValueLabel: {
+                    Text(limit.compactCircularQuantity)
+                        .font(.system(size: 19, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.5)
+                        .overlay(alignment: .bottomTrailing) {
+                            if let symbol = watchExceptionalStatusSymbol(limit.status) {
+                                Image(systemName: symbol)
+                                    .font(.system(size: 7, weight: .semibold))
+                                    .offset(x: 3, y: 3)
+                                    .accessibilityHidden(true)
+                            }
                         }
-                    }
+                }
+                .gaugeStyle(.accessoryCircularCapacity)
+                .tint(tint)
+
+                canaryMarker
             }
-            .gaugeStyle(.accessoryCircularCapacity)
-            .tint(tint)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(limit.accessibilitySentence(direction: .remaining))
+            .accessibilityLabel(
+                limit.accessibilitySentence(direction: .remaining)
+                    + " Upgrade canary \(WatchUpgradeCanary.marker)."
+            )
         } else {
             ZStack {
                 Circle()
                     .stroke(tint, style: StrokeStyle(lineWidth: 2, dash: [3, 3]))
                 Image(systemName: fallbackSymbol)
                     .font(.caption2.weight(.semibold))
+                canaryMarker
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(
-                limit?.accessibilitySentence(direction: .remaining)
-                    ?? watchEmptyText(for: snapshot, compact: false)
+                (limit?.accessibilitySentence(direction: .remaining)
+                    ?? watchEmptyText(for: snapshot, compact: false))
+                    + " Upgrade canary \(WatchUpgradeCanary.marker)."
             )
         }
+    }
+
+    private var canaryMarker: some View {
+        VStack {
+            Text(WatchUpgradeCanary.marker)
+                .font(.system(size: 7, weight: .black, design: .rounded))
+            Spacer(minLength: 0)
+        }
+        .padding(.top, 1)
+        .accessibilityHidden(true)
     }
 
     private var fallbackSymbol: String {

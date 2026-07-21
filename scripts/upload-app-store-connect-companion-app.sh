@@ -6,6 +6,7 @@ configuration="Release"
 platform="ios"
 team_id="${APPLE_TEAM_ID:-MM5YXC7T6E}"
 archive_path=""
+watch_archive_receipt_path=""
 derived_data_path=".build/app-store-connect-companion/xcode-derived"
 export_path=""
 export_options_path=""
@@ -543,9 +544,18 @@ tvos)
 	;;
 esac
 
+if [[ "$platform" == "ios" && ( -z "$marketing_version" || -z "$build_number" ) ]]; then
+	echo "iOS companion releases require both --version and --build-number." >&2
+	exit 2
+fi
+
 archive_path="${archive_path:-.build/app-store-connect-companion/$scheme-$platform_label.xcarchive}"
 export_path="${export_path:-.build/app-store-connect-companion/upload-$platform_label}"
 export_options_path="${export_options_path:-.build/app-store-connect-companion/UploadOptions-$platform_label.plist}"
+if [[ "$platform" == "ios" ]]; then
+	watch_archive_receipt_path="$(dirname "$archive_path")/WatchArchiveReceipt-iOS.txt"
+	rm -f "$watch_archive_receipt_path"
+fi
 
 require_command xcodegen
 require_command xcodebuild
@@ -661,7 +671,109 @@ assert_signed_entitlement_absent() {
 	fi
 }
 
+assert_bundle_version() {
+	local bundle="$1"
+	local label="$2"
+	local info_plist="$bundle/Info.plist"
+	local actual_marketing_version actual_build_number
+	if [[ ! -f "$info_plist" ]]; then
+		echo "$label is missing Info.plist: $info_plist" >&2
+		exit 1
+	fi
+	actual_marketing_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$info_plist" 2>/dev/null || true)"
+	actual_build_number="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$info_plist" 2>/dev/null || true)"
+	if [[ -n "$marketing_version" && "$actual_marketing_version" != "$marketing_version" ]]; then
+		echo "$label marketing version is '$actual_marketing_version', expected '$marketing_version'" >&2
+		exit 1
+	fi
+	if [[ -n "$build_number" && "$actual_build_number" != "$build_number" ]]; then
+		echo "$label build number is '$actual_build_number', expected '$build_number'" >&2
+		exit 1
+	fi
+}
+
+assert_bundle_info_value() {
+	local bundle="$1"
+	local label="$2"
+	local key="$3"
+	local expected_value="$4"
+	local actual_value
+	actual_value="$(/usr/libexec/PlistBuddy -c "Print :$key" "$bundle/Info.plist" 2>/dev/null || true)"
+	if [[ "$actual_value" != "$expected_value" ]]; then
+		echo "$label has $key value '$actual_value', expected '$expected_value'" >&2
+		exit 1
+	fi
+}
+
+assert_code_signature_valid() {
+	local bundle="$1"
+	local label="$2"
+	if ! /usr/bin/codesign --verify --strict --verbose=2 "$bundle"; then
+		echo "$label code signature verification failed: $bundle" >&2
+		exit 1
+	fi
+}
+
+bundle_executable_sha256() {
+	local bundle="$1"
+	local executable
+	executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$bundle/Info.plist" 2>/dev/null || true)"
+	if [[ -z "$executable" || ! -f "$bundle/$executable" ]]; then
+		echo "bundle executable is unavailable for fingerprinting: $bundle" >&2
+		exit 1
+	fi
+	/usr/bin/shasum -a 256 "$bundle/$executable" | /usr/bin/awk '{print $1}'
+}
+
+write_ios_watch_archive_receipt() {
+	local companion_app_path="$archive_path/Products/Applications/Context Panel.app"
+	local watch_app_path="$companion_app_path/Watch/Context Panel.app"
+	local watch_widget_path="$watch_app_path/PlugIns/ContextPanelWatchWidgetExtension.appex"
+	local companion_sha256
+	local watch_app_sha256
+	local watch_widget_sha256
+	if [[ -z "$watch_archive_receipt_path" ]]; then
+		echo "Watch archive receipt path is unavailable" >&2
+		exit 1
+	fi
+	if ! companion_sha256="$(bundle_executable_sha256 "$companion_app_path")"; then
+		echo "could not fingerprint the iOS companion executable" >&2
+		exit 1
+	fi
+	if ! watch_app_sha256="$(bundle_executable_sha256 "$watch_app_path")"; then
+		echo "could not fingerprint the companion Watch app executable" >&2
+		exit 1
+	fi
+	if ! watch_widget_sha256="$(bundle_executable_sha256 "$watch_widget_path")"; then
+		echo "could not fingerprint the companion Watch widget executable" >&2
+		exit 1
+	fi
+	if [[ -z "$companion_sha256" || -z "$watch_app_sha256" || -z "$watch_widget_sha256" ]]; then
+		echo "one or more companion archive executable fingerprints are empty" >&2
+		exit 1
+	fi
+	{
+		printf 'canary_marker=A\n'
+		printf 'companion_bundle_id=%s\n' "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$companion_app_path/Info.plist")"
+		printf 'companion_marketing_version=%s\n' "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$companion_app_path/Info.plist")"
+		printf 'companion_build=%s\n' "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$companion_app_path/Info.plist")"
+		printf 'companion_sha256=%s\n' "$companion_sha256"
+		printf 'watch_app_bundle_id=%s\n' "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$watch_app_path/Info.plist")"
+		printf 'watch_app_marketing_version=%s\n' "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$watch_app_path/Info.plist")"
+		printf 'watch_app_build=%s\n' "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$watch_app_path/Info.plist")"
+		printf 'watch_app_canary=%s\n' "$(/usr/libexec/PlistBuddy -c 'Print :ContextPanelWatchUpgradeCanary' "$watch_app_path/Info.plist")"
+		printf 'watch_app_sha256=%s\n' "$watch_app_sha256"
+		printf 'watch_widget_bundle_id=%s\n' "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$watch_widget_path/Info.plist")"
+		printf 'watch_widget_marketing_version=%s\n' "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$watch_widget_path/Info.plist")"
+		printf 'watch_widget_build=%s\n' "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$watch_widget_path/Info.plist")"
+		printf 'watch_widget_canary=%s\n' "$(/usr/libexec/PlistBuddy -c 'Print :ContextPanelWatchUpgradeCanary' "$watch_widget_path/Info.plist")"
+		printf 'watch_widget_sha256=%s\n' "$watch_widget_sha256"
+	} >"$watch_archive_receipt_path"
+	echo "Watch archive receipt: $watch_archive_receipt_path"
+}
+
 assert_ios_watch_archive_ready() {
+	local companion_app_path="$archive_path/Products/Applications/Context Panel.app"
 	local watch_app_path="$archive_path/Products/Applications/Context Panel.app/Watch/Context Panel.app"
 	local watch_widget_path="$watch_app_path/PlugIns/ContextPanelWatchWidgetExtension.appex"
 	local entitlements_dir
@@ -675,6 +787,28 @@ assert_ios_watch_archive_ready() {
 		echo "iOS archive is missing the embedded Watch complication extension: $watch_widget_path" >&2
 		exit 1
 	fi
+	assert_bundle_version "$companion_app_path" "iOS companion app"
+	assert_bundle_version "$watch_app_path" "companion Watch app"
+	assert_bundle_version "$watch_widget_path" "companion Watch widget"
+	assert_bundle_info_value "$companion_app_path" "iOS companion app" \
+		'CFBundleIdentifier' 'com.shinycomputers.contextpanel'
+	assert_bundle_info_value "$watch_app_path" "companion Watch app" \
+		'CFBundleIdentifier' 'com.shinycomputers.contextpanel.watch'
+	assert_bundle_info_value "$watch_widget_path" "companion Watch widget" \
+		'CFBundleIdentifier' 'com.shinycomputers.contextpanel.watch.widget'
+	assert_bundle_info_value "$watch_app_path" "companion Watch app" \
+		'WKApplication' 'true'
+	assert_bundle_info_value "$watch_app_path" "companion Watch app" \
+		'WKCompanionAppBundleIdentifier' 'com.shinycomputers.contextpanel'
+	assert_bundle_info_value "$watch_widget_path" "companion Watch widget" \
+		'NSExtension:NSExtensionPointIdentifier' 'com.apple.widgetkit-extension'
+	assert_bundle_info_value "$watch_app_path" "companion Watch app" \
+		'ContextPanelWatchUpgradeCanary' 'A'
+	assert_bundle_info_value "$watch_widget_path" "companion Watch widget" \
+		'ContextPanelWatchUpgradeCanary' 'A'
+	assert_code_signature_valid "$watch_widget_path" "companion Watch widget"
+	assert_code_signature_valid "$watch_app_path" "companion Watch app"
+	assert_code_signature_valid "$companion_app_path" "iOS companion app"
 	entitlements_dir="$(mktemp -d)"
 	watch_app_entitlements="$entitlements_dir/watch-app.plist"
 	watch_widget_entitlements="$entitlements_dir/watch-widget.plist"
@@ -697,6 +831,7 @@ assert_ios_watch_archive_ready() {
 	assert_signed_entitlement_value "$watch_widget_entitlements" "companion Watch widget" \
 		'com.apple.developer.icloud-container-environment' 'Production'
 	rm -rf "$entitlements_dir"
+	write_ios_watch_archive_receipt
 }
 
 assert_companion_widget_archive_ready() {
