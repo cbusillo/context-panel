@@ -22,6 +22,7 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
     private let usedAccessibilityText: String
     private let remainingAccessibilityText: String
     private let isAssumedAfterScheduledReset: Bool
+    private let usesPercentageUnit: Bool
     private let resetsAt: Date?
     private let snapshotGeneratedAt: Date
     private let snapshotState: WidgetSnapshotState
@@ -44,6 +45,14 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
 
     public var compactInlineQuantity: String {
         complicationText(remainingCapacity.isIndeterminate ? "?" : remainingText)
+    }
+
+    public var compactCircularQuantity: String {
+        guard !remainingCapacity.isIndeterminate else { return "?" }
+        guard usesPercentageUnit, remainingText.count > 1, remainingText.hasSuffix("%") else {
+            return remainingText
+        }
+        return String(remainingText.dropLast())
     }
 
     public var exceptionalStatusText: String? {
@@ -203,6 +212,7 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
             usedAccessibilityText: "usage unknown",
             remainingAccessibilityText: "remaining capacity unknown",
             isAssumedAfterScheduledReset: false,
+            usesPercentageUnit: false,
             resetsAt: nil,
             snapshotGeneratedAt: snapshot.generatedAt,
             snapshotState: snapshot.state
@@ -261,6 +271,7 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
                 isAssumedAfterScheduledReset: pooledLimit.isAssumedAfterScheduledReset
             ),
             isAssumedAfterScheduledReset: pooledLimit.isAssumedAfterScheduledReset,
+            usesPercentageUnit: pooledLimit.unit == .percent,
             resetsAt: pooledLimit.resetsAt,
             snapshotGeneratedAt: snapshot.generatedAt,
             snapshotState: snapshot.state
@@ -321,6 +332,7 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
                 isAssumedAfterScheduledReset: limit.isAssumedAfterScheduledReset
             ),
             isAssumedAfterScheduledReset: limit.isAssumedAfterScheduledReset,
+            usesPercentageUnit: limit.unit == .percent,
             resetsAt: limit.resetsAt,
             snapshotGeneratedAt: snapshot.generatedAt,
             snapshotState: snapshot.state

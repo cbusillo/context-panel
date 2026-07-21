@@ -295,6 +295,7 @@ import Testing
     #expect(rows.map(\.provider) == [.openAI, .anthropic])
     #expect(rows.map(\.subtitle) == ["1w", "1w"])
     #expect(rows.map(\.compactInlineQuantity) == ["93%", "15%"])
+    #expect(rows.map(\.compactCircularQuantity) == ["93", "15"])
 }
 
 @Test func watchInlineRowsUseNextSavedLimitWhenClosestWouldAddNoise() {
@@ -354,6 +355,7 @@ import Testing
     #expect(singleRow.first?.remainingCapacity.isIndeterminate == true)
     #expect(inlineRows.map(\.provider) == [.openAI, .anthropic])
     #expect(inlineRows.first?.compactInlineQuantity == "?")
+    #expect(inlineRows.first?.compactCircularQuantity == "?")
 }
 
 @Test func watchLimitDisplayMainLaneRowsPreserveSelectedUnknownLane() throws {
@@ -678,6 +680,7 @@ import Testing
 
     #expect(row.usedTextLabeled == "35 used")
     #expect(row.remainingText == "65")
+    #expect(row.compactCircularQuantity == "65")
     #expect(row.remainingComplicationText == "65 left · saved")
     #expect(row.status == .stale)
     #expect(row.resetText(now: now) == "2h")
@@ -749,6 +752,7 @@ import Testing
 
     #expect(row.usedText == "≈0%")
     #expect(row.remainingText == "≈100%")
+    #expect(row.compactCircularQuantity == "≈100")
     #expect(row.resetText(now: now) == "assumed reset")
     let accessibilitySentence = row.accessibilitySentence(direction: .remaining, now: now)
     #expect(accessibilitySentence.contains("approximately 100 percent remaining"))

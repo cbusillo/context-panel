@@ -198,8 +198,11 @@ struct WatchCircularComplication: View {
             Gauge(value: ratio) {
                 EmptyView()
             } currentValueLabel: {
-                Text(limit.remainingText)
-                    .minimumScaleFactor(0.55)
+                Text(limit.compactCircularQuantity)
+                    .font(.system(size: 19, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
                     .overlay(alignment: .bottomTrailing) {
                         if let symbol = watchExceptionalStatusSymbol(limit.status) {
                             Image(systemName: symbol)

@@ -61,7 +61,11 @@ capacity, matching the primary macOS widget answer. Circular and corner gauges
 remain one-value surfaces. Inline may show the stable answer plus a useful
 closest limit when both fit, otherwise it shows the next saved limit or falls
 back to one clear value. Rectangular bars and inline copy use the remaining
-ratio and explicit `left` language. Watch app rows remain detail surfaces and
+ratio and explicit `left` language. Circular capacity gauges use a large
+centered numeral. Percentage values omit the percent sign because the
+surrounding ring already conveys relative capacity; absolute counts remain
+unchanged, and accessibility retains the full spoken unit. Watch app rows remain
+detail surfaces and
 stay explicitly used-pressure while following saved main-limit visibility and
 order; auxiliary provider buckets such as Spark remain in the larger app detail
 views. In every case, the visible number, wording,
