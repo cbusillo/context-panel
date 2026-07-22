@@ -677,6 +677,7 @@ Panel.app`.
    `refresh-agent-cloudkit=Production`. Do not run `install` or `reset`; those
    modes build a local Development-CloudKit runtime and refuse to replace the
    signed Production publisher.
+
 3. Trigger a Mac refresh that publishes the sanitized companion snapshot to
    CloudKit.
 4. Open the app Diagnostics view and confirm `Companion publish` is healthy or,
@@ -718,86 +719,104 @@ Panel.app`.
 
 ### Watch Upgrade Canary
 
-Issue #420 uses two temporary internal TestFlight canaries to distinguish an
-old Watch widget extension from a stale WidgetKit render. Canary A established
-that an in-place TestFlight update could install the new Watch app while a fresh
-circular placement remained blank and the new widget provider was never
-invoked; restarting the Watch recovered provider execution. Canary A marked only
-the circular family, so its results cannot classify the other complication
-families.
+Issue #420 uses temporary internal TestFlight canaries to distinguish an old
+Watch widget extension from a stale WidgetKit render. Apple's expected update
+contract does not require a reboot, reinstall, or complication reselection: an
+in-place update should replace the embedded Watch app and WidgetKit extension
+while preserving existing placements.
 
-Canary B places a visible `B` in circular, corner, rectangular, and inline
-families, including their no-data states. Opening the Watch app starts a fresh
-diagnostic session and requests one WidgetKit timeline reload. The Upgrade
-Canary section shows one compact row per family with separate `L` and `P`
-evidence for live and preview timeline, snapshot, and placeholder callbacks. The
-Watch app rechecks receipts at 0, 2, 5, 15, and 60 seconds without stopping after
-the first family responds.
+Canary A established the original symptom. Canary B then installed build
+`202607220213` on the iPhone, Watch app, and Watch widget while an unchanged
+circular placement continued rendering Canary A. Opening the B app, requesting
+reloads, editing the face, and recommitting the selected complication did not
+visibly recover it. Rebooting the Watch caused the same installed B extension to
+launch and existing placements to render B.
 
-The app and widget extension write family- and context-specific, privacy-safe
-JSON receipts in the shared Watch App Group. The receipts contain only bundle
-identity, marketing version, build number, canary marker, ephemeral app session
-and request UUIDs, process identifier, requested family, preview/live context,
-provider event, request start, and observation timestamps. They never contain
-account identifiers, usage values, credentials, or provider payloads. This
-StaticConfiguration provider does not receive a stable watch-face or slot
-identity, so the strongest supported attribution is widget kind plus family and
-preview/live context.
+That result is important but not conclusive. Canary B used marker-specific
+receipt filenames, so the B app could not display callbacks written by a still-
+running A process. It also performed coordinated App Group I/O synchronously in
+WidgetKit provider paths and issued multiple startup reloads. Those diagnostics
+could hide or perturb the behavior being measured. Treat the B outcome as
+ambiguous with a strong watchOS/WidgetKit activation-bug signal, not proof that
+the application design was uninvolved.
 
-For Canary B validation:
+Canary C is the neutral discriminator:
 
-1. Keep Canary A installed and preserve every existing complication placement.
-2. Confirm the Watch is connected through CoreDevice. Record the installed app
-   build and whether the Canary A extension process is running.
-3. Update the iOS TestFlight app to Canary B in place. Before opening the Watch
-   app, confirm CoreDevice reports the B host-app build and record the extension
-   process state.
-4. Open the Watch app once. Confirm it reports app canary `B`, then wait through
-   the 60-second receipt observation window without editing the face.
-5. If a family has no live B callback, enter face-edit mode once without
-   removing or re-adding the complication. Record whether WidgetKit chooses to
-   request a preview; entering edit mode does not guarantee one.
-6. If no B callback occurs, capture a Watch sysdiagnose and Console timestamps
-   before restarting. Reboot and reinstall remain diagnostic recovery steps,
-   not passing release behavior.
-7. Treat results per family as evidence, not proof. No callback is consistent
-   with extension registration, launch, scheduling, or throttling failure. A
-   completed B callback paired with a visually confirmed A/blank placement is
-   consistent with archive commit or display-selection failure, but the callback
-   may belong to another instance of the same family. Preview-only B is
-   consistent with the normal reload-delivery path being delayed or stuck.
+- It preserves the iOS app, Watch app, and widget bundle identifiers, widget
+  kind, supported families, and existing complication placements.
+- Every family renders a static, visible green `C`; the widget provider does not
+  read CloudKit, the App Group, account state, usage data, or presentation state.
+- Snapshot and timeline completions run before diagnostic work. Placeholder,
+  snapshot, and timeline callbacks only enqueue an asynchronous receipt after
+  producing their entry. Placeholder enqueues the same asynchronous work as it
+  returns. No `NSFileCoordinator` or synchronous shared-storage access exists on
+  the provider's critical path.
+- Receipts use marker-independent, append-only event filenames. The marker is
+  stored inside each privacy-safe JSON payload, and the C app also reads legacy
+  Canary A schema-version-2 and Canary B schema-version-3 receipts so an old
+  process cannot become observationally invisible. Unit tests pin both legacy
+  filename and payload shapes. The provider also emits an immediate privacy-safe
+  unified-log notice before scheduling the receipt write.
+- On its first active launch, the Watch app calls
+  `getCurrentConfigurations`, waits two seconds, requests exactly one timeline
+  reload for the unchanged widget kind, waits five seconds, and records the
+  configurations again. It continues observing receipts without further
+  reloads.
 
-Canary B reproduced the in-place upgrade failure on July 22, 2026. The iPhone,
-Watch app, and Watch widget all installed build `202607220213`, while the
-unchanged circular complication continued rendering Canary A. Opening the B app,
-requesting a timeline reload, entering face edit mode, opening the picker, and
-recommitting the already-selected Context Panel complication did not launch the
-B extension. The stale A render became a blank WidgetKit placeholder during
-face editing, and the picker still recognized Context Panel as selected.
+For Canary C validation:
 
-Rebooting the Watch recovered the same installed build without an uninstall or
-reinstall. The B extension launched after boot, live and preview callbacks were
-recorded, and the unchanged circular and rectangular placements rendered visible
-Canary B markers with live values. This result is consistent with a watchOS or
-WidgetKit extension discovery/activation failure across the in-place update,
-rather than a stale archive, shared snapshot, or lost complication selection.
+1. Keep Canary B installed and preserve every existing complication placement.
+   Capture the face, installed Watch build, and extension-process state before
+   starting the update.
+2. Update the iOS TestFlight app to Canary C in place. Wait for the Watch app
+   installation to finish; do not reboot, uninstall, edit the face, or reselect
+   the complication.
+3. Before opening the Watch app, capture whether each unchanged placement still
+   shows B, has already changed to C, or is blank.
+4. Open the Watch app once. Confirm it reports app canary `C`, record the
+   configuration counts before and after the single reload, and observe the
+   family rows for at least 60 seconds. If the shared receipt store is
+   unavailable or unreadable, record that separate diagnostic instead of
+   interpreting an empty history.
+5. Capture the face and the Watch app diagnostics before any recovery action.
+   Preserve A, B, and C receipt evidence and collect Console or sysdiagnose logs
+   when available.
+6. Only after evidence is captured, enter face-edit mode once as a separate
+   discriminator. Do not remove or re-add the complication. Rebooting is a final
+   recovery probe, not expected update behavior and not a passing result.
 
-Until Apple resolves or explains the behavior, use a Watch reboot as the first
-recovery step after confirming that a TestFlight update installed the expected
-Watch build but left a complication stale or blank. Do not uninstall/reinstall
-first because doing so destroys the placement and upgrade evidence. A reboot is
-an operational workaround, not passing release behavior; normal upgrade
-acceptance still requires the updated extension and existing placements to
-activate without user recovery.
+Interpret the C result as follows:
 
-The signed iOS archive workflow also emits `WatchArchiveReceipt-iOS.txt`. Require
+- Existing placements render C before the Watch app opens: normal in-place
+  extension activation works; B's instrumentation likely affected the result.
+- Opening the Watch app produces C callbacks and the face remains B or blank:
+  provider activation works, but WidgetKit is retaining stale placement/render
+  state.
+- The app sees the configured placements but no C receipt appears after the
+  single reload: the result is inconclusive by itself. Extension registration,
+  launch, scheduling, or throttling remains a candidate, but WidgetKit can also
+  suspend the process before the asynchronous receipt write drains. Correlate
+  the app's receipt-store status with the immediate unified-log callback notice.
+- Legacy A or B callbacks appear after C is installed: the marker-independent
+  history proves an older extension process is still servicing requests.
+- Reboot alone recovers C without reinstall or reselection: preserve the full
+  evidence set and file an Apple Feedback for update-time extension activation.
+
+This `StaticConfiguration` provider does not receive a stable watch-face or slot
+identity, so attribution remains widget kind plus family and preview/live
+context. A callback can belong to another configured instance of the same
+family, and a provider callback proves invocation rather than face commit.
+Treat each row as evidence rather than absolute slot-level render proof and pair
+it with the required face capture.
+
+The signed iOS archive workflow emits `WatchArchiveReceipt-iOS.txt` and retains
+the signed `.xcarchive` plus exported IPA with its workflow artifact. Require
 matching iOS app, Watch app, and Watch widget build numbers before distribution,
-require Canary B markers in both nested Watch bundles, and retain all three
-bundle identifiers, versions, build numbers, and executable SHA-256 values with
-the workflow evidence. The archive gate also verifies each code signature and
-the Watch app, companion-app, and WidgetKit extension role metadata. It deletes
-any prior receipt before archiving so a failed run cannot upload stale evidence.
-Remove all canary UI and receipts after the in-place upgrade path is explained,
+require Canary C markers in both nested Watch bundles, and retain all three
+bundle identifiers, versions, build numbers, executable SHA-256 values,
+code-signature checks, dSYMs, and role metadata. The gate deletes any prior
+receipt before archiving so a failed run cannot upload stale evidence. Remove
+all canary UI and receipts after the in-place upgrade path is explained,
 reported to Apple when reproducible, and the durable release runbook is written.
 
 If the companion app or widget is stale but diagnostics show healthy Mac publish

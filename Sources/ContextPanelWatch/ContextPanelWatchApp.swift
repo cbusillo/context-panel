@@ -21,9 +21,14 @@ private struct WatchRootView: View {
         NavigationStack {
             List {
                 WatchUpgradeCanarySection(
-                    snapshot: model.canarySnapshot,
+                    history: model.canaryHistory,
                     identity: model.canaryIdentity,
-                    sessionID: model.canarySessionID
+                    configurationBeforeReload: model.canaryConfigurationBeforeReload,
+                    configurationAfterReload: model.canaryConfigurationAfterReload,
+                    reloadRequestedAt: model.canaryReloadRequestedAt,
+                    configurationBeforeError: model.canaryConfigurationBeforeError,
+                    configurationAfterError: model.canaryConfigurationAfterError,
+                    receiptStoreError: model.canaryReceiptStoreError
                 )
 
                 WatchStatusSection(
@@ -58,10 +63,14 @@ private struct WatchRootView: View {
             }
             .task {
                 model.reload()
+                if scenePhase == .active {
+                    model.activateCanaryProbe()
+                }
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active {
                     model.reload()
+                    model.activateCanaryProbe()
                 }
             }
         }
@@ -72,13 +81,13 @@ private struct WatchRootView: View {
 @Observable
 private final class WatchSyncModel {
     private let companionLoader: WatchCompanionLoader
-    private let canaryStore: WatchUpgradeCanaryReceiptStore?
+    private let canaryStore: WatchUpgradeCanaryEventStore?
     private var reloadTask: Task<Void, Never>?
     private var canaryObservationTask: Task<Void, Never>?
     private var needsReloadAfterCurrentTask = false
+    private var canaryProbeStarted = false
 
     let canaryIdentity = WatchUpgradeCanaryBuildIdentity.current()
-    let canarySessionID = UUID()
 
     private(set) var result = CompanionSyncLoadResult(document: nil, status: .unknown)
     private(set) var displayResult = CompanionSyncLoadResult(document: nil, status: .unknown)
@@ -87,11 +96,20 @@ private final class WatchSyncModel {
     )
     private(set) var displayPreferences = WidgetDisplayPreferences.defaultPreferences
     private(set) var lastSyncErrorMessage: String?
-    private(set) var canarySnapshot = WatchUpgradeCanarySnapshot.empty
+    private(set) var canaryHistory: [WatchUpgradeCanaryHistoryEvent] = []
+    private(set) var canaryConfigurationBeforeReload: WatchUpgradeCanaryConfigurationSnapshot?
+    private(set) var canaryConfigurationAfterReload: WatchUpgradeCanaryConfigurationSnapshot?
+    private(set) var canaryReloadRequestedAt: Date?
+    private(set) var canaryConfigurationBeforeError: String?
+    private(set) var canaryConfigurationAfterError: String?
+    private(set) var canaryReceiptStoreError: String?
     private(set) var isLoading = false
 
     init() {
-        canaryStore = WatchUpgradeCanaryReceiptStore()
+        canaryStore = WatchUpgradeCanaryEventStore()
+        canaryReceiptStoreError = canaryStore == nil
+            ? "Shared receipt store unavailable"
+            : nil
         let cache = WatchCompanionCache()
         let remoteStore = CompanionCloudKitSyncStoreFactory.make()
         let presentationStore = CompanionCloudKitSyncStoreFactory.makePresentationPreferences()
@@ -100,7 +118,6 @@ private final class WatchSyncModel {
             loadDocument: { now in await remoteStore.load(now: now) },
             loadPresentation: { await presentationStore.load() }
         )
-        startCanarySession()
     }
 
     var displayLimits: [WatchLimitDisplay] {
@@ -148,97 +165,243 @@ private final class WatchSyncModel {
                 synced: loaded.result.document?.widgetDisplayPreferences
             )
             displayPreferences = effectiveDisplayPreferences
-            if WatchComplicationTimelineReloadPolicy.shouldReload(after: loaded) {
-                WidgetCenter.shared.reloadTimelines(ofKind: ContextPanelWatchWidgetIdentity.kind)
-                observeCanaryTimeline()
-            }
-            refreshCanarySnapshot()
+            refreshCanaryHistory()
         }
     }
 
-    private func startCanarySession(now: Date = Date()) {
-        guard let canaryStore else { return }
-        let identity = canaryIdentity
-        let sessionID = canarySessionID
+    func activateCanaryProbe() {
+        guard !canaryProbeStarted else { return }
+        canaryProbeStarted = true
+        WatchUpgradeCanaryRecorder.recordAppAsync(event: .appActivated)
+        canaryObservationTask = Task { [weak self] in
+            guard let self else { return }
+            let before = await currentCanaryConfiguration()
+            canaryConfigurationBeforeReload = before.snapshot
+            canaryConfigurationBeforeError = before.error
+            WatchUpgradeCanaryRecorder.recordAppAsync(
+                event: .configurationsBeforeReload,
+                configuration: before.snapshot
+            )
+            refreshCanaryHistory()
+            do {
+                try await Task.sleep(for: .seconds(2))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            let reloadDate = Date()
+            WidgetCenter.shared.reloadTimelines(ofKind: ContextPanelWatchWidgetIdentity.kind)
+            canaryReloadRequestedAt = reloadDate
+            WatchUpgradeCanaryRecorder.recordAppAsync(
+                event: .reloadRequested,
+                observedAt: reloadDate
+            )
+
+            do {
+                try await Task.sleep(for: .seconds(5))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            let after = await currentCanaryConfiguration()
+            canaryConfigurationAfterReload = after.snapshot
+            canaryConfigurationAfterError = after.error
+            WatchUpgradeCanaryRecorder.recordAppAsync(
+                event: .configurationsAfterReload,
+                configuration: after.snapshot
+            )
+            refreshCanaryHistory()
+
+            for delay in [10, 45] {
+                do {
+                    try await Task.sleep(for: .seconds(delay))
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                refreshCanaryHistory()
+            }
+        }
+    }
+
+    private func refreshCanaryHistory() {
+        guard let canaryStore else {
+            canaryReceiptStoreError = "Shared receipt store unavailable"
+            return
+        }
         Task { [weak self] in
-            let snapshot = await Task.detached(priority: .utility) {
-                _ = canaryStore.recordApp(
-                    identity: identity,
-                    sessionID: sessionID,
-                    now: now
-                )
-                return canaryStore.loadSnapshot()
+            let result = await Task.detached(priority: .utility) {
+                do {
+                    return (events: try canaryStore.loadHistory(), error: nil as String?)
+                } catch {
+                    let error = error as NSError
+                    return (
+                        events: [WatchUpgradeCanaryHistoryEvent](),
+                        error: "Receipt read failed: \(error.domain) \(error.code)"
+                    )
+                }
             }.value
             guard let self else { return }
-            canarySnapshot = snapshot
-            WidgetCenter.shared.reloadTimelines(ofKind: ContextPanelWatchWidgetIdentity.kind)
-            observeCanaryTimeline()
-        }
-    }
-
-    private func observeCanaryTimeline() {
-        guard let canaryStore else { return }
-        canaryObservationTask?.cancel()
-        canaryObservationTask = Task { [weak self] in
-            var previousOffset = 0
-            for offset in [0, 2, 5, 15, 60] {
-                let delay = offset - previousOffset
-                if delay > 0 {
-                    do {
-                        try await Task.sleep(for: .seconds(delay))
-                    } catch {
-                        return
-                    }
-                }
-                let snapshot = await Task.detached(priority: .utility) {
-                    canaryStore.loadSnapshot()
-                }.value
-                guard let self, !Task.isCancelled else { return }
-                canarySnapshot = snapshot
-                previousOffset = offset
+            if let error = result.error {
+                canaryReceiptStoreError = error
+                return
             }
+            canaryReceiptStoreError = nil
+            canaryHistory = mergeCanaryHistory(result.events)
         }
     }
 
-    private func refreshCanarySnapshot() {
-        guard let canaryStore else { return }
-        Task { [weak self] in
-            let snapshot = await Task.detached(priority: .utility) {
-                canaryStore.loadSnapshot()
-            }.value
-            self?.canarySnapshot = snapshot
+    private func mergeCanaryHistory(
+        _ loadedEvents: [WatchUpgradeCanaryHistoryEvent]
+    ) -> [WatchUpgradeCanaryHistoryEvent] {
+        var eventsByID = Dictionary(uniqueKeysWithValues: canaryHistory.map { ($0.id, $0) })
+        for event in loadedEvents {
+            if let existing = eventsByID[event.id], existing.observedAt > event.observedAt {
+                continue
+            }
+            eventsByID[event.id] = event
+        }
+        return eventsByID.values.sorted { left, right in
+            if left.observedAt == right.observedAt {
+                return left.id < right.id
+            }
+            return left.observedAt < right.observedAt
+        }
+    }
+
+    private func currentCanaryConfiguration() async -> (
+        snapshot: WatchUpgradeCanaryConfigurationSnapshot?,
+        error: String?
+    ) {
+        await withCheckedContinuation { continuation in
+            WidgetCenter.shared.getCurrentConfigurations { result in
+                switch result {
+                case let .success(configurations):
+                    var familyCounts: [WatchUpgradeCanaryFamily: Int] = [:]
+                    var matchingKindCount = 0
+                    var otherKindCount = 0
+                    for configuration in configurations {
+                        guard configuration.kind == ContextPanelWatchWidgetIdentity.kind else {
+                            otherKindCount += 1
+                            continue
+                        }
+                        matchingKindCount += 1
+                        if let family = WatchUpgradeCanaryFamily(widgetFamily: configuration.family) {
+                            familyCounts[family, default: 0] += 1
+                        }
+                    }
+                    continuation.resume(returning: (
+                        WatchUpgradeCanaryConfigurationSnapshot(
+                            matchingKindCount: matchingKindCount,
+                            otherKindCount: otherKindCount,
+                            familyCounts: familyCounts
+                        ),
+                        nil
+                    ))
+                case let .failure(error):
+                    let error = error as NSError
+                    continuation.resume(returning: (
+                        nil,
+                        "\(error.domain) \(error.code)"
+                    ))
+                }
+            }
         }
     }
 }
 
 private struct WatchUpgradeCanarySection: View {
-    let snapshot: WatchUpgradeCanarySnapshot
+    let history: [WatchUpgradeCanaryHistoryEvent]
     let identity: WatchUpgradeCanaryBuildIdentity
-    let sessionID: UUID
+    let configurationBeforeReload: WatchUpgradeCanaryConfigurationSnapshot?
+    let configurationAfterReload: WatchUpgradeCanaryConfigurationSnapshot?
+    let reloadRequestedAt: Date?
+    let configurationBeforeError: String?
+    let configurationAfterError: String?
+    let receiptStoreError: String?
 
     var body: some View {
         Section {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Upgrade canary \(WatchUpgradeCanary.marker)")
+                Text("Neutral canary \(WatchUpgradeCanary.marker)")
                     .font(.caption.weight(.semibold))
-                appRow
+                Text("App \(WatchUpgradeCanary.marker) · \(identity.buildNumber)")
+                    .font(.caption2)
+                configurationRow(
+                    label: "Before",
+                    configuration: configurationBeforeReload,
+                    error: configurationBeforeError
+                )
+                reloadRow
+                configurationRow(
+                    label: "After",
+                    configuration: configurationAfterReload,
+                    error: configurationAfterError
+                )
+                if let receiptStoreError {
+                    Text(receiptStoreError)
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
                 ForEach(WatchUpgradeCanaryFamily.allCases) { family in
                     familyRow(family)
                 }
+                historyRow
             }
         }
     }
 
     @ViewBuilder
-    private var appRow: some View {
-        if let app = currentReceipt(snapshot.app) {
-            Text("App \(app.marker) · \(app.buildNumber)")
-                .font(.caption2)
-        } else {
-            Text("App starting this launch")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+    private func configurationRow(
+        label: String,
+        configuration: WatchUpgradeCanaryConfigurationSnapshot?,
+        error: String?
+    ) -> some View {
+        HStack(spacing: 4) {
+            Text(label)
+            Spacer(minLength: 2)
+            if let configuration {
+                Text(configurationText(configuration))
+            } else if let error {
+                Text(error)
+            } else {
+                Text("pending")
+            }
         }
+        .font(.caption2)
+        .foregroundStyle(configuration == nil ? .secondary : .primary)
+        .lineLimit(1)
+        .minimumScaleFactor(0.6)
+    }
+
+    @ViewBuilder
+    private var reloadRow: some View {
+        HStack(spacing: 4) {
+            Text("Reload")
+            Spacer(minLength: 2)
+            if let reloadRequestedAt {
+                Text("sent")
+                    .fontWeight(.semibold)
+                Text(reloadRequestedAt, style: .timer)
+                    .monospacedDigit()
+            } else {
+                Text("waiting for active scene")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .font(.caption2)
+        .lineLimit(1)
+        .minimumScaleFactor(0.6)
+    }
+
+    private func configurationText(
+        _ configuration: WatchUpgradeCanaryConfigurationSnapshot
+    ) -> String {
+        let families = configuration.families.map {
+            "\($0.family.compactName)\($0.count)"
+        }.joined(separator: " ")
+        return "cfg \(configuration.matchingKindCount)"
+            + (families.isEmpty ? "" : " · \(families)")
     }
 
     @ViewBuilder
@@ -247,8 +410,8 @@ private struct WatchUpgradeCanarySection: View {
             Text(family.displayName)
                 .frame(width: 36, alignment: .leading)
             Spacer(minLength: 2)
-            contextEvidence(family: family, requestContext: .live, prefix: "L")
-            contextEvidence(family: family, requestContext: .preview, prefix: "P")
+            eventCell(family: family, requestContext: .live, prefix: "L")
+            eventCell(family: family, requestContext: .preview, prefix: "P")
         }
         .font(.caption2)
         .lineLimit(1)
@@ -257,120 +420,109 @@ private struct WatchUpgradeCanarySection: View {
     }
 
     @ViewBuilder
-    private func contextEvidence(
+    private func eventCell(
         family: WatchUpgradeCanaryFamily,
         requestContext: WatchUpgradeCanaryRequestContext,
         prefix: String
     ) -> some View {
-        let evidence = evidence(family: family, requestContext: requestContext)
-        Text("\(prefix) \(evidence.shortText)")
-            .fontWeight(evidence.isCurrent ? .semibold : .regular)
-            .foregroundStyle(evidence.isCurrent ? .primary : .secondary)
-            .accessibilityLabel(evidence.accessibilityLabel)
+        let event = latestEvent(family: family, requestContext: requestContext)
+        Text("\(prefix) \(eventText(event))")
+            .fontWeight(isCurrent(event) ? .semibold : .regular)
+            .foregroundStyle(event == nil || !isCurrent(event) ? .secondary : .primary)
+            .accessibilityLabel(eventAccessibilityLabel(event, requestContext: requestContext))
     }
 
-    private func evidence(
+    @ViewBuilder
+    private var historyRow: some View {
+        let markers = Set(history.filter { $0.component == .widget }.map(\.marker)).sorted()
+        if markers.isEmpty {
+            Text("History none")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        } else {
+            Text("History \(markers.joined(separator: "/"))")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func latestEvent(
         family: WatchUpgradeCanaryFamily,
         requestContext: WatchUpgradeCanaryRequestContext
-    ) -> ContextEvidence {
-        let observation = snapshot.observation(
-            family: family,
-            requestContext: requestContext
-        )
-        let contextName = requestContext == .preview ? "Preview" : "Live"
-        if let appObservedAt = snapshot.app?.observedAt,
-           let receipt = observation.strongestCurrentReceipt(
-            marketingVersion: identity.marketingVersion,
-            buildNumber: identity.buildNumber,
-            sessionID: sessionID,
-            appObservedAt: appObservedAt
-           ) {
-            return ContextEvidence(
-                shortText: shortEvent(receipt.event),
-                accessibilityLabel: "\(contextName) \(longEvent(receipt.event)) recorded for this launch.",
-                isCurrent: true
-            )
-        }
-        guard let receipt = observation.latest else {
-            return ContextEvidence(
-                shortText: "—",
-                accessibilityLabel: "\(contextName) callback not seen.",
-                isCurrent: false
-            )
-        }
-        let shortPrefix: String
-        let longPrefix: String
-        if receipt.marker == WatchUpgradeCanary.marker,
-           receipt.marketingVersion == identity.marketingVersion,
-           receipt.buildNumber == identity.buildNumber {
-            let callbackStartedAt = receipt.requestStartedAt ?? receipt.observedAt
-            if let appObservedAt = snapshot.app?.observedAt,
-               callbackStartedAt < appObservedAt {
-                shortPrefix = "pre"
-                longPrefix = "before this app launch"
-            } else {
-                shortPrefix = "prior"
-                longPrefix = "from another app session"
+    ) -> WatchUpgradeCanaryHistoryEvent? {
+        let matchingEvents = history.filter {
+                $0.component == .widget
+                    && $0.family == family
+                    && $0.requestContext == requestContext
             }
-        } else {
-            shortPrefix = receipt.marker
-            longPrefix = "from canary \(receipt.marker), build \(receipt.buildNumber)"
+        let currentEvents = matchingEvents.filter { isCurrent($0) }
+        if let strongestCurrentEvent = currentEvents.max(by: isWeakerEvidence) {
+            return strongestCurrentEvent
         }
-        return ContextEvidence(
-            shortText: "\(shortPrefix)-\(shortEvent(receipt.event))",
-            accessibilityLabel: "\(contextName) \(longEvent(receipt.event)) \(longPrefix).",
-            isCurrent: false
-        )
+        return matchingEvents.max { $0.observedAt < $1.observedAt }
     }
 
-    private func shortEvent(_ event: WatchUpgradeCanaryEvent) -> String {
-        switch event {
-        case .widgetPlaceholder:
-            "ph"
-        case .widgetSnapshot:
-            "snap"
-        case .widgetTimelineStarted:
-            "start"
-        case .widgetTimelineCompleted:
-            "done"
-        case .appLaunch:
-            "app"
+    private func isWeakerEvidence(
+        _ left: WatchUpgradeCanaryHistoryEvent,
+        _ right: WatchUpgradeCanaryHistoryEvent
+    ) -> Bool {
+        let leftRank = evidenceRank(left)
+        let rightRank = evidenceRank(right)
+        if leftRank != rightRank {
+            return leftRank < rightRank
         }
+        return left.observedAt < right.observedAt
     }
 
-    private func longEvent(_ event: WatchUpgradeCanaryEvent) -> String {
-        switch event {
-        case .widgetPlaceholder:
-            "placeholder"
-        case .widgetSnapshot:
-            "snapshot"
-        case .widgetTimelineStarted:
-            "timeline started"
-        case .widgetTimelineCompleted:
-            "timeline completed"
-        case .appLaunch:
-            "app launch"
+    private func evidenceRank(_ event: WatchUpgradeCanaryHistoryEvent) -> Int {
+        switch event.shortEventName {
+        case "done":
+            3
+        case "snap":
+            2
+        case "ph":
+            1
+        default:
+            0
         }
     }
 
-    private func currentReceipt(
-        _ receipt: WatchUpgradeCanaryReceipt?
-    ) -> WatchUpgradeCanaryReceipt? {
-        guard let receipt,
-              receipt.belongsToCanaryRun(
-                marketingVersion: identity.marketingVersion,
-                buildNumber: identity.buildNumber,
-                sessionID: sessionID,
-                appObservedAt: snapshot.app?.observedAt
-              )
-        else { return nil }
-        return receipt
+    private func eventText(_ event: WatchUpgradeCanaryHistoryEvent?) -> String {
+        guard let event else { return "—" }
+        return "\(event.marker)-\(event.shortEventName)"
     }
 
-    private struct ContextEvidence {
-        let shortText: String
-        let accessibilityLabel: String
-        let isCurrent: Bool
+    private func isCurrent(_ event: WatchUpgradeCanaryHistoryEvent?) -> Bool {
+        guard let event else { return false }
+        return event.marker == WatchUpgradeCanary.marker
+            && event.marketingVersion == identity.marketingVersion
+            && event.buildNumber == identity.buildNumber
+    }
+
+    private func eventAccessibilityLabel(
+        _ event: WatchUpgradeCanaryHistoryEvent?,
+        requestContext: WatchUpgradeCanaryRequestContext
+    ) -> String {
+        let context = requestContext == .preview ? "Preview" : "Live"
+        guard let event else { return "\(context) receipt not observed." }
+        return "\(context) Canary \(event.marker), \(event.eventName), build \(event.buildNumber)."
+    }
+}
+
+private extension WatchUpgradeCanaryFamily {
+    init?(widgetFamily: WidgetFamily) {
+        switch widgetFamily {
+        case .accessoryCircular:
+            self = .circular
+        case .accessoryCorner:
+            self = .corner
+        case .accessoryRectangular:
+            self = .rectangular
+        case .accessoryInline:
+            self = .inline
+        default:
+            return nil
+        }
     }
 }
 

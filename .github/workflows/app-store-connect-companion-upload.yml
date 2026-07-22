@@ -255,5 +255,6 @@ jobs:
           path: |
             .build/app-store-connect-companion/UploadOptions-*.plist
             .build/app-store-connect-companion/WatchArchiveReceipt-*.txt
+            .build/app-store-connect-companion/*.xcarchive
             .build/app-store-connect-companion/upload-*
           if-no-files-found: ignore

@@ -56,517 +56,237 @@ import Testing
         .path)
 }
 
-@Test func watchUpgradeCanaryTracksAppAndWidgetBuildsIndependently() throws {
+@Test func watchUpgradeCanaryUsesVisibleSentinelWithoutAConfiguredMarker() {
+    #expect(WatchUpgradeCanary.marker == "?")
+}
+
+@Test func watchUpgradeCanaryStoresMarkerIndependentEventHistory() throws {
     let root = try watchCacheTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
-    let store = WatchUpgradeCanaryReceiptStore(directoryURL: root)
-    let sessionID = UUID(uuidString: "B0000000-0000-0000-0000-000000000001")!
-    let requestID = UUID(uuidString: "B1000000-0000-0000-0000-000000000001")!
+    let store = WatchUpgradeCanaryEventStore(directoryURL: root)
     let appDate = Date(timeIntervalSince1970: 1_800_000_000)
-    let startedAt = appDate.addingTimeInterval(10)
-    let widgetDate = appDate.addingTimeInterval(20)
+    let widgetDate = appDate.addingTimeInterval(1)
     let appIdentity = WatchUpgradeCanaryBuildIdentity(
         bundleIdentifier: "com.shinycomputers.contextpanel.watch",
         marketingVersion: "1.0.49",
-        buildNumber: "202607211958"
+        buildNumber: "202607221700"
     )
     let widgetIdentity = WatchUpgradeCanaryBuildIdentity(
         bundleIdentifier: "com.shinycomputers.contextpanel.watch.widget",
         marketingVersion: "1.0.49",
-        buildNumber: "202607211958"
+        buildNumber: "202607221700"
     )
+    let configuration = WatchUpgradeCanaryConfigurationSnapshot(
+        matchingKindCount: 2,
+        otherKindCount: 1,
+        familyCounts: [.circular: 1, .rectangular: 1]
+    )
+    let appID = UUID(uuidString: "C0000000-0000-0000-0000-000000000001")!
+    let widgetID = UUID(uuidString: "C1000000-0000-0000-0000-000000000001")!
 
-    let appReceipt = try #require(store.recordApp(
+    let appURL = try store.append(WatchUpgradeCanaryEventRecord(
+        id: appID,
+        marker: "C",
+        component: .app,
+        event: .configurationsBeforeReload,
         identity: appIdentity,
-        sessionID: sessionID,
-        now: appDate
+        configuration: configuration,
+        observedAt: appDate,
+        processIdentifier: 101
     ))
-    #expect(store.recordTimelineStarted(
+    let widgetURL = try store.append(WatchUpgradeCanaryEventRecord(
+        id: widgetID,
+        marker: "C",
+        component: .widget,
+        event: .widgetTimeline,
+        identity: widgetIdentity,
         family: .circular,
         requestContext: .live,
-        requestID: requestID,
-        identity: widgetIdentity,
-        sessionID: sessionID,
-        now: startedAt
-    ) != nil)
-    let widgetReceipt = try #require(store.recordTimelineCompleted(
-        family: .circular,
-        requestContext: .live,
-        requestID: requestID,
-        startedAt: startedAt,
-        identity: widgetIdentity,
-        sessionID: sessionID,
-        now: widgetDate
+        observedAt: widgetDate,
+        processIdentifier: 202
     ))
-    let snapshot = store.loadSnapshot()
-    let circular = snapshot.observation(family: .circular, requestContext: .live)
+    let history = try store.loadHistory()
 
-    #expect(WatchUpgradeCanary.marker == "B")
-    #expect(appReceipt.marker == "B")
-    #expect(widgetReceipt.marker == "B")
-    #expect(snapshot.app == appReceipt)
-    #expect(snapshot.widget == widgetReceipt)
-    #expect(circular.timeline == widgetReceipt)
-    #expect(snapshot.app?.buildNumber == "202607211958")
-    #expect(snapshot.widget?.sessionID == sessionID)
-    #expect(snapshot.widget?.event == .widgetTimelineCompleted)
-    #expect(snapshot.widget?.requestID == requestID)
-    #expect(snapshot.widget?.requestStartedAt == startedAt)
-    #expect(FileManager.default.fileExists(atPath: root
-        .appending(path: "watch-app-canary-b-receipt.json").path))
-    #expect(FileManager.default.fileExists(atPath: root
-        .appending(path: "watch-widget-canary-b-circular-live-timeline-receipt.json").path))
+    #expect(appURL.lastPathComponent == "event-c0000000-0000-0000-0000-000000000001.json")
+    #expect(widgetURL.lastPathComponent == "event-c1000000-0000-0000-0000-000000000001.json")
+    #expect(appURL.deletingLastPathComponent().lastPathComponent == "Neutral Events")
+    #expect(history.count == 2)
+    #expect(history[0].component == .app)
+    #expect(history[0].eventName == WatchUpgradeCanaryEvent.configurationsBeforeReload.rawValue)
+    #expect(history[1].component == .widget)
+    #expect(history[1].family == .circular)
+    #expect(history[1].requestContext == .live)
+    #expect(configuration.count(for: .circular) == 1)
+    #expect(configuration.count(for: .inline) == 0)
 }
 
-@Test func watchUpgradeCanaryKeepsFamiliesAndContextsSeparate() throws {
+@Test func watchUpgradeCanaryLoadsLegacyMarkersAcrossUpgrades() throws {
     let root = try watchCacheTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
-    let store = WatchUpgradeCanaryReceiptStore(directoryURL: root)
-    let sessionID = UUID(uuidString: "B0000000-0000-0000-0000-000000000002")!
-    let appIdentity = WatchUpgradeCanaryBuildIdentity(
-        bundleIdentifier: "com.shinycomputers.contextpanel.watch",
-        marketingVersion: "1.0.49",
-        buildNumber: "202607211958"
-    )
-    let widgetIdentity = WatchUpgradeCanaryBuildIdentity(
-        bundleIdentifier: "com.shinycomputers.contextpanel.watch.widget",
-        marketingVersion: "1.0.49",
-        buildNumber: "202607211958"
-    )
-    let startedAt = Date(timeIntervalSince1970: 1_800_000_000)
-    let snapshotAt = startedAt.addingTimeInterval(2)
-    let completedAt = startedAt.addingTimeInterval(4)
-    let circularRequestID = UUID(uuidString: "B1000000-0000-0000-0000-000000000002")!
-    let previewRequestID = UUID(uuidString: "B2000000-0000-0000-0000-000000000002")!
-    let rectangularRequestID = UUID(uuidString: "B3000000-0000-0000-0000-000000000002")!
+    let store = WatchUpgradeCanaryEventStore(directoryURL: root)
 
-    #expect(store.recordApp(
-        identity: appIdentity,
-        sessionID: sessionID,
-        now: startedAt.addingTimeInterval(-1)
-    ) != nil)
-    #expect(store.recordTimelineStarted(
-        family: .circular,
-        requestContext: .live,
-        requestID: circularRequestID,
-        identity: widgetIdentity,
-        sessionID: sessionID,
-        now: startedAt
-    )?.event == .widgetTimelineStarted)
-    #expect(store.recordWidgetObservation(
-        event: .widgetSnapshot,
-        family: .circular,
-        requestContext: .preview,
-        requestID: previewRequestID,
-        identity: widgetIdentity,
-        sessionID: sessionID,
-        now: snapshotAt
-    )?.event == .widgetSnapshot)
-    #expect(store.recordWidgetObservation(
-        event: .widgetSnapshot,
+    func writeLegacyReceipt(
+        schemaVersion: Int,
+        marker: String,
+        component: String,
+        event: String,
+        family: String?,
+        requestContext: String?,
+        observedAt: Date,
+        fileName: String
+    ) throws {
+        var receipt: [String: Any] = [
+            "schemaVersion": schemaVersion,
+            "component": component,
+            "marker": marker,
+            "bundleIdentifier": component == "app"
+                ? "com.shinycomputers.contextpanel.watch"
+                : "com.shinycomputers.contextpanel.watch.widget",
+            "marketingVersion": "1.0.49",
+            "buildNumber": "202607220213",
+            "event": event,
+            "observedAt": schemaVersion == 2
+                ? ISO8601DateFormatter().string(from: observedAt)
+                : observedAt.timeIntervalSince1970 * 1_000,
+        ]
+        if schemaVersion == 3 {
+            receipt["processIdentifier"] = 42
+        }
+        if let family {
+            receipt["family"] = family
+        }
+        if let requestContext {
+            receipt["requestContext"] = requestContext
+        }
+        if schemaVersion == 3, component == "widget" {
+            receipt["requestID"] = "B1000000-0000-0000-0000-000000000001"
+            receipt["requestStartedAt"] = observedAt.addingTimeInterval(-1)
+                .timeIntervalSince1970 * 1_000
+            receipt["sessionID"] = "B0000000-0000-0000-0000-000000000001"
+        }
+        let data = try JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys])
+        try data.write(to: root.appending(path: fileName), options: .atomic)
+    }
+
+    let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
+    try writeLegacyReceipt(
+        schemaVersion: 2,
+        marker: "A",
+        component: "widget",
+        event: "widgetTimelineCompleted",
+        family: nil,
+        requestContext: nil,
+        observedAt: baseDate,
+        fileName: "watch-widget-canary-a-timeline-completed-receipt.json"
+    )
+    try writeLegacyReceipt(
+        schemaVersion: 3,
+        marker: "B",
+        component: "widget",
+        event: "widgetTimelineCompleted",
+        family: "circular",
+        requestContext: "live",
+        observedAt: baseDate.addingTimeInterval(1),
+        fileName: "watch-widget-canary-b-circular-live-timeline-receipt.json"
+    )
+    try store.append(WatchUpgradeCanaryEventRecord(
+        marker: "C",
+        component: .widget,
+        event: .widgetTimeline,
+        identity: WatchUpgradeCanaryBuildIdentity(
+            bundleIdentifier: "com.shinycomputers.contextpanel.watch.widget",
+            marketingVersion: "1.0.49",
+            buildNumber: "202607221700"
+        ),
         family: .rectangular,
         requestContext: .live,
-        requestID: rectangularRequestID,
-        identity: widgetIdentity,
-        sessionID: sessionID,
-        now: snapshotAt.addingTimeInterval(1)
-    )?.event == .widgetSnapshot)
-    #expect(store.recordTimelineCompleted(
-        family: .circular,
-        requestContext: .live,
-        requestID: circularRequestID,
-        startedAt: startedAt,
-        identity: widgetIdentity,
-        sessionID: sessionID,
-        now: completedAt
-    )?.event == .widgetTimelineCompleted)
+        observedAt: baseDate.addingTimeInterval(2)
+    ))
 
-    let snapshot = store.loadSnapshot()
-    let circularLive = snapshot.observation(family: .circular, requestContext: .live)
-    let circularPreview = snapshot.observation(family: .circular, requestContext: .preview)
-    let rectangularLive = snapshot.observation(family: .rectangular, requestContext: .live)
-    #expect(snapshot.app?.sessionID == sessionID)
-    #expect(circularLive.timeline?.observedAt == completedAt)
-    #expect(circularPreview.snapshot?.observedAt == snapshotAt)
-    #expect(rectangularLive.snapshot?.observedAt == snapshotAt.addingTimeInterval(1))
-    #expect(circularLive.timeline?.requestContext == .live)
-    #expect(circularPreview.snapshot?.requestContext == .preview)
-    #expect(circularLive.strongestCurrentReceipt(
-        marketingVersion: appIdentity.marketingVersion,
-        buildNumber: appIdentity.buildNumber,
-        sessionID: sessionID,
-        appObservedAt: startedAt.addingTimeInterval(-1)
-    )?.event == .widgetTimelineCompleted)
-    #expect(circularPreview.strongestCurrentReceipt(
-        marketingVersion: appIdentity.marketingVersion,
-        buildNumber: appIdentity.buildNumber,
-        sessionID: sessionID,
-        appObservedAt: startedAt.addingTimeInterval(-1)
-    )?.event == .widgetSnapshot)
-    #expect(snapshot.observations.count == 3)
+    let history = try store.loadHistory()
+
+    #expect(history.map(\.marker) == ["A", "B", "C"])
+    #expect(history[0].source == .legacy)
+    #expect(history[0].shortEventName == "done")
+    #expect(history[0].family == nil)
+    #expect(history[1].source == .legacy)
+    #expect(history[1].family == .circular)
+    #expect(history[2].source == .neutral)
 }
 
-@Test func watchUpgradeCanaryIdentifiesOnlyTheCurrentBuildSession() throws {
+@Test func watchUpgradeCanaryIgnoresMalformedAndUnrelatedFiles() throws {
     let root = try watchCacheTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
-    let store = WatchUpgradeCanaryReceiptStore(directoryURL: root)
-    let sessionID = UUID(uuidString: "B0000000-0000-0000-0000-000000000003")!
-    let appIdentity = WatchUpgradeCanaryBuildIdentity(
-        bundleIdentifier: "com.shinycomputers.contextpanel.watch",
-        marketingVersion: "1.0.49",
-        buildNumber: "202607211958"
-    )
-    let widgetIdentity = WatchUpgradeCanaryBuildIdentity(
-        bundleIdentifier: "com.shinycomputers.contextpanel.watch.widget",
-        marketingVersion: "1.0.49",
-        buildNumber: "202607211958"
-    )
+    let eventDirectory = root.appending(path: "Neutral Events", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: eventDirectory, withIntermediateDirectories: true)
+    try Data("not json".utf8).write(to: eventDirectory.appending(path: "event-corrupt.json"))
+    try Data("{}".utf8).write(to: root.appending(path: "watch-widget-canary-a-receipt.json"))
+    try Data("ignored".utf8).write(to: root.appending(path: "unrelated.txt"))
 
-    #expect(store.recordApp(
-        identity: appIdentity,
-        sessionID: sessionID,
-        now: Date(timeIntervalSince1970: 1_799_999_999)
-    ) != nil)
-    let receipt = try #require(store.recordWidgetObservation(
+    let history = try WatchUpgradeCanaryEventStore(directoryURL: root).loadHistory()
+
+    #expect(history.isEmpty)
+}
+
+@Test func watchUpgradeCanaryReportsAnUnreadableEventDirectory() throws {
+    let root = try watchCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Data("not a directory".utf8).write(to: root.appending(path: "Neutral Events"))
+
+    #expect(throws: CocoaError.self) {
+        try WatchUpgradeCanaryEventStore(directoryURL: root).loadHistory()
+    }
+}
+
+@Test func watchUpgradeCanaryEventContainsOnlyBuildDiagnostics() throws {
+    let root = try watchCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = WatchUpgradeCanaryEventStore(directoryURL: root)
+    let fileURL = try store.append(WatchUpgradeCanaryEventRecord(
+        marker: "C",
+        component: .widget,
         event: .widgetSnapshot,
+        identity: WatchUpgradeCanaryBuildIdentity(
+            bundleIdentifier: "com.shinycomputers.contextpanel.watch.widget",
+            marketingVersion: "1.0.49",
+            buildNumber: "202607221700"
+        ),
         family: .corner,
         requestContext: .preview,
-        requestID: UUID(),
-        identity: widgetIdentity,
-        sessionID: sessionID,
-        now: Date(timeIntervalSince1970: 1_800_000_000)
+        observedAt: Date(timeIntervalSince1970: 1_800_000_000),
+        processIdentifier: 42
     ))
-
-    #expect(receipt.belongsToCanaryRun(
-        marketingVersion: "1.0.49",
-        buildNumber: "202607211958",
-        sessionID: sessionID
-    ))
-    #expect(!receipt.belongsToCanaryRun(
-        marketingVersion: "1.0.49",
-        buildNumber: "202607211959",
-        sessionID: sessionID
-    ))
-    #expect(!receipt.belongsToCanaryRun(
-        marketingVersion: "1.0.49",
-        buildNumber: "202607211958",
-        sessionID: UUID()
-    ))
-    #expect(!receipt.belongsToCanaryRun(
-        marketingVersion: "1.0.49",
-        buildNumber: "202607211958",
-        sessionID: sessionID,
-        appObservedAt: receipt.observedAt.addingTimeInterval(1)
-    ))
-}
-
-@Test func watchUpgradeCanaryRejectsMismatchedComponentAndEvent() throws {
-    let root = try watchCacheTemporaryDirectory()
-    defer { try? FileManager.default.removeItem(at: root) }
-    let store = WatchUpgradeCanaryReceiptStore(directoryURL: root)
-
-    #expect(store.recordWidgetObservation(
-        event: .appLaunch,
-        family: .inline,
-        requestContext: .live,
-        requestID: UUID(),
-        sessionID: nil
-    ) == nil)
-    #expect(store.recordWidgetObservation(
-        event: .widgetTimelineStarted,
-        family: .inline,
-        requestContext: .live,
-        requestID: UUID(),
-        sessionID: nil
-    ) == nil)
-    #expect(store.loadSnapshot() == .empty)
-}
-
-@Test func watchUpgradeCanaryRejectsCompletionFromPreviousAppSession() throws {
-    let root = try watchCacheTemporaryDirectory()
-    defer { try? FileManager.default.removeItem(at: root) }
-    let store = WatchUpgradeCanaryReceiptStore(directoryURL: root)
-    let firstSessionID = UUID(uuidString: "B0000000-0000-0000-0000-000000000004")!
-    let secondSessionID = UUID(uuidString: "B0000000-0000-0000-0000-000000000005")!
-    let requestID = UUID(uuidString: "B1000000-0000-0000-0000-000000000004")!
-    let startedAt = Date(timeIntervalSince1970: 1_800_000_000)
-    let appIdentity = WatchUpgradeCanaryBuildIdentity(
-        bundleIdentifier: "com.shinycomputers.contextpanel.watch",
-        marketingVersion: "1.0.49",
-        buildNumber: "202607211958"
+    let data = try Data(contentsOf: fileURL)
+    let object = try #require(
+        JSONSerialization.jsonObject(with: data) as? [String: Any]
     )
-    let widgetIdentity = WatchUpgradeCanaryBuildIdentity(
-        bundleIdentifier: "com.shinycomputers.contextpanel.watch.widget",
-        marketingVersion: "1.0.49",
-        buildNumber: "202607211958"
-    )
+    let identity = try #require(object["identity"] as? [String: Any])
+    let contents = try #require(String(data: data, encoding: .utf8)).lowercased()
 
-    #expect(store.recordApp(
-        identity: appIdentity,
-        sessionID: firstSessionID,
-        now: startedAt.addingTimeInterval(-1)
-    ) != nil)
-    #expect(store.captureWidgetSessionID() == firstSessionID)
-    #expect(store.recordTimelineStarted(
-        family: .rectangular,
-        requestContext: .live,
-        requestID: requestID,
-        identity: widgetIdentity,
-        sessionID: firstSessionID,
-        now: startedAt
-    ) != nil)
-    #expect(store.recordApp(
-        identity: appIdentity,
-        sessionID: secondSessionID,
-        now: startedAt.addingTimeInterval(1)
-    ) != nil)
-
-    #expect(store.recordTimelineCompleted(
-        family: .rectangular,
-        requestContext: .live,
-        requestID: requestID,
-        startedAt: startedAt,
-        identity: widgetIdentity,
-        sessionID: firstSessionID
-    ) == nil)
-    #expect(store.loadSnapshot()
-        .observation(family: .rectangular, requestContext: .live)
-        .timeline?.event == .widgetTimelineStarted)
-}
-
-@Test func watchUpgradeCanaryRejectsCallbackThatBeganBeforeCurrentSession() throws {
-    let root = try watchCacheTemporaryDirectory()
-    defer { try? FileManager.default.removeItem(at: root) }
-    let store = WatchUpgradeCanaryReceiptStore(directoryURL: root)
-    let sessionID = UUID(uuidString: "B0000000-0000-0000-0000-000000000008")!
-    let callbackStartedAt = Date(timeIntervalSince1970: 1_800_000_000)
-    let appIdentity = WatchUpgradeCanaryBuildIdentity(
-        bundleIdentifier: "com.shinycomputers.contextpanel.watch",
-        marketingVersion: "1.0.49",
-        buildNumber: "202607211958"
-    )
-    let widgetIdentity = WatchUpgradeCanaryBuildIdentity(
-        bundleIdentifier: "com.shinycomputers.contextpanel.watch.widget",
-        marketingVersion: "1.0.49",
-        buildNumber: "202607211958"
-    )
-
-    #expect(store.recordApp(
-        identity: appIdentity,
-        sessionID: sessionID,
-        now: callbackStartedAt.addingTimeInterval(1)
-    ) != nil)
-    #expect(store.recordWidgetObservation(
-        event: .widgetSnapshot,
-        family: .inline,
-        requestContext: .live,
-        requestID: UUID(),
-        identity: widgetIdentity,
-        sessionID: sessionID,
-        now: callbackStartedAt
-    ) == nil)
-    #expect(store.loadSnapshot()
-        .observation(family: .inline, requestContext: .live) == .empty)
-}
-
-@Test func watchUpgradeCanaryRequiresMatchingTimelineStart() throws {
-    let root = try watchCacheTemporaryDirectory()
-    defer { try? FileManager.default.removeItem(at: root) }
-    let store = WatchUpgradeCanaryReceiptStore(directoryURL: root)
-    let sessionID = UUID(uuidString: "B0000000-0000-0000-0000-000000000009")!
-    let requestID = UUID(uuidString: "B1000000-0000-0000-0000-000000000009")!
-    let startedAt = Date(timeIntervalSince1970: 1_800_000_000)
-    let identity = WatchUpgradeCanaryBuildIdentity(
-        bundleIdentifier: "com.shinycomputers.contextpanel.watch.widget",
-        marketingVersion: "1.0.49",
-        buildNumber: "202607211958"
-    )
-
-    #expect(store.recordApp(
-        identity: identity,
-        sessionID: sessionID,
-        now: startedAt.addingTimeInterval(-1)
-    ) != nil)
-    #expect(store.recordTimelineCompleted(
-        family: .circular,
-        requestContext: .live,
-        requestID: requestID,
-        startedAt: startedAt,
-        identity: identity,
-        sessionID: sessionID,
-        now: startedAt.addingTimeInterval(1)
-    ) == nil)
-
-    #expect(store.recordTimelineStarted(
-        family: .circular,
-        requestContext: .live,
-        requestID: requestID,
-        identity: identity,
-        sessionID: sessionID,
-        now: startedAt
-    ) != nil)
-    let firstCompletion = try #require(store.recordTimelineCompleted(
-        family: .circular,
-        requestContext: .live,
-        requestID: requestID,
-        startedAt: startedAt,
-        identity: identity,
-        sessionID: sessionID,
-        now: startedAt.addingTimeInterval(2)
-    ))
-    let duplicateCompletion = try #require(store.recordTimelineCompleted(
-        family: .circular,
-        requestContext: .live,
-        requestID: requestID,
-        startedAt: startedAt,
-        identity: identity,
-        sessionID: sessionID,
-        now: startedAt.addingTimeInterval(3)
-    ))
-    #expect(duplicateCompletion == firstCompletion)
-}
-
-@Test func watchUpgradeCanaryRejectsSupersededTimelineCompletion() throws {
-    let root = try watchCacheTemporaryDirectory()
-    defer { try? FileManager.default.removeItem(at: root) }
-    let store = WatchUpgradeCanaryReceiptStore(directoryURL: root)
-    let sessionID = UUID(uuidString: "B0000000-0000-0000-0000-000000000006")!
-    let firstRequestID = UUID(uuidString: "B1000000-0000-0000-0000-000000000006")!
-    let secondRequestID = UUID(uuidString: "B2000000-0000-0000-0000-000000000006")!
-    let firstStartedAt = Date(timeIntervalSince1970: 1_800_000_000)
-    let secondStartedAt = firstStartedAt.addingTimeInterval(2)
-    let appIdentity = WatchUpgradeCanaryBuildIdentity(
-        bundleIdentifier: "com.shinycomputers.contextpanel.watch",
-        marketingVersion: "1.0.49",
-        buildNumber: "202607211958"
-    )
-    let widgetIdentity = WatchUpgradeCanaryBuildIdentity(
-        bundleIdentifier: "com.shinycomputers.contextpanel.watch.widget",
-        marketingVersion: "1.0.49",
-        buildNumber: "202607211958"
-    )
-
-    #expect(store.recordApp(
-        identity: appIdentity,
-        sessionID: sessionID,
-        now: firstStartedAt.addingTimeInterval(-1)
-    ) != nil)
-    #expect(store.recordTimelineStarted(
-        family: .corner,
-        requestContext: .live,
-        requestID: firstRequestID,
-        identity: widgetIdentity,
-        sessionID: sessionID,
-        now: firstStartedAt
-    ) != nil)
-    #expect(store.recordTimelineStarted(
-        family: .corner,
-        requestContext: .live,
-        requestID: secondRequestID,
-        identity: widgetIdentity,
-        sessionID: sessionID,
-        now: secondStartedAt
-    ) != nil)
-
-    #expect(store.recordTimelineCompleted(
-        family: .corner,
-        requestContext: .live,
-        requestID: firstRequestID,
-        startedAt: firstStartedAt,
-        identity: widgetIdentity,
-        sessionID: sessionID,
-        now: secondStartedAt.addingTimeInterval(1)
-    ) == nil)
-    #expect(store.recordTimelineCompleted(
-        family: .corner,
-        requestContext: .live,
-        requestID: secondRequestID,
-        startedAt: secondStartedAt,
-        identity: widgetIdentity,
-        sessionID: sessionID,
-        now: secondStartedAt.addingTimeInterval(2)
-    )?.event == .widgetTimelineCompleted)
-
-    let timeline = store.loadSnapshot()
-        .observation(family: .corner, requestContext: .live)
-        .timeline
-    #expect(timeline?.requestID == secondRequestID)
-    #expect(timeline?.event == .widgetTimelineCompleted)
-}
-
-@Test func watchUpgradeCanaryRejectsCorruptAndMismatchedReceipts() throws {
-    let root = try watchCacheTemporaryDirectory()
-    defer { try? FileManager.default.removeItem(at: root) }
-    let store = WatchUpgradeCanaryReceiptStore(directoryURL: root)
-    let identity = WatchUpgradeCanaryBuildIdentity(
-        bundleIdentifier: "com.shinycomputers.contextpanel.watch",
-        marketingVersion: "1.0.49",
-        buildNumber: "202607211958"
-    )
-    let appReceiptURL = root.appending(path: "watch-app-canary-b-receipt.json")
-    let widgetReceiptURL = root.appending(
-        path: "watch-widget-canary-b-circular-live-timeline-receipt.json"
-    )
-    let sessionID = UUID(uuidString: "B0000000-0000-0000-0000-000000000010")!
-    let startedAt = Date(timeIntervalSince1970: 1_800_000_001)
-
-    #expect(store.recordApp(
-        identity: identity,
-        sessionID: sessionID,
-        now: Date(timeIntervalSince1970: 1_800_000_000)
-    ) != nil)
-    try FileManager.default.copyItem(at: appReceiptURL, to: widgetReceiptURL)
-    #expect(store.load(component: .widget) == nil)
-
-    try Data("not-json".utf8).write(to: widgetReceiptURL, options: .atomic)
-    #expect(store.load(component: .widget) == nil)
-    #expect(store.recordTimelineStarted(
-        family: .circular,
-        requestContext: .live,
-        requestID: UUID(uuidString: "B1000000-0000-0000-0000-000000000010")!,
-        identity: identity,
-        sessionID: sessionID,
-        now: startedAt
-    )?.event == .widgetTimelineStarted)
-    #expect(store.loadSnapshot()
-        .observation(family: .circular, requestContext: .live)
-        .timeline?.requestStartedAt == startedAt)
-}
-
-@Test func watchUpgradeCanaryReceiptContainsOnlyBuildDiagnostics() throws {
-    let root = try watchCacheTemporaryDirectory()
-    defer { try? FileManager.default.removeItem(at: root) }
-    let store = WatchUpgradeCanaryReceiptStore(directoryURL: root)
-    let identity = WatchUpgradeCanaryBuildIdentity(
-        bundleIdentifier: "com.shinycomputers.contextpanel.watch.widget",
-        marketingVersion: "1.0.49",
-        buildNumber: "202607211958"
-    )
-
-    #expect(store.recordWidgetObservation(
-        event: .widgetSnapshot,
-        family: .inline,
-        requestContext: .preview,
-        requestID: UUID(uuidString: "B1000000-0000-0000-0000-000000000007")!,
-        identity: identity,
-        sessionID: nil,
-        now: Date(timeIntervalSince1970: 1_800_000_000)
-    ) != nil)
-    let receiptData = try Data(contentsOf: root.appending(
-        path: "watch-widget-canary-b-inline-preview-snapshot-receipt.json"
-    ))
-    let receiptText = try #require(String(data: receiptData, encoding: .utf8))
-
-    #expect(receiptText.contains("bundleIdentifier"))
-    #expect(receiptText.contains("buildNumber"))
-    #expect(receiptText.contains("family"))
-    #expect(receiptText.contains("requestContext"))
-    #expect(receiptText.contains("requestID"))
-    #expect(receiptText.contains("processIdentifier"))
-    #expect(!receiptText.localizedCaseInsensitiveContains("account"))
-    #expect(!receiptText.localizedCaseInsensitiveContains("usage"))
-    #expect(!receiptText.localizedCaseInsensitiveContains("credential"))
-    #expect(!receiptText.localizedCaseInsensitiveContains("provider"))
+    #expect(Set(object.keys) == [
+        "schemaVersion",
+        "id",
+        "marker",
+        "component",
+        "event",
+        "identity",
+        "family",
+        "requestContext",
+        "observedAt",
+        "processIdentifier",
+    ])
+    #expect(Set(identity.keys) == [
+        "bundleIdentifier",
+        "marketingVersion",
+        "buildNumber",
+    ])
+    #expect(contents.contains("widgetsnapshot"))
+    #expect(contents.contains("202607221700"))
+    #expect(!contents.contains("account"))
+    #expect(!contents.contains("credential"))
+    #expect(!contents.contains("provider"))
+    #expect(!contents.contains("token"))
+    #expect(!contents.contains("usage"))
 }
 
 @Test func watchComplicationTimelineReloadsForAnyUsableDocument() {
