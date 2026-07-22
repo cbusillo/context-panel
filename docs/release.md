@@ -1,6 +1,6 @@
 # macOS And Companion Release Path
 
-Last verified: 2026-07-11.
+Last verified: 2026-07-22.
 
 Context Panel's normal beta release path is the GitHub Actions `Ship` workflow.
 It coordinates selected release channels from one commit and one marketing
@@ -35,7 +35,7 @@ The lower-level workflows remain callable for recovery and validation:
 - a GitHub Actions App Store Connect Companion Build Upload workflow that
   archives the iOS/visionOS companion app with its embedded WidgetKit extension,
   or the standalone tvOS app, with platform-matching App Store provisioning
-  profiles, then exports or uploads the signed IPA to App Store Connect
+  profiles, then exports a signed IPA or uploads the archive to App Store Connect
 - a GitHub Actions TestFlight Beta Distribution workflow that waits for an
   uploaded build to finish App Store Connect processing, then assigns it to
   TestFlight beta groups
@@ -408,6 +408,13 @@ package; native visionOS companion builds deliberately exclude watchOS content.
 The upload script stops before export if either archived Watch target lacks the
 shared App Group or its required Production CloudKit container and entitlements.
 
+For signed iOS companion archives, the upload script also emits a generic
+`WatchArchiveReceipt-iOS.txt` after validating the nested iOS app, Watch app, and
+Watch widget identities, marketing-version/build parity, code signatures,
+signed entitlements, executable SHA-256 fingerprints, and dSYM UUID coverage.
+The companion upload workflow retains that receipt and the signed `.xcarchive`
+as release evidence.
+
 For physical TestFlight validation, exercise both a cold complication load and a
 cached degraded load. A cold load must render current Production CloudKit data
 without first launching the Watch app. After either the Watch app or complication
@@ -623,6 +630,11 @@ Use inputs:
 - `platform`: `ios`, `visionos`, or `tvos`.
 - `upload`: `true` to upload, `false` for export-only.
 
+Upload mode may not emit a local IPA because Xcode can upload the signed archive
+directly. Export-only mode must emit a local IPA. In either mode, retain the
+signed `.xcarchive`; for iOS also retain `WatchArchiveReceipt-iOS.txt` and the
+export/upload output as workflow artifacts.
+
 After a successful upload, distribute that build with `TestFlight Beta
 Distribution` using:
 
@@ -694,9 +706,9 @@ Panel.app`.
    degraded states in both app and widget.
    For watchOS, add the complication before launching the Watch app and confirm
    it reads the Production CloudKit snapshot directly. Then launch the Watch app
-   and confirm its explicit timeline reload preserves the same answer. Repeat
-   after an in-place TestFlight update and require the complication to refresh
-   without uninstalling or reinstalling the Watch app.
+   and confirm its explicit timeline reload preserves the same answer. For an
+   upgrade, follow the routine Watch restart runbook below before judging the
+   complication.
 8. Reopen the Mac Diagnostics view and confirm companion load/readback state is
    explainable: healthy, stale, unavailable, partial, or failed.
 9. Exercise degraded cases when practical: CloudKit disabled or unavailable,
@@ -715,6 +727,20 @@ Panel.app`.
     clients merge the legacy `current` record with the versioned usage record,
     and confirm repeated legacy publishes cannot erase lanes already preserved
     in the versioned record.
+
+#### Routine Watch Complication Test
+
+1. Confirm the new marketing version and build number reached the Watch, not
+   only the paired iPhone, while preserving existing complication placements.
+2. Restart the Watch after the installation completes.
+3. After the restart, test the real production complication, Watch app reload,
+   shared-cache agreement, and degraded-state behavior.
+4. Do not treat stale or blank pre-restart output as an application-code
+   regression. Skip the restart only for an explicitly requested in-place
+   upgrade investigation; capture the installed build, face, app diagnostics,
+   and extension-process evidence before recovery.
+5. Do not use uninstall/reinstall or complication reselection as the routine
+   recovery path.
 
 If the companion app or widget is stale but diagnostics show healthy Mac publish
 and readable CloudKit state, investigate the companion receive/mirror/reload path
@@ -871,8 +897,8 @@ Context Panel CloudKit container, and Production CloudKit environment because
 the widget reads CloudKit directly and keeps the app-group mirror as fallback.
 It should not carry iCloud Documents, ubiquity, or APNs entitlements. The
 embedded watch app and watch complication profiles must both authorize the
-Context Panel CloudKit container; neither Watch target should carry an App Group
-entitlement.
+Context Panel CloudKit container and the shared
+`group.com.shinycomputers.contextpanel` App Group used for the Watch-local cache.
 
 ## Build The Native App And Widget
 
