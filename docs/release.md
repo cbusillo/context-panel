@@ -767,6 +767,29 @@ For Canary B validation:
    may belong to another instance of the same family. Preview-only B is
    consistent with the normal reload-delivery path being delayed or stuck.
 
+Canary B reproduced the in-place upgrade failure on July 22, 2026. The iPhone,
+Watch app, and Watch widget all installed build `202607220213`, while the
+unchanged circular complication continued rendering Canary A. Opening the B app,
+requesting a timeline reload, entering face edit mode, opening the picker, and
+recommitting the already-selected Context Panel complication did not launch the
+B extension. The stale A render became a blank WidgetKit placeholder during
+face editing, and the picker still recognized Context Panel as selected.
+
+Rebooting the Watch recovered the same installed build without an uninstall or
+reinstall. The B extension launched after boot, live and preview callbacks were
+recorded, and the unchanged circular and rectangular placements rendered visible
+Canary B markers with live values. This result is consistent with a watchOS or
+WidgetKit extension discovery/activation failure across the in-place update,
+rather than a stale archive, shared snapshot, or lost complication selection.
+
+Until Apple resolves or explains the behavior, use a Watch reboot as the first
+recovery step after confirming that a TestFlight update installed the expected
+Watch build but left a complication stale or blank. Do not uninstall/reinstall
+first because doing so destroys the placement and upgrade evidence. A reboot is
+an operational workaround, not passing release behavior; normal upgrade
+acceptance still requires the updated extension and existing placements to
+activate without user recovery.
+
 The signed iOS archive workflow also emits `WatchArchiveReceipt-iOS.txt`. Require
 matching iOS app, Watch app, and Watch widget build numbers before distribution,
 require Canary B markers in both nested Watch bundles, and retain all three
