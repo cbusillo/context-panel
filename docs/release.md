@@ -810,14 +810,15 @@ Treat each row as evidence rather than absolute slot-level render proof and pair
 it with the required face capture.
 
 The signed iOS archive workflow emits `WatchArchiveReceipt-iOS.txt` and retains
-the signed `.xcarchive` plus exported IPA with its workflow artifact. Require
-matching iOS app, Watch app, and Watch widget build numbers before distribution,
-require Canary C markers in both nested Watch bundles, and retain all three
-bundle identifiers, versions, build numbers, executable SHA-256 values,
-code-signature checks, dSYMs, and role metadata. The gate deletes any prior
-receipt before archiving so a failed run cannot upload stale evidence. Remove
-all canary UI and receipts after the in-place upgrade path is explained,
-reported to Apple when reproducible, and the durable release runbook is written.
+the signed `.xcarchive` plus export/upload output with its workflow artifact.
+Upload mode may not emit an IPA locally; export-only mode does. Require matching
+iOS app, Watch app, and Watch widget build numbers before distribution, require
+Canary C markers in both nested Watch bundles, and retain all three bundle
+identifiers, versions, build numbers, executable SHA-256 values, code-signature
+checks, dSYMs, and role metadata. The gate deletes any prior receipt before
+archiving so a failed run cannot upload stale evidence. Remove all canary UI and
+receipts after the in-place upgrade path is explained, reported to Apple when
+reproducible, and the durable release runbook is written.
 
 If the companion app or widget is stale but diagnostics show healthy Mac publish
 and readable CloudKit state, investigate the companion receive/mirror/reload path
