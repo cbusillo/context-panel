@@ -12,6 +12,15 @@ struct ContextPanelWatchWidgetEntry: TimelineEntry {
 struct ContextPanelWatchWidgetProvider: TimelineProvider {
     func placeholder(in context: Context) -> ContextPanelWatchWidgetEntry {
         let date = Date()
+        if let family = WatchUpgradeCanaryFamily(widgetFamily: context.family) {
+            WatchWidgetLoadQueue.recordPlaceholder(
+                family: family,
+                requestContext: WatchUpgradeCanaryRequestContext(isPreview: context.isPreview),
+                requestID: UUID(),
+                sessionID: WatchWidgetLoadQueue.captureCanarySessionID(),
+                date: date
+            )
+        }
         return ContextPanelWatchWidgetEntry(
             date: date,
             snapshot: placeholderSnapshot(date: date),
@@ -20,11 +29,49 @@ struct ContextPanelWatchWidgetProvider: TimelineProvider {
     }
 
     func getSnapshot(in context: Context, completion: @escaping (ContextPanelWatchWidgetEntry) -> Void) {
-        WatchWidgetLoadQueue.loadSnapshot(date: Date(), completion: completion)
+        let date = Date()
+        guard let family = WatchUpgradeCanaryFamily(widgetFamily: context.family) else {
+            WatchWidgetLoadQueue.loadSnapshot(
+                date: date,
+                family: nil,
+                requestContext: nil,
+                requestID: nil,
+                sessionID: nil,
+                completion: completion
+            )
+            return
+        }
+        WatchWidgetLoadQueue.loadSnapshot(
+            date: date,
+            family: family,
+            requestContext: WatchUpgradeCanaryRequestContext(isPreview: context.isPreview),
+            requestID: UUID(),
+            sessionID: WatchWidgetLoadQueue.captureCanarySessionID(),
+            completion: completion
+        )
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<ContextPanelWatchWidgetEntry>) -> Void) {
-        WatchWidgetLoadQueue.loadTimeline(date: Date(), completion: completion)
+        let date = Date()
+        guard let family = WatchUpgradeCanaryFamily(widgetFamily: context.family) else {
+            WatchWidgetLoadQueue.loadTimeline(
+                date: date,
+                family: nil,
+                requestContext: nil,
+                requestID: nil,
+                sessionID: nil,
+                completion: completion
+            )
+            return
+        }
+        WatchWidgetLoadQueue.loadTimeline(
+            date: date,
+            family: family,
+            requestContext: WatchUpgradeCanaryRequestContext(isPreview: context.isPreview),
+            requestID: UUID(),
+            sessionID: WatchWidgetLoadQueue.captureCanarySessionID(),
+            completion: completion
+        )
     }
 
     private func placeholderSnapshot(date: Date) -> WidgetSnapshot {
@@ -55,13 +102,43 @@ private enum WatchWidgetLoadQueue {
         )
     }()
 
-    static func loadSnapshot(date: Date, completion: @escaping (ContextPanelWatchWidgetEntry) -> Void) {
+    static func recordPlaceholder(
+        family: WatchUpgradeCanaryFamily,
+        requestContext: WatchUpgradeCanaryRequestContext,
+        requestID: UUID,
+        sessionID: UUID?,
+        date: Date
+    ) {
+        _ = canaryStore?.recordWidgetObservation(
+            event: .widgetPlaceholder,
+            family: family,
+            requestContext: requestContext,
+            requestID: requestID,
+            sessionID: sessionID,
+            now: date
+        )
+    }
+
+    static func captureCanarySessionID() -> UUID? {
+        canaryStore?.captureWidgetSessionID()
+    }
+
+    static func loadSnapshot(
+        date: Date,
+        family: WatchUpgradeCanaryFamily?,
+        requestContext: WatchUpgradeCanaryRequestContext?,
+        requestID: UUID?,
+        sessionID: UUID?,
+        completion: @escaping (ContextPanelWatchWidgetEntry) -> Void
+    ) {
         let completion = WatchWidgetCompletion(completion)
         queue.async {
-            if let canaryStore {
-                let sessionID = canaryStore.captureWidgetSessionID()
-                _ = canaryStore.recordWidget(
+            if let canaryStore, let family, let requestContext, let requestID {
+                _ = canaryStore.recordWidgetObservation(
                     event: .widgetSnapshot,
+                    family: family,
+                    requestContext: requestContext,
+                    requestID: requestID,
                     sessionID: sessionID,
                     now: date
                 )
@@ -76,16 +153,24 @@ private enum WatchWidgetLoadQueue {
 
     static func loadTimeline(
         date: Date,
+        family: WatchUpgradeCanaryFamily?,
+        requestContext: WatchUpgradeCanaryRequestContext?,
+        requestID: UUID?,
+        sessionID: UUID?,
         completion: @escaping (Timeline<ContextPanelWatchWidgetEntry>) -> Void
     ) {
         let completion = WatchWidgetCompletion(completion)
         Task.detached(priority: .utility) {
-            let sessionID = canaryStore?.captureWidgetSessionID()
-            _ = canaryStore?.recordWidget(
-                event: .widgetTimelineStarted,
-                sessionID: sessionID,
-                now: date
-            )
+            var startRecorded = false
+            if let family, let requestContext, let requestID {
+                startRecorded = canaryStore?.recordTimelineStarted(
+                    family: family,
+                    requestContext: requestContext,
+                    requestID: requestID,
+                    sessionID: sessionID,
+                    now: date
+                )?.requestID == requestID
+            }
             let loaded = await loader.load(now: date)
             let currentEntry = entry(
                 date: date,
@@ -105,16 +190,24 @@ private enum WatchWidgetLoadQueue {
                     now: date
                   )
             else {
-                _ = canaryStore?.recordWidget(
-                    event: .widgetTimelineCompleted,
-                    sessionID: sessionID
+                recordTimelineCompletion(
+                    family: family,
+                    requestContext: requestContext,
+                    requestID: requestID,
+                    sessionID: sessionID,
+                    startedAt: date,
+                    startRecorded: startRecorded
                 )
                 completion.call(Timeline(entries: [currentEntry], policy: refreshPolicy))
                 return
             }
-            _ = canaryStore?.recordWidget(
-                event: .widgetTimelineCompleted,
-                sessionID: sessionID
+            recordTimelineCompletion(
+                family: family,
+                requestContext: requestContext,
+                requestID: requestID,
+                sessionID: sessionID,
+                startedAt: date,
+                startRecorded: startRecorded
             )
             completion.call(Timeline(
                 entries: [
@@ -128,6 +221,24 @@ private enum WatchWidgetLoadQueue {
                 policy: refreshPolicy
             ))
         }
+    }
+
+    private static func recordTimelineCompletion(
+        family: WatchUpgradeCanaryFamily?,
+        requestContext: WatchUpgradeCanaryRequestContext?,
+        requestID: UUID?,
+        sessionID: UUID?,
+        startedAt: Date,
+        startRecorded: Bool
+    ) {
+        guard startRecorded, let family, let requestContext, let requestID else { return }
+        _ = canaryStore?.recordTimelineCompleted(
+            family: family,
+            requestContext: requestContext,
+            requestID: requestID,
+            startedAt: startedAt,
+            sessionID: sessionID
+        )
     }
 
     private static var stalenessPolicy: SnapshotStoreStalenessPolicy {
@@ -211,6 +322,17 @@ struct ContextPanelWatchWidgetView: View {
     }
 }
 
+private struct WatchUpgradeCanaryBadge: View {
+    let size: CGFloat
+
+    var body: some View {
+        Text(WatchUpgradeCanary.marker)
+            .font(.system(size: size, weight: .black, design: .rounded))
+            .unredacted()
+            .accessibilityHidden(true)
+    }
+}
+
 struct WatchCircularComplication: View {
     let limit: WatchLimitDisplay?
     let snapshot: WidgetSnapshot
@@ -265,12 +387,10 @@ struct WatchCircularComplication: View {
 
     private var canaryMarker: some View {
         VStack {
-            Text(WatchUpgradeCanary.marker)
-                .font(.system(size: 7, weight: .black, design: .rounded))
+            WatchUpgradeCanaryBadge(size: 7)
             Spacer(minLength: 0)
         }
         .padding(.top, 1)
-        .accessibilityHidden(true)
     }
 
     private var fallbackSymbol: String {
@@ -288,6 +408,17 @@ struct WatchRectangularComplication: View {
     let snapshot: WidgetSnapshot
 
     var body: some View {
+        HStack(spacing: 3) {
+            WatchUpgradeCanaryBadge(size: 7)
+                .frame(width: 7)
+            content
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityText)
+    }
+
+    @ViewBuilder
+    private var content: some View {
         if !limits.isEmpty {
             VStack(alignment: .leading, spacing: 1) {
                 ForEach(limits) { limit in
@@ -299,6 +430,14 @@ struct WatchRectangularComplication: View {
                 .font(.caption)
                 .lineLimit(2)
         }
+    }
+
+    private var accessibilityText: String {
+        let base = limits.isEmpty
+            ? watchEmptyText(for: snapshot, compact: false)
+            : limits.map { $0.accessibilitySentence(direction: .remaining) }
+                .joined(separator: ". ")
+        return base + " Upgrade canary \(WatchUpgradeCanary.marker)."
     }
 
     private var emptyText: String {
@@ -360,20 +499,34 @@ struct WatchInlineComplication: View {
 
     var body: some View {
         if let primary {
-            ViewThatFits(in: .horizontal) {
-                if limits.count > 1 {
-                    Text(twoLimitText(primary: primary, secondary: limits[1]))
+            HStack(spacing: 3) {
+                WatchUpgradeCanaryBadge(size: 10)
+                ViewThatFits(in: .horizontal) {
+                    if limits.count > 1 {
+                        Text(twoLimitText(primary: primary, secondary: limits[1]))
+                            .accessibilityLabel(
+                                primary.accessibilitySentence(direction: .remaining)
+                                    + ". "
+                                    + limits[1].accessibilitySentence(direction: .remaining)
+                                    + ". Upgrade canary \(WatchUpgradeCanary.marker)."
+                            )
+                    }
+                    Text("\(primary.title) \(primary.subtitle) · \(primary.remainingInlineText)")
                         .accessibilityLabel(
                             primary.accessibilitySentence(direction: .remaining)
-                                + ". "
-                                + limits[1].accessibilitySentence(direction: .remaining)
+                                + " Upgrade canary \(WatchUpgradeCanary.marker)."
                         )
                 }
-                Text("\(primary.title) \(primary.subtitle) · \(primary.remainingInlineText)")
-                    .accessibilityLabel(primary.accessibilitySentence(direction: .remaining))
             }
         } else {
-            Text(watchEmptyText(for: snapshot, compact: false))
+            HStack(spacing: 3) {
+                WatchUpgradeCanaryBadge(size: 10)
+                Text(watchEmptyText(for: snapshot, compact: false))
+                    .accessibilityLabel(
+                        watchEmptyText(for: snapshot, compact: false)
+                            + " Upgrade canary \(WatchUpgradeCanary.marker)."
+                    )
+            }
         }
     }
 
@@ -396,8 +549,12 @@ struct WatchCornerComplication: View {
     @ViewBuilder
     var body: some View {
         if let limit, let ratio = limit.remainingCapacity.ratio {
-            Text(limit.remainingText)
-                .widgetCurvesContent()
+            ZStack(alignment: .top) {
+                Text(limit.remainingText)
+                    .widgetCurvesContent()
+                WatchUpgradeCanaryBadge(size: 7)
+                    .padding(.top, 1)
+            }
                 .widgetLabel {
                     Gauge(value: ratio) {
                         Text(
@@ -408,20 +565,51 @@ struct WatchCornerComplication: View {
                     .tint(watchStatusColor(limit.status))
                 }
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel(limit.accessibilitySentence(direction: .remaining))
+                .accessibilityLabel(
+                    limit.accessibilitySentence(direction: .remaining)
+                        + " Upgrade canary \(WatchUpgradeCanary.marker)."
+                )
         } else {
-            Text("—")
-                .widgetCurvesContent()
+            ZStack(alignment: .top) {
+                Text("—")
+                    .widgetCurvesContent()
+                WatchUpgradeCanaryBadge(size: 7)
+                    .padding(.top, 1)
+            }
                 .widgetLabel {
                     Text(limit?.title ?? watchEmptyText(for: snapshot, compact: true))
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(
-                    limit?.accessibilitySentence(direction: .remaining)
-                        ?? watchEmptyText(for: snapshot, compact: false)
+                    (limit?.accessibilitySentence(direction: .remaining)
+                        ?? watchEmptyText(for: snapshot, compact: false))
+                        + " Upgrade canary \(WatchUpgradeCanary.marker)."
                 )
                 .foregroundStyle(limit.map { watchStatusColor($0.status) } ?? watchStatusColor(snapshot.status))
         }
+    }
+}
+
+private extension WatchUpgradeCanaryFamily {
+    init?(widgetFamily: WidgetFamily) {
+        switch widgetFamily {
+        case .accessoryCircular:
+            self = .circular
+        case .accessoryCorner:
+            self = .corner
+        case .accessoryRectangular:
+            self = .rectangular
+        case .accessoryInline:
+            self = .inline
+        default:
+            return nil
+        }
+    }
+}
+
+private extension WatchUpgradeCanaryRequestContext {
+    init(isPreview: Bool) {
+        self = isPreview ? .preview : .live
     }
 }
 

@@ -22,6 +22,7 @@ build_number="${CURRENT_PROJECT_VERSION:-}"
 marketing_version="${MARKETING_VERSION:-}"
 destination="upload"
 upload="true"
+watch_canary_marker="B"
 
 usage() {
 	cat <<'USAGE'
@@ -753,7 +754,7 @@ write_ios_watch_archive_receipt() {
 		exit 1
 	fi
 	{
-		printf 'canary_marker=A\n'
+		printf 'canary_marker=%s\n' "$watch_canary_marker"
 		printf 'companion_bundle_id=%s\n' "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$companion_app_path/Info.plist")"
 		printf 'companion_marketing_version=%s\n' "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$companion_app_path/Info.plist")"
 		printf 'companion_build=%s\n' "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$companion_app_path/Info.plist")"
@@ -803,9 +804,9 @@ assert_ios_watch_archive_ready() {
 	assert_bundle_info_value "$watch_widget_path" "companion Watch widget" \
 		'NSExtension:NSExtensionPointIdentifier' 'com.apple.widgetkit-extension'
 	assert_bundle_info_value "$watch_app_path" "companion Watch app" \
-		'ContextPanelWatchUpgradeCanary' 'A'
+		'ContextPanelWatchUpgradeCanary' "$watch_canary_marker"
 	assert_bundle_info_value "$watch_widget_path" "companion Watch widget" \
-		'ContextPanelWatchUpgradeCanary' 'A'
+		'ContextPanelWatchUpgradeCanary' "$watch_canary_marker"
 	assert_code_signature_valid "$watch_widget_path" "companion Watch widget"
 	assert_code_signature_valid "$watch_app_path" "companion Watch app"
 	assert_code_signature_valid "$companion_app_path" "iOS companion app"

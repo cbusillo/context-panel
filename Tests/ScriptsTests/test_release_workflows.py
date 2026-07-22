@@ -2070,7 +2070,8 @@ exit 65
         self.assertIn("watch_app_sha256=", script)
         self.assertIn("watch_widget_sha256=", script)
         self.assertIn("ContextPanelWatchUpgradeCanary", script)
-        self.assertIn("canary_marker=A", script)
+        self.assertIn('watch_canary_marker="B"', script)
+        self.assertIn("printf 'canary_marker=%s\\n' \"$watch_canary_marker\"", script)
         self.assertIn("'WKApplication' 'true'", script)
         self.assertIn(
             "'WKCompanionAppBundleIdentifier' 'com.shinycomputers.contextpanel'",
@@ -2134,8 +2135,8 @@ exit 65
             watch_info = plistlib.load(handle)
         with (REPO_ROOT / "Config/ContextPanelWatchWidget-Info.plist").open("rb") as handle:
             watch_widget_info = plistlib.load(handle)
-        self.assertEqual(watch_info["ContextPanelWatchUpgradeCanary"], "A")
-        self.assertEqual(watch_widget_info["ContextPanelWatchUpgradeCanary"], "A")
+        self.assertEqual(watch_info["ContextPanelWatchUpgradeCanary"], "B")
+        self.assertEqual(watch_widget_info["ContextPanelWatchUpgradeCanary"], "B")
 
     def test_release_docs_describe_cloudkit_companion_testflight_validation(self):
         release_docs = self.read("docs/release.md")
