@@ -22,7 +22,7 @@ build_number="${CURRENT_PROJECT_VERSION:-}"
 marketing_version="${MARKETING_VERSION:-}"
 destination="upload"
 upload="true"
-watch_canary_marker="B"
+watch_canary_marker="C"
 
 usage() {
 	cat <<'USAGE'

@@ -2070,7 +2070,7 @@ exit 65
         self.assertIn("watch_app_sha256=", script)
         self.assertIn("watch_widget_sha256=", script)
         self.assertIn("ContextPanelWatchUpgradeCanary", script)
-        self.assertIn('watch_canary_marker="B"', script)
+        self.assertIn('watch_canary_marker="C"', script)
         self.assertIn("printf 'canary_marker=%s\\n' \"$watch_canary_marker\"", script)
         self.assertIn("'WKApplication' 'true'", script)
         self.assertIn(
@@ -2130,13 +2130,44 @@ exit 65
 
         workflow = self.read(".github/workflows/app-store-connect-companion-upload.yml")
         self.assertIn("WatchArchiveReceipt-*.txt", workflow)
+        self.assertIn(".build/app-store-connect-companion/*.xcarchive", workflow)
+        self.assertIn(".build/app-store-connect-companion/upload-*", workflow)
 
         with (REPO_ROOT / "Config/ContextPanelWatch-Info.plist").open("rb") as handle:
             watch_info = plistlib.load(handle)
         with (REPO_ROOT / "Config/ContextPanelWatchWidget-Info.plist").open("rb") as handle:
             watch_widget_info = plistlib.load(handle)
-        self.assertEqual(watch_info["ContextPanelWatchUpgradeCanary"], "B")
-        self.assertEqual(watch_widget_info["ContextPanelWatchUpgradeCanary"], "B")
+        self.assertEqual(watch_info["ContextPanelWatchUpgradeCanary"], "C")
+        self.assertEqual(watch_widget_info["ContextPanelWatchUpgradeCanary"], "C")
+
+    def test_watch_canary_c_keeps_widget_provider_neutral(self):
+        widget = self.read(
+            "Sources/ContextPanelWatchWidget/ContextPanelWatchWidget.swift"
+        )
+        support = self.read(
+            "Sources/ContextPanelWatchSupport/WatchUpgradeCanary.swift"
+        )
+        watch_app = self.read("Sources/ContextPanelWatch/ContextPanelWatchApp.swift")
+
+        self.assertNotIn("ContextPanelCloudKitSync", widget)
+        self.assertNotIn("WatchCompanionLoader", widget)
+        self.assertNotIn("NSFileCoordinator", support)
+        self.assertIn('private static let eventDirectoryName = "Neutral Events"', support)
+        self.assertIn("completion(entry)\n        record(event: .widgetSnapshot", widget)
+        self.assertIn("completion(Timeline(entries: [entry], policy: .never))", widget)
+        self.assertEqual(
+            watch_app.count(
+                "WidgetCenter.shared.reloadTimelines(ofKind: "
+                "ContextPanelWatchWidgetIdentity.kind)"
+            ),
+            1,
+        )
+        self.assertIn("WidgetCenter.shared.getCurrentConfigurations", watch_app)
+
+        release_docs = self.read("docs/release.md")
+        self.assertIn("Canary C is the neutral discriminator", release_docs)
+        self.assertIn("requests exactly one timeline", release_docs)
+        self.assertIn("ambiguous with a strong watchOS/WidgetKit", release_docs)
 
     def test_release_docs_describe_cloudkit_companion_testflight_validation(self):
         release_docs = self.read("docs/release.md")
