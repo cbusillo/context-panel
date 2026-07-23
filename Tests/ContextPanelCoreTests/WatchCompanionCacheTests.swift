@@ -75,6 +75,39 @@ import Testing
     #expect(FileManager.default.fileExists(atPath: cacheURL.path))
 }
 
+@Test func watchCompanionCacheLoadHidesExpiredAccountObservation() throws {
+    let observedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let now = observedAt.addingTimeInterval(SnapshotFreshness.companionAccountRetentionAge)
+    let root = try watchCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cache = WatchCompanionCache(cacheURL: root.appending(path: "watch-cache.json"))
+    let limit = watchOpenAIWeeklyLimit(
+        accountID: "openai-a",
+        used: 20,
+        generatedAt: observedAt
+    )
+    let report = StoredProviderReport(
+        provider: .openAI,
+        accountID: "openai-a",
+        accountName: "OpenAI A",
+        generatedAt: observedAt,
+        status: .healthy,
+        errorMessage: nil
+    )
+    let document = watchCacheDocument(
+        generatedAt: observedAt,
+        limits: [limit],
+        reports: [report]
+    ).mergingForRemotePublish(existing: nil, now: observedAt)
+    #expect(cache.save(document: document, displayPreferences: .defaultPreferences, now: observedAt))
+
+    let loaded = cache.load(now: now)
+
+    #expect(loaded.result.document?.snapshot.limits.isEmpty == true)
+    #expect(loaded.result.document?.snapshot.providerStatuses.isEmpty == true)
+    #expect(loaded.result.status == .unknown)
+}
+
 @Test func watchCompanionCacheCreatesItsFirstNestedDirectory() throws {
     let root = try watchCacheTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -424,6 +457,53 @@ import Testing
     #expect(loaded.displayPreferences == preferences)
     #expect(cache.load().result.document == document)
     #expect(cache.load().displayPreferences == preferences)
+}
+
+@Test func watchCompanionLoaderRetiresExpiredCachedAccountDuringRemoteMerge() async throws {
+    let observedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let now = observedAt.addingTimeInterval(SnapshotFreshness.companionAccountRetentionAge)
+    let root = try watchCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cache = WatchCompanionCache(cacheURL: root.appending(path: "watch-cache.json"))
+    let cachedDocument = watchCacheDocument(
+        generatedAt: observedAt,
+        limits: [
+            watchOpenAIWeeklyLimit(
+                accountID: "openai-a",
+                used: 20,
+                generatedAt: observedAt
+            ),
+        ],
+        reports: [
+            StoredProviderReport(
+                provider: .openAI,
+                accountID: "openai-a",
+                accountName: "OpenAI A",
+                generatedAt: observedAt,
+                status: .healthy,
+                errorMessage: nil
+            ),
+        ]
+    )
+    #expect(cache.save(
+        document: cachedDocument,
+        displayPreferences: .defaultPreferences,
+        now: observedAt
+    ))
+    let remoteDocument = watchCacheDocument(generatedAt: now)
+    let loader = WatchCompanionLoader(
+        cache: cache,
+        timeout: .seconds(1),
+        loadDocument: { _ in watchRemoteLoad(document: remoteDocument, receivedAt: now) },
+        loadPresentation: { watchPresentationLoad() }
+    )
+
+    let loaded = await loader.load(now: now)
+
+    #expect(loaded.result.document?.snapshot.limits.isEmpty == true)
+    #expect(loaded.result.document?.snapshot.providerStatuses.isEmpty == true)
+    #expect(loaded.result.status == .unknown)
+    #expect(cache.load(now: now).result.document == loaded.result.document)
 }
 
 @Test func watchCompanionLoaderKeepsNewerCachedUsageOverOlderCloudKitUsage() async throws {

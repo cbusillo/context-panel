@@ -49,12 +49,19 @@ retries protect concurrent publishers. Preserved observations retain their
 original timestamps so companion clients can mark only those lanes stale instead
 of presenting them as freshly collected. Fresh lanes keep the companion ready;
 saved lanes remain visible but do not participate in pooled capacity or burn
-forecasts while current lanes are available. When every lane is saved, constrained
-glance surfaces may preserve the complete last-known pool as explicitly stale
-context rather than inventing a partial current total. A versioned usage record isolates this behavior from older
-whole-document publishers; current clients also read and merge the legacy record
-during rollout so an older Mac can contribute data without erasing the versioned
-account set.
+forecasts while current lanes are available. When every lane is saved,
+constrained glance surfaces may preserve the complete last-known pool as
+explicitly stale context rather than inventing a partial current total. An
+account remains eligible for saved presentation for 30 days after its last
+complete observation. Omission by one Mac does not change that anchor; failed
+attempts and document envelope timestamps cannot refresh it. Companion reads
+hide expired accounts immediately, and the next publish compacts matching
+limits, statuses, prompt-cache summaries, and burn-rate authority from both
+CloudKit records. A later complete observation restores the account without a
+tombstone. A versioned usage record isolates this behavior from older
+whole-document publishers; current clients also read and merge the legacy
+record during rollout so an older Mac can contribute data without erasing the
+versioned account set.
 After each authoritative `current-v2` save, current publishers mirror the merged
 document to legacy `current`. That mirror remains a compatibility wake channel
 for the Production-promoted CloudKit subscription and for older clients; it is

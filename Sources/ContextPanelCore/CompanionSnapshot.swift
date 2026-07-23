@@ -51,6 +51,7 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
     public let widgetDisplayPreferences: WidgetDisplayPreferences
     public let observedBurnRates: [String: ObservedBurnRate]
     public let fastModeForecastSettings: FastModeForecastSettings
+    public let accountRetentionStates: [CompanionAccountRetentionState]?
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion
@@ -58,19 +59,22 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         case widgetDisplayPreferences
         case observedBurnRates
         case fastModeForecastSettings
+        case accountRetentionStates
     }
 
     public init(
         snapshot: CompanionSnapshot,
         widgetDisplayPreferences: WidgetDisplayPreferences = .defaultPreferences,
         observedBurnRates: [String: ObservedBurnRate] = [:],
-        fastModeForecastSettings: FastModeForecastSettings = .defaultSettings
+        fastModeForecastSettings: FastModeForecastSettings = .defaultSettings,
+        accountRetentionStates: [CompanionAccountRetentionState]? = nil
     ) {
         schemaVersion = Self.schemaVersion
         self.snapshot = snapshot
         self.widgetDisplayPreferences = widgetDisplayPreferences
         self.observedBurnRates = observedBurnRates
         self.fastModeForecastSettings = fastModeForecastSettings
+        self.accountRetentionStates = accountRetentionStates
     }
 
     public init(
@@ -78,13 +82,15 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         publishedAt: Date = Date(),
         widgetDisplayPreferences: WidgetDisplayPreferences = .defaultPreferences,
         observedBurnRates: [String: ObservedBurnRate] = [:],
-        fastModeForecastSettings: FastModeForecastSettings = .defaultSettings
+        fastModeForecastSettings: FastModeForecastSettings = .defaultSettings,
+        accountRetentionStates: [CompanionAccountRetentionState]? = nil
     ) {
         self.init(
             snapshot: CompanionSnapshot(storedSnapshot: storedSnapshot, publishedAt: publishedAt),
             widgetDisplayPreferences: widgetDisplayPreferences,
             observedBurnRates: observedBurnRates,
-            fastModeForecastSettings: fastModeForecastSettings
+            fastModeForecastSettings: fastModeForecastSettings,
+            accountRetentionStates: accountRetentionStates
         )
     }
 
@@ -98,6 +104,26 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
             forKey: .observedBurnRates
         ) ?? [:]
         fastModeForecastSettings = try container.decode(FastModeForecastSettings.self, forKey: .fastModeForecastSettings)
+        accountRetentionStates = try container.decodeIfPresent(
+            [CompanionAccountRetentionState].self,
+            forKey: .accountRetentionStates
+        )
+    }
+}
+
+public struct CompanionAccountRetentionState: Codable, Equatable, Sendable {
+    public let provider: Provider
+    public let companionAccountID: String
+    public let firstIncompleteObservationAt: Date
+
+    public init(
+        provider: Provider,
+        companionAccountID: String,
+        firstIncompleteObservationAt: Date
+    ) {
+        self.provider = provider
+        self.companionAccountID = companionAccountID
+        self.firstIncompleteObservationAt = firstIncompleteObservationAt
     }
 }
 
@@ -389,9 +415,10 @@ public struct CompanionSyncStore: Sendable {
     public func load(policy: SnapshotStoreStalenessPolicy, now: Date = Date()) -> CompanionSyncLoadResult {
         let result = load()
         guard let document = result.document else { return result }
-        let status = document.companionStatus(now: now, stalenessPolicy: policy)
+        let retainedDocument = document.mergingForRemotePublish(existing: nil, now: now)
+        let status = retainedDocument.companionStatus(now: now, stalenessPolicy: policy)
         return CompanionSyncLoadResult(
-            document: document,
+            document: retainedDocument,
             status: status,
             errorMessage: result.errorMessage,
             transportMetadata: result.transportMetadata,
@@ -415,7 +442,8 @@ public struct CompanionSyncStore: Sendable {
         unlessKeepingCurrent shouldKeepCurrent: @escaping @Sendable (CompanionSyncLoadResult) -> Bool
     ) -> CompanionSyncConditionalSaveResult {
         do {
-            let data = try Self.makeEncoder().encode(document)
+            let retainedDocument = document.mergingForRemotePublish(existing: nil, now: now)
+            let data = try Self.makeEncoder().encode(retainedDocument)
             if let keptCurrentResult = try coordinatedWrite(
                 data: data,
                 policy: policy,
@@ -476,9 +504,10 @@ public struct CompanionSyncStore: Sendable {
 
         do {
             let document = try decodeDocument(from: try Data(contentsOf: documentURL))
-            let status = document.companionStatus(now: now, stalenessPolicy: policy)
+            let retainedDocument = document.mergingForRemotePublish(existing: nil, now: now)
+            let status = retainedDocument.companionStatus(now: now, stalenessPolicy: policy)
             return CompanionSyncLoadResult(
-                document: document,
+                document: retainedDocument,
                 status: status,
                 transportMetadata: CompanionSyncTransportMetadata(
                     source: .storeRole(CompanionSyncStoreFailure.storeRole(for: documentURL)),
@@ -571,8 +600,18 @@ public struct CompanionSyncStore: Sendable {
             error: &coordinatorError
         ) { coordinatedURL in
             do {
+                let rawDocument = FileManager.default.fileExists(atPath: coordinatedURL.path)
+                    ? try? Self.decodeDocument(from: Data(contentsOf: coordinatedURL))
+                    : nil
                 let currentResult = Self.loadResult(at: coordinatedURL, policy: policy, now: now)
                 if shouldKeepCurrent(currentResult) {
+                    if let retainedDocument = currentResult.document,
+                       rawDocument != retainedDocument {
+                        try Self.replaceDocument(
+                            at: coordinatedURL,
+                            with: Self.makeEncoder().encode(retainedDocument)
+                        )
+                    }
                     keptCurrentResult = currentResult
                     return
                 }
@@ -606,12 +645,22 @@ public struct CompanionSyncStore: Sendable {
         ) { coordinatedURL in
             do {
                 let currentFileExists = FileManager.default.fileExists(atPath: coordinatedURL.path)
+                let rawDocument = currentFileExists
+                    ? try? Self.decodeDocument(from: Data(contentsOf: coordinatedURL))
+                    : nil
                 let currentResult = Self.loadResult(at: coordinatedURL, policy: policy, now: now)
                 if currentFileExists, currentResult.document == nil {
                     removalResult = .keptCurrent(currentResult)
                     return
                 }
                 guard currentResult.document == expectedDocument else {
+                    if let retainedDocument = currentResult.document,
+                       rawDocument != retainedDocument {
+                        try Self.replaceDocument(
+                            at: coordinatedURL,
+                            with: Self.makeEncoder().encode(retainedDocument)
+                        )
+                    }
                     removalResult = .keptCurrent(currentResult)
                     return
                 }

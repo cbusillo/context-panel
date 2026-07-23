@@ -88,7 +88,7 @@ public final class WatchCompanionCache: @unchecked Sendable {
         self.source = source
     }
 
-    public func load(now: Date? = nil) -> WatchCompanionCacheLoadResult {
+    public func load(now: Date = Date()) -> WatchCompanionCacheLoadResult {
         Self.fileLock.lock()
         defer { Self.fileLock.unlock() }
 
@@ -249,20 +249,19 @@ public final class WatchCompanionCache: @unchecked Sendable {
 
     private static func loadResult(
         from payload: Payload,
-        now: Date?,
+        now: Date,
         source: CompanionSyncSource
     ) -> WatchCompanionCacheLoadResult {
-        WatchCompanionCacheLoadResult(
+        let document = payload.document.mergingForRemotePublish(existing: nil, now: now)
+        return WatchCompanionCacheLoadResult(
             result: CompanionSyncLoadResult(
-                document: payload.document,
-                status: now.map {
-                    payload.document.companionStatus(
-                        now: $0,
-                        stalenessPolicy: SnapshotStoreStalenessPolicy(
-                            maximumAge: SnapshotFreshness.companionProviderMaximumAge
-                        )
+                document: document,
+                status: document.companionStatus(
+                    now: now,
+                    stalenessPolicy: SnapshotStoreStalenessPolicy(
+                        maximumAge: SnapshotFreshness.companionProviderMaximumAge
                     )
-                } ?? payload.document.companionStatus,
+                ),
                 transportMetadata: CompanionSyncTransportMetadata(
                     source: source,
                     mirroredAt: payload.cachedAt,
@@ -319,7 +318,10 @@ public final class WatchCompanionCache: @unchecked Sendable {
                 let current = FileManager.default.fileExists(atPath: coordinatedURL.path)
                     ? try? decodePayload(from: Data(contentsOf: coordinatedURL))
                     : nil
-                let selectedDocument = document.mergingForRemotePublish(existing: current?.document)
+                let selectedDocument = document.mergingForRemotePublish(
+                    existing: current?.document,
+                    now: cachedAt
+                )
                 let selectedPreferences = preferredDisplayPreferences(
                     candidate: displayPreferences,
                     candidateUpdatedAt: displayPreferencesUpdatedAt,

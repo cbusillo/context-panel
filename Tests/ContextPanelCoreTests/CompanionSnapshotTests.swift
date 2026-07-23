@@ -78,6 +78,156 @@ import Testing
     #expect(roundTrip.promptCacheSummaries.first?.latestHitRate == 0.9)
 }
 
+@Test func companionSyncDocumentRetentionStateRoundTripsWithoutSchemaBump() throws {
+    let observedAt = Date(timeIntervalSince1970: 1_250)
+    let legacyDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: observedAt),
+        publishedAt: observedAt
+    )
+    let accountID = try #require(legacyDocument.snapshot.limits.first?.companionAccountID)
+    let managedDocument = CompanionSyncDocument(
+        snapshot: legacyDocument.snapshot,
+        widgetDisplayPreferences: legacyDocument.widgetDisplayPreferences,
+        observedBurnRates: legacyDocument.observedBurnRates,
+        fastModeForecastSettings: legacyDocument.fastModeForecastSettings,
+        accountRetentionStates: [
+            CompanionAccountRetentionState(
+                provider: .openAI,
+                companionAccountID: accountID,
+                firstIncompleteObservationAt: observedAt
+            ),
+        ]
+    )
+
+    let managedRoundTrip = try CompanionSyncPayloadCodec.decode(
+        CompanionSyncPayloadCodec.encode(managedDocument)
+    )
+    let legacyRoundTrip = try CompanionSyncPayloadCodec.decode(
+        CompanionSyncPayloadCodec.encode(legacyDocument)
+    )
+
+    #expect(managedRoundTrip == managedDocument)
+    #expect(managedRoundTrip.schemaVersion == 1)
+    #expect(managedRoundTrip.snapshot.schemaVersion == 1)
+    #expect(managedRoundTrip.accountRetentionStates?.first?.firstIncompleteObservationAt == observedAt)
+    #expect(legacyRoundTrip.accountRetentionStates == nil)
+}
+
+@Test func companionSyncStoreLoadHidesExpiredAccountObservation() throws {
+    let observedAt = Date(timeIntervalSince1970: 1_400)
+    let now = observedAt.addingTimeInterval(SnapshotFreshness.companionAccountRetentionAge)
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = CompanionSyncStore(documentURL: root.appending(path: "companion.json"))
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: observedAt),
+        publishedAt: observedAt
+    ).mergingForRemotePublish(existing: nil, now: observedAt)
+    try store.save(document)
+
+    let loaded = store.load(
+        policy: SnapshotStoreStalenessPolicy(
+            maximumAge: SnapshotFreshness.companionProviderMaximumAge
+        ),
+        now: now
+    )
+
+    #expect(loaded.document?.snapshot.limits.isEmpty == true)
+    #expect(loaded.document?.snapshot.providerStatuses.isEmpty == true)
+    #expect(loaded.document?.snapshot.promptCacheSummaries.isEmpty == true)
+    #expect(loaded.document?.accountRetentionStates == nil)
+    #expect(loaded.status == .unknown)
+}
+
+@Test func companionSyncStoreConditionalOperationsUseRetainedDocument() throws {
+    let observedAt = Date(timeIntervalSince1970: 1_450)
+    let now = observedAt.addingTimeInterval(SnapshotFreshness.companionAccountRetentionAge)
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = CompanionSyncStore(documentURL: root.appending(path: "companion.json"))
+    let staleDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: observedAt),
+        publishedAt: observedAt
+    )
+    let policy = SnapshotStoreStalenessPolicy(
+        maximumAge: SnapshotFreshness.companionProviderMaximumAge
+    )
+    try store.save(staleDocument)
+    let retainedDocument = try #require(store.load(policy: policy, now: now).document)
+
+    let saveResult = store.saveResult(
+        retainedDocument,
+        policy: policy,
+        now: now,
+        unlessKeepingCurrent: { _ in true }
+    )
+
+    guard case let .keptCurrent(keptCurrent) = saveResult else {
+        Issue.record("Expected the retained current document to win.")
+        return
+    }
+    #expect(keptCurrent.document == retainedDocument)
+    #expect(store.load().document == retainedDocument)
+
+    try store.save(staleDocument)
+    let expectedDocument = store.load(policy: policy, now: now).document
+    let keptRemoveResult = store.removeIfCurrent(nil, policy: policy, now: now)
+
+    guard case let .keptCurrent(keptCurrentAfterRemove) = keptRemoveResult else {
+        Issue.record("Expected a mismatched removal to keep the retained document.")
+        return
+    }
+    #expect(keptCurrentAfterRemove.document == expectedDocument)
+    #expect(store.load().document == expectedDocument)
+
+    let removeResult = store.removeIfCurrent(expectedDocument, policy: policy, now: now)
+
+    #expect(removeResult == .removed)
+    #expect(store.load().document == nil)
+}
+
+@Test func companionSyncStorePersistsIncompleteRetentionAnchorAcrossLoads() throws {
+    let firstFailureAt = Date(timeIntervalSince1970: 1_475)
+    let expiry = firstFailureAt.addingTimeInterval(SnapshotFreshness.companionAccountRetentionAge)
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = CompanionSyncStore(documentURL: root.appending(path: "companion.json"))
+    let document = CompanionSyncDocument(
+        storedSnapshot: StoredUsageSnapshot(
+            savedAt: firstFailureAt,
+            snapshot: UsageSnapshot(generatedAt: firstFailureAt, limits: []),
+            reports: [
+                StoredProviderReport(
+                    provider: .openAI,
+                    accountID: "raw-openai",
+                    configuredAccountID: "configured-openai",
+                    accountName: "Work OpenAI",
+                    generatedAt: firstFailureAt,
+                    status: .failure,
+                    errorMessage: "Authentication unavailable"
+                ),
+            ]
+        ),
+        publishedAt: firstFailureAt
+    ).mergingForRemotePublish(existing: nil, now: firstFailureAt)
+    try store.save(document)
+    let policy = SnapshotStoreStalenessPolicy(
+        maximumAge: SnapshotFreshness.companionProviderMaximumAge
+    )
+
+    let beforeExpiry = store.load(policy: policy, now: expiry.addingTimeInterval(-1))
+    let atExpiry = store.load(policy: policy, now: expiry)
+
+    #expect(beforeExpiry.document?.snapshot.providerStatuses.map(\.status) == [.failure])
+    #expect(
+        beforeExpiry.document?.accountRetentionStates?.first?.firstIncompleteObservationAt
+            == firstFailureAt
+    )
+    #expect(atExpiry.document?.snapshot.providerStatuses.isEmpty == true)
+    #expect(atExpiry.document?.accountRetentionStates == nil)
+    #expect(atExpiry.status == .unknown)
+}
+
 @Test func companionSnapshotKeepsDuplicateAccountNamesDistinctWithSafeIDs() throws {
     let generatedAt = Date(timeIntervalSince1970: 1_500)
     let stored = StoredUsageSnapshot(
