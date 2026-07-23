@@ -1414,6 +1414,7 @@ extension WidgetSnapshot {
 
     var widgetProblemText: String? {
         if syncErrorMessage != nil { return "Mac update failed" }
+        if let providerAccessProblemText { return providerAccessProblemText }
         switch state {
         case .failure:
             return "Reconnect account"
@@ -1439,10 +1440,25 @@ extension WidgetSnapshot {
         if syncErrorMessage != nil || requiresProviderReconnect || state == .failure || status == .failure {
             return .failure
         }
+        if let alert = primaryProviderAccessAlert {
+            return alert.status
+        }
         if refreshAttentionSummary != nil || state == .stale || status == .stale {
             return .stale
         }
         return status
+    }
+
+    private var providerAccessProblemText: String? {
+        guard state != .failure,
+              status != .failure,
+              !requiresProviderReconnect,
+              let alert = primaryProviderAccessAlert
+        else { return nil }
+        if let resetsAt = alert.accessState.resetsAt {
+            return "\(alert.title) · reset \(resetsAt.widgetDateTimeWithRelativeText)"
+        }
+        return alert.title
     }
 
     func widgetDeepLinkURL(links: ContextPanelWidgetLinks) -> URL {

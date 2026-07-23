@@ -1051,6 +1051,16 @@ public struct CompanionProviderStatus: Codable, Equatable, Sendable {
     public let accountName: String
     public let generatedAt: Date
     public let status: UsageStatus
+    public let accessState: ProviderAccessState
+
+    enum CodingKeys: String, CodingKey {
+        case provider
+        case companionAccountID
+        case accountName
+        case generatedAt
+        case status
+        case accessState
+    }
 
     public init(report: StoredProviderReport) {
         provider = report.provider
@@ -1062,6 +1072,18 @@ public struct CompanionProviderStatus: Codable, Equatable, Sendable {
         accountName = CompanionAccountIdentity.displayName(report.accountName)
         generatedAt = report.generatedAt
         status = report.status
+        accessState = report.accessState.retainingCurrentProviderObservation(for: report.status)
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        provider = try container.decode(Provider.self, forKey: .provider)
+        companionAccountID = try container.decode(String.self, forKey: .companionAccountID)
+        accountName = try container.decode(String.self, forKey: .accountName)
+        generatedAt = try container.decode(Date.self, forKey: .generatedAt)
+        status = try container.decode(UsageStatus.self, forKey: .status)
+        accessState = try container.decodeIfPresent(ProviderAccessState.self, forKey: .accessState)?
+            .retainingCurrentProviderObservation(for: status) ?? .unknown
     }
 
     public var storedProviderReport: StoredProviderReport {
@@ -1072,6 +1094,7 @@ public struct CompanionProviderStatus: Codable, Equatable, Sendable {
             accountName: accountName,
             generatedAt: generatedAt,
             status: status,
+            accessState: accessState,
             errorMessage: nil
         )
     }

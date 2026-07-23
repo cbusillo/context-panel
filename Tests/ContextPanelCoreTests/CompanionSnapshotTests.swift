@@ -1530,6 +1530,186 @@ import Testing
     #expect(json.contains("secret") == false)
 }
 
+@Test func companionPayloadCarriesSanitizedProviderAccessState() throws {
+    let generatedAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:00:00Z"))
+    let resetsAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:30:00Z"))
+    let stored = StoredUsageSnapshot(
+        savedAt: generatedAt,
+        snapshot: UsageSnapshot(generatedAt: generatedAt, limits: [
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "raw-anthropic",
+                configuredAccountID: "configured-anthropic",
+                accountName: "Work Claude",
+                label: "Claude 5-hour",
+                windowLabel: "5-hour",
+                modelLabel: "Claude",
+                unit: .percent,
+                used: 100,
+                limit: 100,
+                resetsAt: resetsAt,
+                lastUpdatedAt: generatedAt,
+                confidence: .observed
+            ),
+        ]),
+        reports: [
+            StoredProviderReport(
+                provider: .anthropic,
+                accountID: "raw-anthropic",
+                configuredAccountID: "configured-anthropic",
+                accountName: "Work Claude",
+                generatedAt: generatedAt,
+                status: .limited,
+                accessState: ProviderAccessState(kind: .blockedUntilReset, resetsAt: resetsAt),
+                errorMessage: nil
+            ),
+        ]
+    )
+    let document = CompanionSyncDocument(storedSnapshot: stored, publishedAt: generatedAt)
+
+    let data = try CompanionSyncPayloadCodec.encode(document)
+    let json = String(decoding: data, as: UTF8.self)
+    let roundTrip = try CompanionSyncPayloadCodec.decode(data)
+    let widget = WidgetSnapshot.fromCompanionSync(
+        CompanionSyncLoadResult(document: roundTrip, status: .healthy),
+        now: generatedAt
+    )
+
+    #expect(roundTrip.snapshot.providerStatuses.first?.accessState == ProviderAccessState(
+        kind: .blockedUntilReset,
+        resetsAt: resetsAt
+    ))
+    #expect(widget.primaryProviderAccessAlert?.title == "Claude limited")
+    #expect(widget.primaryProviderAccessAlert?.accountName == "Work Claude")
+    #expect(json.contains("raw-anthropic") == false)
+    #expect(json.contains("configured-anthropic") == false)
+    #expect(json.contains("spend") == false)
+    #expect(json.contains("disabled_reason") == false)
+}
+
+@Test func companionEarlierResetDoesNotHideLaterProviderAccessBlock() throws {
+    let generatedAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:00:00Z"))
+    let fiveHourReset = generatedAt.addingTimeInterval(60)
+    let weeklyReset = generatedAt.addingTimeInterval(3_600)
+    let stored = StoredUsageSnapshot(
+        savedAt: generatedAt,
+        snapshot: UsageSnapshot(generatedAt: generatedAt, limits: [
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "raw-anthropic",
+                configuredAccountID: "configured-anthropic",
+                accountName: "Work Claude",
+                label: "Claude 5-hour",
+                windowLabel: "5-hour",
+                modelLabel: "Claude",
+                unit: .percent,
+                used: 100,
+                limit: 100,
+                resetsAt: fiveHourReset,
+                lastUpdatedAt: generatedAt,
+                confidence: .observed
+            ),
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "raw-anthropic",
+                configuredAccountID: "configured-anthropic",
+                accountName: "Work Claude",
+                label: "Claude weekly",
+                windowLabel: "Weekly",
+                modelLabel: "Claude",
+                unit: .percent,
+                used: 100,
+                limit: 100,
+                resetsAt: weeklyReset,
+                lastUpdatedAt: generatedAt,
+                confidence: .observed
+            ),
+        ]),
+        reports: [
+            StoredProviderReport(
+                provider: .anthropic,
+                accountID: "raw-anthropic",
+                configuredAccountID: "configured-anthropic",
+                accountName: "Work Claude",
+                generatedAt: generatedAt,
+                status: .limited,
+                accessState: ProviderAccessState(kind: .blockedUntilReset, resetsAt: weeklyReset),
+                errorMessage: nil
+            ),
+        ]
+    )
+    let document = CompanionSyncDocument(storedSnapshot: stored, publishedAt: generatedAt)
+    let now = fiveHourReset.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace + 1)
+
+    let widget = WidgetSnapshot.fromCompanionSync(
+        CompanionSyncLoadResult(document: document, status: .stale),
+        now: now,
+        stalenessPolicy: SnapshotStoreStalenessPolicy(maximumAge: 10_000)
+    )
+
+    #expect(widget.limits.first { $0.windowLabel == "5-hour" }?.status == .stale)
+    #expect(widget.primaryProviderAccessAlert?.accessState == ProviderAccessState(
+        kind: .blockedUntilReset,
+        resetsAt: weeklyReset
+    ))
+    #expect(widget.reports.first?.accessState == ProviderAccessState(
+        kind: .blockedUntilReset,
+        resetsAt: weeklyReset
+    ))
+}
+
+@Test func staleCompanionTransportDoesNotPresentProviderAccessAsCurrent() throws {
+    let generatedAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:00:00Z"))
+    let stored = StoredUsageSnapshot(
+        savedAt: generatedAt,
+        snapshot: UsageSnapshot(generatedAt: generatedAt, limits: [
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "raw-anthropic",
+                configuredAccountID: "configured-anthropic",
+                accountName: "Work Claude",
+                label: "Claude 5-hour",
+                windowLabel: "5-hour",
+                unit: .percent,
+                used: 100,
+                limit: 100,
+                lastUpdatedAt: generatedAt
+            ),
+        ]),
+        reports: [
+            StoredProviderReport(
+                provider: .anthropic,
+                accountID: "raw-anthropic",
+                configuredAccountID: "configured-anthropic",
+                accountName: "Work Claude",
+                generatedAt: generatedAt,
+                status: .limited,
+                accessState: ProviderAccessState(kind: .blockedUntilReset),
+                errorMessage: nil
+            ),
+        ]
+    )
+    let document = CompanionSyncDocument(storedSnapshot: stored, publishedAt: generatedAt)
+
+    let widget = WidgetSnapshot.fromCompanionSync(
+        CompanionSyncLoadResult(
+            document: document,
+            status: .stale,
+            transportMetadata: CompanionSyncTransportMetadata(
+                source: .localCache,
+                receivedAt: generatedAt,
+                mirroredAt: generatedAt,
+                deliveryStatus: .delayed
+            )
+        ),
+        now: generatedAt
+    )
+
+    #expect(widget.state == .stale)
+    #expect(widget.primaryProviderAccessAlert == nil)
+    #expect(widget.reports.first?.accessState == .unknown)
+}
+
 @Test func companionPayloadCodecDefaultsMissingObservedBurnRatesForLegacyDocuments() throws {
     let generatedAt = Date(timeIntervalSince1970: 3_333.5)
     let document = CompanionSyncDocument(

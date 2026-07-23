@@ -82,6 +82,46 @@ import Testing
     }
 }
 
+@Test func providerAccessStateIsPresentedAcrossProductSurfaces() throws {
+    let root = try userFacingCopyRepositoryRoot()
+    let requiredPhrasesByPath = [
+        "Sources/ContextPanelApp/ContextPanelApp.swift": [
+            "ProviderAccessAlertsSection",
+            "Provider Access",
+        ],
+        "Sources/ContextPanelWidgetUI/ContextPanelWidgetViews.swift": [
+            "primaryProviderAccessAlert",
+            "providerAccessProblemText",
+        ],
+        "Sources/ContextPanelWatch/ContextPanelWatchApp.swift": [
+            "WatchProviderAccessSection",
+        ],
+        "Sources/ContextPanelCompanion/ContextPanelCompanionApp.swift": [
+            "CompanionProviderAccessAlertsView",
+        ],
+        "Sources/ContextPanelWatchWidget/ContextPanelWatchWidget.swift": [
+            "WatchCircularProviderAccessComplication",
+            "WatchRectangularProviderAccessComplication",
+            "WatchInlineProviderAccessComplication",
+            "WatchCornerProviderAccessComplication",
+        ],
+        "Sources/ContextPanelTVSupport/TVRunwayPresentation.swift": [
+            "report.accessState.requiresProminentPresentation",
+            "report.providerAccessAlert",
+        ],
+    ]
+
+    for (relativePath, phrases) in requiredPhrasesByPath {
+        let source = try String(
+            contentsOf: root.appending(path: relativePath),
+            encoding: .utf8
+        )
+        for phrase in phrases {
+            #expect(source.contains(phrase), "\(relativePath) is missing provider access presentation: \(phrase)")
+        }
+    }
+}
+
 private func userFacingCopyRepositoryRoot() throws -> URL {
     var candidate = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     while candidate.path != "/" {

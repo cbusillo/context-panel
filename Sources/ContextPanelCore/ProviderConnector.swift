@@ -42,6 +42,7 @@ public struct ProviderConnectorReport: Equatable, Sendable {
     public let generatedAt: Date
     public let limits: [UsageLimit]
     public let status: UsageStatus
+    public let accessState: ProviderAccessState
     public let errorMessage: String?
 
     public init(
@@ -52,6 +53,7 @@ public struct ProviderConnectorReport: Equatable, Sendable {
         generatedAt: Date,
         limits: [UsageLimit],
         status: UsageStatus? = nil,
+        accessState: ProviderAccessState = .unknown,
         errorMessage: String? = nil
     ) {
         self.provider = provider
@@ -61,6 +63,7 @@ public struct ProviderConnectorReport: Equatable, Sendable {
         self.generatedAt = generatedAt
         self.limits = limits
         self.status = status ?? UsageSnapshot(generatedAt: generatedAt, limits: limits).aggregateStatus
+        self.accessState = accessState.retainingCurrentProviderObservation(for: self.status)
         self.errorMessage = errorMessage.map(ConnectorRedactor.safeErrorDescription)
     }
 }
@@ -222,6 +225,7 @@ private extension ProviderConnectorReport {
             generatedAt: generatedAt,
             limits: limits.map { $0.replacingMissingConfiguredAccountID(with: fallback, accountName: replacementAccountName) },
             status: status,
+            accessState: accessState,
             errorMessage: errorMessage
         )
     }

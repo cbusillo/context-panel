@@ -40,6 +40,86 @@ public enum UsageStatus: String, Codable, Equatable, Sendable {
     case loading
 }
 
+public struct ProviderAccessState: Codable, Equatable, Sendable {
+    public enum Kind: String, Codable, Equatable, Sendable {
+        case available
+        case pressure
+        case blockedUntilReset
+        case paidFallbackActive
+        case unknown
+        case degraded
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            self = Self(rawValue: try container.decode(String.self)) ?? .unknown
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            try container.encode(rawValue)
+        }
+    }
+
+    public static let unknown = ProviderAccessState(kind: .unknown)
+
+    public let kind: Kind
+    public let resetsAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case resetsAt
+    }
+
+    public init(kind: Kind, resetsAt: Date? = nil) {
+        self.kind = kind
+        self.resetsAt = switch kind {
+        case .blockedUntilReset, .paidFallbackActive:
+            resetsAt
+        case .available, .pressure, .unknown, .degraded:
+            nil
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            kind: try container.decodeIfPresent(Kind.self, forKey: .kind) ?? .unknown,
+            resetsAt: try container.decodeIfPresent(Date.self, forKey: .resetsAt)
+        )
+    }
+
+    public var statusContribution: UsageStatus? {
+        switch kind {
+        case .available, .unknown:
+            nil
+        case .pressure, .paidFallbackActive:
+            .close
+        case .blockedUntilReset:
+            .limited
+        case .degraded:
+            .unknown
+        }
+    }
+
+    public var requiresProminentPresentation: Bool {
+        switch kind {
+        case .blockedUntilReset, .paidFallbackActive, .degraded:
+            true
+        case .available, .pressure, .unknown:
+            false
+        }
+    }
+
+    public func retainingCurrentProviderObservation(for status: UsageStatus) -> ProviderAccessState {
+        switch status {
+        case .healthy, .close, .limited:
+            self
+        case .failure, .loading, .stale, .unknown:
+            .unknown
+        }
+    }
+}
+
 public enum UsageConfidence: String, Codable, Equatable, Sendable {
     case official
     case observed
