@@ -101,7 +101,10 @@ public actor WatchCompanionLoader {
             )
         }
 
-        let selectedDocument = document.mergingForRemotePublish(existing: cached.result.document)
+        let selectedDocument = document.mergingForRemotePublish(
+            existing: cached.result.document,
+            now: now
+        )
         let selectedResult: CompanionSyncLoadResult
         if selectedDocument == cached.result.document {
             selectedResult = cached.result

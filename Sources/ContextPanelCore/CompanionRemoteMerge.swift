@@ -1,42 +1,57 @@
 import Foundation
 
 public extension CompanionSyncDocument {
-    func mergingForRemotePublish(existing: CompanionSyncDocument?) -> CompanionSyncDocument {
+    func mergingForRemotePublish(
+        existing: CompanionSyncDocument?,
+        now: Date
+    ) -> CompanionSyncDocument {
         let incomingDocument = normalizedForRemotePublish()
-        guard let existing else { return incomingDocument }
-        let existingDocument = existing.normalizedForRemotePublish()
+        let existingDocument = existing?.normalizedForRemotePublish()
+        let existingDegradedAccountKeys = existing?.snapshot.degradedAccountKeysForRemotePublish ?? []
+        let incomingDegradedAccountKeys = snapshot.degradedAccountKeysForRemotePublish
 
         let merger = CompanionRemoteSnapshotMerger(
-            existing: existingDocument.snapshot,
+            existing: existingDocument?.snapshot ?? incomingDocument.snapshot,
             incoming: incomingDocument.snapshot,
-            existingDegradedAccountKeys: existing.snapshot.degradedAccountKeysForRemotePublish,
-            incomingDegradedAccountKeys: snapshot.degradedAccountKeysForRemotePublish
+            existingDegradedAccountKeys: existingDegradedAccountKeys,
+            incomingDegradedAccountKeys: incomingDegradedAccountKeys
         )
-        let mergedSnapshot = merger.mergedSnapshot()
-        let mergedPromptCacheSummaries = CompanionRemotePromptCacheMerger(
-            existing: existingDocument.snapshot.promptCacheSummaries,
-            incoming: incomingDocument.snapshot.promptCacheSummaries
-        ).mergedSummaries()
-        let settingsDocument = preferredSettingsDocument(
+        let mergedSnapshot = existingDocument == nil
+            ? incomingDocument.snapshot
+            : merger.mergedSnapshot()
+        let mergedPromptCacheSummaries = existingDocument.map { existingDocument in
+            CompanionRemotePromptCacheMerger(
+                existing: existingDocument.snapshot.promptCacheSummaries,
+                incoming: incomingDocument.snapshot.promptCacheSummaries
+            ).mergedSummaries()
+        } ?? incomingDocument.snapshot.promptCacheSummaries
+        let settingsDocument = existingDocument.map { existingDocument in
+            preferredSettingsDocument(
+                existing: existingDocument,
+                incoming: incomingDocument
+            )
+        } ?? incomingDocument
+        let retained = CompanionRemoteAccountRetentionMerger(
             existing: existingDocument,
-            incoming: incomingDocument
+            incoming: incomingDocument,
+            existingDegradedAccountKeys: existingDegradedAccountKeys,
+            incomingDegradedAccountKeys: incomingDegradedAccountKeys,
+            now: now
+        ).retained(
+            snapshot: mergedSnapshot,
+            promptCacheSummaries: mergedPromptCacheSummaries
         )
 
         return CompanionSyncDocument(
-            snapshot: CompanionSnapshot(
-                generatedAt: max(existingDocument.snapshot.generatedAt, incomingDocument.snapshot.generatedAt),
-                publishedAt: max(existingDocument.snapshot.publishedAt, incomingDocument.snapshot.publishedAt),
-                limits: mergedSnapshot.limits,
-                providerStatuses: mergedSnapshot.providerStatuses,
-                promptCacheSummaries: mergedPromptCacheSummaries
-            ),
+            snapshot: retained.snapshot,
             widgetDisplayPreferences: settingsDocument.widgetDisplayPreferences,
             observedBurnRates: merger.mergedObservedBurnRates(
-                existing: existingDocument.observedBurnRates,
+                existing: existingDocument?.observedBurnRates ?? [:],
                 incoming: incomingDocument.observedBurnRates,
-                mergedSnapshot: mergedSnapshot
+                mergedSnapshot: retained.snapshot
             ),
-            fastModeForecastSettings: settingsDocument.fastModeForecastSettings
+            fastModeForecastSettings: settingsDocument.fastModeForecastSettings,
+            accountRetentionStates: retained.states
         )
     }
 
@@ -65,7 +80,8 @@ private extension CompanionSyncDocument {
             snapshot: normalizedSnapshot,
             widgetDisplayPreferences: widgetDisplayPreferences,
             observedBurnRates: observedBurnRates,
-            fastModeForecastSettings: fastModeForecastSettings
+            fastModeForecastSettings: fastModeForecastSettings,
+            accountRetentionStates: accountRetentionStates
         )
     }
 
@@ -83,6 +99,160 @@ private extension CompanionSyncDocument {
 private struct CompanionRemoteSettingsSelection: Encodable {
     let widgetDisplayPreferences: WidgetDisplayPreferences
     let fastModeForecastSettings: FastModeForecastSettings
+}
+
+private struct CompanionRemoteAccountRetentionResult {
+    let snapshot: CompanionSnapshot
+    let states: [CompanionAccountRetentionState]?
+}
+
+private struct CompanionRemoteAccountRetentionMerger {
+    let existing: CompanionSyncDocument?
+    let incoming: CompanionSyncDocument
+    let existingDegradedAccountKeys: Set<CompanionRemoteAccountKey>
+    let incomingDegradedAccountKeys: Set<CompanionRemoteAccountKey>
+    let now: Date
+
+    func retained(
+        snapshot: CompanionSnapshot,
+        promptCacheSummaries: [CompanionPromptCacheSummary]
+    ) -> CompanionRemoteAccountRetentionResult {
+        let accounts = companionRemoteAccountData(in: snapshot)
+        let completeAnchors = completeObservationAnchors()
+        var incompleteAnchors = incompleteObservationAnchors()
+        for (key, account) in accounts
+        where completeAnchors[key] == nil && incompleteAnchors[key] == nil {
+            incompleteAnchors[key] = account.incompleteObservationAt ?? now
+        }
+
+        let expiredAccountKeys = Set(accounts.keys.filter { key in
+            guard let anchor = completeAnchors[key] ?? incompleteAnchors[key] else {
+                return false
+            }
+            return now.timeIntervalSince(anchor) >= SnapshotFreshness.companionAccountRetentionAge
+        })
+        let retainedAccountKeys = Set(accounts.keys).subtracting(expiredAccountKeys)
+        let retainedSnapshot = CompanionSnapshot(
+            generatedAt: snapshot.generatedAt,
+            publishedAt: snapshot.publishedAt,
+            limits: snapshot.limits.filter {
+                retainedAccountKeys.contains(CompanionRemoteAccountKey(limit: $0))
+            },
+            providerStatuses: snapshot.providerStatuses.filter {
+                retainedAccountKeys.contains(CompanionRemoteAccountKey(status: $0))
+            },
+            promptCacheSummaries: promptCacheSummaries.filter {
+                let key = CompanionRemoteAccountKey(summary: $0)
+                guard !expiredAccountKeys.contains(key) else { return false }
+                guard !retainedAccountKeys.contains(key) else { return true }
+                return now.timeIntervalSince($0.latestObservedAt)
+                    < SnapshotFreshness.companionAccountRetentionAge
+            }
+        )
+        let retainedStates: [CompanionAccountRetentionState] = retainedAccountKeys.compactMap { key in
+            guard completeAnchors[key] == nil else { return nil }
+            return incompleteAnchors[key].map {
+                CompanionAccountRetentionState(
+                    provider: key.provider,
+                    companionAccountID: key.companionAccountID,
+                    firstIncompleteObservationAt: $0
+                )
+            }
+        }.sorted { lhs, rhs in
+            if lhs.provider != rhs.provider { return lhs.provider.rawValue < rhs.provider.rawValue }
+            return lhs.companionAccountID < rhs.companionAccountID
+        }
+
+        return CompanionRemoteAccountRetentionResult(
+            snapshot: retainedSnapshot,
+            states: retainedStates.isEmpty ? nil : retainedStates
+        )
+    }
+
+    private func completeObservationAnchors() -> [CompanionRemoteAccountKey: Date] {
+        var anchors: [CompanionRemoteAccountKey: Date] = [:]
+        if let existing {
+            mergeCompleteObservations(
+                in: existing.snapshot,
+                degradedAccountKeys: existingDegradedAccountKeys,
+                into: &anchors
+            )
+        }
+        mergeCompleteObservations(
+            in: incoming.snapshot,
+            degradedAccountKeys: incomingDegradedAccountKeys,
+            into: &anchors
+        )
+        return anchors
+    }
+
+    private func incompleteObservationAnchors() -> [CompanionRemoteAccountKey: Date] {
+        var anchors: [CompanionRemoteAccountKey: Date] = [:]
+        mergeIncompleteStates(existing?.accountRetentionStates, into: &anchors)
+        mergeIncompleteStates(incoming.accountRetentionStates, into: &anchors)
+        if let existing {
+            mergeIncompleteObservations(in: existing.snapshot, into: &anchors)
+        }
+        mergeIncompleteObservations(in: incoming.snapshot, into: &anchors)
+        return anchors
+    }
+
+    private func mergeIncompleteStates(
+        _ states: [CompanionAccountRetentionState]?,
+        into anchors: inout [CompanionRemoteAccountKey: Date]
+    ) {
+        for state in states ?? [] {
+            mergeEarliest(
+                state.firstIncompleteObservationAt,
+                for: CompanionRemoteAccountKey(state: state),
+                into: &anchors
+            )
+        }
+    }
+
+    private func mergeCompleteObservations(
+        in snapshot: CompanionSnapshot,
+        degradedAccountKeys: Set<CompanionRemoteAccountKey>,
+        into anchors: inout [CompanionRemoteAccountKey: Date]
+    ) {
+        for (key, account) in companionRemoteAccountData(in: snapshot) {
+            if account.hasCompleteObservation,
+               !degradedAccountKeys.contains(key),
+               let observedAt = account.completeObservationAt {
+                mergeLatest(observedAt, for: key, into: &anchors)
+            } else if let observedAt = account.historicalCompleteObservationAt {
+                mergeLatest(observedAt, for: key, into: &anchors)
+            }
+        }
+    }
+
+    private func mergeIncompleteObservations(
+        in snapshot: CompanionSnapshot,
+        into anchors: inout [CompanionRemoteAccountKey: Date]
+    ) {
+        for (key, account) in companionRemoteAccountData(in: snapshot) {
+            guard account.historicalCompleteObservationAt == nil,
+                  let observedAt = account.incompleteObservationAt
+            else { continue }
+            mergeEarliest(observedAt, for: key, into: &anchors)
+        }
+    }
+
+    private func mergeLatest(
+        _ observedAt: Date,
+        for key: CompanionRemoteAccountKey,
+        into anchors: inout [CompanionRemoteAccountKey: Date]
+    ) {
+        anchors[key] = max(anchors[key] ?? .distantPast, observedAt)
+    }
+
+    private func mergeEarliest(
+        _ observedAt: Date,
+        for key: CompanionRemoteAccountKey,
+        into anchors: inout [CompanionRemoteAccountKey: Date]
+    ) {
+        anchors[key] = min(anchors[key] ?? .distantFuture, observedAt)
+    }
 }
 
 private extension CompanionSnapshot {
@@ -119,8 +289,8 @@ private struct CompanionRemoteSnapshotMerger {
     let incomingDegradedAccountKeys: Set<CompanionRemoteAccountKey>
 
     func mergedSnapshot() -> CompanionSnapshot {
-        let existingAccounts = accountData(in: existing)
-        let incomingAccounts = accountData(in: incoming)
+        let existingAccounts = companionRemoteAccountData(in: existing)
+        let incomingAccounts = companionRemoteAccountData(in: incoming)
         let existingProvidersWithLimits = Set(existing.limits.map(\.provider))
         let incomingProvidersWithLimits = Set(incoming.limits.map(\.provider))
         let keys = orderedAccountKeys(
@@ -244,8 +414,8 @@ private struct CompanionRemoteSnapshotMerger {
         source: CompanionSnapshot,
         merged: CompanionSnapshot
     ) -> Int {
-        let sourceAccounts = accountData(in: source)
-        let mergedAccounts = accountData(in: merged)
+        let sourceAccounts = companionRemoteAccountData(in: source)
+        let mergedAccounts = companionRemoteAccountData(in: merged)
         return burnRateAccountKeys(forRateID: rateID, in: merged).reduce(into: 0) { count, key in
             guard let sourceAccount = sourceAccounts[key], let mergedAccount = mergedAccounts[key] else { return }
             if sourceAccount.semanticSelectionData == mergedAccount.semanticSelectionData {
@@ -296,33 +466,6 @@ private struct CompanionRemoteSnapshotMerger {
 
     private func accountOrderSelectionData(_ keys: [CompanionRemoteAccountKey]) -> Data {
         keys.map(\.selectionKey).joined(separator: "\u{1e}").data(using: .utf8) ?? Data()
-    }
-
-    private func accountData(in snapshot: CompanionSnapshot) -> [CompanionRemoteAccountKey: CompanionRemoteAccountData] {
-        var data: [CompanionRemoteAccountKey: CompanionRemoteAccountData] = [:]
-        for limit in snapshot.limits {
-            let key = CompanionRemoteAccountKey(limit: limit)
-            data[
-                key,
-                default: CompanionRemoteAccountData(
-                    fallbackGeneratedAt: snapshot.generatedAt
-                )
-            ].limits.append(limit)
-        }
-        for status in snapshot.providerStatuses {
-            let key = CompanionRemoteAccountKey(status: status)
-            var account = data[
-                key,
-                default: CompanionRemoteAccountData(
-                    fallbackGeneratedAt: snapshot.generatedAt
-                )
-            ]
-            if account.status == nil || account.status!.generatedAt <= status.generatedAt {
-                account.status = status
-            }
-            data[key] = account
-        }
-        return data
     }
 
     private func selectedAccount(
@@ -378,6 +521,35 @@ private struct CompanionRemoteSnapshotMerger {
     }
 }
 
+private func companionRemoteAccountData(
+    in snapshot: CompanionSnapshot
+) -> [CompanionRemoteAccountKey: CompanionRemoteAccountData] {
+    var data: [CompanionRemoteAccountKey: CompanionRemoteAccountData] = [:]
+    for limit in snapshot.limits {
+        let key = CompanionRemoteAccountKey(limit: limit)
+        data[
+            key,
+            default: CompanionRemoteAccountData(
+                fallbackGeneratedAt: snapshot.generatedAt
+            )
+        ].limits.append(limit)
+    }
+    for status in snapshot.providerStatuses {
+        let key = CompanionRemoteAccountKey(status: status)
+        var account = data[
+            key,
+            default: CompanionRemoteAccountData(
+                fallbackGeneratedAt: snapshot.generatedAt
+            )
+        ]
+        if account.status == nil || account.status!.generatedAt <= status.generatedAt {
+            account.status = status
+        }
+        data[key] = account
+    }
+    return data
+}
+
 private struct CompanionRemoteAccountData {
     var limits: [CompanionLimit] = []
     var status: CompanionProviderStatus?
@@ -393,6 +565,23 @@ private struct CompanionRemoteAccountData {
 
     var hasCompleteObservation: Bool {
         hasLimits && limits.allSatisfy { $0.status.isCompanionObservationStatus }
+    }
+
+    var completeObservationAt: Date? {
+        guard hasCompleteObservation else { return nil }
+        var dates = limits.compactMap(\.lastUpdatedAt)
+        if let status, status.status.isCompanionObservationStatus {
+            dates.append(status.generatedAt)
+        }
+        return dates.max()
+    }
+
+    var historicalCompleteObservationAt: Date? {
+        limits.compactMap(\.lastUpdatedAt).max()
+    }
+
+    var incompleteObservationAt: Date? {
+        status?.generatedAt
     }
 
     var isStatusOnlyDegraded: Bool {
@@ -471,6 +660,11 @@ private struct CompanionRemoteAccountKey: Hashable {
     init(summary: CompanionPromptCacheSummary) {
         provider = summary.provider
         companionAccountID = summary.companionAccountID
+    }
+
+    init(state: CompanionAccountRetentionState) {
+        provider = state.provider
+        companionAccountID = state.companionAccountID
     }
 
     var selectionKey: String {

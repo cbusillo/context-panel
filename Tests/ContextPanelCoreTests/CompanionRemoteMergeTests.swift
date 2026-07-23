@@ -799,6 +799,327 @@ import Testing
     #expect(merged.fastModeForecastSettings == remoteSettings)
 }
 
+@Test func companionRemoteRetentionKeepsAccountMissingFromOneMacBeforeBoundary() {
+    let observedAt = Date(timeIntervalSince1970: 1_000_000)
+    let now = observedAt.addingTimeInterval(SnapshotFreshness.companionAccountRetentionAge - 1)
+    let remote = companionRemoteDocument(
+        generatedAt: observedAt,
+        accounts: [
+            companionRemoteAccount(
+                name: "OpenAI B",
+                accountID: "openai-b",
+                used: 40,
+                generatedAt: observedAt
+            ),
+        ]
+    ).mergingForRemotePublish(existing: nil, now: observedAt)
+    let incoming = companionRemoteDocument(generatedAt: now, accounts: [])
+
+    let merged = incoming.mergingForRemotePublish(existing: remote, now: now)
+
+    #expect(merged.snapshot.limits.map(\.accountName) == ["OpenAI B"])
+    #expect(merged.snapshot.providerStatuses.map(\.accountName) == ["OpenAI B"])
+    #expect(merged.accountRetentionStates == nil)
+}
+
+@Test func companionRemoteRetentionExpiresAtExactBoundaryAcrossAccountState() {
+    let observedAt = Date(timeIntervalSince1970: 1_100_000)
+    let now = observedAt.addingTimeInterval(SnapshotFreshness.companionAccountRetentionAge)
+    let remote = companionRemoteDocument(
+        generatedAt: observedAt,
+        accounts: [
+            companionRemoteAccount(
+                name: "OpenAI B",
+                accountID: "openai-b",
+                used: 40,
+                generatedAt: observedAt
+            ),
+        ],
+        promptAccounts: [
+            companionRemotePromptAccount(
+                name: "OpenAI B",
+                accountID: "openai-b",
+                observedAt: observedAt
+            ),
+        ],
+        burnRate: 10
+    ).mergingForRemotePublish(existing: nil, now: observedAt)
+    let incoming = companionRemoteDocument(generatedAt: now, accounts: [])
+
+    let merged = incoming.mergingForRemotePublish(existing: remote, now: now)
+
+    #expect(merged.snapshot.limits.isEmpty)
+    #expect(merged.snapshot.providerStatuses.isEmpty)
+    #expect(merged.snapshot.promptCacheSummaries.isEmpty)
+    #expect(merged.observedBurnRates.isEmpty)
+    #expect(merged.accountRetentionStates == nil)
+    #expect(merged.companionStatus == .unknown)
+}
+
+@Test func companionRemoteRetentionRemovesOnlyAccountsAbsentPastBoundary() {
+    let now = Date(timeIntervalSince1970: 4_000_000)
+    let expiredObservation = now.addingTimeInterval(-SnapshotFreshness.companionAccountRetentionAge - 1)
+    let remote = companionRemoteDocument(
+        generatedAt: expiredObservation,
+        accounts: [
+            companionRemoteAccount(
+                name: "OpenAI B",
+                accountID: "openai-b",
+                used: 40,
+                generatedAt: expiredObservation
+            ),
+        ]
+    ).mergingForRemotePublish(existing: nil, now: expiredObservation)
+    let incoming = companionRemoteDocument(
+        generatedAt: now,
+        accounts: [
+            companionRemoteAccount(
+                name: "OpenAI A",
+                accountID: "openai-a",
+                used: 30,
+                generatedAt: now
+            ),
+        ]
+    )
+
+    let merged = incoming.mergingForRemotePublish(existing: remote, now: now)
+
+    #expect(merged.snapshot.limits.map(\.accountName) == ["OpenAI A"])
+    #expect(merged.snapshot.providerStatuses.map(\.accountName) == ["OpenAI A"])
+    #expect(merged.accountRetentionStates == nil)
+}
+
+@Test func companionRemoteRetentionIgnoresClockSkewedDocumentEnvelope() {
+    let now = Date(timeIntervalSince1970: 5_000_000)
+    let remoteObservation = now.addingTimeInterval(-60)
+    let skewedEnvelope = now.addingTimeInterval(40 * 24 * 60 * 60)
+    let remote = companionRemoteDocument(
+        generatedAt: remoteObservation,
+        accounts: [
+            companionRemoteAccount(
+                name: "OpenAI B",
+                accountID: "openai-b",
+                used: 40,
+                generatedAt: remoteObservation
+            ),
+        ]
+    ).mergingForRemotePublish(existing: nil, now: remoteObservation)
+    let incoming = companionRemoteDocument(
+        generatedAt: skewedEnvelope,
+        accounts: [
+            companionRemoteAccount(
+                name: "OpenAI A",
+                accountID: "openai-a",
+                used: 30,
+                generatedAt: now
+            ),
+        ]
+    )
+
+    let merged = incoming.mergingForRemotePublish(existing: remote, now: now)
+
+    #expect(Set(merged.snapshot.limits.map(\.accountName)) == ["OpenAI A", "OpenAI B"])
+    #expect(merged.accountRetentionStates == nil)
+}
+
+@Test func companionRemoteRetentionIsDeterministicInEitherMergeOrder() {
+    let now = Date(timeIntervalSince1970: 6_000_000)
+    let expiredObservation = now.addingTimeInterval(-SnapshotFreshness.companionAccountRetentionAge)
+    let first = companionRemoteDocument(
+        generatedAt: now,
+        accounts: [
+            companionRemoteAccount(
+                name: "OpenAI A",
+                accountID: "openai-a",
+                used: 30,
+                generatedAt: now
+            ),
+        ]
+    ).mergingForRemotePublish(existing: nil, now: now)
+    let second = companionRemoteDocument(
+        generatedAt: now,
+        accounts: [
+            companionRemoteAccount(
+                name: "OpenAI B",
+                accountID: "openai-b",
+                used: 40,
+                generatedAt: expiredObservation
+            ),
+        ]
+    ).mergingForRemotePublish(existing: nil, now: expiredObservation)
+
+    let firstThenSecond = second.mergingForRemotePublish(existing: first, now: now)
+    let secondThenFirst = first.mergingForRemotePublish(existing: second, now: now)
+
+    #expect(firstThenSecond == secondThenFirst)
+    #expect(firstThenSecond.snapshot.limits.map(\.accountName) == ["OpenAI A"])
+}
+
+@Test func companionRemoteRetentionFailureAttemptDoesNotRefreshAnchor() {
+    let observedAt = Date(timeIntervalSince1970: 7_000_000)
+    let now = observedAt.addingTimeInterval(SnapshotFreshness.companionAccountRetentionAge)
+    let healthy = companionRemoteDocument(
+        generatedAt: observedAt,
+        accounts: [
+            companionRemoteAccount(
+                name: "OpenAI A",
+                accountID: "openai-a",
+                used: 20,
+                generatedAt: observedAt
+            ),
+        ]
+    ).mergingForRemotePublish(existing: nil, now: observedAt)
+    let failedRepublish = companionRemoteDocument(
+        generatedAt: now,
+        accounts: [
+            companionRemoteAccount(
+                name: "OpenAI A",
+                accountID: "openai-a",
+                used: 20,
+                generatedAt: observedAt,
+                status: .failure,
+                statusGeneratedAt: now,
+                limitStatus: .healthy
+            ),
+        ]
+    )
+
+    let merged = failedRepublish.mergingForRemotePublish(existing: healthy, now: now)
+
+    #expect(merged.snapshot.limits.isEmpty)
+    #expect(merged.snapshot.providerStatuses.isEmpty)
+    #expect(merged.accountRetentionStates == nil)
+}
+
+@Test func companionRemoteRetentionAllowsFreshAccountToReappear() {
+    let observedAt = Date(timeIntervalSince1970: 8_000_000)
+    let expiry = observedAt.addingTimeInterval(SnapshotFreshness.companionAccountRetentionAge)
+    let remote = companionRemoteDocument(
+        generatedAt: observedAt,
+        accounts: [
+            companionRemoteAccount(
+                name: "OpenAI A",
+                accountID: "openai-a",
+                used: 20,
+                generatedAt: observedAt
+            ),
+        ]
+    ).mergingForRemotePublish(existing: nil, now: observedAt)
+    let retired = companionRemoteDocument(
+        generatedAt: expiry,
+        accounts: []
+    ).mergingForRemotePublish(existing: remote, now: expiry)
+    let refreshedAt = expiry.addingTimeInterval(1)
+    let fresh = companionRemoteDocument(
+        generatedAt: refreshedAt,
+        accounts: [
+            companionRemoteAccount(
+                name: "OpenAI A",
+                accountID: "openai-a",
+                used: 35,
+                generatedAt: refreshedAt
+            ),
+        ]
+    )
+
+    let restored = fresh.mergingForRemotePublish(existing: retired, now: refreshedAt)
+
+    #expect(restored.snapshot.limits.map(\.used) == [35])
+    #expect(restored.snapshot.providerStatuses.map(\.status) == [.healthy])
+    #expect(restored.accountRetentionStates == nil)
+}
+
+@Test func companionRemoteRetentionPersistsGraceForUnanchoredFailureLane() {
+    let firstFailureAt = Date(timeIntervalSince1970: 9_000_000)
+    let expiry = firstFailureAt.addingTimeInterval(SnapshotFreshness.companionAccountRetentionAge)
+    let firstFailure = companionRemoteDocument(
+        generatedAt: firstFailureAt,
+        accounts: [
+            companionRemoteAccount(
+                name: "OpenAI A",
+                accountID: "openai-a",
+                used: nil,
+                generatedAt: firstFailureAt,
+                status: .failure
+            ),
+        ]
+    ).mergingForRemotePublish(existing: nil, now: firstFailureAt)
+    let repeatedFailure = companionRemoteDocument(
+        generatedAt: expiry,
+        accounts: [
+            companionRemoteAccount(
+                name: "OpenAI A",
+                accountID: "openai-a",
+                used: nil,
+                generatedAt: expiry,
+                status: .failure
+            ),
+        ]
+    )
+
+    let expired = repeatedFailure.mergingForRemotePublish(existing: firstFailure, now: expiry)
+
+    #expect(firstFailure.accountRetentionStates?.first?.firstIncompleteObservationAt == firstFailureAt)
+    #expect(expired.snapshot.providerStatuses.isEmpty)
+    #expect(expired.accountRetentionStates == nil)
+}
+
+@Test func companionRemoteRetentionCompleteObservationBeatsNewerIncompleteGrace() {
+    let completeAt = Date(timeIntervalSince1970: 9_500_000)
+    let failureAt = completeAt.addingTimeInterval(10 * 24 * 60 * 60)
+    let now = completeAt.addingTimeInterval(SnapshotFreshness.companionAccountRetentionAge)
+    let complete = companionRemoteDocument(
+        generatedAt: completeAt,
+        accounts: [
+            companionRemoteAccount(
+                name: "OpenAI A",
+                accountID: "openai-a",
+                used: 20,
+                generatedAt: completeAt
+            ),
+        ]
+    )
+    let incomplete = companionRemoteDocument(
+        generatedAt: failureAt,
+        accounts: [
+            companionRemoteAccount(
+                name: "OpenAI A",
+                accountID: "openai-a",
+                used: nil,
+                generatedAt: failureAt,
+                status: .failure
+            ),
+        ]
+    ).mergingForRemotePublish(existing: nil, now: failureAt)
+
+    let completeThenIncomplete = incomplete.mergingForRemotePublish(existing: complete, now: now)
+    let incompleteThenComplete = complete.mergingForRemotePublish(existing: incomplete, now: now)
+
+    #expect(completeThenIncomplete.snapshot.limits.isEmpty)
+    #expect(incompleteThenComplete.snapshot.limits.isEmpty)
+    #expect(completeThenIncomplete == incompleteThenComplete)
+}
+
+@Test func companionRemoteRetentionExpiresOrphanedPromptSummaryAtBoundary() {
+    let observedAt = Date(timeIntervalSince1970: 10_000_000)
+    let now = observedAt.addingTimeInterval(SnapshotFreshness.companionAccountRetentionAge)
+    let document = companionRemoteDocument(
+        generatedAt: observedAt,
+        accounts: [],
+        promptAccounts: [
+            companionRemotePromptAccount(
+                name: "OpenAI A",
+                accountID: "openai-a",
+                observedAt: observedAt
+            ),
+        ]
+    )
+
+    let retained = document.mergingForRemotePublish(existing: nil, now: now)
+
+    #expect(retained.snapshot.promptCacheSummaries.isEmpty)
+}
+
 private struct CompanionRemoteTestAccount {
     let name: String
     let accountID: String
@@ -808,6 +1129,15 @@ private struct CompanionRemoteTestAccount {
     let statusGeneratedAt: Date
     let limitStatus: UsageStatus
     let labels: [String]
+}
+
+private extension CompanionSyncDocument {
+    func mergingForRemotePublish(existing: CompanionSyncDocument?) -> CompanionSyncDocument {
+        mergingForRemotePublish(
+            existing: existing,
+            now: Date(timeIntervalSince1970: 0)
+        )
+    }
 }
 
 private struct CompanionRemoteTestPromptAccount {

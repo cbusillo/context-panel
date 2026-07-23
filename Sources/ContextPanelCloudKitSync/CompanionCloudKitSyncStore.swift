@@ -42,7 +42,7 @@ public enum CompanionCloudKitSyncStoreFactory {
         )
         return CompanionRemoteSyncStore(
             storeRole: storeRole,
-            saveDocument: { document in await client.save(document) },
+            saveDocument: { document in await client.save(document, now: Date()) },
             loadDocument: { now in await client.load(now: now) },
             registerForUpdates: { await client.registerSubscription() }
         )
@@ -106,10 +106,14 @@ struct CompanionCloudKitRecordBuilder {
 
     func makeRecord(
         incomingDocument: CompanionSyncDocument,
-        existingRecord: CKRecord?
+        existingRecord: CKRecord?,
+        now: Date
     ) throws -> (record: CKRecord, payload: Data, document: CompanionSyncDocument) {
         let existingDocument = try existingRecord.map(decodeDocument(from:))
-        let document = incomingDocument.mergingForRemotePublish(existing: existingDocument)
+        let document = incomingDocument.mergingForRemotePublish(
+            existing: existingDocument,
+            now: now
+        )
         let payload = try CompanionSyncPayloadCodec.encode(document)
         let record = existingRecord ?? CKRecord(
             recordType: CompanionRemoteSync.cloudKitRecordType,
@@ -134,10 +138,14 @@ struct CompanionCloudKitRecordBuilder {
 }
 
 enum CompanionCloudKitDocumentSet {
-    static func merged(_ documents: [CompanionSyncDocument]) -> CompanionSyncDocument? {
-        guard var document = documents.first else { return nil }
+    static func merged(
+        _ documents: [CompanionSyncDocument],
+        now: Date
+    ) -> CompanionSyncDocument? {
+        guard let first = documents.first else { return nil }
+        var document = first.mergingForRemotePublish(existing: nil, now: now)
         for incoming in documents.dropFirst() {
-            document = incoming.mergingForRemotePublish(existing: document)
+            document = incoming.mergingForRemotePublish(existing: document, now: now)
         }
         return document
     }
@@ -163,14 +171,23 @@ private actor CompanionCloudKitClient {
         self.storeRole = storeRole
     }
 
-    func save(_ document: CompanionSyncDocument) async -> CompanionRemoteSyncOutcome {
+    func save(
+        _ document: CompanionSyncDocument,
+        now: Date
+    ) async -> CompanionRemoteSyncOutcome {
         let authoritativeSave: (record: CKRecord, payload: Data, document: CompanionSyncDocument)
         do {
             let legacyDocuments = try await loadDocuments(recordNames: legacyRecordNames)
-            let migrationDocument = CompanionCloudKitDocumentSet.merged(legacyDocuments + [document]) ?? document
+            guard let migrationDocument = CompanionCloudKitDocumentSet.merged(
+                legacyDocuments + [document],
+                now: now
+            ) else {
+                throw SnapshotStoreError.corruptStore("CloudKit companion sync migration produced no document.")
+            }
             authoritativeSave = try await saveMergedRecord(
                 migrationDocument,
-                recordName: recordName
+                recordName: recordName,
+                now: now
             )
             try verifyPublishedRecord(authoritativeSave.record, expectedPayload: authoritativeSave.payload)
         } catch {
@@ -186,7 +203,8 @@ private actor CompanionCloudKitClient {
             for legacyRecordName in legacyRecordNames {
                 let wakeSave = try await saveMergedRecord(
                     authoritativeSave.document,
-                    recordName: legacyRecordName
+                    recordName: legacyRecordName,
+                    now: now
                 )
                 try verifyPublishedRecord(wakeSave.record, expectedPayload: wakeSave.payload)
             }
@@ -205,7 +223,7 @@ private actor CompanionCloudKitClient {
     func load(now: Date) async -> CompanionRemoteSyncLoadResult {
         do {
             let documents = try await loadDocuments(recordNames: [recordName] + legacyRecordNames)
-            guard let document = CompanionCloudKitDocumentSet.merged(documents) else {
+            guard let document = CompanionCloudKitDocumentSet.merged(documents, now: now) else {
                 return CompanionRemoteSyncLoadResult(
                     result: CompanionSyncLoadResult(document: nil, status: .unknown),
                     outcome: CompanionRemoteSyncOutcome(
@@ -357,7 +375,8 @@ private actor CompanionCloudKitClient {
 
     private func saveMergedRecord(
         _ incomingDocument: CompanionSyncDocument,
-        recordName targetRecordName: String
+        recordName targetRecordName: String,
+        now: Date
     ) async throws -> (record: CKRecord, payload: Data, document: CompanionSyncDocument) {
         let targetRecordID = CKRecord.ID(recordName: targetRecordName)
         var currentRecord = try await loadRecord(recordName: targetRecordName)
@@ -366,7 +385,8 @@ private actor CompanionCloudKitClient {
         for attempt in 0..<Self.maximumSaveAttempts {
             let pendingSave = try recordBuilder.makeRecord(
                 incomingDocument: incomingDocument,
-                existingRecord: currentRecord
+                existingRecord: currentRecord,
+                now: now
             )
 
             do {

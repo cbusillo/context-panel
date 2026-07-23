@@ -60,7 +60,7 @@ private enum WatchWidgetLoadQueue {
         queue.async {
             completion.call(entry(
                 date: date,
-                loaded: cache.load(),
+                loaded: cache.load(now: date),
                 stalenessPolicy: stalenessPolicy
             ))
         }
