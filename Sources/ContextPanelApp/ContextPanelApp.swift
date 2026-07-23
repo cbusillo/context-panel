@@ -2347,6 +2347,7 @@ struct OverviewDashboard: View {
             VStack(alignment: .leading, spacing: 18) {
                 HeaderCard(model: model, snapshot: snapshot)
                 SetupStatusStrip(model: model)
+                ProviderAccessAlertsSection(alerts: model.providerAccessAlerts)
                 PromptCacheOverviewCard(summary: model.promptCacheSummary)
                 SectionHeader(
                     title: "Main Limits",
@@ -2779,6 +2780,9 @@ struct ProviderDashboard: View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 18) {
                 ProviderHeaderCard(model: model, provider: provider, summaries: summaries)
+                ProviderAccessAlertsSection(
+                    alerts: model.providerAccessAlerts.filter { $0.provider == provider }
+                )
                 SectionHeader(title: "Main Limits", trailing: "\(summaries.count) windows")
                 VStack(spacing: 10) {
                     ForEach(summaries) { summary in
@@ -3206,6 +3210,82 @@ struct SetupStatusStrip: View {
         .background(CPTheme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(CPTheme.stroke(cornerRadius: 10))
+    }
+}
+
+struct ProviderAccessAlertsSection: View {
+    let alerts: [ProviderAccessAlert]
+
+    var body: some View {
+        if !alerts.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                SectionHeader(title: "Provider Access", trailing: alerts.count == 1 ? "1 account" : "\(alerts.count) accounts")
+                ForEach(alerts) { alert in
+                    ProviderAccessAlertCard(alert: alert)
+                }
+            }
+        }
+    }
+}
+
+private struct ProviderAccessAlertCard: View {
+    let alert: ProviderAccessAlert
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: symbolName)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(CPTheme.statusColor(alert.status))
+                .frame(width: 28, height: 28)
+                .background(CPTheme.statusColor(alert.status).opacity(0.12), in: Circle())
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(alert.title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(CPTheme.primaryText)
+                Text(alert.accountName)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(CPTheme.tertiaryText)
+                    .lineLimit(1)
+                Text(alert.detail)
+                    .font(.system(size: 12))
+                    .foregroundStyle(CPTheme.secondaryText)
+                if let resetText = alert.resetDisplayText() {
+                    Text("Plan access resets \(resetText)")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(CPTheme.secondaryText)
+                }
+            }
+            Spacer(minLength: 8)
+        }
+        .padding(14)
+        .background(CPTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(CPTheme.stroke(cornerRadius: 10))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var symbolName: String {
+        switch alert.accessState.kind {
+        case .blockedUntilReset:
+            "exclamationmark.octagon.fill"
+        case .paidFallbackActive:
+            "dollarsign.circle.fill"
+        case .degraded:
+            "questionmark.circle.fill"
+        case .available, .pressure, .unknown:
+            "circle.fill"
+        }
+    }
+
+    private var accessibilityLabel: String {
+        var components = [alert.title, alert.accountName, alert.detail]
+        if let resetText = alert.resetAccessibilityText() {
+            components.append("Plan access resets at \(resetText)")
+        }
+        return components.joined(separator: ". ")
     }
 }
 
@@ -3811,6 +3891,14 @@ final class ContextPanelAppModel: ObservableObject {
 
     var promptCacheSummary: PromptCacheSummary {
         PromptCacheSummary(observations: storedSnapshot?.promptCacheObservations ?? [], now: Date())
+    }
+
+    var providerAccessAlerts: [ProviderAccessAlert] {
+        guard let storedSnapshot else { return [] }
+        return storedSnapshot.providerAccessAlerts(
+            stalenessPolicy: refreshAttentionPolicyCache.policy,
+            now: Date()
+        )
     }
 
     var lastRefreshText: String {

@@ -13,6 +13,20 @@ private let renderTestWidgetLinks = ContextPanelWidgetLinks(
     cacheStatsSettings: URL(string: "contextpanel://settings/cache-stats")!
 )
 
+@Test func widgetProblemCopySurfacesBlockedProviderAccess() {
+    let snapshot = providerAccessRenderSnapshot(status: .limited)
+
+    #expect(snapshot.widgetProblemText == "Claude limited")
+    #expect(snapshot.widgetProblemStatus == .limited)
+}
+
+@Test func widgetProblemCopyKeepsRefreshFailurePriorityOverProviderAccess() {
+    let snapshot = providerAccessRenderSnapshot(status: .failure)
+
+    #expect(snapshot.widgetProblemText == "Provider refresh needed")
+    #expect(snapshot.widgetProblemStatus == .failure)
+}
+
 @MainActor
 @Test func healthyMediumWidgetRenderIsNotBlank() throws {
     let snapshot = WidgetSnapshot(
@@ -367,6 +381,42 @@ private extension Range where Bound == Int {
     func clamped(to limits: Range<Int>) -> Range<Int> {
         Swift.max(lowerBound, limits.lowerBound)..<Swift.min(upperBound, limits.upperBound)
     }
+}
+
+private func providerAccessRenderSnapshot(status: UsageStatus) -> WidgetSnapshot {
+    let generatedAt = Date(timeIntervalSince1970: 1_000)
+    return WidgetSnapshot(
+        state: .ready,
+        generatedAt: generatedAt,
+        limits: [
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "anthropic-work",
+                accountName: "Work Claude",
+                label: "Claude 5-hour",
+                windowLabel: "5-hour",
+                modelLabel: "Claude",
+                unit: .percent,
+                used: 100,
+                limit: 100,
+                lastUpdatedAt: generatedAt,
+                confidence: .observed
+            ),
+        ],
+        reports: [
+            StoredProviderReport(
+                provider: .anthropic,
+                accountID: "anthropic-work",
+                accountName: "Work Claude",
+                generatedAt: generatedAt,
+                status: .limited,
+                accessState: ProviderAccessState(kind: .blockedUntilReset),
+                errorMessage: nil
+            ),
+        ],
+        status: status,
+        message: "Synced"
+    )
 }
 
 private func smallWidgetSnapshot(

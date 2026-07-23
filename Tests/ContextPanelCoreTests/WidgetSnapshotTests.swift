@@ -688,6 +688,193 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(summaries[.anthropic]?.limitCount == 0)
 }
 
+@Test func widgetSnapshotPromotesBlockedProviderAccessOutsideLaneSelection() throws {
+    let generatedAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:00:00Z"))
+    let resetsAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:30:00Z"))
+    let stored = StoredUsageSnapshot(
+        savedAt: generatedAt,
+        snapshot: UsageSnapshot(generatedAt: generatedAt, limits: [
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "anthropic-work",
+                accountName: "Work Claude",
+                label: "Claude 5-hour",
+                windowLabel: "5-hour",
+                modelLabel: "Claude",
+                unit: .percent,
+                used: 100,
+                limit: 100,
+                resetsAt: resetsAt,
+                lastUpdatedAt: generatedAt,
+                confidence: .observed
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "openai-personal",
+                accountName: "Personal OpenAI",
+                label: "Codex weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 20,
+                limit: 100,
+                lastUpdatedAt: generatedAt
+            ),
+        ]),
+        reports: [
+            StoredProviderReport(
+                provider: .anthropic,
+                accountID: "anthropic-work",
+                accountName: "Work Claude",
+                generatedAt: generatedAt,
+                status: .limited,
+                accessState: ProviderAccessState(kind: .blockedUntilReset, resetsAt: resetsAt),
+                errorMessage: nil
+            ),
+        ]
+    )
+
+    let widget = WidgetSnapshot.fromStore(
+        SnapshotStoreLoadResult(snapshot: stored, status: .healthy),
+        now: generatedAt
+    )
+
+    #expect(widget.primaryProviderAccessAlert?.title == "Claude limited")
+    #expect(widget.primaryProviderAccessAlert?.detail == "Usage credits unavailable")
+    #expect(widget.primaryProviderAccessAlert?.accessState.resetsAt == resetsAt)
+    #expect(widget.status == .limited)
+    #expect(widget.providerSummaries.first { $0.provider == .anthropic }?.status == .limited)
+}
+
+@Test func widgetSnapshotKeepsPaidFallbackSeparateFromLimitedQuota() throws {
+    let generatedAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:00:00Z"))
+    let stored = StoredUsageSnapshot(
+        savedAt: generatedAt,
+        snapshot: UsageSnapshot(generatedAt: generatedAt, limits: [
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "anthropic-work",
+                accountName: "Work Claude",
+                label: "Claude 5-hour",
+                windowLabel: "5-hour",
+                modelLabel: "Claude",
+                unit: .percent,
+                used: 100,
+                limit: 100,
+                lastUpdatedAt: generatedAt
+            ),
+        ]),
+        reports: [
+            StoredProviderReport(
+                provider: .anthropic,
+                accountID: "anthropic-work",
+                accountName: "Work Claude",
+                generatedAt: generatedAt,
+                status: .limited,
+                accessState: ProviderAccessState(kind: .paidFallbackActive),
+                errorMessage: nil
+            ),
+        ]
+    )
+
+    let widget = WidgetSnapshot.fromStore(
+        SnapshotStoreLoadResult(snapshot: stored, status: .healthy),
+        now: generatedAt
+    )
+
+    #expect(widget.primaryProviderAccessAlert?.title == "Claude using paid fallback")
+    #expect(widget.primaryProviderAccessAlert?.status == .close)
+    #expect(widget.status == .limited)
+}
+
+@Test func widgetSnapshotDoesNotPresentStaleProviderAccessAsCurrent() {
+    let generatedAt = Date(timeIntervalSince1970: 1_000)
+    let stored = StoredUsageSnapshot(
+        savedAt: generatedAt,
+        snapshot: UsageSnapshot(generatedAt: generatedAt, limits: [
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "anthropic-work",
+                accountName: "Work Claude",
+                label: "Claude 5-hour",
+                windowLabel: "5-hour",
+                modelLabel: "Claude",
+                unit: .percent,
+                used: 100,
+                limit: 100,
+                lastUpdatedAt: generatedAt,
+                confidence: .observed
+            ),
+        ]),
+        reports: [
+            StoredProviderReport(
+                provider: .anthropic,
+                accountID: "anthropic-work",
+                accountName: "Work Claude",
+                generatedAt: generatedAt,
+                status: .limited,
+                accessState: ProviderAccessState(kind: .blockedUntilReset),
+                errorMessage: nil
+            ),
+        ]
+    )
+
+    let widget = WidgetSnapshot.fromStore(
+        SnapshotStoreLoadResult(snapshot: stored, status: .healthy),
+        now: generatedAt.addingTimeInterval(120),
+        stalenessPolicy: SnapshotStoreStalenessPolicy(maximumAge: 60)
+    )
+
+    #expect(widget.state == .stale)
+    #expect(widget.primaryProviderAccessAlert == nil)
+    #expect(widget.reports.first?.accessState == .unknown)
+}
+
+@Test func widgetSnapshotDemotesProviderAccessWhenItsResetRefreshIsDue() {
+    let generatedAt = Date(timeIntervalSince1970: 1_000)
+    let resetsAt = generatedAt.addingTimeInterval(60)
+    let stored = StoredUsageSnapshot(
+        savedAt: generatedAt,
+        snapshot: UsageSnapshot(generatedAt: generatedAt, limits: [
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "anthropic-work",
+                accountName: "Work Claude",
+                label: "Claude 5-hour",
+                windowLabel: "5-hour",
+                modelLabel: "Claude",
+                unit: .percent,
+                used: 100,
+                limit: 100,
+                resetsAt: resetsAt,
+                lastUpdatedAt: generatedAt,
+                confidence: .observed
+            ),
+        ]),
+        reports: [
+            StoredProviderReport(
+                provider: .anthropic,
+                accountID: "anthropic-work",
+                accountName: "Work Claude",
+                generatedAt: generatedAt,
+                status: .limited,
+                accessState: ProviderAccessState(kind: .blockedUntilReset, resetsAt: resetsAt),
+                errorMessage: nil
+            ),
+        ]
+    )
+
+    let widget = WidgetSnapshot.fromStore(
+        SnapshotStoreLoadResult(snapshot: stored, status: .stale),
+        now: resetsAt.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace + 1),
+        stalenessPolicy: SnapshotStoreStalenessPolicy(maximumAge: 10_000)
+    )
+
+    #expect(widget.state == .ready)
+    #expect(widget.refreshAttentionSummary?.expiredResetLimits.count == 1)
+    #expect(widget.primaryProviderAccessAlert == nil)
+    #expect(widget.reports.first?.accessState == .unknown)
+}
+
 @Test func widgetSnapshotUsesSetupCopyWhenProviderAccessIsMissing() {
     let savedAt = Date(timeIntervalSince1970: 100)
     let stored = StoredUsageSnapshot(

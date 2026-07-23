@@ -308,6 +308,62 @@ import Testing
     #expect(hiddenStatusLane.accountNames.isEmpty)
 }
 
+@Test func tvRunwayPresentationSurfacesProviderAccessBesideMatchingCapacity() throws {
+    let now = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:00:00Z"))
+    let resetsAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:30:00Z"))
+    let limit = UsageLimit(
+        provider: .anthropic,
+        accountID: "anthropic-work",
+        configuredAccountID: "anthropic-work",
+        accountName: "Work Claude",
+        label: "Claude 5-hour",
+        windowLabel: "5-hour",
+        modelLabel: "Claude",
+        unit: .percent,
+        used: 100,
+        limit: 100,
+        resetsAt: resetsAt,
+        lastUpdatedAt: now,
+        confidence: .observed
+    )
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: now,
+        limits: [limit],
+        reports: [
+            StoredProviderReport(
+                provider: .anthropic,
+                accountID: limit.accountID,
+                configuredAccountID: limit.configuredAccountID,
+                accountName: limit.accountName,
+                generatedAt: now,
+                status: .limited,
+                accessState: ProviderAccessState(kind: .blockedUntilReset, resetsAt: resetsAt),
+                errorMessage: nil
+            ),
+        ],
+        status: .limited,
+        message: "Claude limited"
+    )
+
+    let presentation = TVRunwayPresentation(snapshot: snapshot, mode: .fullDetail, now: now)
+    let anthropic = try #require(presentation.sections.first { $0.provider == .anthropic })
+    let accessLane = try #require(anthropic.lanes.first { $0.kind == .accountStatus })
+
+    #expect(anthropic.status == .limited)
+    #expect(accessLane.title == "Claude limited · Work Claude")
+    #expect(accessLane.status == .limited)
+    #expect(accessLane.detailText == "Usage credits unavailable")
+    #expect(accessLane.resetText != nil)
+
+    let hiddenPresentation = TVRunwayPresentation(snapshot: snapshot, mode: .projectOnly, now: now)
+    let hiddenLane = try #require(
+        hiddenPresentation.sections.first { $0.provider == .anthropic }?.lanes.first { $0.kind == .accountStatus }
+    )
+    #expect(hiddenLane.title == "Account 1 limited")
+    #expect(hiddenLane.accountNames.isEmpty)
+}
+
 @Test func tvRunwayPresentationMakesRefreshStateExplicitWithoutDroppingSavedData() {
     let now = Date(timeIntervalSince1970: 1_750_000_000)
     let presentation = TVRunwayPresentation(

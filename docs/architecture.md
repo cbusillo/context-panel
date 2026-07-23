@@ -69,12 +69,13 @@ to the user-facing app bundle rather than the background login item.
 The shared vocabulary now lives in `ContextPanelCore`. App, widgets, Watch,
 tvOS, probes, and the background refresh agent all consume the same normalized
 provider reports, account configuration, snapshots, main-limit summaries,
-display preferences, main-answer selection, and forecast math. The shared
-selection keeps the first visible saved limit stable, identifies an optional
-distinct closest limit, and preserves supporting saved order; platform targets
-still own their native layout and interaction. Missing saved limits remain
-explicit placeholders, an all-hidden selection remains empty, and auxiliary
-provider limits stay in detail surfaces instead of replacing the stable answer.
+provider access states, display preferences, main-answer selection, and forecast
+math. The shared selection keeps the first visible saved limit stable,
+identifies an optional distinct closest limit, and preserves supporting saved
+order; platform targets still own their native layout and interaction. Missing
+saved limits remain explicit placeholders, an all-hidden selection remains
+empty, and auxiliary provider limits stay in detail surfaces instead of
+replacing the stable answer.
 
 ## Domain Model
 
@@ -83,6 +84,15 @@ provider, local redacted account identity, display account name, model/window
 labels, unit, used and total values when known, reset time, freshness,
 confidence, and an explicit degraded status. Unknown limits and provider
 failures stay representable instead of being collapsed into zero capacity.
+
+`UsageStatus` and `ProviderAccessState` are deliberately separate. Usage status
+describes quota pressure and refresh health for a bucket or report. Provider
+access state answers whether one account can serve another request: available,
+under pressure, blocked until reset, using paid fallback, unknown, or degraded.
+The account-level access state lives on provider reports because it can depend
+on multiple limit windows plus spend configuration; it is never duplicated as a
+synthetic quota lane. Prominent blocked, paid-fallback, and degraded states are
+projected independently of saved lane visibility and count limits.
 
 `UsageSnapshot` is the provider-neutral aggregate consumed by storage and UI.
 It can contain multiple accounts per provider and multiple limit buckets per
@@ -125,8 +135,12 @@ MVP connectors:
 - Claude provider: store Context Panel-owned Claude OAuth tokens, refresh them
   through Anthropic's OAuth token endpoint when needed, call the Claude OAuth
   usage endpoint, and normalize returned utilization windows into reported
-  percentages. Legacy Claude Code status-line/cache paths are not runtime data
-  sources.
+  percentages. Structured `limits[]` entries take precedence by canonical
+  window ID, with missing windows filled from legacy top-level fields. The
+  adapter reduces `spend.enabled` or legacy `extra_usage.is_enabled` to the
+  normalized account access state while retaining no spend amounts, balances,
+  disabled reasons, or raw provider payload. Legacy Claude Code
+  status-line/cache paths are not runtime data sources.
 
 Connector implementations must keep secrets out of normalized state. Do not
 persist or print tokens, raw account IDs, project IDs, organization IDs,

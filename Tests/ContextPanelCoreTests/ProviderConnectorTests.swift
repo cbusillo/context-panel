@@ -1451,6 +1451,7 @@ import Testing
 
     #expect(result.reports.count == 1)
     #expect(result.reports[0].status == .healthy)
+    #expect(result.reports[0].accessState == ProviderAccessState(kind: .available))
     #expect(result.snapshot.limits.count == 3)
     #expect(result.snapshot.limits.map(\.windowLabel) == ["5-hour", "Weekly", "Weekly"])
     #expect(result.snapshot.limits.map(\.modelLabel) == ["Claude", "Claude", "Sonnet"])
@@ -1459,6 +1460,177 @@ import Testing
     #expect(http.requests.count == 1)
     #expect(http.requests[0].url.absoluteString == "https://api.anthropic.com/api/oauth/usage")
     #expect(http.requests[0].headers["Authorization"] == "Bearer access-secret")
+}
+
+@Test func claudeOAuthConnectorReportsBlockedAccessFromStructuredUsage() async throws {
+    let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
+    let usage = #"""
+    {
+      "limits": [
+        { "id": "five_hour", "metric": "percent", "current_value": 100, "reset_at": "2026-07-23T19:30:00Z" },
+        { "id": "seven_day", "metric": "percent", "current_value": 29, "reset_at": "2026-07-27T12:00:00Z" }
+      ],
+      "spend": { "enabled": false, "used_minor_units": 999999 },
+      "extra_usage": { "is_enabled": true, "disabled_reason": "must-not-survive" }
+    }
+    """#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
+    let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
+    let connector = ClaudeOAuthUsageConnector(
+        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
+        httpClient: http,
+        credentialStore: store
+    )
+    let observedAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:00:00Z"))
+    let resetsAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:30:00Z"))
+
+    let result = await connector.refresh(now: observedAt)
+
+    #expect(result.reports[0].status == .limited)
+    #expect(result.reports[0].accessState == ProviderAccessState(
+        kind: .blockedUntilReset,
+        resetsAt: resetsAt
+    ))
+    #expect(result.snapshot.limits.map(\.used) == [100, 29])
+    #expect(result.snapshot.limits.allSatisfy { $0.note == nil })
+}
+
+@Test func claudeOAuthConnectorKeepsLimitedQuotaWhilePaidFallbackIsActive() async throws {
+    let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
+    let usage = #"""
+    {
+      "limits": [
+        { "id": "five_hour", "metric": "utilization", "current_value": 100, "reset_at": "2026-07-23T19:30:00Z" },
+        { "id": "seven_day", "metric": "percent", "current_value": 100, "reset_at": "2026-07-27T12:00:00Z" }
+      ],
+      "spend": { "enabled": true }
+    }
+    """#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
+    let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
+    let connector = ClaudeOAuthUsageConnector(
+        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
+        httpClient: http,
+        credentialStore: store
+    )
+    let observedAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:00:00Z"))
+    let resetsAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-27T12:00:00Z"))
+
+    let result = await connector.refresh(now: observedAt)
+
+    #expect(result.reports[0].status == .limited)
+    #expect(result.reports[0].accessState == ProviderAccessState(
+        kind: .paidFallbackActive,
+        resetsAt: resetsAt
+    ))
+}
+
+@Test func claudeOAuthStructuredUsageWinsAndFallsBackPerWindow() async throws {
+    let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
+    let usage = #"""
+    {
+      "limits": [
+        "ignore me",
+        { "id": "five_hour", "metric": "percent", "current_value": 35, "reset_at": "not-a-date" },
+        { "id": "seven_day_sonnet", "metric": "tokens", "current_value": 999 },
+        { "id": "unknown_window", "metric": "percent", "current_value": 100 }
+      ],
+      "five_hour": { "utilization": 99, "resets_at": "2026-07-23T19:30:00Z" },
+      "seven_day": { "utilization": 45, "resets_at": "2026-07-27T12:00:00Z" },
+      "seven_day_sonnet": { "utilization": 55, "resets_at": "2026-07-27T12:00:00Z" },
+      "extra_usage": { "is_enabled": false }
+    }
+    """#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
+    let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
+    let connector = ClaudeOAuthUsageConnector(
+        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
+        httpClient: http,
+        credentialStore: store
+    )
+
+    let observedAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:00:00Z"))
+    let result = await connector.refresh(now: observedAt)
+
+    #expect(result.snapshot.limits.map(\.used) == [35, 45, 55])
+    #expect(result.snapshot.limits.map(\.modelLabel) == ["Claude", "Claude", "Sonnet"])
+    #expect(result.snapshot.limits[0].resetsAt == nil)
+    #expect(result.reports[0].accessState == ProviderAccessState(kind: .available))
+}
+
+@Test func claudeOAuthSaturatedUsageWithoutFallbackSignalIsDegraded() async throws {
+    let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
+    let usage = #"""
+    {
+      "five_hour": { "utilization": 100, "resets_at": "2026-07-23T19:30:00Z" },
+      "seven_day": { "utilization": 29, "resets_at": "2026-07-27T12:00:00Z" }
+    }
+    """#.data(using: .utf8)!
+    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)])
+    let store = StubCredentialStore(storage: ["claude-oauth-default": credentials])
+    let connector = ClaudeOAuthUsageConnector(
+        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
+        httpClient: http,
+        credentialStore: store
+    )
+
+    let observedAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:00:00Z"))
+    let result = await connector.refresh(now: observedAt)
+
+    #expect(result.reports[0].status == .limited)
+    #expect(result.reports[0].accessState == ProviderAccessState(kind: .degraded))
+}
+
+@Test func claudeOAuthAccessReturnsToAvailableAfterReset() async throws {
+    let credentials = #"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresAt":"2099-01-01T00:00:00Z","scopes":["user:profile","user:inference"]}"#.data(using: .utf8)!
+    let blocked = Data(#"{"five_hour":{"utilization":100,"resets_at":"2026-07-23T19:30:00Z"},"seven_day":{"utilization":29},"extra_usage":{"is_enabled":false}}"#.utf8)
+    let available = Data(#"{"five_hour":{"utilization":0,"resets_at":"2026-07-23T23:30:00Z"},"seven_day":{"utilization":29},"extra_usage":{"is_enabled":false}}"#.utf8)
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: blocked),
+        ConnectorHTTPResponse(statusCode: 200, data: available),
+    ])
+    let connector = ClaudeOAuthUsageConnector(
+        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
+        httpClient: http,
+        credentialStore: StubCredentialStore(storage: ["claude-oauth-default": credentials])
+    )
+    let beforeReset = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:00:00Z"))
+    let afterReset = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:31:00Z"))
+
+    let blockedResult = await connector.refresh(now: beforeReset)
+    let availableResult = await connector.refresh(now: afterReset)
+
+    #expect(blockedResult.reports[0].accessState.kind == .blockedUntilReset)
+    #expect(availableResult.reports[0].accessState == ProviderAccessState(kind: .available))
+}
+
+@Test func claudeOAuthAccessStateRemainsIsolatedPerAccount() async throws {
+    let personalCredentials = #"{"accessToken":"personal-secret","refreshToken":"personal-refresh","expiresAt":"2099-01-01T00:00:00Z","scopes":[]}"#.data(using: .utf8)!
+    let workCredentials = #"{"accessToken":"work-secret","refreshToken":"work-refresh","expiresAt":"2099-01-01T00:00:00Z","scopes":[]}"#.data(using: .utf8)!
+    let personalUsage = Data(#"{"five_hour":{"utilization":100,"resets_at":"2026-07-23T19:30:00Z"},"seven_day":{"utilization":20},"extra_usage":{"is_enabled":false}}"#.utf8)
+    let workUsage = Data(#"{"five_hour":{"utilization":100,"resets_at":"2026-07-23T20:00:00Z"},"seven_day":{"utilization":80},"extra_usage":{"is_enabled":true}}"#.utf8)
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: personalUsage),
+        ConnectorHTTPResponse(statusCode: 200, data: workUsage),
+    ])
+    let connector = ClaudeOAuthUsageConnector(
+        accounts: [
+            ClaudeOAuthAccountConfiguration(accountID: "personal", accountName: "Personal Claude"),
+            ClaudeOAuthAccountConfiguration(accountID: "work", accountName: "Work Claude"),
+        ],
+        httpClient: http,
+        credentialStore: StubCredentialStore(storage: [
+            "personal": personalCredentials,
+            "work": workCredentials,
+        ])
+    )
+    let observedAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:00:00Z"))
+
+    let result = await connector.refresh(now: observedAt)
+
+    #expect(result.reports.map(\.accountName) == ["Personal Claude", "Work Claude"])
+    #expect(result.reports.map(\.accessState.kind) == [.blockedUntilReset, .paidFallbackActive])
+    #expect(Set(result.reports.map(\.accountID)).count == 2)
 }
 
 @Test func claudeOAuthConnectorAcceptsEpochResetTimes() async throws {
@@ -1532,6 +1704,7 @@ import Testing
 
     #expect(result.reports.count == 1)
     #expect(result.reports[0].status == .unknown)
+    #expect(result.reports[0].accessState == .unknown)
     #expect(result.reports[0].limits.isEmpty)
     #expect(result.snapshot.limits.isEmpty)
 }
@@ -1713,6 +1886,7 @@ import Testing
 
     #expect(http.requests.isEmpty)
     #expect(result.reports[0].status == .failure)
+    #expect(result.reports[0].accessState == .unknown)
     #expect(result.reports[0].errorMessage?.contains("do not contain a refresh token") == true)
 }
 

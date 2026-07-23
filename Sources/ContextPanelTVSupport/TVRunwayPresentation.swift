@@ -281,6 +281,7 @@ public struct TVProviderRunwaySection: Equatable, Identifiable, Sendable {
             .filter { report in
                 !Self.hasMatchingLimit(for: report, in: providerLimits)
                     || !report.status.tvRepresentsCurrentCapacity
+                    || report.accessState.requiresProminentPresentation
             }
             .sorted { lhs, rhs in
                 lhs.accountName.localizedCaseInsensitiveCompare(rhs.accountName) == .orderedAscending
@@ -291,7 +292,8 @@ public struct TVProviderRunwaySection: Equatable, Identifiable, Sendable {
                     report: $0,
                     snapshotState: snapshot.state,
                     mode: mode,
-                    anonymousAccountNumbers: anonymousAccountNumbers
+                    anonymousAccountNumbers: anonymousAccountNumbers,
+                    now: now
                 )
             }
         let lanes = capacityLanes + reportLanes
@@ -301,6 +303,7 @@ public struct TVProviderRunwaySection: Equatable, Identifiable, Sendable {
         let sourceStatuses = mainSummaries.map(\.status)
             + fallbackLimits.map(\.status)
             + reports.map(\.status)
+            + reports.compactMap(\.accessState.statusContribution)
         status = snapshot.state.tvDisplayStatus(source: sourceStatuses.contextPanelWorstStatus)
         self.lanes = lanes
         accountNames = mode == .fullDetail
@@ -473,11 +476,13 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
         report: StoredProviderReport,
         snapshotState: WidgetSnapshotState,
         mode: TVPresentationMode,
-        anonymousAccountNumbers: [String: Int]
+        anonymousAccountNumbers: [String: Int],
+        now: Date
     ) {
         id = "\(provider.rawValue):report:\(report.configuredAccountID ?? report.accountID)"
         kind = .accountStatus
         self.provider = provider
+        let accessAlert = report.providerAccessAlert
         let accountNumber = anonymousAccountNumbers[
             Self.anonymousAccountIdentity(
                 accountID: report.accountID,
@@ -486,23 +491,44 @@ public struct TVRunwayLane: Equatable, Identifiable, Sendable {
         ]
         title = switch mode {
         case .fullDetail:
-            "\(report.accountName) status"
+            accessAlert.map { "\($0.title) · \(report.accountName)" } ?? "\(report.accountName) status"
         case .projectOnly:
-            accountNumber.map { "Account \($0) status" } ?? "Account status"
+            if let accessAlert {
+                accountNumber.map { "Account \($0) \(Self.accessLabel(accessAlert))" }
+                    ?? "Account \(Self.accessLabel(accessAlert))"
+            } else {
+                accountNumber.map { "Account \($0) status" } ?? "Account status"
+            }
         case .countsOnly:
-            "Account status"
+            accessAlert?.title ?? "Account status"
         }
-        status = snapshotState.tvDisplayStatus(source: report.status)
+        status = snapshotState.tvDisplayStatus(source: accessAlert?.status ?? report.status)
         remainingPercent = nil
         isAssumedAfterScheduledReset = false
         capacityRatio = nil
-        resetText = nil
-        accessibilityResetText = nil
+        resetText = Self.compactResetText(until: accessAlert?.accessState.resetsAt, now: now)
+        accessibilityResetText = Self.accessibilityResetText(
+            until: accessAlert?.accessState.resetsAt,
+            now: now
+        )
         exactCapacityText = nil
         accountCountText = nil
-        detailText = "No fresh capacity data"
+        detailText = accessAlert?.detail ?? "No fresh capacity data"
         accountNames = mode == .fullDetail ? [report.accountName] : []
         metrics = []
+    }
+
+    private static func accessLabel(_ alert: ProviderAccessAlert) -> String {
+        switch alert.accessState.kind {
+        case .blockedUntilReset:
+            "limited"
+        case .paidFallbackActive:
+            "using paid fallback"
+        case .degraded:
+            "availability uncertain"
+        case .available, .pressure, .unknown:
+            "status"
+        }
     }
 
     init(preference: WidgetMainLimitPreference, snapshotState: WidgetSnapshotState) {

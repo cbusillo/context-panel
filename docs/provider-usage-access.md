@@ -254,10 +254,22 @@ Claude subscription pressure should use a Context Panel-owned Claude OAuth
 credential when the user explicitly connects Claude in Settings. The refresh
 agent calls `GET https://api.anthropic.com/api/oauth/usage` and stores only
 normalized percent windows such as `five_hour`, `seven_day`,
-`seven_day_opus`, `seven_day_sonnet`, `seven_day_oauth_apps`, `utilization`,
-and reset timestamps. Tokens are stored in Context Panel's own Keychain item;
+`seven_day_opus`, `seven_day_sonnet`, and `seven_day_oauth_apps`. Current
+structured `limits[]` entries are preferred by canonical ID, while legacy
+top-level utilization/reset windows fill only missing IDs. Tokens are stored in
+Context Panel's own Keychain item;
 Context Panel must not read Claude Code's Keychain item or Claude Desktop
 cookies/storage.
+
+Quota pressure and effective execution access are separate. A 100% plan window
+remains limited even when paid usage credits allow the next request. Context
+Panel derives one account-level access state from account-wide five-hour and
+weekly windows plus `spend.enabled`, falling back to
+`extra_usage.is_enabled` only when the structured spend signal is unavailable.
+The normalized state can be available, under pressure, blocked until reset,
+using paid fallback, unknown, or degraded. Only that enum and an optional reset
+time are persisted and synced; spend amounts, balances, organization data,
+disabled reasons, and raw response fields are discarded.
 
 Claude Code's supported status-line JSON was useful research evidence but is no
 longer a fallback or runtime diagnostic source for Context Panel. Claude Code's
@@ -322,7 +334,13 @@ Preferred v1 connector scope:
   transient token-endpoint failures as redacted diagnostics instead of telling
   the user to reconnect.
 - Refresh `/api/oauth/usage` in the app and background agent. Treat
-  `utilization` as percent used and persist only normalized limit windows.
+  `current_value` or legacy `utilization` as percent used and persist only
+  normalized limit windows plus the privacy-safe account access state.
+- A saturated account-wide window with paid fallback enabled remains a limited
+  quota but reports paid fallback active. With fallback explicitly disabled it
+  reports blocked until the latest known blocking reset. Missing or malformed
+  fallback evidence is degraded rather than assumed available or blocked.
+- Model-scoped saturation does not by itself claim an account-wide block.
 - Send Anthropic's current OAuth beta header on refresh-token grants. The
   official Anthropic SDK requires `anthropic-beta: oauth-2025-04-20`; omitting
   it can reject an otherwise valid Context Panel refresh token.
@@ -336,6 +354,9 @@ Preferred v1 connector scope:
 
 - Treat `unknown`, `manual`, `observed`, and `official` as distinct confidence
   levels in the data model and UI.
+- Never overload quota pressure to answer whether the next provider request can
+  run. Present effective provider access independently on the app, widgets,
+  Watch, and tvOS surfaces, and do not let saved lane ordering hide a hard block.
 - Do not block the whole widget when one provider cannot expose usage. Show stale
   or estimated state for that account and keep official data for other accounts.
 - Prioritize OpenAI ChatGPT forecasting in the UX even if the first automated

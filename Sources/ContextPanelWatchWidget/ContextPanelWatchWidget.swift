@@ -165,6 +165,10 @@ struct ContextPanelWatchWidgetView: View {
         )
     }
 
+    private var accessAlert: ProviderAccessAlert? {
+        entry.snapshot.primaryProviderAccessAlert
+    }
+
     private func limits(maximumCount: Int) -> [WatchLimitDisplay] {
         WatchLimitDisplay.mainLaneRows(
             from: entry.snapshot,
@@ -174,18 +178,92 @@ struct ContextPanelWatchWidgetView: View {
     }
 
     var body: some View {
-        switch family {
-        case .accessoryCircular:
-            WatchCircularComplication(limit: limit, snapshot: entry.snapshot)
-        case .accessoryRectangular:
-            WatchRectangularComplication(limits: rectangularLimits, snapshot: entry.snapshot)
-        case .accessoryInline:
-            WatchInlineComplication(limits: inlineLimits, snapshot: entry.snapshot)
-        case .accessoryCorner:
-            WatchCornerComplication(limit: limit, snapshot: entry.snapshot)
-        default:
-            WatchRectangularComplication(limits: rectangularLimits, snapshot: entry.snapshot)
+        if let accessAlert {
+            switch family {
+            case .accessoryCircular:
+                WatchCircularProviderAccessComplication(alert: accessAlert)
+            case .accessoryRectangular:
+                WatchRectangularProviderAccessComplication(alert: accessAlert)
+            case .accessoryInline:
+                WatchInlineProviderAccessComplication(alert: accessAlert)
+            case .accessoryCorner:
+                WatchCornerProviderAccessComplication(alert: accessAlert)
+            default:
+                WatchRectangularProviderAccessComplication(alert: accessAlert)
+            }
+        } else {
+            switch family {
+            case .accessoryCircular:
+                WatchCircularComplication(limit: limit, snapshot: entry.snapshot)
+            case .accessoryRectangular:
+                WatchRectangularComplication(limits: rectangularLimits, snapshot: entry.snapshot)
+            case .accessoryInline:
+                WatchInlineComplication(limits: inlineLimits, snapshot: entry.snapshot)
+            case .accessoryCorner:
+                WatchCornerComplication(limit: limit, snapshot: entry.snapshot)
+            default:
+                WatchRectangularComplication(limits: rectangularLimits, snapshot: entry.snapshot)
+            }
         }
+    }
+}
+
+private struct WatchCircularProviderAccessComplication: View {
+    let alert: ProviderAccessAlert
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(watchStatusColor(alert.status), lineWidth: 3)
+            Image(systemName: watchProviderAccessSymbol(alert))
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(watchStatusColor(alert.status))
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(watchProviderAccessAccessibilityText(alert))
+    }
+}
+
+private struct WatchRectangularProviderAccessComplication: View {
+    let alert: ProviderAccessAlert
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Label(alert.title, systemImage: watchProviderAccessSymbol(alert))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(watchStatusColor(alert.status))
+                .lineLimit(1)
+            Text(watchProviderAccessDetail(alert))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(watchProviderAccessAccessibilityText(alert))
+    }
+}
+
+private struct WatchInlineProviderAccessComplication: View {
+    let alert: ProviderAccessAlert
+
+    var body: some View {
+        Text(watchProviderAccessInlineText(alert))
+            .accessibilityLabel(watchProviderAccessAccessibilityText(alert))
+    }
+}
+
+private struct WatchCornerProviderAccessComplication: View {
+    let alert: ProviderAccessAlert
+
+    var body: some View {
+        Text(watchProviderAccessCornerText(alert))
+            .widgetCurvesContent()
+            .widgetLabel {
+                Label(alert.title, systemImage: watchProviderAccessSymbol(alert))
+                    .foregroundStyle(watchStatusColor(alert.status))
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(watchProviderAccessAccessibilityText(alert))
     }
 }
 
@@ -418,6 +496,54 @@ private func watchStatusColor(_ status: UsageStatus) -> Color {
     case .unknown, .loading:
         .secondary
     }
+}
+
+private func watchProviderAccessSymbol(_ alert: ProviderAccessAlert) -> String {
+    switch alert.accessState.kind {
+    case .blockedUntilReset:
+        "exclamationmark"
+    case .paidFallbackActive:
+        "dollarsign"
+    case .degraded:
+        "questionmark"
+    case .available, .pressure, .unknown:
+        "circle"
+    }
+}
+
+private func watchProviderAccessDetail(_ alert: ProviderAccessAlert) -> String {
+    if let resetText = alert.resetDisplayText() {
+        return "Reset \(resetText)"
+    }
+    return alert.detail
+}
+
+private func watchProviderAccessInlineText(_ alert: ProviderAccessAlert) -> String {
+    if let resetText = alert.resetDisplayText() {
+        return "\(alert.title) until \(resetText)"
+    }
+    return alert.title
+}
+
+private func watchProviderAccessCornerText(_ alert: ProviderAccessAlert) -> String {
+    switch alert.accessState.kind {
+    case .blockedUntilReset:
+        "Limited"
+    case .paidFallbackActive:
+        "Paid"
+    case .degraded:
+        "Unknown"
+    case .available, .pressure, .unknown:
+        "—"
+    }
+}
+
+private func watchProviderAccessAccessibilityText(_ alert: ProviderAccessAlert) -> String {
+    var components = [alert.title, alert.accountName, alert.detail]
+    if let resetText = alert.resetAccessibilityText() {
+        components.append("Plan access resets at \(resetText)")
+    }
+    return components.joined(separator: ". ")
 }
 
 private func watchEmptyText(for snapshot: WidgetSnapshot, compact: Bool) -> String {

@@ -60,6 +60,14 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         UsageSnapshot(generatedAt: generatedAt, limits: limits)
     }
 
+    public var providerAccessAlerts: [ProviderAccessAlert] {
+        reports.providerAccessAlerts
+    }
+
+    public var primaryProviderAccessAlert: ProviderAccessAlert? {
+        reports.primaryProviderAccessAlert
+    }
+
     public var mostConstrainedLimits: [UsageLimit] {
         usageSnapshot.mostConstrainedLimits
     }
@@ -82,11 +90,14 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             let statuses = provider == .anthropic && !mainSummaries.isEmpty
                 ? mainSummaries.map(\.status)
                 : mainSummaries.map(\.status) + nonMainStatuses
+            let accessStatuses = reports
+                .filter { $0.provider == provider }
+                .compactMap(\.accessState.statusContribution)
             let tightestLimit = UsageSnapshot(generatedAt: generatedAt, limits: providerLimits).mostConstrainedLimits.first
             return ProviderSummary(
                 provider: provider,
                 limitCount: providerLimits.count,
-                status: statuses.contextPanelWorstStatus,
+                status: (statuses + accessStatuses).contextPanelWorstStatus,
                 capacityRatio: capacityRatio(for: providerLimits),
                 tightestLimit: tightestLimit
             )
@@ -121,8 +132,13 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             .ready
         }
         let presentationSnapshot = stored.snapshot.presented(at: now)
+        let presentationReports = stored.reports.providerAccessPresentationReports(
+            snapshotIsStale: state != .ready,
+            expiredResetLimits: refreshAttentionSummary?.expiredResetLimits ?? []
+        )
         let status = widgetStatus(
             for: presentationSnapshot,
+            reports: presentationReports,
             fallback: snapshotWideStatus(for: state, snapshot: presentationSnapshot)
         )
 
@@ -138,7 +154,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             state: state,
             generatedAt: stored.snapshot.generatedAt,
             limits: presentationSnapshot.limits,
-            reports: stored.reports,
+            reports: presentationReports,
             promptCacheObservations: recentPromptCacheObservations,
             promptCacheWidgetState: resolvedPromptCacheState,
             observedBurnRates: MainLimitBurnRateEstimator.observedBurnRates(
@@ -203,9 +219,16 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         } else {
             .ready
         }
+        let providerAccessSnapshotIsStale = usesStaleSavedCache
+            || rawRefreshAttentionSummary?.isSnapshotAgeStale == true
+        let presentationReports = reports.providerAccessPresentationReports(
+            snapshotIsStale: providerAccessSnapshotIsStale,
+            expiredResetLimits: rawRefreshAttentionSummary?.expiredResetLimits ?? []
+        )
         let presentationSnapshot = stored.snapshot.presented(at: now)
         let status = widgetStatus(
             for: presentationSnapshot,
+            reports: presentationReports,
             fallback: snapshotWideStatus(for: state, snapshot: presentationSnapshot),
             prefersCurrentOverStale: state == .ready
         )
@@ -223,7 +246,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             state: state,
             generatedAt: companion.generatedAt,
             limits: presentationSnapshot.limits,
-            reports: reports,
+            reports: presentationReports,
             promptCacheObservations: promptCacheObservations,
             promptCacheWidgetState: promptCacheState,
             observedBurnRates: compatibleObservedBurnRates(
@@ -345,6 +368,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
 
     private static func widgetStatus(
         for snapshot: UsageSnapshot,
+        reports: [StoredProviderReport],
         fallback: UsageStatus,
         prefersCurrentOverStale: Bool = false
     ) -> UsageStatus {
@@ -378,7 +402,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             }
             return limit.status
         }
-        let statuses = summaries.map(\.status) + nonMainStatuses
+        let accessStatuses = reports.compactMap(\.accessState.statusContribution)
+        let statuses = summaries.map(\.status) + nonMainStatuses + accessStatuses
         guard !statuses.isEmpty else { return fallback }
         return statuses.contextPanelWorstStatus
     }
@@ -457,13 +482,20 @@ private struct CompanionUsagePresentation {
             accountStates[key] = state
         }
 
-        let staleAccounts = Set(accountStates.compactMap { key, state in
-            if state.hasResetRefreshDue { return key }
+        let resetDueLimits = snapshot.limits.compactMap { companionLimit -> UsageLimit? in
+            let limit = companionLimit.usageLimit
+            return stalenessPolicy.presentationResetRefreshIsDue(for: limit, now: now) ? limit : nil
+        }
+        let resetDueAccounts: Set<CompanionUsageAccountKey> = Set(accountStates.compactMap { key, state in
+            state.hasResetRefreshDue ? key : nil
+        })
+        let ageStaleAccounts: Set<CompanionUsageAccountKey> = Set(accountStates.compactMap { key, state in
             let isAgeSensitive = !state.hasLimits || state.hasAgeSensitiveLimits
             guard isAgeSensitive else { return nil }
             guard let observedAt = state.observedAt else { return key }
             return now.timeIntervalSince(observedAt) > stalenessPolicy.maximumAge ? key : nil
         })
+        let staleAccounts = ageStaleAccounts.union(resetDueAccounts)
 
         limits = snapshot.limits.map { companionLimit in
             let limit = companionLimit.usageLimit
@@ -471,7 +503,7 @@ private struct CompanionUsagePresentation {
             guard staleAccounts.contains(key), limit.status.canAgeToStale else { return limit }
             return limit.replacingStatusOverride(with: .stale)
         }
-        reports = snapshot.providerStatuses.compactMap { companionStatus in
+        reports = snapshot.providerStatuses.compactMap { companionStatus -> StoredProviderReport? in
             let report = companionStatus.storedProviderReport
             let key = CompanionUsageAccountKey(status: companionStatus)
             let accountState = accountStates[key, default: CompanionUsageAccountState()]
@@ -484,7 +516,10 @@ private struct CompanionUsagePresentation {
                 return nil
             }
             if accountState.hasLimits {
-                return report
+                return [report].providerAccessPresentationReports(
+                    snapshotIsStale: ageStaleAccounts.contains(key),
+                    expiredResetLimits: resetDueLimits
+                ).first
             }
             guard staleAccounts.contains(key), report.status.canAgeToStale else { return report }
             return report.replacingStatus(with: .stale)
@@ -562,6 +597,7 @@ private extension StoredProviderReport {
             accountName: accountName,
             generatedAt: generatedAt,
             status: status,
+            accessState: accessState,
             errorMessage: errorMessage
         )
     }

@@ -290,6 +290,7 @@ private struct CompanionRootView: View {
                 .frame(height: layoutMode == .twoColumn ? CompanionLayoutPolicy.wideWidgetHeight : nil)
                 .frame(maxWidth: .infinity, minHeight: CompanionLayoutPolicy.wideWidgetHeight)
 
+            CompanionProviderAccessAlertsView(alerts: model.snapshot.providerAccessAlerts)
             CompanionSyncStatusView(result: model.result)
         }
         .frame(
@@ -910,6 +911,90 @@ private extension CompanionSurfacePalette {
             unselectedSegmentText: unselectedSegmentText,
             border: border
         )
+    }
+}
+
+private struct CompanionProviderAccessAlertsView: View {
+    @Environment(\.companionSurfacePalette) private var palette
+
+    let alerts: [ProviderAccessAlert]
+
+    var body: some View {
+        if !alerts.isEmpty {
+            CompanionSettingsCard {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Provider access")
+                        .font(.headline)
+                        .foregroundStyle(palette.primaryText)
+
+                    ForEach(alerts) { alert in
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: symbolName(for: alert))
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(statusColor(for: alert))
+                                .frame(width: 24, height: 24)
+                                .accessibilityHidden(true)
+
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(alert.title)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(palette.primaryText)
+                                Text(alert.accountName)
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(palette.tertiaryText)
+                                Text(alert.detail)
+                                    .font(.caption)
+                                    .foregroundStyle(palette.secondaryText)
+                                if let resetText = alert.resetDisplayText() {
+                                    Text("Plan access resets \(resetText)")
+                                        .font(.caption2.weight(.medium))
+                                        .foregroundStyle(palette.secondaryText)
+                                }
+                            }
+                            Spacer(minLength: 8)
+                        }
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(accessibilityLabel(for: alert))
+                    }
+                }
+            }
+        }
+    }
+
+    private func symbolName(for alert: ProviderAccessAlert) -> String {
+        switch alert.accessState.kind {
+        case .blockedUntilReset:
+            "exclamationmark.octagon.fill"
+        case .paidFallbackActive:
+            "dollarsign.circle.fill"
+        case .degraded:
+            "questionmark.circle.fill"
+        case .available, .pressure, .unknown:
+            "circle.fill"
+        }
+    }
+
+    private func statusColor(for alert: ProviderAccessAlert) -> Color {
+        switch alert.status {
+        case .healthy:
+            .green
+        case .close:
+            .orange
+        case .limited, .failure:
+            palette.errorText
+        case .stale:
+            .orange
+        case .unknown, .loading:
+            palette.secondaryText
+        }
+    }
+
+    private func accessibilityLabel(for alert: ProviderAccessAlert) -> String {
+        var components = [alert.title, alert.accountName, alert.detail]
+        if let resetText = alert.resetAccessibilityText() {
+            components.append("Plan access resets at \(resetText)")
+        }
+        return components.joined(separator: ". ")
     }
 }
 

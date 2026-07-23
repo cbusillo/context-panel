@@ -69,6 +69,19 @@ public struct StoredUsageSnapshot: Codable, Equatable, Sendable {
     }
 }
 
+public extension StoredUsageSnapshot {
+    func providerAccessAlerts(
+        stalenessPolicy: SnapshotStoreStalenessPolicy,
+        now: Date
+    ) -> [ProviderAccessAlert] {
+        let attention = stalenessPolicy.refreshAttentionSummary(for: self, now: now)
+        return reports.providerAccessPresentationReports(
+            snapshotIsStale: attention?.isSnapshotAgeStale == true,
+            expiredResetLimits: attention?.expiredResetLimits ?? []
+        ).providerAccessAlerts
+    }
+}
+
 public struct StoredProviderReport: Codable, Equatable, Sendable {
     public let provider: Provider
     public let accountID: String
@@ -76,7 +89,19 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
     public let accountName: String
     public let generatedAt: Date
     public let status: UsageStatus
+    public let accessState: ProviderAccessState
     public let errorMessage: String?
+
+    enum CodingKeys: String, CodingKey {
+        case provider
+        case accountID
+        case configuredAccountID
+        case accountName
+        case generatedAt
+        case status
+        case accessState
+        case errorMessage
+    }
 
     public init(
         provider: Provider,
@@ -85,6 +110,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         accountName: String,
         generatedAt: Date,
         status: UsageStatus,
+        accessState: ProviderAccessState = .unknown,
         errorMessage: String?
     ) {
         self.provider = provider
@@ -93,7 +119,22 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         self.accountName = accountName
         self.generatedAt = generatedAt
         self.status = status
+        self.accessState = accessState.retainingCurrentProviderObservation(for: status)
         self.errorMessage = errorMessage.map(ConnectorRedactor.safeErrorDescription)
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        provider = try container.decode(Provider.self, forKey: .provider)
+        accountID = try container.decode(String.self, forKey: .accountID)
+        configuredAccountID = try container.decodeIfPresent(String.self, forKey: .configuredAccountID)
+        accountName = try container.decode(String.self, forKey: .accountName)
+        generatedAt = try container.decode(Date.self, forKey: .generatedAt)
+        status = try container.decode(UsageStatus.self, forKey: .status)
+        accessState = try container.decodeIfPresent(ProviderAccessState.self, forKey: .accessState)?
+            .retainingCurrentProviderObservation(for: status) ?? .unknown
+        errorMessage = try container.decodeIfPresent(String.self, forKey: .errorMessage)
+            .map(ConnectorRedactor.safeErrorDescription)
     }
 
     public init(report: ProviderConnectorReport) {
@@ -104,6 +145,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
             accountName: report.accountName,
             generatedAt: report.generatedAt,
             status: report.status,
+            accessState: report.accessState,
             errorMessage: report.errorMessage
         )
     }
@@ -116,8 +158,183 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
             accountName: accountName,
             generatedAt: generatedAt,
             status: replacementStatus,
+            accessState: accessState,
             errorMessage: errorMessage
         )
+    }
+
+    func withAccessState(_ replacementAccessState: ProviderAccessState) -> StoredProviderReport {
+        StoredProviderReport(
+            provider: provider,
+            accountID: accountID,
+            configuredAccountID: configuredAccountID,
+            accountName: accountName,
+            generatedAt: generatedAt,
+            status: status,
+            accessState: replacementAccessState,
+            errorMessage: errorMessage
+        )
+    }
+
+    public var providerAccessAlert: ProviderAccessAlert? {
+        guard accessState.requiresProminentPresentation else { return nil }
+        return ProviderAccessAlert(
+            provider: provider,
+            accountID: accountID,
+            configuredAccountID: configuredAccountID,
+            accountName: accountName,
+            generatedAt: generatedAt,
+            accessState: accessState
+        )
+    }
+
+    func matchesAccount(of limit: UsageLimit) -> Bool {
+        guard provider == limit.provider else { return false }
+        if let configuredAccountID {
+            return limit.configuredAccountID == configuredAccountID || limit.accountID == accountID
+        }
+        return limit.accountID == accountID
+    }
+}
+
+public struct ProviderAccessAlert: Equatable, Identifiable, Sendable {
+    public let provider: Provider
+    public let accountID: String
+    public let configuredAccountID: String?
+    public let accountName: String
+    public let generatedAt: Date
+    public let accessState: ProviderAccessState
+
+    public var id: String {
+        let accountIdentity = ProviderAccountIdentity.unique(
+            accountID: accountID,
+            configuredAccountID: configuredAccountID
+        )
+        return "\(provider.rawValue):\(accountIdentity)"
+    }
+
+    public var title: String {
+        switch accessState.kind {
+        case .blockedUntilReset:
+            "\(provider.accessProductName) limited"
+        case .paidFallbackActive:
+            "\(provider.accessProductName) using paid fallback"
+        case .degraded:
+            "\(provider.accessProductName) availability uncertain"
+        case .pressure:
+            "\(provider.accessProductName) close to limit"
+        case .available:
+            "\(provider.accessProductName) available"
+        case .unknown:
+            "\(provider.accessProductName) availability unknown"
+        }
+    }
+
+    public var detail: String {
+        switch accessState.kind {
+        case .blockedUntilReset:
+            "Usage credits unavailable"
+        case .paidFallbackActive:
+            "Plan limit reached; usage credits available"
+        case .degraded:
+            "Provider access could not be confirmed"
+        case .pressure:
+            "Provider capacity is close to a limit"
+        case .available:
+            "Provider access is available"
+        case .unknown:
+            "Provider access is unknown"
+        }
+    }
+
+    public var status: UsageStatus {
+        switch accessState.kind {
+        case .degraded:
+            .close
+        case .available, .pressure, .blockedUntilReset, .paidFallbackActive, .unknown:
+            accessState.statusContribution ?? .unknown
+        }
+    }
+
+    public func resetDisplayText(now: Date = Date()) -> String? {
+        guard let resetsAt = accessState.resetsAt else { return nil }
+        if Calendar.current.isDate(resetsAt, inSameDayAs: now) {
+            return resetsAt.formatted(date: .omitted, time: .shortened)
+        }
+        return resetsAt.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    public func resetAccessibilityText(now: Date = Date()) -> String? {
+        accessState.resetsAt?.formatted(date: .abbreviated, time: .shortened)
+    }
+}
+
+public extension Collection where Element == StoredProviderReport {
+    var providerAccessAlerts: [ProviderAccessAlert] {
+        compactMap(\.providerAccessAlert)
+        .sorted { lhs, rhs in
+            let lhsRank = lhs.accessState.kind.alertSortRank
+            let rhsRank = rhs.accessState.kind.alertSortRank
+            if lhsRank != rhsRank { return lhsRank > rhsRank }
+            if lhs.provider != rhs.provider { return lhs.provider.displayName < rhs.provider.displayName }
+            return lhs.accountName.localizedCaseInsensitiveCompare(rhs.accountName) == .orderedAscending
+        }
+    }
+
+    var primaryProviderAccessAlert: ProviderAccessAlert? {
+        providerAccessAlerts.first
+    }
+}
+
+extension Array where Element == StoredProviderReport {
+    func providerAccessPresentationReports(
+        snapshotIsStale: Bool,
+        expiredResetLimits: [UsageLimit]
+    ) -> [StoredProviderReport] {
+        map { report in
+            let matchingExpiredLimits = expiredResetLimits.filter { report.matchesAccount(of: $0) }
+            let resetRefreshIsDue = switch report.accessState.kind {
+            case .blockedUntilReset, .paidFallbackActive:
+                if let accessReset = report.accessState.resetsAt {
+                    matchingExpiredLimits.contains { $0.resetsAt == accessReset }
+                } else {
+                    !matchingExpiredLimits.isEmpty
+                }
+            case .degraded:
+                !matchingExpiredLimits.isEmpty
+            case .available, .pressure, .unknown:
+                false
+            }
+            return snapshotIsStale || resetRefreshIsDue
+                ? report.withAccessState(.unknown)
+                : report
+        }
+    }
+}
+
+private extension Provider {
+    var accessProductName: String {
+        switch self {
+        case .anthropic:
+            "Claude"
+        case .openAI, .google:
+            displayName
+        }
+    }
+}
+
+private extension ProviderAccessState.Kind {
+    var alertSortRank: Int {
+        switch self {
+        case .blockedUntilReset:
+            3
+        case .paidFallbackActive:
+            2
+        case .degraded:
+            1
+        case .available, .pressure, .unknown:
+            0
+        }
     }
 }
 

@@ -26,6 +26,10 @@ private struct WatchRootView: View {
                     syncErrorMessage: model.lastSyncErrorMessage
                 )
 
+                if let alert = model.snapshot.primaryProviderAccessAlert {
+                    WatchProviderAccessSection(alert: alert)
+                }
+
                 if model.displayLimits.isEmpty {
                     WatchEmptySection(
                         result: model.displayResult,
@@ -193,6 +197,67 @@ private struct WatchStatusSection: View {
             }
             .padding(.vertical, 1)
         }
+    }
+}
+
+private struct WatchProviderAccessSection: View {
+    let alert: ProviderAccessAlert
+
+    var body: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 5) {
+                Label(alert.title, systemImage: symbolName)
+                    .font(.headline)
+                    .foregroundStyle(statusColor)
+                Text(alert.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let resetText = alert.resetDisplayText() {
+                    Text("Plan access resets \(resetText)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(.vertical, 3)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(accessibilityLabel)
+        }
+    }
+
+    private var symbolName: String {
+        switch alert.accessState.kind {
+        case .blockedUntilReset:
+            "exclamationmark.octagon.fill"
+        case .paidFallbackActive:
+            "dollarsign.circle.fill"
+        case .degraded:
+            "questionmark.circle.fill"
+        case .available, .pressure, .unknown:
+            "circle.fill"
+        }
+    }
+
+    private var statusColor: Color {
+        switch alert.status {
+        case .healthy:
+            .green
+        case .close:
+            .yellow
+        case .limited, .failure:
+            .red
+        case .stale:
+            .orange
+        case .unknown, .loading:
+            .secondary
+        }
+    }
+
+    private var accessibilityLabel: String {
+        var components = [alert.title, alert.accountName, alert.detail]
+        if let resetText = alert.resetAccessibilityText() {
+            components.append("Plan access resets at \(resetText)")
+        }
+        return components.joined(separator: ". ")
     }
 }
 

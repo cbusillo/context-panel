@@ -69,15 +69,39 @@ public struct ClaudeOAuthAccountConfiguration: Equatable, Sendable {
     }
 }
 
+public struct ClaudeOAuthUsageResult: Equatable, Sendable {
+    public let limits: [UsageLimit]
+    public let accessState: ProviderAccessState
+
+    public init(limits: [UsageLimit], accessState: ProviderAccessState) {
+        self.limits = limits
+        self.accessState = accessState
+    }
+}
+
 public enum ClaudeOAuthUsageParser {
+    public static func usageResult(
+        from data: Data,
+        accountID: String,
+        accountName: String,
+        observedAt: Date
+    ) throws -> ClaudeOAuthUsageResult {
+        let payload = try JSONDecoder.contextPanelISO8601.decode(ClaudeOAuthUsagePayload.self, from: data)
+        return payload.result(accountID: accountID, accountName: accountName, observedAt: observedAt)
+    }
+
     public static func usageLimits(
         from data: Data,
         accountID: String,
         accountName: String,
         observedAt: Date
     ) throws -> [UsageLimit] {
-        let payload = try JSONDecoder.contextPanelISO8601.decode(ClaudeOAuthUsagePayload.self, from: data)
-        return payload.limits(accountID: accountID, accountName: accountName, observedAt: observedAt)
+        try usageResult(
+            from: data,
+            accountID: accountID,
+            accountName: accountName,
+            observedAt: observedAt
+        ).limits
     }
 }
 
@@ -333,7 +357,7 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
             guard (200..<300).contains(retryResponse.statusCode) else {
                 throw ConnectorError.httpFailure(operation: "Claude usage", statusCode: retryResponse.statusCode)
             }
-            let retryLimits = try ClaudeOAuthUsageParser.usageLimits(
+            let retryUsage = try ClaudeOAuthUsageParser.usageResult(
                 from: retryResponse.data,
                 accountID: localAccountID,
                 accountName: account.accountName,
@@ -344,15 +368,16 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
                 accountID: localAccountID,
                 accountName: account.accountName,
                 generatedAt: now,
-                limits: retryLimits,
-                status: retryLimits.isEmpty ? .unknown : nil
+                limits: retryUsage.limits,
+                status: retryUsage.limits.isEmpty ? .unknown : nil,
+                accessState: retryUsage.accessState
             )
         }
 
         guard (200..<300).contains(response.statusCode) else {
             throw ConnectorError.httpFailure(operation: "Claude usage", statusCode: response.statusCode)
         }
-        let limits = try ClaudeOAuthUsageParser.usageLimits(
+        let usage = try ClaudeOAuthUsageParser.usageResult(
             from: response.data,
             accountID: localAccountID,
             accountName: account.accountName,
@@ -363,8 +388,9 @@ public struct ClaudeOAuthUsageConnector: ProviderConnector {
             accountID: localAccountID,
             accountName: account.accountName,
             generatedAt: now,
-            limits: limits,
-            status: limits.isEmpty ? .unknown : nil
+            limits: usage.limits,
+            status: usage.limits.isEmpty ? .unknown : nil,
+            accessState: usage.accessState
         )
     }
 
@@ -480,58 +506,211 @@ public enum ClaudeOAuthMetadata {
 }
 
 private struct ClaudeOAuthUsagePayload: Decodable {
+    let structuredLimits: [ClaudeOAuthStructuredLimit]
     let fiveHour: ClaudeOAuthUsageWindow?
     let sevenDay: ClaudeOAuthUsageWindow?
     let sevenDayOpus: ClaudeOAuthUsageWindow?
     let sevenDaySonnet: ClaudeOAuthUsageWindow?
     let sevenDayOAuthApps: ClaudeOAuthUsageWindow?
+    let spend: ClaudeOAuthSpend?
     let extraUsage: ClaudeOAuthExtraUsage?
 
     enum CodingKeys: String, CodingKey {
+        case structuredLimits = "limits"
         case fiveHour = "five_hour"
         case sevenDay = "seven_day"
         case sevenDayOpus = "seven_day_opus"
         case sevenDaySonnet = "seven_day_sonnet"
         case sevenDayOAuthApps = "seven_day_oauth_apps"
+        case spend
         case extraUsage = "extra_usage"
     }
 
-    func limits(accountID: String, accountName: String, observedAt: Date) -> [UsageLimit] {
-        var limits: [UsageLimit] = []
-        append(window: fiveHour, label: "Claude 5-hour", windowLabel: "5-hour", modelLabel: "Claude", to: &limits, accountID: accountID, accountName: accountName, observedAt: observedAt)
-        append(window: sevenDay, label: "Claude weekly", windowLabel: "Weekly", modelLabel: "Claude", to: &limits, accountID: accountID, accountName: accountName, observedAt: observedAt)
-        append(window: sevenDayOpus, label: "Claude weekly Opus", windowLabel: "Weekly", modelLabel: "Opus", to: &limits, accountID: accountID, accountName: accountName, observedAt: observedAt)
-        append(window: sevenDaySonnet, label: "Claude weekly Sonnet", windowLabel: "Weekly", modelLabel: "Sonnet", to: &limits, accountID: accountID, accountName: accountName, observedAt: observedAt)
-        append(window: sevenDayOAuthApps, label: "Claude weekly OAuth apps", windowLabel: "Weekly", modelLabel: "OAuth apps", to: &limits, accountID: accountID, accountName: accountName, observedAt: observedAt)
-        return limits
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        structuredLimits = (try? container.decode(
+            [LossyDecodable<ClaudeOAuthStructuredLimit>].self,
+            forKey: .structuredLimits
+        ))?.compactMap(\.value) ?? []
+        fiveHour = try container.decodeIfPresent(ClaudeOAuthUsageWindow.self, forKey: .fiveHour)
+        sevenDay = try container.decodeIfPresent(ClaudeOAuthUsageWindow.self, forKey: .sevenDay)
+        sevenDayOpus = try container.decodeIfPresent(ClaudeOAuthUsageWindow.self, forKey: .sevenDayOpus)
+        sevenDaySonnet = try container.decodeIfPresent(ClaudeOAuthUsageWindow.self, forKey: .sevenDaySonnet)
+        sevenDayOAuthApps = try container.decodeIfPresent(ClaudeOAuthUsageWindow.self, forKey: .sevenDayOAuthApps)
+        spend = try? container.decode(ClaudeOAuthSpend.self, forKey: .spend)
+        extraUsage = try? container.decode(ClaudeOAuthExtraUsage.self, forKey: .extraUsage)
     }
 
-    private func append(
-        window: ClaudeOAuthUsageWindow?,
-        label: String,
-        windowLabel: String,
-        modelLabel: String,
-        to limits: inout [UsageLimit],
-        accountID: String,
-        accountName: String,
+    func result(accountID: String, accountName: String, observedAt: Date) -> ClaudeOAuthUsageResult {
+        var windowsByID: [ClaudeOAuthLimitID: ClaudeOAuthUsageWindow] = [:]
+        for structuredLimit in structuredLimits {
+            guard let id = structuredLimit.canonicalID,
+                  windowsByID[id] == nil,
+                  let window = structuredLimit.usageWindow
+            else { continue }
+            windowsByID[id] = window
+        }
+
+        let legacyWindows: [ClaudeOAuthLimitID: ClaudeOAuthUsageWindow?] = [
+            .fiveHour: fiveHour,
+            .sevenDay: sevenDay,
+            .sevenDayOpus: sevenDayOpus,
+            .sevenDaySonnet: sevenDaySonnet,
+            .sevenDayOAuthApps: sevenDayOAuthApps,
+        ]
+        for id in ClaudeOAuthLimitID.allCases where windowsByID[id] == nil {
+            if let window = legacyWindows[id] ?? nil, window.utilization != nil {
+                windowsByID[id] = window
+            }
+        }
+
+        let limits = ClaudeOAuthLimitID.allCases.compactMap { id -> UsageLimit? in
+            guard let window = windowsByID[id], let utilization = window.utilization else { return nil }
+            return UsageLimit(
+                provider: .anthropic,
+                accountID: accountID,
+                accountName: accountName,
+                label: id.label,
+                windowLabel: id.windowLabel,
+                modelLabel: id.modelLabel,
+                unit: .percent,
+                used: Int(max(0, min(utilization, 100)).rounded()),
+                limit: 100,
+                resetsAt: window.resetsAt,
+                lastUpdatedAt: observedAt,
+                confidence: .observed
+            )
+        }
+
+        let accountWindows = ClaudeOAuthLimitID.accountWide.compactMap { windowsByID[$0] }
+        let accessState = Self.accessState(
+            accountWindows: accountWindows,
+            paidFallbackEnabled: spend?.enabled ?? extraUsage?.isEnabled,
+            observedAt: observedAt
+        )
+        return ClaudeOAuthUsageResult(limits: limits, accessState: accessState)
+    }
+
+    private static func accessState(
+        accountWindows: [ClaudeOAuthUsageWindow],
+        paidFallbackEnabled: Bool?,
         observedAt: Date
-    ) {
-        guard let window, let utilization = window.utilization else { return }
-        limits.append(UsageLimit(
-            provider: .anthropic,
-            accountID: accountID,
-            accountName: accountName,
-            label: label,
-            windowLabel: windowLabel,
-            modelLabel: modelLabel,
-            unit: .percent,
-            used: Int(max(0, min(utilization, 100)).rounded()),
-            limit: 100,
-            resetsAt: window.resetsAt,
-            lastUpdatedAt: observedAt,
-            confidence: .observed,
-            note: extraUsage?.note
-        ))
+    ) -> ProviderAccessState {
+        let validWindows = accountWindows.filter { $0.utilization != nil }
+        guard !validWindows.isEmpty else { return .unknown }
+
+        let saturatedWindows = validWindows.filter { ($0.utilization ?? 0) >= 100 }
+        guard !saturatedWindows.isEmpty else {
+            return ProviderAccessState(
+                kind: validWindows.contains { ($0.utilization ?? 0) >= 80 } ? .pressure : .available
+            )
+        }
+
+        let resetCandidates = saturatedWindows.compactMap(\.resetsAt)
+        let resetIsComplete = resetCandidates.count == saturatedWindows.count
+            && resetCandidates.allSatisfy { $0 > observedAt }
+        let resetsAt = resetIsComplete ? resetCandidates.max() : nil
+
+        return switch paidFallbackEnabled {
+        case true:
+            ProviderAccessState(kind: .paidFallbackActive, resetsAt: resetsAt)
+        case false:
+            ProviderAccessState(kind: .blockedUntilReset, resetsAt: resetsAt)
+        case nil:
+            ProviderAccessState(kind: .degraded)
+        }
+    }
+}
+
+private enum ClaudeOAuthLimitID: String, CaseIterable {
+    case fiveHour = "five_hour"
+    case sevenDay = "seven_day"
+    case sevenDayOpus = "seven_day_opus"
+    case sevenDaySonnet = "seven_day_sonnet"
+    case sevenDayOAuthApps = "seven_day_oauth_apps"
+
+    static let accountWide: [ClaudeOAuthLimitID] = [.fiveHour, .sevenDay]
+
+    var label: String {
+        switch self {
+        case .fiveHour:
+            "Claude 5-hour"
+        case .sevenDay:
+            "Claude weekly"
+        case .sevenDayOpus:
+            "Claude weekly Opus"
+        case .sevenDaySonnet:
+            "Claude weekly Sonnet"
+        case .sevenDayOAuthApps:
+            "Claude weekly OAuth apps"
+        }
+    }
+
+    var windowLabel: String {
+        self == .fiveHour ? "5-hour" : "Weekly"
+    }
+
+    var modelLabel: String {
+        switch self {
+        case .fiveHour, .sevenDay:
+            "Claude"
+        case .sevenDayOpus:
+            "Opus"
+        case .sevenDaySonnet:
+            "Sonnet"
+        case .sevenDayOAuthApps:
+            "OAuth apps"
+        }
+    }
+}
+
+private struct ClaudeOAuthStructuredLimit: Decodable {
+    let id: String?
+    let rateLimitType: String?
+    let metric: String?
+    let currentValue: Double?
+    let utilization: Double?
+    let resetsAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case rateLimitType = "rate_limit_type"
+        case metric
+        case currentValue = "current_value"
+        case utilization
+        case resetAt = "reset_at"
+        case resetsAt = "resets_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try? container.decode(String.self, forKey: .id)
+        rateLimitType = try? container.decode(String.self, forKey: .rateLimitType)
+        metric = try? container.decode(String.self, forKey: .metric)
+        currentValue = container.lossyDouble(forKey: .currentValue)
+        utilization = container.lossyDouble(forKey: .utilization)
+        resetsAt = (try? container.decode(Date.self, forKey: .resetAt))
+            ?? (try? container.decode(Date.self, forKey: .resetsAt))
+    }
+
+    var canonicalID: ClaudeOAuthLimitID? {
+        [id, rateLimitType]
+            .compactMap { value in
+                guard let value else { return nil }
+                return ClaudeOAuthLimitID(rawValue: value.lowercased())
+            }
+            .first
+    }
+
+    var usageWindow: ClaudeOAuthUsageWindow? {
+        if let metric {
+            let normalizedMetric = metric.lowercased()
+            guard normalizedMetric.contains("percent") || normalizedMetric.contains("utilization") else {
+                return nil
+            }
+        }
+        guard let value = currentValue ?? utilization else { return nil }
+        return ClaudeOAuthUsageWindow(utilization: value, resetsAt: resetsAt)
     }
 }
 
@@ -543,22 +722,75 @@ private struct ClaudeOAuthUsageWindow: Decodable {
         case utilization
         case resetsAt = "resets_at"
     }
+
+    init(utilization: Double?, resetsAt: Date?) {
+        self.utilization = utilization
+        self.resetsAt = resetsAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        utilization = container.lossyDouble(forKey: .utilization)
+        resetsAt = try? container.decode(Date.self, forKey: .resetsAt)
+    }
 }
 
 private struct ClaudeOAuthExtraUsage: Decodable {
     let isEnabled: Bool?
-    let disabledReason: String?
 
     enum CodingKeys: String, CodingKey {
         case isEnabled = "is_enabled"
-        case disabledReason = "disabled_reason"
     }
 
-    var note: String? {
-        if isEnabled == true { return "source: Claude OAuth usage; extra usage enabled" }
-        if let disabledReason, !disabledReason.isEmpty {
-            return "source: Claude OAuth usage; extra usage disabled: \(disabledReason)"
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        isEnabled = container.lossyBool(forKey: .isEnabled)
+    }
+}
+
+private struct ClaudeOAuthSpend: Decodable {
+    let enabled: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case enabled
+        case isEnabled = "is_enabled"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = container.lossyBool(forKey: .enabled) ?? container.lossyBool(forKey: .isEnabled)
+    }
+}
+
+private struct LossyDecodable<Value: Decodable>: Decodable {
+    let value: Value?
+
+    init(from decoder: Decoder) throws {
+        value = try? Value(from: decoder)
+    }
+}
+
+private extension KeyedDecodingContainer {
+    func lossyDouble(forKey key: Key) -> Double? {
+        if let value = try? decode(Double.self, forKey: key) { return value }
+        if let value = try? decode(Int.self, forKey: key) { return Double(value) }
+        if let value = try? decode(String.self, forKey: key) { return Double(value) }
+        return nil
+    }
+
+    func lossyBool(forKey key: Key) -> Bool? {
+        if let value = try? decode(Bool.self, forKey: key) { return value }
+        if let value = try? decode(Int.self, forKey: key) { return value != 0 }
+        if let value = try? decode(String.self, forKey: key) {
+            switch value.lowercased() {
+            case "true", "1", "yes":
+                return true
+            case "false", "0", "no":
+                return false
+            default:
+                return nil
+            }
         }
-        return "source: Claude OAuth usage"
+        return nil
     }
 }

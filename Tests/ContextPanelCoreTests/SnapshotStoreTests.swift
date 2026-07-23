@@ -1326,6 +1326,195 @@ import Testing
     #expect(stored.errorMessage?.contains("hooks.example.com") == false)
 }
 
+@Test func storedProviderReportRoundTripsProviderAccessStateWithoutProviderPayload() throws {
+    let reset = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:30:00Z"))
+    let report = StoredProviderReport(
+        provider: .anthropic,
+        accountID: "local-anthropic",
+        accountName: "Claude",
+        generatedAt: reset.addingTimeInterval(-300),
+        status: .limited,
+        accessState: ProviderAccessState(kind: .blockedUntilReset, resetsAt: reset),
+        errorMessage: nil
+    )
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+
+    let data = try encoder.encode(report)
+    let decoded = try JSONDecoder.contextPanelISO8601.decode(StoredProviderReport.self, from: data)
+    let json = try #require(String(data: data, encoding: .utf8))
+
+    #expect(decoded == report)
+    #expect(json.contains("blockedUntilReset"))
+    #expect(json.contains("spend") == false)
+    #expect(json.contains("disabled_reason") == false)
+}
+
+@Test func storedProviderReportDefaultsLegacyAccessStateToUnknown() throws {
+    let json = #"""
+    {
+      "provider": "anthropic",
+      "accountID": "local-anthropic",
+      "accountName": "Claude",
+      "generatedAt": "2026-07-23T19:00:00Z",
+      "status": "limited",
+      "errorMessage": null
+    }
+    """#.data(using: .utf8)!
+
+    let decoded = try JSONDecoder.contextPanelISO8601.decode(StoredProviderReport.self, from: json)
+
+    #expect(decoded.accessState == .unknown)
+}
+
+@Test func storedProviderReportDemotesAccessStateWhenObservationBecomesStale() {
+    let report = StoredProviderReport(
+        provider: .anthropic,
+        accountID: "local-anthropic",
+        accountName: "Claude",
+        generatedAt: Date(timeIntervalSince1970: 0),
+        status: .limited,
+        accessState: ProviderAccessState(kind: .paidFallbackActive),
+        errorMessage: nil
+    )
+
+    #expect(report.withStatus(.stale).accessState == .unknown)
+}
+
+@Test func degradedProviderAccessUsesWarningPresentation() {
+    let report = StoredProviderReport(
+        provider: .anthropic,
+        accountID: "local-anthropic",
+        accountName: "Claude",
+        generatedAt: Date(timeIntervalSince1970: 0),
+        status: .limited,
+        accessState: ProviderAccessState(kind: .degraded),
+        errorMessage: nil
+    )
+
+    #expect(report.providerAccessAlert?.status == .close)
+}
+
+@Test func storedSnapshotProviderAccessAlertsRespectAgeAndResetStaleness() {
+    let generatedAt = Date(timeIntervalSince1970: 1_000)
+    let resetsAt = generatedAt.addingTimeInterval(60)
+    let stored = StoredUsageSnapshot(
+        savedAt: generatedAt,
+        snapshot: UsageSnapshot(generatedAt: generatedAt, limits: [
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "anthropic-work",
+                accountName: "Work Claude",
+                label: "Claude 5-hour",
+                windowLabel: "5-hour",
+                unit: .percent,
+                used: 100,
+                limit: 100,
+                resetsAt: resetsAt,
+                lastUpdatedAt: generatedAt
+            ),
+        ]),
+        reports: [
+            StoredProviderReport(
+                provider: .anthropic,
+                accountID: "anthropic-work",
+                accountName: "Work Claude",
+                generatedAt: generatedAt,
+                status: .limited,
+                accessState: ProviderAccessState(kind: .blockedUntilReset, resetsAt: resetsAt),
+                errorMessage: nil
+            ),
+        ]
+    )
+
+    #expect(stored.providerAccessAlerts(
+        stalenessPolicy: SnapshotStoreStalenessPolicy(maximumAge: 10_000),
+        now: generatedAt
+    ).count == 1)
+    #expect(stored.providerAccessAlerts(
+        stalenessPolicy: SnapshotStoreStalenessPolicy(maximumAge: 10_000),
+        now: resetsAt.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace + 1)
+    ).isEmpty)
+    #expect(stored.providerAccessAlerts(
+        stalenessPolicy: SnapshotStoreStalenessPolicy(maximumAge: 60),
+        now: generatedAt.addingTimeInterval(120)
+    ).isEmpty)
+}
+
+@Test func earlierAccountResetDoesNotHideLaterBlockingReset() {
+    let generatedAt = Date(timeIntervalSince1970: 1_000)
+    let fiveHourReset = generatedAt.addingTimeInterval(60)
+    let weeklyReset = generatedAt.addingTimeInterval(600)
+    let stored = StoredUsageSnapshot(
+        savedAt: generatedAt,
+        snapshot: UsageSnapshot(generatedAt: generatedAt, limits: [
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "anthropic-work",
+                accountName: "Work Claude",
+                label: "Claude 5-hour",
+                windowLabel: "5-hour",
+                unit: .percent,
+                used: 100,
+                limit: 100,
+                resetsAt: fiveHourReset,
+                lastUpdatedAt: generatedAt
+            ),
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "anthropic-work",
+                accountName: "Work Claude",
+                label: "Claude weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 100,
+                limit: 100,
+                resetsAt: weeklyReset,
+                lastUpdatedAt: generatedAt
+            ),
+        ]),
+        reports: [
+            StoredProviderReport(
+                provider: .anthropic,
+                accountID: "anthropic-work",
+                accountName: "Work Claude",
+                generatedAt: generatedAt,
+                status: .limited,
+                accessState: ProviderAccessState(kind: .blockedUntilReset, resetsAt: weeklyReset),
+                errorMessage: nil
+            ),
+        ]
+    )
+    let policy = SnapshotStoreStalenessPolicy(maximumAge: 10_000)
+
+    #expect(stored.providerAccessAlerts(
+        stalenessPolicy: policy,
+        now: fiveHourReset.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace + 1)
+    ).count == 1)
+    #expect(stored.providerAccessAlerts(
+        stalenessPolicy: policy,
+        now: weeklyReset.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace + 1)
+    ).isEmpty)
+}
+
+@Test func providerAccessResetCopyIncludesDateForAnotherDay() throws {
+    let now = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:00:00Z"))
+    let resetsAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-27T12:00:00Z"))
+    let report = StoredProviderReport(
+        provider: .anthropic,
+        accountID: "anthropic-work",
+        accountName: "Work Claude",
+        generatedAt: now,
+        status: .limited,
+        accessState: ProviderAccessState(kind: .blockedUntilReset, resetsAt: resetsAt),
+        errorMessage: nil
+    )
+    let alert = try #require(report.providerAccessAlert)
+
+    #expect(alert.resetDisplayText(now: now) == resetsAt.formatted(date: .abbreviated, time: .shortened))
+    #expect(alert.resetAccessibilityText(now: now) == resetsAt.formatted(date: .abbreviated, time: .shortened))
+}
+
 @Test func snapshotRefreshServiceDoesNotSaveEmptyRefreshWhenNoAccountsAreEnabled() async throws {
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
