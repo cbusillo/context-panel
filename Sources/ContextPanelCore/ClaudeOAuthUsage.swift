@@ -695,7 +695,7 @@ private struct ClaudeOAuthStructuredLimit: Decodable {
 
     var canonicalID: ClaudeOAuthLimitID? {
         [id, rateLimitType]
-            .compactMap { value in
+            .compactMap { value -> ClaudeOAuthLimitID? in
                 guard let value else { return nil }
                 return ClaudeOAuthLimitID(rawValue: value.lowercased())
             }
