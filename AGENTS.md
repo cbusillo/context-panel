@@ -75,6 +75,17 @@ report `Production` CloudKit:
 scripts/context-panel-runtime-baseline.sh check --require-production-runtime
 ```
 
+For routine physical watchOS complication testing, first confirm that the new
+build has reached the Watch, then restart the Watch before judging complication
+UI or behavior. The current TestFlight/watchOS runtime can keep the previous
+WidgetKit extension or render active until a post-install restart, so do not
+treat pre-restart stale or blank complication output as an application-code
+regression. Skip the restart only when Chris explicitly asks to investigate the
+in-place upgrade path; in that case preserve existing placements and capture the
+installed build, face state, app diagnostics, and extension-process evidence
+before any recovery action. Do not use uninstall/reinstall or complication
+reselection as the routine workaround.
+
 Never run `install` or `reset` while preserving a signed Production publisher.
 Those modes build a local Debug runtime with Development CloudKit and now refuse
 to replace a Production, TestFlight, App Store, or unverified canonical app.

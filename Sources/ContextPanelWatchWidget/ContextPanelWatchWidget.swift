@@ -56,8 +56,9 @@ private enum WatchWidgetLoadQueue {
     }()
 
     static func loadSnapshot(date: Date, completion: @escaping (ContextPanelWatchWidgetEntry) -> Void) {
+        let completion = WatchWidgetCompletion(completion)
         queue.async {
-            completion(entry(
+            completion.call(entry(
                 date: date,
                 loaded: cache.load(),
                 stalenessPolicy: stalenessPolicy

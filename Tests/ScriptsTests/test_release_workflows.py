@@ -2058,6 +2058,9 @@ exit 65
 
         self.assertIn("assert_companion_widget_archive_ready()", script)
         self.assertIn("assert_ios_watch_archive_ready()", script)
+        self.assertIn("assert_bundle_version()", script)
+        self.assertIn("assert_bundle_info_value()", script)
+        self.assertIn("assert_code_signature_valid()", script)
         self.assertIn("/usr/bin/codesign -d --entitlements - --xml", script)
         self.assertIn("assert_signed_entitlement_array_value_absent()", script)
         self.assertIn("assert_signed_entitlement_value()", script)
@@ -2099,6 +2102,147 @@ exit 65
         self.assertLess(archive_index, widget_validation_index)
         self.assertLess(widget_validation_index, watch_validation_index)
         self.assertLess(watch_validation_index, export_index)
+
+    def test_companion_upload_retains_generic_watch_archive_evidence(self):
+        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
+        workflow = self.read(
+            ".github/workflows/app-store-connect-companion-upload.yml"
+        )
+
+        self.assertIn(
+            "iOS companion releases require both --version and --build-number.",
+            script,
+        )
+        self.assertIn("write_ios_watch_archive_receipt()", script)
+        self.assertIn("matching_dsym_relative_path()", script)
+        self.assertIn("bundle_executable_uuids()", script)
+        self.assertIn('rm -f "$watch_archive_receipt_path"', script)
+        self.assertIn("receipt_schema_version=1", script)
+        self.assertIn("archive_retained=true", script)
+        self.assertIn("distribution_mode=%s", script)
+        self.assertIn("local_ipa_expected=%s", script)
+        self.assertIn("export-only mode did not emit a local IPA", script)
+        self.assertIn("companion_signature=valid", script)
+        self.assertIn("watch_app_signature=valid", script)
+        self.assertIn("watch_widget_signature=valid", script)
+        self.assertIn("companion_entitlements_sha256", script)
+        self.assertIn("watch_app_entitlements_sha256", script)
+        self.assertIn("watch_widget_entitlements_sha256", script)
+        self.assertIn("companion_executable_sha256", script)
+        self.assertIn("watch_app_executable_sha256", script)
+        self.assertIn("watch_widget_executable_sha256", script)
+        self.assertIn("companion_dsym=%s", script)
+        self.assertIn("watch_app_dsym=%s", script)
+        self.assertIn("watch_widget_dsym=%s", script)
+        self.assertIn("'WKApplication' 'true'", script)
+        self.assertIn(
+            "'WKCompanionAppBundleIdentifier' 'com.shinycomputers.contextpanel'",
+            script,
+        )
+        self.assertIn(
+            "'NSExtension:NSExtensionPointIdentifier' 'com.apple.widgetkit-extension'",
+            script,
+        )
+        self.assertNotIn("ContextPanelWatchUpgradeCanary", script)
+        self.assertNotIn("watch_canary_marker", script)
+        self.assertIn("WatchArchiveReceipt-*.txt", workflow)
+        self.assertIn(".build/app-store-connect-companion/*.xcarchive", workflow)
+        self.assertIn(".build/app-store-connect-companion/upload-*", workflow)
+
+    def test_companion_upload_enforces_local_ipa_only_for_export_mode(self):
+        script = self.read("scripts/upload-app-store-connect-companion-app.sh")
+        result_block = script[script.rindex('if [[ "$upload" == "true" ]]; then') :]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            export_path = Path(temp_dir)
+            environment = os.environ.copy()
+            environment["export_path"] = str(export_path)
+            environment["platform_label"] = "iOS"
+
+            environment["upload"] = "true"
+            upload_result = subprocess.run(
+                ["/bin/bash", "-c", result_block],
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(upload_result.returncode, 0, upload_result.stdout)
+            self.assertIn("Uploaded Context Panel companion (iOS)", upload_result.stdout)
+
+            environment["upload"] = "false"
+            missing_ipa_result = subprocess.run(
+                ["/bin/bash", "-c", result_block],
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(missing_ipa_result.returncode, 1)
+            self.assertIn(
+                "export-only mode did not emit a local IPA",
+                missing_ipa_result.stdout,
+            )
+
+            ipa_path = export_path / "ContextPanelCompanion.ipa"
+            ipa_path.write_bytes(b"signed-ipa-fixture")
+            exported_ipa_result = subprocess.run(
+                ["/bin/bash", "-c", result_block],
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(exported_ipa_result.returncode, 0, exported_ipa_result.stdout)
+            self.assertIn(str(ipa_path), exported_ipa_result.stdout)
+
+    def test_post_canary_cleanup_keeps_the_production_watch_complication(self):
+        widget = self.read(
+            "Sources/ContextPanelWatchWidget/ContextPanelWatchWidget.swift"
+        )
+        watch_app = self.read("Sources/ContextPanelWatch/ContextPanelWatchApp.swift")
+
+        self.assertIn("import ContextPanelCloudKitSync", widget)
+        self.assertIn("WatchCompanionLoader", widget)
+        self.assertIn("WatchCompanionCache", widget)
+        self.assertIn("WatchComplicationTimelineReloadPolicy.shouldReload", watch_app)
+        self.assertNotIn('Text("C")', widget)
+        self.assertFalse(
+            (REPO_ROOT / "Sources/ContextPanelWatchSupport/WatchUpgradeCanary.swift").exists()
+        )
+        self.assertNotIn(
+            "ContextPanelWatchUpgradeCanary",
+            self.read("Config/ContextPanelWatch-Info.plist"),
+        )
+        self.assertNotIn(
+            "ContextPanelWatchUpgradeCanary",
+            self.read("Config/ContextPanelWatchWidget-Info.plist"),
+        )
+
+    def test_release_runbook_requires_watch_restart_and_correct_artifact_modes(self):
+        release_docs = self.read("docs/release.md")
+        agent_notes = self.read("AGENTS.md")
+        normalized_agent_notes = " ".join(agent_notes.split())
+
+        self.assertIn("#### Routine Watch Complication Test", release_docs)
+        self.assertIn("Restart the Watch after the installation completes.", release_docs)
+        self.assertIn("Do not treat stale or blank pre-restart output", release_docs)
+        self.assertIn("Upload mode may not emit a local IPA", release_docs)
+        self.assertIn("Export-only mode must emit a local IPA.", release_docs)
+        self.assertIn("WatchArchiveReceipt-iOS.txt", release_docs)
+        self.assertIn("signed `.xcarchive`", release_docs)
+        self.assertNotIn("### Watch Upgrade Canary", release_docs)
+        self.assertIn(
+            "first confirm that the new build has reached the Watch, then restart the Watch",
+            normalized_agent_notes,
+        )
+        self.assertIn(
+            "Do not use uninstall/reinstall or complication reselection as the routine workaround.",
+            normalized_agent_notes,
+        )
 
     def test_release_docs_describe_cloudkit_companion_testflight_validation(self):
         release_docs = self.read("docs/release.md")
