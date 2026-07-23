@@ -114,6 +114,7 @@
 		7C6664EA7FABECBBFC8F71A1 /* libContextPanelCloudKitSyncCompanion.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 4EF1C31059DCFA7FFC3969EC /* libContextPanelCloudKitSyncCompanion.a */; };
 		7CAEB043EEE06F41D719F7A7 /* LimitWarningWebhook.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE09AE825E3B368ED89CD521 /* LimitWarningWebhook.swift */; };
 		7D389D52287E9778C1742B44 /* ResetExpiryRefreshState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58B71A183966EEC56B955CD3 /* ResetExpiryRefreshState.swift */; };
+		7F3B4D8E43F64F798DEA1ED4 /* WatchSyncPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5B65339825AC1B0BB414797 /* WatchSyncPresentation.swift */; };
 		7FD021610CC3841DE13AD70E /* ContextPanelCompanionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E29EEFA73267A8346212E7A /* ContextPanelCompanionApp.swift */; };
 		8121EE15127A2C78EED0D4B8 /* AccountConfigurationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 186D607FE2EEFDFFE2E70446 /* AccountConfigurationStore.swift */; };
 		81A1506D8F6020DB9204E7E8 /* CompanionRemoteMerge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C28E693A6A73B61184A5288 /* CompanionRemoteMerge.swift */; };
@@ -672,6 +673,7 @@
 		9909074D7E80648BC2A01C51 /* ContextPanelDateFormatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelDateFormatting.swift; sourceTree = "<group>"; };
 		9FA8FE4CC9BE058D8F46FBA2 /* CodexRateLimits.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRateLimits.swift; sourceTree = "<group>"; };
 		A3C9122F0E0741C701520316 /* libContextPanelWidgetUICompanion.a */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = archive.ar; path = libContextPanelWidgetUICompanion.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		A5B65339825AC1B0BB414797 /* WatchSyncPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSyncPresentation.swift; sourceTree = "<group>"; };
 		A625CCDC97920B24B000C170 /* ProviderCredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderCredentialStore.swift; sourceTree = "<group>"; };
 		AC712405A58ED12AA33BDC68 /* ContextPanelRefreshAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelRefreshAgent.swift; sourceTree = "<group>"; };
 		B0DC574A48A772716FE09735 /* TVAppRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVAppRoute.swift; sourceTree = "<group>"; };
@@ -990,6 +992,7 @@
 				17D5840405C58759B27E26F7 /* WatchCompanionCache.swift */,
 				5C18341F829AEDD53F6289C5 /* WatchCompanionLoader.swift */,
 				47D628E750682BA2235D68F3 /* WatchLimitDisplay.swift */,
+				A5B65339825AC1B0BB414797 /* WatchSyncPresentation.swift */,
 			);
 			name = ContextPanelWatchSupport;
 			path = Sources/ContextPanelWatchSupport;
@@ -2069,6 +2072,7 @@
 				16F29EE0F21C2D066452F841 /* WatchCompanionCache.swift in Sources */,
 				4D3042ECC2194F1B0FE482FE /* WatchCompanionLoader.swift in Sources */,
 				B32B9A08B17CEA125482D04F /* WatchLimitDisplay.swift in Sources */,
+				7F3B4D8E43F64F798DEA1ED4 /* WatchSyncPresentation.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

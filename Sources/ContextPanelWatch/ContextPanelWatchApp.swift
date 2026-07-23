@@ -159,7 +159,7 @@ private struct WatchStatusSection: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Image(systemName: presentation.symbol)
-                        .foregroundStyle(presentation.tint)
+                        .foregroundStyle(presentation.tone.color)
                     Text(presentation.title)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -179,7 +179,16 @@ private struct WatchStatusSection: View {
                     Text(presentation.detail)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if let diagnosticDetail = presentation.diagnosticDetail,
+                   let diagnosticAccessibilityLabel = presentation.diagnosticAccessibilityLabel {
+                    Text(verbatim: "Details: \(diagnosticDetail)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel(diagnosticAccessibilityLabel)
                 }
             }
             .padding(.vertical, 1)
@@ -333,59 +342,17 @@ private struct WatchLimitRow: View {
     }
 }
 
-private struct WatchSyncPresentation {
-    let title: String
-    let detail: String
-    let symbol: String
-    let tint: Color
-    let generatedText: String?
-    let generatedAccessibilityText: String?
-    let shouldShowDetail: Bool
-
-    init(result: CompanionSyncLoadResult, snapshot: WidgetSnapshot, syncErrorMessage: String?) {
-        switch result.status {
-        case .healthy, .close, .limited:
-            if let generatedAt = result.document?.snapshot.generatedAt {
-                generatedText = SnapshotFreshness.compactAgeText(since: generatedAt)
-                generatedAccessibilityText = generatedAt.formatted(.relative(presentation: .numeric))
-            } else {
-                generatedText = nil
-                generatedAccessibilityText = nil
-            }
-        case .stale, .failure, .loading, .unknown:
-            generatedText = nil
-            generatedAccessibilityText = nil
-        }
-        shouldShowDetail = result.status == .failure || result.status == .stale || result.status == .unknown
-
-        switch result.status {
-        case .healthy, .close, .limited:
-            title = "Synced"
-            detail = snapshot.message
-            symbol = "checkmark.circle"
-            tint = .green
-        case .stale:
-            title = "Saved usage is stale"
-            detail = syncErrorMessage == nil
-                ? "Open Context Panel on your Mac to refresh this watch."
-                : "Showing saved usage because the latest update failed."
-            symbol = "clock.badge.exclamationmark"
-            tint = .yellow
-        case .loading:
-            title = "Checking for updates"
-            detail = "Looking for the latest usage from your Mac."
-            symbol = "arrow.clockwise.icloud"
-            tint = .secondary
+private extension WatchSyncPresentationTone {
+    var color: Color {
+        switch self {
+        case .available:
+            .green
+        case .warning:
+            .yellow
         case .failure:
-            title = "Update unavailable"
-            detail = "The watch could not load the latest usage from your Mac."
-            symbol = "icloud.slash"
-            tint = .red
-        case .unknown:
-            title = "Waiting for your Mac"
-            detail = "Open Context Panel on your Mac to share usage with this watch."
-            symbol = "icloud.and.arrow.down"
-            tint = .secondary
+            .red
+        case .neutral:
+            .secondary
         }
     }
 }

@@ -233,6 +233,14 @@ cache is empty or damaged. Opening the Watch app invalidates the complication
 timeline whenever it has a usable document, and the timeline includes a future
 stale transition. The watch app list follows the synced saved main-limit
 visibility and order instead of promoting auxiliary provider buckets.
+The Watch app may show one bounded operational detail from a failed sync after
+reapplying the shared connector redaction boundary. That boundary removes C0,
+C1, and standalone Unicode format controls before final matching so they cannot
+split credential labels or values, while preserving emoji joiners. Presentation
+then normalizes whitespace and limits the result to 120 user-perceived
+characters. The generic status sentence remains primary, the detail is not
+persisted separately, and complications continue to discard transport error
+text.
 When any cached lane in a multi-account limit becomes stale or unavailable,
 Watch presentation preserves the complete pooled last-known capacity and labels
 it stale instead of recalculating from only the remaining current lanes or

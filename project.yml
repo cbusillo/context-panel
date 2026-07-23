@@ -462,6 +462,8 @@ targets:
     sources:
       - path: Sources/ContextPanelWatchWidget
       - path: Sources/ContextPanelWatchSupport
+        excludes:
+          - WatchSyncPresentation.swift
     dependencies:
       - target: ContextPanelCoreWatch
       - target: ContextPanelCloudKitSyncWatch

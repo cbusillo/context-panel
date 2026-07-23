@@ -1,6 +1,6 @@
 # Design Direction
 
-Last updated: 2026-07-11.
+Last updated: 2026-07-20.
 
 ## Accepted Direction
 
@@ -61,7 +61,11 @@ capacity, matching the primary macOS widget answer. Circular and corner gauges
 remain one-value surfaces. Inline may show the stable answer plus a useful
 closest limit when both fit, otherwise it shows the next saved limit or falls
 back to one clear value. Rectangular bars and inline copy use the remaining
-ratio and explicit `left` language. Watch app rows remain detail surfaces and
+ratio and explicit `left` language. Circular capacity gauges use a large
+centered numeral. Percentage values omit the percent sign because the
+surrounding ring already conveys relative capacity; absolute counts remain
+unchanged, and accessibility retains the full spoken unit. Watch app rows remain
+detail surfaces and
 stay explicitly used-pressure while following saved main-limit visibility and
 order; auxiliary provider buckets such as Spark remain in the larger app detail
 views. In every case, the visible number, wording,
@@ -75,6 +79,10 @@ available states so updating, stale, and failure labels keep their full width.
 Allow those status labels to wrap rather than truncate at larger text sizes.
 Keep settled-state freshness visually compact while preserving the full elapsed
 duration for accessibility output.
+When a Watch sync fails without saved usage, keep the plain-language failure
+sentence primary and allow one quieter, bounded, sanitized diagnostic line for
+troubleshooting. Let both lines wrap at large text sizes, provide explicit sync
+error context to VoiceOver, and never surface that diagnostic in complications.
 Keep Watch limit footers on one line when they fit. When they do not, allow the
 account context to wrap and move the reset to a separate trailing line instead
 of truncating either value.
