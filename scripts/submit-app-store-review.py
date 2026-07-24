@@ -37,11 +37,6 @@ ACTIVE_REVIEW_SUBMISSION_STATES = {
     "IN_REVIEW",
     "UNRESOLVED_ISSUES",
 }
-SUBMITTED_REVIEW_SUBMISSION_STATES = {
-    "WAITING_FOR_REVIEW",
-    "IN_REVIEW",
-    "UNRESOLVED_ISSUES",
-}
 BLOCKING_REVIEW_VERSION_STATES = {
     "WAITING_FOR_REVIEW",
     "IN_REVIEW",
@@ -251,35 +246,6 @@ def is_orphan_ready_for_sale_review_draft(
         and app_store_version is not None
         and version_state(app_store_version) == "READY_FOR_SALE"
     )
-
-
-def cancellable_orphan_review_submission(
-    submissions: dict[str, Any],
-) -> dict[str, Any] | None:
-    included = included_by_id(submissions)
-    submitted_version_ids: set[str] = set()
-    for submission in submissions.get("data", []):
-        if submission.get("attributes", {}).get("state") in SUBMITTED_REVIEW_SUBMISSION_STATES:
-            submitted_version_ids.update(review_submission_version_ids(submission, included))
-
-    for submission in submissions.get("data", []):
-        attributes = submission.get("attributes", {})
-        if (
-            attributes.get("state") != "READY_FOR_REVIEW"
-            or attributes.get("submittedDate") is not None
-            or review_submission_item_ids(submission)
-        ):
-            continue
-        submission_version_id = relationship_id(submission, "appStoreVersionForReview")
-        if submission_version_id is None:
-            continue
-        submission_version = included.get(submission_version_id)
-        if (
-            submission_version_id in submitted_version_ids
-            or is_orphan_ready_for_sale_review_draft(submission, submission_version)
-        ):
-            return submission
-    return None
 
 
 def print_active_review_submissions(submissions: dict[str, Any]) -> None:
@@ -1379,22 +1345,12 @@ def ensure_review_submission(
         except AppStoreConnectError as error:
             if not is_review_submission_limit_exceeded(error):
                 raise
-            orphan_submission = cancellable_orphan_review_submission(submissions)
-            if orphan_submission is None:
-                print_active_review_submissions(submissions)
-                raise AppStoreConnectError(
-                    "review submission limit exceeded and no safe orphan draft was found; "
-                    "inspect the active submissions before retrying",
-                    status=error.status,
-                    payload=error.payload,
-                ) from error
-            cancel_review_submission(
-                client,
-                orphan_submission["id"],
-                "orphan draft",
-            )
-            submission = create_review_submission(client, app_id, app_store_version_relationship)
-            print(f"Created review submission after canceling an orphan draft: {submission['id']}")
+            print_active_review_submissions(submissions)
+            raise AppStoreConnectError(
+                "review submission limit exceeded; inspect the active submissions before retrying",
+                status=error.status,
+                payload=error.payload,
+            ) from error
     for review_version_id in review_version_ids:
         try:
             item = client.request(
