@@ -315,33 +315,73 @@ private struct WatchLimitRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(limit.title)
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
-                Text(limit.subtitle)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Spacer(minLength: 4)
-                Text(limit.usedTextLabeled)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(statusColor)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                    .layoutPriority(1)
-                    .accessibilityHidden(true)
-            }
+            header
 
             pressureTrack
 
             footer
-            .font(.caption2)
-            .foregroundStyle(.tertiary)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
         }
         .padding(.vertical, 1)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(limit.accessibilitySentence(direction: .used))
+    }
+
+    private var header: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Text(limit.title)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                Text(limit.subtitle)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                Spacer(minLength: 4)
+                usedText
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(limit.title)
+                    .font(.caption.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        subtitle
+                        Spacer(minLength: 4)
+                        usedText
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        subtitle
+                        usedText
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+    }
+
+    private var subtitle: some View {
+        Text(limit.subtitle)
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var usedText: some View {
+        Text(limit.usedTextLabeled)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(statusColor)
+            .accessibilityHidden(true)
     }
 
     @ViewBuilder
