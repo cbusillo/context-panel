@@ -1819,6 +1819,134 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         patch_body = next(request[3] for request in client.requests if request[0] == "PATCH")
         assert_review_submission_submit_body(self, patch_body)
 
+    def test_ensure_review_submission_reuses_cross_platform_ready_for_sale_orphan(self):
+        class CrossPlatformOrphanReviewSubmissionClient:
+            def __init__(self):
+                self.requests: list[tuple[Any, ...]] = []
+
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                self.requests.append((method, path, params, body, allowed))
+                if method == "GET" and path == "/reviewSubmissions":
+                    if params and "filter[platform]" in params:
+                        return {"data": []}
+                    return {
+                        "data": [
+                            {
+                                "id": "cross-platform-orphan-submission",
+                                "attributes": {
+                                    "state": "READY_FOR_REVIEW",
+                                    "platform": None,
+                                    "submittedDate": None,
+                                },
+                                "relationships": {
+                                    "appStoreVersionForReview": {
+                                        "data": {"type": "appStoreVersions", "id": "released-ios-version"}
+                                    },
+                                    "items": {"data": []},
+                                },
+                            }
+                        ],
+                        "included": [
+                            {
+                                "id": "released-ios-version",
+                                "type": "appStoreVersions",
+                                "attributes": {
+                                    "platform": "IOS",
+                                    "versionString": "1.0.48",
+                                    "appStoreState": "READY_FOR_SALE",
+                                },
+                            }
+                        ],
+                    }
+                if method == "POST" and path == "/reviewSubmissionItems":
+                    return {"data": {"id": "vision-item"}}
+                if method == "PATCH" and path == "/reviewSubmissions/cross-platform-orphan-submission":
+                    return {
+                        "data": {
+                            "id": "cross-platform-orphan-submission",
+                            "attributes": {"state": "WAITING_FOR_REVIEW"},
+                        }
+                    }
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        client = CrossPlatformOrphanReviewSubmissionClient()
+        args = SimpleNamespace(dry_run=False, platform="VISION_OS")
+
+        submission = submit_app_store_review.ensure_review_submission(
+            client,
+            "app-id",
+            "vision-version",
+            args,
+        )
+
+        self.assertEqual(submission["id"], "cross-platform-orphan-submission")
+        get_params = next(request[2] for request in client.requests if request[0] == "GET")
+        self.assertNotIn("filter[platform]", get_params)
+        post_paths = [request[1] for request in client.requests if request[0] == "POST"]
+        self.assertEqual(post_paths, ["/reviewSubmissionItems"])
+
+    def test_ensure_review_submission_reports_active_reviews_at_limit(self):
+        class LegitimateReviewSubmissionLimitClient:
+            def __init__(self):
+                self.requests: list[tuple[Any, ...]] = []
+
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                self.requests.append((method, path, params, body, allowed))
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {
+                        "data": [
+                            {
+                                "id": "submitted-mac-review",
+                                "attributes": {
+                                    "state": "WAITING_FOR_REVIEW",
+                                    "platform": "MAC_OS",
+                                    "submittedDate": "2026-07-24T18:00:00Z",
+                                },
+                                "relationships": {
+                                    "appStoreVersionForReview": {
+                                        "data": {"type": "appStoreVersions", "id": "mac-version"}
+                                    },
+                                    "items": {"data": []},
+                                },
+                            }
+                        ],
+                        "included": [],
+                    }
+                if method == "POST" and path == "/reviewSubmissions":
+                    raise submit_app_store_review.AppStoreConnectError(
+                        "review submission limit exceeded",
+                        status=409,
+                        payload={
+                            "errors": [
+                                {
+                                    "code": "STATE_ERROR.CONCURRENT_REVIEW_SUBMISSION_LIMIT_EXCEEDED"
+                                }
+                            ]
+                        },
+                    )
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        client = LegitimateReviewSubmissionLimitClient()
+        args = SimpleNamespace(dry_run=False, platform="VISION_OS")
+
+        with self.assertRaisesRegex(
+            submit_app_store_review.AppStoreConnectError,
+            "inspect the active submissions",
+        ):
+            submit_app_store_review.ensure_review_submission(
+                client,
+                "app-id",
+                "vision-version",
+                args,
+            )
+
+        canceled_requests = [
+            request
+            for request in client.requests
+            if request[0] == "PATCH"
+        ]
+        self.assertEqual(canceled_requests, [])
+
     def test_ensure_review_submission_ignores_ready_submission_for_other_version(self):
         class StaleReadyReviewSubmissionClient:
             def __init__(self):

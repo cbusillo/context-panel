@@ -217,6 +217,21 @@ def review_submission_item_ids(submission: dict[str, Any]) -> list[str]:
     ]
 
 
+def review_submission_version_ids(
+    submission: dict[str, Any],
+    included: dict[str, dict[str, Any]],
+) -> set[str]:
+    version_ids: set[str] = set()
+    submission_version_id = relationship_id(submission, "appStoreVersionForReview")
+    if submission_version_id is not None:
+        version_ids.add(submission_version_id)
+    for item_id in review_submission_item_ids(submission):
+        item_version_id = relationship_id(included.get(item_id, {}), "appStoreVersion")
+        if item_version_id is not None:
+            version_ids.add(item_version_id)
+    return version_ids
+
+
 def is_orphan_ready_for_sale_review_draft(
     submission: dict[str, Any],
     app_store_version: dict[str, Any] | None,
@@ -231,6 +246,36 @@ def is_orphan_ready_for_sale_review_draft(
         and app_store_version is not None
         and version_state(app_store_version) == "READY_FOR_SALE"
     )
+
+
+def print_active_review_submissions(submissions: dict[str, Any]) -> None:
+    included = included_by_id(submissions)
+    print("Active App Store review submissions:")
+    for submission in submissions.get("data", []):
+        attributes = submission.get("attributes", {})
+        state = attributes.get("state")
+        if state not in ACTIVE_REVIEW_SUBMISSION_STATES:
+            continue
+        version_labels: list[str] = []
+        for version_id in sorted(review_submission_version_ids(submission, included)):
+            version = included.get(version_id, {})
+            version_attributes = version.get("attributes", {})
+            version_labels.append(
+                " ".join(
+                    part
+                    for part in (
+                        version_attributes.get("platform"),
+                        version_attributes.get("versionString") or version_id,
+                        version_state(version),
+                    )
+                    if part
+                )
+            )
+        print(
+            f"- {submission.get('id', '<unknown>')} state={state or '<unknown>'} "
+            f"versions={','.join(version_labels) or '<none>'} "
+            f"items={len(review_submission_item_ids(submission))}"
+        )
 
 
 def expanded_key_path(args: argparse.Namespace) -> tuple[Path, Path | None]:
@@ -638,6 +683,13 @@ def is_review_version_create_relationship_not_allowed(error: AppStoreConnectErro
         and "not_allowed" in text
         and "create" in text
     )
+
+
+def is_review_submission_limit_exceeded(error: AppStoreConnectError) -> bool:
+    if error.status not in (409, 422):
+        return False
+    text = json.dumps(error.payload or {}, sort_keys=True).lower()
+    return "concurrent_review_submission_limit_exceeded" in text
 
 
 def create_app_store_version(client: ASCClient, app_id: str, args: argparse.Namespace) -> dict[str, Any]:
@@ -1252,10 +1304,10 @@ def ensure_review_submission(
         "/reviewSubmissions",
         {
             "filter[app]": app_id,
-            "filter[platform]": namespace_platform(args),
             "include": "items,appStoreVersionForReview",
             "fields[reviewSubmissions]": "platform,state,submittedDate,items,appStoreVersionForReview",
             "fields[reviewSubmissionItems]": "state,appStoreVersion",
+            "fields[appStoreVersions]": "versionString,appStoreState,appVersionState,platform",
         },
         limit=20,
     )
@@ -1269,8 +1321,13 @@ def ensure_review_submission(
         submission_version_id = relationship_id(submission, "appStoreVersionForReview")
         item_ids = [item["id"] for item in submission.get("relationships", {}).get("items", {}).get("data", [])]
         item_version_ids = {relationship_id(included.get(item_id, {}), "appStoreVersion") for item_id in item_ids}
-        if state == "READY_FOR_REVIEW" and submission_version_id is None and not item_ids:
-            reusable_empty_submission = reusable_empty_submission or submission
+        if state == "READY_FOR_REVIEW" and not item_ids:
+            submission_version = included.get(submission_version_id or "")
+            if submission_version_id is None or is_orphan_ready_for_sale_review_draft(
+                submission,
+                submission_version,
+            ):
+                reusable_empty_submission = reusable_empty_submission or submission
         if submission_version_id == version_id:
             existing = submission
             break
@@ -1287,8 +1344,18 @@ def ensure_review_submission(
         print(f"Using existing review submission: {existing['id']} ({state})")
         submission = existing
     else:
-        submission = create_review_submission(client, app_id, app_store_version_relationship)
-        print(f"Created review submission: {submission['id']}")
+        try:
+            submission = create_review_submission(client, app_id, app_store_version_relationship)
+            print(f"Created review submission: {submission['id']}")
+        except AppStoreConnectError as error:
+            if not is_review_submission_limit_exceeded(error):
+                raise
+            print_active_review_submissions(submissions)
+            raise AppStoreConnectError(
+                "review submission limit exceeded; inspect the active submissions before retrying",
+                status=error.status,
+                payload=error.payload,
+            ) from error
     for review_version_id in review_version_ids:
         try:
             item = client.request(
