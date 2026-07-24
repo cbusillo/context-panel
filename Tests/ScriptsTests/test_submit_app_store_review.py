@@ -1868,6 +1868,183 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         post_paths = [request[1] for request in client.requests if request[0] == "POST"]
         self.assertEqual(post_paths, ["/reviewSubmissionItems"])
 
+    def test_ensure_review_submission_cancels_duplicate_orphan_when_limit_is_reached(self):
+        class ReviewSubmissionLimitClient:
+            def __init__(self):
+                self.requests: list[tuple[Any, ...]] = []
+                self.create_attempts = 0
+
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                self.requests.append((method, path, params, body, allowed))
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {
+                        "data": [
+                            {
+                                "id": "duplicate-ios-draft",
+                                "attributes": {
+                                    "state": "READY_FOR_REVIEW",
+                                    "platform": None,
+                                    "submittedDate": None,
+                                },
+                                "relationships": {
+                                    "appStoreVersionForReview": {
+                                        "data": {"type": "appStoreVersions", "id": "ios-version"}
+                                    },
+                                    "items": {"data": []},
+                                },
+                            },
+                            {
+                                "id": "submitted-ios-review",
+                                "attributes": {
+                                    "state": "WAITING_FOR_REVIEW",
+                                    "platform": "IOS",
+                                    "submittedDate": "2026-07-24T18:00:00Z",
+                                },
+                                "relationships": {
+                                    "appStoreVersionForReview": {
+                                        "data": {"type": "appStoreVersions", "id": "ios-version"}
+                                    },
+                                    "items": {
+                                        "data": [{"type": "reviewSubmissionItems", "id": "ios-item"}]
+                                    },
+                                },
+                            },
+                        ],
+                        "included": [
+                            {
+                                "id": "ios-item",
+                                "type": "reviewSubmissionItems",
+                                "relationships": {
+                                    "appStoreVersion": {
+                                        "data": {"type": "appStoreVersions", "id": "ios-version"}
+                                    }
+                                },
+                            },
+                            {
+                                "id": "ios-version",
+                                "type": "appStoreVersions",
+                                "attributes": {
+                                    "platform": "IOS",
+                                    "versionString": "1.0.49",
+                                    "appStoreState": "WAITING_FOR_REVIEW",
+                                },
+                            },
+                        ],
+                    }
+                if method == "POST" and path == "/reviewSubmissions":
+                    self.create_attempts += 1
+                    if self.create_attempts == 1:
+                        raise submit_app_store_review.AppStoreConnectError(
+                            "review submission limit exceeded",
+                            status=409,
+                            payload={
+                                "errors": [
+                                    {
+                                        "code": "STATE_ERROR.CONCURRENT_REVIEW_SUBMISSION_LIMIT_EXCEEDED"
+                                    }
+                                ]
+                            },
+                        )
+                    return {
+                        "data": {
+                            "id": "vision-submission",
+                            "attributes": {"state": "READY_FOR_REVIEW"},
+                        }
+                    }
+                if method == "PATCH" and path == "/reviewSubmissions/duplicate-ios-draft":
+                    return {"data": {"id": "duplicate-ios-draft"}}
+                if method == "POST" and path == "/reviewSubmissionItems":
+                    return {"data": {"id": "vision-item"}}
+                if method == "PATCH" and path == "/reviewSubmissions/vision-submission":
+                    return {
+                        "data": {
+                            "id": "vision-submission",
+                            "attributes": {"state": "WAITING_FOR_REVIEW"},
+                        }
+                    }
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        client = ReviewSubmissionLimitClient()
+        args = SimpleNamespace(dry_run=False, platform="VISION_OS")
+
+        submission = submit_app_store_review.ensure_review_submission(
+            client,
+            "app-id",
+            "vision-version",
+            args,
+        )
+
+        self.assertEqual(submission["id"], "vision-submission")
+        self.assertEqual(client.create_attempts, 2)
+        canceled = next(
+            request
+            for request in client.requests
+            if request[0] == "PATCH" and request[1] == "/reviewSubmissions/duplicate-ios-draft"
+        )
+        self.assertEqual(canceled[3]["data"]["attributes"], {"canceled": True})
+
+    def test_ensure_review_submission_does_not_cancel_legitimate_reviews_at_limit(self):
+        class LegitimateReviewSubmissionLimitClient:
+            def __init__(self):
+                self.requests: list[tuple[Any, ...]] = []
+
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                self.requests.append((method, path, params, body, allowed))
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {
+                        "data": [
+                            {
+                                "id": "submitted-mac-review",
+                                "attributes": {
+                                    "state": "WAITING_FOR_REVIEW",
+                                    "platform": "MAC_OS",
+                                    "submittedDate": "2026-07-24T18:00:00Z",
+                                },
+                                "relationships": {
+                                    "appStoreVersionForReview": {
+                                        "data": {"type": "appStoreVersions", "id": "mac-version"}
+                                    },
+                                    "items": {"data": []},
+                                },
+                            }
+                        ],
+                        "included": [],
+                    }
+                if method == "POST" and path == "/reviewSubmissions":
+                    raise submit_app_store_review.AppStoreConnectError(
+                        "review submission limit exceeded",
+                        status=409,
+                        payload={
+                            "errors": [
+                                {
+                                    "code": "STATE_ERROR.CONCURRENT_REVIEW_SUBMISSION_LIMIT_EXCEEDED"
+                                }
+                            ]
+                        },
+                    )
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        client = LegitimateReviewSubmissionLimitClient()
+        args = SimpleNamespace(dry_run=False, platform="VISION_OS")
+
+        with self.assertRaisesRegex(
+            submit_app_store_review.AppStoreConnectError,
+            "no safe orphan draft was found",
+        ):
+            submit_app_store_review.ensure_review_submission(
+                client,
+                "app-id",
+                "vision-version",
+                args,
+            )
+
+        canceled_requests = [
+            request
+            for request in client.requests
+            if request[0] == "PATCH"
+        ]
+        self.assertEqual(canceled_requests, [])
+
     def test_ensure_review_submission_ignores_ready_submission_for_other_version(self):
         class StaleReadyReviewSubmissionClient:
             def __init__(self):
