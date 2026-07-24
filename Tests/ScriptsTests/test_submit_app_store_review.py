@@ -1819,8 +1819,8 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         patch_body = next(request[3] for request in client.requests if request[0] == "PATCH")
         assert_review_submission_submit_body(self, patch_body)
 
-    def test_ensure_review_submission_reuses_cross_platform_empty_ready_submission(self):
-        class CrossPlatformEmptyReviewSubmissionClient:
+    def test_ensure_review_submission_reuses_cross_platform_ready_for_sale_orphan(self):
+        class CrossPlatformOrphanReviewSubmissionClient:
             def __init__(self):
                 self.requests: list[tuple[Any, ...]] = []
 
@@ -1832,27 +1832,44 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
                     return {
                         "data": [
                             {
-                                "id": "cross-platform-empty-submission",
+                                "id": "cross-platform-orphan-submission",
                                 "attributes": {
                                     "state": "READY_FOR_REVIEW",
                                     "platform": None,
+                                    "submittedDate": None,
                                 },
-                                "relationships": {"items": {"data": []}},
+                                "relationships": {
+                                    "appStoreVersionForReview": {
+                                        "data": {"type": "appStoreVersions", "id": "released-ios-version"}
+                                    },
+                                    "items": {"data": []},
+                                },
                             }
-                        ]
+                        ],
+                        "included": [
+                            {
+                                "id": "released-ios-version",
+                                "type": "appStoreVersions",
+                                "attributes": {
+                                    "platform": "IOS",
+                                    "versionString": "1.0.48",
+                                    "appStoreState": "READY_FOR_SALE",
+                                },
+                            }
+                        ],
                     }
                 if method == "POST" and path == "/reviewSubmissionItems":
                     return {"data": {"id": "vision-item"}}
-                if method == "PATCH" and path == "/reviewSubmissions/cross-platform-empty-submission":
+                if method == "PATCH" and path == "/reviewSubmissions/cross-platform-orphan-submission":
                     return {
                         "data": {
-                            "id": "cross-platform-empty-submission",
+                            "id": "cross-platform-orphan-submission",
                             "attributes": {"state": "WAITING_FOR_REVIEW"},
                         }
                     }
                 raise AssertionError(f"unexpected request: {method} {path}")
 
-        client = CrossPlatformEmptyReviewSubmissionClient()
+        client = CrossPlatformOrphanReviewSubmissionClient()
         args = SimpleNamespace(dry_run=False, platform="VISION_OS")
 
         submission = submit_app_store_review.ensure_review_submission(
@@ -1862,7 +1879,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             args,
         )
 
-        self.assertEqual(submission["id"], "cross-platform-empty-submission")
+        self.assertEqual(submission["id"], "cross-platform-orphan-submission")
         get_params = next(request[2] for request in client.requests if request[0] == "GET")
         self.assertNotIn("filter[platform]", get_params)
         post_paths = [request[1] for request in client.requests if request[0] == "POST"]

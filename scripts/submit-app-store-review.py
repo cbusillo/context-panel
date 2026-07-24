@@ -1321,8 +1321,13 @@ def ensure_review_submission(
         submission_version_id = relationship_id(submission, "appStoreVersionForReview")
         item_ids = [item["id"] for item in submission.get("relationships", {}).get("items", {}).get("data", [])]
         item_version_ids = {relationship_id(included.get(item_id, {}), "appStoreVersion") for item_id in item_ids}
-        if state == "READY_FOR_REVIEW" and submission_version_id is None and not item_ids:
-            reusable_empty_submission = reusable_empty_submission or submission
+        if state == "READY_FOR_REVIEW" and not item_ids:
+            submission_version = included.get(submission_version_id or "")
+            if submission_version_id is None or is_orphan_ready_for_sale_review_draft(
+                submission,
+                submission_version,
+            ):
+                reusable_empty_submission = reusable_empty_submission or submission
         if submission_version_id == version_id:
             existing = submission
             break
