@@ -1252,7 +1252,6 @@ def ensure_review_submission(
         "/reviewSubmissions",
         {
             "filter[app]": app_id,
-            "filter[platform]": namespace_platform(args),
             "include": "items,appStoreVersionForReview",
             "fields[reviewSubmissions]": "platform,state,submittedDate,items,appStoreVersionForReview",
             "fields[reviewSubmissionItems]": "state,appStoreVersion",
