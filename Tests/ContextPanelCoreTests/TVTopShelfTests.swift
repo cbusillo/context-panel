@@ -85,6 +85,41 @@ import Testing
     #expect(openAI.detail == "5-hour")
 }
 
+@Test func tvTopShelfCardCountsOneAccountOnceAcrossGoogleWeeklyBuckets() throws {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: now,
+        limits: makeGoogleAntigravityWeeklyLimits(
+            accountID: "google-account",
+            accountName: "Antigravity",
+            thirdPartyUsed: 1,
+            geminiUsed: 2,
+            now: now
+        ),
+        status: .healthy,
+        message: "Synced"
+    )
+    var preferences = WidgetDisplayPreferences.defaultPreferences
+    let weeklyIndex = try #require(preferences.mainLimits.firstIndex {
+        $0.provider == .google && $0.window == .weekly
+    })
+    preferences.moveMainLimits(fromOffsets: IndexSet(integer: weeklyIndex), toOffset: 0)
+
+    let document = TVTopShelfDocument(
+        snapshot: snapshot,
+        preferences: preferences,
+        mode: .fullDetail,
+        now: now
+    )
+    let google = try #require(document.cards.first { $0.provider == .google })
+
+    #expect(google.headline == "99% left")
+    #expect(google.remainingPercent == 99)
+    #expect(google.detail.contains("99 of 100 points remaining"))
+    #expect(!google.detail.contains("of 200 points"))
+}
+
 @Test func tvTopShelfDocumentKeepsActionableStatusWhenSavedPrimaryHasNoCapacity() throws {
     let now = Date(timeIntervalSince1970: 1_750_000_000)
     let document = TVTopShelfDocument(

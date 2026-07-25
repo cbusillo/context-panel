@@ -62,6 +62,32 @@ import Testing
     #expect(metric.remainingPercentAccessibilityText == "approximately 100 percent left")
 }
 
+@Test func tvRunwayPresentationCountsOneAccountOnceAcrossGoogleWeeklyBuckets() throws {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: now,
+        limits: makeGoogleAntigravityWeeklyLimits(
+            accountID: "google-account",
+            accountName: "Antigravity",
+            thirdPartyUsed: 1,
+            geminiUsed: 2,
+            now: now
+        ),
+        status: .healthy,
+        message: "Synced"
+    )
+
+    let presentation = TVRunwayPresentation(snapshot: snapshot, mode: .fullDetail, now: now)
+    let google = try #require(presentation.sections.first { $0.provider == .google })
+    let weekly = try #require(google.lanes.first { $0.title == "Weekly" })
+
+    #expect(weekly.remainingPercent == 99)
+    #expect(weekly.exactCapacityText == "99 of 100 points remaining")
+    #expect(weekly.accountCountText == "1 account")
+    #expect(weekly.metrics.count == 2)
+}
+
 @Test func tvRunwayPresentationPreservesDuplicateAccountLabelsAndSavedOrder() throws {
     let now = Date(timeIntervalSince1970: 1_750_000_000)
     let snapshot = WidgetSnapshot(

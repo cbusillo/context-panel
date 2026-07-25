@@ -1793,6 +1793,28 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(summary.widgetPressureAccessibilityValue.contains("Data stale"))
 }
 
+@Test func widgetPresentationUsesNormalizedGoogleLastKnownCapacity() throws {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let summary = MainLimitSummary(
+        provider: .google,
+        window: .weekly,
+        limits: makeGoogleAntigravityWeeklyLimits(
+            accountID: "google-account",
+            accountName: "Antigravity",
+            thirdPartyUsed: 1,
+            geminiUsed: 2,
+            now: now,
+            statusOverride: .stale
+        ),
+        generatedAt: now
+    )
+
+    #expect(summary.usageRatio == nil)
+    #expect(summary.widgetUsageRatio == 0.01)
+    #expect(summary.widgetRemainingHeadline == "99% left")
+    #expect(summary.widgetUsageText == "1% used")
+}
+
 @Test func widgetPresentationHonorsLongerWindowCapacityGates() throws {
     let now = Date()
     let snapshot = WidgetSnapshot(

@@ -134,17 +134,11 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
     }
 
     public var used: Int? {
-        guard unit != nil else { return nil }
-        let numericLimits = liveNumericLimits
-        guard !numericLimits.isEmpty else { return nil }
-        return numericLimits.reduce(0) { total, limit in total + (limit.used ?? 0) }
+        pooledTotals?.used
     }
 
     public var limit: Int? {
-        guard unit != nil else { return nil }
-        let numericLimits = liveNumericLimits
-        guard !numericLimits.isEmpty else { return nil }
-        return numericLimits.reduce(0) { total, limit in total + (limit.limit ?? 0) }
+        pooledTotals?.limit
     }
 
     public var accountCount: Int {
@@ -209,7 +203,7 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
         else {
             return nil
         }
-        let contributingAccountCount = Set(liveNumericLimits.map(\.accountID)).count
+        guard let contributingAccountCount = pooledTotals?.contributingAccountCount else { return nil }
         return PooledPercentCapacity(
             usedPoints: usedPoints,
             poolPoints: poolPoints,
@@ -290,8 +284,7 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
         else {
             return nil
         }
-        let used = numericLimits.reduce(0) { $0 + ($1.used ?? 0) }
-        let limit = numericLimits.reduce(0) { $0 + ($1.limit ?? 0) }
+        guard let totals = pooledTotals(for: numericLimits, unit: unit) else { return nil }
         let resetsAt = CapacityPool(limits: numericLimits).nextReset(after: generatedAt)
             ?? numericLimits.compactMap(\.resetsAt).min()
         let lastUpdatedAt = numericLimits.compactMap(\.lastUpdatedAt).max()
@@ -307,8 +300,8 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
             label: "\(provider.displayName) \(window.displayName)",
             windowLabel: window.displayName,
             unit: unit,
-            used: used,
-            limit: limit,
+            used: totals.used,
+            limit: totals.limit,
             resetsAt: resetsAt,
             lastUpdatedAt: lastUpdatedAt,
             confidence: confidence,
@@ -397,6 +390,44 @@ public struct MainLimitSummary: Codable, Equatable, Identifiable, Sendable {
 
     private var liveNumericLimits: [UsageLimit] {
         liveLimits.filter { $0.used != nil && $0.limit != nil }
+    }
+
+    private var pooledTotals: (used: Int, limit: Int, contributingAccountCount: Int)? {
+        pooledTotals(for: liveNumericLimits, unit: unit)
+    }
+
+    private func pooledTotals(
+        for numericLimits: [UsageLimit],
+        unit: UsageUnit?
+    ) -> (used: Int, limit: Int, contributingAccountCount: Int)? {
+        guard let unit, !numericLimits.isEmpty else { return nil }
+        guard provider == .google, unit == .percent else {
+            return (
+                used: numericLimits.reduce(0) { $0 + ($1.used ?? 0) },
+                limit: numericLimits.reduce(0) { $0 + ($1.limit ?? 0) },
+                contributingAccountCount: Set(numericLimits.map(\.accountID)).count
+            )
+        }
+
+        let limitsByAccount = Dictionary(grouping: numericLimits, by: \.accountID)
+        let remainingRatios: [Double] = limitsByAccount.sorted { $0.key < $1.key }.compactMap {
+            _, accountLimits -> Double? in
+            let accountLimit = accountLimits.reduce(0) { $0 + ($1.limit ?? 0) }
+            guard accountLimit > 0 else { return nil }
+            let accountRemaining = accountLimits.reduce(0) { $0 + ($1.remaining ?? 0) }
+            return min(max(Double(accountRemaining) / Double(accountLimit), 0), 1)
+        }
+        guard !remainingRatios.isEmpty else { return nil }
+        let poolPoints = remainingRatios.count * 100
+        let remainingPoints = remainingRatios.reduce(0, +) * 100
+        let roundedRemainingPoints = remainingPoints > 0
+            ? min(max(Int(remainingPoints.rounded()), 1), poolPoints)
+            : 0
+        return (
+            used: poolPoints - roundedRemainingPoints,
+            limit: poolPoints,
+            contributingAccountCount: remainingRatios.count
+        )
     }
 
     private func hasExhaustedLongerWindow(for limit: UsageLimit) -> Bool {
