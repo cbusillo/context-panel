@@ -2208,7 +2208,14 @@ struct AccountsSidebar: View {
                         ProviderSidebarRow(provider: provider, limitCount: summaries.count)
                             .tag(AppNavigationSelection.provider(provider))
                         ForEach(summaries.sortedForSidebar) { summary in
-                            SidebarRateLimitRow(summary: summary)
+                            SidebarRateLimitRow(
+                                summary: summary,
+                                status: providerStatusIncludingAccessAlerts(
+                                    provider: provider,
+                                    baseStatuses: [summary.status],
+                                    alerts: model.providerAccessAlerts
+                                )
+                            )
                                 .tag(AppNavigationSelection.mainLimit(summary.id))
                         }
                     }
@@ -2255,10 +2262,11 @@ struct ProviderSidebarRow: View {
 
 struct SidebarRateLimitRow: View {
     let summary: MainLimitSummary
+    let status: UsageStatus
 
     var body: some View {
         HStack(spacing: 10) {
-            StatusMark(status: summary.status, size: 7)
+            StatusMark(status: status, size: 7)
             VStack(alignment: .leading, spacing: 2) {
                 Text(summary.previewWindowLine)
                     .font(.system(size: 13, weight: .medium))
@@ -2277,7 +2285,7 @@ struct SidebarRateLimitRow: View {
         .padding(.vertical, 3)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(summary.quantitativeAccessibilityLabel)
-        .accessibilityValue(summary.usedPressureAccessibilityValue)
+        .accessibilityValue(summary.usedPressureAccessibilityValue(status: status))
     }
 }
 
@@ -2366,7 +2374,14 @@ struct OverviewDashboard: View {
                 } else {
                     VStack(spacing: 10) {
                         ForEach(savedSummaries) { summary in
-                            MainLimitRow(summary: summary)
+                            MainLimitRow(
+                                summary: summary,
+                                status: providerStatusIncludingAccessAlerts(
+                                    provider: summary.provider,
+                                    baseStatuses: [summary.status],
+                                    alerts: model.providerAccessAlerts
+                                )
+                            )
                         }
                     }
                 }
@@ -2786,7 +2801,14 @@ struct ProviderDashboard: View {
                 SectionHeader(title: "Main Limits", trailing: "\(summaries.count) windows")
                 VStack(spacing: 10) {
                     ForEach(summaries) { summary in
-                        MainLimitRow(summary: summary)
+                        MainLimitRow(
+                            summary: summary,
+                            status: providerStatusIncludingAccessAlerts(
+                                provider: provider,
+                                baseStatuses: [summary.status],
+                                alerts: model.providerAccessAlerts
+                            )
+                        )
                     }
                 }
                 if provider == .openAI {
@@ -2997,6 +3019,18 @@ private struct OpenAIAccountLimitSummary: Identifiable {
     }
 }
 
+func providerStatusIncludingAccessAlerts(
+    provider: Provider,
+    baseStatuses: [UsageStatus],
+    alerts: [ProviderAccessAlert]
+) -> UsageStatus {
+    let accessStatuses = alerts
+        .filter { $0.provider == provider }
+        .map(\.status)
+    let statuses = baseStatuses + accessStatuses
+    return statuses.isEmpty ? .unknown : statuses.contextPanelWorstStatus
+}
+
 struct HeaderCard: View {
     @ObservedObject var model: ContextPanelAppModel
     let snapshot: UsageSnapshot
@@ -3017,14 +3051,24 @@ struct HeaderCard: View {
         answerSelection.closest?.summary
     }
 
+    private var closestStatus: UsageStatus {
+        guard let closestSummary else { return .unknown }
+        return displayStatus(source: providerStatusIncludingAccessAlerts(
+            provider: closestSummary.provider,
+            baseStatuses: [closestSummary.status],
+            alerts: model.providerAccessAlerts
+        ))
+    }
+
     private var primaryStatus: UsageStatus {
-        var statuses = model.providerAccessAlerts
-            .filter { $0.provider == primaryLane?.provider }
-            .map(\.status)
-        if let primarySummary {
-            statuses.append(primarySummary.status)
+        guard let provider = primaryLane?.provider else {
+            return displayStatus(source: .unknown)
         }
-        return displayStatus(source: statuses.isEmpty ? .unknown : statuses.contextPanelWorstStatus)
+        return displayStatus(source: providerStatusIncludingAccessAlerts(
+            provider: provider,
+            baseStatuses: primarySummary.map { [$0.status] } ?? [],
+            alerts: model.providerAccessAlerts
+        ))
     }
 
     var body: some View {
@@ -3077,7 +3121,7 @@ struct HeaderCard: View {
                         .frame(width: 168)
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 5) {
-                            StatusMark(status: displayStatus(source: closestSummary.status), size: 7)
+                            StatusMark(status: closestStatus, size: 7)
                             Text("Closest to limit")
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(CPTheme.primaryText)
@@ -3090,7 +3134,11 @@ struct HeaderCard: View {
                         .lineLimit(2)
                     }
                     .frame(width: 180, alignment: .leading)
-                    .accessibilityElement(children: .combine)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Closest to limit")
+                    .accessibilityValue(
+                        "\(closestSummary.provider.displayName), \(closestSummary.previewWindowName), \(closestSummary.previewRemainingHeadline), \(closestStatus.accessibilityStatusText)"
+                    )
                 }
             }
         }
@@ -3127,11 +3175,11 @@ struct ProviderHeaderCard: View {
     }
 
     private var providerStatus: UsageStatus {
-        let accessStatuses = model.providerAccessAlerts
-            .filter { $0.provider == provider }
-            .map(\.status)
-        let statuses = summaries.map(\.status) + accessStatuses
-        return statuses.isEmpty ? .unknown : statuses.contextPanelWorstStatus
+        providerStatusIncludingAccessAlerts(
+            provider: provider,
+            baseStatuses: summaries.map(\.status),
+            alerts: model.providerAccessAlerts
+        )
     }
 
     var body: some View {
@@ -3582,6 +3630,18 @@ struct MainLimitDetail: View {
     let summary: MainLimitSummary
     let generatedAt: Date
 
+    private var providerAccessAlerts: [ProviderAccessAlert] {
+        model.providerAccessAlerts.filter { $0.provider == summary.provider }
+    }
+
+    private var presentationStatus: UsageStatus {
+        providerStatusIncludingAccessAlerts(
+            provider: summary.provider,
+            baseStatuses: [summary.status],
+            alerts: providerAccessAlerts
+        )
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -3595,18 +3655,20 @@ struct MainLimitDetail: View {
                             .foregroundStyle(CPTheme.secondaryText)
                     }
                     Spacer()
-                    StatusMark(status: summary.status, size: 10)
+                    StatusMark(status: presentationStatus, size: 10)
                         .accessibilityHidden(true)
                 }
+
+                ProviderAccessAlertsSection(alerts: providerAccessAlerts)
 
                 HStack(alignment: .top, spacing: 18) {
                     MetricDial(
                         metric: .remainingCapacity(remainingRatio: summary.remainingCapacityRatio),
-                        status: summary.status,
+                        status: presentationStatus,
                         accessibilityName: "\(summary.provider.displayName) \(summary.previewWindowName) remaining capacity",
                         sublabel: "remaining",
                         displayText: summary.detailRemainingValue,
-                        accessibilityValue: summary.detailRemainingAccessibilityValue,
+                        accessibilityValue: summary.detailRemainingAccessibilityValue(status: presentationStatus),
                         size: 140
                     )
                     .frame(width: 180)
@@ -3639,12 +3701,15 @@ struct MainLimitDetail: View {
                     DetailRow(label: "Remaining", value: summary.detailRemainingText)
                     DetailRow(label: "Used", value: summary.detailUsedValue)
                     DetailRow(label: summary.detailPoolLabel, value: summary.detailLimitValue)
-                    DetailRow(label: "Status", value: summary.status.accessibilityStatusText)
+                    DetailRow(label: "Status", value: presentationStatus.accessibilityStatusText)
                     DetailRow(label: "Updated", value: summary.lastUpdatedAt.map(model.relativeTime) ?? "unknown")
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(summary.pooledCapacityAccessibilityLabel)
-                .accessibilityValue(summary.pooledCapacityAccessibilityValue(updatedText: summary.lastUpdatedAt.map(model.relativeTime) ?? "unknown"))
+                .accessibilityValue(summary.pooledCapacityAccessibilityValue(
+                    updatedText: summary.lastUpdatedAt.map(model.relativeTime) ?? "unknown",
+                    status: presentationStatus
+                ))
             }
             .padding(22)
         }
@@ -3814,6 +3879,11 @@ struct ProviderMiniStatus: View {
 struct MainLimitRow: View {
     let summary: MainLimitSummary
     var compact = false
+    var status: UsageStatus? = nil
+
+    private var presentationStatus: UsageStatus {
+        status ?? summary.status
+    }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -3830,10 +3900,10 @@ struct MainLimitRow: View {
                         .foregroundStyle(CPTheme.secondaryText)
                 }
                 HStack(spacing: 8) {
-                    UsagePressureBar(usedRatio: summary.usageRatio, status: summary.status)
+                    UsagePressureBar(usedRatio: summary.usageRatio, status: presentationStatus)
                     Text(compact ? summary.resetText : summary.previewResetConfidenceText)
                         .font(.system(size: 10))
-                        .foregroundStyle(summary.status == .stale ? CPTheme.statusColor(.stale) : CPTheme.tertiaryText)
+                        .foregroundStyle(presentationStatus == .stale ? CPTheme.statusColor(.stale) : CPTheme.tertiaryText)
                         .lineLimit(1)
                 }
             }
@@ -3848,7 +3918,7 @@ struct MainLimitRow: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(summary.quantitativeAccessibilityLabel)
-        .accessibilityValue(summary.usedPressureAccessibilityValue)
+        .accessibilityValue(summary.usedPressureAccessibilityValue(status: presentationStatus))
     }
 }
 
@@ -4971,7 +5041,7 @@ extension MainLimitSummary {
         return remaining.map { "\(assumptionPrefix)\($0)" } ?? "?"
     }
 
-    var detailRemainingAccessibilityValue: String {
+    func detailRemainingAccessibilityValue(status: UsageStatus) -> String {
         if let pooledPercentCapacity {
             let value = "\(assumptionAccessibilityPrefix)\(pooledPercentCapacity.remainingPercent) percent remaining, \(status.accessibilityStatusText)"
             return accessibilityValueWithAssumption(value)
@@ -5022,7 +5092,7 @@ extension MainLimitSummary {
         "\(provider.displayName), \(previewWindowName), \(accountText)"
     }
 
-    var usedPressureAccessibilityValue: String {
+    func usedPressureAccessibilityValue(status: UsageStatus) -> String {
         let usage: String
         if let roundedUsedPercent {
             usage = "\(assumptionAccessibilityPrefix)\(roundedUsedPercent) percent used"
@@ -5032,19 +5102,19 @@ extension MainLimitSummary {
             usage = "Usage unknown"
         }
         if hasAssumedScheduledResetCapacity {
-            return "\(usage), \(accessibilityStateText). \(UsagePresentationAssumption.scheduledReset.accessibilityText)."
+            return "\(usage), \(accessibilityStateText(status: status)). \(UsagePresentationAssumption.scheduledReset.accessibilityText)."
         }
-        return "\(usage), \(accessibilityStateText). \(resetAccessibilityText). \(confidence.previewText)."
+        return "\(usage), \(accessibilityStateText(status: status)). \(resetAccessibilityText). \(confidence.previewText)."
     }
 
-    func pooledCapacityAccessibilityValue(updatedText: String) -> String {
+    func pooledCapacityAccessibilityValue(updatedText: String, status: UsageStatus) -> String {
         let capacity: String
         if let pooledPercentCapacity {
             capacity = "\(assumptionAccessibilityPrefix)\(pooledPercentCapacity.remainingPercent) percent remaining, \(pooledPercentCapacity.remainingPoints) of \(pooledPercentCapacity.poolPoints) points. \(assumptionAccessibilityPrefix)\(pooledPercentCapacity.usedPercent) percent used"
         } else {
             capacity = "\(detailRemainingText) remaining. \(detailUsedValue) used. \(detailLimitValue) limit"
         }
-        let value = "\(pooledCapacityScopeText(pooledPercentCapacity)). \(capacity). \(accessibilityStateText). Updated \(updatedText)."
+        let value = "\(pooledCapacityScopeText(pooledPercentCapacity)). \(capacity). \(accessibilityStateText(status: status)). Updated \(updatedText)."
         return accessibilityValueWithAssumption(value)
     }
 
@@ -5074,7 +5144,7 @@ extension MainLimitSummary {
         return "\(value). \(UsagePresentationAssumption.scheduledReset.accessibilityText)."
     }
 
-    private var accessibilityStateText: String {
+    private func accessibilityStateText(status: UsageStatus) -> String {
         if status == .stale, let lastUpdatedAt {
             return "stale, updated \(lastUpdatedAt.accessibilityAgeText)"
         }

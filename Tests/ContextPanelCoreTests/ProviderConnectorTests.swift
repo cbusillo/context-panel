@@ -1604,6 +1604,84 @@ import Testing
     #expect(availableResult.reports[0].accessState == ProviderAccessState(kind: .available))
 }
 
+@Test func claudeOAuthFractionalUtilizationDoesNotRoundIntoAccessThresholds() async throws {
+    let usage = Data(#"{"five_hour":{"utilization":99.6},"seven_day":{"utilization":79.6},"extra_usage":{"is_enabled":false}}"#.utf8)
+
+    let result = try await claudeUsageRefreshResult(usage: usage)
+
+    #expect(result.snapshot.limits.map(\.used) == [99, 79])
+    #expect(result.snapshot.limits.map(\.status) == [.close, .healthy])
+    #expect(result.reports[0].accessState == ProviderAccessState(kind: .pressure))
+}
+
+@Test func claudeOAuthUtilizationAtOrAboveOneHundredSaturates() async throws {
+    let observedAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:00:00Z"))
+    let resetsAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:30:00Z"))
+    let usage = Data(#"{"five_hour":{"utilization":100.4,"resets_at":"2026-07-23T19:30:00Z"},"seven_day":{"utilization":20},"extra_usage":{"is_enabled":false}}"#.utf8)
+
+    let result = try await claudeUsageRefreshResult(usage: usage, now: observedAt)
+
+    #expect(result.snapshot.limits.first?.used == 100)
+    #expect(result.reports[0].accessState == ProviderAccessState(
+        kind: .blockedUntilReset,
+        resetsAt: resetsAt
+    ))
+}
+
+@Test func claudeOAuthFractionalUtilizationIsNotRescaledFromZeroToOne() async throws {
+    let usage = Data(#"{"five_hour":{"utilization":0.6},"seven_day":{"utilization":0.2},"extra_usage":{"is_enabled":false}}"#.utf8)
+
+    let result = try await claudeUsageRefreshResult(usage: usage)
+
+    #expect(result.snapshot.limits.map(\.used) == [1, 0])
+    #expect(result.reports[0].accessState == ProviderAccessState(kind: .available))
+}
+
+@Test func claudeOAuthMetriclessStructuredValueDoesNotFabricateBlock() async throws {
+    let usage = #"""
+    {
+      "limits": [
+        { "id": "five_hour", "current_value": 41234, "reset_at": "2026-07-23T19:30:00Z" }
+      ],
+      "five_hour": { "utilization": 12, "resets_at": "2026-07-23T19:30:00Z" },
+      "seven_day": { "utilization": 20 },
+      "extra_usage": { "is_enabled": false }
+    }
+    """#.data(using: .utf8)!
+
+    let result = try await claudeUsageRefreshResult(usage: usage)
+
+    #expect(result.snapshot.limits.map(\.used) == [12, 20])
+    #expect(result.reports[0].accessState == ProviderAccessState(kind: .available))
+}
+
+@Test func claudeOAuthMetriclessStructuredEntryPrefersUtilization() async throws {
+    let usage = #"""
+    {
+      "limits": [
+        { "id": "five_hour", "current_value": 87, "utilization": 42 }
+      ],
+      "seven_day": { "utilization": 20 },
+      "extra_usage": { "is_enabled": false }
+    }
+    """#.data(using: .utf8)!
+
+    let result = try await claudeUsageRefreshResult(usage: usage)
+
+    #expect(result.snapshot.limits.map(\.used) == [42, 20])
+    #expect(result.reports[0].accessState == ProviderAccessState(kind: .available))
+}
+
+@Test func claudeOAuthNonFiniteUtilizationStaysUnknown() async throws {
+    let usage = Data(#"{"five_hour":{"utilization":"NaN"},"seven_day":{"utilization":"Infinity"}}"#.utf8)
+
+    let result = try await claudeUsageRefreshResult(usage: usage)
+
+    #expect(result.snapshot.limits.isEmpty)
+    #expect(result.reports[0].status == .unknown)
+    #expect(result.reports[0].accessState == .unknown)
+}
+
 @Test func claudeOAuthAccessStateRemainsIsolatedPerAccount() async throws {
     let personalCredentials = #"{"accessToken":"personal-secret","refreshToken":"personal-refresh","expiresAt":"2099-01-01T00:00:00Z","scopes":[]}"#.data(using: .utf8)!
     let workCredentials = #"{"accessToken":"work-secret","refreshToken":"work-refresh","expiresAt":"2099-01-01T00:00:00Z","scopes":[]}"#.data(using: .utf8)!
@@ -1733,6 +1811,7 @@ import Testing
         let result = await connector.refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
 
         #expect(result.reports[0].status == .failure)
+        #expect(result.reports[0].accessState == .unknown)
         #expect(result.reports[0].limits.isEmpty)
         #expect(result.reports[0].errorMessage?.contains("request-secret") == false)
         #expect(result.reports[0].errorMessage?.contains("body secret") == false)
@@ -2423,6 +2502,23 @@ private func claudeCredentialsData(
         expiresAt: expiresAt,
         scopes: scopes
     ))
+}
+
+private func claudeUsageRefreshResult(
+    usage: Data,
+    now: Date = Date(timeIntervalSince1970: 1_800_000_000)
+) async throws -> ConnectorRefreshResult {
+    let credentials = try claudeCredentialsData(
+        accessToken: "access-secret",
+        refreshToken: "refresh-secret",
+        expiresAt: Date(timeIntervalSince1970: 2_000_000_000)
+    )
+    let connector = ClaudeOAuthUsageConnector(
+        accounts: [ClaudeOAuthAccountConfiguration(accountID: "claude-oauth-default", accountName: "Claude")],
+        httpClient: StubHTTPClient(responses: [ConnectorHTTPResponse(statusCode: 200, data: usage)]),
+        credentialStore: StubCredentialStore(storage: ["claude-oauth-default": credentials])
+    )
+    return await connector.refresh(now: now)
 }
 
 private func googleAntigravityTestAccount() -> GoogleAntigravityAccountConfiguration {

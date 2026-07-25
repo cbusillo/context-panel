@@ -574,7 +574,7 @@ private struct ClaudeOAuthUsagePayload: Decodable {
                 windowLabel: id.windowLabel,
                 modelLabel: id.modelLabel,
                 unit: .percent,
-                used: Int(max(0, min(utilization, 100)).rounded()),
+                used: Self.displayedUtilization(utilization),
                 limit: 100,
                 resetsAt: window.resetsAt,
                 lastUpdatedAt: observedAt,
@@ -589,6 +589,17 @@ private struct ClaudeOAuthUsagePayload: Decodable {
             observedAt: observedAt
         )
         return ClaudeOAuthUsageResult(limits: limits, accessState: accessState)
+    }
+
+    private static func displayedUtilization(_ utilization: Double) -> Int {
+        let clamped = min(max(utilization, 0), 100)
+        if clamped < 80 {
+            return min(Int(clamped.rounded()), 79)
+        }
+        if clamped < 100 {
+            return min(Int(clamped.rounded()), 99)
+        }
+        return 100
     }
 
     private static func accessState(
@@ -708,9 +719,14 @@ private struct ClaudeOAuthStructuredLimit: Decodable {
             guard normalizedMetric.contains("percent") || normalizedMetric.contains("utilization") else {
                 return nil
             }
+            guard let value = currentValue ?? utilization else { return nil }
+            return ClaudeOAuthUsageWindow(utilization: value, resetsAt: resetsAt)
         }
-        guard let value = currentValue ?? utilization else { return nil }
-        return ClaudeOAuthUsageWindow(utilization: value, resetsAt: resetsAt)
+        if let utilization {
+            return ClaudeOAuthUsageWindow(utilization: utilization, resetsAt: resetsAt)
+        }
+        guard let currentValue, (0...100).contains(currentValue) else { return nil }
+        return ClaudeOAuthUsageWindow(utilization: currentValue, resetsAt: resetsAt)
     }
 }
 
@@ -772,9 +788,13 @@ private struct LossyDecodable<Value: Decodable>: Decodable {
 
 private extension KeyedDecodingContainer {
     func lossyDouble(forKey key: Key) -> Double? {
-        if let value = try? decode(Double.self, forKey: key) { return value }
+        if let value = try? decode(Double.self, forKey: key), value.isFinite { return value }
         if let value = try? decode(Int.self, forKey: key) { return Double(value) }
-        if let value = try? decode(String.self, forKey: key) { return Double(value) }
+        if let string = try? decode(String.self, forKey: key),
+           let value = Double(string),
+           value.isFinite {
+            return value
+        }
         return nil
     }
 

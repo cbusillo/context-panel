@@ -451,8 +451,9 @@ private struct TVTopShelfRenderer {
                 return [
                     provider.displayName,
                     card.headline,
+                    card.detail,
                     statusText(displayStatus(for: card, isStale: isStale)),
-                ].joined(separator: ", ")
+                ].filter { !$0.isEmpty }.joined(separator: ", ")
             }
             return [card.headline, card.detail].filter { !$0.isEmpty }.joined(separator: ", ")
         }
