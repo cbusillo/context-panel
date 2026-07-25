@@ -3018,7 +3018,13 @@ struct HeaderCard: View {
     }
 
     private var primaryStatus: UsageStatus {
-        displayStatus(source: primarySummary?.status ?? .unknown)
+        var statuses = model.providerAccessAlerts
+            .filter { $0.provider == primaryLane?.provider }
+            .map(\.status)
+        if let primarySummary {
+            statuses.append(primarySummary.status)
+        }
+        return displayStatus(source: statuses.isEmpty ? .unknown : statuses.contextPanelWorstStatus)
     }
 
     var body: some View {
@@ -3120,6 +3126,14 @@ struct ProviderHeaderCard: View {
         }.first
     }
 
+    private var providerStatus: UsageStatus {
+        let accessStatuses = model.providerAccessAlerts
+            .filter { $0.provider == provider }
+            .map(\.status)
+        let statuses = summaries.map(\.status) + accessStatuses
+        return statuses.isEmpty ? .unknown : statuses.contextPanelWorstStatus
+    }
+
     var body: some View {
         HStack(alignment: .center, spacing: 22) {
             VStack(alignment: .leading, spacing: 10) {
@@ -3144,7 +3158,7 @@ struct ProviderHeaderCard: View {
             if let tightestSummary {
                 MetricDial(
                     metric: .remainingCapacity(remainingRatio: tightestSummary.remainingCapacityRatio),
-                    status: tightestSummary.status,
+                    status: providerStatus,
                     accessibilityName: "\(provider.displayName) \(tightestSummary.previewWindowName) \(tightestSummary.accountText) remaining capacity",
                     sublabel: "remaining",
                     size: 116

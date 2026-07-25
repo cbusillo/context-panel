@@ -651,6 +651,9 @@ struct CPWProblemLabel: View {
             .textCase(.uppercase)
             .foregroundStyle(CPWTheme.statusColor(status))
             .lineLimit(1)
+            .minimumScaleFactor(0.75)
+            .accessibilityLabel(text)
+            .accessibilityValue(status.widgetAccessibilityLabel)
     }
 }
 
@@ -806,14 +809,12 @@ struct CPWProviderSummaryGrid: View {
             ForEach(Provider.allCases) { provider in
                 let providerLimits = snapshot.limits.filter { $0.provider == provider }
                 let metricSummary = snapshot.widgetProviderMainLimitSummary(provider: provider)
-                let summaries = snapshot.mainLimitSummaries.filter { $0.provider == provider }
-                let nonMainStatuses = providerLimits.filter { !$0.isMainLimit }.map(\.status)
-                let providerStatus = provider == .anthropic && !summaries.isEmpty
-                    ? summaries.map(\.status).contextPanelWorstStatus
-                    : (summaries.map(\.status) + nonMainStatuses).contextPanelWorstStatus
+                let providerStatus = snapshot.providerSummaries.first { $0.provider == provider }?.status ?? .unknown
                 let metricStatus = metricSummary?.status ?? .unknown
                 let displayProviderStatus = snapshot.widgetPresentationStatus(for: providerStatus)
-                let displayMetricStatus = snapshot.widgetPresentationStatus(for: metricStatus)
+                let displayMetricStatus = snapshot.widgetPresentationStatus(
+                    for: [metricStatus, providerStatus].contextPanelWorstStatus
+                )
                 let isConnected = !providerLimits.isEmpty
                 let summaryText = snapshot.widgetProviderSummaryText(provider: provider)
 

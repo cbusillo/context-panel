@@ -126,8 +126,12 @@ public struct TVTopShelfDocument: Codable, Equatable, Sendable {
         mode: TVPresentationMode
     ) -> TVTopShelfCard {
         let capacityLane = section.primaryLane
+        let statusLane = prominentStatusLane(in: section)
+        let displayLane = statusLane ?? capacityLane
         let headline: String
-        if let remainingPercent = capacityLane?.remainingPercent {
+        if let statusLane {
+            headline = statusHeadline(lane: statusLane, fallbackStatus: section.status)
+        } else if let remainingPercent = capacityLane?.remainingPercent {
             headline = "\(remainingPercent)% left"
         } else {
             headline = switch section.status {
@@ -137,17 +141,43 @@ public struct TVTopShelfDocument: Codable, Equatable, Sendable {
                 capacityLane?.kind == .accountStatus ? "No fresh capacity" : "Unknown"
             }
         }
-        let detail = detailText(lane: capacityLane, mode: mode, fallbackStatus: section.status)
+        let detail = detailText(lane: displayLane, mode: mode, fallbackStatus: section.status)
         return TVTopShelfCard(
             id: "provider-\(section.provider.rawValue)",
             provider: section.provider,
             title: "\(section.provider.displayName) · \(headline)",
             headline: headline,
             detail: detail,
-            status: section.status,
-            remainingPercent: capacityLane?.remainingPercent,
+            status: statusLane?.status ?? section.status,
+            remainingPercent: statusLane == nil ? capacityLane?.remainingPercent : nil,
             actionURLString: TVAppRoute.provider(section.provider).url.absoluteString
         )
+    }
+
+    private static func prominentStatusLane(in section: TVProviderRunwaySection) -> TVRunwayLane? {
+        let statusLanes = section.lanes.filter { lane in
+            guard lane.kind == .accountStatus else { return false }
+            return switch lane.status {
+            case .close, .limited, .stale, .failure, .loading:
+                true
+            case .healthy, .unknown:
+                false
+            }
+        }
+        return statusLanes.first { $0.status == section.status } ?? statusLanes.first
+    }
+
+    private static func statusHeadline(
+        lane: TVRunwayLane,
+        fallbackStatus: UsageStatus
+    ) -> String {
+        guard let detail = lane.detailText, detail != "No fresh capacity data" else {
+            return statusLabel(fallbackStatus)
+        }
+        let headline = lane.title.split(separator: "·").first.map {
+            String($0).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return headline.flatMap { $0.isEmpty ? nil : $0 } ?? statusLabel(fallbackStatus)
     }
 
     private static func setupCard(presentation: TVRunwayPresentation) -> TVTopShelfCard {
@@ -169,6 +199,16 @@ public struct TVTopShelfDocument: Codable, Equatable, Sendable {
         fallbackStatus: UsageStatus
     ) -> String {
         guard let lane else { return statusLabel(fallbackStatus) }
+        if lane.kind == .accountStatus {
+            let components: [String?] = switch mode {
+            case .fullDetail, .projectOnly:
+                [lane.detailText, lane.resetText]
+            case .countsOnly:
+                [lane.detailText]
+            }
+            let detail = components.compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+            return detail.isEmpty ? statusLabel(lane.status) : detail
+        }
         let safeTitle = safeLaneTitle(lane.title)
         let components: [String?] = switch mode {
         case .fullDetail:
