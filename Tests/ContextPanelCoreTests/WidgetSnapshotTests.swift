@@ -745,6 +745,82 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(widget.providerSummaries.first { $0.provider == .anthropic }?.status == .limited)
 }
 
+@Test func widgetSnapshotClearsBlockedProviderAccessAfterFreshRecovery() {
+    let generatedAt = Date(timeIntervalSince1970: 1_800_000_000)
+
+    func storedSnapshot(
+        used: Int,
+        status: UsageStatus,
+        accessState: ProviderAccessState,
+        generatedAt: Date
+    ) -> StoredUsageSnapshot {
+        StoredUsageSnapshot(
+            savedAt: generatedAt,
+            snapshot: UsageSnapshot(generatedAt: generatedAt, limits: [
+                UsageLimit(
+                    provider: .anthropic,
+                    accountID: "anthropic-work",
+                    accountName: "Work Claude",
+                    label: "Claude 5-hour",
+                    windowLabel: "5-hour",
+                    modelLabel: "Claude",
+                    unit: .percent,
+                    used: used,
+                    limit: 100,
+                    resetsAt: generatedAt.addingTimeInterval(3_600),
+                    lastUpdatedAt: generatedAt,
+                    confidence: .observed
+                ),
+            ]),
+            reports: [
+                StoredProviderReport(
+                    provider: .anthropic,
+                    accountID: "anthropic-work",
+                    accountName: "Work Claude",
+                    generatedAt: generatedAt,
+                    status: status,
+                    accessState: accessState,
+                    errorMessage: nil
+                ),
+            ]
+        )
+    }
+
+    let blockedReset = generatedAt.addingTimeInterval(3_600)
+    let blocked = WidgetSnapshot.fromStore(
+        SnapshotStoreLoadResult(
+            snapshot: storedSnapshot(
+                used: 100,
+                status: .limited,
+                accessState: ProviderAccessState(kind: .blockedUntilReset, resetsAt: blockedReset),
+                generatedAt: generatedAt
+            ),
+            status: .healthy
+        ),
+        now: generatedAt
+    )
+    let recoveredAt = blockedReset.addingTimeInterval(30)
+    let recovered = WidgetSnapshot.fromStore(
+        SnapshotStoreLoadResult(
+            snapshot: storedSnapshot(
+                used: 0,
+                status: .healthy,
+                accessState: ProviderAccessState(kind: .available),
+                generatedAt: recoveredAt
+            ),
+            status: .healthy
+        ),
+        now: recoveredAt
+    )
+
+    #expect(blocked.status == .limited)
+    #expect(blocked.primaryProviderAccessAlert?.accessState.kind == .blockedUntilReset)
+    #expect(recovered.status == .healthy)
+    #expect(recovered.primaryProviderAccessAlert == nil)
+    #expect(recovered.reports.first?.accessState.kind == .available)
+    #expect(recovered.providerSummaries.first { $0.provider == .anthropic }?.status == .healthy)
+}
+
 @Test func widgetSnapshotKeepsPaidFallbackSeparateFromLimitedQuota() throws {
     let generatedAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:00:00Z"))
     let stored = StoredUsageSnapshot(

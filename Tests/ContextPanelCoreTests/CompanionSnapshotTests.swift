@@ -1654,6 +1654,66 @@ import Testing
     )
 }
 
+@Test func companionStatusIncludesCurrentUndatedBlockBeyondHealthyCapacity() {
+    let now = Date(timeIntervalSince1970: 3_500)
+    let document = CompanionSyncDocument(
+        storedSnapshot: StoredUsageSnapshot(
+            savedAt: now,
+            snapshot: UsageSnapshot(generatedAt: now, limits: [
+                UsageLimit(
+                    provider: .anthropic,
+                    accountID: "anthropic-work",
+                    configuredAccountID: "anthropic-work",
+                    accountName: "Work Claude",
+                    label: "Claude weekly",
+                    windowLabel: "Weekly",
+                    modelLabel: "Claude",
+                    unit: .percent,
+                    used: 45,
+                    limit: 100,
+                    lastUpdatedAt: now,
+                    confidence: .observed
+                ),
+                UsageLimit(
+                    provider: .google,
+                    accountID: "google",
+                    configuredAccountID: "google",
+                    accountName: "Google",
+                    label: "Google weekly",
+                    windowLabel: "Weekly",
+                    unit: .percent,
+                    used: 20,
+                    limit: 100,
+                    lastUpdatedAt: now,
+                    confidence: .observed
+                ),
+            ]),
+            reports: [
+                StoredProviderReport(
+                    provider: .anthropic,
+                    accountID: "anthropic-work",
+                    configuredAccountID: "anthropic-work",
+                    accountName: "Work Claude",
+                    generatedAt: now,
+                    status: .limited,
+                    accessState: ProviderAccessState(kind: .blockedUntilReset),
+                    errorMessage: nil
+                ),
+            ]
+        ),
+        publishedAt: now
+    )
+
+    #expect(document.snapshot.limits.allSatisfy { $0.status == .healthy })
+    #expect(document.companionStatus == .limited)
+    #expect(
+        document.companionStatus(
+            now: now,
+            maximumAge: SnapshotFreshness.companionProviderMaximumAge
+        ) == .limited
+    )
+}
+
 @Test func companionStatusKeepsFutureBlockWhenAnEarlierPollingResetExpires() {
     let now = Date(timeIntervalSince1970: 7_200)
     let futureReset = now.addingTimeInterval(3_600)
