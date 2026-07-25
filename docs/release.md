@@ -212,7 +212,12 @@ The generated `ContextPanel` Xcode target stamps
 `ContextPanelBuildFingerprint.txt` into the app bundle before Xcode signs the
 archive. The upload script verifies that the archived fingerprint matches the
 current source tree before export, so TestFlight installs can satisfy the
-canonical runtime receipt without modifying or re-signing the exported app.
+canonical runtime receipt without modifying or re-signing the exported app. The
+fingerprint hashes `project.yml`, the source-of-truth project specification,
+rather than generated `ContextPanel.xcodeproj` output so XcodeGen version changes
+cannot make identical source trees produce different runtime fingerprints. It
+also covers the Release entitlements, embedded Mac target sources, and app asset
+catalog used by the signed archive.
 
 ## TestFlight Beta Distribution
 

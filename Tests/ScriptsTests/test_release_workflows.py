@@ -1031,6 +1031,29 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("archived app is missing the build fingerprint", upload_script)
         self.assertIn("archived app build fingerprint does not match the source tree", upload_script)
 
+    def test_build_fingerprint_covers_release_sources_without_generated_output(self):
+        fingerprint_script = self.read("scripts/context-panel-build-fingerprint.sh")
+
+        for required_input in (
+            "Config/ContextPanelAppStore.entitlements",
+            "Config/ContextPanelRefreshAgent-Info.plist",
+            "Config/ContextPanelRefreshAgentAppStore.entitlements",
+            "Package.swift",
+            "project.yml",
+            "Sources/ContextPanelApp",
+            "Sources/ContextPanelCloudKitSync",
+            "Sources/ContextPanelCore",
+            "Sources/ContextPanelRefreshAgent",
+            "Sources/ContextPanelSettingsUI",
+            "Sources/ContextPanelWidget",
+            "Sources/ContextPanelWidgetUI",
+            "Resources/Assets.xcassets",
+        ):
+            with self.subTest(required_input=required_input):
+                self.assertIn(required_input, fingerprint_script)
+        self.assertNotIn("ContextPanel.xcodeproj/project.pbxproj", fingerprint_script)
+        self.assertIn("missing build fingerprint input", fingerprint_script)
+
     def test_upload_scripts_guard_against_app_store_marketing_version_regression(self):
         for script_path, expected_platform in (
             ("scripts/upload-app-store-connect-macos-app.sh", "--platform MAC_OS"),
