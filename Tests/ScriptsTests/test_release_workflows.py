@@ -722,6 +722,16 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("Prepare only: review submission was not created or submitted", script)
         self.assertIn("--prepare-only and --cancel-review-only are mutually exclusive", script)
 
+    def test_app_store_review_workflow_supports_review_notes_override(self):
+        workflow = self.read(".github/workflows/submit-app-store-review.yml")
+        script = self.read("scripts/submit-app-store-review.py")
+
+        self.assertIn("review_notes:", workflow)
+        self.assertIn("INPUT_REVIEW_NOTES", workflow)
+        self.assertIn('args+=(--review-notes "${INPUT_REVIEW_NOTES}")', workflow)
+        self.assertIn("--review-notes", script)
+        self.assertIn('review_attributes["notes"] = review_notes', script)
+
     def test_app_store_review_workflow_supports_tvos(self):
         workflow = self.read(".github/workflows/submit-app-store-review.yml")
         script = self.read("scripts/submit-app-store-review.py")

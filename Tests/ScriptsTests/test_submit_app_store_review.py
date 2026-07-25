@@ -1685,6 +1685,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             locale=None,
             support_url=None,
             whats_new="Adds CloudKit companion sync.",
+            review_notes="Physical iPhone demo: https://example.com/reviewer-demo.mp4",
         )
 
         submit_app_store_review.ensure_metadata(
@@ -1705,6 +1706,16 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         self.assertIn("whatsNew", localization_updates[0])
         self.assertNotIn("whatsNew", localization_updates[1])
         self.assertEqual(localization_updates[1]["description"], "desc")
+        review_detail_update = next(
+            request[3]["data"]["attributes"]
+            for request in client.requests
+            if request[0] == "PATCH" and request[1] == "/appStoreReviewDetails/detail-1"
+        )
+        self.assertEqual(
+            review_detail_update["notes"],
+            "Physical iPhone demo: https://example.com/reviewer-demo.mp4",
+        )
+        self.assertEqual(review_detail_update["contactEmail"], "review@example.com")
 
     def test_prepare_only_path_does_not_create_or_submit_review(self):
         class PrepareOnlyClient:

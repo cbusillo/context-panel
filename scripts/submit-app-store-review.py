@@ -1158,6 +1158,9 @@ def ensure_metadata(client: ASCClient, version_id: str, source_localization: dic
         )
         if source_review_detail.get(key) is not None
     }
+    review_notes = getattr(args, "review_notes", None)
+    if review_notes is not None:
+        review_attributes["notes"] = review_notes
     if review_detail_id and review_attributes:
         client.request(
             "PATCH",
@@ -1434,6 +1437,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--version", required=True, help="App Store marketing version, for example 1.0.12")
     parser.add_argument("--build-number", help="CFBundleVersion uploaded to App Store Connect")
     parser.add_argument("--whats-new")
+    parser.add_argument("--review-notes", help="Override App Review notes copied from the source version")
     parser.add_argument("--copy-from-version", help="Existing App Store version to copy localization and review details from")
     parser.add_argument(
         "--copy-from-platform",
