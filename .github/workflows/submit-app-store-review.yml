@@ -21,12 +21,18 @@ name: Submit App Store Review
         description: Release notes for the App Store version.
         required: false
         type: string
+      review_notes:
+        description: Optional App Review notes override.
+        required: false
+        type: string
       copy_from_version:
         description: Existing App Store version to copy metadata from.
         required: false
         type: string
       copy_from_platform:
-        description: Platform containing the metadata source. Defaults to the target platform.
+        description: >-
+          Platform containing the metadata source. Defaults to the target
+          platform.
         required: false
         type: string
       remove_active_review_version:
@@ -82,12 +88,18 @@ name: Submit App Store Review
         description: Release notes for the App Store version.
         required: false
         type: string
+      review_notes:
+        description: Optional App Review notes override.
+        required: false
+        type: string
       copy_from_version:
         description: Existing App Store version to copy metadata from.
         required: false
         type: string
       copy_from_platform:
-        description: Platform containing the metadata source. Defaults to the target platform.
+        description: >-
+          Platform containing the metadata source. Defaults to the target
+          platform.
         required: false
         type: string
       remove_active_review_version:
@@ -160,6 +172,7 @@ jobs:
           INPUT_PLATFORM: ${{ inputs.platform }}
           INPUT_BUILD_NUMBER: ${{ inputs.build_number }}
           INPUT_WHATS_NEW: ${{ inputs.whats_new }}
+          INPUT_REVIEW_NOTES: ${{ inputs.review_notes }}
           INPUT_COPY_FROM_VERSION: ${{ inputs.copy_from_version }}
           INPUT_COPY_FROM_PLATFORM: ${{ inputs.copy_from_platform }}
           INPUT_REMOVE_ACTIVE_REVIEW_VERSION: >-
@@ -192,6 +205,9 @@ jobs:
             if [[ -n "${INPUT_BUILD_NUMBER}" ]]; then
               args+=(--build-number "${INPUT_BUILD_NUMBER}")
             fi
+          fi
+          if [[ -n "${INPUT_REVIEW_NOTES}" ]]; then
+            args+=(--review-notes "${INPUT_REVIEW_NOTES}")
           fi
           if [[ -n "${INPUT_COPY_FROM_VERSION}" ]]; then
             args+=(--copy-from-version "${INPUT_COPY_FROM_VERSION}")
