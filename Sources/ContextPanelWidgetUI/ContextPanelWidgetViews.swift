@@ -1530,13 +1530,11 @@ extension WidgetSnapshot {
 
 extension MainLimitSummary {
     var widgetUsageRatio: Double? {
-        let numericLimits = lastKnownCapacityLimits
-        guard let unit = numericLimits.first?.unit,
-              numericLimits.allSatisfy({ $0.unit == unit }) else {
-            return nil
-        }
-        let used = numericLimits.reduce(0) { $0 + ($1.used ?? 0) }
-        let limit = numericLimits.reduce(0) { $0 + ($1.limit ?? 0) }
+        guard
+            let pooledLimit = lastKnownPooledLimit,
+            let used = pooledLimit.used,
+            let limit = pooledLimit.limit
+        else { return nil }
         guard limit > 0 else { return nil }
         return min(max(Double(used) / Double(limit), 0), 1)
     }

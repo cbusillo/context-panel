@@ -490,6 +490,9 @@ import Testing
     #expect(summary.displayWindowName(now: now) == "Model capacity")
     #expect(summary.compactDisplayWindowName(now: now) == "Cap")
     #expect(summary.limits.map(\.modelLabel) == ["Gemini Pro", "Gemini Flash"])
+    #expect(summary.used == 66)
+    #expect(summary.limit == 100)
+    #expect(summary.remaining == 34)
     #expect(snapshot.mainLimitSummaries.contains { $0.id == "google:fiveHour" } == false)
     #expect(snapshot.mainLimitSummaries.contains { $0.id == "google:weekly" } == false)
     #expect(snapshot.limits.filter { !$0.isMainLimit }.map(\.modelLabel) == ["Claude"])
@@ -562,6 +565,135 @@ import Testing
     )
 
     #expect(summary.pooledPercentCapacity == nil)
+}
+
+@Test func googleMainLimitSummaryCountsOneAccountOnceAcrossWeeklyBuckets() throws {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let snapshot = UsageSnapshot(
+        generatedAt: now,
+        limits: makeGoogleAntigravityWeeklyLimits(
+            accountID: "google-account",
+            accountName: "Antigravity",
+            thirdPartyUsed: 1,
+            geminiUsed: 2,
+            now: now
+        )
+    )
+
+    let summary = try #require(snapshot.mainLimitSummaries.first { $0.id == "google:weekly" })
+
+    #expect(summary.limits.count == 2)
+    #expect(summary.accountCount == 1)
+    #expect(summary.used == 1)
+    #expect(summary.limit == 100)
+    #expect(summary.remaining == 99)
+    #expect(summary.roundedRemainingPercent == 99)
+    let pooledCapacity = try #require(summary.pooledPercentCapacity)
+    #expect(pooledCapacity.usedPoints == 1)
+    #expect(pooledCapacity.poolPoints == 100)
+    #expect(pooledCapacity.remainingPoints == 99)
+    #expect(pooledCapacity.remainingPercent == 99)
+    #expect(pooledCapacity.contributingAccountCount == 1)
+    #expect(pooledCapacity.pointsPerAccount == 100)
+}
+
+@Test func googleMainLimitSummaryScalesOneHundredPointsPerAccount() throws {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let snapshot = UsageSnapshot(
+        generatedAt: now,
+        limits: makeGoogleAntigravityWeeklyLimits(
+            accountID: "google-primary",
+            accountName: "Primary",
+            thirdPartyUsed: 10,
+            geminiUsed: 20,
+            now: now
+        ) + makeGoogleAntigravityWeeklyLimits(
+            accountID: "google-secondary",
+            accountName: "Secondary",
+            thirdPartyUsed: 30,
+            geminiUsed: 50,
+            now: now
+        )
+    )
+
+    let summary = try #require(snapshot.mainLimitSummaries.first { $0.id == "google:weekly" })
+
+    #expect(summary.limits.count == 4)
+    #expect(summary.accountCount == 2)
+    #expect(summary.used == 55)
+    #expect(summary.limit == 200)
+    #expect(summary.remaining == 145)
+    let pooledCapacity = try #require(summary.pooledPercentCapacity)
+    #expect(pooledCapacity.poolPoints == 200)
+    #expect(pooledCapacity.contributingAccountCount == 2)
+    #expect(pooledCapacity.pointsPerAccount == 100)
+}
+
+@Test func googleLastKnownPooledLimitCountsOneAccountOnceAcrossWeeklyBuckets() throws {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let summary = MainLimitSummary(
+        provider: .google,
+        window: .weekly,
+        limits: makeGoogleAntigravityWeeklyLimits(
+            accountID: "google-account",
+            accountName: "Antigravity",
+            thirdPartyUsed: 1,
+            geminiUsed: 2,
+            now: now,
+            statusOverride: .stale
+        ),
+        generatedAt: now
+    )
+
+    #expect(summary.used == nil)
+    let lastKnown = try #require(summary.lastKnownPooledLimit)
+    #expect(lastKnown.used == 1)
+    #expect(lastKnown.limit == 100)
+    #expect(lastKnown.remaining == 99)
+}
+
+@Test func googleMainLimitSummaryPreservesNonzeroRemainingCapacityBelowHalfAPoint() throws {
+    let snapshot = UsageSnapshot(
+        generatedAt: Date(timeIntervalSince1970: 1_750_000_000),
+        limits: [
+            UsageLimit(
+                provider: .google,
+                accountID: "google-account",
+                accountName: "Antigravity",
+                label: "3p Weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 100,
+                limit: 100
+            ),
+            UsageLimit(
+                provider: .google,
+                accountID: "google-account",
+                accountName: "Antigravity",
+                label: "Gemini Pro Weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 100,
+                limit: 100
+            ),
+            UsageLimit(
+                provider: .google,
+                accountID: "google-account",
+                accountName: "Antigravity",
+                label: "Gemini Flash Weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 99,
+                limit: 100
+            ),
+        ]
+    )
+
+    let summary = try #require(snapshot.mainLimitSummaries.first)
+    #expect(summary.used == 99)
+    #expect(summary.limit == 100)
+    #expect(summary.remaining == 1)
+    #expect(summary.status == .close)
 }
 
 @Test func mainLimitSummariesExcludeAccountsExhaustedByLongerOpenAIWindow() throws {
