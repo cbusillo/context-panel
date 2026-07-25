@@ -120,6 +120,139 @@ import Testing
     #expect(!google.detail.contains("of 200 points"))
 }
 
+@Test func tvTopShelfPrioritizesBlockedAccessOverHealthyPooledCapacity() throws {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let resetsAt = now.addingTimeInterval(3_600)
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: now,
+        limits: [
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "blocked-claude",
+                accountName: "Blocked Claude",
+                label: "Claude 5-hour",
+                windowLabel: "5-hour",
+                modelLabel: "Claude",
+                unit: .percent,
+                used: 100,
+                limit: 100,
+                resetsAt: resetsAt,
+                lastUpdatedAt: now,
+                confidence: .observed
+            ),
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "available-claude",
+                accountName: "Available Claude",
+                label: "Claude 5-hour",
+                windowLabel: "5-hour",
+                modelLabel: "Claude",
+                unit: .percent,
+                used: 10,
+                limit: 100,
+                resetsAt: resetsAt,
+                lastUpdatedAt: now,
+                confidence: .observed
+            ),
+        ],
+        reports: [
+            StoredProviderReport(
+                provider: .anthropic,
+                accountID: "blocked-claude",
+                accountName: "Blocked Claude",
+                generatedAt: now,
+                status: .limited,
+                accessState: ProviderAccessState(kind: .blockedUntilReset, resetsAt: resetsAt),
+                errorMessage: nil
+            ),
+            StoredProviderReport(
+                provider: .anthropic,
+                accountID: "available-claude",
+                accountName: "Available Claude",
+                generatedAt: now,
+                status: .healthy,
+                accessState: ProviderAccessState(kind: .available),
+                errorMessage: nil
+            ),
+        ],
+        status: .limited,
+        message: "Claude limited"
+    )
+    #expect(snapshot.usageSnapshot.mainLimitSummaries.first { $0.provider == .anthropic }?.status == .healthy)
+
+    let document = TVTopShelfDocument(snapshot: snapshot, mode: .fullDetail, now: now)
+    let anthropic = try #require(document.cards.first { $0.provider == .anthropic })
+
+    #expect(anthropic.status == .limited)
+    #expect(anthropic.headline == "Claude limited")
+    #expect(anthropic.remainingPercent == nil)
+    #expect(anthropic.detail.contains("Usage credits unavailable"))
+    #expect(!anthropic.title.contains("45% left"))
+    #expect(!anthropic.detail.contains("Blocked Claude"))
+}
+
+@Test func tvTopShelfDistinguishesPaidFallbackFromBlockedAccess() throws {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let resetsAt = now.addingTimeInterval(3_600)
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: now,
+        limits: [
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "fallback-claude",
+                accountName: "Fallback Claude",
+                label: "Claude 5-hour",
+                windowLabel: "5-hour",
+                modelLabel: "Claude",
+                unit: .percent,
+                used: 100,
+                limit: 100,
+                resetsAt: resetsAt,
+                lastUpdatedAt: now,
+                confidence: .observed
+            ),
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "available-claude",
+                accountName: "Available Claude",
+                label: "Claude 5-hour",
+                windowLabel: "5-hour",
+                modelLabel: "Claude",
+                unit: .percent,
+                used: 10,
+                limit: 100,
+                resetsAt: resetsAt,
+                lastUpdatedAt: now,
+                confidence: .observed
+            ),
+        ],
+        reports: [
+            StoredProviderReport(
+                provider: .anthropic,
+                accountID: "fallback-claude",
+                accountName: "Fallback Claude",
+                generatedAt: now,
+                status: .limited,
+                accessState: ProviderAccessState(kind: .paidFallbackActive, resetsAt: resetsAt),
+                errorMessage: nil
+            ),
+        ],
+        status: .limited,
+        message: "Claude using paid fallback"
+    )
+
+    let document = TVTopShelfDocument(snapshot: snapshot, mode: .fullDetail, now: now)
+    let anthropic = try #require(document.cards.first { $0.provider == .anthropic })
+
+    #expect(anthropic.status == .close)
+    #expect(anthropic.headline == "Claude using paid fallback")
+    #expect(anthropic.remainingPercent == nil)
+    #expect(anthropic.detail.contains("Plan limit reached; usage credits available"))
+    #expect(!anthropic.detail.contains("Fallback Claude"))
+}
+
 @Test func tvTopShelfDocumentKeepsActionableStatusWhenSavedPrimaryHasNoCapacity() throws {
     let now = Date(timeIntervalSince1970: 1_750_000_000)
     let document = TVTopShelfDocument(

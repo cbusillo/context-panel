@@ -39,6 +39,136 @@ import Testing
     #expect(rows.filter { $0.provider == .openAI && $0.subtitle == "1w" }.count == 1)
 }
 
+@Test func watchLimitDisplayIncludesBlockedAccessBeyondPooledCapacity() throws {
+    let generatedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let resetsAt = generatedAt.addingTimeInterval(3_600)
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: generatedAt,
+        limits: [
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "blocked-claude",
+                accountName: "Blocked Claude",
+                label: "Claude 5-hour",
+                windowLabel: "5-hour",
+                modelLabel: "Claude",
+                unit: .percent,
+                used: 100,
+                limit: 100,
+                resetsAt: resetsAt,
+                lastUpdatedAt: generatedAt,
+                confidence: .observed
+            ),
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "available-claude",
+                accountName: "Available Claude",
+                label: "Claude 5-hour",
+                windowLabel: "5-hour",
+                modelLabel: "Claude",
+                unit: .percent,
+                used: 10,
+                limit: 100,
+                resetsAt: resetsAt,
+                lastUpdatedAt: generatedAt,
+                confidence: .observed
+            ),
+        ],
+        reports: [
+            StoredProviderReport(
+                provider: .anthropic,
+                accountID: "blocked-claude",
+                accountName: "Blocked Claude",
+                generatedAt: generatedAt,
+                status: .limited,
+                accessState: ProviderAccessState(kind: .blockedUntilReset, resetsAt: resetsAt),
+                errorMessage: nil
+            ),
+            StoredProviderReport(
+                provider: .anthropic,
+                accountID: "available-claude",
+                accountName: "Available Claude",
+                generatedAt: generatedAt,
+                status: .healthy,
+                accessState: ProviderAccessState(kind: .available),
+                errorMessage: nil
+            ),
+        ],
+        status: .limited,
+        message: "Claude limited"
+    )
+    #expect(snapshot.usageSnapshot.mainLimitSummaries.first { $0.provider == .anthropic }?.status == .healthy)
+
+    let row = try #require(
+        WatchLimitDisplay.rows(from: snapshot, maximumCount: 5).first { $0.provider == .anthropic }
+    )
+
+    #expect(row.remainingText == "45%")
+    #expect(row.status == .limited)
+    #expect(row.accessibilitySentence(direction: .remaining, now: generatedAt).contains("limited"))
+}
+
+@Test func watchLimitDisplayDistinguishesPaidFallbackFromBlockedAccess() throws {
+    let generatedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let resetsAt = generatedAt.addingTimeInterval(3_600)
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: generatedAt,
+        limits: [
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "fallback-claude",
+                accountName: "Fallback Claude",
+                label: "Claude 5-hour",
+                windowLabel: "5-hour",
+                modelLabel: "Claude",
+                unit: .percent,
+                used: 100,
+                limit: 100,
+                resetsAt: resetsAt,
+                lastUpdatedAt: generatedAt,
+                confidence: .observed
+            ),
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "available-claude",
+                accountName: "Available Claude",
+                label: "Claude 5-hour",
+                windowLabel: "5-hour",
+                modelLabel: "Claude",
+                unit: .percent,
+                used: 10,
+                limit: 100,
+                resetsAt: resetsAt,
+                lastUpdatedAt: generatedAt,
+                confidence: .observed
+            ),
+        ],
+        reports: [
+            StoredProviderReport(
+                provider: .anthropic,
+                accountID: "fallback-claude",
+                accountName: "Fallback Claude",
+                generatedAt: generatedAt,
+                status: .limited,
+                accessState: ProviderAccessState(kind: .paidFallbackActive, resetsAt: resetsAt),
+                errorMessage: nil
+            ),
+        ],
+        status: .limited,
+        message: "Claude using paid fallback"
+    )
+
+    let row = try #require(
+        WatchLimitDisplay.rows(from: snapshot, maximumCount: 5).first { $0.provider == .anthropic }
+    )
+
+    #expect(row.remainingText == "45%")
+    #expect(row.status == .close)
+    #expect(row.accessibilitySentence(direction: .remaining, now: generatedAt).contains("close to limit"))
+}
+
 @Test func watchComplicationKeepsLastKnownPoolWhenCachedAccountsAgeToStale() throws {
     let snapshot = WidgetSnapshot(
         state: .stale,

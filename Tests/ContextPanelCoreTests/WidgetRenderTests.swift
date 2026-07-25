@@ -27,6 +27,91 @@ private let renderTestWidgetLinks = ContextPanelWidgetLinks(
     #expect(snapshot.widgetProblemStatus == .failure)
 }
 
+@Test func widgetProblemCopyIncludesBlockedResetTime() {
+    let resetsAt = Date(timeIntervalSince1970: 4_600)
+    let snapshot = providerAccessRenderSnapshot(
+        status: .limited,
+        accessState: ProviderAccessState(kind: .blockedUntilReset, resetsAt: resetsAt)
+    )
+
+    #expect(snapshot.widgetProblemText?.hasPrefix("Claude limited · reset ") == true)
+    #expect(snapshot.widgetProblemStatus == .limited)
+}
+
+@MainActor
+@Test func widgetProviderGridUsesBlockedAccessStatusBeyondPooledCapacity() throws {
+    let generatedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let resetsAt = generatedAt.addingTimeInterval(3_600)
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: generatedAt,
+        limits: [
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "blocked-claude",
+                accountName: "Blocked Claude",
+                label: "Claude 5-hour",
+                windowLabel: "5-hour",
+                modelLabel: "Claude",
+                unit: .percent,
+                used: 100,
+                limit: 100,
+                resetsAt: resetsAt,
+                lastUpdatedAt: generatedAt,
+                confidence: .observed
+            ),
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "available-claude",
+                accountName: "Available Claude",
+                label: "Claude 5-hour",
+                windowLabel: "5-hour",
+                modelLabel: "Claude",
+                unit: .percent,
+                used: 10,
+                limit: 100,
+                resetsAt: resetsAt,
+                lastUpdatedAt: generatedAt,
+                confidence: .observed
+            ),
+        ],
+        reports: [
+            StoredProviderReport(
+                provider: .anthropic,
+                accountID: "blocked-claude",
+                accountName: "Blocked Claude",
+                generatedAt: generatedAt,
+                status: .limited,
+                accessState: ProviderAccessState(kind: .blockedUntilReset, resetsAt: resetsAt),
+                errorMessage: nil
+            ),
+            StoredProviderReport(
+                provider: .anthropic,
+                accountID: "available-claude",
+                accountName: "Available Claude",
+                generatedAt: generatedAt,
+                status: .healthy,
+                accessState: ProviderAccessState(kind: .available),
+                errorMessage: nil
+            ),
+        ],
+        status: .limited,
+        message: "Claude limited"
+    )
+    let anthropic = try #require(snapshot.providerSummaries.first { $0.provider == .anthropic })
+    #expect(snapshot.mainLimitSummaries.first { $0.provider == .anthropic }?.status == .healthy)
+    #expect(anthropic.status == .limited)
+    #expect(anthropic.tightestLimit?.status == .limited)
+
+    let view = CPWProviderSummaryGrid(snapshot: snapshot)
+        .cpwThemeVariant(.light)
+        .frame(width: 344, height: 80)
+        .background(CPWTheme.surface(variant: .light))
+    let image = try #require(renderedImage(from: view, width: 344, height: 80))
+
+    #expect(pixelCount(in: image, near: (138, 74, 74)) > 20)
+}
+
 @MainActor
 @Test func healthyMediumWidgetRenderIsNotBlank() throws {
     let snapshot = WidgetSnapshot(
@@ -383,7 +468,10 @@ private extension Range where Bound == Int {
     }
 }
 
-private func providerAccessRenderSnapshot(status: UsageStatus) -> WidgetSnapshot {
+private func providerAccessRenderSnapshot(
+    status: UsageStatus,
+    accessState: ProviderAccessState = ProviderAccessState(kind: .blockedUntilReset)
+) -> WidgetSnapshot {
     let generatedAt = Date(timeIntervalSince1970: 1_000)
     return WidgetSnapshot(
         state: .ready,
@@ -410,7 +498,7 @@ private func providerAccessRenderSnapshot(status: UsageStatus) -> WidgetSnapshot
                 accountName: "Work Claude",
                 generatedAt: generatedAt,
                 status: .limited,
-                accessState: ProviderAccessState(kind: .blockedUntilReset),
+                accessState: accessState,
                 errorMessage: nil
             ),
         ],

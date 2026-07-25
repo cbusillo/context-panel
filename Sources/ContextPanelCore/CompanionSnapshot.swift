@@ -1214,7 +1214,8 @@ private extension Array where Element == CompanionLimit {
 
 public extension CompanionSyncDocument {
     var companionStatus: UsageStatus {
-        let limitStatuses = snapshot.limits.map(\.status)
+        let accessStatuses = snapshot.providerStatuses.compactMap(\.accessState.statusContribution)
+        let limitStatuses = snapshot.limits.map(\.status) + accessStatuses
         if !limitStatuses.isEmpty {
             return limitStatuses.contextPanelWorstStatus
         }
@@ -1240,28 +1241,41 @@ public extension CompanionSyncDocument {
         let limitGroups = Dictionary(grouping: snapshot.limits) {
             CompanionStatusAccountKey(limit: $0)
         }
-        guard !limitGroups.isEmpty else { return companionStatus }
+        let accountKeys = Set(limitGroups.keys).union(statusesByAccount.keys)
+        guard !accountKeys.isEmpty else { return companionStatus }
 
-        let accountStatuses = limitGroups.map { key, limits -> UsageStatus in
+        let accountStatuses = accountKeys.map { key -> UsageStatus in
+            let limits = limitGroups[key] ?? []
+            let providerStatuses = statusesByAccount[key] ?? []
+            if limits.isEmpty {
+                let statuses = providerStatuses.map(\.status)
+                    + providerStatuses.compactMap(\.accessState.statusContribution)
+                return statuses.contextPanelWorstStatus
+            }
+            let futureDatedAccessStatuses = providerStatuses.compactMap {
+                $0.accessState.futureDatedCompanionStatusContribution(at: now)
+            }
             let hasAgeSensitiveLimits = limits.contains { !$0.usageLimit.usesEventDrivenFreshness }
             let hasExpiredPollingReset = limits.contains {
                 stalenessPolicy.presentationResetRefreshIsDue(for: $0.usageLimit, now: now)
             }
             if hasExpiredPollingReset {
-                return .stale
+                return ([.stale] + futureDatedAccessStatuses).contextPanelWorstStatus
             }
             let limitObservedAt = limits.compactMap(\.lastUpdatedAt).max()
-            let statusObservedAt = statusesByAccount[key]?
+            let statusObservedAt = providerStatuses
                 .filter { $0.status.isCompanionObservationStatus }
                 .map(\.generatedAt)
                 .max()
             if hasAgeSensitiveLimits {
                 guard let observedAt = limitObservedAt ?? statusObservedAt else { return .stale }
                 if now.timeIntervalSince(observedAt) > stalenessPolicy.maximumAge {
-                    return .stale
+                    return ([.stale] + futureDatedAccessStatuses).contextPanelWorstStatus
                 }
             }
-            return limits.map(\.status).contextPanelWorstStatus
+            let statuses = limits.map(\.status)
+                + providerStatuses.compactMap(\.accessState.statusContribution)
+            return statuses.contextPanelWorstStatus
         }
         let currentStatuses = accountStatuses.filter { $0 != .stale }
         return (currentStatuses.isEmpty ? accountStatuses : currentStatuses).contextPanelWorstStatus
@@ -1280,6 +1294,18 @@ private struct CompanionStatusAccountKey: Hashable {
     init(status: CompanionProviderStatus) {
         provider = status.provider
         companionAccountID = status.companionAccountID
+    }
+}
+
+private extension ProviderAccessState {
+    func futureDatedCompanionStatusContribution(at now: Date) -> UsageStatus? {
+        switch kind {
+        case .blockedUntilReset, .paidFallbackActive:
+            guard let resetsAt, resetsAt > now else { return nil }
+            return statusContribution
+        case .available, .pressure, .unknown, .degraded:
+            return nil
+        }
     }
 }
 

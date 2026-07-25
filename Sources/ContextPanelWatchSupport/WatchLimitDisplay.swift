@@ -194,7 +194,11 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
             return row(from: matchingLimit, snapshot: snapshot)
         }
 
-        let status = displayStatus(source: .unknown, snapshotState: snapshot.state)
+        let status = providerDisplayStatus(
+            source: .unknown,
+            provider: lane.provider,
+            snapshot: snapshot
+        )
         let metrics = metricValues(remainingRatio: nil, usedRatio: nil, status: status)
         return WatchLimitDisplay(
             id: summaryID(provider: lane.provider, window: lane.window),
@@ -222,7 +226,11 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
     private static func row(from summary: MainLimitSummary, snapshot: WidgetSnapshot) -> WatchLimitDisplay? {
         guard let pooledLimit = summary.lastKnownPooledLimit ?? summary.pooledLimit else { return nil }
         let accountText = summary.accountCount == 1 ? "1 account" : "\(summary.accountCount) accounts"
-        let status = displayStatus(source: pooledLimit.status, snapshotState: snapshot.state)
+        let status = providerDisplayStatus(
+            source: pooledLimit.status,
+            provider: summary.provider,
+            snapshot: snapshot
+        )
         let metrics = metricValues(
             remainingRatio: pooledLimit.remainingCapacityRatio,
             usedRatio: pooledLimit.usageRatio,
@@ -283,7 +291,11 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
     }
 
     private static func row(from limit: UsageLimit, snapshot: WidgetSnapshot) -> WatchLimitDisplay {
-        let status = displayStatus(source: limit.status, snapshotState: snapshot.state)
+        let status = providerDisplayStatus(
+            source: limit.status,
+            provider: limit.provider,
+            snapshot: snapshot
+        )
         let metrics = metricValues(
             remainingRatio: limit.remainingCapacityRatio,
             usedRatio: limit.usageRatio,
@@ -379,6 +391,23 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
         case .setupNeeded:
             .unknown
         }
+    }
+
+    private static func providerDisplayStatus(
+        source: UsageStatus,
+        provider: Provider,
+        snapshot: WidgetSnapshot
+    ) -> UsageStatus {
+        let accessStatuses = snapshot.reports
+            .filter { $0.provider == provider }
+            .compactMap(\.accessState.statusContribution)
+        let providerStatus = accessStatuses.isEmpty
+            ? source
+            : ([source] + accessStatuses).contextPanelWorstStatus
+        return displayStatus(
+            source: providerStatus,
+            snapshotState: snapshot.state
+        )
     }
 
     private static func accessibilityContext(for limit: UsageLimit) -> String {

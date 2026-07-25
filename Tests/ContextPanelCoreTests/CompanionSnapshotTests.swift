@@ -1605,6 +1605,132 @@ import Testing
     #expect(widget.message == "Showing saved usage from your Mac.")
 }
 
+@Test func companionStatusIncludesBlockedAccessBeyondHealthyCapacity() {
+    let now = Date(timeIntervalSince1970: 3_400)
+    let resetsAt = now.addingTimeInterval(3_600)
+    let document = CompanionSyncDocument(
+        storedSnapshot: StoredUsageSnapshot(
+            savedAt: now,
+            snapshot: UsageSnapshot(generatedAt: now, limits: [
+                UsageLimit(
+                    provider: .anthropic,
+                    accountID: "anthropic-work",
+                    configuredAccountID: "anthropic-work",
+                    accountName: "Work Claude",
+                    label: "Claude 5-hour",
+                    windowLabel: "5-hour",
+                    modelLabel: "Claude",
+                    unit: .percent,
+                    used: 20,
+                    limit: 100,
+                    resetsAt: resetsAt,
+                    lastUpdatedAt: now,
+                    confidence: .observed
+                ),
+            ]),
+            reports: [
+                StoredProviderReport(
+                    provider: .anthropic,
+                    accountID: "anthropic-work",
+                    configuredAccountID: "anthropic-work",
+                    accountName: "Work Claude",
+                    generatedAt: now,
+                    status: .limited,
+                    accessState: ProviderAccessState(kind: .blockedUntilReset, resetsAt: resetsAt),
+                    errorMessage: nil
+                ),
+            ]
+        ),
+        publishedAt: now
+    )
+
+    #expect(document.snapshot.limits.first?.status == .healthy)
+    #expect(document.companionStatus == .limited)
+    #expect(
+        document.companionStatus(
+            now: now,
+            maximumAge: SnapshotFreshness.companionProviderMaximumAge
+        ) == .limited
+    )
+}
+
+@Test func companionStatusKeepsFutureBlockWhenAnEarlierPollingResetExpires() {
+    let now = Date(timeIntervalSince1970: 7_200)
+    let futureReset = now.addingTimeInterval(3_600)
+    let document = CompanionSyncDocument(
+        storedSnapshot: StoredUsageSnapshot(
+            savedAt: now,
+            snapshot: UsageSnapshot(generatedAt: now, limits: [
+                UsageLimit(
+                    provider: .anthropic,
+                    accountID: "anthropic-work",
+                    configuredAccountID: "anthropic-work",
+                    accountName: "Work Claude",
+                    label: "Claude 5-hour",
+                    windowLabel: "5-hour",
+                    modelLabel: "Claude",
+                    unit: .percent,
+                    used: 0,
+                    limit: 100,
+                    resetsAt: now.addingTimeInterval(-60),
+                    lastUpdatedAt: now.addingTimeInterval(-300),
+                    confidence: .observed
+                ),
+                UsageLimit(
+                    provider: .anthropic,
+                    accountID: "anthropic-work",
+                    configuredAccountID: "anthropic-work",
+                    accountName: "Work Claude",
+                    label: "Claude weekly",
+                    windowLabel: "Weekly",
+                    modelLabel: "Claude",
+                    unit: .percent,
+                    used: 100,
+                    limit: 100,
+                    resetsAt: futureReset,
+                    lastUpdatedAt: now,
+                    confidence: .observed
+                ),
+                UsageLimit(
+                    provider: .google,
+                    accountID: "google",
+                    configuredAccountID: "google",
+                    accountName: "Google",
+                    label: "Google weekly",
+                    windowLabel: "Weekly",
+                    unit: .percent,
+                    used: 20,
+                    limit: 100,
+                    resetsAt: futureReset,
+                    lastUpdatedAt: now,
+                    confidence: .observed
+                ),
+            ]),
+            reports: [
+                StoredProviderReport(
+                    provider: .anthropic,
+                    accountID: "anthropic-work",
+                    configuredAccountID: "anthropic-work",
+                    accountName: "Work Claude",
+                    generatedAt: now,
+                    status: .limited,
+                    accessState: ProviderAccessState(kind: .blockedUntilReset, resetsAt: futureReset),
+                    errorMessage: nil
+                ),
+            ]
+        ),
+        publishedAt: now
+    )
+
+    #expect(document.companionStatus == .limited)
+    #expect(
+        document.companionStatus(
+            now: now,
+            maximumAge: SnapshotFreshness.companionProviderMaximumAge
+        ) == .limited
+    )
+}
+
 @Test func companionWidgetDropsExpiredPromptCacheObservationsIndependently() {
     let now = Date(timeIntervalSince1970: 4_000)
     let stored = StoredUsageSnapshot(
