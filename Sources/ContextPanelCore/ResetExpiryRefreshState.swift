@@ -122,31 +122,7 @@ public struct ResetExpiryRefreshState: Codable, Equatable, Sendable {
         }
         records = preservedRecords + stuckKeys.sortedByIdentity.map { key in
             let existing = existingByIdentity[key.identity]
-            let retryCount = (existing?.retryCount ?? 0) + 1
-            return ResetExpiryRefreshRecord(
-                key: key,
-                attemptedAt: attemptedAt,
-                nextRetryAt: retryCount == 1 ? attemptedAt.addingTimeInterval(retryDelay) : nil,
-                retryCount: retryCount
-            )
-        }
-    }
-
-    public mutating func recordAttemptWithoutSnapshot(
-        previousSnapshot: UsageSnapshot?,
-        attemptedAt: Date,
-        retryDelay: TimeInterval = SnapshotFreshness.resetExpiryRetryDelay
-    ) {
-        guard let previousSnapshot else { return }
-        let stuckKeys = previousSnapshot.resetRefreshDueKeys(now: attemptedAt)
-        guard !stuckKeys.isEmpty else {
-            records.removeAll()
-            return
-        }
-        let existingByIdentity = Dictionary(uniqueKeysWithValues: records.map { ($0.identity, $0) })
-        records = stuckKeys.sortedByIdentity.map { key in
-            let existing = existingByIdentity[key.identity]
-            let retryCount = (existing?.retryCount ?? 0) + 1
+            let retryCount = min((existing?.retryCount ?? 0) + 1, 2)
             return ResetExpiryRefreshRecord(
                 key: key,
                 attemptedAt: attemptedAt,

@@ -654,7 +654,7 @@ public struct SnapshotStoreStalenessPolicy: Equatable, Sendable {
         guard let resetExpiryRefreshState else { return true }
         guard let key = ResetExpiryRefreshKey(limit: limit) else { return false }
         guard let record = resetExpiryRefreshState.record(for: key) else { return true }
-        guard let nextRetryAt = record.nextRetryAt else { return false }
+        guard let nextRetryAt = record.nextRetryAt else { return limit.usesEventDrivenFreshness }
         return nextRetryAt <= now
     }
 }

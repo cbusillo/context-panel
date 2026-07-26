@@ -146,7 +146,7 @@ public struct SnapshotRefreshRunner: Sendable {
         let current = service.loadCurrent(policy: stalenessPolicy, now: now)
         let resetRefreshIsDue = stalenessPolicy.needsResetRefresh(for: current.snapshot, now: now)
         let promptCacheObservations = service.promptCacheObservations(now: now)
-        if shouldSavePromptCacheOnly(
+        if !resetRefreshIsDue, shouldSavePromptCacheOnly(
             current: current.snapshot,
             currentStatus: current.status,
             promptCacheObservations: promptCacheObservations,
@@ -183,13 +183,18 @@ public struct SnapshotRefreshRunner: Sendable {
             guard let outcome = try await lock.withLock({
                 try await service.refresh(now: now)
             }) else {
-                deferResetExpiryRefreshAfterLockContention(previousSnapshot: previousSnapshot, savedAt: now)
+                deferResetExpiryRefresh(
+                    previousSnapshot: previousSnapshot,
+                    savedAt: now,
+                    retryDelay: SnapshotFreshness.resetExpiryRetryDelay
+                )
                 return .skippedAlreadyRunning
             }
             guard outcome.didSaveSnapshot else {
-                recordResetExpiryRefreshAttemptWithoutSnapshot(
+                deferResetExpiryRefresh(
                     previousSnapshot: previousSnapshot,
-                    savedAt: outcome.savedAt
+                    savedAt: outcome.savedAt,
+                    retryDelay: SnapshotFreshness.refreshNeededAge
                 )
                 return .skippedNoReports
             }
@@ -197,21 +202,27 @@ public struct SnapshotRefreshRunner: Sendable {
                 previousSnapshot: previousSnapshot,
                 refreshedSnapshot: service.loadCurrent().snapshot?.snapshot ?? outcome.refreshResult.snapshot,
                 refreshResult: outcome.refreshResult,
-                savedAt: outcome.savedAt
+                savedAt: outcome.savedAt,
+                unattemptedRetryDelay: SnapshotFreshness.refreshNeededAge
             )
             return .refreshed(outcome)
         }
 
         let outcome = try await service.refresh(now: now)
         guard outcome.didSaveSnapshot else {
-            recordResetExpiryRefreshAttemptWithoutSnapshot(previousSnapshot: previousSnapshot, savedAt: outcome.savedAt)
+            deferResetExpiryRefresh(
+                previousSnapshot: previousSnapshot,
+                savedAt: outcome.savedAt,
+                retryDelay: SnapshotFreshness.refreshNeededAge
+            )
             return .skippedNoReports
         }
         recordResetExpiryRefreshAttempt(
             previousSnapshot: previousSnapshot,
             refreshedSnapshot: service.loadCurrent().snapshot?.snapshot ?? outcome.refreshResult.snapshot,
             refreshResult: outcome.refreshResult,
-            savedAt: outcome.savedAt
+            savedAt: outcome.savedAt,
+            unattemptedRetryDelay: SnapshotFreshness.refreshNeededAge
         )
         return .refreshed(outcome)
     }
@@ -323,7 +334,8 @@ public struct SnapshotRefreshRunner: Sendable {
         previousSnapshot: UsageSnapshot?,
         refreshedSnapshot: UsageSnapshot,
         refreshResult: ConnectorRefreshResult,
-        savedAt: Date
+        savedAt: Date,
+        unattemptedRetryDelay: TimeInterval? = nil
     ) {
         guard let resetExpiryRefreshStore else { return }
         let attemptedAccounts = Set(refreshResult.reports.map(ResetExpiryRefreshAccountKey.init(report:)))
@@ -331,23 +343,31 @@ public struct SnapshotRefreshRunner: Sendable {
             state.recordAttempt(
                 previousSnapshot: previousSnapshot,
                 refreshedSnapshot: refreshedSnapshot,
-                attemptedAccounts: attemptedAccounts.isEmpty ? nil : attemptedAccounts,
+                attemptedAccounts: attemptedAccounts,
                 attemptedAt: savedAt
             )
+            if attemptedAccounts.isEmpty, let unattemptedRetryDelay {
+                state.deferDueResets(
+                    previousSnapshot: refreshedSnapshot,
+                    attemptedAt: savedAt,
+                    retryDelay: unattemptedRetryDelay
+                )
+            }
         }
     }
 
-    private func recordResetExpiryRefreshAttemptWithoutSnapshot(previousSnapshot: UsageSnapshot?, savedAt: Date) {
+    private func deferResetExpiryRefresh(
+        previousSnapshot: UsageSnapshot?,
+        savedAt: Date,
+        retryDelay: TimeInterval
+    ) {
         guard let resetExpiryRefreshStore else { return }
         try? resetExpiryRefreshStore.update { state in
-            state.recordAttemptWithoutSnapshot(previousSnapshot: previousSnapshot, attemptedAt: savedAt)
-        }
-    }
-
-    private func deferResetExpiryRefreshAfterLockContention(previousSnapshot: UsageSnapshot?, savedAt: Date) {
-        guard let resetExpiryRefreshStore else { return }
-        try? resetExpiryRefreshStore.update { state in
-            state.deferDueResets(previousSnapshot: previousSnapshot, attemptedAt: savedAt)
+            state.deferDueResets(
+                previousSnapshot: previousSnapshot,
+                attemptedAt: savedAt,
+                retryDelay: retryDelay
+            )
         }
     }
 

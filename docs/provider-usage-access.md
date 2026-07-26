@@ -236,6 +236,10 @@ approximation marker means the scheduled reset is assumed rather than observed;
 the next AGY run replaces it. This presentation inference must not be written
 into observed history or used as high-confidence forecast evidence, and it must
 not create stale or refresh-needed UI by itself.
+Context Panel makes one immediate reset-expiry retry, then keeps unchanged AGY
+observations on the configured low-frequency background refresh cadence. Saves
+that only update prompt-cache telemetry, and refreshes that contact no provider
+account, do not consume the provider retry attempts.
 Every reported active bucket remains distinct. Context Panel may humanize the
 bucket ID and recognize literal `weekly` or `5h` tokens already present in that
 provider identifier, but it must not infer a window from reset timing or add
