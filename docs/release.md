@@ -1,6 +1,6 @@
 # macOS And Companion Release Path
 
-Last verified: 2026-07-22.
+Last verified: 2026-07-26.
 
 Context Panel's normal beta release path is the GitHub Actions `Ship` workflow.
 It coordinates selected release channels from one commit and one marketing
@@ -13,11 +13,12 @@ version:
 Companion iOS/iPadOS, visionOS, and tvOS distribution use the same App Store
 Connect and TestFlight building blocks, but each platform is deliberately
 opt-in from `Ship`. The native visionOS app is published and its signed physical
-Vision Pro path is proven. The tvOS app passed its signed Production TestFlight
-matrix on physical Apple TV hardware; its first App Store version still needs
-the approved tvOS metadata and screenshot set uploaded before review. Fresh
-visionOS or tvOS trains still require the platform-specific signed device smoke
-gate described below.
+Vision Pro path is proven. The first tvOS App Store version has complete
+metadata, screenshots, reviewer evidence, and signed physical Apple TV proof;
+it was submitted after the earlier rejected candidate was retired safely. Treat
+live review state as App Store Connect-owned operational data and verify it
+directly before release decisions. Fresh visionOS or tvOS trains still require
+the platform-specific signed device smoke gate described below.
 
 App Store Review submission is intentionally separate from `Ship`. Run it only
 after the TestFlight build has been validated and the App Store release decision
@@ -258,9 +259,10 @@ uploaded build; neither should secretly invoke the other.
 
 ## Companion TestFlight Validation
 
-Use this path for issue #274 and companion device dogfood. It is separate from
-the normal Mac TestFlight cut unless `Ship` is explicitly configured to use the
-companion channel.
+Use this path for companion device dogfood and CloudKit sync regression
+validation. Issue #274 records the completed initial iOS/visionOS validation.
+This path is separate from the normal Mac TestFlight cut unless `Ship` is
+explicitly configured to use the companion channel.
 
 ### tvOS Release Lane
 
@@ -318,8 +320,9 @@ Before treating the first tvOS TestFlight build as release evidence:
 The approved tvOS screenshot set lives under
 `Resources/AppStore/Screenshots/tvos/`. Upload it with the `tvos` screenshot set;
 the uploader maps those approved 1920-by-1080 frames to App Store Connect display
-type `APP_APPLE_TV`. The editable first tvOS App Store version still needs its
-description and screenshots populated before review submission.
+type `APP_APPLE_TV`. The first tvOS App Store version already has its approved
+description and screenshots; verify the live App Store Connect record before
+editing or submitting a later train.
 
 ### visionOS Release State
 
@@ -560,15 +563,15 @@ the selected platform and App Group, validate the companion app profile for
 iCloud Documents, CloudKit, ubiquity, and production APNs entitlements, then
 export a signed IPA under `.build/app-store-connect-companion/`.
 
-Use `--platform visionos` only after #230 has an explicit native visionOS
-packaging decision. A passing generic no-sign visionOS build is not enough to
-run this as release evidence. The visionOS profiles must support `visionOS` or
-`xrOS`. The upload script also blocks `--platform visionos` until a complete
+The native visionOS packaging requirements proven by #230 remain mandatory. A
+passing generic no-sign visionOS build is not enough to run this as release
+evidence. The visionOS profiles must support `visionOS` or `xrOS`. The upload
+script also blocks `--platform visionos` until a complete
 `Resources/Assets.xcassets/AppIcon.solidimagestack` with solid image stack
 layers exists, so a missing or placeholder layered visionOS icon cannot become
 accidental signed release evidence.
 
-The next signed canary for #231 is:
+Use the signed canary shape validated by #231:
 
 ```sh
 scripts/upload-app-store-connect-companion-app.sh \
@@ -662,16 +665,16 @@ release needs to upload both Mac and companion builds while distributing only th
 Mac build to TestFlight, run that as separate `Ship` dispatches so the TestFlight
 source remains unambiguous.
 
-Use `companion_platform=visionos` only for the #168/#231 native visionOS
-validation path, after #230 has confirmed profile, icon, metadata, and App Store
-Connect requirements. The normal companion dogfood path remains `ios` for
-iPhone/iPad.
+Use `companion_platform=visionos` for native visionOS validation. Issues #168,
+#230, and #231 record the completed initial packaging, profile, icon, metadata,
+App Store Connect, and signed-device proof. The normal companion dogfood path
+remains `ios` for iPhone/iPad.
 
-Use `companion_platform=tvos` for issue #379 after both tvOS profile secrets are
-present. The signed candidate includes Couch Mode, the dynamic Top Shelf
-extension, and upgrade cleanup for the retired provider badge; App Store
-submission still requires physical Apple TV, screenshot, metadata, privacy, and
-review evidence.
+Use `companion_platform=tvos` for the signed tvOS lane recorded by #379. Both
+tvOS profile secrets remain required. The signed candidate includes Couch Mode,
+the dynamic Top Shelf extension, and upgrade cleanup for the retired provider
+badge; every fresh App Store submission still requires physical Apple TV,
+screenshot, metadata, privacy, and reviewer evidence.
 
 Do not set `testflight_beta_source=macos` when the intent is companion device
 validation; that distributes the Mac App Store build instead of the companion
@@ -681,6 +684,12 @@ build.
 
 Before treating a companion TestFlight build as release evidence, validate this
 sequence from signed runtimes:
+
+The sandbox-local widget mirror is a local-development fallback, not a
+substitute for release app-group entitlements. The `install` and `reset` runtime
+baseline modes unregister stale PluginKit and Launch Services paths and
+quarantine competing local bundles; the read-only `check` mode fails while such
+registrations or bundles remain.
 
 1. Install and launch the canonical Mac app from `/Applications/Context
 Panel.app`.
@@ -699,9 +708,9 @@ Panel.app`.
 4. Open the app Diagnostics view and confirm `Companion publish` is healthy or,
    if degraded, names the failing store without raw paths or account data.
 5. Install the companion build from TestFlight on the target device. For the
-   current validated companion lane, that means iPhone or iPad. For a future
-   visionOS lane, release evidence requires Apple Vision Pro after #168
-   packaging requirements are satisfied. A visionOS simulator can be used for a
+   current validated companion lane, that means iPhone or iPad. For visionOS,
+   release evidence requires Apple Vision Pro; #168 records the completed
+   initial packaging requirements. A visionOS simulator can be used for a
    separate pre-release UI smoke check, but not as TestFlight/device validation.
 6. Before launching the companion app, add the companion widget and confirm its
    small/medium/large layouts render current lanes directly from Production
@@ -733,6 +742,40 @@ Panel.app`.
     and confirm repeated legacy publishes cannot erase lanes already preserved
     in the versioned record.
 
+#### Security-Scoped Bookmark QA
+
+Before treating a fresh macOS train as release-ready:
+
+1. Authorize one configured auth file and one Every Code usage directory from
+   the signed app, then confirm a refresh produces provider limits and
+   prompt-cache telemetry.
+2. Run the Production runtime receipt once to inspect the refresh agent's
+   aggregate bookmark summary, then rerun it with
+   `--expect-bookmark-current <count>` and
+   `--expect-bookmark-resolvable <count>` set to the explained release
+   expectations. Strict mode requires every stored entry to use the current
+   format, rejects legacy, document-scoped, and invalid entries, and requires the
+   expected number of resolvable entries. A check without those expectation
+   flags proves only that the privacy-safe summary can be read; it is not an
+   access-health verdict. The receipt must never print bookmark payloads, raw
+   paths, or account identifiers.
+3. Replace the authorized auth file atomically, refresh again, and confirm the
+   bookmark remains readable and is renewed rather than remaining stale.
+4. Reauthorize the same configured path and confirm it replaces the prior entry
+   without removing sibling authorizations.
+5. Make one configured usage source temporarily unreadable while another stays
+   healthy. Confirm the healthy source advances and the unreadable source keeps
+   its last-good mirror instead of being purged.
+6. Quit the main app, run or await the signed login-item refresh agent, and
+   confirm refresh diagnostics plus snapshot time advance. Record whether the
+   aggregate bookmark summary shows app-created bookmarks as resolvable from the
+   separately sandboxed agent. If it does not, confirm provider refresh uses the
+   shared Keychain credential and prompt-cache telemetry preserves the last-good
+   main-app mirror; do not claim direct agent bookmark access.
+7. Upgrade over the previous signed build and repeat the receipt. Treat a change
+   between Developer ID and Mac App Store sandbox identities as a separate
+   reauthorization scenario rather than ordinary in-place upgrade evidence.
+
 #### Routine Watch Complication Test
 
 1. Confirm the new marketing version and build number reached the Watch, not
@@ -748,8 +791,8 @@ Panel.app`.
    recovery path.
 
 If the companion app or widget is stale but diagnostics show healthy Mac publish
-and readable CloudKit state, investigate the companion receive/mirror/reload path
-under #456 before treating provider refresh as the cause.
+and readable CloudKit state, follow the companion receive/mirror/reload
+diagnostics established by #456 before treating provider refresh as the cause.
 
 ## App Store Review Submission
 

@@ -453,7 +453,8 @@ public struct SnapshotRefreshService: Sendable {
     }
 
     public static func appDefault(
-        companionRemoteStore: CompanionRemoteSyncStore? = nil
+        companionRemoteStore: CompanionRemoteSyncStore? = nil,
+        renewsStaleBookmarks: Bool = true
     ) -> SnapshotRefreshService {
         SnapshotRefreshService(
             accountStore: AccountConfigurationStore(
@@ -461,7 +462,10 @@ public struct SnapshotRefreshService: Sendable {
                 fallbackConfigurationURL: ContextPanelLocations.legacyAccountConfigurationURL()
             ),
             stores: .appDefault(),
-            bookmarkStore: SecureFileBookmarkStore(storeURL: ContextPanelLocations.bookmarkStoreURL()),
+            bookmarkStore: SecureFileBookmarkStore(
+                storeURL: ContextPanelLocations.bookmarkStoreURL(),
+                renewsStaleBookmarks: renewsStaleBookmarks
+            ),
             credentialStore: ProviderCredentialStore(),
             companionSyncPublisher: .appDefault(remoteStore: companionRemoteStore),
             refreshDiagnosticsStore: RefreshDiagnosticsStateStore(

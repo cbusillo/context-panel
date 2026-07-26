@@ -1701,6 +1701,38 @@ import Testing
     #expect(callOrder.values == ["present"])
 }
 
+@Test func snapshotRefreshServiceImportsCurrentBookmarkedCredential() throws {
+    let root = try temporaryDirectory()
+    let authURL = root.appending(path: "auth_accounts.json")
+    let accountStore = AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json"))
+    let bookmarkStore = SecureFileBookmarkStore(storeURL: root.appending(path: "bookmarks.json"))
+    let credentialStore = InMemoryProviderCredentialStore(storage: ["openai-code": Data("old".utf8)])
+    let currentCredential = Data("current".utf8)
+    try currentCredential.write(to: authURL)
+    try bookmarkStore.createAndStoreBookmark(for: authURL, path: authURL.path)
+    try accountStore.save(AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 100), accounts: [
+        LocalProviderAccountConfiguration(
+            id: "openai-code",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "Every Code",
+            authPath: authURL.path
+        ),
+    ]))
+    let service = SnapshotRefreshService(
+        accountStore: accountStore,
+        stores: SnapshotRefreshStores(primary: JSONSnapshotStore(rootDirectory: root.appending(path: "snapshots"))),
+        bookmarkStore: bookmarkStore,
+        credentialStore: credentialStore,
+        promptCacheTelemetryMirror: { _, _ in },
+        promptCacheTelemetryReader: { _ in [] }
+    )
+
+    service.importConfiguredAuthFiles(now: Date(timeIntervalSince1970: 200))
+
+    #expect(try credentialStore.load(accountID: "openai-code") == currentCredential)
+}
+
 @Test func snapshotRefreshServiceMirrorsPromptCacheFromConfiguredCodexUsageDirectories() async throws {
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())

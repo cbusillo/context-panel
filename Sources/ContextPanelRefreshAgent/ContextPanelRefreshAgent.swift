@@ -17,6 +17,7 @@ struct ContextPanelRefreshAgent {
                 "--clear-webhook-credentials",
                 "--provider-credentials-present",
                 "--webhook-credentials-present",
+                "--bookmark-access-summary",
                 "--ingest-antigravity-status-line",
             ].contains($0)
         }
@@ -34,6 +35,8 @@ struct ContextPanelRefreshAgent {
                 checkProviderCredentials()
             case "--webhook-credentials-present":
                 checkWebhookCredentials()
+            case "--bookmark-access-summary":
+                printBookmarkAccessSummary()
             case "--ingest-antigravity-status-line":
                 ingestAntigravityStatusLine()
             default:
@@ -42,7 +45,8 @@ struct ContextPanelRefreshAgent {
         }
 
         let runner = SnapshotRefreshRunner(service: .appDefault(
-            companionRemoteStore: CompanionCloudKitSyncStoreFactory.make()
+            companionRemoteStore: CompanionCloudKitSyncStoreFactory.make(),
+            renewsStaleBookmarks: false
         ))
         let warningService = LimitWarningNotificationService.appDefault()
         let diagnosticsStore = RefreshDiagnosticsStateStore(
@@ -111,6 +115,22 @@ struct ContextPanelRefreshAgent {
                 return
             }
         }
+    }
+
+    private static func printBookmarkAccessSummary() {
+        let summary = SecureFileBookmarkStore(
+            storeURL: ContextPanelLocations.bookmarkStoreURL(),
+            renewsStaleBookmarks: false
+        ).accessSummary()
+        let storeState = summary.storeExists
+            ? (summary.storeReadable ? "readable" : "invalid")
+            : "absent"
+        print(
+            "bookmarks store=\(storeState) total=\(summary.total) current=\(summary.current) " +
+                "legacy=\(summary.legacyAppScoped) document-scoped=\(summary.documentScoped) " +
+                "invalid=\(summary.invalid) resolvable=\(summary.resolvable)"
+        )
+        Foundation.exit(summary.storeReadable && summary.invalid == 0 ? 0 : 2)
     }
 
     private static func recordRefreshStarted(

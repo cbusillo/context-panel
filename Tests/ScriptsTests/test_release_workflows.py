@@ -2280,7 +2280,7 @@ exit 65
     def test_release_docs_describe_cloudkit_companion_testflight_validation(self):
         release_docs = self.read("docs/release.md")
 
-        self.assertIn("Use this path for issue #274", release_docs)
+        self.assertIn("Issue #274 records the completed initial iOS/visionOS validation", release_docs)
         self.assertIn("`testflight_beta_source=companion`", release_docs)
         self.assertIn("--platform MAC_OS", release_docs)
         self.assertIn("--version <active-companion-app-store-version>", release_docs)
@@ -2302,6 +2302,50 @@ exit 65
         self.assertNotIn("read-only companion surfaces can sync fresh snapshots", release_docs)
         self.assertNotIn("runtime-baseline.sh install --launch` or", release_docs)
         self.assertNotIn("--version 1.0.32", release_docs)
+
+    def test_runtime_baseline_reports_refresh_agent_bookmark_access(self):
+        script = self.read("scripts/context-panel-runtime-baseline.sh")
+        refresh_agent = self.read("Sources/ContextPanelRefreshAgent/ContextPanelRefreshAgent.swift")
+
+        self.assertIn("bookmark_access_state()", script)
+        self.assertIn("verify_bookmark_access_expectations()", script)
+        self.assertIn("--bookmark-access-summary", script)
+        self.assertIn("--expect-bookmark-current", script)
+        self.assertIn("--expect-bookmark-resolvable", script)
+        self.assertIn("privacy-safe bookmark access summary", script)
+        self.assertIn('"--bookmark-access-summary"', refresh_agent)
+        self.assertIn("SecureFileBookmarkStore", refresh_agent)
+        self.assertIn("summary.resolvable", refresh_agent)
+
+    def test_runtime_baseline_rejects_unexpected_bookmark_counts(self):
+        command = """
+        source scripts/context-panel-runtime-baseline.sh --source-only
+        failures=0
+        expected_bookmark_current=2
+        expected_bookmark_resolvable=2
+        verify_bookmark_access_expectations \
+          'bookmarks store=readable total=3 current=2 legacy=1 document-scoped=0 invalid=0 resolvable=2'
+        [[ "$failures" -gt "0" ]]
+        """
+        result = subprocess.run(
+            ["bash", "-lc", command],
+            cwd=REPO_ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("bookmark current count matches expected value 2", result.stdout)
+        self.assertIn("bookmark resolvable count matches expected value 2", result.stdout)
+        self.assertIn("strict bookmark gate requires total=3 to equal current=2", result.stdout)
+        self.assertIn("strict bookmark gate found legacy=1", result.stdout)
+
+    def test_release_docs_do_not_claim_tvos_metadata_is_pending(self):
+        release_docs = self.read("docs/release.md")
+
+        self.assertNotIn("still needs its description and screenshots", release_docs)
 
     def test_runtime_baseline_does_not_require_google_oauth_build_settings(self):
         script = self.read("scripts/context-panel-runtime-baseline.sh")

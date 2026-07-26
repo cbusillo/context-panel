@@ -8,11 +8,13 @@ open_url_after_reset=0
 reset_widget_placement=0
 include_btm_diagnostics=0
 require_production_runtime=0
+expected_bookmark_current=""
+expected_bookmark_resolvable=""
 source_only=0
 
 usage() {
 	cat <<'USAGE'
-Usage: scripts/context-panel-runtime-baseline.sh [check|install|reset] [--launch] [--open-url] [--reset-widget-placement] [--require-production-runtime]
+Usage: scripts/context-panel-runtime-baseline.sh [check|install|reset] [--launch] [--open-url] [--reset-widget-placement] [--require-production-runtime] [--expect-bookmark-current <count>] [--expect-bookmark-resolvable <count>]
 
 check  Print a runtime receipt and fail if Context Panel is not isolated to this checkout.
 install
@@ -31,6 +33,10 @@ reset  Build this checkout, clear Context Panel storage, quarantine conflicting 
             Include sfltool Background Task Management diagnostics. macOS may prompt for a password.
 --require-production-runtime
             With check, require Production CloudKit entitlements for the app and refresh agent.
+--expect-bookmark-current <count>
+            With check, require the refresh agent to report exactly this many current bookmarks.
+--expect-bookmark-resolvable <count>
+            With check, require the refresh agent to resolve exactly this many bookmarks.
 
 USAGE
 }
@@ -62,6 +68,22 @@ while [[ $# -gt 0 ]]; do
 		require_production_runtime=1
 		shift
 		;;
+	--expect-bookmark-current)
+		if [[ $# -lt 2 || ! "${2:-}" =~ ^[0-9]+$ ]]; then
+			echo "--expect-bookmark-current requires a non-negative integer" >&2
+			exit 2
+		fi
+		expected_bookmark_current="$2"
+		shift 2
+		;;
+	--expect-bookmark-resolvable)
+		if [[ $# -lt 2 || ! "${2:-}" =~ ^[0-9]+$ ]]; then
+			echo "--expect-bookmark-resolvable requires a non-negative integer" >&2
+			exit 2
+		fi
+		expected_bookmark_resolvable="$2"
+		shift 2
+		;;
 	--source-only)
 		source_only=1
 		shift
@@ -80,6 +102,19 @@ done
 
 if [[ "$require_production_runtime" == "1" && "$mode" != "check" ]]; then
 	echo "--require-production-runtime is only valid with check" >&2
+	usage >&2
+	exit 2
+fi
+
+if [[ "$mode" != "check" && (-n "$expected_bookmark_current" || -n "$expected_bookmark_resolvable") ]]; then
+	echo "bookmark count expectations are only valid with check" >&2
+	usage >&2
+	exit 2
+fi
+
+if [[ -n "$expected_bookmark_current" && -z "$expected_bookmark_resolvable" ]] ||
+	[[ -z "$expected_bookmark_current" && -n "$expected_bookmark_resolvable" ]]; then
+	echo "--expect-bookmark-current and --expect-bookmark-resolvable must be used together" >&2
 	usage >&2
 	exit 2
 fi
@@ -287,6 +322,63 @@ provider_credential_state() {
 	10) return 10 ;;
 	*) return 2 ;;
 	esac
+}
+
+bookmark_access_state() {
+	local executable="$refresh_agent_path/Contents/MacOS/ContextPanelRefreshAgent"
+	if [[ ! -x "$executable" ]]; then
+		printf 'Context Panel bookmark access check unavailable: missing %s\n' "$executable"
+		return 2
+	fi
+
+	local output status
+	set +e
+	output="$(run_with_timeout 10 "$executable" --bookmark-access-summary 2>&1)"
+	status=$?
+	set -e
+	printf '%s\n' "$output"
+	[[ "$status" == "0" ]]
+}
+
+verify_bookmark_access_expectations() {
+	local summary="$1"
+	local total current legacy document_scoped invalid resolvable
+	[[ -n "$expected_bookmark_current" ]] || return 0
+
+	if ! total="$(bookmark_summary_count "$summary" total)" ||
+		! current="$(bookmark_summary_count "$summary" current)" ||
+		! legacy="$(bookmark_summary_count "$summary" legacy)" ||
+		! document_scoped="$(bookmark_summary_count "$summary" document-scoped)" ||
+		! invalid="$(bookmark_summary_count "$summary" invalid)" ||
+		! resolvable="$(bookmark_summary_count "$summary" resolvable)"; then
+		fail "bookmark summary did not report every required count"
+		return
+	fi
+
+	if [[ "$current" == "$expected_bookmark_current" ]]; then
+		ok "bookmark current count matches expected value $expected_bookmark_current"
+	else
+		fail "bookmark current count expected $expected_bookmark_current but found $current"
+	fi
+	if [[ "$resolvable" == "$expected_bookmark_resolvable" ]]; then
+		ok "bookmark resolvable count matches expected value $expected_bookmark_resolvable"
+	else
+		fail "bookmark resolvable count expected $expected_bookmark_resolvable but found $resolvable"
+	fi
+	[[ "$total" == "$current" ]] || fail "strict bookmark gate requires total=$total to equal current=$current"
+	[[ "$legacy" == "0" ]] || fail "strict bookmark gate found legacy=$legacy"
+	[[ "$document_scoped" == "0" ]] || fail "strict bookmark gate found document-scoped=$document_scoped"
+	[[ "$invalid" == "0" ]] || fail "strict bookmark gate found invalid=$invalid"
+}
+
+bookmark_summary_count() {
+	local summary="$1"
+	local key="$2"
+	if [[ "$summary" =~ (^|[[:space:]])${key}=([0-9]+)($|[[:space:]]) ]]; then
+		printf '%s' "${BASH_REMATCH[2]}"
+		return 0
+	fi
+	return 1
 }
 
 clear_provider_credentials() {
@@ -1591,6 +1683,23 @@ check_runtime() {
 	fi
 	if [[ -n "$saved_at" ]]; then
 		ok "current snapshot savedAt=$saved_at"
+	fi
+	local bookmark_state bookmark_status
+	set +e
+	bookmark_state="$(bookmark_access_state)"
+	bookmark_status=$?
+	set -e
+	if [[ -n "$bookmark_state" ]]; then
+		printf '%s\n' "$bookmark_state"
+	fi
+	if [[ "$bookmark_status" == "0" ]]; then
+		ok "refresh agent emitted a privacy-safe bookmark access summary"
+		verify_bookmark_access_expectations "$bookmark_state"
+		if [[ -z "$expected_bookmark_current" && -z "$expected_bookmark_resolvable" ]]; then
+			note "Bookmark counts are informational; pass --expect-bookmark-current and --expect-bookmark-resolvable for a strict release gate."
+		fi
+	else
+		fail "could not verify refresh-agent bookmark access"
 	fi
 	render_cache="$(widget_render_cache_files)"
 	placeholder_cache="$(widget_placeholder_cache_files)"

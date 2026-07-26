@@ -485,6 +485,37 @@ import Testing
     #expect(result.reports[0].errorMessage?.contains("permission") == true)
 }
 
+@Test func sandboxedAuthLoaderRejectsUnreadableStoredBookmark() async throws {
+    let root = try temporaryDirectory()
+    let authURL = root.appending(path: "auth_accounts.json")
+    let bookmarkStore = SecureFileBookmarkStore(storeURL: root.appending(path: "bookmarks.json"))
+    try Data(#"{}"#.utf8).write(to: authURL)
+    try bookmarkStore.createAndStoreBookmark(for: authURL, path: authURL.path)
+    try FileManager.default.removeItem(at: authURL)
+    let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
+        LocalProviderAccountConfiguration(
+            id: "codex",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "OpenAI",
+            authPath: authURL.path
+        )
+    ])
+    let connectors = AccountConnectorFactory.connectors(
+        from: document,
+        bookmarkStore: bookmarkStore,
+        requiresBookmarkedAuthFiles: true
+    )
+
+    let result = await ProviderConnectorRuntime(connectors: connectors)
+        .refreshAll(now: Date(timeIntervalSince1970: 0))
+
+    #expect(result.reports.count == 1)
+    #expect(result.reports[0].status == .failure)
+    #expect(result.snapshot.limits.isEmpty)
+    #expect(result.reports[0].errorMessage?.contains("permission") == true)
+}
+
 @Test func sandboxedAuthLoaderPrefersImportedCredentialStore() async {
     let document = AccountConfigurationDocument(updatedAt: Date(timeIntervalSince1970: 0), accounts: [
         LocalProviderAccountConfiguration(
