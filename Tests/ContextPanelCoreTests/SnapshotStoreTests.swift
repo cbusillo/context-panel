@@ -2664,6 +2664,354 @@ import Testing
     }
 }
 
+@Test func snapshotRefreshRunnerKeepsAGYResetRefreshAliveAfterImmediateRetries() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let resetStateStore = ResetExpiryRefreshStateStore(
+        stateURL: try temporaryDirectory().appending(path: "reset-state.json")
+    )
+    let bridgeStore = GoogleAntigravityStatusLineSnapshotStore(
+        snapshotURL: try temporaryDirectory().appending(path: "antigravity-status-line.json")
+    )
+    let savedAt = Date(timeIntervalSince1970: 1_000)
+    let resetAt = savedAt.addingTimeInterval(60)
+    try bridgeStore.save(GoogleAntigravityStatusLineSnapshot(
+        sourceVersion: "1.1.1",
+        planTier: "Google AI Pro",
+        observedAt: savedAt,
+        buckets: [GoogleAntigravityStatusLineBucket(
+            id: "gemini-3.1-pro-high-5h",
+            remainingFraction: 0.80,
+            resetsAt: resetAt
+        )]
+    ))
+    try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
+        updatedAt: savedAt,
+        accounts: [LocalProviderAccountConfiguration(
+            id: "google-antigravity-default",
+            provider: .google,
+            connectorKind: .googleAntigravityQuota,
+            displayName: "Antigravity"
+        )]
+    ))
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary),
+        googleAntigravitySnapshotLoader: bridgeStore,
+        promptCacheTelemetryReader: { _ in [] }
+    )
+    _ = try await service.refresh(now: savedAt)
+    let runner = SnapshotRefreshRunner(
+        service: service,
+        stalenessPolicy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.refreshNeededAge),
+        resetExpiryRefreshStore: resetStateStore,
+        lock: nil
+    )
+    let firstAttemptAt = resetAt.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace)
+    let secondAttemptAt = firstAttemptAt.addingTimeInterval(SnapshotFreshness.resetExpiryRetryDelay)
+
+    if case .refreshed = try await runner.refreshIfNeeded(now: firstAttemptAt) {
+        #expect(resetStateStore.load().records.first?.retryCount == 1)
+    } else {
+        Issue.record("expected the first elapsed AGY reset refresh")
+    }
+    if case .refreshed = try await runner.refreshIfNeeded(now: secondAttemptAt) {
+        let record = try #require(resetStateStore.load().records.first)
+        #expect(record.retryCount == 2)
+        #expect(record.nextRetryAt == nil)
+    } else {
+        Issue.record("expected the immediate AGY reset retry")
+    }
+
+    let normalInterval = SnapshotFreshness.refreshNeededAge
+    #expect(runner.nextRefreshCheckDate(now: secondAttemptAt) == nil)
+    #expect(SnapshotRefreshRunner.nextRefreshCheckInterval(
+        normalInterval: normalInterval,
+        nextCheckDate: runner.nextRefreshCheckDate(now: secondAttemptAt),
+        startedAt: secondAttemptAt,
+        finishedAt: secondAttemptAt
+    ) == normalInterval)
+
+    let thirdAttemptAt = secondAttemptAt.addingTimeInterval(normalInterval)
+    if case .refreshed = try await runner.refreshIfNeeded(now: thirdAttemptAt) {
+        let record = try #require(resetStateStore.load().records.first)
+        #expect(record.retryCount == 2)
+        #expect(record.nextRetryAt == nil)
+    } else {
+        Issue.record("expected the terminal AGY reset state to retry on the normal refresh cadence")
+    }
+}
+
+@Test func snapshotRefreshRunnerPrefersDueAGYRefreshOverPromptCacheOnlySave() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let resetStateStore = ResetExpiryRefreshStateStore(
+        stateURL: try temporaryDirectory().appending(path: "reset-state.json")
+    )
+    let bridgeStore = GoogleAntigravityStatusLineSnapshotStore(
+        snapshotURL: try temporaryDirectory().appending(path: "antigravity-status-line.json")
+    )
+    let savedAt = Date(timeIntervalSince1970: 1_000)
+    let resetAt = savedAt.addingTimeInterval(60)
+    try bridgeStore.save(GoogleAntigravityStatusLineSnapshot(
+        sourceVersion: "1.1.1",
+        planTier: "Google AI Pro",
+        observedAt: savedAt,
+        buckets: [GoogleAntigravityStatusLineBucket(
+            id: "gemini-3.1-pro-high-5h",
+            remainingFraction: 0.80,
+            resetsAt: resetAt
+        )]
+    ))
+    try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
+        updatedAt: savedAt,
+        accounts: [LocalProviderAccountConfiguration(
+            id: "google-antigravity-default",
+            provider: .google,
+            connectorKind: .googleAntigravityQuota,
+            displayName: "Antigravity"
+        )]
+    ))
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary),
+        googleAntigravitySnapshotLoader: bridgeStore,
+        promptCacheTelemetryReader: { now in [PromptCacheObservation(
+            provider: .openAI,
+            accountID: "openai-cache",
+            accountName: "Every Code · Pro",
+            observedAt: now,
+            windowLabel: "Last hour",
+            tokens: PromptCacheTokenSet(inputTokens: 100, cachedInputTokens: 80)
+        )] }
+    )
+    _ = try await service.refresh(now: savedAt)
+    let runner = SnapshotRefreshRunner(
+        service: service,
+        resetExpiryRefreshStore: resetStateStore,
+        lock: nil
+    )
+    let now = resetAt.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace)
+
+    let decision = try await runner.refreshIfNeeded(now: now)
+
+    if case let .refreshed(outcome) = decision {
+        #expect(outcome.refreshResult.reports.map(\.provider) == [.google])
+        #expect(outcome.refreshResult.promptCacheObservations.count == 1)
+        #expect(resetStateStore.load().records.first?.retryCount == 1)
+    } else {
+        Issue.record("expected the due AGY reset to run a provider refresh")
+    }
+}
+
+@Test func snapshotRefreshRunnerPromptCacheOnlySaveDoesNotConsumeResetRetry() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let resetStateStore = ResetExpiryRefreshStateStore(
+        stateURL: try temporaryDirectory().appending(path: "reset-state.json")
+    )
+    let savedAt = Date(timeIntervalSince1970: 1_000)
+    let resetAt = savedAt.addingTimeInterval(60)
+    let firstAttemptAt = resetAt.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace)
+    let promptSaveAt = firstAttemptAt.addingTimeInterval(10)
+    let staleSnapshot = UsageSnapshot(generatedAt: savedAt, limits: [UsageLimit(
+        id: "google:local:agy:gemini-5h",
+        provider: .google,
+        accountID: "local",
+        configuredAccountID: "google-antigravity-default",
+        accountName: "Antigravity",
+        label: "Gemini 5-hour",
+        unit: .percent,
+        used: 20,
+        limit: 100,
+        resetsAt: resetAt,
+        lastUpdatedAt: savedAt,
+        confidence: .observed
+    )])
+    let previousObservation = PromptCacheObservation(
+        provider: .openAI,
+        accountID: "openai-cache",
+        accountName: "Every Code · Pro",
+        observedAt: firstAttemptAt,
+        windowLabel: "Last hour",
+        tokens: PromptCacheTokenSet(inputTokens: 100, cachedInputTokens: 80)
+    )
+    try primary.save(StoredUsageSnapshot(
+        savedAt: firstAttemptAt,
+        snapshot: staleSnapshot,
+        promptCacheObservations: [previousObservation]
+    ))
+    try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
+        updatedAt: savedAt,
+        accounts: [LocalProviderAccountConfiguration(
+            id: "disabled-openai",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "OpenAI",
+            isEnabled: false,
+            authPath: "/tmp/missing-auth.json"
+        )]
+    ))
+    var initialState = ResetExpiryRefreshState()
+    initialState.recordAttempt(
+        previousSnapshot: staleSnapshot,
+        refreshedSnapshot: staleSnapshot,
+        attemptedAt: firstAttemptAt
+    )
+    try resetStateStore.save(initialState)
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary),
+        promptCacheTelemetryReader: { _ in [PromptCacheObservation(
+            provider: .openAI,
+            accountID: "openai-cache",
+            accountName: "Every Code · Pro",
+            observedAt: promptSaveAt,
+            windowLabel: "Last hour",
+            tokens: PromptCacheTokenSet(inputTokens: 120, cachedInputTokens: 90)
+        )] }
+    )
+    let runner = SnapshotRefreshRunner(
+        service: service,
+        stalenessPolicy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.refreshNeededAge),
+        resetExpiryRefreshStore: resetStateStore,
+        lock: nil
+    )
+
+    let decision = try await runner.refreshIfNeeded(now: promptSaveAt)
+
+    if case let .refreshed(outcome) = decision {
+        #expect(outcome.refreshResult.reports.isEmpty)
+        #expect(outcome.refreshResult.promptCacheObservations.count == 1)
+    } else {
+        Issue.record("expected a prompt-cache-only save before the provider retry deadline")
+    }
+    #expect(resetStateStore.load() == initialState)
+}
+
+@Test func snapshotRefreshRunnerNoReportRefreshDefersWithoutConsumingResetRetry() async throws {
+    let accountURL = try temporaryDirectory().appending(path: "accounts.json")
+    let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let resetStateStore = ResetExpiryRefreshStateStore(
+        stateURL: try temporaryDirectory().appending(path: "reset-state.json")
+    )
+    let savedAt = Date(timeIntervalSince1970: 1_000)
+    let resetAt = savedAt.addingTimeInterval(60)
+    let firstAttemptAt = resetAt.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace)
+    let retryAt = firstAttemptAt.addingTimeInterval(SnapshotFreshness.resetExpiryRetryDelay)
+    let staleSnapshot = UsageSnapshot(generatedAt: savedAt, limits: [UsageLimit(
+        id: "google:local:agy:gemini-5h",
+        provider: .google,
+        accountID: "local",
+        configuredAccountID: "google-antigravity-default",
+        accountName: "Antigravity",
+        label: "Gemini 5-hour",
+        unit: .percent,
+        used: 20,
+        limit: 100,
+        resetsAt: resetAt,
+        lastUpdatedAt: savedAt,
+        confidence: .observed
+    )])
+    try primary.save(StoredUsageSnapshot(savedAt: firstAttemptAt, snapshot: staleSnapshot))
+    try AccountConfigurationStore(configurationURL: accountURL).save(AccountConfigurationDocument(
+        updatedAt: savedAt,
+        accounts: [LocalProviderAccountConfiguration(
+            id: "openai-without-auth-path",
+            provider: .openAI,
+            connectorKind: .codexRateLimits,
+            displayName: "OpenAI"
+        )]
+    ))
+    var initialState = ResetExpiryRefreshState()
+    initialState.recordAttempt(
+        previousSnapshot: staleSnapshot,
+        refreshedSnapshot: staleSnapshot,
+        attemptedAt: firstAttemptAt
+    )
+    try resetStateStore.save(initialState)
+    let service = SnapshotRefreshService(
+        accountStore: AccountConfigurationStore(configurationURL: accountURL),
+        stores: SnapshotRefreshStores(primary: primary),
+        promptCacheTelemetryReader: { _ in [] }
+    )
+    let runner = SnapshotRefreshRunner(
+        service: service,
+        resetExpiryRefreshStore: resetStateStore,
+        lock: nil
+    )
+
+    let decision = try await runner.refresh(now: retryAt)
+
+    #expect(decision == .skippedNoReports)
+    let record = try #require(resetStateStore.load().records.first)
+    #expect(record.retryCount == 1)
+    #expect(record.nextRetryAt == retryAt.addingTimeInterval(SnapshotFreshness.refreshNeededAge))
+}
+
+@Test func snapshotStalenessPolicyKeepsTerminalAGYResetOnNormalRefreshPath() throws {
+    let savedAt = Date(timeIntervalSince1970: 1_000)
+    let resetAt = savedAt.addingTimeInterval(60)
+    let attemptedAt = resetAt.addingTimeInterval(40)
+    let limit = UsageLimit(
+        id: "google:local:agy:gemini-5h",
+        provider: .google,
+        accountID: "local",
+        accountName: "Antigravity",
+        label: "Gemini 5-hour",
+        unit: .percent,
+        used: 20,
+        limit: 100,
+        resetsAt: resetAt,
+        lastUpdatedAt: savedAt,
+        confidence: .observed
+    )
+    let snapshot = UsageSnapshot(generatedAt: savedAt, limits: [limit])
+    let state = ResetExpiryRefreshState(records: [ResetExpiryRefreshRecord(
+        key: try #require(ResetExpiryRefreshKey(limit: limit)),
+        attemptedAt: attemptedAt,
+        nextRetryAt: nil,
+        retryCount: 2
+    )])
+    let stored = StoredUsageSnapshot(savedAt: attemptedAt, snapshot: snapshot)
+    let policy = SnapshotStoreStalenessPolicy(
+        maximumAge: SnapshotFreshness.refreshNeededAge,
+        resetExpiryRefreshState: state
+    )
+
+    #expect(state.nextRefreshCheckDate(for: snapshot, now: attemptedAt) == nil)
+    #expect(policy.needsResetRefresh(for: stored, now: attemptedAt.addingTimeInterval(300)))
+    #expect(policy.status(for: stored, now: attemptedAt.addingTimeInterval(300)) == .healthy)
+}
+
+@Test func snapshotStalenessPolicyKeepsTerminalPollingResetSuppressed() throws {
+    let savedAt = Date(timeIntervalSince1970: 1_000)
+    let resetAt = savedAt.addingTimeInterval(60)
+    let attemptedAt = resetAt.addingTimeInterval(40)
+    let limit = usageLimit(
+        provider: .openAI,
+        accountID: "openai",
+        used: 100,
+        savedAt: savedAt,
+        resetsAt: resetAt
+    )
+    let snapshot = UsageSnapshot(generatedAt: savedAt, limits: [limit])
+    let state = ResetExpiryRefreshState(records: [ResetExpiryRefreshRecord(
+        key: try #require(ResetExpiryRefreshKey(limit: limit)),
+        attemptedAt: attemptedAt,
+        nextRetryAt: nil,
+        retryCount: 2
+    )])
+    let stored = StoredUsageSnapshot(savedAt: attemptedAt, snapshot: snapshot)
+    let policy = SnapshotStoreStalenessPolicy(
+        maximumAge: 24 * 60 * 60,
+        resetExpiryRefreshState: state
+    )
+
+    #expect(!policy.needsResetRefresh(for: stored, now: attemptedAt.addingTimeInterval(300)))
+    #expect(policy.status(for: stored, now: attemptedAt.addingTimeInterval(300)) == .limited)
+}
+
 @Test func resetExpiryRefreshStateSuppressesImmediateRetryForSameExpiredWindow() throws {
     let savedAt = Date(timeIntervalSince1970: 1_000)
     let resetAt = savedAt.addingTimeInterval(60)
@@ -2790,6 +3138,30 @@ import Testing
     #expect(googleRecord.nextRetryAt == resetAt.addingTimeInterval(50))
 }
 
+@Test func resetExpiryRefreshStateEmptyAttemptSetPreservesRetryBudget() throws {
+    let savedAt = Date(timeIntervalSince1970: 1_000)
+    let resetAt = savedAt.addingTimeInterval(60)
+    let staleSnapshot = UsageSnapshot(generatedAt: savedAt, limits: [
+        usageLimit(provider: .openAI, accountID: "openai", used: 100, savedAt: savedAt, resetsAt: resetAt),
+    ])
+    var state = ResetExpiryRefreshState()
+    state.recordAttempt(
+        previousSnapshot: staleSnapshot,
+        refreshedSnapshot: staleSnapshot,
+        attemptedAt: resetAt.addingTimeInterval(10)
+    )
+    let initialState = state
+
+    state.recordAttempt(
+        previousSnapshot: staleSnapshot,
+        refreshedSnapshot: staleSnapshot,
+        attemptedAccounts: [],
+        attemptedAt: resetAt.addingTimeInterval(20)
+    )
+
+    #expect(state == initialState)
+}
+
 @Test func snapshotRefreshRunnerDefersResetRetryWhenRefreshLockIsHeld() async throws {
     let accountURL = try temporaryDirectory().appending(path: "accounts.json")
     let primary = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
@@ -2848,6 +3220,61 @@ import Testing
         previousSnapshot: previous,
         refreshedSnapshot: refreshed,
         attemptedAt: resetAt.addingTimeInterval(10)
+    )
+
+    #expect(state.records.isEmpty)
+}
+
+@Test func resetExpiryRefreshStateClearsWhenEventDrivenObservationAdvancesPastReset() throws {
+    let savedAt = Date(timeIntervalSince1970: 1_000)
+    let resetAt = savedAt.addingTimeInterval(60)
+    let refreshedAt = resetAt.addingTimeInterval(20)
+    let previousLimit = UsageLimit(
+        id: "google:local:agy:gemini-5h",
+        provider: .google,
+        accountID: "local",
+        configuredAccountID: "google-antigravity-default",
+        accountName: "Antigravity",
+        label: "Gemini 5-hour",
+        unit: .percent,
+        used: 20,
+        limit: 100,
+        resetsAt: resetAt,
+        lastUpdatedAt: savedAt,
+        confidence: .observed
+    )
+    let refreshedLimit = UsageLimit(
+        id: previousLimit.id,
+        provider: previousLimit.provider,
+        accountID: previousLimit.accountID,
+        configuredAccountID: previousLimit.configuredAccountID,
+        accountName: previousLimit.accountName,
+        label: previousLimit.label,
+        unit: previousLimit.unit,
+        used: 0,
+        limit: 100,
+        resetsAt: resetAt,
+        lastUpdatedAt: refreshedAt,
+        confidence: .observed
+    )
+    let previous = UsageSnapshot(generatedAt: savedAt, limits: [previousLimit])
+    let refreshed = UsageSnapshot(generatedAt: refreshedAt, limits: [refreshedLimit])
+    var state = ResetExpiryRefreshState(records: [ResetExpiryRefreshRecord(
+        key: try #require(ResetExpiryRefreshKey(limit: previousLimit)),
+        attemptedAt: resetAt.addingTimeInterval(10),
+        nextRetryAt: nil,
+        retryCount: 2
+    )])
+
+    state.recordAttempt(
+        previousSnapshot: previous,
+        refreshedSnapshot: refreshed,
+        attemptedAccounts: [ResetExpiryRefreshAccountKey(
+            provider: .google,
+            accountID: "local",
+            configuredAccountID: "google-antigravity-default"
+        )],
+        attemptedAt: refreshedAt
     )
 
     #expect(state.records.isEmpty)
