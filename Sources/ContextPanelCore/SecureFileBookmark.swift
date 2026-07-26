@@ -1,13 +1,17 @@
 import Foundation
 
 #if os(macOS)
+import Darwin
+
 public struct SecureFileBookmarkStore: Sendable {
     private static let currentBookmarkPrefix = "appScoped:"
     private static let documentScopedBookmarkPrefix = "documentScoped:"
     private let storeURL: URL
+    private let renewsStaleBookmarks: Bool
 
-    public init(storeURL: URL) {
+    public init(storeURL: URL, renewsStaleBookmarks: Bool = true) {
         self.storeURL = storeURL
+        self.renewsStaleBookmarks = renewsStaleBookmarks
     }
 
     public func bookmarkData(for path: String) -> Data? {
@@ -25,9 +29,21 @@ public struct SecureFileBookmarkStore: Sendable {
         return Self.decodeBookmarkData(value, relativeTo: storeURL) != nil
     }
 
+    public func hasStoredBookmark(for path: String) -> Bool {
+        loadAll()?[path] != nil
+    }
+
+    public func hasUnreadableStore() -> Bool {
+        FileManager.default.fileExists(atPath: storeURL.path) && loadAll() == nil
+    }
+
     public func hasCurrentBookmark(for path: String) -> Bool {
         guard let all = loadAll(), let value = all[path] else { return false }
         return Self.decodeCurrentBookmarkData(value) != nil
+    }
+
+    public func hasReadableCurrentBookmark(for path: String) -> Bool {
+        hasCurrentBookmark(for: path) && canReadBookmark(for: path)
     }
 
     public func canReadBookmark(for path: String) -> Bool {
@@ -55,22 +71,95 @@ public struct SecureFileBookmarkStore: Sendable {
 
     public func withResolvedURL<T>(for path: String, _ body: (URL) throws -> T) throws -> T? {
         guard let bookmark = bookmark(for: path) else { return nil }
-        return try SecureFileBookmark.withResolvedURL(
+        return try SecureFileBookmark.withResolvedURLResult(
             bookmarkData: bookmark.data,
-            relativeTo: bookmark.relativeURL,
-            body
-        )
+            relativeTo: bookmark.relativeURL
+        ) { url, isStale in
+            let result = try body(url)
+            renewBookmarkIfNeeded(
+                isStale: isStale,
+                resolvedURL: url,
+                path: path,
+                format: bookmark.format,
+                originalStoredValue: bookmark.storedValue
+            )
+            return result
+        }
     }
 
     public func readData(for path: String) throws -> Data? {
-        guard let bookmark = bookmark(for: path) else { return nil }
-        return try SecureFileBookmark.read(bookmarkData: bookmark.data, relativeTo: bookmark.relativeURL).data
+        try withResolvedURL(for: path) { try Data(contentsOf: $0) }
+    }
+
+    public func accessSummary() -> SecureFileBookmarkAccessSummary {
+        guard FileManager.default.fileExists(atPath: storeURL.path) else {
+            return SecureFileBookmarkAccessSummary()
+        }
+        guard let all = loadAll() else {
+            return SecureFileBookmarkAccessSummary(storeExists: true, storeReadable: false)
+        }
+        var summary = SecureFileBookmarkAccessSummary(
+            storeExists: true,
+            storeReadable: true,
+            total: all.count
+        )
+        for (path, value) in all {
+            if Self.decodeCurrentBookmarkData(value) != nil {
+                summary.current += 1
+            } else if value.hasPrefix(Self.documentScopedBookmarkPrefix),
+                      Data(base64Encoded: String(value.dropFirst(Self.documentScopedBookmarkPrefix.count))) != nil
+            {
+                summary.documentScoped += 1
+            } else if Data(base64Encoded: value) != nil {
+                summary.legacyAppScoped += 1
+            } else {
+                summary.invalid += 1
+            }
+            if canResolveBookmark(for: path) {
+                summary.resolvable += 1
+            }
+        }
+        return summary
     }
 
     private func store(bookmarkData: Data, for path: String) throws {
-        var all = loadAll() ?? [:]
-        all[path] = Self.currentBookmarkPrefix + bookmarkData.base64EncodedString()
-        try save(all)
+        try withStoreLock {
+            var all = try loadAllForUpdate(recoveringCorruptStore: true)
+            all[path] = Self.currentBookmarkPrefix + bookmarkData.base64EncodedString()
+            try save(all)
+        }
+    }
+
+    private func renewBookmarkIfNeeded(
+        isStale: Bool,
+        resolvedURL: URL,
+        path: String,
+        format: StoredBookmarkFormat,
+        originalStoredValue: String
+    ) {
+        guard renewsStaleBookmarks,
+              format != .documentScoped,
+              isStale,
+              let bookmarkData = try? SecureFileBookmark.create(for: resolvedURL)
+        else { return }
+        try? replaceBookmarkIfUnchanged(
+            bookmarkData: bookmarkData,
+            for: path,
+            expectedStoredValue: originalStoredValue
+        )
+    }
+
+    private func replaceBookmarkIfUnchanged(
+        bookmarkData: Data,
+        for path: String,
+        expectedStoredValue: String
+    ) throws {
+        try withStoreLock {
+            var all = try loadAllForUpdate()
+            guard all[path] == expectedStoredValue else { return }
+            all[path] = Self.currentBookmarkPrefix + bookmarkData.base64EncodedString()
+            try save(all)
+        }
     }
 
     private static func decodeCurrentBookmarkData(_ value: String) -> Data? {
@@ -85,22 +174,40 @@ public struct SecureFileBookmarkStore: Sendable {
 
     private static func decodeBookmarkData(_ value: String, relativeTo storeURL: URL) -> StoredBookmark? {
         if let current = decodeCurrentBookmarkData(value) {
-            return StoredBookmark(data: current, relativeURL: nil)
+            return StoredBookmark(
+                data: current,
+                relativeURL: nil,
+                format: .currentAppScoped,
+                storedValue: value
+            )
         }
         if value.hasPrefix(documentScopedBookmarkPrefix) {
             return Data(base64Encoded: String(value.dropFirst(documentScopedBookmarkPrefix.count))).map {
-                StoredBookmark(data: $0, relativeURL: storeURL)
+                StoredBookmark(
+                    data: $0,
+                    relativeURL: storeURL,
+                    format: .documentScoped,
+                    storedValue: value
+                )
             }
         }
         return Data(base64Encoded: value).map {
-            StoredBookmark(data: $0, relativeURL: nil)
+            StoredBookmark(
+                data: $0,
+                relativeURL: nil,
+                format: .legacyAppScoped,
+                storedValue: value
+            )
         }
     }
 
     public func remove(for path: String) throws {
-        guard var all = loadAll(), all[path] != nil else { return }
-        all.removeValue(forKey: path)
-        try save(all)
+        try withStoreLock {
+            var all = try loadAllForUpdate()
+            guard all[path] != nil else { return }
+            all.removeValue(forKey: path)
+            try save(all)
+        }
     }
 
     private func loadAll() -> [String: String]? {
@@ -117,11 +224,82 @@ public struct SecureFileBookmarkStore: Sendable {
         let data = try JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys, .prettyPrinted])
         try data.write(to: storeURL, options: .atomic)
     }
+
+    private func loadAllForUpdate(recoveringCorruptStore: Bool = false) throws -> [String: String] {
+        guard FileManager.default.fileExists(atPath: storeURL.path) else { return [:] }
+        let data = try Data(contentsOf: storeURL)
+        guard let object = try? JSONSerialization.jsonObject(with: data),
+              let dict = object as? [String: String]
+        else {
+            guard recoveringCorruptStore else { throw CocoaError(.fileReadCorruptFile) }
+            try quarantineCorruptStore()
+            return [:]
+        }
+        return dict
+    }
+
+    private func quarantineCorruptStore() throws {
+        let backupURL = storeURL.appendingPathExtension("corrupt-\(UUID().uuidString)")
+        try FileManager.default.moveItem(at: storeURL, to: backupURL)
+    }
+
+    private func withStoreLock<T>(_ body: () throws -> T) throws -> T {
+        let directory = storeURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let lockURL = storeURL.appendingPathExtension("lock")
+        let descriptor = open(lockURL.path, O_CREAT | O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else { throw CocoaError(.fileWriteUnknown) }
+        defer { close(descriptor) }
+        while flock(descriptor, LOCK_EX) != 0 {
+            guard errno == EINTR else { throw CocoaError(.fileWriteUnknown) }
+        }
+        defer { flock(descriptor, LOCK_UN) }
+        return try body()
+    }
+}
+
+public struct SecureFileBookmarkAccessSummary: Equatable, Sendable {
+    public var storeExists: Bool
+    public var storeReadable: Bool
+    public var total: Int
+    public var current: Int
+    public var legacyAppScoped: Int
+    public var documentScoped: Int
+    public var invalid: Int
+    public var resolvable: Int
+
+    public init(
+        storeExists: Bool = false,
+        storeReadable: Bool = true,
+        total: Int = 0,
+        current: Int = 0,
+        legacyAppScoped: Int = 0,
+        documentScoped: Int = 0,
+        invalid: Int = 0,
+        resolvable: Int = 0
+    ) {
+        self.storeExists = storeExists
+        self.storeReadable = storeReadable
+        self.total = total
+        self.current = current
+        self.legacyAppScoped = legacyAppScoped
+        self.documentScoped = documentScoped
+        self.invalid = invalid
+        self.resolvable = resolvable
+    }
 }
 
 private struct StoredBookmark {
     let data: Data
     let relativeURL: URL?
+    let format: StoredBookmarkFormat
+    let storedValue: String
+}
+
+private enum StoredBookmarkFormat {
+    case currentAppScoped
+    case legacyAppScoped
+    case documentScoped
 }
 
 public enum SecureFileBookmark {
@@ -160,7 +338,7 @@ public enum SecureFileBookmark {
         }
     }
 
-    private static func withResolvedURLResult<T>(
+    fileprivate static func withResolvedURLResult<T>(
         bookmarkData: Data,
         relativeTo relativeURL: URL? = nil,
         _ body: (URL, Bool) throws -> T
@@ -220,7 +398,7 @@ public enum SecureFileBookmark {
 }
 #else
 public struct SecureFileBookmarkStore: Sendable {
-    public init(storeURL: URL) {}
+    public init(storeURL: URL, renewsStaleBookmarks: Bool = true) {}
 
     public func bookmarkData(for path: String) -> Data? { nil }
 
@@ -228,7 +406,13 @@ public struct SecureFileBookmarkStore: Sendable {
 
     public func hasBookmark(for path: String) -> Bool { false }
 
+    public func hasStoredBookmark(for path: String) -> Bool { false }
+
+    public func hasUnreadableStore() -> Bool { false }
+
     public func hasCurrentBookmark(for path: String) -> Bool { false }
+
+    public func hasReadableCurrentBookmark(for path: String) -> Bool { false }
 
     public func canReadBookmark(for path: String) -> Bool { false }
 
@@ -244,7 +428,40 @@ public struct SecureFileBookmarkStore: Sendable {
 
     public func readData(for path: String) throws -> Data? { nil }
 
+    public func accessSummary() -> SecureFileBookmarkAccessSummary { SecureFileBookmarkAccessSummary() }
+
     public func remove(for path: String) throws {}
+}
+
+public struct SecureFileBookmarkAccessSummary: Equatable, Sendable {
+    public var storeExists: Bool
+    public var storeReadable: Bool
+    public var total: Int
+    public var current: Int
+    public var legacyAppScoped: Int
+    public var documentScoped: Int
+    public var invalid: Int
+    public var resolvable: Int
+
+    public init(
+        storeExists: Bool = false,
+        storeReadable: Bool = true,
+        total: Int = 0,
+        current: Int = 0,
+        legacyAppScoped: Int = 0,
+        documentScoped: Int = 0,
+        invalid: Int = 0,
+        resolvable: Int = 0
+    ) {
+        self.storeExists = storeExists
+        self.storeReadable = storeReadable
+        self.total = total
+        self.current = current
+        self.legacyAppScoped = legacyAppScoped
+        self.documentScoped = documentScoped
+        self.invalid = invalid
+        self.resolvable = resolvable
+    }
 }
 
 public enum SecureFileBookmark {

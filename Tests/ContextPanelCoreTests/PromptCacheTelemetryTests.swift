@@ -473,6 +473,131 @@ import Testing
     #expect(FileManager.default.fileExists(atPath: target.path))
 }
 
+@Test func promptCacheMirrorPreservesUnreadableConfiguredSourceMirror() throws {
+    let root = try promptCacheTemporaryDirectory()
+    let readableSource = root.appending(path: "readable", directoryHint: .isDirectory)
+    let unreadableSource = root.appending(path: "unreadable", directoryHint: .isDirectory)
+    let destination = root.appending(path: "mirror", directoryHint: .isDirectory)
+    let bookmarkURL = root.appending(path: "bookmarks.json")
+    let bookmarkStore = SecureFileBookmarkStore(storeURL: bookmarkURL)
+    try FileManager.default.createDirectory(at: readableSource, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: unreadableSource, withIntermediateDirectories: true)
+    let readableFile = readableSource.appending(path: "usage.json")
+    try promptCachePayload(
+        lastUpdated: "2026-07-26T00:00:00Z",
+        cachedInputTokens: 90
+    ).write(to: readableFile, atomically: true, encoding: .utf8)
+    try bookmarkStore.createAndStoreBookmark(for: readableSource, path: readableSource.path)
+    let storedData = try Data(contentsOf: bookmarkURL)
+    var stored = try #require(try JSONSerialization.jsonObject(with: storedData) as? [String: String])
+    stored[unreadableSource.path] = "appScoped:AQID"
+    try JSONSerialization.data(withJSONObject: stored, options: [.sortedKeys])
+        .write(to: bookmarkURL, options: .atomic)
+    let preservedSourceFile = unreadableSource.appending(path: "last-good.json")
+    let preservedMirror = ContextPanelLocations.promptCacheMirrorTargetURL(
+        destination: destination,
+        sourceDirectory: unreadableSource,
+        fileURL: preservedSourceFile
+    )
+    try FileManager.default.createDirectory(
+        at: preservedMirror.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+    )
+    try Data("last-good".utf8).write(to: preservedMirror)
+
+    let result = try PromptCacheTelemetryMirrorService.mirror(
+        bookmarkStore: bookmarkStore,
+        sourceDirectories: [readableSource, unreadableSource],
+        destination: destination
+    )
+
+    #expect(result.copied == 1)
+    #expect(result.removed == 0)
+    #expect(FileManager.default.fileExists(atPath: preservedMirror.path))
+}
+
+@Test func promptCacheMirrorPreservesConfiguredMirrorsWhenBookmarkStoreIsCorrupt() throws {
+    let root = try promptCacheTemporaryDirectory()
+    let readableSource = root.appending(path: "readable", directoryHint: .isDirectory)
+    let unreadableSource = root.appending(path: "unreadable", directoryHint: .isDirectory)
+    let destination = root.appending(path: "mirror", directoryHint: .isDirectory)
+    let bookmarkURL = root.appending(path: "bookmarks.json")
+    let bookmarkStore = SecureFileBookmarkStore(storeURL: bookmarkURL)
+    try FileManager.default.createDirectory(at: readableSource, withIntermediateDirectories: true)
+    let readableFile = readableSource.appending(path: "usage.json")
+    try promptCachePayload(
+        lastUpdated: "2026-07-26T00:00:00Z",
+        cachedInputTokens: 90
+    ).write(to: readableFile, atomically: true, encoding: .utf8)
+    try Data("not-json".utf8).write(to: bookmarkURL)
+    let preservedSourceFile = unreadableSource.appending(path: "last-good.json")
+    let preservedMirror = ContextPanelLocations.promptCacheMirrorTargetURL(
+        destination: destination,
+        sourceDirectory: unreadableSource,
+        fileURL: preservedSourceFile
+    )
+    try FileManager.default.createDirectory(
+        at: preservedMirror.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+    )
+    try Data("last-good".utf8).write(to: preservedMirror)
+
+    let result = try PromptCacheTelemetryMirrorService.mirror(
+        bookmarkStore: bookmarkStore,
+        sourceDirectories: [readableSource, unreadableSource],
+        destination: destination
+    )
+
+    #expect(result.copied == 1)
+    #expect(result.removed == 0)
+    #expect(FileManager.default.fileExists(atPath: preservedMirror.path))
+}
+
+@Test func promptCacheMirrorKeepsConfiguredIdentityWhenBookmarkResolvesMovedDirectory() throws {
+    let root = try promptCacheTemporaryDirectory()
+    let configuredSource = root.appending(path: "configured", directoryHint: .isDirectory)
+    let movedSource = root.appending(path: "moved", directoryHint: .isDirectory)
+    let destination = root.appending(path: "mirror", directoryHint: .isDirectory)
+    let bookmarkStore = SecureFileBookmarkStore(storeURL: root.appending(path: "bookmarks.json"))
+    try FileManager.default.createDirectory(at: configuredSource, withIntermediateDirectories: true)
+    let configuredFile = configuredSource.appending(path: "usage.json")
+    try promptCachePayload(
+        lastUpdated: "2026-07-26T00:00:00Z",
+        cachedInputTokens: 90
+    ).write(to: configuredFile, atomically: true, encoding: .utf8)
+    try bookmarkStore.createAndStoreBookmark(for: configuredSource, path: configuredSource.path)
+    try FileManager.default.moveItem(at: configuredSource, to: movedSource)
+
+    let result = try PromptCacheTelemetryMirrorService.mirror(
+        bookmarkStore: bookmarkStore,
+        sourceDirectories: [configuredSource],
+        destination: destination
+    )
+
+    let target = ContextPanelLocations.promptCacheMirrorTargetURL(
+        destination: destination,
+        sourceIDPath: configuredSource.path,
+        fileURL: movedSource.appending(path: "usage.json")
+    )
+    let mirroredPayload = try #require(
+        try JSONSerialization.jsonObject(with: Data(contentsOf: target)) as? [String: Any]
+    )
+    let expectedSourceID = ConnectorRedactor.localAccountID(
+        provider: .openAI,
+        path: configuredSource.appending(path: "usage.json").path
+    )
+    #expect(result.copied == 1)
+    #expect(result.removed == 0)
+    #expect(FileManager.default.fileExists(atPath: target.path))
+    #expect(mirroredPayload["_context_panel_source_id"] as? String == expectedSourceID)
+    let observations = PromptCacheTelemetryReader.everyCodeUsageObservations(
+        rootDirectory: destination,
+        now: Date(timeIntervalSince1970: 1_785_024_060),
+        maximumAge: 24 * 60 * 60
+    )
+    #expect(observations.map(\.accountID) == [expectedSourceID])
+}
+
 @Test func promptCacheMirrorServiceRemovesLegacyFlatMirrorFiles() throws {
     let root = try promptCacheTemporaryDirectory()
     let source = root.appending(path: "usage", directoryHint: .isDirectory)

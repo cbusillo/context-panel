@@ -1238,7 +1238,9 @@ final class SettingsPaneModel: NSObject, ObservableObject {
             guard let authPath = account.effectiveAuthPath else { return nil }
             guard account.connectorKind.requiresSecurityScopedAuthFile else { return nil }
             let expanded = NSString(string: authPath).expandingTildeInPath
-            return bookmarkStore.hasCurrentBookmark(for: expanded) || hasImportedCredential(for: account) ? expanded : nil
+            return bookmarkStore.hasReadableCurrentBookmark(for: expanded) || hasImportedCredential(for: account)
+                ? expanded
+                : nil
         })
         loadedAuthorizedPaths.formUnion(recentlyVerifiedAuthPaths)
         authorizedPaths = loadedAuthorizedPaths
@@ -1247,7 +1249,9 @@ final class SettingsPaneModel: NSObject, ObservableObject {
             guard let authPath = account.effectiveAuthPath else { return nil }
             guard account.connectorKind.requiresSecurityScopedAuthFile else { return nil }
             let expanded = NSString(string: authPath).expandingTildeInPath
-            return bookmarkStore.hasBookmark(for: expanded) || hasImportedCredential(for: account) ? nil : expanded
+            return bookmarkStore.hasReadableCurrentBookmark(for: expanded) || hasImportedCredential(for: account)
+                ? nil
+                : expanded
         })
         loadedMissingPaths.subtract(recentlyVerifiedAuthPaths)
         missingAuthPaths = loadedMissingPaths
@@ -1661,7 +1665,7 @@ final class SettingsPaneModel: NSObject, ObservableObject {
         guard let authPath = account.effectiveAuthPath else { return false }
         guard account.connectorKind.requiresSecurityScopedAuthFile else { return false }
         let expanded = NSString(string: authPath).expandingTildeInPath
-        return !bookmarkStore.hasBookmark(for: expanded)
+        return !bookmarkStore.hasReadableCurrentBookmark(for: expanded) && !hasImportedCredential(for: account)
     }
 
     func hasSavedAuthorization(_ account: LocalProviderAccountConfiguration) -> Bool {

@@ -31,10 +31,16 @@ public enum PromptCacheTelemetryMirrorService {
             )
         }
 
+        let preservesAllConfiguredSources = bookmarkStore.hasUnreadableStore()
+
         return try mirror(
             sourceDirectories: sourceDirectories,
             destination: destination,
             fileManager: fileManager,
+            preserveUnreadableSource: { source in
+                preservesAllConfiguredSources
+                    || bookmarkStore.hasStoredBookmark(for: ContextPanelLocations.normalizedPath(source.path))
+            },
             sourceResolver: { source, body in
                 let path = ContextPanelLocations.normalizedPath(source.path)
                 if let result = try bookmarkStore.withResolvedURL(for: path, body) {
@@ -54,6 +60,7 @@ public enum PromptCacheTelemetryMirrorService {
             sourceDirectories: sourceDirectories,
             destination: destination,
             fileManager: fileManager,
+            preserveUnreadableSource: { _ in false },
             sourceResolver: { source, body in try body(source) }
         )
     }
@@ -62,6 +69,7 @@ public enum PromptCacheTelemetryMirrorService {
         sourceDirectories: [URL],
         destination: URL,
         fileManager: FileManager,
+        preserveUnreadableSource: (URL) -> Bool,
         sourceResolver: (URL, (URL) throws -> SourceMirrorResult) throws -> SourceMirrorResult
     ) throws -> PromptCacheTelemetryMirrorResult {
         try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
@@ -69,10 +77,19 @@ public enum PromptCacheTelemetryMirrorService {
         var removed = 0
         var seenSources = Set<String>()
         var readableSourceMirrorDirectories = Set<String>()
+        var preservedSourceMirrorDirectories = Set<String>()
 
         for source in sourceDirectories {
             let sourcePath = ContextPanelLocations.normalizedPath(source.path)
             guard seenSources.insert(sourcePath).inserted else { continue }
+            let sourceMirrorDirectory = destination.appending(
+                path: ConnectorRedactor.localAccountID(provider: .openAI, path: sourcePath),
+                directoryHint: .isDirectory
+            )
+            let sourceMirrorPath = ContextPanelLocations.normalizedPath(sourceMirrorDirectory.path)
+            if preserveUnreadableSource(source) {
+                preservedSourceMirrorDirectories.insert(sourceMirrorPath)
+            }
 
             guard let sourceResult = try? sourceResolver(source, { resolvedSource in
                 try mirrorSource(
@@ -85,12 +102,13 @@ public enum PromptCacheTelemetryMirrorService {
             copied += sourceResult.copied
             removed += sourceResult.removed
             readableSourceMirrorDirectories.insert(sourceResult.sourceMirrorPath)
+            preservedSourceMirrorDirectories.insert(sourceResult.sourceMirrorPath)
         }
 
         if !readableSourceMirrorDirectories.isEmpty {
             removed += try removeOrphanedSourceMirrors(
                 in: destination,
-                preserving: readableSourceMirrorDirectories,
+                preserving: preservedSourceMirrorDirectories,
                 fileManager: fileManager
             )
             removed += try removeLegacyFlatMirrors(in: destination, fileManager: fileManager)
@@ -119,7 +137,7 @@ public enum PromptCacheTelemetryMirrorService {
         for url in urls {
             let target = ContextPanelLocations.promptCacheMirrorTargetURL(
                 destination: destination,
-                sourceDirectory: source,
+                sourceIDPath: sourceIDPath,
                 fileURL: url
             )
             expectedTargets.insert(ContextPanelLocations.normalizedPath(target.path))
@@ -130,9 +148,13 @@ public enum PromptCacheTelemetryMirrorService {
             if fileManager.fileExists(atPath: target.path) {
                 try fileManager.removeItem(at: target)
             }
+            let configuredFilePath = URL(
+                fileURLWithPath: sourceIDPath,
+                isDirectory: true
+            ).appending(path: url.lastPathComponent).path
             let sourceID = ConnectorRedactor.localAccountID(
                 provider: .openAI,
-                path: ContextPanelLocations.normalizedPath(url.path)
+                path: ContextPanelLocations.normalizedPath(configuredFilePath)
             )
             if let data = mirroredData(from: url, sourceID: sourceID) {
                 try data.write(to: target)

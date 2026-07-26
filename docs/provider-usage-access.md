@@ -140,11 +140,17 @@ or Codex CLI's app-server request.
 
 In signed app and widget builds, prompt-cache telemetry from Every Code usage
 files requires a separate user-approved bookmark for the matching usage folder,
-normally `~/.code/usage`. The app and refresh agent mirror those JSON files into
-the canonical app-group `PromptCache` directory before building the shared
-snapshot, so the widget reads only normalized app-owned snapshot data. This
-usage-folder permission is intentionally separate from the `auth_accounts.json`
-permission used for live Codex limit refresh.
+normally `~/.code/usage`. The main app mirrors those JSON files into the
+canonical app-group `PromptCache` directory before building the shared snapshot,
+so the widget reads only normalized app-owned data. The refresh agent may update
+that mirror from the raw user-approved files when its sandbox can resolve the
+bookmark; otherwise it preserves and reads the last-good mirror until the main
+app refreshes it again. Do not assume that an app-scoped bookmark created by the
+main app is transferable to the separately sandboxed login item. The Production
+runtime receipt reports aggregate refresh-agent bookmark resolution without
+paths or account IDs. This usage-folder permission is intentionally separate
+from the `auth_accounts.json` permission used to seed the shared Keychain
+credential for live Codex limit refresh.
 When an enabled Codex/Every Code account is missing that usage-folder bookmark,
 medium and large widgets may show a compact `Enable Cache` pill that opens the
 app's settings flow; the settings row uses the more explicit `Enable Cache Stats`

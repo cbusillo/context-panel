@@ -376,7 +376,19 @@ public enum ContextPanelLocations {
         sourceDirectory: URL,
         fileURL: URL
     ) -> URL {
-        let sourceID = ConnectorRedactor.localAccountID(provider: .openAI, path: normalizedPath(sourceDirectory.path))
+        promptCacheMirrorTargetURL(
+            destination: destination,
+            sourceIDPath: normalizedPath(sourceDirectory.path),
+            fileURL: fileURL
+        )
+    }
+
+    public static func promptCacheMirrorTargetURL(
+        destination: URL,
+        sourceIDPath: String,
+        fileURL: URL
+    ) -> URL {
+        let sourceID = ConnectorRedactor.localAccountID(provider: .openAI, path: normalizedPath(sourceIDPath))
         return destination
             .appending(path: sourceID, directoryHint: .isDirectory)
             .appending(path: fileURL.lastPathComponent)
