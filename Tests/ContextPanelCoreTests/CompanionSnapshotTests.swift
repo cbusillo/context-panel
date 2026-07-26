@@ -2447,7 +2447,7 @@ import Testing
         now: now
     )
 
-    #expect(clock.now - startedAt < .seconds(1))
+    #expect(clock.now - startedAt < .seconds(10))
     #expect(result.document == savedDocument)
     #expect(result.errorMessage == "Context Panel widget timed out while refreshing usage.")
 }

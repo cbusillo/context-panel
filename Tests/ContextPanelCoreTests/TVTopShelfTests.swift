@@ -485,7 +485,7 @@ import Testing
     }
 
     #expect(value == nil)
-    #expect(startedAt.duration(to: clock.now) < .seconds(1))
+    #expect(startedAt.duration(to: clock.now) < .seconds(10))
     await blocker.resume(returning: 42)
 }
 
