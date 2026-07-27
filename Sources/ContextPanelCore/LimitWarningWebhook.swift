@@ -221,8 +221,18 @@ public struct LimitWarningWebhookDeliveryState: Codable, Equatable, Sendable {
         records = Self.normalized(records)
     }
 
-    public mutating func retainLiveRecords(for warningLaneIDs: Set<String>) {
-        records.removeAll { !$0.isTest && !warningLaneIDs.contains($0.laneID) }
+    public mutating func pruneRecoveredRecords(
+        using snapshot: UsageSnapshot,
+        settings: LimitWarningSettings
+    ) {
+        let summariesByID = Dictionary(uniqueKeysWithValues: snapshot.mainLimitSummaries.map { ($0.id, $0) })
+        let recoveryCapacityRatio = LimitWarningEvaluator.recoveryCapacityRatio(for: settings)
+        records.removeAll { record in
+            guard !record.isTest else { return false }
+            guard let summary = summariesByID[record.laneID] else { return true }
+            guard let usageRatio = summary.usageRatio else { return false }
+            return max(1 - usageRatio, 0) > recoveryCapacityRatio
+        }
     }
 
     private static func normalized(_ records: [LimitWarningWebhookDeliveryRecord]) -> [LimitWarningWebhookDeliveryRecord] {
@@ -733,6 +743,7 @@ public struct LimitWarningWebhookDeliveryService: Sendable {
     public let warningSettingsStore: LimitWarningSettingsStore
     public let settingsStore: LimitWarningWebhookSettingsStore
     public let stateStore: LimitWarningWebhookDeliveryStateStore
+    public let snapshotStore: JSONSnapshotStore
     public let secretStore: any LimitWarningWebhookSecretLoading
     public let poster: any LimitWarningWebhookPosting
     public let appVersion: String
@@ -744,6 +755,9 @@ public struct LimitWarningWebhookDeliveryService: Sendable {
         warningSettingsStore: LimitWarningSettingsStore,
         settingsStore: LimitWarningWebhookSettingsStore,
         stateStore: LimitWarningWebhookDeliveryStateStore,
+        snapshotStore: JSONSnapshotStore = JSONSnapshotStore(
+            rootDirectory: ContextPanelLocations.snapshotDirectory(appGroupID: ContextPanelLocations.appGroupID)
+        ),
         secretStore: any LimitWarningWebhookSecretLoading,
         poster: any LimitWarningWebhookPosting = URLSessionLimitWarningWebhookPoster(),
         appVersion: String = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0",
@@ -754,6 +768,7 @@ public struct LimitWarningWebhookDeliveryService: Sendable {
         self.warningSettingsStore = warningSettingsStore
         self.settingsStore = settingsStore
         self.stateStore = stateStore
+        self.snapshotStore = snapshotStore
         self.secretStore = secretStore
         self.poster = poster
         self.appVersion = appVersion
@@ -774,6 +789,9 @@ public struct LimitWarningWebhookDeliveryService: Sendable {
             ),
             stateStore: LimitWarningWebhookDeliveryStateStore(
                 stateURL: ContextPanelLocations.webhookDeliveryStateURL(appGroupID: appGroupID)
+            ),
+            snapshotStore: JSONSnapshotStore(
+                rootDirectory: ContextPanelLocations.snapshotDirectory(appGroupID: appGroupID)
             ),
             secretStore: LimitWarningWebhookSecretStore()
         )
@@ -801,16 +819,14 @@ public struct LimitWarningWebhookDeliveryService: Sendable {
         now: Date = Date()
     ) async -> [LimitWarningWebhookDeliveryResult] {
         guard case let .refreshed(outcome) = decision else { return [] }
-        let persistedSnapshot = JSONSnapshotStore(
-            rootDirectory: ContextPanelLocations.snapshotDirectory(appGroupID: ContextPanelLocations.appGroupID)
-        ).loadCurrent().snapshot
-        return await deliverIfNeeded(
-            snapshot: LimitWarningSnapshotResolver.effectiveSnapshot(
+        return await withDeliveryLock {
+            let persistedSnapshot = snapshotStore.loadCurrent().snapshot
+            let warningSnapshot = LimitWarningSnapshotResolver.effectiveSnapshot(
                 transientSnapshot: outcome.refreshResult.snapshot,
                 persistedSnapshot: persistedSnapshot
-            ),
-            now: now
-        )
+            )
+            return await deliverIfNeededWhileLocked(snapshot: warningSnapshot, now: now)
+        } ?? []
     }
 
     public func deliverIfNeeded(
@@ -833,7 +849,7 @@ public struct LimitWarningWebhookDeliveryService: Sendable {
             snapshot: presentationSnapshot,
             thresholdPercentRemaining: warningSettings.thresholdPercentRemaining
         )
-        state.retainLiveRecords(for: Set(events.map(\.laneID)))
+        state.pruneRecoveredRecords(using: presentationSnapshot, settings: warningSettings)
         defer { try? stateStore.save(state) }
 
         let settings = settingsStore.load()
