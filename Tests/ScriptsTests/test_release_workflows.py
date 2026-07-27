@@ -735,9 +735,17 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
     def test_app_store_review_workflow_supports_tvos(self):
         workflow = self.read(".github/workflows/submit-app-store-review.yml")
         script = self.read("scripts/submit-app-store-review.py")
+        release_docs = self.read("docs/release.md")
 
         self.assertIn("- TV_OS", workflow)
         self.assertIn('choices=("IOS", "MAC_OS", "TV_OS", "VISION_OS")', script)
+        self.assertIn("tvos_demo_video_url:", workflow)
+        self.assertIn("INPUT_TVOS_DEMO_VIDEO_URL", workflow)
+        self.assertIn('args+=(--tvos-demo-video-url "${INPUT_TVOS_DEMO_VIDEO_URL}")', workflow)
+        self.assertIn("TVOS_DEMO_NOTES_HEADING", script)
+        self.assertIn("--tvos-demo-video-url", script)
+        self.assertIn("every non-cancel `TV_OS` preparation or submission", release_docs)
+        self.assertIn("`tvos_demo_video_url`", release_docs)
         self.assertIn("copy_from_platform:", workflow)
         self.assertIn("INPUT_COPY_FROM_PLATFORM", workflow)
         self.assertIn('args+=(--copy-from-platform "${INPUT_COPY_FROM_PLATFORM}")', workflow)

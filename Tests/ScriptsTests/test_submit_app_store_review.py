@@ -289,6 +289,9 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             build_number=None,
             whats_new=None,
             prepare_only=False,
+            platform="TV_OS",
+            review_notes=None,
+            tvos_demo_video_url=None,
         )
 
         submit_app_store_review.validate_args(args)
@@ -386,6 +389,85 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         )
 
         submit_app_store_review.validate_args(args)
+
+    def test_validate_args_requires_explicit_tvos_demo_video_url(self):
+        args = SimpleNamespace(
+            cancel_review_only=False,
+            remove_active_review_version=None,
+            build_number="202607241933",
+            whats_new="Adds the Apple TV companion.",
+            prepare_only=False,
+            platform="TV_OS",
+            review_notes="The app uses a Mac-published CloudKit snapshot.",
+            tvos_demo_video_url=None,
+        )
+
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+            submit_app_store_review.validate_args(args)
+
+        self.assertIn("--tvos-demo-video-url", str(context.exception))
+
+    def test_validate_args_requires_https_tvos_demo_video_url(self):
+        args = SimpleNamespace(
+            cancel_review_only=False,
+            remove_active_review_version=None,
+            build_number="202607241933",
+            whats_new="Adds the Apple TV companion.",
+            prepare_only=False,
+            platform="TV_OS",
+            review_notes="The app uses a Mac-published CloudKit snapshot.",
+            tvos_demo_video_url="http://example.com/physical-apple-tv-demo.mp4",
+        )
+
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+            submit_app_store_review.validate_args(args)
+
+        self.assertIn("valid HTTPS URL", str(context.exception))
+
+    def test_validate_args_rejects_tvos_demo_video_url_for_other_platforms(self):
+        args = SimpleNamespace(
+            cancel_review_only=False,
+            remove_active_review_version=None,
+            build_number="202607241933",
+            whats_new="Adds the Apple TV companion.",
+            prepare_only=False,
+            platform="IOS",
+            review_notes="Physical iPhone demo.",
+            tvos_demo_video_url="https://example.com/physical-apple-tv-demo.mp4",
+        )
+
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+            submit_app_store_review.validate_args(args)
+
+        self.assertIn("only valid with --platform TV_OS", str(context.exception))
+
+    def test_validate_args_accepts_structured_tvos_demo_video_url(self):
+        args = SimpleNamespace(
+            cancel_review_only=False,
+            remove_active_review_version=None,
+            build_number="202607241933",
+            whats_new="Adds the Apple TV companion.",
+            prepare_only=False,
+            platform="TV_OS",
+            review_notes="The app uses a Mac-published CloudKit snapshot.",
+            tvos_demo_video_url="https://example.com/physical-apple-tv-demo.mp4",
+        )
+
+        submit_app_store_review.validate_args(args)
+
+    def test_effective_review_notes_prepends_standardized_tvos_evidence(self):
+        args = SimpleNamespace(
+            platform="TV_OS",
+            review_notes="No demo account or tvOS permission prompt is required.",
+            tvos_demo_video_url="https://example.com/physical-apple-tv-demo.mp4",
+        )
+
+        self.assertEqual(
+            submit_app_store_review.effective_review_notes(args),
+            "Physical Apple TV demo (reviewer-accessible, no login required):\n"
+            "https://example.com/physical-apple-tv-demo.mp4\n\n"
+            "No demo account or tvOS permission prompt is required.",
+        )
 
     def test_deletes_matching_item(self):
         client = FakeASCClient()
@@ -1685,7 +1767,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             locale=None,
             support_url=None,
             whats_new="Adds CloudKit companion sync.",
-            review_notes="Physical iPhone demo: https://example.com/reviewer-demo.mp4",
+            review_notes="Physical Apple TV demo: https://example.com/reviewer-demo.mp4",
         )
 
         submit_app_store_review.ensure_metadata(
@@ -1713,7 +1795,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         )
         self.assertEqual(
             review_detail_update["notes"],
-            "Physical iPhone demo: https://example.com/reviewer-demo.mp4",
+            "Physical Apple TV demo: https://example.com/reviewer-demo.mp4",
         )
         self.assertEqual(review_detail_update["contactEmail"], "review@example.com")
 

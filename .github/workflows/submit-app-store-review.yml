@@ -22,7 +22,15 @@ name: Submit App Store Review
         required: false
         type: string
       review_notes:
-        description: Optional App Review notes override.
+        description: >-
+          Optional App Review explanation. TV_OS prepends its standardized
+          physical-device evidence block from tvos_demo_video_url.
+        required: false
+        type: string
+      tvos_demo_video_url:
+        description: >-
+          Reviewer-accessible HTTPS physical Apple TV demo URL. Required for
+          non-cancel TV_OS preparation and submission.
         required: false
         type: string
       copy_from_version:
@@ -89,7 +97,15 @@ name: Submit App Store Review
         required: false
         type: string
       review_notes:
-        description: Optional App Review notes override.
+        description: >-
+          Optional App Review explanation. TV_OS prepends its standardized
+          physical-device evidence block from tvos_demo_video_url.
+        required: false
+        type: string
+      tvos_demo_video_url:
+        description: >-
+          Reviewer-accessible HTTPS physical Apple TV demo URL. Required for
+          non-cancel TV_OS preparation and submission.
         required: false
         type: string
       copy_from_version:
@@ -173,6 +189,7 @@ jobs:
           INPUT_BUILD_NUMBER: ${{ inputs.build_number }}
           INPUT_WHATS_NEW: ${{ inputs.whats_new }}
           INPUT_REVIEW_NOTES: ${{ inputs.review_notes }}
+          INPUT_TVOS_DEMO_VIDEO_URL: ${{ inputs.tvos_demo_video_url }}
           INPUT_COPY_FROM_VERSION: ${{ inputs.copy_from_version }}
           INPUT_COPY_FROM_PLATFORM: ${{ inputs.copy_from_platform }}
           INPUT_REMOVE_ACTIVE_REVIEW_VERSION: >-
@@ -208,6 +225,9 @@ jobs:
           fi
           if [[ -n "${INPUT_REVIEW_NOTES}" ]]; then
             args+=(--review-notes "${INPUT_REVIEW_NOTES}")
+          fi
+          if [[ -n "${INPUT_TVOS_DEMO_VIDEO_URL}" ]]; then
+            args+=(--tvos-demo-video-url "${INPUT_TVOS_DEMO_VIDEO_URL}")
           fi
           if [[ -n "${INPUT_COPY_FROM_VERSION}" ]]; then
             args+=(--copy-from-version "${INPUT_COPY_FROM_VERSION}")
