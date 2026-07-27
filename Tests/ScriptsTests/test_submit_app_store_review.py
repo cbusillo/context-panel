@@ -291,6 +291,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             prepare_only=False,
             platform="TV_OS",
             review_notes=None,
+            tvos_demo_video_url=None,
         )
 
         submit_app_store_review.validate_args(args)
@@ -389,7 +390,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
 
         submit_app_store_review.validate_args(args)
 
-    def test_validate_args_requires_explicit_tvos_review_notes(self):
+    def test_validate_args_requires_explicit_tvos_demo_video_url(self):
         args = SimpleNamespace(
             cancel_review_only=False,
             remove_active_review_version=None,
@@ -397,15 +398,16 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             whats_new="Adds the Apple TV companion.",
             prepare_only=False,
             platform="TV_OS",
-            review_notes=None,
+            review_notes="The app uses a Mac-published CloudKit snapshot.",
+            tvos_demo_video_url=None,
         )
 
         with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
             submit_app_store_review.validate_args(args)
 
-        self.assertIn("physical Apple TV demo link", str(context.exception))
+        self.assertIn("--tvos-demo-video-url", str(context.exception))
 
-    def test_validate_args_rejects_non_tvos_demo_for_tvos_review(self):
+    def test_validate_args_requires_https_tvos_demo_video_url(self):
         args = SimpleNamespace(
             cancel_review_only=False,
             remove_active_review_version=None,
@@ -413,34 +415,33 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             whats_new="Adds the Apple TV companion.",
             prepare_only=False,
             platform="TV_OS",
-            review_notes=(
-                "Physical iPhone demo: https://example.com/reviewer-demo.mp4\n\n"
-                "The companion was also smoke-tested on a physical Apple TV."
-            ),
+            review_notes="The app uses a Mac-published CloudKit snapshot.",
+            tvos_demo_video_url="http://example.com/physical-apple-tv-demo.mp4",
         )
 
         with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
             submit_app_store_review.validate_args(args)
 
-        self.assertIn("label an HTTPS link as a physical Apple TV or physical tvOS", str(context.exception))
+        self.assertIn("valid HTTPS URL", str(context.exception))
 
-    def test_validate_args_requires_https_tvos_demo_link(self):
+    def test_validate_args_rejects_tvos_demo_video_url_for_other_platforms(self):
         args = SimpleNamespace(
             cancel_review_only=False,
             remove_active_review_version=None,
             build_number="202607241933",
             whats_new="Adds the Apple TV companion.",
             prepare_only=False,
-            platform="TV_OS",
-            review_notes="Physical Apple TV demo is available to the reviewer.",
+            platform="IOS",
+            review_notes="Physical iPhone demo.",
+            tvos_demo_video_url="https://example.com/physical-apple-tv-demo.mp4",
         )
 
         with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
             submit_app_store_review.validate_args(args)
 
-        self.assertIn("HTTPS demo video link", str(context.exception))
+        self.assertIn("only valid with --platform TV_OS", str(context.exception))
 
-    def test_validate_args_accepts_physical_apple_tv_demo_link(self):
+    def test_validate_args_accepts_structured_tvos_demo_video_url(self):
         args = SimpleNamespace(
             cancel_review_only=False,
             remove_active_review_version=None,
@@ -448,10 +449,25 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             whats_new="Adds the Apple TV companion.",
             prepare_only=False,
             platform="TV_OS",
-            review_notes="Physical Apple TV demo: https://example.com/physical-apple-tv-demo.mp4",
+            review_notes="The app uses a Mac-published CloudKit snapshot.",
+            tvos_demo_video_url="https://example.com/physical-apple-tv-demo.mp4",
         )
 
         submit_app_store_review.validate_args(args)
+
+    def test_effective_review_notes_prepends_standardized_tvos_evidence(self):
+        args = SimpleNamespace(
+            platform="TV_OS",
+            review_notes="No demo account or tvOS permission prompt is required.",
+            tvos_demo_video_url="https://example.com/physical-apple-tv-demo.mp4",
+        )
+
+        self.assertEqual(
+            submit_app_store_review.effective_review_notes(args),
+            "Physical Apple TV demo (reviewer-accessible, no login required):\n"
+            "https://example.com/physical-apple-tv-demo.mp4\n\n"
+            "No demo account or tvOS permission prompt is required.",
+        )
 
     def test_deletes_matching_item(self):
         client = FakeASCClient()

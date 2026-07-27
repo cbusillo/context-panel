@@ -7,7 +7,6 @@ import argparse
 import base64
 import json
 import os
-import re
 import sys
 import tempfile
 import time
@@ -66,9 +65,7 @@ DEFAULT_VERSION_UNLOCK_WAIT_TIMEOUT_SECONDS = 2 * 60
 DEFAULT_VERSION_UNLOCK_POLL_SECONDS = 5
 DEFAULT_REVIEW_ITEM_OWNER_WAIT_TIMEOUT_SECONDS = 2 * 60
 DEFAULT_REVIEW_ITEM_OWNER_POLL_SECONDS = 5
-HTTPS_URL_PATTERN = re.compile(r"https://\S+", re.IGNORECASE)
-TVOS_PHYSICAL_DEMO_MARKERS = ("physical apple tv", "physical tvos")
-TVOS_DEMO_LABEL_WINDOW = 256
+TVOS_DEMO_NOTES_HEADING = "Physical Apple TV demo (reviewer-accessible, no login required):"
 
 
 class AppStoreConnectError(RuntimeError):
@@ -1162,7 +1159,7 @@ def ensure_metadata(client: ASCClient, version_id: str, source_localization: dic
         )
         if source_review_detail.get(key) is not None
     }
-    review_notes = getattr(args, "review_notes", None)
+    review_notes = effective_review_notes(args)
     if review_notes is not None:
         review_attributes["notes"] = review_notes
     if review_detail_id and review_attributes:
@@ -1429,13 +1426,20 @@ def parse_bool(value: str) -> bool:
     raise argparse.ArgumentTypeError(f"expected boolean, got {value!r}")
 
 
-def has_physical_tvos_demo_link(review_notes: str) -> bool:
-    for match in HTTPS_URL_PATTERN.finditer(review_notes):
-        label_start = max(0, match.start() - TVOS_DEMO_LABEL_WINDOW)
-        label_context = " ".join(review_notes[label_start : match.start()].lower().split())
-        if any(marker in label_context for marker in TVOS_PHYSICAL_DEMO_MARKERS):
-            return True
-    return False
+def is_https_url(value: str) -> bool:
+    parsed = urllib.parse.urlparse(value)
+    return parsed.scheme.lower() == "https" and bool(parsed.netloc) and not any(character.isspace() for character in value)
+
+
+def effective_review_notes(args: argparse.Namespace) -> str | None:
+    review_notes = (getattr(args, "review_notes", None) or "").strip()
+    if getattr(args, "platform", None) != "TV_OS":
+        return review_notes or None
+    demo_video_url = (getattr(args, "tvos_demo_video_url", None) or "").strip()
+    if not demo_video_url:
+        return review_notes or None
+    evidence_notes = f"{TVOS_DEMO_NOTES_HEADING}\n{demo_video_url}"
+    return f"{evidence_notes}\n\n{review_notes}" if review_notes else evidence_notes
 
 
 def parse_args() -> argparse.Namespace:
@@ -1451,6 +1455,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--build-number", help="CFBundleVersion uploaded to App Store Connect")
     parser.add_argument("--whats-new")
     parser.add_argument("--review-notes", help="Override App Review notes copied from the source version")
+    parser.add_argument(
+        "--tvos-demo-video-url",
+        help="Reviewer-accessible HTTPS URL for the physical Apple TV demo required by TV_OS submissions",
+    )
     parser.add_argument("--copy-from-version", help="Existing App Store version to copy localization and review details from")
     parser.add_argument(
         "--copy-from-platform",
@@ -1509,18 +1517,15 @@ def validate_args(args: argparse.Namespace) -> None:
     if not args.whats_new:
         raise AppStoreConnectError("--whats-new is required unless --cancel-review-only is used")
     if getattr(args, "platform", None) == "TV_OS":
-        review_notes = (getattr(args, "review_notes", None) or "").strip()
-        if not review_notes:
+        demo_video_url = (getattr(args, "tvos_demo_video_url", None) or "").strip()
+        if not demo_video_url:
             raise AppStoreConnectError(
-                "TV_OS review preparation and submission require --review-notes with a physical Apple TV demo link"
+                "TV_OS review preparation and submission require --tvos-demo-video-url"
             )
-        url_matches = list(HTTPS_URL_PATTERN.finditer(review_notes))
-        if not url_matches:
-            raise AppStoreConnectError("TV_OS --review-notes must include an HTTPS demo video link")
-        if not has_physical_tvos_demo_link(review_notes):
-            raise AppStoreConnectError(
-                "TV_OS --review-notes must label an HTTPS link as a physical Apple TV or physical tvOS demo"
-            )
+        if not is_https_url(demo_video_url):
+            raise AppStoreConnectError("--tvos-demo-video-url must be a valid HTTPS URL")
+    elif getattr(args, "tvos_demo_video_url", None):
+        raise AppStoreConnectError("--tvos-demo-video-url is only valid with --platform TV_OS")
 
 
 def main() -> int:
