@@ -611,19 +611,112 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
         poster: poster,
         appVersion: "1.0.test"
     )
-    let snapshot = UsageSnapshot(generatedAt: warningNow, limits: [
-        warningLimit(provider: .anthropic, accountID: "claude", label: "Claude Weekly", used: 93, limit: 100),
+    let failedSnapshot = UsageSnapshot(generatedAt: warningNow, limits: [
+        warningLimit(
+            provider: .anthropic,
+            accountID: "claude",
+            label: "Claude Weekly",
+            used: 93,
+            limit: 100,
+            resetsAt: warningNow.addingTimeInterval(20 * 60)
+        ),
+    ])
+    let retrySnapshot = UsageSnapshot(generatedAt: warningNow.addingTimeInterval(11 * 60), limits: [
+        warningLimit(
+            provider: .anthropic,
+            accountID: "claude",
+            label: "Claude Weekly",
+            used: 93,
+            limit: 100,
+            resetsAt: warningNow.addingTimeInterval(31 * 60)
+        ),
     ])
 
-    let failed = await service.deliverIfNeeded(snapshot: snapshot, now: warningNow)
-    let succeeded = await service.deliverIfNeeded(snapshot: snapshot, now: warningNow.addingTimeInterval(60))
-    let suppressed = await service.deliverIfNeeded(snapshot: snapshot, now: warningNow.addingTimeInterval(120))
+    let failed = await service.deliverIfNeeded(snapshot: failedSnapshot, now: failedSnapshot.generatedAt)
+    let succeeded = await service.deliverIfNeeded(snapshot: retrySnapshot, now: retrySnapshot.generatedAt)
+    let suppressed = await service.deliverIfNeeded(
+        snapshot: retrySnapshot,
+        now: retrySnapshot.generatedAt.addingTimeInterval(60)
+    )
 
     #expect(failed.first?.statusCode == 500)
     #expect(failed.first?.succeeded == false)
     #expect(succeeded.first?.statusCode == 204)
     #expect(succeeded.first?.succeeded == true)
     #expect(suppressed.isEmpty)
+    #expect(await poster.postCount == 2)
+}
+
+@Test func limitWarningWebhookDeliverySuppressesResetDriftUntilCapacityRecovers() async throws {
+    let directory = try temporaryWarningDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let settingsStore = LimitWarningWebhookSettingsStore(settingsURL: directory.appending(path: "webhook-settings.json"))
+    let warningSettingsStore = LimitWarningSettingsStore(settingsURL: directory.appending(path: "warning-settings.json"))
+    let stateStore = LimitWarningWebhookDeliveryStateStore(stateURL: directory.appending(path: "webhook-state.json"))
+    try settingsStore.save(LimitWarningWebhookSettings(isEnabled: true, preset: .discord))
+    try warningSettingsStore.save(LimitWarningSettings(isEnabled: true, thresholdPercentRemaining: 15))
+    let poster = FakeWebhookPoster(statusCodes: [204, 204])
+    let service = LimitWarningWebhookDeliveryService(
+        warningSettingsStore: warningSettingsStore,
+        settingsStore: settingsStore,
+        stateStore: stateStore,
+        secretStore: StaticWebhookSecretStore(url: URL(string: "https://example.com/hook")),
+        poster: poster,
+        appVersion: "1.0.test"
+    )
+    let firstLow = UsageSnapshot(generatedAt: warningNow, limits: [
+        warningLimit(
+            provider: .anthropic,
+            accountID: "claude",
+            label: "Claude 5-hour",
+            used: 100,
+            limit: 100,
+            resetsAt: warningNow.addingTimeInterval(20 * 60)
+        ),
+    ])
+    let driftingLow = UsageSnapshot(generatedAt: warningNow.addingTimeInterval(11 * 60), limits: [
+        warningLimit(
+            provider: .anthropic,
+            accountID: "claude",
+            label: "Claude 5-hour",
+            used: 100,
+            limit: 100,
+            resetsAt: warningNow.addingTimeInterval(31 * 60)
+        ),
+    ])
+    let recovered = UsageSnapshot(generatedAt: warningNow.addingTimeInterval(16 * 60), limits: [
+        warningLimit(
+            provider: .anthropic,
+            accountID: "claude",
+            label: "Claude 5-hour",
+            used: 80,
+            limit: 100,
+            resetsAt: warningNow.addingTimeInterval(36 * 60)
+        ),
+    ])
+    let nextLow = UsageSnapshot(generatedAt: warningNow.addingTimeInterval(21 * 60), limits: [
+        warningLimit(
+            provider: .anthropic,
+            accountID: "claude",
+            label: "Claude 5-hour",
+            used: 100,
+            limit: 100,
+            resetsAt: warningNow.addingTimeInterval(41 * 60)
+        ),
+    ])
+
+    let firstResult = await service.deliverIfNeeded(snapshot: firstLow, now: firstLow.generatedAt)
+    let driftingResult = await service.deliverIfNeeded(snapshot: driftingLow, now: driftingLow.generatedAt)
+    let recoveredResult = await service.deliverIfNeeded(snapshot: recovered, now: recovered.generatedAt)
+
+    #expect(firstResult.first?.succeeded == true)
+    #expect(driftingResult.isEmpty)
+    #expect(recoveredResult.isEmpty)
+    #expect(stateStore.load().latestRecord == nil)
+
+    let nextLowResult = await service.deliverIfNeeded(snapshot: nextLow, now: nextLow.generatedAt)
+
+    #expect(nextLowResult.first?.succeeded == true)
     #expect(await poster.postCount == 2)
 }
 
@@ -694,7 +787,7 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
     #expect(state.latestTestRecord?.deliveryKey == "test:123")
 }
 
-@Test func limitWarningWebhookDeliveryPrunesMissingLanes() throws {
+@Test func limitWarningWebhookDeliveryPrunesInactiveLanes() throws {
     var state = LimitWarningWebhookDeliveryState(records: [
         LimitWarningWebhookDeliveryRecord(
             deliveryKey: "primary-webhook:openai:fiveHour:reset:10",
@@ -723,13 +816,13 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
         ),
     ])
 
-    state.removeRecords(forMissing: ["anthropic:weekly"])
+    state.retainLiveRecords(for: ["anthropic:weekly"])
 
     #expect(state.records.map(\.laneID).sorted() == ["anthropic:weekly", "test:fiveHour"])
     #expect(state.latestTestRecord?.deliveryKey == "test:123")
 }
 
-@Test func limitWarningWebhookDeliveryPrunesMissingLanesBeforeEligibilityGuards() async throws {
+@Test func limitWarningWebhookDeliveryPrunesInactiveLanesBeforeEligibilityGuards() async throws {
     let directory = try temporaryWarningDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let settingsStore = LimitWarningWebhookSettingsStore(settingsURL: directory.appending(path: "webhook-settings.json"))
@@ -891,7 +984,7 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
     let warningSettingsStore = LimitWarningSettingsStore(settingsURL: directory.appending(path: "warning-settings.json"))
     let stateStore = LimitWarningWebhookDeliveryStateStore(stateURL: directory.appending(path: "webhook-state.json"))
     try settingsStore.save(LimitWarningWebhookSettings(isEnabled: false, preset: .discord))
-    let poster = FakeWebhookPoster(statusCodes: [204])
+    let poster = FakeWebhookPoster(statusCodes: [204, 204])
     let service = LimitWarningWebhookDeliveryService(
         warningSettingsStore: warningSettingsStore,
         settingsStore: settingsStore,
@@ -931,9 +1024,20 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
     ])
 
     let result = await service.deliverIfNeeded(snapshot: snapshot, now: warningNow)
+    let suppressed = await service.deliverIfNeeded(
+        snapshot: snapshot,
+        now: warningNow.addingTimeInterval(60)
+    )
+    try warningSettingsStore.save(LimitWarningSettings(isEnabled: true, thresholdPercentRemaining: 30))
+    let changedThreshold = await service.deliverIfNeeded(
+        snapshot: snapshot,
+        now: warningNow.addingTimeInterval(120)
+    )
 
     #expect(result.first?.succeeded == true)
-    #expect(await poster.postCount == 1)
+    #expect(suppressed.isEmpty)
+    #expect(changedThreshold.first?.succeeded == true)
+    #expect(await poster.postCount == 2)
 }
 
 @Test func limitWarningPendingNotificationQueueKeepsNewestPerLaneAndRemovesDelivered() throws {

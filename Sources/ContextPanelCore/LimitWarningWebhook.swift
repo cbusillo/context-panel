@@ -197,8 +197,18 @@ public struct LimitWarningWebhookDeliveryState: Codable, Equatable, Sendable {
         records.first { $0.deliveryKey == deliveryKey }
     }
 
-    public func hasSucceeded(deliveryKey: String) -> Bool {
-        record(for: deliveryKey)?.succeeded == true
+    public func hasSucceededWarning(
+        laneID: String,
+        thresholdPercentRemaining: Int,
+        channelID: String = LimitWarningWebhookDeliveryState.defaultChannelID
+    ) -> Bool {
+        records.contains { record in
+            !record.isTest
+                && record.channelID == channelID
+                && record.laneID == laneID
+                && record.succeeded
+                && Self.thresholdPercentRemaining(from: record.deliveryKey) == thresholdPercentRemaining
+        }
     }
 
     public mutating func upsert(_ record: LimitWarningWebhookDeliveryRecord) {
@@ -211,8 +221,8 @@ public struct LimitWarningWebhookDeliveryState: Codable, Equatable, Sendable {
         records = Self.normalized(records)
     }
 
-    public mutating func removeRecords(forMissing laneIDs: Set<String>) {
-        records.removeAll { !$0.isTest && !laneIDs.contains($0.laneID) }
+    public mutating func retainLiveRecords(for warningLaneIDs: Set<String>) {
+        records.removeAll { !$0.isTest && !warningLaneIDs.contains($0.laneID) }
     }
 
     private static func normalized(_ records: [LimitWarningWebhookDeliveryRecord]) -> [LimitWarningWebhookDeliveryRecord] {
@@ -238,6 +248,10 @@ public struct LimitWarningWebhookDeliveryState: Codable, Equatable, Sendable {
             return "test:\(record.channelID)"
         }
         return "live:\(record.channelID):\(record.laneID)"
+    }
+
+    private static func thresholdPercentRemaining(from deliveryKey: String) -> Int? {
+        deliveryKey.split(separator: ":").last.flatMap { Int($0) }
     }
 }
 
@@ -814,21 +828,24 @@ public struct LimitWarningWebhookDeliveryService: Sendable {
     ) async -> [LimitWarningWebhookDeliveryResult] {
         let presentationSnapshot = snapshot.presented(at: now)
         var state = stateStore.load()
-        state.removeRecords(forMissing: Set(presentationSnapshot.mainLimitSummaries.map(\.id)))
-        defer { try? stateStore.save(state) }
-
-        let settings = settingsStore.load()
-        guard settings.isEnabled else { return [] }
-        guard let webhookURL = try? secretStore.loadWebhookURL() else { return [] }
         let warningSettings = warningSettingsStore.load()
         let events = LimitWarningWebhookEventEvaluator.events(
             snapshot: presentationSnapshot,
             thresholdPercentRemaining: warningSettings.thresholdPercentRemaining
         )
+        state.retainLiveRecords(for: Set(events.map(\.laneID)))
+        defer { try? stateStore.save(state) }
+
+        let settings = settingsStore.load()
+        guard settings.isEnabled else { return [] }
+        guard let webhookURL = try? secretStore.loadWebhookURL() else { return [] }
         var results: [LimitWarningWebhookDeliveryResult] = []
         for event in events {
+            guard !state.hasSucceededWarning(
+                laneID: event.laneID,
+                thresholdPercentRemaining: event.thresholdPercentRemaining
+            ) else { continue }
             let deliveryKey = LimitWarningWebhookPayloadBuilder.deliveryKey(event: event)
-            guard !state.hasSucceeded(deliveryKey: deliveryKey) else { continue }
             let result = await deliver(
                 event: event,
                 settings: settings,
