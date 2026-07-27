@@ -22,7 +22,9 @@ name: Submit App Store Review
         required: false
         type: string
       review_notes:
-        description: Optional App Review notes override.
+        description: >-
+          App Review notes override. TV_OS requires an HTTPS physical Apple TV
+          demo link.
         required: false
         type: string
       copy_from_version:
@@ -89,7 +91,9 @@ name: Submit App Store Review
         required: false
         type: string
       review_notes:
-        description: Optional App Review notes override.
+        description: >-
+          App Review notes override. TV_OS requires an HTTPS physical Apple TV
+          demo link.
         required: false
         type: string
       copy_from_version:

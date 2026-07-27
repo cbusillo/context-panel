@@ -735,9 +735,14 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
     def test_app_store_review_workflow_supports_tvos(self):
         workflow = self.read(".github/workflows/submit-app-store-review.yml")
         script = self.read("scripts/submit-app-store-review.py")
+        release_docs = self.read("docs/release.md")
 
         self.assertIn("- TV_OS", workflow)
         self.assertIn('choices=("IOS", "MAC_OS", "TV_OS", "VISION_OS")', script)
+        self.assertIn("TV_OS requires an HTTPS physical Apple TV", workflow)
+        self.assertIn("TVOS_PHYSICAL_DEMO_MARKERS", script)
+        self.assertIn("physical Apple TV demo link", script)
+        self.assertIn("every non-cancel `TV_OS` preparation or submission", release_docs)
         self.assertIn("copy_from_platform:", workflow)
         self.assertIn("INPUT_COPY_FROM_PLATFORM", workflow)
         self.assertIn('args+=(--copy-from-platform "${INPUT_COPY_FROM_PLATFORM}")', workflow)

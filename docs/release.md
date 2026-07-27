@@ -845,6 +845,12 @@ Mac-published snapshot.
 Reply to App Review with that link and summarize that no demo account is needed
 unless the build requires one.
 
+The submit helper requires every non-cancel `TV_OS` preparation or submission to
+provide explicit `review_notes` containing an HTTPS link and identifying the
+recording as a physical Apple TV or physical tvOS demo. Copied notes, simulator
+footage, and recordings from another companion platform must fail before any App
+Store Connect mutation.
+
 After a companion platform is rejected, do not resubmit that rejected marketing
 version as the recovery candidate. Prepare the next marketing version, copy the
 approved metadata and screenshot matrix there, attach a newly validated build,
