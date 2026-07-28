@@ -346,6 +346,7 @@ enum AppNavigationSelection: Hashable {
     case overview
     case reconnect
     case provider(Provider)
+    case providerAccount(Provider, String)
     case mainLimit(MainLimitSummary.ID)
 }
 
@@ -2333,6 +2334,13 @@ struct MainContent: View {
             ReconnectDashboard(appModel: model, snapshot: snapshot)
         case .provider(let provider):
             ProviderDashboard(model: model, snapshot: snapshot, provider: provider)
+        case let .providerAccount(provider, accountID):
+            ProviderDashboard(
+                model: model,
+                snapshot: snapshot,
+                provider: provider,
+                focusedAccountID: accountID
+            )
         case .mainLimit(let id):
             if let summary = snapshot.mainLimitSummaries.first(where: { $0.id == id }) {
                 MainLimitDetail(model: model, summary: summary, generatedAt: snapshot.generatedAt)
@@ -2786,6 +2794,7 @@ struct ProviderDashboard: View {
     @ObservedObject var model: ContextPanelAppModel
     let snapshot: UsageSnapshot
     let provider: Provider
+    var focusedAccountID: String? = nil
 
     private var summaries: [MainLimitSummary] {
         snapshot.mainLimitSummaries.filter { $0.provider == provider }
@@ -2796,38 +2805,55 @@ struct ProviderDashboard: View {
     }
 
     var body: some View {
-        ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 18) {
-                ProviderHeaderCard(model: model, provider: provider, summaries: summaries)
-                ProviderAccessAlertsSection(
-                    alerts: model.providerAccessAlerts.filter { $0.provider == provider }
-                )
-                SectionHeader(title: "Main Limits", trailing: "\(summaries.count) windows")
-                VStack(spacing: 10) {
-                    ForEach(summaries) { summary in
-                        MainLimitRow(
-                            summary: summary,
-                            status: providerStatusIncludingAccessAlerts(
-                                provider: provider,
-                                baseStatuses: [summary.status],
-                                alerts: model.providerAccessAlerts
+        ScrollViewReader { proxy in
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 18) {
+                    ProviderHeaderCard(model: model, provider: provider, summaries: summaries)
+                    ProviderAccessAlertsSection(
+                        alerts: model.providerAccessAlerts.filter { $0.provider == provider }
+                    )
+                    SectionHeader(title: "Main Limits", trailing: "\(summaries.count) windows")
+                    VStack(spacing: 10) {
+                        ForEach(summaries) { summary in
+                            MainLimitRow(
+                                summary: summary,
+                                status: providerStatusIncludingAccessAlerts(
+                                    provider: provider,
+                                    baseStatuses: [summary.status],
+                                    alerts: model.providerAccessAlerts
+                                )
                             )
+                        }
+                    }
+                    if provider == .openAI {
+                        OpenAIAccountLimitsSection(
+                            summaries: summaries,
+                            reports: model.storedSnapshot?.reports ?? [],
+                            now: Date()
                         )
+                    } else {
+                        ProviderAccountLimitsSection(summaries: summaries)
+                    }
+                    if !additionalLimits.isEmpty {
+                        AdditionalLimitsSection(snapshot: snapshot, provider: provider)
                     }
                 }
-                if provider == .openAI {
-                    OpenAIAccountLimitsSection(summaries: summaries)
-                } else {
-                    ProviderAccountLimitsSection(summaries: summaries)
-                }
-                if !additionalLimits.isEmpty {
-                    AdditionalLimitsSection(snapshot: snapshot, provider: provider)
-                }
+                .padding(24)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            .padding(24)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .background(CPTheme.background)
+            .onAppear { scrollToFocusedAccount(using: proxy) }
+            .onChange(of: focusedAccountID) { _, _ in scrollToFocusedAccount(using: proxy) }
         }
-        .background(CPTheme.background)
+    }
+
+    private func scrollToFocusedAccount(using proxy: ScrollViewProxy) {
+        guard provider == .openAI, let focusedAccountID else { return }
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: 0.25)) {
+                proxy.scrollTo("openai-account:\(focusedAccountID)", anchor: .center)
+            }
+        }
     }
 }
 
@@ -2862,9 +2888,24 @@ struct ProviderAccountLimitsSection: View {
 
 struct OpenAIAccountLimitsSection: View {
     let summaries: [MainLimitSummary]
+    let reports: [StoredProviderReport]
+    let now: Date
 
     private var accounts: [OpenAIAccountLimitSummary] {
-        OpenAIAccountLimitSummary.accounts(from: summaries)
+        OpenAIAccountLimitSummary.accounts(from: summaries, reports: reports)
+    }
+
+    private var guidanceByAccountID: [String: ProviderResetCreditGuidance] {
+        Dictionary(
+            ResetCreditGuidanceAdvisor.guidance(
+                reports: reports,
+                limits: summaries.flatMap(\.limits),
+                now: now
+            ).map { ($0.configuredAccountID ?? $0.accountID, $0) },
+            uniquingKeysWith: { current, candidate in
+                candidate.resetCredits.observedAt > current.resetCredits.observedAt ? candidate : current
+            }
+        )
     }
 
     private var recommendation: AccountResetRecommendation? {
@@ -2880,7 +2921,12 @@ struct OpenAIAccountLimitsSection: View {
                         OpenAIRecommendedAccountRow(recommendation: recommendation)
                     }
                     ForEach(accounts) { account in
-                        OpenAIAccountLimitRow(account: account)
+                        OpenAIAccountLimitRow(
+                            account: account,
+                            resetCreditGuidance: guidanceByAccountID[account.logicalAccountID],
+                            now: now
+                        )
+                        .id("openai-account:\(account.logicalAccountID)")
                     }
                 }
             }
@@ -2916,6 +2962,8 @@ private struct OpenAIRecommendedAccountRow: View {
 
 private struct OpenAIAccountLimitRow: View {
     let account: OpenAIAccountLimitSummary
+    let resetCreditGuidance: ProviderResetCreditGuidance?
+    let now: Date
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -2939,10 +2987,109 @@ private struct OpenAIAccountLimitRow: View {
                 OpenAIAccountWindowPill(title: "Weekly", limit: account.limit(for: .weekly))
                 OpenAIAccountWindowPill(title: "5h", limit: account.limit(for: .fiveHour))
             }
+            if let resetCreditGuidance {
+                Divider()
+                    .overlay(CPTheme.line)
+                OpenAIResetCreditRow(guidance: resetCreditGuidance, now: now)
+            }
         }
         .padding(10)
         .background(CPTheme.surface2)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+private struct OpenAIResetCreditRow: View {
+    let guidance: ProviderResetCreditGuidance
+    let now: Date
+
+    private var status: UsageStatus {
+        switch guidance.state {
+        case .considerUsingNow:
+            .limited
+        case .considerBefore:
+            .close
+        case .hold:
+            .healthy
+        case let .refresh(reason):
+            reason == .staleObservation ? .stale : .unknown
+        }
+    }
+
+    private var availabilityText: String {
+        switch guidance.state {
+        case .refresh(.staleObservation), .refresh(.inconsistentObservation), .refresh(.expiryElapsed):
+            "\(guidance.countText) last observed"
+        case .hold, .considerUsingNow, .considerBefore, .refresh:
+            "\(guidance.countText) available"
+        }
+    }
+
+    private var expiryText: String {
+        guard let expiry = guidance.resetCredits.earliestKnownExpiry else { return "Expiry unknown" }
+        let prefix = guidance.resetCredits.coverage == .partial ? "Earliest known expiry" : "Earliest expiry"
+        return "\(prefix) \(expiry.formatted(date: .abbreviated, time: .shortened))"
+    }
+
+    private var freshnessText: String {
+        let age = SnapshotFreshness.compactAgeText(since: guidance.resetCredits.observedAt, now: now)
+        return switch guidance.state {
+        case .refresh(.staleObservation):
+            "\(age) · stale"
+        case .refresh(.inconsistentObservation), .refresh(.expiryElapsed):
+            "\(age) · refresh"
+        case .hold, .considerUsingNow, .considerBefore, .refresh:
+            age
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: "arrow.counterclockwise.circle")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(CPTheme.statusColor(status))
+                .frame(width: 18, height: 18)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("Reset credits")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(CPTheme.secondaryText)
+                    Spacer(minLength: 8)
+                    Text(availabilityText)
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(CPTheme.primaryText)
+                        .lineLimit(1)
+                }
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(expiryText)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(CPTheme.tertiaryText)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    Text(freshnessText)
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundStyle(CPTheme.tertiaryText)
+                        .lineLimit(1)
+                }
+                Text(guidance.recommendationTitle)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(CPTheme.statusColor(status))
+                Text(guidance.recommendationDetail(now: now))
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(CPTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityText)
+    }
+
+    private var accessibilityText: String {
+        let observed = guidance.resetCredits.observedAt.formatted(date: .long, time: .shortened)
+        let expiry = guidance.resetCredits.earliestKnownExpiry
+            .map { "Earliest known expiry \($0.formatted(date: .long, time: .shortened))." }
+            ?? "Expiry unknown."
+        return "\(availabilityText) for \(guidance.accountName). \(expiry) Observed \(observed). \(guidance.recommendationTitle). \(guidance.recommendationDetail(now: now))"
     }
 }
 
@@ -2971,12 +3118,13 @@ private struct OpenAIAccountWindowPill: View {
     }
 }
 
-private struct OpenAIAccountLimitSummary: Identifiable {
+struct OpenAIAccountLimitSummary: Identifiable {
+    let logicalAccountID: String
     let accountID: String
     let accountName: String
     let limits: [UsageLimit]
 
-    var id: String { accountID }
+    var id: String { logicalAccountID }
 
     var displayName: String {
         accountNameParts.first ?? accountName
@@ -3004,22 +3152,50 @@ private struct OpenAIAccountLimitSummary: Identifiable {
             .filter { !$0.isEmpty }
     }
 
-    static func accounts(from summaries: [MainLimitSummary]) -> [OpenAIAccountLimitSummary] {
+    static func accounts(
+        from summaries: [MainLimitSummary],
+        reports: [StoredProviderReport]
+    ) -> [OpenAIAccountLimitSummary] {
         let limits = summaries
             .filter { $0.provider == .openAI }
             .flatMap(\.limits)
             .filter { $0.isMainLimit }
-        return Dictionary(grouping: limits, by: \.accountID)
-            .map { accountID, accountLimits in
-                OpenAIAccountLimitSummary(
-                    accountID: accountID,
-                    accountName: accountLimits.first?.accountName ?? "OpenAI Account",
+        let positiveResetReports = reports.filter {
+            $0.provider == .openAI && ($0.resetCredits?.availableCount ?? 0) > 0
+        }
+        let reportsByAccountID = Dictionary(grouping: positiveResetReports, by: \.configuredOrResolvedAccountID)
+            .compactMapValues(preferredReport)
+        let accountIDs = Set(limits.map(\.configuredOrResolvedAccountID)).union(reportsByAccountID.keys)
+        return accountIDs
+            .map { logicalAccountID in
+                let report = reportsByAccountID[logicalAccountID]
+                let accountLimits = limits.filter { limit in
+                    report?.matchesAccount(of: limit) ?? (limit.configuredOrResolvedAccountID == logicalAccountID)
+                }
+                return OpenAIAccountLimitSummary(
+                    logicalAccountID: logicalAccountID,
+                    accountID: report?.accountID ?? accountLimits.first?.accountID ?? logicalAccountID,
+                    accountName: accountLimits.first?.accountName ?? report?.accountName ?? "OpenAI Account",
                     limits: accountLimits.sortedForOpenAIAccount
                 )
             }
             .sorted { lhs, rhs in
                 lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
             }
+    }
+
+    private static func preferredReport(in reports: [StoredProviderReport]) -> StoredProviderReport? {
+        reports.max { lhs, rhs in
+            if lhs.generatedAt != rhs.generatedAt {
+                return lhs.generatedAt < rhs.generatedAt
+            }
+            let lhsObservedAt = lhs.resetCredits?.observedAt ?? .distantPast
+            let rhsObservedAt = rhs.resetCredits?.observedAt ?? .distantPast
+            if lhsObservedAt != rhsObservedAt {
+                return lhsObservedAt < rhsObservedAt
+            }
+            return lhs.accountID > rhs.accountID
+        }
     }
 }
 
@@ -4219,6 +4395,17 @@ final class ContextPanelAppModel: ObservableObject {
             navigationRequest = .reconnect
         case "overview":
             navigationRequest = .overview
+        case "provider":
+            let providerValue = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
+            guard let provider = Provider(rawValue: providerValue) else {
+                navigationRequest = .overview
+                return
+            }
+            let accountID = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?
+                .first { $0.name == "account" }?
+                .value
+            navigationRequest = accountID.map { .providerAccount(provider, $0) } ?? .provider(provider)
         default:
             navigationRequest = .overview
         }

@@ -1326,6 +1326,160 @@ import Testing
     #expect(stored.errorMessage?.contains("hooks.example.com") == false)
 }
 
+@Test func jsonSnapshotStoreReplacesExplicitZeroWithoutCollapsingSiblingResetCredits() throws {
+    let store = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let first = Date(timeIntervalSince1970: 100)
+    let second = Date(timeIntervalSince1970: 200)
+
+    try store.save(StoredUsageSnapshot(
+        savedAt: first,
+        refreshResult: ConnectorRefreshResult(generatedAt: first, reports: [
+            resetCreditTestReport(accountID: "openai-a", count: 2, observedAt: first, coverage: .complete, expiry: 500),
+            resetCreditTestReport(accountID: "openai-b", count: 7, observedAt: first),
+        ])
+    ))
+
+    try store.saveMerged(
+        refreshResult: ConnectorRefreshResult(generatedAt: second, reports: [
+            resetCreditTestReport(accountID: "openai-a", count: 0, observedAt: second),
+        ]),
+        savedAt: second
+    )
+
+    let current = try #require(store.loadCurrent().snapshot)
+    let accountA = try #require(current.reports.first { $0.accountID == "openai-a" })
+    let accountB = try #require(current.reports.first { $0.accountID == "openai-b" })
+
+    #expect((current.reports.count, accountA.resetCredits?.availableCount, accountB.resetCredits?.availableCount) == (2, 0, 7))
+    #expect((accountA.resetCredits?.observedAt, accountB.resetCredits?.observedAt) == (second, first))
+    #expect(accountA.resetCredits?.earliestKnownExpiry == nil)
+}
+
+@Test func jsonSnapshotStorePreservesFailedResetCreditsAsStaleSafeCountOnly() throws {
+    let store = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let first = Date(timeIntervalSince1970: 100)
+    let second = Date(timeIntervalSince1970: 200)
+
+    try store.save(StoredUsageSnapshot(
+        savedAt: first,
+        refreshResult: ConnectorRefreshResult(generatedAt: first, reports: [
+            resetCreditTestReport(accountID: "openai-a", count: 2, observedAt: first, coverage: .complete, expiry: 500),
+        ])
+    ))
+
+    try store.saveMerged(
+        refreshResult: ConnectorRefreshResult(generatedAt: second, reports: [
+            resetCreditTestReport(accountID: "openai-a", observedAt: second, status: .failure),
+        ]),
+        savedAt: second,
+        preservesUnreportedAccounts: false
+    )
+
+    let current = try #require(store.loadCurrent().snapshot)
+    let report = try #require(current.reports.first)
+    let resetCredits = try #require(report.resetCredits)
+
+    #expect((report.status, report.generatedAt, resetCredits.availableCount) == (.failure, second, 2))
+    #expect(resetCredits.observedAt < report.generatedAt)
+    #expect((resetCredits.observedAt, resetCredits.coverage, resetCredits.earliestKnownExpiry) == (first, .countOnly, nil))
+}
+
+@Test func jsonSnapshotStorePreservesFailedResetCreditsAcrossResolvedAccountIDChange() throws {
+    let store = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
+    let first = Date(timeIntervalSince1970: 100)
+    let second = Date(timeIntervalSince1970: 200)
+
+    try store.save(StoredUsageSnapshot(
+        savedAt: first,
+        refreshResult: ConnectorRefreshResult(generatedAt: first, reports: [
+            resetCreditTestReport(
+                accountID: "resolved-old",
+                configuredAccountID: "configured-openai",
+                count: 2,
+                observedAt: first,
+                coverage: .complete,
+                expiry: 500
+            ),
+        ])
+    ))
+
+    try store.saveMerged(
+        refreshResult: ConnectorRefreshResult(generatedAt: second, reports: [
+            resetCreditTestReport(
+                accountID: "resolved-current",
+                configuredAccountID: "configured-openai",
+                observedAt: second,
+                status: .failure
+            ),
+        ]),
+        savedAt: second,
+        preservesUnreportedAccounts: false
+    )
+
+    let current = try #require(store.loadCurrent().snapshot)
+    let report = try #require(current.reports.first)
+    let resetCredits = try #require(report.resetCredits)
+
+    #expect(current.reports.count == 1)
+    #expect(report.accountID == "resolved-current")
+    #expect(report.configuredAccountID == "configured-openai")
+    #expect((resetCredits.availableCount, resetCredits.observedAt, resetCredits.coverage) == (2, first, .countOnly))
+    #expect(resetCredits.earliestKnownExpiry == nil)
+}
+
+@Test func storedUsageSnapshotDecodesWithoutResetCredits() throws {
+    let json = Data(#"{"schemaVersion":1,"savedAt":"2026-07-28T12:00:00Z","snapshot":{"generatedAt":"2026-07-28T12:00:00Z","limits":[]},"reports":[{"provider":"openai","accountID":"local-openai","accountName":"OpenAI","generatedAt":"2026-07-28T12:00:00Z","status":"failure","errorMessage":null}]}"#.utf8)
+
+    let decoded = try JSONDecoder.contextPanelISO8601.decode(StoredUsageSnapshot.self, from: json)
+
+    #expect(decoded.reports.first?.resetCredits == nil)
+}
+
+@Test func providerResetCreditSummaryDegradesUnknownCoverageToCountOnly() throws {
+    let json = Data(#"{"availableCount":3,"observedAt":"2026-07-28T12:00:00Z","coverage":"future-provider-value","earliestKnownExpiry":"2026-07-29T12:00:00Z"}"#.utf8)
+
+    let decoded = try JSONDecoder.contextPanelISO8601.decode(ProviderResetCreditSummary.self, from: json)
+
+    #expect((decoded.availableCount, decoded.coverage, decoded.earliestKnownExpiry) == (3, .countOnly, nil))
+}
+
+@Test func providerResetCreditSummaryNormalizesContradictoryCoverage() {
+    let observedAt = Date(timeIntervalSince1970: 100)
+    let expiry = Date(timeIntervalSince1970: 500)
+
+    let missingExpiry = ProviderResetCreditSummary(
+        availableCount: 2,
+        observedAt: observedAt,
+        coverage: .partial
+    )
+    let explicitZero = ProviderResetCreditSummary(
+        availableCount: 0,
+        observedAt: observedAt,
+        coverage: .complete,
+        earliestKnownExpiry: expiry
+    )
+
+    #expect((missingExpiry.coverage, missingExpiry.earliestKnownExpiry) == (.countOnly, nil))
+    #expect((explicitZero.coverage, explicitZero.earliestKnownExpiry) == (.countOnly, nil))
+}
+
+@Test func companionSnapshotOmitsResetCreditSummary() throws {
+    let observedAt = Date(timeIntervalSince1970: 100)
+    let stored = StoredUsageSnapshot(
+        savedAt: observedAt,
+        refreshResult: ConnectorRefreshResult(generatedAt: observedAt, reports: [
+            resetCreditTestReport(accountID: "openai-a", count: 2, observedAt: observedAt, coverage: .complete, expiry: 500),
+        ])
+    )
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+
+    let data = try encoder.encode(CompanionSnapshot(storedSnapshot: stored, publishedAt: observedAt))
+    let json = try #require(String(data: data, encoding: .utf8))
+
+    #expect(["resetCredits", "availableCount", "earliestKnownExpiry"].allSatisfy { !json.contains($0) })
+}
+
 @Test func storedProviderReportRoundTripsProviderAccessStateWithoutProviderPayload() throws {
     let reset = try #require(ContextPanelDateFormatting.date(from: "2026-07-23T19:30:00Z"))
     let report = StoredProviderReport(
@@ -3486,6 +3640,41 @@ private final class HeldFileLock: @unchecked Sendable {
     deinit {
         release()
     }
+}
+
+private func resetCreditTestReport(
+    accountID: String,
+    configuredAccountID: String? = nil,
+    count: Int? = nil,
+    observedAt: Date,
+    coverage: ProviderResetCreditCoverage = .countOnly,
+    expiry: TimeInterval? = nil,
+    status: UsageStatus? = nil
+) -> ProviderConnectorReport {
+    ProviderConnectorReport(
+        provider: .openAI,
+        accountID: accountID,
+        configuredAccountID: configuredAccountID,
+        accountName: accountID,
+        generatedAt: observedAt,
+        limits: status == .failure ? [] : [usageLimit(
+            provider: .openAI,
+            accountID: accountID,
+            configuredAccountID: configuredAccountID,
+            used: 10,
+            savedAt: observedAt
+        )],
+        resetCredits: count.map {
+            ProviderResetCreditSummary(
+                availableCount: $0,
+                observedAt: observedAt,
+                coverage: coverage,
+                earliestKnownExpiry: expiry.map(Date.init(timeIntervalSince1970:))
+            )
+        },
+        status: status,
+        errorMessage: status == .failure ? "refresh failed" : nil
+    )
 }
 
 private func usageLimit(

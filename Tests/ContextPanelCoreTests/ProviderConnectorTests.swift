@@ -40,6 +40,100 @@ import Testing
     #expect(http.requests.map { $0.headers["ChatGPT-Account-Id"] } == ["account-a", "account-b"])
 }
 
+@Test func codexResetCreditsUseOnlySiblingGETDetailsEndpoint() async throws {
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: codexResetUsage(available: 4, applicable: 2)),
+        ConnectorHTTPResponse(statusCode: 200, data: codexResetDetails(expiries: [
+            "2027-02-01T00:00:00Z", "2027-02-02T00:00:00Z",
+        ])),
+    ])
+
+    let result = await codexResetConnector(http: http).refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+    let summary = try #require(result.reports.first?.resetCredits)
+
+    #expect((summary.availableCount, summary.coverage) == (2, .complete))
+    #expect(http.requests.map(\.method) == ["GET", "GET"])
+    #expect(http.requests.allSatisfy { $0.body == nil })
+    #expect(http.requests.map(\.url.absoluteString) == [
+        "https://chatgpt.com/backend-api/wham/usage",
+        "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits",
+    ])
+    #expect(http.requests.contains { $0.url.path.contains("/usage/") } == false)
+}
+
+@Test func codexResetCreditsSkipDetailsForExplicitZero() async throws {
+    let http = StubHTTPClient(responses: [ConnectorHTTPResponse(
+        statusCode: 200,
+        data: codexResetUsage(available: 4, applicable: 0)
+    )])
+
+    let result = await codexResetConnector(http: http).refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+    let summary = try #require(result.reports.first?.resetCredits)
+
+    #expect(summary == ProviderResetCreditSummary(
+        availableCount: 0,
+        observedAt: Date(timeIntervalSince1970: 1_800_000_000),
+        coverage: .countOnly
+    ))
+    #expect(http.requests.map(\.url.absoluteString) == ["https://chatgpt.com/backend-api/wham/usage"])
+}
+
+@Test func codexResetCreditDetailsFailureKeepsSuccessfulUsageCountOnly() async throws {
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: codexResetUsage(available: 1)),
+        ConnectorHTTPResponse(statusCode: 503, data: Data()),
+    ])
+
+    let result = await codexResetConnector(http: http).refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+    let report = try #require(result.reports.first)
+    let summary = try #require(report.resetCredits)
+
+    #expect((report.status, report.limits.count, report.errorMessage) == (.healthy, 1, nil))
+    #expect((summary.availableCount, summary.coverage, summary.earliestKnownExpiry) == (1, .countOnly, nil))
+}
+
+@Test func codexResetCreditDetailsAuthorizationFailureKeepsSuccessfulUsageCountOnly() async throws {
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: codexResetUsage(available: 1)),
+        ConnectorHTTPResponse(statusCode: 401, data: Data()),
+    ])
+
+    let report = try #require(await codexResetConnector(http: http)
+        .refresh(now: Date(timeIntervalSince1970: 1_800_000_000)).reports.first)
+
+    #expect(report.status == .healthy)
+    #expect((report.resetCredits?.availableCount, report.resetCredits?.coverage) == (1, .countOnly))
+}
+
+@Test func codexMalformedResetCreditDetailsKeepSuccessfulUsageCountOnly() async throws {
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: codexResetUsage(available: 1)),
+        ConnectorHTTPResponse(statusCode: 200, data: Data(#"{"data":{"credits":[]}}"#.utf8)),
+    ])
+
+    let report = try #require(await codexResetConnector(http: http)
+        .refresh(now: Date(timeIntervalSince1970: 1_800_000_000)).reports.first)
+
+    #expect(report.status == .healthy)
+    #expect((report.resetCredits?.availableCount, report.resetCredits?.coverage) == (1, .countOnly))
+}
+
+@Test func codexUsageDecodeFailureKeepsFreshResetCountStaleSafe() async throws {
+    let usage = Data(#"{"rate_limit":"malformed","rate_limit_reset_credits":{"available_count":1}}"#.utf8)
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: usage),
+        ConnectorHTTPResponse(statusCode: 200, data: codexResetDetails(expiries: ["2027-02-01T00:00:00Z"])),
+    ])
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+    let report = try #require(await codexResetConnector(http: http).refresh(now: now).reports.first)
+    let summary = try #require(report.resetCredits)
+
+    #expect(report.status == .failure)
+    #expect((summary.availableCount, summary.observedAt) == (1, now))
+    #expect((summary.coverage, summary.earliestKnownExpiry) == (.countOnly, nil))
+}
+
 @Test func providerRuntimeDeduplicatesSameProviderAccountID() async throws {
     let auth = #"{"tokens":{"access_token":"token-secret","account_id":"same-account"}}"#.data(using: .utf8)!
     let usage = #"""
@@ -70,6 +164,34 @@ import Testing
     #expect(result.reports.count == 1)
     #expect(result.snapshot.limits.count == 2)
     #expect(result.snapshot.limits.map(\.accountName) == ["OpenAI A", "OpenAI A"])
+}
+
+@Test func providerRuntimeSelectsFreshestResetCreditsWithoutCollapsingSiblings() async throws {
+    let older = resetCreditSummary(count: 3, observedAt: 100, coverage: .complete, expiry: 500)
+    let newer = resetCreditSummary(count: 1, observedAt: 200, coverage: .partial, expiry: 400)
+    let primary = resetCreditReport(accountID: "same-account", summary: older, hasLimit: true)
+    let aliasFailure = resetCreditReport(accountID: "same-account", summary: newer, status: .failure)
+    let sibling = resetCreditReport(accountID: "sibling-account", summary: resetCreditSummary(count: 7, observedAt: 200))
+
+    let forward = await ProviderConnectorRuntime(connectors: [
+        StubConnector(provider: .openAI, report: primary),
+        StubConnector(provider: .openAI, report: aliasFailure),
+        StubConnector(provider: .openAI, report: sibling),
+    ]).refreshAll(now: Date(timeIntervalSince1970: 200))
+    let reverse = await ProviderConnectorRuntime(connectors: [
+        StubConnector(provider: .openAI, report: sibling),
+        StubConnector(provider: .openAI, report: aliasFailure),
+        StubConnector(provider: .openAI, report: primary),
+    ]).refreshAll(now: Date(timeIntervalSince1970: 200))
+    let forwardPrimary = try #require(forward.reports.first { $0.accountID == "same-account" })
+    let reversePrimary = try #require(reverse.reports.first { $0.accountID == "same-account" })
+
+    #expect((forward.reports.count, reverse.reports.count) == (2, 2))
+    #expect((forwardPrimary.status, reversePrimary.status) == (.healthy, .healthy))
+    #expect((forwardPrimary.limits.count, reversePrimary.limits.count) == (1, 1))
+    #expect((forwardPrimary.resetCredits, reversePrimary.resetCredits) == (newer, newer))
+    #expect(forward.reports.first { $0.accountID == "sibling-account" }?.resetCredits?.availableCount == 7)
+    #expect(reverse.reports.first { $0.accountID == "sibling-account" }?.resetCredits?.availableCount == 7)
 }
 
 @Test func providerRuntimePreservesConfiguredAccountIDWhenDeduplicatingFallbackReports() async throws {
@@ -2352,6 +2474,64 @@ import Testing
     #expect(result.reports.count == 2)
     #expect(result.snapshot.generatedAt == Date(timeIntervalSince1970: 10))
     #expect(Set(result.snapshot.limits.map(\.provider)) == [.openAI, .google])
+}
+
+private func codexResetConnector(http: StubHTTPClient) -> CodexRateLimitConnector {
+    CodexRateLimitConnector(
+        accounts: [CodexAccountConfiguration(authPath: "/tmp/openai.json", accountName: "OpenAI")],
+        httpClient: http,
+        fileLoader: { _ in Data(#"{"tokens":{"access_token":"token-secret","account_id":"account-a"}}"#.utf8) }
+    )
+}
+
+private func codexResetUsage(available: Int, applicable: Int? = nil) -> Data {
+    let applicableJSON = applicable.map { ",\"applicable_available_count\":\($0)" } ?? ""
+    return Data("{\"rate_limit\":{\"primary_window\":{\"used_percent\":20,\"limit_window_seconds\":18000,\"reset_at\":1800003600}},\"rate_limit_reset_credits\":{\"available_count\":\(available)\(applicableJSON)}}".utf8)
+}
+
+private func codexResetDetails(expiries: [String]) -> Data {
+    let rows = expiries.map {
+        "{\"id\":\"discard-me\",\"status\":\"available\",\"is_supported_by_plan\":true,\"expires_at\":\"\($0)\"}"
+    }.joined(separator: ",")
+    return Data("{\"credits\":[\(rows)]}".utf8)
+}
+
+private func resetCreditSummary(
+    count: Int,
+    observedAt: TimeInterval,
+    coverage: ProviderResetCreditCoverage = .countOnly,
+    expiry: TimeInterval? = nil
+) -> ProviderResetCreditSummary {
+    ProviderResetCreditSummary(
+        availableCount: count,
+        observedAt: Date(timeIntervalSince1970: observedAt),
+        coverage: coverage,
+        earliestKnownExpiry: expiry.map(Date.init(timeIntervalSince1970:))
+    )
+}
+
+private func resetCreditReport(
+    accountID: String,
+    summary: ProviderResetCreditSummary,
+    hasLimit: Bool = false,
+    status: UsageStatus? = nil
+) -> ProviderConnectorReport {
+    ProviderConnectorReport(
+        provider: .openAI,
+        accountID: accountID,
+        accountName: accountID,
+        generatedAt: Date(timeIntervalSince1970: 200),
+        limits: hasLimit ? [UsageLimit(
+            provider: .openAI,
+            accountID: accountID,
+            accountName: accountID,
+            label: "Weekly",
+            used: 20,
+            limit: 100
+        )] : [],
+        resetCredits: summary,
+        status: status
+    )
 }
 
 private final class StubHTTPClient: ConnectorHTTPClient, @unchecked Sendable {

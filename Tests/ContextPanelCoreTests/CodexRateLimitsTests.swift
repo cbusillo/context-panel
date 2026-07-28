@@ -95,6 +95,72 @@ import Testing
     #expect(snapshots[0].secondary == nil)
 }
 
+@Test func codexResetCreditCountUsesApplicableCountAndClampsAtZero() {
+    let applicable = Data(#"{"rate_limit_reset_credits":{"available_count":5,"applicable_available_count":2}}"#.utf8)
+    let fallback = Data(#"{"rate_limit_reset_credits":{"available_count":5}}"#.utf8)
+    let negative = Data(#"{"rate_limit_reset_credits":{"available_count":5,"applicable_available_count":-3}}"#.utf8)
+    let malformedApplicable = Data(#"{"rate_limit_reset_credits":{"available_count":5,"applicable_available_count":"unknown"}}"#.utf8)
+    let missing = Data(#"{"available_count":9}"#.utf8)
+
+    #expect(CodexUsagePayloadParser.resetCreditAvailableCount(from: applicable) == 2)
+    #expect(CodexUsagePayloadParser.resetCreditAvailableCount(from: fallback) == 5)
+    #expect(CodexUsagePayloadParser.resetCreditAvailableCount(from: negative) == 0)
+    #expect(CodexUsagePayloadParser.resetCreditAvailableCount(from: malformedApplicable) == 5)
+    #expect(CodexUsagePayloadParser.resetCreditAvailableCount(from: missing) == nil)
+}
+
+@Test func codexResetCreditDetailsRequireExactTrustworthyTopLevelCoverage() throws {
+    let observedAt = try #require(ContextPanelDateFormatting.date(from: "2026-07-28T12:00:00Z"))
+    let firstExpiry = try #require(ContextPanelDateFormatting.date(from: "2026-07-29T12:00:00Z"))
+    let completeSummary = try CodexResetCreditDetailsParser.summary(
+        from: resetCreditDetails([
+            resetCreditRow(expiresAt: "2026-07-29T12:00:00Z"),
+            resetCreditRow(expiresAt: "2026-07-30T12:00:00Z"),
+            resetCreditRow(supported: false, expiresAt: "2026-07-31T12:00:00Z"),
+        ]),
+        availableCount: 2,
+        observedAt: observedAt
+    )
+    let partialSummary = try CodexResetCreditDetailsParser.summary(
+        from: resetCreditDetails([
+            resetCreditRow(expiresAt: "2026-07-29T12:00:00Z"),
+            resetCreditRow(expiresAt: "2026-07-27T12:00:00Z"),
+            resetCreditRow(supported: false, expiresAt: "2026-07-30T12:00:00Z"),
+            resetCreditRow(status: "future-provider-value", expiresAt: "2026-07-30T12:00:00Z"),
+        ]),
+        availableCount: 2,
+        observedAt: observedAt
+    )
+    let ambiguousSummary = try CodexResetCreditDetailsParser.summary(
+        from: resetCreditDetails([
+            resetCreditRow(expiresAt: "2026-07-29T12:00:00Z"),
+            resetCreditRow(expiresAt: "2026-07-30T12:00:00Z"),
+        ]),
+        availableCount: 1,
+        observedAt: observedAt
+    )
+    let expiredSummary = try CodexResetCreditDetailsParser.summary(
+        from: resetCreditDetails([resetCreditRow(expiresAt: "2026-07-27T12:00:00Z")]),
+        availableCount: 1,
+        observedAt: observedAt
+    )
+
+    #expect((completeSummary.coverage, completeSummary.earliestKnownExpiry) == (.complete, firstExpiry))
+    #expect((partialSummary.coverage, partialSummary.earliestKnownExpiry) == (.partial, firstExpiry))
+    #expect((ambiguousSummary.coverage, ambiguousSummary.earliestKnownExpiry) == (.countOnly, nil))
+    #expect((expiredSummary.coverage, expiredSummary.earliestKnownExpiry) == (.countOnly, nil))
+    #expect((try? CodexResetCreditDetailsParser.summary(
+        from: Data(#"{"data":{"credits":[]}}"#.utf8),
+        availableCount: 1,
+        observedAt: observedAt
+    )) == nil)
+    #expect((try? CodexResetCreditDetailsParser.summary(
+        from: Data(#"{"credits":null}"#.utf8),
+        availableCount: 1,
+        observedAt: observedAt
+    )) == nil)
+}
+
 @Test func codexUsagePayloadParserFiltersRetiredModelAdditionalLimitsWhenAvailabilityIsKnown() throws {
     let json = codexUsagePayloadWithAdditionalLimits([
         ("GPT-5.3-Codex-Spark", "codex_bengalfox", 1),
@@ -214,6 +280,14 @@ import Testing
     #expect(availability.contains(limitName: "GPT-5.5-Thinking"))
     #expect(availability.contains(limitName: "o3 pro"))
     #expect(!availability.contains(limitName: "GPT-5.3-Codex-Spark"))
+}
+
+private func resetCreditDetails(_ rows: [String]) -> Data {
+    Data("{\"credits\":[\(rows.joined(separator: ","))]}".utf8)
+}
+
+private func resetCreditRow(status: String = "available", supported: Bool = true, expiresAt: String) -> String {
+    "{\"id\":\"discard-me\",\"reset_type\":\"discard-me\",\"status\":\"\(status)\",\"is_supported_by_plan\":\(supported),\"expires_at\":\"\(expiresAt)\"}"
 }
 
 private func codexUsagePayloadWithAdditionalLimits(_ limits: [(name: String, feature: String, used: Int)]) -> String {

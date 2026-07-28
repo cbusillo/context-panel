@@ -405,8 +405,15 @@ public struct CodexRateLimitConnector: ProviderConnector {
             ConnectorRedactor.localAccountID(provider: provider, stableID: "local:\($0)")
         } ?? ConnectorRedactor.localAccountID(provider: provider, path: account.authPath)
 
+        var observedResetCredits: ProviderResetCreditSummary?
         do {
             let data = try await fetchUsage(endpoint: account.endpoint, auth: auth)
+            observedResetCredits = await resetCredits(
+                for: account,
+                auth: auth,
+                usageData: data,
+                observedAt: now
+            )
             let availability = await modelAvailability(for: account, auth: auth, usageData: data)
             let snapshots = try CodexUsagePayloadParser.snapshots(from: data, modelAvailability: availability)
             let limits = snapshots.flatMap { snapshot in
@@ -424,7 +431,8 @@ public struct CodexRateLimitConnector: ProviderConnector {
                 configuredAccountID: account.configuredAccountID,
                 accountName: authRecord.accountName,
                 generatedAt: now,
-                limits: limits
+                limits: limits,
+                resetCredits: observedResetCredits
             )
         } catch {
             return ProviderConnectorReport(
@@ -434,9 +442,40 @@ public struct CodexRateLimitConnector: ProviderConnector {
                 accountName: authRecord.accountName,
                 generatedAt: now,
                 limits: [],
+                resetCredits: observedResetCredits?.preservingCountAfterRefreshFailure,
                 status: .failure,
                 errorMessage: error.localizedDescription
             )
+        }
+    }
+
+    private func resetCredits(
+        for account: CodexAccountConfiguration,
+        auth: CodexAuthTokens,
+        usageData: Data,
+        observedAt: Date
+    ) async -> ProviderResetCreditSummary? {
+        guard let availableCount = CodexUsagePayloadParser.resetCreditAvailableCount(from: usageData) else {
+            return nil
+        }
+        let countOnly = ProviderResetCreditSummary(
+            availableCount: availableCount,
+            observedAt: observedAt,
+            coverage: .countOnly
+        )
+        guard availableCount > 0, account.endpoint.path == "/backend-api/wham/usage" else {
+            return countOnly
+        }
+        do {
+            let endpoint = account.endpoint.deletingLastPathComponent().appendingPathComponent("rate-limit-reset-credits")
+            let data = try await fetchResetCreditDetails(endpoint: endpoint, auth: auth)
+            return try CodexResetCreditDetailsParser.summary(
+                from: data,
+                availableCount: availableCount,
+                observedAt: observedAt
+            )
+        } catch {
+            return countOnly
         }
     }
 
@@ -480,6 +519,18 @@ public struct CodexRateLimitConnector: ProviderConnector {
             throw ConnectorError.httpFailure(operation: "ChatGPT models endpoint", statusCode: response.statusCode)
         }
         return try CodexModelAvailabilityParser.availability(from: response.data)
+    }
+
+    private func fetchResetCreditDetails(endpoint: URL, auth: CodexAuthTokens) async throws -> Data {
+        let response = try await httpClient.data(for: ConnectorHTTPRequest(
+            url: endpoint,
+            method: "GET",
+            headers: authorizedHeaders(auth: auth)
+        ))
+        guard (200..<300).contains(response.statusCode) else {
+            throw ConnectorError.httpFailure(operation: "Codex reset-credit details endpoint", statusCode: response.statusCode)
+        }
+        return response.data
     }
 
     private func authorizedHeaders(auth: CodexAuthTokens) -> [String: String] {
@@ -545,6 +596,11 @@ public enum CodexUsagePayloadParser {
         return !payload.additionalRateLimits.isEmpty
     }
 
+    static func resetCreditAvailableCount(from data: Data) -> Int? {
+        guard let payload = try? JSONDecoder().decode(CodexResetCreditCountEnvelope.self, from: data) else { return nil }
+        return payload.summary?.effectiveAvailableCount
+    }
+
     private static func snapshots(from payload: CodexUsagePayload, modelAvailability: CodexModelAvailability?) -> [CodexRateLimitSnapshot] {
         var snapshots = [
             CodexRateLimitSnapshot(
@@ -592,6 +648,31 @@ public enum CodexModelAvailabilityParser {
     }
 }
 
+enum CodexResetCreditDetailsParser {
+    static func summary(
+        from data: Data,
+        availableCount: Int,
+        observedAt: Date
+    ) throws -> ProviderResetCreditSummary {
+        let payload = try JSONDecoder().decode(CodexResetCreditDetailsPayload.self, from: data)
+        let expiries = payload.credits.compactMap { $0.trustworthyExpiry(observedAt: observedAt) }
+        let coverage: ProviderResetCreditCoverage
+        if expiries.isEmpty || expiries.count > availableCount {
+            coverage = .countOnly
+        } else if expiries.count == availableCount {
+            coverage = .complete
+        } else {
+            coverage = .partial
+        }
+        return ProviderResetCreditSummary(
+            availableCount: availableCount,
+            observedAt: observedAt,
+            coverage: coverage,
+            earliestKnownExpiry: coverage == .countOnly ? nil : expiries.min()
+        )
+    }
+}
+
 private struct CodexUsagePayload: Decodable {
     let planType: String
     let rateLimit: CodexRateLimitDetails?
@@ -614,6 +695,62 @@ private struct CodexUsagePayload: Decodable {
         credits = try container.decodeIfPresent(CodexCreditsDetails.self, forKey: .credits)
         additionalRateLimits = try container.decodeIfPresent([CodexAdditionalRateLimitDetails].self, forKey: .additionalRateLimits) ?? []
         rateLimitReachedType = try container.decodeIfPresent(CodexReachedType.self, forKey: .rateLimitReachedType)
+    }
+}
+
+private struct CodexResetCreditCountEnvelope: Decodable {
+    let summary: CodexResetCreditCountDetails?
+
+    enum CodingKeys: String, CodingKey {
+        case summary = "rate_limit_reset_credits"
+    }
+}
+
+private struct CodexResetCreditCountDetails: Decodable {
+    let availableCount: Int
+    let applicableAvailableCount: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case availableCount = "available_count"
+        case applicableAvailableCount = "applicable_available_count"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        availableCount = try container.decode(Int.self, forKey: .availableCount)
+        applicableAvailableCount = try? container.decode(Int.self, forKey: .applicableAvailableCount)
+    }
+
+    var effectiveAvailableCount: Int {
+        return max(0, applicableAvailableCount ?? availableCount)
+    }
+}
+
+private struct CodexResetCreditDetailsPayload: Decodable {
+    let credits: [CodexResetCreditDetail]
+}
+
+private struct CodexResetCreditDetail: Decodable {
+    let status: String?
+    let isSupportedByPlan: Bool?
+    let expiresAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case isSupportedByPlan = "is_supported_by_plan"
+        case expiresAt = "expires_at"
+    }
+
+    func trustworthyExpiry(observedAt: Date) -> Date? {
+        guard status == "available",
+              isSupportedByPlan == true,
+              let expiresAt,
+              let expiry = ContextPanelDateFormatting.date(from: expiresAt),
+              expiry > observedAt
+        else {
+            return nil
+        }
+        return expiry
     }
 }
 

@@ -122,6 +122,56 @@ import Testing
     }
 }
 
+@Test func resetCreditPresentationStaysReadOnlyAndSurfaceScoped() throws {
+    let root = try userFacingCopyRepositoryRoot()
+    let guidanceSource = try String(
+        contentsOf: root.appending(path: "Sources/ContextPanelCore/ResetCreditGuidance.swift"),
+        encoding: .utf8
+    )
+    let appSource = try String(
+        contentsOf: root.appending(path: "Sources/ContextPanelApp/ContextPanelApp.swift"),
+        encoding: .utf8
+    )
+    let widgetSource = try String(
+        contentsOf: root.appending(path: "Sources/ContextPanelWidgetUI/ContextPanelWidgetViews.swift"),
+        encoding: .utf8
+    )
+    let appResetRow = try userFacingCopySection(
+        in: appSource,
+        startingAt: "private struct OpenAIResetCreditRow",
+        endingAt: "private struct OpenAIAccountWindowPill"
+    )
+    let smallWidget = try userFacingCopySection(
+        in: widgetSource,
+        startingAt: "struct ContextPanelSmallWidget",
+        endingAt: "private struct CPWSmallPrimaryLimitView"
+    )
+    let mediumWidget = try userFacingCopySection(
+        in: widgetSource,
+        startingAt: "struct ContextPanelMediumWidget",
+        endingAt: "struct ContextPanelLargeWidget"
+    )
+    let largeWidget = try userFacingCopySection(
+        in: widgetSource,
+        startingAt: "struct ContextPanelLargeWidget",
+        endingAt: "struct CPWResetCreditActionNote"
+    )
+
+    for phrase in ["redeem", "consume", "guarantee", "payment", "purchase"] {
+        #expect(!guidanceSource.lowercased().contains(phrase), "Guidance source contains mutation or guarantee language: \(phrase)")
+    }
+    for phrase in ["Button(", "Link(", "openURL", "redeem", "consume"] {
+        #expect(!appResetRow.contains(phrase), "The app reset-credit row must remain read-only: \(phrase)")
+    }
+
+    #expect(!smallWidget.contains("ResetCredit"))
+    #expect(mediumWidget.contains("CPWResetCreditActionNote"))
+    #expect(largeWidget.contains("CPWResetCreditActionNote"))
+    #expect(widgetSource.contains("components.scheme = \"contextpanel\""))
+    #expect(widgetSource.contains("components.host = \"provider\""))
+    #expect(widgetSource.contains("accessibilityHint(\"Opens account detail in Context Panel\")"))
+}
+
 private func userFacingCopyRepositoryRoot() throws -> URL {
     var candidate = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     while candidate.path != "/" {
@@ -131,4 +181,17 @@ private func userFacingCopyRepositoryRoot() throws -> URL {
         candidate.deleteLastPathComponent()
     }
     throw CocoaError(.fileNoSuchFile)
+}
+
+private func userFacingCopySection(
+    in source: String,
+    startingAt start: String,
+    endingAt end: String
+) throws -> Substring {
+    guard let startRange = source.range(of: start),
+          let endRange = source.range(of: end, range: startRange.upperBound..<source.endIndex)
+    else {
+        throw CocoaError(.fileReadCorruptFile)
+    }
+    return source[startRange.lowerBound..<endRange.lowerBound]
 }

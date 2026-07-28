@@ -2097,6 +2097,138 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(snapshot.widgetProviderSummaryText(provider: .openAI) == "5h 0% used")
 }
 
+@Test func widgetResetCreditGuidanceReturnsOnlyPrimaryActionableAccount() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let actionableReport = widgetResetCreditReport(
+        accountID: "actionable",
+        accountName: "Actionable Account",
+        now: now,
+        expiry: now.addingTimeInterval(86_400)
+    )
+    let holdReport = widgetResetCreditReport(
+        accountID: "hold",
+        accountName: "Hold Account",
+        now: now,
+        expiry: now.addingTimeInterval(2 * 86_400)
+    )
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: now,
+        limits: [
+            widgetResetCreditWeeklyLimit(
+                accountID: "actionable",
+                used: 100,
+                resetsAt: now.addingTimeInterval(2 * 60 * 60),
+                now: now
+            ),
+            widgetResetCreditWeeklyLimit(
+                accountID: "hold",
+                used: 20,
+                resetsAt: now.addingTimeInterval(3 * 86_400),
+                now: now
+            ),
+        ],
+        reports: [holdReport, actionableReport],
+        status: .limited,
+        message: "Current"
+    )
+
+    let guidance = try #require(snapshot.primaryActionableResetCreditGuidance(now: now))
+
+    #expect(guidance.accountID == "actionable")
+    #expect(guidance.state == .considerUsingNow)
+}
+
+@Test func widgetResetCreditGuidanceSuppressesHoldStaleAndSyncFailure() {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let report = widgetResetCreditReport(
+        accountID: "hold",
+        accountName: "Hold Account",
+        now: now,
+        expiry: now.addingTimeInterval(86_400)
+    )
+    let limits = [
+        widgetResetCreditWeeklyLimit(
+            accountID: "hold",
+            used: 20,
+            resetsAt: now.addingTimeInterval(3 * 86_400),
+            now: now
+        ),
+    ]
+    let hold = WidgetSnapshot(
+        state: .ready,
+        generatedAt: now,
+        limits: limits,
+        reports: [report],
+        status: .healthy,
+        message: "Current"
+    )
+    let stale = WidgetSnapshot(
+        state: .stale,
+        generatedAt: now,
+        limits: limits,
+        reports: [report],
+        status: .stale,
+        message: "Saved"
+    )
+    let syncFailure = WidgetSnapshot(
+        state: .ready,
+        generatedAt: now,
+        limits: limits,
+        reports: [report],
+        status: .healthy,
+        message: "Current",
+        syncErrorMessage: "delivery failed"
+    )
+
+    #expect(hold.primaryActionableResetCreditGuidance(now: now) == nil)
+    #expect(stale.primaryActionableResetCreditGuidance(now: now) == nil)
+    #expect(syncFailure.primaryActionableResetCreditGuidance(now: now) == nil)
+}
+
+private func widgetResetCreditReport(
+    accountID: String,
+    accountName: String,
+    now: Date,
+    expiry: Date
+) -> StoredProviderReport {
+    StoredProviderReport(
+        provider: .openAI,
+        accountID: accountID,
+        accountName: accountName,
+        generatedAt: now,
+        resetCredits: ProviderResetCreditSummary(
+            availableCount: 1,
+            observedAt: now,
+            coverage: .complete,
+            earliestKnownExpiry: expiry
+        ),
+        status: .healthy,
+        errorMessage: nil
+    )
+}
+
+private func widgetResetCreditWeeklyLimit(
+    accountID: String,
+    used: Int,
+    resetsAt: Date,
+    now: Date
+) -> UsageLimit {
+    UsageLimit(
+        provider: .openAI,
+        accountID: accountID,
+        accountName: accountID,
+        label: "Weekly",
+        windowLabel: "Weekly",
+        unit: .percent,
+        used: used,
+        limit: 100,
+        resetsAt: resetsAt,
+        lastUpdatedAt: now,
+        confidence: .observed
+    )
+}
+
 private func defaultPrimarySummary(in snapshot: WidgetSnapshot) -> MainLimitSummary? {
     WidgetDisplayPreferences.defaultPreferences
         .mainLimitAnswerSelection(from: snapshot.usageSnapshot.mainLimitSummaries)

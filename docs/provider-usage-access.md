@@ -1,6 +1,6 @@
 # Provider Usage Access Research
 
-Last verified: 2026-07-12.
+Last verified: 2026-07-28.
 
 ## Summary
 
@@ -86,6 +86,60 @@ examples:
 - `1.4%/h active · fast lasts ~2d`
 - `reset Sat 4:12 PM (2d 21h)`
 - `pace unknown`
+
+## OpenAI Reset Credits
+
+The verified OpenAI Codex read contract exposes an account-level summary under
+the exact `/backend-api/wham/usage` key `rate_limit_reset_credits`. Context
+Panel uses `applicable_available_count` when present, otherwise
+`available_count`, and clamps the effective count at zero. Reset credits remain
+an account entitlement summary; they are not converted into `UsageLimit`
+capacity or pooled across accounts.
+
+When the effective count is greater than zero, Context Panel may make the
+separate sibling GET request
+`/backend-api/wham/rate-limit-reset-credits` to look for expiry evidence. Only
+the verified top-level `credits` array is parsed. A row contributes expiry
+evidence only when `status` is `available`, `is_supported_by_plan` is `true`,
+and `expires_at` is a valid future date at observation time. Missing, unknown,
+expired, unsupported, malformed, capped, or otherwise ambiguous rows reduce
+detail coverage without failing the normal usage refresh. The summary count
+from `/wham/usage` remains authoritative.
+
+Local persistence is deliberately narrow: available count, observation time,
+coverage (`countOnly`, `partial`, or `complete`), and earliest known expiry.
+Provider credit IDs, status/reset-type strings, titles, descriptions, and raw
+rows are discarded. Reset-credit summaries are not sent through companion or
+CloudKit payloads.
+
+After a full account refresh failure, storage may retain only the prior count
+with its original observation time. Detail coverage is reduced to `countOnly`
+and expiry is cleared until a fresh read succeeds, so stale timing cannot be
+presented as current guidance. A fresh explicit zero replaces prior
+availability.
+
+Guidance is evaluated independently for each account and never feeds capacity,
+forecast, account-selection, or notification math. The current conservative
+rule treats a known weekly reset within one hour as imminent. With current,
+complete timing evidence, Context Panel recommends holding when weekly capacity
+is healthy, when only the five-hour window is pressured, or when the natural
+weekly reset is imminent or no later than the earliest known credit expiry. It
+may say `consider using now` for a weekly-limited account whose natural reset is
+more than one hour away, or `consider before <date>` for a weekly-close account
+when the earliest known expiry precedes its natural reset. Stale, failed,
+inconsistent, count-only, elapsed-expiry, or unknown weekly-reset evidence uses
+`refresh`, `stale`, or `unknown` language instead of timing advice.
+
+The Mac app shows each account's positive observed count, earliest known expiry
+or `expiry unknown`, observation freshness, and advisory reason. Medium and
+large macOS widgets may show one currently actionable account note; hold and
+unknown states remain app-only, and the small widget and companion surfaces do
+not include reset-credit copy. Selecting the widget note opens the matching
+Context Panel account detail. It does not open an OpenAI action surface.
+
+Context Panel's reset-credit integration is permanently read-only. It performs
+GET requests only and will not implement redemption, consumption, or any other
+provider mutation route.
 
 ## Local Probe And Every Code Evidence
 

@@ -88,6 +88,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
     public let configuredAccountID: String?
     public let accountName: String
     public let generatedAt: Date
+    public let resetCredits: ProviderResetCreditSummary?
     public let status: UsageStatus
     public let accessState: ProviderAccessState
     public let errorMessage: String?
@@ -98,6 +99,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         case configuredAccountID
         case accountName
         case generatedAt
+        case resetCredits
         case status
         case accessState
         case errorMessage
@@ -109,6 +111,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         configuredAccountID: String? = nil,
         accountName: String,
         generatedAt: Date,
+        resetCredits: ProviderResetCreditSummary? = nil,
         status: UsageStatus,
         accessState: ProviderAccessState = .unknown,
         errorMessage: String?
@@ -118,6 +121,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         self.configuredAccountID = configuredAccountID
         self.accountName = accountName
         self.generatedAt = generatedAt
+        self.resetCredits = resetCredits
         self.status = status
         self.accessState = accessState.retainingCurrentProviderObservation(for: status)
         self.errorMessage = errorMessage.map(ConnectorRedactor.safeErrorDescription)
@@ -130,6 +134,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         configuredAccountID = try container.decodeIfPresent(String.self, forKey: .configuredAccountID)
         accountName = try container.decode(String.self, forKey: .accountName)
         generatedAt = try container.decode(Date.self, forKey: .generatedAt)
+        resetCredits = try container.decodeIfPresent(ProviderResetCreditSummary.self, forKey: .resetCredits)
         status = try container.decode(UsageStatus.self, forKey: .status)
         accessState = try container.decodeIfPresent(ProviderAccessState.self, forKey: .accessState)?
             .retainingCurrentProviderObservation(for: status) ?? .unknown
@@ -144,10 +149,15 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
             configuredAccountID: report.configuredAccountID,
             accountName: report.accountName,
             generatedAt: report.generatedAt,
+            resetCredits: report.resetCredits,
             status: report.status,
             accessState: report.accessState,
             errorMessage: report.errorMessage
         )
+    }
+
+    public var configuredOrResolvedAccountID: String {
+        configuredAccountID ?? accountID
     }
 
     func withStatus(_ replacementStatus: UsageStatus) -> StoredProviderReport {
@@ -157,6 +167,7 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
             configuredAccountID: configuredAccountID,
             accountName: accountName,
             generatedAt: generatedAt,
+            resetCredits: resetCredits,
             status: replacementStatus,
             accessState: accessState,
             errorMessage: errorMessage
@@ -170,8 +181,23 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
             configuredAccountID: configuredAccountID,
             accountName: accountName,
             generatedAt: generatedAt,
+            resetCredits: resetCredits,
             status: status,
             accessState: replacementAccessState,
+            errorMessage: errorMessage
+        )
+    }
+
+    func withResetCredits(_ replacementResetCredits: ProviderResetCreditSummary?) -> StoredProviderReport {
+        StoredProviderReport(
+            provider: provider,
+            accountID: accountID,
+            configuredAccountID: configuredAccountID,
+            accountName: accountName,
+            generatedAt: generatedAt,
+            resetCredits: replacementResetCredits,
+            status: status,
+            accessState: accessState,
             errorMessage: errorMessage
         )
     }
@@ -188,12 +214,32 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         )
     }
 
-    func matchesAccount(of limit: UsageLimit) -> Bool {
-        guard provider == limit.provider else { return false }
+    public func matchesAccount(of limit: UsageLimit) -> Bool {
+        matchesAccount(
+            provider: limit.provider,
+            accountID: limit.accountID,
+            configuredAccountID: limit.configuredAccountID
+        )
+    }
+
+    func matchesAccount(of report: ProviderConnectorReport) -> Bool {
+        matchesAccount(
+            provider: report.provider,
+            accountID: report.accountID,
+            configuredAccountID: report.configuredAccountID
+        )
+    }
+
+    private func matchesAccount(
+        provider otherProvider: Provider,
+        accountID otherAccountID: String,
+        configuredAccountID otherConfiguredAccountID: String?
+    ) -> Bool {
+        guard provider == otherProvider else { return false }
         if let configuredAccountID {
-            return limit.configuredAccountID == configuredAccountID || limit.accountID == accountID
+            return otherConfiguredAccountID == configuredAccountID || otherAccountID == accountID
         }
-        return limit.accountID == accountID
+        return otherAccountID == accountID
     }
 }
 
@@ -866,7 +912,21 @@ public struct JSONSnapshotStore: Sendable {
             limits: (preservedFailureLimits.map { $0.markingPreservedFailure() } + preservedLimits + refreshResult.snapshot.limits)
                 .deduplicatedByID()
         )
-        let mergedReports = preservedReports + refreshResult.reports.map(StoredProviderReport.init(report:))
+        let refreshedReports = refreshResult.reports.map { report in
+            let storedReport = StoredProviderReport(report: report)
+            let previousResetCredits = current?.reports.lazy
+                .filter { $0.matchesAccount(of: report) }
+                .compactMap(\.resetCredits)
+                .reduce(nil as ProviderResetCreditSummary?, ProviderResetCreditSummary.preferred)
+            guard report.status == .failure,
+                  report.resetCredits == nil,
+                  let previousResetCredits
+            else {
+                return storedReport
+            }
+            return storedReport.withResetCredits(previousResetCredits.preservingCountAfterRefreshFailure)
+        }
+        let mergedReports = preservedReports + refreshedReports
         let preservedPromptCacheObservations = current?.promptCacheObservations.filter { observation in
             savedAt.timeIntervalSince(observation.observedAt) <= PromptCacheSummary.defaultMaximumAge
                 && !refreshResult.promptCacheObservations.contains { refreshed in refreshed.id == observation.id }

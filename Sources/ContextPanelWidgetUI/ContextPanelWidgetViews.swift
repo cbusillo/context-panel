@@ -408,9 +408,11 @@ struct ContextPanelMediumWidget: View {
     let links: ContextPanelWidgetLinks
 
     var body: some View {
+        let now = Date()
         let primaryLane = displayPreferences.mainLimitAnswerSelection(
             from: snapshot.usageSnapshot.mainLimitSummaries
         ).primary
+        let resetCreditGuidance = snapshot.primaryActionableResetCreditGuidance(now: now)
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 5) {
                 if let problem = snapshot.widgetProblemText {
@@ -440,7 +442,7 @@ struct ContextPanelMediumWidget: View {
             VStack(alignment: .leading, spacing: 7) {
                 let lanes = snapshot.visibleMainLimitLanes(
                     displayPreferences: displayPreferences,
-                    maximumCount: 3
+                    maximumCount: resetCreditGuidance == nil ? 3 : 2
                 )
                 CPWSectionHeader(
                     title: "Limits",
@@ -457,6 +459,9 @@ struct ContextPanelMediumWidget: View {
                         CPWMainLimitRow(lane: lane, snapshotState: snapshot.state)
                     }
                 }
+                if let resetCreditGuidance {
+                    CPWResetCreditActionNote(guidance: resetCreditGuidance, now: now)
+                }
             }
         }
         .padding(14)
@@ -471,9 +476,11 @@ struct ContextPanelLargeWidget: View {
     let links: ContextPanelWidgetLinks
 
     var body: some View {
+        let now = Date()
         let primaryLane = displayPreferences.mainLimitAnswerSelection(
             from: snapshot.usageSnapshot.mainLimitSummaries
         ).primary
+        let resetCreditGuidance = snapshot.primaryActionableResetCreditGuidance(now: now)
         VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -505,7 +512,7 @@ struct ContextPanelLargeWidget: View {
             VStack(alignment: .leading, spacing: 6) {
                 let lanes = snapshot.visibleMainLimitLanes(
                     displayPreferences: displayPreferences,
-                    maximumCount: 5
+                    maximumCount: resetCreditGuidance == nil ? 5 : 4
                 )
                 CPWSectionHeader(
                     title: "Main Limits",
@@ -522,10 +529,75 @@ struct ContextPanelLargeWidget: View {
                         CPWMainLimitRow(lane: lane, snapshotState: snapshot.state)
                     }
                 }
+                if let resetCreditGuidance {
+                    CPWResetCreditActionNote(guidance: resetCreditGuidance, now: now)
+                }
             }
         }
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+struct CPWResetCreditActionNote: View {
+    @Environment(\.cpwThemeVariant) private var themeVariant
+    let guidance: ProviderResetCreditGuidance
+    let now: Date
+
+    private var status: UsageStatus {
+        switch guidance.state {
+        case .considerUsingNow:
+            .limited
+        case .considerBefore:
+            .close
+        case .hold:
+            .healthy
+        case .refresh:
+            .unknown
+        }
+    }
+
+    var body: some View {
+        Link(destination: guidance.widgetDeepLinkURL) {
+            HStack(spacing: 6) {
+                Image(systemName: "hourglass.circle.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(CPWTheme.statusColor(status))
+                Text("\(guidance.resetCredits.availableCount)×")
+                    .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
+                    .lineLimit(1)
+                Text(guidance.compactActionText ?? "reset credit available")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(CPWTheme.primaryText(variant: themeVariant))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+                    .layoutPriority(2)
+                Text("·")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
+                    .lineLimit(1)
+                Text(guidance.accountName)
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(CPWTheme.statusColor(status).opacity(0.12))
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityText)
+        .accessibilityHint("Opens account detail in Context Panel")
+    }
+
+    private var accessibilityText: String {
+        let expiry = guidance.resetCredits.earliestKnownExpiry
+            .map { "Earliest known expiry \($0.formatted(date: .long, time: .shortened))." }
+            ?? "Expiry unknown."
+        return "\(guidance.countText) available for \(guidance.accountName). \(expiry) \(guidance.recommendationTitle). \(guidance.recommendationDetail(now: now))"
     }
 }
 
@@ -1526,6 +1598,17 @@ extension WidgetSnapshot {
             return "\(rounded)h"
         }
         return "\(Int(hours.rounded()))h"
+    }
+}
+
+extension ProviderResetCreditGuidance {
+    var widgetDeepLinkURL: URL {
+        var components = URLComponents()
+        components.scheme = "contextpanel"
+        components.host = "provider"
+        components.path = "/\(provider.rawValue)"
+        components.queryItems = [URLQueryItem(name: "account", value: configuredAccountID ?? accountID)]
+        return components.url ?? URL(string: "contextpanel://overview")!
     }
 }
 
