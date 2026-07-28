@@ -194,6 +194,33 @@ import Testing
     #expect(reverse.reports.first { $0.accountID == "sibling-account" }?.resetCredits?.availableCount == 7)
 }
 
+@Test func providerRuntimePrefersLowerEqualTimeResetCountRegardlessOfConnectorOrder() async throws {
+    let positive = resetCreditReport(
+        accountID: "same-account",
+        summary: resetCreditSummary(count: 2, observedAt: 200, coverage: .complete, expiry: 500),
+        hasLimit: true
+    )
+    let explicitZero = resetCreditReport(
+        accountID: "same-account",
+        summary: resetCreditSummary(count: 0, observedAt: 200),
+        hasLimit: true
+    )
+
+    let forward = await ProviderConnectorRuntime(connectors: [
+        StubConnector(provider: .openAI, report: positive),
+        StubConnector(provider: .openAI, report: explicitZero),
+    ]).refreshAll(now: Date(timeIntervalSince1970: 200))
+    let reverse = await ProviderConnectorRuntime(connectors: [
+        StubConnector(provider: .openAI, report: explicitZero),
+        StubConnector(provider: .openAI, report: positive),
+    ]).refreshAll(now: Date(timeIntervalSince1970: 200))
+    let forwardSummary = try #require(forward.reports.first?.resetCredits)
+    let reverseSummary = try #require(reverse.reports.first?.resetCredits)
+
+    #expect(forwardSummary == reverseSummary)
+    #expect((forwardSummary.availableCount, forwardSummary.coverage) == (0, .countOnly))
+}
+
 @Test func providerRuntimePreservesConfiguredAccountIDWhenDeduplicatingFallbackReports() async throws {
     let generatedAt = Date(timeIntervalSince1970: 10)
     let resolvedAccountID = ConnectorRedactor.localAccountID(provider: .openAI, stableID: "chatgpt:resolved")

@@ -94,11 +94,11 @@ public struct ProviderResetCreditSummary: Codable, Equatable, Sendable {
         if lhs.observedAt != rhs.observedAt {
             return lhs.observedAt > rhs.observedAt ? lhs : rhs
         }
-        if lhs.coverage != rhs.coverage {
-            return lhs.coverage.selectionRank > rhs.coverage.selectionRank ? lhs : rhs
-        }
         if lhs.availableCount != rhs.availableCount {
             return lhs.availableCount < rhs.availableCount ? lhs : rhs
+        }
+        if lhs.coverage != rhs.coverage {
+            return lhs.coverage.selectionRank > rhs.coverage.selectionRank ? lhs : rhs
         }
         return (lhs.earliestKnownExpiry ?? .distantFuture) <= (rhs.earliestKnownExpiry ?? .distantFuture) ? lhs : rhs
     }

@@ -2207,9 +2207,10 @@ struct AccountsSidebar: View {
                 }
             }
             Section("Providers") {
+                let reports = model.storedSnapshot?.reports ?? []
                 ForEach(Provider.allCases) { provider in
                     let summaries = snapshot.mainLimitSummaries.filter { $0.provider == provider }
-                    if !summaries.isEmpty {
+                    if shouldShowProviderNavigation(provider: provider, summaries: summaries, reports: reports) {
                         ProviderSidebarRow(provider: provider, limitCount: summaries.count)
                             .tag(AppNavigationSelection.provider(provider))
                         ForEach(summaries.sortedForSidebar) { summary in
@@ -2258,9 +2259,11 @@ struct ProviderSidebarRow: View {
                 .textCase(.uppercase)
                 .foregroundStyle(.secondary)
             Spacer()
-            Text("\(limitCount)")
-                .font(.system(.caption, design: .monospaced, weight: .medium))
-                .foregroundStyle(.tertiary)
+            if limitCount > 0 {
+                Text("\(limitCount)")
+                    .font(.system(.caption, design: .monospaced, weight: .medium))
+                    .foregroundStyle(.tertiary)
+            }
         }
     }
 }
@@ -3122,6 +3125,7 @@ struct OpenAIAccountLimitSummary: Identifiable {
     let accountID: String
     let accountName: String
     let limits: [UsageLimit]
+    let reportStatus: UsageStatus?
 
     var id: String { accountID }
 
@@ -3137,7 +3141,8 @@ struct OpenAIAccountLimitSummary: Identifiable {
     }
 
     var status: UsageStatus {
-        limits.map(\.status).contextPanelWorstStatus
+        let statuses = limits.map(\.status) + [reportStatus].compactMap { $0 }
+        return statuses.isEmpty ? .unknown : statuses.contextPanelWorstStatus
     }
 
     func limit(for window: MainLimitWindow) -> UsageLimit? {
@@ -3172,7 +3177,8 @@ struct OpenAIAccountLimitSummary: Identifiable {
                 return OpenAIAccountLimitSummary(
                     accountID: accountID,
                     accountName: accountLimits.first?.accountName ?? report?.accountName ?? "OpenAI Account",
-                    limits: accountLimits.sortedForOpenAIAccount
+                    limits: accountLimits.sortedForOpenAIAccount,
+                    reportStatus: report?.status
                 )
             }
             .sorted { lhs, rhs in
@@ -3192,6 +3198,22 @@ struct OpenAIAccountLimitSummary: Identifiable {
             }
             return lhs.accountID > rhs.accountID
         }
+    }
+}
+
+func shouldShowProviderNavigation(
+    provider: Provider,
+    summaries: [MainLimitSummary],
+    reports: [StoredProviderReport]
+) -> Bool {
+    if !summaries.isEmpty {
+        return true
+    }
+    guard provider == .openAI else {
+        return false
+    }
+    return reports.contains {
+        $0.provider == provider && ($0.resetCredits?.availableCount ?? 0) > 0
     }
 }
 
