@@ -135,6 +135,130 @@ import Testing
     #expect(shouldShowProviderNavigation(provider: .openAI, summaries: [], reports: [failureReport]))
 }
 
+@Test func failureOnlyResetCreditSnapshotJSONLoadsAndShowsOpenAIProviderNavigation() throws {
+    let root = try presentationTestTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let fixture = #"""
+    {
+      "schemaVersion": 1,
+      "savedAt": "2026-07-28T12:00:00Z",
+      "snapshot": {
+        "generatedAt": "2026-07-28T12:00:00Z",
+        "limits": []
+      },
+      "reports": [
+        {
+          "provider": "openai",
+          "accountID": "fixture-openai-reset-credit",
+          "configuredAccountID": "fixture-configured-openai",
+          "accountName": "Fixture OpenAI",
+          "generatedAt": "2026-07-28T12:00:00Z",
+          "resetCredits": {
+            "availableCount": 1,
+            "observedAt": "2026-07-28T11:00:00Z",
+            "coverage": "countOnly"
+          },
+          "status": "failure",
+          "accessState": {
+            "kind": "unknown"
+          },
+          "errorMessage": "Fixture-only sanitized refresh failure"
+        }
+      ],
+      "promptCacheObservations": []
+    }
+    """#
+    try Data(fixture.utf8).write(to: root.appending(path: "current-snapshot.json"))
+
+    let result = JSONSnapshotStore(rootDirectory: root).loadCurrent()
+    let storedSnapshot = try #require(result.snapshot)
+    let report = try #require(storedSnapshot.reports.first)
+    let account = try #require(OpenAIAccountLimitSummary.accounts(
+        from: storedSnapshot.snapshot.mainLimitSummaries,
+        reports: storedSnapshot.reports
+    ).first)
+
+    #expect(result.errorMessage == nil)
+    #expect(result.status == .unknown)
+    #expect(storedSnapshot.snapshot.limits.isEmpty)
+    #expect(report.resetCredits?.availableCount == 1)
+    #expect(report.status == .failure)
+    #expect(report.errorMessage == "Fixture-only sanitized refresh failure")
+    #expect(account.status == .failure)
+    #expect(shouldShowProviderNavigation(
+        provider: .openAI,
+        summaries: storedSnapshot.snapshot.mainLimitSummaries,
+        reports: storedSnapshot.reports
+    ))
+}
+
+@Test func failedRefreshPreservesResetOnlyCreditsForProviderNavigation() throws {
+    let root = try presentationTestTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let store = JSONSnapshotStore(rootDirectory: root)
+    let observedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let failedAt = observedAt.addingTimeInterval(3_600)
+    let initialReport = ProviderConnectorReport(
+        provider: .openAI,
+        accountID: "resolved-openai",
+        configuredAccountID: "configured-openai",
+        accountName: "OpenAI Reset Only",
+        generatedAt: observedAt,
+        limits: [],
+        resetCredits: ProviderResetCreditSummary(
+            availableCount: 1,
+            observedAt: observedAt,
+            coverage: .complete,
+            earliestKnownExpiry: observedAt.addingTimeInterval(86_400)
+        ),
+        status: .healthy,
+        errorMessage: nil
+    )
+    let failureReport = ProviderConnectorReport(
+        provider: .openAI,
+        accountID: "resolved-openai",
+        configuredAccountID: "configured-openai",
+        accountName: "OpenAI Reset Only",
+        generatedAt: failedAt,
+        limits: [],
+        status: .failure,
+        errorMessage: "Refresh failed"
+    )
+
+    try store.save(StoredUsageSnapshot(
+        savedAt: observedAt,
+        refreshResult: ConnectorRefreshResult(generatedAt: observedAt, reports: [initialReport])
+    ))
+    try store.saveMerged(
+        refreshResult: ConnectorRefreshResult(generatedAt: failedAt, reports: [failureReport]),
+        savedAt: failedAt,
+        preservesUnreportedAccounts: false
+    )
+
+    let storedSnapshot = try #require(store.loadCurrent().snapshot)
+    let report = try #require(storedSnapshot.reports.first)
+    let resetCredits = try #require(report.resetCredits)
+    let account = try #require(OpenAIAccountLimitSummary.accounts(
+        from: storedSnapshot.snapshot.mainLimitSummaries,
+        reports: storedSnapshot.reports
+    ).first)
+
+    #expect(storedSnapshot.snapshot.limits.isEmpty)
+    #expect(report.status == .failure)
+    #expect(resetCredits.availableCount == 1)
+    #expect(resetCredits.observedAt == observedAt)
+    #expect(resetCredits.coverage == .countOnly)
+    #expect(resetCredits.earliestKnownExpiry == nil)
+    #expect(account.status == .failure)
+    #expect(shouldShowProviderNavigation(
+        provider: .openAI,
+        summaries: storedSnapshot.snapshot.mainLimitSummaries,
+        reports: storedSnapshot.reports
+    ))
+}
+
 @Test func openAIAccountPresentationUsesStoredStaleStatusWithoutLimits() throws {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
     let staleReport = StoredProviderReport(
@@ -244,4 +368,12 @@ private func providerAccessAlert(
         generatedAt: Date(timeIntervalSince1970: 1_800_000_000),
         accessState: ProviderAccessState(kind: kind, resetsAt: resetsAt)
     )
+}
+
+private func presentationTestTemporaryDirectory() throws -> URL {
+    let root = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-presentation-tests")
+        .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    return root
 }
