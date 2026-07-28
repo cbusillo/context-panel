@@ -84,8 +84,12 @@ when testing the widget extension.
 To build the native release artifact locally, including the widget extension:
 
 ```sh
-scripts/package-native-macos-app.sh --version 1.0.0 --output dist --identity auto
+scripts/package-native-macos-app.sh --version 1.0.0 --output dist --identity -
 ```
+
+This command produces an ad-hoc validation artifact. Developer ID packaging
+requires the app, widget, and refresh-agent provisioning profiles from the same
+certificate set; see `docs/release.md` for the signed and notarized command.
 
 GitHub Actions also has a `Release` workflow for tag or manual releases. Without
 Apple signing secrets it publishes an ad-hoc signed validation artifact; with
