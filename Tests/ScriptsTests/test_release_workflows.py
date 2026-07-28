@@ -784,6 +784,20 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn('assert_entitlement_present "$app_path" "Context Panel app" "com.apple.application-identifier"', package_script)
         self.assertIn('assert_entitlement_present "$refresh_agent_path" "Context Panel refresh agent" "com.apple.application-identifier"', package_script)
 
+    def test_release_and_runtime_gates_reject_profile_certificate_mismatches(self):
+        package_script = self.read("scripts/package-native-macos-app.sh")
+        runtime_script = self.read("scripts/context-panel-runtime-baseline.sh")
+
+        self.assertIn("assert_profile_matches_signing_certificate()", package_script)
+        self.assertIn("DeveloperCertificates.$index", package_script)
+        self.assertIn("does not authorize the actual signing certificate", package_script)
+        self.assertIn(
+            'assert_profile_matches_signing_certificate "$widget_path" "$widget_provisioning_profile" "Context Panel widget"',
+            package_script,
+        )
+        self.assertIn("DeveloperCertificates.$index", runtime_script)
+        self.assertIn("does not authorize the actual signing certificate", runtime_script)
+
     def test_release_package_rejects_cloudkit_without_profiles_before_building(self):
         result = self.run_package_script_preflight([
             "--identity",

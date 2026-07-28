@@ -161,7 +161,9 @@ To produce a signed build, configure:
 - `MACOS_APP_PROVISIONING_PROFILE_BASE64`: required base64 app provisioning
   profile for signed Release builds with CloudKit entitlements.
 - `MACOS_WIDGET_PROVISIONING_PROFILE_BASE64`: optional base64 widget extension
-  provisioning profile.
+  provisioning profile. Its `DeveloperCertificates` list must include the
+  certificate used to sign the widget; packaging and runtime receipts reject a
+  stale profile that authorizes a different Developer ID certificate.
 - `MACOS_REFRESH_AGENT_PROVISIONING_PROFILE_BASE64`: required base64 refresh
   agent provisioning profile for signed Release builds with CloudKit
   entitlements.

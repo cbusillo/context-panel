@@ -360,6 +360,41 @@ validate_profile_covers_entitlements() {
 	rm -f "$profile_plist"
 }
 
+assert_profile_matches_signing_certificate() {
+	local bundle_path="$1"
+	local profile="$2"
+	local label="$3"
+	[[ "$resolved_identity" != "-" && -n "$profile" ]] || return
+
+	local temp_dir profile_plist candidate_base64 candidate_der index matched
+	temp_dir="$(mktemp -d)"
+	profile_plist="$temp_dir/profile.plist"
+	candidate_base64="$temp_dir/certificate.base64"
+	candidate_der="$temp_dir/certificate.der"
+	decode_provisioning_profile "$profile" "$profile_plist"
+	if ! codesign -d --extract-certificates="$temp_dir/signed-certificate" "$bundle_path" >/dev/null 2>&1; then
+		rm -rf "$temp_dir"
+		echo "could not extract the signing certificate for $label: $bundle_path" >&2
+		exit 1
+	fi
+
+	index=0
+	matched=0
+	while plutil -extract "DeveloperCertificates.$index" raw -o - "$profile_plist" >"$candidate_base64" 2>/dev/null; do
+		if /usr/bin/base64 -D <"$candidate_base64" >"$candidate_der" 2>/dev/null &&
+			cmp -s "$temp_dir/signed-certificate0" "$candidate_der"; then
+			matched=1
+			break
+		fi
+		index=$((index + 1))
+	done
+	rm -rf "$temp_dir"
+	if [[ "$matched" != "1" ]]; then
+		echo "$label provisioning profile does not authorize the actual signing certificate" >&2
+		exit 1
+	fi
+}
+
 prepared_entitlements() {
 	local source="$1"
 	local profile="$2"
@@ -539,6 +574,9 @@ codesign "${codesign_options[@]}" \
 	--entitlements "$app_signing_entitlements" \
 	"$app_path"
 codesign --verify --deep --strict --verbose=2 "$app_path"
+assert_profile_matches_signing_certificate "$app_path" "$app_provisioning_profile" "Context Panel app"
+assert_profile_matches_signing_certificate "$widget_path" "$widget_provisioning_profile" "Context Panel widget"
+assert_profile_matches_signing_certificate "$refresh_agent_path" "$refresh_agent_provisioning_profile" "Context Panel refresh agent"
 assert_app_group_entitlement "$app_path" "Context Panel app"
 assert_app_group_entitlement "$widget_path" "Context Panel widget"
 assert_app_group_entitlement "$refresh_agent_path" "Context Panel refresh agent"

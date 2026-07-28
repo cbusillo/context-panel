@@ -1070,7 +1070,7 @@ check_provisioning_profile() {
 	local bundle="$1"
 	local label="$2"
 	local profile="$bundle/Contents/embedded.provisionprofile"
-	local plist name teams
+	local plist name teams temp_dir candidate_base64 candidate_der index matched
 	if [[ ! -f "$profile" ]]; then
 		ok "$label has no embedded provisioning profile"
 		return
@@ -1084,17 +1084,44 @@ check_provisioning_profile() {
 	name="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$plist" 2>/dev/null || true)"
 	teams="$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier' "$plist" 2>/dev/null |
 		awk '/^[[:space:]]+[A-Za-z0-9]+$/ { gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print }' || true)"
-	rm -f "$plist"
 	if [[ -z "$name" ]]; then
+		rm -f "$plist"
 		fail "$label embedded provisioning profile has no Name"
 		return
 	fi
-	if rg -qx --fixed-strings "$developer_team_id" <<<"$teams"; then
-		ok "$label provisioning profile: $name"
-	else
+	if ! rg -qx --fixed-strings "$developer_team_id" <<<"$teams"; then
 		printf '%s\n' "$teams"
+		rm -f "$plist"
 		fail "$label provisioning profile is not for canonical team $developer_team_id"
+		return
 	fi
+
+	temp_dir="$(mktemp -d)"
+	candidate_base64="$temp_dir/certificate.base64"
+	candidate_der="$temp_dir/certificate.der"
+	if ! codesign -d --extract-certificates="$temp_dir/signed-certificate" "$bundle" >/dev/null 2>&1; then
+		rm -f "$plist"
+		rm -rf "$temp_dir"
+		fail "$label signing certificate could not be extracted"
+		return
+	fi
+	index=0
+	matched=0
+	while plutil -extract "DeveloperCertificates.$index" raw -o - "$plist" >"$candidate_base64" 2>/dev/null; do
+		if /usr/bin/base64 -D <"$candidate_base64" >"$candidate_der" 2>/dev/null &&
+			cmp -s "$temp_dir/signed-certificate0" "$candidate_der"; then
+			matched=1
+			break
+		fi
+		index=$((index + 1))
+	done
+	rm -f "$plist"
+	rm -rf "$temp_dir"
+	if [[ "$matched" != "1" ]]; then
+		fail "$label provisioning profile does not authorize the actual signing certificate"
+		return
+	fi
+	ok "$label provisioning profile: $name"
 }
 
 bootout_refresh_agent() {
