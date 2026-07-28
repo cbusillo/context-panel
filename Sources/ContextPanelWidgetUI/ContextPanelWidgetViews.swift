@@ -1607,7 +1607,7 @@ extension ProviderResetCreditGuidance {
         components.scheme = "contextpanel"
         components.host = "provider"
         components.path = "/\(provider.rawValue)"
-        components.queryItems = [URLQueryItem(name: "account", value: configuredAccountID ?? accountID)]
+        components.queryItems = [URLQueryItem(name: "account", value: accountID)]
         return components.url ?? URL(string: "contextpanel://overview")!
     }
 }

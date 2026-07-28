@@ -1384,7 +1384,7 @@ import Testing
     #expect((resetCredits.observedAt, resetCredits.coverage, resetCredits.earliestKnownExpiry) == (first, .countOnly, nil))
 }
 
-@Test func jsonSnapshotStorePreservesFailedResetCreditsAcrossResolvedAccountIDChange() throws {
+@Test func jsonSnapshotStoreDoesNotCrossMergeSiblingResetCreditsUnderSharedConfiguration() throws {
     let store = JSONSnapshotStore(rootDirectory: try temporaryDirectory())
     let first = Date(timeIntervalSince1970: 100)
     let second = Date(timeIntervalSince1970: 200)
@@ -1393,12 +1393,20 @@ import Testing
         savedAt: first,
         refreshResult: ConnectorRefreshResult(generatedAt: first, reports: [
             resetCreditTestReport(
-                accountID: "resolved-old",
+                accountID: "resolved-a",
                 configuredAccountID: "configured-openai",
                 count: 2,
                 observedAt: first,
                 coverage: .complete,
                 expiry: 500
+            ),
+            resetCreditTestReport(
+                accountID: "resolved-b",
+                configuredAccountID: "configured-openai",
+                count: 7,
+                observedAt: first,
+                coverage: .complete,
+                expiry: 600
             ),
         ])
     ))
@@ -1406,10 +1414,16 @@ import Testing
     try store.saveMerged(
         refreshResult: ConnectorRefreshResult(generatedAt: second, reports: [
             resetCreditTestReport(
-                accountID: "resolved-current",
+                accountID: "resolved-a",
                 configuredAccountID: "configured-openai",
                 observedAt: second,
                 status: .failure
+            ),
+            resetCreditTestReport(
+                accountID: "resolved-b",
+                configuredAccountID: "configured-openai",
+                count: 6,
+                observedAt: second
             ),
         ]),
         savedAt: second,
@@ -1417,14 +1431,15 @@ import Testing
     )
 
     let current = try #require(store.loadCurrent().snapshot)
-    let report = try #require(current.reports.first)
-    let resetCredits = try #require(report.resetCredits)
+    let accountA = try #require(current.reports.first { $0.accountID == "resolved-a" })
+    let accountB = try #require(current.reports.first { $0.accountID == "resolved-b" })
+    let creditsA = try #require(accountA.resetCredits)
+    let creditsB = try #require(accountB.resetCredits)
 
-    #expect(current.reports.count == 1)
-    #expect(report.accountID == "resolved-current")
-    #expect(report.configuredAccountID == "configured-openai")
-    #expect((resetCredits.availableCount, resetCredits.observedAt, resetCredits.coverage) == (2, first, .countOnly))
-    #expect(resetCredits.earliestKnownExpiry == nil)
+    #expect(current.reports.count == 2)
+    #expect((creditsA.availableCount, creditsA.observedAt, creditsA.coverage) == (2, first, .countOnly))
+    #expect(creditsA.earliestKnownExpiry == nil)
+    #expect((creditsB.availableCount, creditsB.observedAt) == (6, second))
 }
 
 @Test func storedUsageSnapshotDecodesWithoutResetCredits() throws {

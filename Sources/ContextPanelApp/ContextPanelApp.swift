@@ -2901,7 +2901,7 @@ struct OpenAIAccountLimitsSection: View {
                 reports: reports,
                 limits: summaries.flatMap(\.limits),
                 now: now
-            ).map { ($0.configuredAccountID ?? $0.accountID, $0) },
+            ).map { ($0.accountID, $0) },
             uniquingKeysWith: { current, candidate in
                 candidate.resetCredits.observedAt > current.resetCredits.observedAt ? candidate : current
             }
@@ -2923,10 +2923,10 @@ struct OpenAIAccountLimitsSection: View {
                     ForEach(accounts) { account in
                         OpenAIAccountLimitRow(
                             account: account,
-                            resetCreditGuidance: guidanceByAccountID[account.logicalAccountID],
+                            resetCreditGuidance: guidanceByAccountID[account.accountID],
                             now: now
                         )
-                        .id("openai-account:\(account.logicalAccountID)")
+                        .id("openai-account:\(account.accountID)")
                     }
                 }
             }
@@ -3119,12 +3119,11 @@ private struct OpenAIAccountWindowPill: View {
 }
 
 struct OpenAIAccountLimitSummary: Identifiable {
-    let logicalAccountID: String
     let accountID: String
     let accountName: String
     let limits: [UsageLimit]
 
-    var id: String { logicalAccountID }
+    var id: String { accountID }
 
     var displayName: String {
         accountNameParts.first ?? accountName
@@ -3163,18 +3162,15 @@ struct OpenAIAccountLimitSummary: Identifiable {
         let positiveResetReports = reports.filter {
             $0.provider == .openAI && ($0.resetCredits?.availableCount ?? 0) > 0
         }
-        let reportsByAccountID = Dictionary(grouping: positiveResetReports, by: \.configuredOrResolvedAccountID)
+        let reportsByAccountID = Dictionary(grouping: positiveResetReports, by: \.accountID)
             .compactMapValues(preferredReport)
-        let accountIDs = Set(limits.map(\.configuredOrResolvedAccountID)).union(reportsByAccountID.keys)
+        let accountIDs = Set(limits.map(\.accountID)).union(reportsByAccountID.keys)
         return accountIDs
-            .map { logicalAccountID in
-                let report = reportsByAccountID[logicalAccountID]
-                let accountLimits = limits.filter { limit in
-                    report?.matchesAccount(of: limit) ?? (limit.configuredOrResolvedAccountID == logicalAccountID)
-                }
+            .map { accountID in
+                let report = reportsByAccountID[accountID]
+                let accountLimits = limits.filter { $0.accountID == accountID }
                 return OpenAIAccountLimitSummary(
-                    logicalAccountID: logicalAccountID,
-                    accountID: report?.accountID ?? accountLimits.first?.accountID ?? logicalAccountID,
+                    accountID: accountID,
                     accountName: accountLimits.first?.accountName ?? report?.accountName ?? "OpenAI Account",
                     limits: accountLimits.sortedForOpenAIAccount
                 )

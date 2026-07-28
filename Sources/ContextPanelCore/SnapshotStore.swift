@@ -156,10 +156,6 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         )
     }
 
-    public var configuredOrResolvedAccountID: String {
-        configuredAccountID ?? accountID
-    }
-
     func withStatus(_ replacementStatus: UsageStatus) -> StoredProviderReport {
         StoredProviderReport(
             provider: provider,
@@ -214,32 +210,12 @@ public struct StoredProviderReport: Codable, Equatable, Sendable {
         )
     }
 
-    public func matchesAccount(of limit: UsageLimit) -> Bool {
-        matchesAccount(
-            provider: limit.provider,
-            accountID: limit.accountID,
-            configuredAccountID: limit.configuredAccountID
-        )
-    }
-
-    func matchesAccount(of report: ProviderConnectorReport) -> Bool {
-        matchesAccount(
-            provider: report.provider,
-            accountID: report.accountID,
-            configuredAccountID: report.configuredAccountID
-        )
-    }
-
-    private func matchesAccount(
-        provider otherProvider: Provider,
-        accountID otherAccountID: String,
-        configuredAccountID otherConfiguredAccountID: String?
-    ) -> Bool {
-        guard provider == otherProvider else { return false }
+    func matchesAccount(of limit: UsageLimit) -> Bool {
+        guard provider == limit.provider else { return false }
         if let configuredAccountID {
-            return otherConfiguredAccountID == configuredAccountID || otherAccountID == accountID
+            return limit.configuredAccountID == configuredAccountID || limit.accountID == accountID
         }
-        return otherAccountID == accountID
+        return limit.accountID == accountID
     }
 }
 
@@ -915,7 +891,7 @@ public struct JSONSnapshotStore: Sendable {
         let refreshedReports = refreshResult.reports.map { report in
             let storedReport = StoredProviderReport(report: report)
             let previousResetCredits = current?.reports.lazy
-                .filter { $0.matchesAccount(of: report) }
+                .filter { $0.provider == report.provider && $0.accountID == report.accountID }
                 .compactMap(\.resetCredits)
                 .reduce(nil as ProviderResetCreditSummary?, ProviderResetCreditSummary.preferred)
             guard report.status == .failure,

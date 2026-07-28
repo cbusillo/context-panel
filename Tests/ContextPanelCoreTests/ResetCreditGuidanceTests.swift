@@ -406,46 +406,51 @@ import Testing
     #expect(guidance.map(\.state) == [.considerUsingNow, .hold(.weeklyCapacityHealthy)])
 }
 
-@Test func resetCreditGuidanceMatchesAndDeduplicatesConfiguredAccountIdentity() throws {
+@Test func resetCreditGuidanceKeepsResolvedAccountsUnderSharedConfigurationDistinct() throws {
     let now = resetGuidanceDate()
-    let oldReport = resetGuidanceReport(
-        accountID: "resolved-old",
+    let firstReport = resetGuidanceReport(
+        accountID: "resolved-a",
         configuredAccountID: "configured-openai",
-        accountName: "Old Name",
-        now: now.addingTimeInterval(-60),
+        accountName: "Account A",
+        now: now,
         count: 1,
         coverage: .complete,
         expiry: now.addingTimeInterval(86_400)
     )
-    let currentReport = resetGuidanceReport(
-        accountID: "resolved-current",
+    let secondReport = resetGuidanceReport(
+        accountID: "resolved-b",
         configuredAccountID: "configured-openai",
-        accountName: "Current Name",
+        accountName: "Account B",
         now: now,
         count: 2,
         coverage: .complete,
         expiry: now.addingTimeInterval(2 * 86_400)
     )
-    let weekly = resetGuidanceLimit(
-        accountID: "resolved-limit",
-        configuredAccountID: "configured-openai",
-        window: .weekly,
-        used: 100,
-        resetsAt: now.addingTimeInterval(3 * 60 * 60)
-    )
 
     let guidance = ResetCreditGuidanceAdvisor.guidance(
-        reports: [oldReport, currentReport],
-        limits: [weekly],
+        reports: [secondReport, firstReport],
+        limits: [
+            resetGuidanceLimit(
+                accountID: "resolved-a",
+                configuredAccountID: "configured-openai",
+                window: .weekly,
+                used: 100,
+                resetsAt: now.addingTimeInterval(3 * 60 * 60)
+            ),
+            resetGuidanceLimit(
+                accountID: "resolved-b",
+                configuredAccountID: "configured-openai",
+                window: .weekly,
+                used: 20,
+                resetsAt: now.addingTimeInterval(3 * 86_400)
+            ),
+        ],
         now: now
     )
-    let account = try #require(guidance.first)
 
-    #expect(guidance.count == 1)
-    #expect(account.accountID == "resolved-current")
-    #expect(account.configuredAccountID == "configured-openai")
-    #expect(account.resetCredits.availableCount == 2)
-    #expect(account.state == .considerUsingNow)
+    #expect(guidance.map(\.accountID) == ["resolved-a", "resolved-b"])
+    #expect(guidance.map(\.resetCredits.availableCount) == [1, 2])
+    #expect(guidance.map(\.state) == [.considerUsingNow, .hold(.weeklyCapacityHealthy)])
 }
 
 private func resetGuidanceDate() -> Date {

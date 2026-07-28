@@ -142,7 +142,10 @@ public enum ResetCreditGuidanceAdvisor {
         let reportsByAccount = reports.reduce(into: [ResetCreditAccountKey: StoredProviderReport]()) { result, report in
             let key = ResetCreditAccountKey(
                 provider: report.provider,
-                accountID: report.configuredOrResolvedAccountID
+                accountID: ProviderAccountIdentity.unique(
+                    accountID: report.accountID,
+                    configuredAccountID: report.configuredAccountID
+                )
             )
             if let current = result[key], !prefers(report, over: current) {
                 return
@@ -184,7 +187,9 @@ public enum ResetCreditGuidanceAdvisor {
             return nil
         }
 
-        let accountLimits = limits.filter { report.matchesAccount(of: $0) }
+        let accountLimits = limits.filter {
+            $0.provider == report.provider && $0.accountID == report.accountID
+        }
         let weeklyLimits = accountLimits.filter { $0.mainLimitWindow == .weekly }
         let fiveHourLimits = accountLimits.filter { $0.mainLimitWindow == .fiveHour }
         let state: ResetCreditGuidanceState

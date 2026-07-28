@@ -63,29 +63,30 @@ import Testing
     ) == .healthy)
 }
 
-@Test func openAIAccountPresentationKeepsConfiguredIdentityInOneLane() throws {
+@Test func openAIAccountPresentationKeepsResolvedAccountsUnderSharedConfigurationDistinct() throws {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
-    let limits = [
+    let accountIDs = ["resolved-a", "resolved-b", "resolved-c"]
+    let limits = accountIDs.enumerated().map { index, accountID in
         UsageLimit(
             provider: .openAI,
-            accountID: "resolved-limit",
+            accountID: accountID,
             configuredAccountID: "configured-openai",
-            accountName: "OpenAI Work",
+            accountName: "OpenAI Account \(index + 1)",
             label: "Codex Weekly",
             windowLabel: "Weekly",
             unit: .percent,
-            used: 100,
+            used: 20 + index,
             limit: 100,
             resetsAt: now.addingTimeInterval(3 * 60 * 60),
             lastUpdatedAt: now,
             confidence: .observed
-        ),
-    ]
+        )
+    }
     let report = StoredProviderReport(
         provider: .openAI,
-        accountID: "resolved-report",
+        accountID: "resolved-b",
         configuredAccountID: "configured-openai",
-        accountName: "OpenAI Work",
+        accountName: "OpenAI Account 2",
         generatedAt: now,
         resetCredits: ProviderResetCreditSummary(
             availableCount: 1,
@@ -99,12 +100,12 @@ import Testing
     let summaries = UsageSnapshot(generatedAt: now, limits: limits).mainLimitSummaries
 
     let accounts = OpenAIAccountLimitSummary.accounts(from: summaries, reports: [report])
-    let account = try #require(accounts.first)
 
-    #expect(accounts.count == 1)
-    #expect(account.logicalAccountID == "configured-openai")
-    #expect(account.accountID == "resolved-report")
-    #expect(account.limits.map(\.accountID) == ["resolved-limit"])
+    #expect(accounts.count == 3)
+    #expect(Set(accounts.map(\.accountID)) == Set(accountIDs))
+    #expect(accounts.allSatisfy { account in
+        account.limits.map(\.accountID) == [account.accountID]
+    })
 }
 
 private func providerAccessAlert(

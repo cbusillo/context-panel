@@ -192,7 +192,7 @@ private let renderTestWidgetLinks = ContextPanelWidgetLinks(
     #expect(components.scheme == "contextpanel")
     #expect(components.host == "provider")
     #expect(components.path == "/openai")
-    #expect(components.queryItems?.first { $0.name == "account" }?.value == guidance.configuredAccountID)
+    #expect(components.queryItems?.first { $0.name == "account" }?.value == guidance.accountID)
 
     let scenarios: [(WidgetFamily, CGFloat, CGFloat, Int)] = [
         (.systemMedium, 344, 164, 2_500),
