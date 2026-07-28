@@ -1060,6 +1060,10 @@ scripts/package-macos-app.sh --identity -
   bookmark entitlements. The native packaging script verifies those entitlements
   after signing and fails before producing an artifact if any required bundle is
   missing them.
+- A launched canonical runtime receipt requires an active WidgetKit timeline
+  whose modification time is at least as new as the installed build fingerprint.
+  Older render caches are diagnostic evidence only and cannot prove that the
+  newly installed widget extension launched successfully.
 
 ## Validation
 

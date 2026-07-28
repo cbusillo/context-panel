@@ -325,6 +325,30 @@ class ReleaseWorkflowTests(unittest.TestCase):
             check=False,
         )
 
+    def run_widget_timeline_freshness_fixture(self, timeline_mtime: int, reference_mtime: int) -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            timeline_dir = root / "timelines/ContextPanelWidget"
+            timeline_dir.mkdir(parents=True)
+            timeline = timeline_dir / "systemMedium344.00w-164.00h.timeline.chrono-timeline"
+            reference = root / "ContextPanelBuildFingerprint.txt"
+            timeline.write_text("timeline")
+            reference.write_text("fingerprint")
+            os.utime(timeline, (timeline_mtime, timeline_mtime))
+            os.utime(reference, (reference_mtime, reference_mtime))
+            command = f"""
+            source scripts/context-panel-runtime-baseline.sh --source-only
+            widget_timeline_cache_is_current_for_build "{root}" "{reference}"
+            """
+            return subprocess.run(
+                ["bash", "-lc", command],
+                cwd=REPO_ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+
     def run_runtime_identity_fixture(
         self,
         app_entitlements: str | None,
@@ -797,6 +821,37 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         )
         self.assertIn("DeveloperCertificates.$index", runtime_script)
         self.assertIn("does not authorize the actual signing certificate", runtime_script)
+
+    def test_runtime_gate_accepts_widget_timeline_from_installed_build(self):
+        result = self.run_widget_timeline_freshness_fixture(timeline_mtime=200, reference_mtime=100)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_runtime_gate_rejects_widget_timeline_from_previous_build(self):
+        result = self.run_widget_timeline_freshness_fixture(timeline_mtime=100, reference_mtime=200)
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+
+    def test_runtime_gate_rejects_widget_timeline_without_build_reference(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            timeline_dir = root / "timelines/ContextPanelWidget"
+            timeline_dir.mkdir(parents=True)
+            (timeline_dir / "systemMedium344.00w-164.00h.timeline.chrono-timeline").write_text("timeline")
+            command = f"""
+            source scripts/context-panel-runtime-baseline.sh --source-only
+            widget_timeline_cache_is_current_for_build "{root}" "{root / 'missing-fingerprint.txt'}"
+            """
+            result = subprocess.run(
+                ["bash", "-lc", command],
+                cwd=REPO_ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
 
     def test_release_package_rejects_cloudkit_without_profiles_before_building(self):
         result = self.run_package_script_preflight([
