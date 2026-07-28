@@ -463,19 +463,26 @@ public struct CodexRateLimitConnector: ProviderConnector {
             observedAt: observedAt,
             coverage: .countOnly
         )
-        guard availableCount > 0, account.endpoint.path == "/backend-api/wham/usage" else {
+        guard availableCount > 0, let endpoint = resetCreditDetailsEndpoint(for: account.endpoint) else {
             return countOnly
         }
         do {
-            let endpoint = account.endpoint.deletingLastPathComponent().appendingPathComponent("rate-limit-reset-credits")
             let data = try await fetchResetCreditDetails(endpoint: endpoint, auth: auth)
             return try CodexResetCreditDetailsParser.summary(
                 from: data,
-                availableCount: availableCount,
                 observedAt: observedAt
             )
         } catch {
             return countOnly
+        }
+    }
+
+    private func resetCreditDetailsEndpoint(for usageEndpoint: URL) -> URL? {
+        switch usageEndpoint.path {
+        case "/backend-api/wham/usage", "/api/codex/usage":
+            return usageEndpoint.deletingLastPathComponent().appendingPathComponent("rate-limit-reset-credits")
+        default:
+            return nil
         }
     }
 
@@ -598,7 +605,7 @@ public enum CodexUsagePayloadParser {
 
     static func resetCreditAvailableCount(from data: Data) -> Int? {
         guard let payload = try? JSONDecoder().decode(CodexResetCreditCountEnvelope.self, from: data) else { return nil }
-        return payload.summary?.effectiveAvailableCount
+        return payload.summary.map { max(0, $0.availableCount) }
     }
 
     private static func snapshots(from payload: CodexUsagePayload, modelAvailability: CodexModelAvailability?) -> [CodexRateLimitSnapshot] {
@@ -651,10 +658,10 @@ public enum CodexModelAvailabilityParser {
 enum CodexResetCreditDetailsParser {
     static func summary(
         from data: Data,
-        availableCount: Int,
         observedAt: Date
     ) throws -> ProviderResetCreditSummary {
         let payload = try JSONDecoder().decode(CodexResetCreditDetailsPayload.self, from: data)
+        let availableCount = max(0, payload.availableCount)
         let expiries = payload.credits.compactMap { $0.trustworthyExpiry(observedAt: observedAt) }
         let coverage: ProviderResetCreditCoverage
         if expiries.isEmpty || expiries.count > availableCount {
@@ -708,42 +715,56 @@ private struct CodexResetCreditCountEnvelope: Decodable {
 
 private struct CodexResetCreditCountDetails: Decodable {
     let availableCount: Int
-    let applicableAvailableCount: Int?
 
     enum CodingKeys: String, CodingKey {
         case availableCount = "available_count"
-        case applicableAvailableCount = "applicable_available_count"
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        availableCount = try container.decode(Int.self, forKey: .availableCount)
-        applicableAvailableCount = try? container.decode(Int.self, forKey: .applicableAvailableCount)
-    }
-
-    var effectiveAvailableCount: Int {
-        return max(0, applicableAvailableCount ?? availableCount)
     }
 }
 
 private struct CodexResetCreditDetailsPayload: Decodable {
     let credits: [CodexResetCreditDetail]
+    let availableCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case credits
+        case availableCount = "available_count"
+    }
 }
 
 private struct CodexResetCreditDetail: Decodable {
-    let status: String?
-    let isSupportedByPlan: Bool?
+    let id: String
+    let resetType: String
+    let status: String
+    let grantedAt: String
     let expiresAt: String?
 
     enum CodingKeys: String, CodingKey {
+        case id
+        case resetType = "reset_type"
         case status
-        case isSupportedByPlan = "is_supported_by_plan"
+        case grantedAt = "granted_at"
         case expiresAt = "expires_at"
     }
 
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        resetType = try container.decode(String.self, forKey: .resetType)
+        status = try container.decode(String.self, forKey: .status)
+        grantedAt = try container.decode(String.self, forKey: .grantedAt)
+        guard ContextPanelDateFormatting.date(from: grantedAt) != nil else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .grantedAt,
+                in: container,
+                debugDescription: "Expected an RFC 3339 reset-credit grant timestamp."
+            )
+        }
+        expiresAt = try container.decodeIfPresent(String.self, forKey: .expiresAt)
+    }
+
     func trustworthyExpiry(observedAt: Date) -> Date? {
-        guard status == "available",
-              isSupportedByPlan == true,
+        guard resetType == "codex_rate_limits",
+              status == "available",
               let expiresAt,
               let expiry = ContextPanelDateFormatting.date(from: expiresAt),
               expiry > observedAt

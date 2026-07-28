@@ -43,7 +43,7 @@ import Testing
 @Test func codexResetCreditsUseOnlySiblingGETDetailsEndpoint() async throws {
     let http = StubHTTPClient(responses: [
         ConnectorHTTPResponse(statusCode: 200, data: codexResetUsage(available: 4, applicable: 2)),
-        ConnectorHTTPResponse(statusCode: 200, data: codexResetDetails(expiries: [
+        ConnectorHTTPResponse(statusCode: 200, data: codexResetDetails(available: 2, expiries: [
             "2027-02-01T00:00:00Z", "2027-02-02T00:00:00Z",
         ])),
     ])
@@ -61,10 +61,31 @@ import Testing
     #expect(http.requests.contains { $0.url.path.contains("/usage/") } == false)
 }
 
-@Test func codexResetCreditsSkipDetailsForExplicitZero() async throws {
+@Test func codexResetCreditsIgnoreApplicableZeroForAvailableInventory() async throws {
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: codexResetUsage(available: 4, applicable: 0)),
+        ConnectorHTTPResponse(statusCode: 200, data: codexResetDetails(available: 4, expiries: [
+            "2027-02-01T00:00:00Z",
+            "2027-02-02T00:00:00Z",
+            "2027-02-03T00:00:00Z",
+            "2027-02-04T00:00:00Z",
+        ])),
+    ])
+
+    let result = await codexResetConnector(http: http).refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
+    let summary = try #require(result.reports.first?.resetCredits)
+
+    #expect((summary.availableCount, summary.coverage) == (4, .complete))
+    #expect(http.requests.map(\.url.absoluteString) == [
+        "https://chatgpt.com/backend-api/wham/usage",
+        "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits",
+    ])
+}
+
+@Test func codexResetCreditsSkipDetailsForAuthoritativeAvailableZero() async throws {
     let http = StubHTTPClient(responses: [ConnectorHTTPResponse(
         statusCode: 200,
-        data: codexResetUsage(available: 4, applicable: 0)
+        data: codexResetUsage(available: 0, applicable: 4)
     )])
 
     let result = await codexResetConnector(http: http).refresh(now: Date(timeIntervalSince1970: 1_800_000_000))
@@ -116,6 +137,49 @@ import Testing
 
     #expect(report.status == .healthy)
     #expect((report.resetCredits?.availableCount, report.resetCredits?.coverage) == (1, .countOnly))
+}
+
+@Test func codexResetCreditDetailsMissingRequiredCountKeepSuccessfulUsageCountOnly() async throws {
+    let details = Data(#"{"credits":[{"id":"discard-me","reset_type":"codex_rate_limits","status":"available","granted_at":"2027-01-01T00:00:00Z","expires_at":"2027-02-01T00:00:00Z"}]}"#.utf8)
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: codexResetUsage(available: 1)),
+        ConnectorHTTPResponse(statusCode: 200, data: details),
+    ])
+
+    let report = try #require(await codexResetConnector(http: http)
+        .refresh(now: Date(timeIntervalSince1970: 1_800_000_000)).reports.first)
+
+    #expect(report.status == .healthy)
+    #expect((report.resetCredits?.availableCount, report.resetCredits?.coverage) == (1, .countOnly))
+}
+
+@Test func codexResetCreditsUseCodexAPISiblingGETDetailsEndpoint() async throws {
+    let http = StubHTTPClient(responses: [
+        ConnectorHTTPResponse(statusCode: 200, data: codexResetUsage(available: 1)),
+        ConnectorHTTPResponse(statusCode: 200, data: codexResetDetails(
+            available: 1,
+            expiries: ["2027-02-01T00:00:00Z"]
+        )),
+    ])
+    let connector = CodexRateLimitConnector(
+        accounts: [CodexAccountConfiguration(
+            authPath: "/tmp/openai.json",
+            accountName: "OpenAI",
+            endpoint: URL(string: "https://example.test/api/codex/usage")!
+        )],
+        httpClient: http,
+        fileLoader: { _ in Data(#"{"tokens":{"access_token":"token-secret","account_id":"account-a"}}"#.utf8) }
+    )
+
+    let report = try #require(await connector.refresh(
+        now: Date(timeIntervalSince1970: 1_800_000_000)
+    ).reports.first)
+
+    #expect((report.resetCredits?.availableCount, report.resetCredits?.coverage) == (1, .complete))
+    #expect(http.requests.map(\.url.absoluteString) == [
+        "https://example.test/api/codex/usage",
+        "https://example.test/api/codex/rate-limit-reset-credits",
+    ])
 }
 
 @Test func codexUsageDecodeFailureKeepsFreshResetCountStaleSafe() async throws {
@@ -592,18 +656,29 @@ import Testing
         .replacingOccurrences(of: "__FIRST_ID_TOKEN__", with: firstIDToken)
         .replacingOccurrences(of: "__SECOND_ID_TOKEN__", with: secondIDToken)
         .data(using: .utf8)!
-    let usage = #"""
+    let usageTemplate = #"""
     {
       "plan_type": "pro",
       "rate_limit": {
         "primary_window": { "used_percent": 1, "limit_window_seconds": 18000, "reset_at": 1788393600 },
         "secondary_window": { "used_percent": 2, "limit_window_seconds": 604800, "reset_at": 1788998400 }
+      },
+      "rate_limit_reset_credits": {
+        "available_count": __AVAILABLE_COUNT__,
+        "applicable_available_count": 0
       }
     }
-    """#.data(using: .utf8)!
+    """#
+    let firstUsage = Data(usageTemplate.replacingOccurrences(of: "__AVAILABLE_COUNT__", with: "2").utf8)
+    let secondUsage = Data(usageTemplate.replacingOccurrences(of: "__AVAILABLE_COUNT__", with: "3").utf8)
     let http = StubHTTPClient(responses: [
-        ConnectorHTTPResponse(statusCode: 200, data: usage),
-        ConnectorHTTPResponse(statusCode: 200, data: usage),
+        ConnectorHTTPResponse(statusCode: 200, data: firstUsage),
+        ConnectorHTTPResponse(statusCode: 200, data: codexResetDetails(
+            available: 2,
+            expiries: ["2027-02-01T00:00:00Z", "2027-02-02T00:00:00Z"]
+        )),
+        ConnectorHTTPResponse(statusCode: 200, data: secondUsage),
+        ConnectorHTTPResponse(statusCode: 503, data: Data()),
     ])
     let connector = CodexRateLimitConnector(
         accounts: [CodexAccountConfiguration(authPath: "/tmp/auth_accounts.json", accountName: "OpenAI Code")],
@@ -624,7 +699,11 @@ import Testing
         "second@example.com · pro",
     ])
     #expect(result.snapshot.limits.allSatisfy { $0.configuredAccountID == nil })
-    #expect(http.requests.map { $0.headers["ChatGPT-Account-Id"] } == ["account-a", "account-b"])
+    #expect(result.reports.map { $0.resetCredits?.availableCount } == [2, 3])
+    #expect(result.reports.map { $0.resetCredits?.coverage } == [.complete, .countOnly])
+    #expect(http.requests.map { $0.headers["ChatGPT-Account-Id"] } == [
+        "account-a", "account-a", "account-b", "account-b",
+    ])
     #expect(Set(result.reports.map(\.accountID)).count == 2)
 }
 
@@ -2516,11 +2595,12 @@ private func codexResetUsage(available: Int, applicable: Int? = nil) -> Data {
     return Data("{\"rate_limit\":{\"primary_window\":{\"used_percent\":20,\"limit_window_seconds\":18000,\"reset_at\":1800003600}},\"rate_limit_reset_credits\":{\"available_count\":\(available)\(applicableJSON)}}".utf8)
 }
 
-private func codexResetDetails(expiries: [String]) -> Data {
+private func codexResetDetails(available: Int? = nil, expiries: [String]) -> Data {
+    let availableCount = available ?? expiries.count
     let rows = expiries.map {
-        "{\"id\":\"discard-me\",\"status\":\"available\",\"is_supported_by_plan\":true,\"expires_at\":\"\($0)\"}"
+        "{\"id\":\"discard-me\",\"reset_type\":\"codex_rate_limits\",\"status\":\"available\",\"granted_at\":\"2027-01-01T00:00:00Z\",\"expires_at\":\"\($0)\"}"
     }.joined(separator: ",")
-    return Data("{\"credits\":[\(rows)]}".utf8)
+    return Data("{\"credits\":[\(rows)],\"available_count\":\(availableCount)}".utf8)
 }
 
 private func resetCreditSummary(

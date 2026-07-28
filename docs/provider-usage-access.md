@@ -91,20 +91,24 @@ examples:
 
 The verified OpenAI Codex read contract exposes an account-level summary under
 the exact `/backend-api/wham/usage` key `rate_limit_reset_credits`. Context
-Panel uses `applicable_available_count` when present, otherwise
-`available_count`, and clamps the effective count at zero. Reset credits remain
+Panel treats `available_count` as the authoritative inventory count, ignores
+unknown sibling fields, and clamps only that count at zero. Reset credits remain
 an account entitlement summary; they are not converted into `UsageLimit`
 capacity or pooled across accounts.
 
-When the effective count is greater than zero, Context Panel may make the
-separate sibling GET request
-`/backend-api/wham/rate-limit-reset-credits` to look for expiry evidence. Only
-the verified top-level `credits` array is parsed. A row contributes expiry
-evidence only when `status` is `available`, `is_supported_by_plan` is `true`,
-and `expires_at` is a valid future date at observation time. Missing, unknown,
-expired, unsupported, malformed, capped, or otherwise ambiguous rows reduce
-detail coverage without failing the normal usage refresh. The summary count
-from `/wham/usage` remains authoritative.
+When `available_count` is greater than zero, Context Panel may make the separate
+sibling GET request `/backend-api/wham/rate-limit-reset-credits` to look for
+expiry evidence. The equivalent `/api/codex/usage` source uses the verified
+`/api/codex/rate-limit-reset-credits` sibling. Only the required top-level
+`available_count` and `credits` array are parsed. Each row must contain the
+required `id`, `reset_type`, `status`, and valid `granted_at` fields; a row
+contributes expiry evidence only when `reset_type` is `codex_rate_limits`,
+`status` is `available`, and `expires_at` is a valid future date at observation
+time. Missing, unknown, expired, malformed, capped, or otherwise ambiguous rows
+reduce detail coverage without failing the normal usage refresh. A valid details
+response supplies the newer count. If that read fails or violates the required
+shape, the summary count from the usage response remains available as count-only
+evidence and no detail timing is retained.
 
 Local persistence is deliberately narrow: available count, observation time,
 coverage (`countOnly`, `partial`, or `complete`), and earliest known expiry.
