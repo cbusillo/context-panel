@@ -834,6 +834,13 @@ Preferred operator flow:
 4. After the dry run succeeds, rerun the same inputs with `dry_run: false` to
    submit review.
 
+App Store Connect accepts exactly one App Store version item per review
+submission. Run `Submit App Store Review` separately for each platform and
+marketing version; do not group internal version IDs into one submission. The
+helper creates an app-only review submission, attaches exactly one version item,
+and reuses that same item when a partial same-version retry reaches App Store
+Connect after item creation but before submission.
+
 Rejected App Store versions are not release candidates. They may be useful as
 audit targets while cleaning screenshots or copying metadata, but do not submit
 or dry-run-submit the same rejected marketing version again. Prepare the next
@@ -874,11 +881,11 @@ and submit that fresh version after device validation.
 
 Use `platform: MAC_OS` for the native macOS app. For companion review, first run
 the companion App Store Connect upload for `platform=ios`, `platform=visionos`,
-or `platform=tvos`, then run `Submit App Store Review` with `platform: IOS`,
-`platform: VISION_OS`, or `platform: TV_OS` and the companion build number. If
-App Store Connect says the app needs an approved iOS version or an iOS version
-in the current review submission, do not retry the macOS submit as the fix;
-upload and submit the companion iOS review path.
+or `platform=tvos`, then run `Submit App Store Review` separately with
+`platform: IOS`, `platform: VISION_OS`, or `platform: TV_OS` and the companion
+build number. If App Store Connect says the app needs an approved iOS version or
+an iOS version under review, do not retry the macOS submit as the fix; upload and
+submit the companion iOS review path as its own review submission.
 
 Cancel-only recovery is available through `Submit App Store Review` by setting
 `cancel_review_only: true` and `remove_active_review_version` to the version
