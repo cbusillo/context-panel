@@ -569,7 +569,8 @@ private struct CPWMainLimitHeaderAccessory: View {
         CPWPromptCacheInlineStat(
             state: state,
             summary: summary,
-            cacheStatsSettingsURL: cacheStatsSettingsURL
+            cacheStatsSettingsURL: cacheStatsSettingsURL,
+            compactAvailable: layout == .large && resetCreditSummary != nil
         )
     }
 
@@ -586,15 +587,25 @@ private struct CPWMainLimitHeaderAccessory: View {
             }
         case .large:
             if let resetCreditSummary, showsCache {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 6) {
+                if resetCreditSummary.primaryActionableGuidance != nil {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 6) {
+                            cache
+                            CPWResetCreditHeaderToken(layout: .large, summary: resetCreditSummary, now: now)
+                        }
                         CPWResetCreditHeaderToken(layout: .large, summary: resetCreditSummary, now: now)
-                        cache
                     }
-                    if resetCreditSummary.primaryActionableGuidance != nil {
-                        CPWResetCreditHeaderToken(layout: .large, summary: resetCreditSummary, now: now)
-                    } else {
-                        cache
+                } else {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 6) {
+                            cache
+                            CPWResetCreditHeaderToken(layout: .large, summary: resetCreditSummary, now: now)
+                        }
+                        if state == .available {
+                            CPWResetCreditHeaderToken(layout: .large, summary: resetCreditSummary, now: now)
+                        } else {
+                            cache
+                        }
                     }
                 }
             } else if let resetCreditSummary {
@@ -660,9 +671,9 @@ private struct CPWResetCreditHeaderToken: View {
 
     private var tokenContent: some View {
         HStack(spacing: 4) {
-            Image(systemName: "arrow.counterclockwise.circle.fill")
-                .font(.system(size: 9, weight: .semibold))
             if let guidance {
+                Image(systemName: "arrow.counterclockwise.circle.fill")
+                    .font(.system(size: 9, weight: .semibold))
                 if case .large = layout {
                     CPWProviderBadge(provider: guidance.provider, compact: true)
                 }
@@ -679,7 +690,14 @@ private struct CPWResetCreditHeaderToken: View {
                         .font(.system(size: 8, weight: .semibold))
                         .lineLimit(1)
                 }
+            } else if layout == .large {
+                CPWProviderBadge(provider: summary.provider, compact: true)
+                Text("Reset credits · \(compactAccountCountText)")
+                    .font(.system(size: 8, weight: .semibold))
+                    .lineLimit(1)
             } else {
+                Image(systemName: "arrow.counterclockwise.circle.fill")
+                    .font(.system(size: 9, weight: .semibold))
                 Text("Credits · \(summary.accountCountText)")
                     .font(.system(size: 8, weight: .semibold))
                     .lineLimit(1)
@@ -687,6 +705,10 @@ private struct CPWResetCreditHeaderToken: View {
         }
         .foregroundStyle(tone)
         .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var compactAccountCountText: String {
+        summary.accountCount == 1 ? "1 acct" : "\(summary.accountCount) accts"
     }
 
     private var accessibilityText: String {
@@ -705,6 +727,19 @@ struct CPWPromptCacheInlineStat: View {
     let state: PromptCacheWidgetState
     let summary: PromptCacheSummary
     let cacheStatsSettingsURL: URL
+    let compactAvailable: Bool
+
+    init(
+        state: PromptCacheWidgetState,
+        summary: PromptCacheSummary,
+        cacheStatsSettingsURL: URL,
+        compactAvailable: Bool = false
+    ) {
+        self.state = state
+        self.summary = summary
+        self.cacheStatsSettingsURL = cacheStatsSettingsURL
+        self.compactAvailable = compactAvailable
+    }
 
     private var currentRate: Double? {
         summary.latestHitRate
@@ -717,7 +752,7 @@ struct CPWPromptCacheInlineStat: View {
     var body: some View {
         switch state {
         case .available:
-            HStack(alignment: .center, spacing: 0) {
+            if compactAvailable {
                 HStack(spacing: 4) {
                     CPWStatusMark(status: summary.comparisonStatus, size: 5)
                     Text("Cache")
@@ -728,31 +763,51 @@ struct CPWPromptCacheInlineStat: View {
                         .font(.system(size: 10, weight: .semibold, design: .monospaced))
                 }
                 .foregroundStyle(CPWTheme.statusColor(summary.comparisonStatus))
-                .padding(.leading, 6)
-                .padding(.trailing, 5)
+                .lineLimit(1)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(CPWTheme.line(variant: themeVariant).opacity(0.45))
+                .clipShape(Capsule(style: .continuous))
+                .fixedSize(horizontal: true, vertical: false)
+                .accessibilityLabel(accessibilityLabel)
+            } else {
+                HStack(alignment: .center, spacing: 0) {
+                    HStack(spacing: 4) {
+                        CPWStatusMark(status: summary.comparisonStatus, size: 5)
+                        Text("Cache")
+                            .font(.system(size: 8, weight: .semibold))
+                            .tracking(0.45)
+                            .textCase(.uppercase)
+                        Text(currentRate.map(Self.percentText) ?? "--")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    }
+                    .foregroundStyle(CPWTheme.statusColor(summary.comparisonStatus))
+                    .padding(.leading, 6)
+                    .padding(.trailing, 5)
 
-                Rectangle()
-                    .fill(CPWTheme.line(variant: themeVariant).opacity(0.85))
-                    .frame(width: 1, height: 11)
+                    Rectangle()
+                        .fill(CPWTheme.line(variant: themeVariant).opacity(0.85))
+                        .frame(width: 1, height: 11)
 
-                HStack(spacing: 3) {
-                    Text("avg")
-                        .font(.system(size: 8, weight: .semibold))
-                        .tracking(0.45)
-                        .textCase(.uppercase)
-                    Text(averageRate.map(Self.percentText) ?? "--")
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    HStack(spacing: 3) {
+                        Text("avg")
+                            .font(.system(size: 8, weight: .semibold))
+                            .tracking(0.45)
+                            .textCase(.uppercase)
+                        Text(averageRate.map(Self.percentText) ?? "--")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    }
+                    .foregroundStyle(CPWTheme.tertiaryText(variant: themeVariant))
+                    .padding(.leading, 5)
+                    .padding(.trailing, 6)
                 }
-                .foregroundStyle(CPWTheme.tertiaryText(variant: themeVariant))
-                .padding(.leading, 5)
-                .padding(.trailing, 6)
+                .lineLimit(1)
+                .padding(.vertical, 2)
+                .background(CPWTheme.line(variant: themeVariant).opacity(0.45))
+                .clipShape(Capsule(style: .continuous))
+                .fixedSize(horizontal: true, vertical: false)
+                .accessibilityLabel(accessibilityLabel)
             }
-            .lineLimit(1)
-            .padding(.vertical, 2)
-            .background(CPWTheme.line(variant: themeVariant).opacity(0.45))
-            .clipShape(Capsule(style: .continuous))
-            .fixedSize(horizontal: true, vertical: false)
-            .accessibilityLabel(accessibilityLabel)
         case .needsAuthorization:
             Link(destination: cacheStatsSettingsURL) {
                 promptCachePill(
@@ -1294,6 +1349,8 @@ struct CPWSectionHeader<Accessory: View>: View {
                 .foregroundStyle(CPWTheme.tertiaryText(variant: themeVariant))
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
+                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(1)
             Spacer()
             accessory
             if let trailing {

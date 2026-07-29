@@ -78,8 +78,12 @@ horizontal slots rather than adding cards or reducing visible limit rows.
   global credit total.
 - Medium-widget accessory priority is actionable reset guidance, prompt-cache
   telemetry, then neutral credit availability. The large widget may show reset
-  availability and cache telemetry together when they fit. Neither family gives
-  up a saved limit row for reset-credit presentation.
+  availability and cache telemetry together. When both are present, the large
+  widget keeps the cache health/current-rate signal compact and leaves the
+  rolling average in accessibility and the app. Actionable reset guidance wins
+  when the pair cannot fit; a stale or authorization-required cache state wins
+  over neutral reset availability. Neither family gives up a saved limit row for
+  reset-credit presentation.
 - Widgets suppress reset-credit signals when the widget is stale, failed, needs
   setup, or when the credit observation is inconsistent or has elapsed. The app
   remains the place to explain and recover those states.

@@ -239,7 +239,9 @@ private let renderTestWidgetLinks = ContextPanelWidgetLinks(
         now: now,
         weeklyUsed: 20,
         resetInterval: 4 * 86_400,
-        expiryInterval: 2 * 86_400
+        expiryInterval: 2 * 86_400,
+        promptCacheObservations: resetCreditPromptCacheObservations(now: now),
+        promptCacheWidgetState: .available
     )
     let neutralSummary = try #require(neutralSnapshot.resetCreditSurfaceSummary(now: now))
     #expect(neutralSummary.accountCount == 1)
@@ -400,7 +402,9 @@ private func resetCreditRenderSnapshot(
     now: Date,
     weeklyUsed: Int = 100,
     resetInterval: TimeInterval = 3 * 60 * 60,
-    expiryInterval: TimeInterval = 2 * 86_400
+    expiryInterval: TimeInterval = 2 * 86_400,
+    promptCacheObservations: [PromptCacheObservation] = [],
+    promptCacheWidgetState: PromptCacheWidgetState = .unavailable
 ) -> WidgetSnapshot {
     let accountID = "openai-long-account-name"
     let configuredAccountID = "configured-openai"
@@ -440,9 +444,32 @@ private func resetCreditRenderSnapshot(
                 errorMessage: nil
             ),
         ],
+        promptCacheObservations: promptCacheObservations,
+        promptCacheWidgetState: promptCacheWidgetState,
         status: weeklyUsed >= 100 ? .limited : .close,
         message: "Current"
     )
+}
+
+private func resetCreditPromptCacheObservations(now: Date) -> [PromptCacheObservation] {
+    [
+        PromptCacheObservation(
+            provider: .openAI,
+            accountID: "openai-long-account-name",
+            accountName: "OpenAI Long Account Name For Layout",
+            observedAt: now,
+            windowLabel: "latest",
+            tokens: PromptCacheTokenSet(inputTokens: 1_000, cachedInputTokens: 980)
+        ),
+        PromptCacheObservation(
+            provider: .openAI,
+            accountID: "openai-long-account-name",
+            accountName: "OpenAI Long Account Name For Layout",
+            observedAt: now.addingTimeInterval(-60),
+            windowLabel: "previous",
+            tokens: PromptCacheTokenSet(inputTokens: 1_000, cachedInputTokens: 970)
+        ),
+    ]
 }
 
 private func multiLaneSmallWidgetSnapshot(state: WidgetSnapshotState = .ready) -> WidgetSnapshot {
