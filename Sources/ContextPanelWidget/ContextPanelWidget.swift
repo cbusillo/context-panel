@@ -160,7 +160,8 @@ struct ContextPanelWidgetView: View {
             family: family,
             snapshot: entry.snapshot,
             displayPreferences: entry.displayPreferences,
-            links: ContextPanelWidgetURL.links
+            links: ContextPanelWidgetURL.links,
+            showsResetCreditSurfaces: true
         )
     }
 }

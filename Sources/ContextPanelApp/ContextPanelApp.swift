@@ -2208,10 +2208,19 @@ struct AccountsSidebar: View {
             }
             Section("Providers") {
                 let reports = model.storedSnapshot?.reports ?? []
+                let resetCreditSummary = ResetCreditSurfaceAdvisor.appSummary(
+                    reports: reports,
+                    limits: snapshot.limits,
+                    now: Date()
+                )
                 ForEach(Provider.allCases) { provider in
                     let summaries = snapshot.mainLimitSummaries.filter { $0.provider == provider }
                     if shouldShowProviderNavigation(provider: provider, summaries: summaries, reports: reports) {
-                        ProviderSidebarRow(provider: provider, limitCount: summaries.count)
+                        ProviderSidebarRow(
+                            provider: provider,
+                            limitCount: summaries.count,
+                            resetCreditSummary: provider == .openAI ? resetCreditSummary : nil
+                        )
                             .tag(AppNavigationSelection.provider(provider))
                         ForEach(summaries.sortedForSidebar) { summary in
                             SidebarRateLimitRow(
@@ -2250,6 +2259,7 @@ struct AccountsSidebar: View {
 struct ProviderSidebarRow: View {
     let provider: Provider
     let limitCount: Int
+    let resetCreditSummary: ProviderResetCreditSurfaceSummary?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -2258,6 +2268,13 @@ struct ProviderSidebarRow: View {
                 .font(.system(size: 12, weight: .semibold))
                 .textCase(.uppercase)
                 .foregroundStyle(.secondary)
+            if let resetCreditSummary {
+                Image(systemName: "arrow.counterclockwise.circle")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(CPTheme.tertiaryText)
+                    .help(resetCreditHelpText(resetCreditSummary))
+                    .accessibilityHidden(true)
+            }
             Spacer()
             if limitCount > 0 {
                 Text("\(limitCount)")
@@ -2265,6 +2282,19 @@ struct ProviderSidebarRow: View {
                     .foregroundStyle(.tertiary)
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityText)
+    }
+
+    private var accessibilityText: String {
+        var parts = [provider.displayName]
+        if limitCount > 0 {
+            parts.append(limitCount == 1 ? "1 main limit" : "\(limitCount) main limits")
+        }
+        if let resetCreditSummary {
+            parts.append(resetCreditAccessibilityText(resetCreditSummary))
+        }
+        return parts.joined(separator: ", ")
     }
 }
 
@@ -3269,6 +3299,14 @@ struct HeaderCard: View {
         ))
     }
 
+    private var resetCreditSummary: ProviderResetCreditSurfaceSummary? {
+        ResetCreditSurfaceAdvisor.appSummary(
+            reports: model.storedSnapshot?.reports ?? [],
+            limits: snapshot.limits,
+            now: Date()
+        )
+    }
+
     var body: some View {
         HStack(alignment: .center, spacing: 22) {
             VStack(alignment: .leading, spacing: 10) {
@@ -3292,6 +3330,9 @@ struct HeaderCard: View {
                 HStack(spacing: 8) {
                     TagLabel("\(snapshot.mainLimitSummaries.count) main windows")
                     TagLabel("Accounts pooled")
+                    if let resetCreditSummary {
+                        ResetCreditAvailabilityTag(summary: resetCreditSummary)
+                    }
                     if model.storeStatus != .healthy {
                         TagLabel(model.storeStatus.previewStatusText.capitalized)
                     }
@@ -3380,6 +3421,15 @@ struct ProviderHeaderCard: View {
         )
     }
 
+    private var resetCreditSummary: ProviderResetCreditSurfaceSummary? {
+        guard provider == .openAI else { return nil }
+        return ResetCreditSurfaceAdvisor.appSummary(
+            reports: model.storedSnapshot?.reports ?? [],
+            limits: summaries.flatMap(\.limits),
+            now: Date()
+        )
+    }
+
     var body: some View {
         HStack(alignment: .center, spacing: 22) {
             VStack(alignment: .leading, spacing: 10) {
@@ -3395,6 +3445,9 @@ struct ProviderHeaderCard: View {
                 HStack(spacing: 8) {
                     TagLabel("\(summaries.count) main windows")
                     TagLabel("\(summaries.reduce(0) { $0 + $1.accountCount }) account windows")
+                    if let resetCreditSummary {
+                        ResetCreditAvailabilityTag(summary: resetCreditSummary)
+                    }
                     if model.storeStatus != .healthy {
                         TagLabel(model.storeStatus.previewStatusText.capitalized)
                     }
@@ -5000,6 +5053,67 @@ struct TagLabel: View {
             .background(CPTheme.accent.opacity(0.08))
             .clipShape(Capsule())
     }
+}
+
+private struct ResetCreditAvailabilityTag: View {
+    let summary: ProviderResetCreditSurfaceSummary
+    @State private var isHovering = false
+
+    private var tone: Color {
+        summary.isLastSeenOnly ? CPTheme.statusColor(.stale) : CPTheme.accent
+    }
+
+    private var destination: URL {
+        URL(string: "contextpanel://provider/\(summary.provider.rawValue)")!
+    }
+
+    var body: some View {
+        Link(destination: destination) {
+            HStack(spacing: 5) {
+                Image(systemName: "arrow.counterclockwise.circle")
+                    .font(.system(size: 10, weight: .semibold))
+                Text(resetCreditTagText(summary))
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            }
+            .foregroundStyle(tone)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(tone.opacity(isHovering ? 0.15 : 0.08))
+            .clipShape(Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(tone.opacity(isHovering ? 0.42 : 0.18), lineWidth: 1)
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(resetCreditHelpText(summary))
+        .accessibilityLabel(resetCreditAccessibilityText(summary))
+        .accessibilityHint("Opens OpenAI detail in Context Panel")
+        .onHover { isHovering in
+            self.isHovering = isHovering
+            (isHovering ? NSCursor.pointingHand : NSCursor.arrow).set()
+        }
+    }
+}
+
+private func resetCreditTagText(_ summary: ProviderResetCreditSurfaceSummary) -> String {
+    let prefix = summary.isLastSeenOnly ? "Reset credits last seen" : "Reset credits"
+    return "\(prefix) · \(summary.accountCountText)"
+}
+
+private func resetCreditHelpText(_ summary: ProviderResetCreditSurfaceSummary) -> String {
+    summary.isLastSeenOnly
+        ? "Reset credits were last seen on \(summary.accountCountText)."
+        : "Reset credits are available on \(summary.accountCountText)."
+}
+
+private func resetCreditAccessibilityText(_ summary: ProviderResetCreditSurfaceSummary) -> String {
+    summary.isLastSeenOnly
+        ? "Reset credits were last seen on \(summary.providerAccountCountText)."
+        : "Reset credits are available on \(summary.providerAccountCountText)."
 }
 
 enum CPTheme {

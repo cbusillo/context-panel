@@ -136,6 +136,14 @@ import Testing
         contentsOf: root.appending(path: "Sources/ContextPanelWidgetUI/ContextPanelWidgetViews.swift"),
         encoding: .utf8
     )
+    let macWidgetSource = try String(
+        contentsOf: root.appending(path: "Sources/ContextPanelWidget/ContextPanelWidget.swift"),
+        encoding: .utf8
+    )
+    let companionWidgetSource = try String(
+        contentsOf: root.appending(path: "Sources/ContextPanelCompanionWidget/ContextPanelCompanionWidget.swift"),
+        encoding: .utf8
+    )
     let appResetRow = try userFacingCopySection(
         in: appSource,
         startingAt: "private struct OpenAIResetCreditRow",
@@ -154,7 +162,7 @@ import Testing
     let largeWidget = try userFacingCopySection(
         in: widgetSource,
         startingAt: "struct ContextPanelLargeWidget",
-        endingAt: "struct CPWResetCreditActionNote"
+        endingAt: "private enum CPWMainLimitHeaderLayout"
     )
 
     for phrase in ["redeem", "consume", "guarantee", "payment", "purchase"] {
@@ -165,11 +173,25 @@ import Testing
     }
 
     #expect(!smallWidget.contains("ResetCredit"))
-    #expect(mediumWidget.contains("CPWResetCreditActionNote"))
-    #expect(largeWidget.contains("CPWResetCreditActionNote"))
+    #expect(mediumWidget.contains("CPWMainLimitHeaderAccessory"))
+    #expect(largeWidget.contains("CPWMainLimitHeaderAccessory"))
+    #expect(mediumWidget.contains("maximumCount: 3"))
+    #expect(largeWidget.contains("maximumCount: 5"))
+    #expect(!mediumWidget.contains("maximumCount: resetCredit"))
+    #expect(!largeWidget.contains("maximumCount: resetCredit"))
+    #expect(widgetSource.contains("private struct CPWResetCreditHeaderToken"))
+    #expect(widgetSource.contains("Text(\"Credits · \\(summary.accountCountText)\")"))
+    #expect(widgetSource.contains("guidance.glanceActionText"))
+    #expect(widgetSource.contains("showsResetCreditSurfaces: Bool = false"))
+    #expect(macWidgetSource.contains("showsResetCreditSurfaces: true"))
+    #expect(!companionWidgetSource.contains("showsResetCreditSurfaces: true"))
+    #expect(appSource.contains("ResetCreditAvailabilityTag"))
+    #expect(appSource.contains("Reset credits last seen"))
+    #expect(appSource.contains("arrow.counterclockwise.circle"))
     #expect(widgetSource.contains("components.scheme = \"contextpanel\""))
     #expect(widgetSource.contains("components.host = \"provider\""))
-    #expect(widgetSource.contains("accessibilityHint(\"Opens account detail in Context Panel\")"))
+    #expect(widgetSource.contains("\"Opens account detail in Context Panel\""))
+    #expect(widgetSource.contains("\"Opens OpenAI detail in Context Panel\""))
 }
 
 private func userFacingCopyRepositoryRoot() throws -> URL {

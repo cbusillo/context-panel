@@ -79,6 +79,7 @@ import Testing
 
     #expect(guidance.state == .considerUsingNow)
     #expect(guidance.compactActionText == "consider using now")
+    #expect(guidance.glanceActionText == "use now")
 }
 
 @Test func resetCreditGuidanceHoldsForImminentNaturalResetBoundary() throws {
@@ -174,6 +175,7 @@ import Testing
     #expect(pressured.state == .considerBefore(expiry))
     #expect(pressured.compactActionText?.hasPrefix("consider before ") == true)
     #expect(pressured.compactActionText?.contains(pressured.accountName) == false)
+    #expect(pressured.glanceActionText?.hasPrefix("by ") == true)
     #expect(healthy.state == .hold(.weeklyCapacityHealthy))
 }
 
@@ -451,6 +453,83 @@ import Testing
     #expect(guidance.map(\.accountID) == ["resolved-a", "resolved-b"])
     #expect(guidance.map(\.resetCredits.availableCount) == [1, 2])
     #expect(guidance.map(\.state) == [.considerUsingNow, .hold(.weeklyCapacityHealthy)])
+}
+
+@Test func resetCreditSurfaceSummarySeparatesAppDiscoveryFromWidgetTrust() throws {
+    let now = resetGuidanceDate()
+    let staleDate = now.addingTimeInterval(-(SnapshotFreshness.widgetMaximumAge + 1))
+    let current = resetGuidanceReport(
+        accountID: "account-current",
+        accountName: "Current",
+        now: now,
+        count: 2,
+        coverage: .complete,
+        expiry: now.addingTimeInterval(86_400)
+    )
+    let stale = resetGuidanceReport(
+        accountID: "account-stale",
+        accountName: "Stale",
+        now: staleDate,
+        count: 3,
+        coverage: .complete,
+        expiry: now.addingTimeInterval(2 * 86_400)
+    )
+    let limits = [
+        resetGuidanceLimit(
+            accountID: current.accountID,
+            window: .weekly,
+            used: 20,
+            resetsAt: now.addingTimeInterval(3 * 86_400)
+        ),
+        resetGuidanceLimit(
+            accountID: stale.accountID,
+            window: .weekly,
+            used: 20,
+            resetsAt: now.addingTimeInterval(3 * 86_400)
+        ),
+    ]
+
+    let app = try #require(ResetCreditSurfaceAdvisor.appSummary(
+        reports: [stale, current],
+        limits: limits,
+        now: now
+    ))
+    let widget = try #require(ResetCreditSurfaceAdvisor.widgetSummary(
+        reports: [stale, current],
+        limits: limits,
+        now: now
+    ))
+    let staleOnly = try #require(ResetCreditSurfaceAdvisor.appSummary(
+        reports: [stale],
+        limits: limits,
+        now: now
+    ))
+
+    #expect((app.accountCount, app.accountCountText, app.providerAccountCountText, app.isLastSeenOnly) == (
+        1, "1 account", "1 OpenAI account", false
+    ))
+    #expect((widget.accountCount, widget.accountCountText, widget.isLastSeenOnly) == (1, "1 account", false))
+    #expect((staleOnly.accountCount, staleOnly.isLastSeenOnly) == (1, true))
+    #expect(ResetCreditSurfaceAdvisor.widgetSummary(reports: [stale], limits: limits, now: now) == nil)
+}
+
+@Test func resetCreditSurfaceSummaryKeepsCurrentCountOnlyAvailabilityNeutral() throws {
+    let now = resetGuidanceDate()
+    let report = resetGuidanceReport(now: now, count: 2, coverage: .countOnly)
+    let summary = try #require(ResetCreditSurfaceAdvisor.widgetSummary(
+        reports: [report],
+        limits: [resetGuidanceLimit(
+            accountID: report.accountID,
+            window: .weekly,
+            used: 20,
+            resetsAt: now.addingTimeInterval(3 * 86_400)
+        )],
+        now: now
+    ))
+
+    #expect(summary.accountCount == 1)
+    #expect(summary.primaryActionableGuidance == nil)
+    #expect(!summary.isLastSeenOnly)
 }
 
 private func resetGuidanceDate() -> Date {

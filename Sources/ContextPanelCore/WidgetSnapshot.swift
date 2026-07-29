@@ -81,8 +81,14 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     public func primaryActionableResetCreditGuidance(
         now: Date = Date()
     ) -> ProviderResetCreditGuidance? {
+        resetCreditSurfaceSummary(now: now)?.primaryActionableGuidance
+    }
+
+    public func resetCreditSurfaceSummary(
+        now: Date = Date()
+    ) -> ProviderResetCreditSurfaceSummary? {
         guard state == .ready, syncErrorMessage == nil else { return nil }
-        return ResetCreditGuidanceAdvisor.primaryActionableGuidance(
+        return ResetCreditSurfaceAdvisor.widgetSummary(
             reports: reports,
             limits: limits,
             now: now,

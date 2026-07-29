@@ -108,6 +108,17 @@ public struct ProviderResetCreditGuidance: Equatable, Identifiable, Sendable {
         }
     }
 
+    public var glanceActionText: String? {
+        switch state {
+        case .considerUsingNow:
+            "use now"
+        case let .considerBefore(expiry):
+            "by \(Self.compactDateText(expiry))"
+        case .hold, .refresh:
+            nil
+        }
+    }
+
     private static func dateText(_ date: Date) -> String {
         date.formatted(date: .abbreviated, time: .shortened)
     }
@@ -126,6 +137,93 @@ public struct ProviderResetCreditGuidance: Equatable, Identifiable, Sendable {
             return "in \(max(Int(interval / (60 * 60)), 1))h"
         }
         return "on \(date.formatted(date: .abbreviated, time: .shortened))"
+    }
+}
+
+public struct ProviderResetCreditSurfaceSummary: Equatable, Sendable {
+    public let provider: Provider
+    public let accountCount: Int
+    public let isLastSeenOnly: Bool
+    public let primaryActionableGuidance: ProviderResetCreditGuidance?
+
+    public var accountCountText: String {
+        accountCount == 1 ? "1 account" : "\(accountCount) accounts"
+    }
+
+    public var providerAccountCountText: String {
+        accountCount == 1
+            ? "1 \(provider.displayName) account"
+            : "\(accountCount) \(provider.displayName) accounts"
+    }
+}
+
+public enum ResetCreditSurfaceAdvisor {
+    public static func appSummary(
+        reports: [StoredProviderReport],
+        limits: [UsageLimit],
+        now: Date,
+        maximumAge: TimeInterval = SnapshotFreshness.appMaximumAge
+    ) -> ProviderResetCreditSurfaceSummary? {
+        summary(
+            reports: reports,
+            limits: limits,
+            now: now,
+            maximumAge: maximumAge,
+            includesLastSeen: true
+        )
+    }
+
+    public static func widgetSummary(
+        reports: [StoredProviderReport],
+        limits: [UsageLimit],
+        now: Date,
+        maximumAge: TimeInterval = SnapshotFreshness.widgetMaximumAge
+    ) -> ProviderResetCreditSurfaceSummary? {
+        summary(
+            reports: reports,
+            limits: limits,
+            now: now,
+            maximumAge: maximumAge,
+            includesLastSeen: false
+        )
+    }
+
+    private static func summary(
+        reports: [StoredProviderReport],
+        limits: [UsageLimit],
+        now: Date,
+        maximumAge: TimeInterval,
+        includesLastSeen: Bool
+    ) -> ProviderResetCreditSurfaceSummary? {
+        let guidance = ResetCreditGuidanceAdvisor.guidance(
+            reports: reports,
+            limits: limits,
+            now: now,
+            maximumAge: maximumAge
+        )
+        let trustworthy = guidance.filter { $0.state.supportsResetCreditGlance }
+        let displayed: [ProviderResetCreditGuidance]
+        let isLastSeenOnly: Bool
+        if !trustworthy.isEmpty {
+            displayed = trustworthy
+            isLastSeenOnly = false
+        } else if includesLastSeen, !guidance.isEmpty {
+            displayed = guidance
+            isLastSeenOnly = true
+        } else {
+            return nil
+        }
+        return ProviderResetCreditSurfaceSummary(
+            provider: .openAI,
+            accountCount: displayed.count,
+            isLastSeenOnly: isLastSeenOnly,
+            primaryActionableGuidance: ResetCreditGuidanceAdvisor.primaryActionableGuidance(
+                reports: reports,
+                limits: limits,
+                now: now,
+                maximumAge: maximumAge
+            )
+        )
     }
 }
 
@@ -344,6 +442,17 @@ private extension UsageStatus {
 }
 
 private extension ResetCreditGuidanceState {
+    var supportsResetCreditGlance: Bool {
+        switch self {
+        case .hold, .considerUsingNow, .considerBefore:
+            true
+        case .refresh(.expiryUnknown), .refresh(.weeklyLimitUnknown), .refresh(.naturalResetUnknown):
+            true
+        case .refresh(.staleObservation), .refresh(.inconsistentObservation), .refresh(.expiryElapsed):
+            false
+        }
+    }
+
     var actionableRank: Int {
         switch self {
         case .considerUsingNow: 0

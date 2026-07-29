@@ -2133,8 +2133,10 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
         message: "Current"
     )
 
-    let guidance = try #require(snapshot.primaryActionableResetCreditGuidance(now: now))
+    let surfaceSummary = try #require(snapshot.resetCreditSurfaceSummary(now: now))
+    let guidance = try #require(surfaceSummary.primaryActionableGuidance)
 
+    #expect(surfaceSummary.accountCount == 2)
     #expect(guidance.accountID == "actionable")
     #expect(guidance.state == .considerUsingNow)
 }
@@ -2184,6 +2186,9 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(hold.primaryActionableResetCreditGuidance(now: now) == nil)
     #expect(stale.primaryActionableResetCreditGuidance(now: now) == nil)
     #expect(syncFailure.primaryActionableResetCreditGuidance(now: now) == nil)
+    #expect(hold.resetCreditSurfaceSummary(now: now)?.accountCount == 1)
+    #expect(stale.resetCreditSurfaceSummary(now: now) == nil)
+    #expect(syncFailure.resetCreditSurfaceSummary(now: now) == nil)
 }
 
 private func widgetResetCreditReport(

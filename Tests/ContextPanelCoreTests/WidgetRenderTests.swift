@@ -203,7 +203,8 @@ private let renderTestWidgetLinks = ContextPanelWidgetLinks(
             family: family,
             snapshot: snapshot,
             displayPreferences: .defaultPreferences,
-            links: renderTestWidgetLinks
+            links: renderTestWidgetLinks,
+            showsResetCreditSurfaces: true
         )
         .cpwThemeVariant(.light)
         .frame(width: width, height: height)
@@ -225,13 +226,36 @@ private let renderTestWidgetLinks = ContextPanelWidgetLinks(
         family: .systemMedium,
         snapshot: considerBeforeSnapshot,
         displayPreferences: .defaultPreferences,
-        links: renderTestWidgetLinks
+        links: renderTestWidgetLinks,
+        showsResetCreditSurfaces: true
     )
     .cpwThemeVariant(.light)
     .frame(width: 344, height: 164)
     .background(CPWTheme.surface(variant: .light))
     let considerBeforeImage = try #require(renderedImage(from: considerBeforeView, width: 344, height: 164))
     #expect(nonBackgroundPixelCount(in: considerBeforeImage) > 2_500)
+
+    let neutralSnapshot = resetCreditRenderSnapshot(
+        now: now,
+        weeklyUsed: 20,
+        resetInterval: 4 * 86_400,
+        expiryInterval: 2 * 86_400
+    )
+    let neutralSummary = try #require(neutralSnapshot.resetCreditSurfaceSummary(now: now))
+    #expect(neutralSummary.accountCount == 1)
+    #expect(neutralSummary.primaryActionableGuidance == nil)
+    let neutralView = ContextPanelWidgetContentView(
+        family: .systemLarge,
+        snapshot: neutralSnapshot,
+        displayPreferences: .defaultPreferences,
+        links: renderTestWidgetLinks,
+        showsResetCreditSurfaces: true
+    )
+    .cpwThemeVariant(.light)
+    .frame(width: 344, height: 344)
+    .background(CPWTheme.surface(variant: .light))
+    let neutralImage = try #require(renderedImage(from: neutralView, width: 344, height: 344))
+    #expect(nonBackgroundPixelCount(in: neutralImage) > 5_000)
 }
 
 @MainActor
