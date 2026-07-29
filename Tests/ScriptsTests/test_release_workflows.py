@@ -812,6 +812,17 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("--review-notes", script)
         self.assertIn('review_attributes["notes"] = review_notes', script)
 
+    def test_app_store_review_workflow_uses_single_version_submissions(self):
+        workflow = self.read(".github/workflows/submit-app-store-review.yml")
+        script = self.read("scripts/submit-app-store-review.py")
+        release_docs = self.read("docs/release.md")
+
+        self.assertNotIn("additional_review_versions:", workflow)
+        self.assertNotIn("--additional-review-version", script)
+        self.assertIn('f"/reviewSubmissions/{submission_id}/items"', script)
+        self.assertIn("exactly one App Store version item per review", release_docs)
+        self.assertIn("separately for each platform and", release_docs)
+
     def test_app_store_review_workflow_supports_tvos(self):
         workflow = self.read(".github/workflows/submit-app-store-review.yml")
         script = self.read("scripts/submit-app-store-review.py")

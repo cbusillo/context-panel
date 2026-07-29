@@ -198,10 +198,6 @@ def namespace_platform(args: argparse.Namespace) -> str:
     return getattr(args, "platform", "MAC_OS")
 
 
-def namespace_additional_review_versions(args: argparse.Namespace) -> list[str]:
-    return list(getattr(args, "additional_review_version", []))
-
-
 def namespace_copy_from_platform(args: argparse.Namespace) -> str:
     return getattr(args, "copy_from_platform", None) or namespace_platform(args)
 
@@ -658,7 +654,14 @@ def is_existing_review_item_conflict(error: AppStoreConnectError) -> bool:
     if error.status != 409:
         return False
     text = f"{error} {json.dumps(error.payload or {}, sort_keys=True)}".lower()
-    return "already exists" in text
+    return "already exists" in text or "was already added to this reviewsubmission" in text
+
+
+def is_review_submission_version_slot_taken(error: AppStoreConnectError) -> bool:
+    if error.status != 409:
+        return False
+    text = f"{error} {json.dumps(error.payload or {}, sort_keys=True)}".lower()
+    return "only one appstoreversion can be present" in text
 
 
 def is_review_submission_state_invalid_for_item_removal(error: AppStoreConnectError) -> bool:
@@ -673,17 +676,6 @@ def is_locked_whats_new_error(error: AppStoreConnectError) -> bool:
         return False
     text = json.dumps(error.payload or {}, sort_keys=True).lower()
     return "whatsnew" in text and "cannot be edited" in text
-
-
-def is_review_version_create_relationship_not_allowed(error: AppStoreConnectError) -> bool:
-    if error.status != 409:
-        return False
-    text = json.dumps(error.payload or {}, sort_keys=True).lower()
-    return (
-        "appstoreversionforreview" in text
-        and "not_allowed" in text
-        and "create" in text
-    )
 
 
 def is_review_submission_limit_exceeded(error: AppStoreConnectError) -> bool:
@@ -1179,114 +1171,51 @@ def ensure_metadata(client: ASCClient, version_id: str, source_localization: dic
             print("Cleared copied prior-version TV_OS review notes")
 
 
-def create_review_submission(
-    client: ASCClient,
-    app_id: str,
-    app_store_version_relationship: dict[str, Any],
-) -> dict[str, Any]:
+def create_review_submission(client: ASCClient, app_id: str) -> dict[str, Any]:
     body = {
         "data": {
             "type": "reviewSubmissions",
-            "relationships": {
-                "app": {"data": {"type": "apps", "id": app_id}},
-                "appStoreVersionForReview": app_store_version_relationship,
-            },
+            "relationships": {"app": {"data": {"type": "apps", "id": app_id}}},
         }
     }
-    try:
-        return client.request("POST", "/reviewSubmissions", body=body, allowed=(201,))["data"]
-    except AppStoreConnectError as error:
-        if not is_review_version_create_relationship_not_allowed(error):
-            raise
-        fallback_body = {
-            "data": {
-                "type": "reviewSubmissions",
-                "relationships": {"app": {"data": {"type": "apps", "id": app_id}}},
-            }
-        }
-        submission = client.request("POST", "/reviewSubmissions", body=fallback_body, allowed=(201,))["data"]
-        print("Created review submission without appStoreVersionForReview because App Store Connect rejected it")
-        return submission
+    return client.request("POST", "/reviewSubmissions", body=body, allowed=(201,))["data"]
 
 
-def active_submission_for_version(
+def review_submission_item_version_ids(
     client: ASCClient,
-    app_id: str,
-    platform: str | None,
-    version_id: str,
-) -> dict[str, Any] | None:
-    base_params = {
-            "filter[app]": app_id,
-            "include": "items,appStoreVersionForReview",
-            "fields[reviewSubmissions]": "platform,state,submittedDate,items,appStoreVersionForReview",
+    submission_id: str,
+) -> set[str]:
+    payload = paginated_get(
+        client,
+        f"/reviewSubmissions/{submission_id}/items",
+        {
+            "include": "appStoreVersion",
             "fields[reviewSubmissionItems]": "state,appStoreVersion",
+            "fields[appStoreVersions]": "versionString,appStoreState,appVersionState,platform",
+        },
+        limit=20,
+    )
+    return {
+        version_id
+        for item in payload.get("data", [])
+        if (version_id := relationship_id(item, "appStoreVersion")) is not None
     }
-    queries: list[dict[str, str]] = []
-    if platform is not None:
-        platform_params = dict(base_params)
-        platform_params["filter[platform]"] = platform
-        queries.append(platform_params)
-    queries.append(base_params)
-
-    seen_submission_ids: set[str] = set()
-    inspected: list[str] = []
-    for params in queries:
-        submissions = paginated_get(
-            client,
-            "/reviewSubmissions",
-            params,
-            limit=20,
-        )
-        included = included_by_id(submissions)
-        for submission in submissions.get("data", []):
-            submission_id = submission.get("id")
-            if submission_id in seen_submission_ids:
-                continue
-            if submission_id is not None:
-                seen_submission_ids.add(submission_id)
-            state = submission["attributes"].get("state")
-            submission_version_id = relationship_id(submission, "appStoreVersionForReview")
-            item_ids = [item["id"] for item in submission.get("relationships", {}).get("items", {}).get("data", [])]
-            item_version_ids = [
-                relationship_id(included.get(item_id, {}), "appStoreVersion")
-                for item_id in item_ids
-            ]
-            inspected.append(
-                f"{submission_id or '<unknown>'} state={state or '<unknown>'} "
-                f"primary={submission_version_id or '<none>'} "
-                f"items={','.join(item_version_id or '<unknown>' for item_version_id in item_version_ids) or '<none>'}"
-            )
-            if state not in ACTIVE_REVIEW_SUBMISSION_STATES:
-                continue
-            if submission_version_id == version_id:
-                return submission
-            for item_version_id in item_version_ids:
-                if item_version_id == version_id:
-                    return submission
-    if inspected:
-        print("Inspected review submissions:")
-        for inspected_submission in inspected:
-            print(f"- {inspected_submission}")
-    return None
 
 
-def wait_for_active_submission_for_version(
+def wait_for_review_submission_item_version_ids(
     client: ASCClient,
-    app_id: str,
-    platform: str | None,
+    submission_id: str,
     version_id: str,
     timeout_seconds: int = DEFAULT_REVIEW_ITEM_OWNER_WAIT_TIMEOUT_SECONDS,
     poll_seconds: int = DEFAULT_REVIEW_ITEM_OWNER_POLL_SECONDS,
-) -> dict[str, Any] | None:
+) -> set[str]:
     deadline = time.monotonic() + max(0, timeout_seconds)
     while True:
-        submission = active_submission_for_version(client, app_id, platform, version_id)
-        if submission is not None:
-            return submission
-        if time.monotonic() >= deadline:
-            return None
+        version_ids = review_submission_item_version_ids(client, submission_id)
+        if version_ids or time.monotonic() >= deadline:
+            return version_ids
         print(
-            "Review submission item owner is not visible yet; "
+            "Review submission item is not visible yet; "
             f"waiting {poll_seconds}s for App Store Connect consistency"
         )
         time.sleep(max(1, poll_seconds))
@@ -1296,15 +1225,7 @@ def ensure_review_submission(
     client: ASCClient,
     app_id: str,
     version_id: str,
-    args: argparse.Namespace,
 ) -> dict[str, Any]:
-    review_version_ids = [version_id]
-    for additional_version_id in namespace_additional_review_versions(args):
-        if additional_version_id not in review_version_ids:
-            review_version_ids.append(additional_version_id)
-    app_store_version_relationship = {
-        "data": {"type": "appStoreVersions", "id": version_id}
-    }
     submissions = paginated_get(
         client,
         "/reviewSubmissions",
@@ -1327,13 +1248,8 @@ def ensure_review_submission(
         submission_version_id = relationship_id(submission, "appStoreVersionForReview")
         item_ids = [item["id"] for item in submission.get("relationships", {}).get("items", {}).get("data", [])]
         item_version_ids = {relationship_id(included.get(item_id, {}), "appStoreVersion") for item_id in item_ids}
-        if state == "READY_FOR_REVIEW" and not item_ids:
-            submission_version = included.get(submission_version_id or "")
-            if submission_version_id is None or is_orphan_ready_for_sale_review_draft(
-                submission,
-                submission_version,
-            ):
-                reusable_empty_submission = reusable_empty_submission or submission
+        if state == "READY_FOR_REVIEW" and submission_version_id is None and not item_ids:
+            reusable_empty_submission = reusable_empty_submission or submission
         if submission_version_id == version_id:
             existing = submission
             break
@@ -1351,7 +1267,7 @@ def ensure_review_submission(
         submission = existing
     else:
         try:
-            submission = create_review_submission(client, app_id, app_store_version_relationship)
+            submission = create_review_submission(client, app_id)
             print(f"Created review submission: {submission['id']}")
         except AppStoreConnectError as error:
             if not is_review_submission_limit_exceeded(error):
@@ -1362,7 +1278,15 @@ def ensure_review_submission(
                 status=error.status,
                 payload=error.payload,
             ) from error
-    for review_version_id in review_version_ids:
+    existing_version_ids = review_submission_item_version_ids(client, submission["id"]) if existing else set()
+    if version_id in existing_version_ids:
+        print(f"Review submission item already exists for App Store version: {version_id}")
+    elif existing_version_ids:
+        raise AppStoreConnectError(
+            "review submission already contains another App Store version; "
+            "submit each platform and version in a separate review submission"
+        )
+    else:
         try:
             item = client.request(
                 "POST",
@@ -1372,7 +1296,7 @@ def ensure_review_submission(
                         "type": "reviewSubmissionItems",
                         "relationships": {
                             "reviewSubmission": {"data": {"type": "reviewSubmissions", "id": submission["id"]}},
-                            "appStoreVersion": {"data": {"type": "appStoreVersions", "id": review_version_id}},
+                            "appStoreVersion": {"data": {"type": "appStoreVersions", "id": version_id}},
                         },
                     }
                 },
@@ -1380,26 +1304,32 @@ def ensure_review_submission(
             )
             print(f"Created review submission item: {item['data']['id']}")
         except AppStoreConnectError as error:
-            if not is_existing_review_item_conflict(error):
+            if not (
+                is_existing_review_item_conflict(error)
+                or is_review_submission_version_slot_taken(error)
+            ):
                 raise
-            print(f"Review submission item already exists for App Store version: {review_version_id}")
-            existing_submission = wait_for_active_submission_for_version(
+            visible_version_ids = wait_for_review_submission_item_version_ids(
                 client,
-                app_id,
-                namespace_platform(args),
-                review_version_id,
+                submission["id"],
+                version_id,
             )
-            if existing_submission is not None:
-                submission = existing_submission
+            if version_id in visible_version_ids:
+                print(f"Review submission item already exists for App Store version: {version_id}")
+            elif visible_version_ids:
+                raise AppStoreConnectError(
+                    "review submission already contains another App Store version; "
+                    "submit each platform and version in a separate review submission",
+                    status=error.status,
+                    payload=error.payload,
+                ) from error
             else:
                 raise AppStoreConnectError(
-                    "review submission item already exists, but no active owning review submission was found; "
-                    "inspect App Store Connect review submissions before retrying",
-                    status=409,
-                )
-    if args.dry_run:
-        print("Dry run: would submit the prepared review submission")
-        return submission
+                    "review submission item conflict did not resolve to a visible item; "
+                    "inspect App Store Connect before retrying",
+                    status=error.status,
+                    payload=error.payload,
+                ) from error
     state = submission["attributes"].get("state") if submission.get("attributes") else None
     if state in {"WAITING_FOR_REVIEW", "IN_REVIEW", "UNRESOLVED_ISSUES"}:
         print(f"Review submission is already submitted: {submission['id']} ({state})")
@@ -1478,12 +1408,6 @@ def parse_args() -> argparse.Namespace:
         help="Existing App Store version to remove from active review before creating the target version",
     )
     parser.add_argument(
-        "--additional-review-version",
-        action="append",
-        default=[],
-        help="Additional App Store version ID to include in the review submission; repeat for multi-platform submissions",
-    )
-    parser.add_argument(
         "--cancel-review-only",
         action="store_true",
         help="Cancel/remove the active review for --remove-active-review-version and exit without creating a replacement",
@@ -1514,8 +1438,6 @@ def validate_args(args: argparse.Namespace) -> None:
     if args.prepare_only:
         if args.cancel_review_only:
             raise AppStoreConnectError("--prepare-only and --cancel-review-only are mutually exclusive")
-        if getattr(args, "additional_review_version", []):
-            raise AppStoreConnectError("--additional-review-version is only valid when submitting review")
     if args.cancel_review_only:
         if not args.remove_active_review_version:
             raise AppStoreConnectError("--cancel-review-only requires --remove-active-review-version")
@@ -1626,7 +1548,6 @@ def main() -> int:
             client,
             app_id,
             version["id"],
-            args,
         )
         final = client.request(
             "GET",

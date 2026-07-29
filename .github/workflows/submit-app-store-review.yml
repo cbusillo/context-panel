@@ -51,12 +51,6 @@ name: Submit App Store Review
           Connect blocks creating the target version.
         required: false
         type: string
-      additional_review_versions:
-        description: >-
-          Comma-separated App Store version IDs to include in the review
-          submission.
-        required: false
-        type: string
       dry_run:
         description: >-
           Validate metadata, build, and review path without submitting.
@@ -128,12 +122,6 @@ name: Submit App Store Review
           Connect blocks creating the target version.
         required: false
         type: string
-      additional_review_versions:
-        description: >-
-          Comma-separated App Store version IDs to include in the review
-          submission.
-        required: false
-        type: string
       dry_run:
         description: >-
           Validate metadata, build, and review path without submitting. With
@@ -198,8 +186,6 @@ jobs:
           INPUT_COPY_FROM_PLATFORM: ${{ inputs.copy_from_platform }}
           INPUT_REMOVE_ACTIVE_REVIEW_VERSION: >-
             ${{ inputs.remove_active_review_version }}
-          INPUT_ADDITIONAL_REVIEW_VERSIONS: >-
-            ${{ inputs.additional_review_versions }}
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
           INPUT_CANCEL_REVIEW_ONLY: ${{ inputs.cancel_review_only }}
           INPUT_PREPARE_ONLY: ${{ inputs.prepare_only }}
@@ -244,21 +230,6 @@ jobs:
               --remove-active-review-version
               "${INPUT_REMOVE_ACTIVE_REVIEW_VERSION}"
             )
-          fi
-          if [[ -n "${INPUT_ADDITIONAL_REVIEW_VERSIONS}" ]]; then
-            IFS=',' read -r -a additional_review_versions \
-              <<<"${INPUT_ADDITIONAL_REVIEW_VERSIONS}"
-            for review_version in "${additional_review_versions[@]}"; do
-              additional_review_version="$(
-                printf '%s' "${review_version}" | awk '{$1=$1};1'
-              )"
-              if [[ -n "${additional_review_version}" ]]; then
-                args+=(
-                  --additional-review-version
-                  "${additional_review_version}"
-                )
-              fi
-            done
           fi
           if [[ "${INPUT_DRY_RUN}" == "true" ]]; then
             args+=(--dry-run)
