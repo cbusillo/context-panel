@@ -855,12 +855,17 @@ Mac-published snapshot.
 Reply to App Review with that link and summarize that no demo account is needed
 unless the build requires one.
 
-The submit helper requires every non-cancel `TV_OS` preparation or submission to
-provide a dedicated `tvos_demo_video_url` HTTPS input. It prepends a standardized
-physical Apple TV evidence block to the optional explanatory `review_notes`, so
-free-form note wording cannot accidentally substitute simulator footage or a
-recording from another companion platform. A missing or invalid URL fails before
-any App Store Connect mutation.
+`tvos_demo_video_url` is optional for ordinary `TV_OS` updates. Provide a
+reviewer-accessible HTTPS physical Apple TV recording when App Review asks for
+current hardware evidence, or when a new tvOS surface otherwise needs a physical
+demo path. When supplied, the submit helper replaces copied prior-version notes
+with a standardized physical Apple TV evidence block plus any explanatory
+`review_notes`; an invalid URL fails before any App Store Connect mutation. When
+neither a current video nor current review notes are supplied, the helper
+clears copied prior-version review notes during both prepare-only and submission
+runs so an exact-build recording from an older version cannot silently carry
+forward.
+Dry runs report that pending clear without changing App Store Connect.
 
 After a companion platform is rejected, do not resubmit that rejected marketing
 version as the recovery candidate. Prepare the next marketing version, copy the

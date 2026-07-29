@@ -390,7 +390,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
 
         submit_app_store_review.validate_args(args)
 
-    def test_validate_args_requires_explicit_tvos_demo_video_url(self):
+    def test_validate_args_allows_tvos_without_demo_video_url(self):
         args = SimpleNamespace(
             cancel_review_only=False,
             remove_active_review_version=None,
@@ -402,10 +402,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             tvos_demo_video_url=None,
         )
 
-        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
-            submit_app_store_review.validate_args(args)
-
-        self.assertIn("--tvos-demo-video-url", str(context.exception))
+        submit_app_store_review.validate_args(args)
 
     def test_validate_args_requires_https_tvos_demo_video_url(self):
         args = SimpleNamespace(
@@ -417,6 +414,23 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             platform="TV_OS",
             review_notes="The app uses a Mac-published CloudKit snapshot.",
             tvos_demo_video_url="http://example.com/physical-apple-tv-demo.mp4",
+        )
+
+        with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
+            submit_app_store_review.validate_args(args)
+
+        self.assertIn("valid HTTPS URL", str(context.exception))
+
+    def test_validate_args_rejects_blank_tvos_demo_video_url(self):
+        args = SimpleNamespace(
+            cancel_review_only=False,
+            remove_active_review_version=None,
+            build_number="202607241933",
+            whats_new="Adds the Apple TV companion.",
+            prepare_only=False,
+            platform="TV_OS",
+            review_notes="The app uses a Mac-published CloudKit snapshot.",
+            tvos_demo_video_url="   ",
         )
 
         with self.assertRaises(submit_app_store_review.AppStoreConnectError) as context:
@@ -466,6 +480,27 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             submit_app_store_review.effective_review_notes(args),
             "Physical Apple TV demo (reviewer-accessible, no login required):\n"
             "https://example.com/physical-apple-tv-demo.mp4\n\n"
+            "No demo account or tvOS permission prompt is required.",
+        )
+
+    def test_effective_review_notes_clears_copied_tvos_notes_without_current_override(self):
+        args = SimpleNamespace(
+            platform="TV_OS",
+            review_notes=None,
+            tvos_demo_video_url=None,
+        )
+
+        self.assertEqual(submit_app_store_review.effective_review_notes(args), "")
+
+    def test_effective_review_notes_keeps_current_tvos_notes_without_demo_video(self):
+        args = SimpleNamespace(
+            platform="TV_OS",
+            review_notes="No demo account or tvOS permission prompt is required.",
+            tvos_demo_video_url=None,
+        )
+
+        self.assertEqual(
+            submit_app_store_review.effective_review_notes(args),
             "No demo account or tvOS permission prompt is required.",
         )
 
@@ -1797,6 +1832,61 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             review_detail_update["notes"],
             "Physical Apple TV demo: https://example.com/reviewer-demo.mp4",
         )
+        self.assertEqual(review_detail_update["contactEmail"], "review@example.com")
+
+    def test_ensure_metadata_clears_copied_tvos_review_notes(self):
+        class MetadataClient:
+            def __init__(self):
+                self.requests: list[tuple[Any, ...]] = []
+
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                self.requests.append((method, path, params, body, allowed))
+                if method == "GET" and path == "/appStoreVersions/version-1-0-50":
+                    return {
+                        "data": {
+                            "id": "version-1-0-50",
+                            "attributes": {"appStoreState": "PREPARE_FOR_SUBMISSION"},
+                            "relationships": {
+                                "appStoreVersionLocalizations": {
+                                    "data": [{"type": "appStoreVersionLocalizations", "id": "loc-1"}]
+                                },
+                                "appStoreReviewDetail": {
+                                    "data": {"type": "appStoreReviewDetails", "id": "detail-1"}
+                                },
+                            },
+                        }
+                    }
+                if method == "PATCH" and path in {
+                    "/appStoreVersionLocalizations/loc-1",
+                    "/appStoreReviewDetails/detail-1",
+                }:
+                    return {"data": {"id": path.rsplit("/", maxsplit=1)[-1]}}
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        client = MetadataClient()
+        args = SimpleNamespace(
+            platform="TV_OS",
+            tvos_demo_video_url=None,
+            review_notes=None,
+            locale=None,
+            support_url=None,
+            whats_new="Improves synced provider availability.",
+        )
+
+        submit_app_store_review.ensure_metadata(
+            client,
+            "version-1-0-50",
+            {"locale": "en-US", "description": "desc", "supportUrl": "https://example.com"},
+            {"contactEmail": "review@example.com", "notes": "Physical Apple TV demo:\nhttps://old.example/demo.mp4"},
+            args,
+        )
+
+        review_detail_update = next(
+            request[3]["data"]["attributes"]
+            for request in client.requests
+            if request[0] == "PATCH" and request[1] == "/appStoreReviewDetails/detail-1"
+        )
+        self.assertEqual(review_detail_update["notes"], "")
         self.assertEqual(review_detail_update["contactEmail"], "review@example.com")
 
     def test_prepare_only_path_does_not_create_or_submit_review(self):
