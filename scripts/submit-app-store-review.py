@@ -1175,6 +1175,8 @@ def ensure_metadata(client: ASCClient, version_id: str, source_localization: dic
             },
         )
         print(f"Updated review detail: {review_detail_id}")
+        if getattr(args, "platform", None) == "TV_OS" and review_notes == "":
+            print("Cleared copied prior-version TV_OS review notes")
 
 
 def create_review_submission(
@@ -1437,9 +1439,15 @@ def effective_review_notes(args: argparse.Namespace) -> str | None:
         return review_notes or None
     demo_video_url = (getattr(args, "tvos_demo_video_url", None) or "").strip()
     if not demo_video_url:
-        return review_notes or None
+        return review_notes
     evidence_notes = f"{TVOS_DEMO_NOTES_HEADING}\n{demo_video_url}"
     return f"{evidence_notes}\n\n{review_notes}" if review_notes else evidence_notes
+
+
+def print_tvos_review_notes_dry_run_action(args: argparse.Namespace) -> None:
+    if getattr(args, "platform", None) != "TV_OS" or effective_review_notes(args) != "":
+        return
+    print("Dry run: would clear copied prior-version TV_OS review notes")
 
 
 def parse_args() -> argparse.Namespace:
@@ -1457,7 +1465,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--review-notes", help="Override App Review notes copied from the source version")
     parser.add_argument(
         "--tvos-demo-video-url",
-        help="Reviewer-accessible HTTPS URL for the physical Apple TV demo required by TV_OS submissions",
+        help="Optional reviewer-accessible HTTPS URL for current physical Apple TV evidence",
     )
     parser.add_argument("--copy-from-version", help="Existing App Store version to copy localization and review details from")
     parser.add_argument(
@@ -1517,12 +1525,11 @@ def validate_args(args: argparse.Namespace) -> None:
     if not args.whats_new:
         raise AppStoreConnectError("--whats-new is required unless --cancel-review-only is used")
     if getattr(args, "platform", None) == "TV_OS":
-        demo_video_url = (getattr(args, "tvos_demo_video_url", None) or "").strip()
-        if not demo_video_url:
-            raise AppStoreConnectError(
-                "TV_OS review preparation and submission require --tvos-demo-video-url"
-            )
-        if not is_https_url(demo_video_url):
+        raw_demo_video_url = getattr(args, "tvos_demo_video_url", None)
+        demo_video_url = (raw_demo_video_url or "").strip()
+        if raw_demo_video_url is not None and not demo_video_url:
+            raise AppStoreConnectError("--tvos-demo-video-url must be a valid HTTPS URL")
+        if demo_video_url and not is_https_url(demo_video_url):
             raise AppStoreConnectError("--tvos-demo-video-url must be a valid HTTPS URL")
     elif getattr(args, "tvos_demo_video_url", None):
         raise AppStoreConnectError("--tvos-demo-video-url is only valid with --platform TV_OS")
@@ -1591,6 +1598,7 @@ def main() -> int:
                 )
         if args.dry_run:
             dry_run_version_path(client, app_id, args, removable_review_version=removable_review_version)
+            print_tvos_review_notes_dry_run_action(args)
             print("Dry run: metadata, build, and version path validated; no App Store Connect changes were made")
             return 0
         version, reused_removed_version = ensure_replacement_version(client, app_id, args)

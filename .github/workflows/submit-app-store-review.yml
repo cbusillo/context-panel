@@ -23,14 +23,16 @@ name: Submit App Store Review
         type: string
       review_notes:
         description: >-
-          Optional App Review explanation. TV_OS prepends its standardized
-          physical-device evidence block from tvos_demo_video_url.
+          Optional App Review explanation. TV_OS clears copied prior-version
+          notes when omitted and prepends physical-device evidence when a demo
+          URL is supplied.
         required: false
         type: string
       tvos_demo_video_url:
         description: >-
-          Reviewer-accessible HTTPS physical Apple TV demo URL. Required for
-          non-cancel TV_OS preparation and submission.
+          Optional reviewer-accessible HTTPS physical Apple TV demo URL for
+          submissions that need current hardware evidence. When supplied, its
+          standardized evidence block replaces copied prior-version notes.
         required: false
         type: string
       copy_from_version:
@@ -98,14 +100,16 @@ name: Submit App Store Review
         type: string
       review_notes:
         description: >-
-          Optional App Review explanation. TV_OS prepends its standardized
-          physical-device evidence block from tvos_demo_video_url.
+          Optional App Review explanation. TV_OS clears copied prior-version
+          notes when omitted and prepends physical-device evidence when a demo
+          URL is supplied.
         required: false
         type: string
       tvos_demo_video_url:
         description: >-
-          Reviewer-accessible HTTPS physical Apple TV demo URL. Required for
-          non-cancel TV_OS preparation and submission.
+          Optional reviewer-accessible HTTPS physical Apple TV demo URL for
+          submissions that need current hardware evidence. When supplied, its
+          standardized evidence block replaces copied prior-version notes.
         required: false
         type: string
       copy_from_version:
