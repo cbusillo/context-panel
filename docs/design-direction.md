@@ -76,14 +76,14 @@ horizontal slots rather than adding cards or reducing visible limit rows.
   guidance names one exact account and uses explicit `use now` or `by <date>`
   copy. Neutral availability says `Credits · N accounts` and never displays a
   global credit total.
-- Medium-widget accessory priority is actionable reset guidance, prompt-cache
-  telemetry, then neutral credit availability. The large widget may show reset
-  availability and cache telemetry together. When both are present, the large
-  widget keeps the cache health/current-rate signal compact and leaves the
-  rolling average in accessibility and the app. Actionable reset guidance wins
-  when the pair cannot fit; a stale or authorization-required cache state wins
-  over neutral reset availability. Neither family gives up a saved limit row for
-  reset-credit presentation.
+- Medium and large widgets keep reset availability and prompt-cache telemetry
+  visible together whenever both are available. Their single-line header uses a
+  progressive fit ladder: cache drops its rolling average first, reset guidance
+  then drops the account name and action text, and the cache label disappears
+  only as a last resort. Authorization and stale-cache pills shorten to labels
+  and then symbols under the same pressure. Full cache averages, account
+  identity, credit counts, and guidance remain in accessibility and the app.
+  Neither family gives up a saved limit row for reset-credit presentation.
 - Widgets suppress reset-credit signals when the widget is stale, failed, needs
   setup, or when the credit observation is inconsistent or has elapsed. The app
   remains the place to explain and recover those states.

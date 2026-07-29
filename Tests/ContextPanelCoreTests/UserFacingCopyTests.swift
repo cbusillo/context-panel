@@ -164,6 +164,11 @@ import Testing
         startingAt: "struct ContextPanelLargeWidget",
         endingAt: "private enum CPWMainLimitHeaderLayout"
     )
+    let headerAccessory = try userFacingCopySection(
+        in: widgetSource,
+        startingAt: "private struct CPWMainLimitHeaderAccessory",
+        endingAt: "private struct CPWResetCreditHeaderToken"
+    )
 
     for phrase in ["redeem", "consume", "guarantee", "payment", "purchase"] {
         #expect(!guidanceSource.lowercased().contains(phrase), "Guidance source contains mutation or guarantee language: \(phrase)")
@@ -183,8 +188,17 @@ import Testing
     #expect(widgetSource.contains("Text(\"Credits · \\(summary.accountCountText)\")"))
     #expect(widgetSource.contains("Text(\"Reset credits · \\(compactAccountCountText)\")"))
     #expect(widgetSource.contains("guidance.glanceActionText"))
-    #expect(widgetSource.contains("compactAvailable: layout == .large && resetCreditSummary != nil"))
-    #expect(widgetSource.contains("if state == .available"))
+    #expect(headerAccessory.contains("ViewThatFits(in: .horizontal)"))
+    #expect(headerAccessory.contains("cacheLayout: .compact"))
+    #expect(headerAccessory.contains("cacheLayout: .minimal"))
+    #expect(headerAccessory.contains("resetDensity: .compact"))
+    #expect(headerAccessory.contains("resetDensity: .minimal"))
+    #expect(headerAccessory.contains("cache(cacheLayout)"))
+    #expect(headerAccessory.contains("resetCredit(resetSummary, density: resetDensity)"))
+    #expect(widgetSource.contains("availableLayout == .full"))
+    #expect(widgetSource.contains("availableLayout == .compact"))
+    #expect(widgetSource.contains("folder.badge.plus"))
+    #expect(widgetSource.contains("clock.fill"))
     #expect(widgetSource.contains("showsResetCreditSurfaces: Bool = false"))
     #expect(macWidgetSource.contains("showsResetCreditSurfaces: true"))
     #expect(!companionWidgetSource.contains("showsResetCreditSurfaces: true"))

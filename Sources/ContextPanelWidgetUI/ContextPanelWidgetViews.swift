@@ -421,7 +421,7 @@ struct ContextPanelMediumWidget: View {
         let resetCreditSummary = showsResetCreditSurfaces
             ? snapshot.resetCreditSurfaceSummary(now: now)
             : nil
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             VStack(alignment: .leading, spacing: 5) {
                 if let problem = snapshot.widgetProblemText {
                     CPWProblemLabel(problem, status: snapshot.widgetProblemStatus)
@@ -443,7 +443,7 @@ struct ContextPanelMediumWidget: View {
                     .minimumScaleFactor(0.82)
                 Spacer(minLength: 0)
             }
-            .frame(width: 124, alignment: .leading)
+            .frame(width: 120, alignment: .leading)
 
             Divider()
 
@@ -553,6 +553,18 @@ private enum CPWMainLimitHeaderLayout {
     case large
 }
 
+private enum CPWPromptCacheAvailableLayout: Equatable {
+    case full
+    case compact
+    case minimal
+}
+
+private enum CPWResetCreditTokenDensity {
+    case standard
+    case compact
+    case minimal
+}
+
 private struct CPWMainLimitHeaderAccessory: View {
     let layout: CPWMainLimitHeaderLayout
     let resetCreditSummary: ProviderResetCreditSurfaceSummary?
@@ -565,53 +577,93 @@ private struct CPWMainLimitHeaderAccessory: View {
         state != .unavailable
     }
 
-    private var cache: CPWPromptCacheInlineStat {
+    private func cache(_ availableLayout: CPWPromptCacheAvailableLayout) -> CPWPromptCacheInlineStat {
         CPWPromptCacheInlineStat(
             state: state,
             summary: summary,
             cacheStatsSettingsURL: cacheStatsSettingsURL,
-            compactAvailable: layout == .large && resetCreditSummary != nil
+            availableLayout: availableLayout
         )
+    }
+
+    private func resetCredit(
+        _ resetSummary: ProviderResetCreditSurfaceSummary,
+        density: CPWResetCreditTokenDensity
+    ) -> CPWResetCreditHeaderToken {
+        CPWResetCreditHeaderToken(
+            layout: layout,
+            summary: resetSummary,
+            now: now,
+            density: density
+        )
+    }
+
+    private func pairedAccessory(
+        _ resetSummary: ProviderResetCreditSurfaceSummary,
+        cacheLayout: CPWPromptCacheAvailableLayout,
+        resetDensity: CPWResetCreditTokenDensity
+    ) -> some View {
+        HStack(spacing: 4) {
+            cache(cacheLayout)
+            resetCredit(resetSummary, density: resetDensity)
+        }
     }
 
     @ViewBuilder
     var body: some View {
         switch layout {
         case .medium:
-            if let resetCreditSummary, resetCreditSummary.primaryActionableGuidance != nil {
-                CPWResetCreditHeaderToken(layout: .medium, summary: resetCreditSummary, now: now)
+            if let resetCreditSummary, showsCache {
+                ViewThatFits(in: .horizontal) {
+                    pairedAccessory(
+                        resetCreditSummary,
+                        cacheLayout: .compact,
+                        resetDensity: .compact
+                    )
+                    pairedAccessory(
+                        resetCreditSummary,
+                        cacheLayout: .compact,
+                        resetDensity: .minimal
+                    )
+                    pairedAccessory(
+                        resetCreditSummary,
+                        cacheLayout: .minimal,
+                        resetDensity: .minimal
+                    )
+                }
             } else if showsCache {
-                cache
+                cache(.full)
             } else if let resetCreditSummary {
-                CPWResetCreditHeaderToken(layout: .medium, summary: resetCreditSummary, now: now)
+                resetCredit(resetCreditSummary, density: .standard)
             }
         case .large:
             if let resetCreditSummary, showsCache {
-                if resetCreditSummary.primaryActionableGuidance != nil {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 6) {
-                            cache
-                            CPWResetCreditHeaderToken(layout: .large, summary: resetCreditSummary, now: now)
-                        }
-                        CPWResetCreditHeaderToken(layout: .large, summary: resetCreditSummary, now: now)
-                    }
-                } else {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 6) {
-                            cache
-                            CPWResetCreditHeaderToken(layout: .large, summary: resetCreditSummary, now: now)
-                        }
-                        if state == .available {
-                            CPWResetCreditHeaderToken(layout: .large, summary: resetCreditSummary, now: now)
-                        } else {
-                            cache
-                        }
-                    }
+                ViewThatFits(in: .horizontal) {
+                    pairedAccessory(
+                        resetCreditSummary,
+                        cacheLayout: .compact,
+                        resetDensity: .standard
+                    )
+                    pairedAccessory(
+                        resetCreditSummary,
+                        cacheLayout: .compact,
+                        resetDensity: .compact
+                    )
+                    pairedAccessory(
+                        resetCreditSummary,
+                        cacheLayout: .compact,
+                        resetDensity: .minimal
+                    )
+                    pairedAccessory(
+                        resetCreditSummary,
+                        cacheLayout: .minimal,
+                        resetDensity: .minimal
+                    )
                 }
             } else if let resetCreditSummary {
-                CPWResetCreditHeaderToken(layout: .large, summary: resetCreditSummary, now: now)
+                resetCredit(resetCreditSummary, density: .standard)
             } else if showsCache {
-                cache
+                cache(.full)
             }
         }
     }
@@ -622,6 +674,19 @@ private struct CPWResetCreditHeaderToken: View {
     let layout: CPWMainLimitHeaderLayout
     let summary: ProviderResetCreditSurfaceSummary
     let now: Date
+    let density: CPWResetCreditTokenDensity
+
+    init(
+        layout: CPWMainLimitHeaderLayout,
+        summary: ProviderResetCreditSurfaceSummary,
+        now: Date,
+        density: CPWResetCreditTokenDensity = .standard
+    ) {
+        self.layout = layout
+        self.summary = summary
+        self.now = now
+        self.density = density
+    }
 
     private var guidance: ProviderResetCreditGuidance? {
         summary.primaryActionableGuidance
@@ -630,9 +695,7 @@ private struct CPWResetCreditHeaderToken: View {
     private var status: UsageStatus? {
         guard let guidance else { return nil }
         return switch guidance.state {
-        case .considerUsingNow:
-            .limited
-        case .considerBefore:
+        case .considerUsingNow, .considerBefore:
             .close
         case .hold, .refresh:
             nil
@@ -653,7 +716,7 @@ private struct CPWResetCreditHeaderToken: View {
     var body: some View {
         Link(destination: destination) {
             tokenContent
-            .padding(.horizontal, 6)
+            .padding(.horizontal, horizontalPadding)
             .padding(.vertical, 2)
             .background(tone.opacity(status == nil ? 0.08 : 0.13))
             .clipShape(Capsule(style: .continuous))
@@ -674,41 +737,93 @@ private struct CPWResetCreditHeaderToken: View {
             if let guidance {
                 Image(systemName: "arrow.counterclockwise.circle.fill")
                     .font(.system(size: 9, weight: .semibold))
-                if case .large = layout {
-                    CPWProviderBadge(provider: guidance.provider, compact: true)
+                switch density {
+                case .standard:
+                    if case .large = layout {
+                        CPWProviderBadge(provider: guidance.provider, compact: true)
+                    }
+                    Text(guidance.accountName)
+                        .font(.system(size: 8, weight: .medium))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: layout == .medium ? 42 : 64)
+                    Text(layout == .medium ? "\(guidance.resetCredits.availableCount)×" : guidance.countText)
+                        .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                        .lineLimit(1)
+                    if let actionText = guidance.glanceActionText {
+                        Text("· \(actionText)")
+                            .font(.system(size: 8, weight: .semibold))
+                            .lineLimit(1)
+                    }
+                case .compact:
+                    Text("\(guidance.resetCredits.availableCount)×")
+                        .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                        .lineLimit(1)
+                    if let actionText = compactTokenActionText(for: guidance) {
+                        Text(actionText)
+                            .font(.system(size: 8, weight: .semibold))
+                            .lineLimit(1)
+                    }
+                case .minimal:
+                    Text("\(guidance.resetCredits.availableCount)×")
+                        .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                        .lineLimit(1)
                 }
-                Text(guidance.accountName)
-                    .font(.system(size: 8, weight: .medium))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: layout == .medium ? 42 : 64)
-                Text(layout == .medium ? "\(guidance.resetCredits.availableCount)×" : guidance.countText)
-                    .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                    .lineLimit(1)
-                if let actionText = guidance.glanceActionText {
-                    Text("· \(actionText)")
+            } else {
+                switch density {
+                case .standard:
+                    if layout == .large {
+                        CPWProviderBadge(provider: summary.provider, compact: true)
+                        Text("Reset credits · \(compactAccountCountText)")
+                            .font(.system(size: 8, weight: .semibold))
+                            .lineLimit(1)
+                    } else {
+                        Image(systemName: "arrow.counterclockwise.circle.fill")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text("Credits · \(summary.accountCountText)")
+                            .font(.system(size: 8, weight: .semibold))
+                            .lineLimit(1)
+                    }
+                case .compact, .minimal:
+                    Image(systemName: "arrow.counterclockwise.circle.fill")
+                        .font(.system(size: 9, weight: .semibold))
+                    Text(compactAccountCountText)
                         .font(.system(size: 8, weight: .semibold))
                         .lineLimit(1)
                 }
-            } else if layout == .large {
-                CPWProviderBadge(provider: summary.provider, compact: true)
-                Text("Reset credits · \(compactAccountCountText)")
-                    .font(.system(size: 8, weight: .semibold))
-                    .lineLimit(1)
-            } else {
-                Image(systemName: "arrow.counterclockwise.circle.fill")
-                    .font(.system(size: 9, weight: .semibold))
-                Text("Credits · \(summary.accountCountText)")
-                    .font(.system(size: 8, weight: .semibold))
-                    .lineLimit(1)
             }
         }
         .foregroundStyle(tone)
         .fixedSize(horizontal: true, vertical: false)
     }
 
+    private func compactTokenActionText(for guidance: ProviderResetCreditGuidance) -> String? {
+        guard layout == .medium else {
+            return guidance.glanceActionText
+        }
+        return switch guidance.state {
+        case .considerUsingNow:
+            "now"
+        case let .considerBefore(expiry):
+            expiry.formatted(.dateTime.month(.abbreviated).day())
+        case .hold, .refresh:
+            nil
+        }
+    }
+
     private var compactAccountCountText: String {
         summary.accountCount == 1 ? "1 acct" : "\(summary.accountCount) accts"
+    }
+
+    private var horizontalPadding: CGFloat {
+        switch density {
+        case .standard:
+            6
+        case .compact:
+            4
+        case .minimal:
+            5
+        }
     }
 
     private var accessibilityText: String {
@@ -722,23 +837,23 @@ private struct CPWResetCreditHeaderToken: View {
     }
 }
 
-struct CPWPromptCacheInlineStat: View {
+private struct CPWPromptCacheInlineStat: View {
     @Environment(\.cpwThemeVariant) private var themeVariant
     let state: PromptCacheWidgetState
     let summary: PromptCacheSummary
     let cacheStatsSettingsURL: URL
-    let compactAvailable: Bool
+    let availableLayout: CPWPromptCacheAvailableLayout
 
     init(
         state: PromptCacheWidgetState,
         summary: PromptCacheSummary,
         cacheStatsSettingsURL: URL,
-        compactAvailable: Bool = false
+        availableLayout: CPWPromptCacheAvailableLayout = .full
     ) {
         self.state = state
         self.summary = summary
         self.cacheStatsSettingsURL = cacheStatsSettingsURL
-        self.compactAvailable = compactAvailable
+        self.availableLayout = availableLayout
     }
 
     private var currentRate: Double? {
@@ -752,25 +867,7 @@ struct CPWPromptCacheInlineStat: View {
     var body: some View {
         switch state {
         case .available:
-            if compactAvailable {
-                HStack(spacing: 4) {
-                    CPWStatusMark(status: summary.comparisonStatus, size: 5)
-                    Text("Cache")
-                        .font(.system(size: 8, weight: .semibold))
-                        .tracking(0.45)
-                        .textCase(.uppercase)
-                    Text(currentRate.map(Self.percentText) ?? "--")
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                }
-                .foregroundStyle(CPWTheme.statusColor(summary.comparisonStatus))
-                .lineLimit(1)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(CPWTheme.line(variant: themeVariant).opacity(0.45))
-                .clipShape(Capsule(style: .continuous))
-                .fixedSize(horizontal: true, vertical: false)
-                .accessibilityLabel(accessibilityLabel)
-            } else {
+            if availableLayout == .full {
                 HStack(alignment: .center, spacing: 0) {
                     HStack(spacing: 4) {
                         CPWStatusMark(status: summary.comparisonStatus, size: 5)
@@ -806,21 +903,48 @@ struct CPWPromptCacheInlineStat: View {
                 .background(CPWTheme.line(variant: themeVariant).opacity(0.45))
                 .clipShape(Capsule(style: .continuous))
                 .fixedSize(horizontal: true, vertical: false)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(accessibilityLabel)
+            } else {
+                HStack(spacing: 4) {
+                    CPWStatusMark(status: summary.comparisonStatus, size: 5)
+                    if availableLayout == .compact {
+                        Text("Cache")
+                            .font(.system(size: 8, weight: .semibold))
+                            .tracking(0.45)
+                            .textCase(.uppercase)
+                    }
+                    Text(currentRate.map(Self.percentText) ?? "--")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                }
+                .foregroundStyle(CPWTheme.statusColor(summary.comparisonStatus))
+                .lineLimit(1)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(CPWTheme.line(variant: themeVariant).opacity(0.45))
+                .clipShape(Capsule(style: .continuous))
+                .fixedSize(horizontal: true, vertical: false)
+                .accessibilityElement(children: .ignore)
                 .accessibilityLabel(accessibilityLabel)
             }
         case .needsAuthorization:
+            let content = needsAuthorizationPillContent
             Link(destination: cacheStatsSettingsURL) {
                 promptCachePill(
-                    text: "Enable Cache",
+                    text: content.text,
+                    systemImage: content.systemImage,
                     foreground: CPWTheme.accent,
                     background: CPWTheme.accent.opacity(0.16),
                     accessibilityLabel: "Enable cache stats"
                 )
             }
             .buttonStyle(.plain)
+            .accessibilityHint("Opens cache stats settings in Context Panel")
         case .stale:
+            let content = stalePillContent
             promptCachePill(
-                text: "Cache stale",
+                text: content.text,
+                systemImage: content.systemImage,
                 foreground: CPWTheme.statusColor(.stale),
                 background: CPWTheme.statusColor(.stale).opacity(0.14),
                 accessibilityLabel: "Cache stats are stale"
@@ -831,22 +955,54 @@ struct CPWPromptCacheInlineStat: View {
     }
 
     private func promptCachePill(
-        text: String,
+        text: String?,
+        systemImage: String? = nil,
         foreground: Color,
         background: Color,
         accessibilityLabel: String
     ) -> some View {
-        Text(text)
-            .font(.system(size: 9, weight: .semibold))
+        HStack(spacing: 3) {
+            if let systemImage {
+                Image(systemName: systemImage)
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            if let text {
+                Text(text)
+                    .font(.system(size: 9, weight: .semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+            }
+        }
             .foregroundStyle(foreground)
-            .lineLimit(1)
-            .minimumScaleFactor(0.82)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(background)
             .clipShape(Capsule(style: .continuous))
             .fixedSize(horizontal: true, vertical: false)
+            .accessibilityElement(children: .ignore)
             .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var needsAuthorizationPillContent: (text: String?, systemImage: String?) {
+        switch availableLayout {
+        case .full:
+            ("Enable Cache", nil)
+        case .compact:
+            ("Enable", nil)
+        case .minimal:
+            (nil, "folder.badge.plus")
+        }
+    }
+
+    private var stalePillContent: (text: String?, systemImage: String?) {
+        switch availableLayout {
+        case .full:
+            ("Cache stale", nil)
+        case .compact:
+            ("Stale", nil)
+        case .minimal:
+            (nil, "clock.fill")
+        }
     }
 
     private var accessibilityLabel: String {
@@ -1341,7 +1497,7 @@ struct CPWSectionHeader<Accessory: View>: View {
     }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline) {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
             Text(title)
                 .font(.system(size: 10, weight: .semibold))
                 .tracking(0.8)
@@ -1351,7 +1507,7 @@ struct CPWSectionHeader<Accessory: View>: View {
                 .minimumScaleFactor(0.8)
                 .fixedSize(horizontal: true, vertical: false)
                 .layoutPriority(1)
-            Spacer()
+            Spacer(minLength: 0)
             accessory
             if let trailing {
                 Text(trailing)
