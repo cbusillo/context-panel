@@ -184,7 +184,11 @@ private let renderTestWidgetLinks = ContextPanelWidgetLinks(
 @MainActor
 @Test func actionableResetCreditRendersInMediumAndLargeWidgets() throws {
     let now = Date()
-    let snapshot = resetCreditRenderSnapshot(now: now)
+    let snapshot = resetCreditRenderSnapshot(
+        now: now,
+        promptCacheObservations: resetCreditPromptCacheObservations(now: now),
+        promptCacheWidgetState: .available
+    )
     let guidance = try #require(snapshot.primaryActionableResetCreditGuidance(now: now))
     let deepLink = guidance.widgetDeepLinkURL
     let components = try #require(URLComponents(url: deepLink, resolvingAgainstBaseURL: false))
@@ -199,6 +203,7 @@ private let renderTestWidgetLinks = ContextPanelWidgetLinks(
         (.systemLarge, 344, 344, 5_000),
     ]
     for (family, width, height, minimumPixels) in scenarios {
+        let headerRows = family == .systemMedium ? 10..<35 : 125..<155
         let view = ContextPanelWidgetContentView(
             family: family,
             snapshot: snapshot,
@@ -212,13 +217,46 @@ private let renderTestWidgetLinks = ContextPanelWidgetLinks(
 
         let image = try #require(renderedImage(from: view, width: width, height: height))
         #expect(nonBackgroundPixelCount(in: image) > minimumPixels)
+        #expect(pixelCount(in: image, near: (74, 122, 91), rows: headerRows) > 20)
+        #expect(pixelCount(in: image, near: (138, 106, 42), rows: headerRows, columns: 250..<344) > 20)
+        if family == .systemMedium {
+            #expect(pixelCount(in: image, near: (74, 122, 91), rows: headerRows, columns: 195..<225) > 5)
+            #expect(pixelCount(in: image, near: (138, 106, 42), rows: headerRows, columns: 275..<295) > 5)
+        }
+    }
+
+    let constrainedCacheStates: [(PromptCacheWidgetState, (UInt8, UInt8, UInt8))] = [
+        (.needsAuthorization, (74, 91, 122)),
+        (.stale, (122, 98, 63)),
+    ]
+    for (cacheState, cacheTone) in constrainedCacheStates {
+        let constrainedSnapshot = resetCreditRenderSnapshot(
+            now: now,
+            promptCacheWidgetState: cacheState
+        )
+        let constrainedView = ContextPanelWidgetContentView(
+            family: .systemMedium,
+            snapshot: constrainedSnapshot,
+            displayPreferences: .defaultPreferences,
+            links: renderTestWidgetLinks,
+            showsResetCreditSurfaces: true
+        )
+        .cpwThemeVariant(.light)
+        .frame(width: 320, height: 164)
+        .background(CPWTheme.surface(variant: .light))
+
+        let constrainedImage = try #require(renderedImage(from: constrainedView, width: 320, height: 164))
+        #expect(pixelCount(in: constrainedImage, near: cacheTone, rows: 10..<35) > 5)
+        #expect(pixelCount(in: constrainedImage, near: (138, 106, 42), rows: 10..<35) > 20)
     }
 
     let considerBeforeSnapshot = resetCreditRenderSnapshot(
         now: now,
         weeklyUsed: 85,
         resetInterval: 4 * 86_400,
-        expiryInterval: 2 * 86_400
+        expiryInterval: 2 * 86_400,
+        promptCacheObservations: resetCreditPromptCacheObservations(now: now),
+        promptCacheWidgetState: .available
     )
     let considerBefore = try #require(considerBeforeSnapshot.primaryActionableResetCreditGuidance(now: now))
     #expect(considerBefore.state == .considerBefore(now.addingTimeInterval(2 * 86_400)))
@@ -234,6 +272,8 @@ private let renderTestWidgetLinks = ContextPanelWidgetLinks(
     .background(CPWTheme.surface(variant: .light))
     let considerBeforeImage = try #require(renderedImage(from: considerBeforeView, width: 344, height: 164))
     #expect(nonBackgroundPixelCount(in: considerBeforeImage) > 2_500)
+    #expect(pixelCount(in: considerBeforeImage, near: (74, 122, 91), rows: 10..<35) > 20)
+    #expect(pixelCount(in: considerBeforeImage, near: (138, 106, 42), rows: 10..<35, columns: 250..<344) > 5)
 
     let neutralSnapshot = resetCreditRenderSnapshot(
         now: now,
@@ -258,6 +298,8 @@ private let renderTestWidgetLinks = ContextPanelWidgetLinks(
     .background(CPWTheme.surface(variant: .light))
     let neutralImage = try #require(renderedImage(from: neutralView, width: 344, height: 344))
     #expect(nonBackgroundPixelCount(in: neutralImage) > 5_000)
+    #expect(pixelCount(in: neutralImage, near: (74, 122, 91), rows: 125..<155) > 20)
+    #expect(pixelCount(in: neutralImage, near: (87, 87, 92), rows: 125..<155, columns: 250..<344) > 5)
 }
 
 @MainActor
@@ -585,7 +627,9 @@ private func nonBackgroundPixelCount(in image: CGImage, rows: Range<Int>) -> Int
 private func pixelCount(
     in image: CGImage,
     near target: (red: UInt8, green: UInt8, blue: UInt8),
-    tolerance: Int = 12
+    tolerance: Int = 12,
+    rows: Range<Int>? = nil,
+    columns: Range<Int>? = nil
 ) -> Int {
     let width = image.width
     let height = image.height
@@ -605,12 +649,16 @@ private func pixelCount(
     }
 
     context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-    return stride(from: 0, to: pixels.count, by: bytesPerPixel).reduce(into: 0) { count, offset in
-        let redDelta = abs(Int(pixels[offset]) - Int(target.red))
-        let greenDelta = abs(Int(pixels[offset + 1]) - Int(target.green))
-        let blueDelta = abs(Int(pixels[offset + 2]) - Int(target.blue))
-        if redDelta <= tolerance, greenDelta <= tolerance, blueDelta <= tolerance {
-            count += 1
+    return (rows ?? 0..<height).clamped(to: 0..<height).reduce(into: 0) { count, row in
+        let rowStart = row * bytesPerRow
+        for column in (columns ?? 0..<width).clamped(to: 0..<width) {
+            let offset = rowStart + column * bytesPerPixel
+            let redDelta = abs(Int(pixels[offset]) - Int(target.red))
+            let greenDelta = abs(Int(pixels[offset + 1]) - Int(target.green))
+            let blueDelta = abs(Int(pixels[offset + 2]) - Int(target.blue))
+            if redDelta <= tolerance, greenDelta <= tolerance, blueDelta <= tolerance {
+                count += 1
+            }
         }
     }
 }
