@@ -155,16 +155,26 @@ Use that to prove the release path, not as a friend-installable build.
 To produce a signed build, configure:
 
 - `MACOS_CERTIFICATE_P12`: base64-encoded Developer ID Application certificate
-  export.
+  export. The workflow requires exactly one Developer ID identity in this
+  isolated import and passes its SHA-1 fingerprint directly to `codesign`; it
+  never falls back to a same-named certificate from another keychain.
 - `MACOS_CERTIFICATE_PASSWORD`: password for the `.p12` export.
 - `MACOS_KEYCHAIN_PASSWORD`: optional temporary CI keychain password.
 - `MACOS_APP_PROVISIONING_PROFILE_BASE64`: required base64 app provisioning
   profile for signed Release builds with CloudKit entitlements.
-- `MACOS_WIDGET_PROVISIONING_PROFILE_BASE64`: optional base64 widget extension
-  provisioning profile.
+- `MACOS_WIDGET_PROVISIONING_PROFILE_BASE64`: required base64 widget extension
+  provisioning profile for signed builds.
 - `MACOS_REFRESH_AGENT_PROVISIONING_PROFILE_BASE64`: required base64 refresh
   agent provisioning profile for signed Release builds with CloudKit
   entitlements.
+
+Treat the P12 and all three provisioning profiles as one Developer ID signing
+set. Rotate them together. Before `xcodegen` or `xcodebuild` runs, packaging
+requires every profile's `DeveloperCertificates` list to authorize the exact
+fingerprint imported from the P12; after signing, packaging and runtime receipts
+independently verify the certificate embedded in each signed bundle. Common-name
+or `auto` selection is rejected when more than one matching signing certificate
+is available.
 
 To notarize, also configure:
 
@@ -997,11 +1007,12 @@ The native packaging script regenerates `ContextPanel.xcodeproj`, builds the
 verifies the resulting bundle, optionally notarizes, and writes a zip artifact.
 
 Use `--identity -` for ad-hoc local validation. With `--identity auto`, the
-script prefers the local Developer ID Application certificate, signs with
-hardened runtime and timestamp options, and verifies the bundle. Signed Release
-packaging with CloudKit entitlements also requires explicit provisioning profiles
-for the app and refresh agent so the packaged entitlements match the production
-CloudKit container.
+script prefers one unambiguous Developer ID Application certificate, then one
+Apple Distribution or Apple Development certificate, and otherwise uses ad-hoc
+signing. Ambiguous identity classes fail instead of choosing the first common
+name. Every selected identity is resolved to its exact SHA-1 fingerprint before
+signing. Signed Release packaging requires explicit provisioning profiles for
+the app, widget, and refresh agent from the same certificate set.
 
 Use `--notarize` only with a Developer ID identity and either Apple notarization
 environment variables, App Store Connect API credentials, or a stored notarytool
@@ -1013,6 +1024,8 @@ scripts/package-native-macos-app.sh \
   --output dist \
   --identity auto \
   --app-provisioning-profile path/to/ContextPanel.provisionprofile \
+  --widget-provisioning-profile \
+    path/to/ContextPanelWidgetExtension.provisionprofile \
   --refresh-agent-provisioning-profile \
     path/to/ContextPanelRefreshAgent.provisionprofile \
   --notarize \
@@ -1058,6 +1071,10 @@ scripts/package-macos-app.sh --identity -
   bookmark entitlements. The native packaging script verifies those entitlements
   after signing and fails before producing an artifact if any required bundle is
   missing them.
+- A launched canonical runtime receipt requires an active WidgetKit timeline
+  whose modification time is at least as new as the installed build fingerprint.
+  Older render caches are diagnostic evidence only and cannot prove that the
+  newly installed widget extension launched successfully.
 
 ## Validation
 

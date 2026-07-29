@@ -58,10 +58,10 @@ struct ProbeConfiguration {
         print("""
         Usage: swift run CodexRateLimitProbe [--auth /path/to/auth.json] [--endpoint URL]
 
-        Calls the live Codex usage endpoint directly and prints only a redacted
-        summary of limit buckets, windows, plan type, and credits. Tokens,
-        account identifiers, emails, headers, and raw response bodies are never
-        printed.
+        Calls the GET-only Codex usage endpoint and, for a positive count, its
+        sibling reset-credit details endpoint. Output is limited to account
+        index, count, detail coverage, and earliest known expiry. Account
+        identities and raw provider metadata are never printed.
         """)
     }
 }
@@ -75,45 +75,20 @@ struct CodexRateLimitProbe {
                 CodexAccountConfiguration(authPath: configuration.authPath, endpoint: configuration.endpoint)
             ])
             let result = await connector.refresh(now: Date())
-            printSummary(result: result, endpoint: configuration.endpoint, authPath: configuration.authPath)
+            printSummary(result: result)
         } catch {
             fputs("CodexRateLimitProbe failed: \(error.localizedDescription)\n", stderr)
             Foundation.exit(1)
         }
     }
 
-    private static func printSummary(result: ConnectorRefreshResult, endpoint: URL, authPath: String) {
-        print("Codex live usage endpoint probe")
-        print("endpoint: \(endpoint.absoluteString)")
-        print("auth: \(redactedAuthPath(authPath))")
-        print("accounts: \(result.reports.count)")
-        print("limits: \(result.snapshot.limits.count)")
-        print("redacted: tokens, account identifiers, emails, headers, raw response bodies")
-        print("")
-
-        for report in result.reports {
-            print("- \(report.accountName): \(report.status.rawValue)")
-            if let errorMessage = report.errorMessage {
-                print("  error: \(errorMessage)")
-            }
-            for limit in report.limits {
-                print("  - \(limit.label): \(format(limit: limit))")
-            }
+    private static func printSummary(result: ConnectorRefreshResult) {
+        for (index, report) in result.reports.enumerated() {
+            let count = report.resetCredits.map { String($0.availableCount) } ?? "unknown"
+            let coverage = report.resetCredits?.coverage.rawValue ?? "unknown"
+            let expiry = report.resetCredits?.earliestKnownExpiry
+                .map(ContextPanelDateFormatting.string(from:)) ?? "unknown"
+            print("account \(index + 1): count=\(count) coverage=\(coverage) earliest_expiry=\(expiry)")
         }
-    }
-
-    private static func format(limit: UsageLimit) -> String {
-        let used = limit.used.map { "\($0)% used" } ?? "unknown used"
-        let reset = limit.resetsAt.map { ContextPanelDateFormatting.string(from: $0) } ?? "unknown reset"
-        return "\(used) / resets \(reset)"
-    }
-
-    private static func redactedAuthPath(_ path: String) -> String {
-        let expanded = NSString(string: path).expandingTildeInPath
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        if expanded.hasPrefix(home) {
-            return "~" + expanded.dropFirst(home.count)
-        }
-        return URL(fileURLWithPath: expanded).lastPathComponent
     }
 }

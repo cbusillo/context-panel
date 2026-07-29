@@ -182,6 +182,85 @@ private let renderTestWidgetLinks = ContextPanelWidgetLinks(
 }
 
 @MainActor
+@Test func actionableResetCreditRendersInMediumAndLargeWidgets() throws {
+    let now = Date()
+    let snapshot = resetCreditRenderSnapshot(now: now)
+    let guidance = try #require(snapshot.primaryActionableResetCreditGuidance(now: now))
+    let deepLink = guidance.widgetDeepLinkURL
+    let components = try #require(URLComponents(url: deepLink, resolvingAgainstBaseURL: false))
+
+    #expect(components.scheme == "contextpanel")
+    #expect(components.host == "provider")
+    #expect(components.path == "/openai")
+    #expect(components.queryItems?.first { $0.name == "account" }?.value == guidance.accountID)
+
+    let scenarios: [(WidgetFamily, CGFloat, CGFloat, Int)] = [
+        (.systemMedium, 344, 164, 2_500),
+        (.systemLarge, 344, 344, 5_000),
+    ]
+    for (family, width, height, minimumPixels) in scenarios {
+        let view = ContextPanelWidgetContentView(
+            family: family,
+            snapshot: snapshot,
+            displayPreferences: .defaultPreferences,
+            links: renderTestWidgetLinks,
+            showsResetCreditSurfaces: true
+        )
+        .cpwThemeVariant(.light)
+        .frame(width: width, height: height)
+        .background(CPWTheme.surface(variant: .light))
+
+        let image = try #require(renderedImage(from: view, width: width, height: height))
+        #expect(nonBackgroundPixelCount(in: image) > minimumPixels)
+    }
+
+    let considerBeforeSnapshot = resetCreditRenderSnapshot(
+        now: now,
+        weeklyUsed: 85,
+        resetInterval: 4 * 86_400,
+        expiryInterval: 2 * 86_400
+    )
+    let considerBefore = try #require(considerBeforeSnapshot.primaryActionableResetCreditGuidance(now: now))
+    #expect(considerBefore.state == .considerBefore(now.addingTimeInterval(2 * 86_400)))
+    let considerBeforeView = ContextPanelWidgetContentView(
+        family: .systemMedium,
+        snapshot: considerBeforeSnapshot,
+        displayPreferences: .defaultPreferences,
+        links: renderTestWidgetLinks,
+        showsResetCreditSurfaces: true
+    )
+    .cpwThemeVariant(.light)
+    .frame(width: 344, height: 164)
+    .background(CPWTheme.surface(variant: .light))
+    let considerBeforeImage = try #require(renderedImage(from: considerBeforeView, width: 344, height: 164))
+    #expect(nonBackgroundPixelCount(in: considerBeforeImage) > 2_500)
+
+    let neutralSnapshot = resetCreditRenderSnapshot(
+        now: now,
+        weeklyUsed: 20,
+        resetInterval: 4 * 86_400,
+        expiryInterval: 2 * 86_400,
+        promptCacheObservations: resetCreditPromptCacheObservations(now: now),
+        promptCacheWidgetState: .available
+    )
+    let neutralSummary = try #require(neutralSnapshot.resetCreditSurfaceSummary(now: now))
+    #expect(neutralSummary.accountCount == 1)
+    #expect(neutralSummary.primaryActionableGuidance == nil)
+    let neutralView = ContextPanelWidgetContentView(
+        family: .systemLarge,
+        snapshot: neutralSnapshot,
+        displayPreferences: .defaultPreferences,
+        links: renderTestWidgetLinks,
+        showsResetCreditSurfaces: true
+    )
+    .cpwThemeVariant(.light)
+    .frame(width: 344, height: 344)
+    .background(CPWTheme.surface(variant: .light))
+    let neutralImage = try #require(renderedImage(from: neutralView, width: 344, height: 344))
+    #expect(nonBackgroundPixelCount(in: neutralImage) > 5_000)
+}
+
+@MainActor
 @Test func selectedSmallWidgetRendersKnownUnknownAndStaleStates() throws {
     let scenarios: [(
         snapshot: WidgetSnapshot,
@@ -317,6 +396,80 @@ private var singleLaneWidgetPreferences: WidgetDisplayPreferences {
             && preferences.mainLimits[index].window == .weekly
     }
     return preferences
+}
+
+private func resetCreditRenderSnapshot(
+    now: Date,
+    weeklyUsed: Int = 100,
+    resetInterval: TimeInterval = 3 * 60 * 60,
+    expiryInterval: TimeInterval = 2 * 86_400,
+    promptCacheObservations: [PromptCacheObservation] = [],
+    promptCacheWidgetState: PromptCacheWidgetState = .unavailable
+) -> WidgetSnapshot {
+    let accountID = "openai-long-account-name"
+    let configuredAccountID = "configured-openai"
+    return WidgetSnapshot(
+        state: .ready,
+        generatedAt: now,
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: accountID,
+                configuredAccountID: configuredAccountID,
+                accountName: "OpenAI Long Account Name For Layout",
+                label: "Codex Weekly",
+                windowLabel: "weekly",
+                unit: .percent,
+                used: weeklyUsed,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(resetInterval),
+                lastUpdatedAt: now,
+                confidence: .observed
+            ),
+        ],
+        reports: [
+            StoredProviderReport(
+                provider: .openAI,
+                accountID: accountID,
+                configuredAccountID: configuredAccountID,
+                accountName: "OpenAI Long Account Name For Layout",
+                generatedAt: now,
+                resetCredits: ProviderResetCreditSummary(
+                    availableCount: 2,
+                    observedAt: now,
+                    coverage: .complete,
+                    earliestKnownExpiry: now.addingTimeInterval(expiryInterval)
+                ),
+                status: .healthy,
+                errorMessage: nil
+            ),
+        ],
+        promptCacheObservations: promptCacheObservations,
+        promptCacheWidgetState: promptCacheWidgetState,
+        status: weeklyUsed >= 100 ? .limited : .close,
+        message: "Current"
+    )
+}
+
+private func resetCreditPromptCacheObservations(now: Date) -> [PromptCacheObservation] {
+    [
+        PromptCacheObservation(
+            provider: .openAI,
+            accountID: "openai-long-account-name",
+            accountName: "OpenAI Long Account Name For Layout",
+            observedAt: now,
+            windowLabel: "latest",
+            tokens: PromptCacheTokenSet(inputTokens: 1_000, cachedInputTokens: 980)
+        ),
+        PromptCacheObservation(
+            provider: .openAI,
+            accountID: "openai-long-account-name",
+            accountName: "OpenAI Long Account Name For Layout",
+            observedAt: now.addingTimeInterval(-60),
+            windowLabel: "previous",
+            tokens: PromptCacheTokenSet(inputTokens: 1_000, cachedInputTokens: 970)
+        ),
+    ]
 }
 
 private func multiLaneSmallWidgetSnapshot(state: WidgetSnapshotState = .ready) -> WidgetSnapshot {

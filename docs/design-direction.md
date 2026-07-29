@@ -1,6 +1,6 @@
 # Design Direction
 
-Last updated: 2026-07-20.
+Last updated: 2026-07-28.
 
 ## Accepted Direction
 
@@ -55,6 +55,41 @@ The large widget may use a dense ledger-like treatment when realistic
 multi-account data does not fit a dial-led composition. The design preference is
 still instrument-first: clear pressure, reset timing, and state hierarchy before
 raw completeness.
+
+## Reset-Credit Surface Direction
+
+Reset credits remain account-owned metadata, never pooled capacity. Full count,
+expiry, freshness, and recommendation reasoning belong only in the OpenAI
+account-detail rows. Higher-level surfaces acknowledge availability in existing
+horizontal slots rather than adding cards or reducing visible limit rows.
+
+- The Mac overview and OpenAI provider header use an interactive tag with a
+  reset glyph and the number of credit-bearing accounts. The number always means
+  accounts, never a sum of credits. The OpenAI sidebar may use the same neutral
+  glyph after the provider name, with help and complete accessibility copy.
+- App account detail retains positive stale or degraded observations for
+  discovery and troubleshooting. Higher-level tags count current observations
+  when any exist, and fall back to an all-stale `last seen` count only when no
+  current observation remains. Selecting the tag opens OpenAI detail; no app
+  surface performs a credit action.
+- Medium and large widgets use the existing section-header baseline. Actionable
+  guidance names one exact account and uses explicit `use now` or `by <date>`
+  copy. Neutral availability says `Credits · N accounts` and never displays a
+  global credit total.
+- Medium-widget accessory priority is actionable reset guidance, prompt-cache
+  telemetry, then neutral credit availability. The large widget may show reset
+  availability and cache telemetry together. When both are present, the large
+  widget keeps the cache health/current-rate signal compact and leaves the
+  rolling average in accessibility and the app. Actionable reset guidance wins
+  when the pair cannot fit; a stale or authorization-required cache state wins
+  over neutral reset availability. Neither family gives up a saved limit row for
+  reset-credit presentation.
+- Widgets suppress reset-credit signals when the widget is stale, failed, needs
+  setup, or when the credit observation is inconsistent or has elapsed. The app
+  remains the place to explain and recover those states.
+- Small widgets, Watch surfaces, companion apps, complications, tvOS, and Top
+  Shelf remain unchanged until an explicit companion-data and glance-hierarchy
+  decision is made.
 
 Every Apple Watch complication family is a glance surface and shows remaining
 capacity, matching the primary macOS widget answer. Circular and corner gauges

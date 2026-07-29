@@ -1,6 +1,6 @@
 # Context Panel Privacy Policy
 
-Effective date: May 8, 2026
+Effective date: July 28, 2026
 
 Context Panel is a native macOS utility for viewing local AI-provider usage
 limits and reset timing.
@@ -17,7 +17,8 @@ capacity, reset timing, freshness, and the user-facing account display label.
 That display label may be an email address when the provider or user uses an
 email as the account name. Companion snapshots do not include provider tokens,
 raw account identifiers, prompts, transcripts, raw provider responses, or
-diagnostic logs.
+diagnostic logs. OpenAI reset-credit summaries remain local to the Mac and are
+not included in companion or CloudKit payloads.
 
 Apple TV presentation privacy is device-local. Full Detail may show safe account
 display labels; Hide Account Names and Percentages Only suppress them. The Top
@@ -41,6 +42,13 @@ status. Those requests are made for the user's configured accounts so the app
 can display current capacity. Context Panel does not intentionally store raw
 provider responses, prompts, transcript contents, API keys, emails,
 organization identifiers, or access tokens in diagnostic reports.
+
+For OpenAI Codex reset credits, Context Panel performs read-only GET requests
+and stores only a normalized local summary: available count, observation time,
+detail coverage, and the earliest trustworthy expiry when known. It does not
+store provider credit IDs, status or reset-type strings, titles, descriptions,
+or raw detail rows. Context Panel does not redeem, consume, create, or otherwise
+mutate reset credits; that is a permanent product boundary.
 
 Refresh and alert diagnostics are stored locally to help explain whether the app
 or background agent refreshed successfully and whether configured local or

@@ -10,6 +10,7 @@ display_name="Context Panel"
 version="1.0.0"
 build_number=""
 signing_identity="auto"
+codesigning_identity_output=""
 app_provisioning_profile=""
 widget_provisioning_profile=""
 refresh_agent_provisioning_profile=""
@@ -32,11 +33,12 @@ Options:
   --output DIR                         Output directory. Default: dist
   --derived-data-path DIR              Xcode derived data path.
   --configuration NAME                 Xcode configuration. Default: Release
-  --identity VALUE                     codesign identity, "auto", or "-" for ad-hoc.
-  --app-provisioning-profile PATH      Optional app embedded.provisionprofile.
-  --widget-provisioning-profile PATH   Optional widget embedded.provisionprofile.
+  --identity VALUE                     SHA-1 fingerprint, exact Keychain identity name,
+                                      "auto", or "-" for ad-hoc.
+  --app-provisioning-profile PATH      App profile; required for non-ad-hoc Release.
+  --widget-provisioning-profile PATH   Widget profile; required for non-ad-hoc signing.
   --refresh-agent-provisioning-profile PATH
-                                      Optional refresh agent embedded.provisionprofile.
+                                      Refresh-agent profile; required for non-ad-hoc Release.
   --notarize                           Submit the zipped app to Apple notarization.
   --notary-keychain-profile NAME       notarytool keychain profile for notarization.
   --notary-key PATH                    App Store Connect API private key path.
@@ -129,27 +131,130 @@ require_command() {
 	fi
 }
 
+normalize_certificate_fingerprint() {
+	printf '%s' "$1" | tr -d ':' | tr '[:lower:]' '[:upper:]'
+}
+
+codesigning_identity_records() {
+	local line fingerprint name
+	while IFS= read -r line; do
+		fingerprint="$(printf '%s\n' "$line" |
+			sed -n 's/^[[:space:]]*[0-9][0-9]*) \([[:xdigit:]][[:xdigit:]]*\) ".*"[[:space:]]*$/\1/p')"
+		fingerprint="$(normalize_certificate_fingerprint "$fingerprint")"
+		if [[ "${#fingerprint}" -ne 40 || "$fingerprint" == *[!0-9A-F]* ]]; then
+			continue
+		fi
+		name="${line#*\"}"
+		if [[ "$name" == "$line" ]]; then
+			continue
+		fi
+		name="${name%%\"*}"
+		printf '%s\t%s\n' "$fingerprint" "$name"
+	done <<<"$codesigning_identity_output"
+}
+
+load_codesigning_identities() {
+	local output
+	if ! output="$(security find-identity -v -p codesigning 2>&1)"; then
+		echo "could not list valid codesigning identities" >&2
+		return 1
+	fi
+	codesigning_identity_output="$output"
+}
+
+identity_hashes_for_selector() {
+	local selector="$1"
+	local mode="$2"
+	local fingerprint name
+	while IFS=$'\t' read -r fingerprint name; do
+		case "$mode" in
+		hash)
+			[[ "$fingerprint" == "$selector" ]] || continue
+			;;
+		name)
+			[[ "$name" == "$selector" ]] || continue
+			;;
+		prefix)
+			[[ "$name" == "${selector}:"* ]] || continue
+			;;
+		esac
+		printf '%s\n' "$fingerprint"
+	done < <(codesigning_identity_records)
+}
+
+select_unique_signing_identity_hash() {
+	local selector="$1"
+	local mode="$2"
+	local description="$3"
+	local fingerprint existing duplicate
+	local fingerprints=()
+	while IFS= read -r fingerprint; do
+		[[ -n "$fingerprint" ]] || continue
+		duplicate=0
+		if [[ "${#fingerprints[@]}" -gt 0 ]]; then
+			for existing in "${fingerprints[@]}"; do
+				if [[ "$existing" == "$fingerprint" ]]; then
+					duplicate=1
+					break
+				fi
+			done
+		fi
+		if [[ "$duplicate" == "0" ]]; then
+			fingerprints+=("$fingerprint")
+		fi
+	done < <(identity_hashes_for_selector "$selector" "$mode")
+
+	if [[ "${#fingerprints[@]}" == "0" ]]; then
+		return 1
+	fi
+	if [[ "${#fingerprints[@]}" != "1" ]]; then
+		echo "multiple valid $description signing certificates are available; pass an exact SHA-1 fingerprint with --identity" >&2
+		return 2
+	fi
+	printf '%s\n' "${fingerprints[0]}"
+}
+
 resolve_identity() {
+	local identity status normalized prefix
 	if [[ "$signing_identity" != "auto" ]]; then
-		printf '%s\n' "$signing_identity"
-		return
+		if [[ "$signing_identity" == "-" ]]; then
+			printf '%s\n' "-"
+			return
+		fi
+		normalized="$(normalize_certificate_fingerprint "$signing_identity")"
+		if [[ "${#normalized}" == "40" && "$normalized" != *[!0-9A-F]* ]]; then
+			if identity="$(select_unique_signing_identity_hash "$normalized" hash "requested")"; then
+				printf '%s\n' "$identity"
+				return
+			else
+				status=$?
+			fi
+		else
+			if identity="$(select_unique_signing_identity_hash "$signing_identity" name "named")"; then
+				printf '%s\n' "$identity"
+				return
+			else
+				status=$?
+			fi
+		fi
+		if [[ "$status" == "1" ]]; then
+			echo "signing identity is not available in the keychain: $signing_identity" >&2
+		fi
+		return "$status"
 	fi
 
-	local identity
-	identity=$(security find-identity -v -p codesigning 2>/dev/null |
-		sed -n 's/^.*"\(Developer ID Application:[^"]*\)".*$/\1/p' |
-		head -n 1)
-	if [[ -z "$identity" ]]; then
-		identity=$(security find-identity -v -p codesigning 2>/dev/null |
-			sed -n 's/^.*"\(Apple Distribution:[^"]*\)".*$/\1/p' |
-			head -n 1)
-	fi
-	if [[ -z "$identity" ]]; then
-		identity=$(security find-identity -v -p codesigning 2>/dev/null |
-			sed -n 's/^.*"\(Apple Development:[^"]*\)".*$/\1/p' |
-			head -n 1)
-	fi
-	printf '%s\n' "${identity:--}"
+	for prefix in "Developer ID Application" "Apple Distribution" "Apple Development"; do
+		if identity="$(select_unique_signing_identity_hash "$prefix" prefix "$prefix")"; then
+			printf '%s\n' "$identity"
+			return
+		else
+			status=$?
+		fi
+		if [[ "$status" == "2" ]]; then
+			return "$status"
+		fi
+	done
+	printf '%s\n' "-"
 }
 
 copy_profile_if_present() {
@@ -271,11 +376,9 @@ require_profile_for_cloudkit_entitlements() {
 	fi
 }
 
-require_non_ad_hoc_for_cloudkit_entitlements() {
-	local entitlements="$1"
-	local label="$2"
-	if requires_cloudkit_profile "$entitlements" && [[ "$resolved_identity" == "-" && -n "$app_provisioning_profile$refresh_agent_provisioning_profile" ]]; then
-		echo "$label uses CloudKit entitlements and requires a non-ad-hoc signing identity" >&2
+require_non_ad_hoc_for_provisioning_profiles() {
+	if [[ "$resolved_identity" == "-" && -n "$app_provisioning_profile$widget_provisioning_profile$refresh_agent_provisioning_profile" ]]; then
+		echo "Context Panel packaging with provisioning profiles requires a non-ad-hoc signing identity" >&2
 		exit 1
 	fi
 }
@@ -358,6 +461,82 @@ validate_profile_covers_entitlements() {
 	check_profile_authorizes_scalar_entitlement "$profile_plist" "$entitlements" "$label" "com.apple.developer.icloud-container-environment"
 	check_profile_authorizes_scalar_entitlement "$profile_plist" "$entitlements" "$label" "com.apple.developer.team-identifier"
 	rm -f "$profile_plist"
+}
+
+require_profile_for_signed_bundle() {
+	local profile="$1"
+	local label="$2"
+	if [[ "$resolved_identity" != "-" && -z "$profile" ]]; then
+		echo "$label requires an embedded provisioning profile for non-ad-hoc signing" >&2
+		exit 1
+	fi
+	return 0
+}
+
+assert_profile_authorizes_signing_identity() {
+	local profile="$1"
+	local label="$2"
+	[[ "$resolved_identity" != "-" && -n "$profile" ]] || return 0
+
+	local temp_dir profile_plist candidate_base64 candidate_der candidate_fingerprint index matched
+	temp_dir="$(mktemp -d)"
+	profile_plist="$temp_dir/profile.plist"
+	candidate_base64="$temp_dir/certificate.base64"
+	candidate_der="$temp_dir/certificate.der"
+	decode_provisioning_profile "$profile" "$profile_plist"
+
+	index=0
+	matched=0
+	while plutil -extract "DeveloperCertificates.$index" raw -o - "$profile_plist" >"$candidate_base64" 2>/dev/null; do
+		if /usr/bin/base64 -D <"$candidate_base64" >"$candidate_der" 2>/dev/null; then
+			candidate_fingerprint="$(shasum -a 1 "$candidate_der" | awk '{ print toupper($1) }')"
+			if [[ "$candidate_fingerprint" == "$resolved_identity" ]]; then
+				matched=1
+				break
+			fi
+		fi
+		index=$((index + 1))
+	done
+	rm -rf "$temp_dir"
+	if [[ "$matched" != "1" ]]; then
+		echo "$label provisioning profile does not authorize signing certificate $resolved_identity" >&2
+		exit 1
+	fi
+}
+
+assert_profile_matches_signing_certificate() {
+	local bundle_path="$1"
+	local profile="$2"
+	local label="$3"
+	[[ "$resolved_identity" != "-" && -n "$profile" ]] || return 0
+
+	local temp_dir profile_plist candidate_base64 candidate_der index matched
+	temp_dir="$(mktemp -d)"
+	profile_plist="$temp_dir/profile.plist"
+	candidate_base64="$temp_dir/certificate.base64"
+	candidate_der="$temp_dir/certificate.der"
+	decode_provisioning_profile "$profile" "$profile_plist"
+	if ! codesign -d --extract-certificates="$temp_dir/signed-certificate" "$bundle_path" >/dev/null 2>&1; then
+		rm -rf "$temp_dir"
+		echo "could not extract the signing certificate for $label: $bundle_path" >&2
+		exit 1
+	fi
+
+	index=0
+	matched=0
+	while plutil -extract "DeveloperCertificates.$index" raw -o - "$profile_plist" >"$candidate_base64" 2>/dev/null; do
+		if /usr/bin/base64 -D <"$candidate_base64" >"$candidate_der" 2>/dev/null &&
+			cmp -s "$temp_dir/signed-certificate0" "$candidate_der"; then
+			matched=1
+			break
+		fi
+		index=$((index + 1))
+	done
+	rm -rf "$temp_dir"
+	if [[ "$matched" != "1" ]]; then
+		echo "$label provisioning profile does not authorize the actual signing certificate" >&2
+		exit 1
+	fi
 }
 
 prepared_entitlements() {
@@ -454,8 +633,12 @@ require_command xcodebuild
 require_command codesign
 require_command ditto
 require_command security
+require_command shasum
 require_command xcrun
 
+if [[ "$signing_identity" != "-" ]]; then
+	load_codesigning_identities
+fi
 resolved_identity=$(resolve_identity)
 app_name="$display_name.app"
 product_dir="$derived_data_path/Build/Products/$configuration"
@@ -464,6 +647,7 @@ app_path="$output_dir/$app_name"
 zip_path="$output_dir/ContextPanel-$version-macOS.zip"
 metadata_path="$output_dir/release-metadata.json"
 app_entitlements="Config/ContextPanel.entitlements"
+widget_entitlements="Config/ContextPanelWidget.entitlements"
 refresh_agent_entitlements="Config/ContextPanelRefreshAgent.entitlements"
 if [[ "$configuration" == "Release" ]]; then
 	app_entitlements="Config/ContextPanelAppStore.entitlements"
@@ -471,10 +655,14 @@ if [[ "$configuration" == "Release" ]]; then
 fi
 require_profile_for_cloudkit_entitlements "$app_entitlements" "$app_provisioning_profile" "Context Panel app"
 require_profile_for_cloudkit_entitlements "$refresh_agent_entitlements" "$refresh_agent_provisioning_profile" "Context Panel refresh agent"
-require_non_ad_hoc_for_cloudkit_entitlements "$app_entitlements" "Context Panel app"
-require_non_ad_hoc_for_cloudkit_entitlements "$refresh_agent_entitlements" "Context Panel refresh agent"
+require_non_ad_hoc_for_provisioning_profiles
 validate_profile_covers_entitlements "$app_provisioning_profile" "$app_entitlements" "Context Panel app" "com.shinycomputers.contextpanel"
 validate_profile_covers_entitlements "$refresh_agent_provisioning_profile" "$refresh_agent_entitlements" "Context Panel refresh agent" "com.shinycomputers.contextpanel.refresh-agent"
+require_profile_for_signed_bundle "$widget_provisioning_profile" "Context Panel widget"
+validate_profile_covers_entitlements "$widget_provisioning_profile" "$widget_entitlements" "Context Panel widget" "com.shinycomputers.contextpanel.widget"
+assert_profile_authorizes_signing_identity "$app_provisioning_profile" "Context Panel app"
+assert_profile_authorizes_signing_identity "$widget_provisioning_profile" "Context Panel widget"
+assert_profile_authorizes_signing_identity "$refresh_agent_provisioning_profile" "Context Panel refresh agent"
 
 xcodegen generate --spec project.yml
 
@@ -539,6 +727,9 @@ codesign "${codesign_options[@]}" \
 	--entitlements "$app_signing_entitlements" \
 	"$app_path"
 codesign --verify --deep --strict --verbose=2 "$app_path"
+assert_profile_matches_signing_certificate "$app_path" "$app_provisioning_profile" "Context Panel app"
+assert_profile_matches_signing_certificate "$widget_path" "$widget_provisioning_profile" "Context Panel widget"
+assert_profile_matches_signing_certificate "$refresh_agent_path" "$refresh_agent_provisioning_profile" "Context Panel refresh agent"
 assert_app_group_entitlement "$app_path" "Context Panel app"
 assert_app_group_entitlement "$widget_path" "Context Panel widget"
 assert_app_group_entitlement "$refresh_agent_path" "Context Panel refresh agent"

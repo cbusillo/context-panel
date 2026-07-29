@@ -122,6 +122,81 @@ import Testing
     }
 }
 
+@Test func resetCreditPresentationStaysReadOnlyAndSurfaceScoped() throws {
+    let root = try userFacingCopyRepositoryRoot()
+    let guidanceSource = try String(
+        contentsOf: root.appending(path: "Sources/ContextPanelCore/ResetCreditGuidance.swift"),
+        encoding: .utf8
+    )
+    let appSource = try String(
+        contentsOf: root.appending(path: "Sources/ContextPanelApp/ContextPanelApp.swift"),
+        encoding: .utf8
+    )
+    let widgetSource = try String(
+        contentsOf: root.appending(path: "Sources/ContextPanelWidgetUI/ContextPanelWidgetViews.swift"),
+        encoding: .utf8
+    )
+    let macWidgetSource = try String(
+        contentsOf: root.appending(path: "Sources/ContextPanelWidget/ContextPanelWidget.swift"),
+        encoding: .utf8
+    )
+    let companionWidgetSource = try String(
+        contentsOf: root.appending(path: "Sources/ContextPanelCompanionWidget/ContextPanelCompanionWidget.swift"),
+        encoding: .utf8
+    )
+    let appResetRow = try userFacingCopySection(
+        in: appSource,
+        startingAt: "private struct OpenAIResetCreditRow",
+        endingAt: "private struct OpenAIAccountWindowPill"
+    )
+    let smallWidget = try userFacingCopySection(
+        in: widgetSource,
+        startingAt: "struct ContextPanelSmallWidget",
+        endingAt: "private struct CPWSmallPrimaryLimitView"
+    )
+    let mediumWidget = try userFacingCopySection(
+        in: widgetSource,
+        startingAt: "struct ContextPanelMediumWidget",
+        endingAt: "struct ContextPanelLargeWidget"
+    )
+    let largeWidget = try userFacingCopySection(
+        in: widgetSource,
+        startingAt: "struct ContextPanelLargeWidget",
+        endingAt: "private enum CPWMainLimitHeaderLayout"
+    )
+
+    for phrase in ["redeem", "consume", "guarantee", "payment", "purchase"] {
+        #expect(!guidanceSource.lowercased().contains(phrase), "Guidance source contains mutation or guarantee language: \(phrase)")
+    }
+    for phrase in ["Button(", "Link(", "openURL", "redeem", "consume"] {
+        #expect(!appResetRow.contains(phrase), "The app reset-credit row must remain read-only: \(phrase)")
+    }
+
+    #expect(!smallWidget.contains("ResetCredit"))
+    #expect(mediumWidget.contains("CPWMainLimitHeaderAccessory"))
+    #expect(largeWidget.contains("CPWMainLimitHeaderAccessory"))
+    #expect(mediumWidget.contains("maximumCount: 3"))
+    #expect(largeWidget.contains("maximumCount: 5"))
+    #expect(!mediumWidget.contains("maximumCount: resetCredit"))
+    #expect(!largeWidget.contains("maximumCount: resetCredit"))
+    #expect(widgetSource.contains("private struct CPWResetCreditHeaderToken"))
+    #expect(widgetSource.contains("Text(\"Credits · \\(summary.accountCountText)\")"))
+    #expect(widgetSource.contains("Text(\"Reset credits · \\(compactAccountCountText)\")"))
+    #expect(widgetSource.contains("guidance.glanceActionText"))
+    #expect(widgetSource.contains("compactAvailable: layout == .large && resetCreditSummary != nil"))
+    #expect(widgetSource.contains("if state == .available"))
+    #expect(widgetSource.contains("showsResetCreditSurfaces: Bool = false"))
+    #expect(macWidgetSource.contains("showsResetCreditSurfaces: true"))
+    #expect(!companionWidgetSource.contains("showsResetCreditSurfaces: true"))
+    #expect(appSource.contains("ResetCreditAvailabilityTag"))
+    #expect(appSource.contains("Reset credits last seen"))
+    #expect(appSource.contains("arrow.counterclockwise.circle"))
+    #expect(widgetSource.contains("components.scheme = \"contextpanel\""))
+    #expect(widgetSource.contains("components.host = \"provider\""))
+    #expect(widgetSource.contains("\"Opens account detail in Context Panel\""))
+    #expect(widgetSource.contains("\"Opens OpenAI detail in Context Panel\""))
+}
+
 private func userFacingCopyRepositoryRoot() throws -> URL {
     var candidate = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     while candidate.path != "/" {
@@ -131,4 +206,17 @@ private func userFacingCopyRepositoryRoot() throws -> URL {
         candidate.deleteLastPathComponent()
     }
     throw CocoaError(.fileNoSuchFile)
+}
+
+private func userFacingCopySection(
+    in source: String,
+    startingAt start: String,
+    endingAt end: String
+) throws -> Substring {
+    guard let startRange = source.range(of: start),
+          let endRange = source.range(of: end, range: startRange.upperBound..<source.endIndex)
+    else {
+        throw CocoaError(.fileReadCorruptFile)
+    }
+    return source[startRange.lowerBound..<endRange.lowerBound]
 }

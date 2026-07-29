@@ -165,8 +165,30 @@ jobs:
             done < <(security list-keychains -d user)
             security list-keychains -d user -s "${keychain_path}" "${existing_keychains[@]}"
             security set-key-partition-list -S apple-tool:,apple: -s -k "${keychain_password}" "${keychain_path}"
-            security find-identity -v -p codesigning "${keychain_path}"
-            identity="auto"
+            identity_output="$(security find-identity -v -p codesigning "${keychain_path}")"
+            printf '%s\n' "${identity_output}"
+            identities=()
+            while IFS= read -r candidate; do
+              candidate="$(printf '%s' "${candidate}" | tr '[:lower:]' '[:upper:]')"
+              if [[ "${#candidate}" -eq 40 && "${candidate}" != *[!0-9A-F]* ]]; then
+                identities+=("${candidate}")
+              fi
+            done < <(printf '%s\n' "${identity_output}" | awk '/"Developer ID Application:/ { print $2 }')
+            if [[ "${#identities[@]}" -ne 1 ]]; then
+              echo "expected exactly one Developer ID Application identity in MACOS_CERTIFICATE_P12; found ${#identities[@]}" >&2
+              exit 1
+            fi
+            identity="${identities[0]}"
+
+            if [[ -z "${MACOS_APP_PROVISIONING_PROFILE_BASE64:-}" ||
+              -z "${MACOS_WIDGET_PROVISIONING_PROFILE_BASE64:-}" ||
+              -z "${MACOS_REFRESH_AGENT_PROVISIONING_PROFILE_BASE64:-}" ]]; then
+              echo "Developer ID signing requires app, widget, and refresh-agent provisioning profiles from the same certificate set" >&2
+              exit 1
+            fi
+          elif [[ -n "${MACOS_APP_PROVISIONING_PROFILE_BASE64:-}${MACOS_WIDGET_PROVISIONING_PROFILE_BASE64:-}${MACOS_REFRESH_AGENT_PROVISIONING_PROFILE_BASE64:-}" ]]; then
+            echo "Developer ID provisioning profiles are configured without MACOS_CERTIFICATE_P12" >&2
+            exit 1
           fi
 
           if [[ -n "${MACOS_APP_PROVISIONING_PROFILE_BASE64:-}" ]]; then

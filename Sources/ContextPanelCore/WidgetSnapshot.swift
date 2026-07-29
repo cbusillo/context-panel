@@ -78,6 +78,24 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             ?? usageSnapshot.nextAccountToUse(provider: .openAI)
     }
 
+    public func primaryActionableResetCreditGuidance(
+        now: Date = Date()
+    ) -> ProviderResetCreditGuidance? {
+        resetCreditSurfaceSummary(now: now)?.primaryActionableGuidance
+    }
+
+    public func resetCreditSurfaceSummary(
+        now: Date = Date()
+    ) -> ProviderResetCreditSurfaceSummary? {
+        guard state == .ready, syncErrorMessage == nil else { return nil }
+        return ResetCreditSurfaceAdvisor.widgetSummary(
+            reports: reports,
+            limits: limits,
+            now: now,
+            maximumAge: SnapshotFreshness.widgetMaximumAge
+        )
+    }
+
     public var aggregateCapacityRatio: Double {
         usageSnapshot.aggregateCapacityRatio
     }
@@ -596,6 +614,7 @@ private extension StoredProviderReport {
             configuredAccountID: configuredAccountID,
             accountName: accountName,
             generatedAt: generatedAt,
+            resetCredits: resetCredits,
             status: status,
             accessState: accessState,
             errorMessage: errorMessage

@@ -34,6 +34,84 @@ public enum ConnectorError: LocalizedError, Equatable, Sendable {
     }
 }
 
+public enum ProviderResetCreditCoverage: String, Codable, Equatable, Sendable {
+    case countOnly
+    case partial
+    case complete
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        self = (try? container.decode(String.self))
+            .flatMap(Self.init(rawValue:)) ?? .countOnly
+    }
+
+    fileprivate var selectionRank: Int {
+        switch self {
+        case .countOnly: 0
+        case .partial: 1
+        case .complete: 2
+        }
+    }
+}
+
+public struct ProviderResetCreditSummary: Codable, Equatable, Sendable {
+    public let availableCount: Int
+    public let observedAt: Date
+    public let coverage: ProviderResetCreditCoverage
+    public let earliestKnownExpiry: Date?
+
+    public init(
+        availableCount: Int,
+        observedAt: Date,
+        coverage: ProviderResetCreditCoverage,
+        earliestKnownExpiry: Date? = nil
+    ) {
+        let normalizedCount = max(0, availableCount)
+        self.availableCount = normalizedCount
+        self.observedAt = observedAt
+        if normalizedCount == 0 || earliestKnownExpiry == nil {
+            self.coverage = .countOnly
+            self.earliestKnownExpiry = nil
+        } else {
+            self.coverage = coverage
+            self.earliestKnownExpiry = coverage == .countOnly ? nil : earliestKnownExpiry
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            availableCount: try container.decode(Int.self, forKey: .availableCount),
+            observedAt: try container.decode(Date.self, forKey: .observedAt),
+            coverage: try container.decode(ProviderResetCreditCoverage.self, forKey: .coverage),
+            earliestKnownExpiry: try container.decodeIfPresent(Date.self, forKey: .earliestKnownExpiry)
+        )
+    }
+
+    static func preferred(_ lhs: Self?, _ rhs: Self?) -> Self? {
+        guard let lhs else { return rhs }
+        guard let rhs else { return lhs }
+        if lhs.observedAt != rhs.observedAt {
+            return lhs.observedAt > rhs.observedAt ? lhs : rhs
+        }
+        if lhs.availableCount != rhs.availableCount {
+            return lhs.availableCount < rhs.availableCount ? lhs : rhs
+        }
+        if lhs.coverage != rhs.coverage {
+            return lhs.coverage.selectionRank > rhs.coverage.selectionRank ? lhs : rhs
+        }
+        return (lhs.earliestKnownExpiry ?? .distantFuture) <= (rhs.earliestKnownExpiry ?? .distantFuture) ? lhs : rhs
+    }
+
+    var preservingCountAfterRefreshFailure: Self {
+        Self(
+            availableCount: availableCount,
+            observedAt: observedAt,
+            coverage: .countOnly
+        )
+    }
+}
+
 public struct ProviderConnectorReport: Equatable, Sendable {
     public let provider: Provider
     public let accountID: String
@@ -41,6 +119,7 @@ public struct ProviderConnectorReport: Equatable, Sendable {
     public let accountName: String
     public let generatedAt: Date
     public let limits: [UsageLimit]
+    public let resetCredits: ProviderResetCreditSummary?
     public let status: UsageStatus
     public let accessState: ProviderAccessState
     public let errorMessage: String?
@@ -52,6 +131,7 @@ public struct ProviderConnectorReport: Equatable, Sendable {
         accountName: String,
         generatedAt: Date,
         limits: [UsageLimit],
+        resetCredits: ProviderResetCreditSummary? = nil,
         status: UsageStatus? = nil,
         accessState: ProviderAccessState = .unknown,
         errorMessage: String? = nil
@@ -62,6 +142,7 @@ public struct ProviderConnectorReport: Equatable, Sendable {
         self.accountName = accountName
         self.generatedAt = generatedAt
         self.limits = limits
+        self.resetCredits = resetCredits
         self.status = status ?? UsageSnapshot(generatedAt: generatedAt, limits: limits).aggregateStatus
         self.accessState = accessState.retainingCurrentProviderObservation(for: self.status)
         self.errorMessage = errorMessage.map(ConnectorRedactor.safeErrorDescription)
@@ -156,13 +237,14 @@ public struct ProviderConnectorRuntime: Sendable {
             if let existingIndex = indexesByAccount[key] {
                 let existing = deduplicated[existingIndex]
                 let configuredAccountID = existing.configuredAccountID ?? report.configuredAccountID
+                var merged = existing
                 if existing.limits.isEmpty, !report.limits.isEmpty {
-                    deduplicated[existingIndex] = report.replacingMissingConfiguredAccountID(
+                    merged = report.replacingMissingConfiguredAccountID(
                         with: configuredAccountID,
                         accountName: mergedAccountName(existing: existing, report: report, prefersReportOnTie: true)
                     )
                 } else if existing.configuredAccountID == nil || existing.limits.contains(where: { $0.configuredAccountID == nil }) {
-                    deduplicated[existingIndex] = existing.replacingMissingConfiguredAccountID(
+                    merged = existing.replacingMissingConfiguredAccountID(
                         with: configuredAccountID,
                         accountName: mergedAccountName(
                             existing: existing,
@@ -171,6 +253,9 @@ public struct ProviderConnectorRuntime: Sendable {
                         )
                     )
                 }
+                deduplicated[existingIndex] = merged.replacingResetCredits(
+                    with: ProviderResetCreditSummary.preferred(existing.resetCredits, report.resetCredits)
+                )
             } else {
                 indexesByAccount[key] = deduplicated.count
                 deduplicated.append(report)
@@ -224,6 +309,23 @@ private extension ProviderConnectorReport {
             accountName: replacementAccountName ?? accountName,
             generatedAt: generatedAt,
             limits: limits.map { $0.replacingMissingConfiguredAccountID(with: fallback, accountName: replacementAccountName) },
+            resetCredits: resetCredits,
+            status: status,
+            accessState: accessState,
+            errorMessage: errorMessage
+        )
+    }
+
+    func replacingResetCredits(with replacement: ProviderResetCreditSummary?) -> ProviderConnectorReport {
+        guard resetCredits != replacement else { return self }
+        return ProviderConnectorReport(
+            provider: provider,
+            accountID: accountID,
+            configuredAccountID: configuredAccountID,
+            accountName: accountName,
+            generatedAt: generatedAt,
+            limits: limits,
+            resetCredits: replacement,
             status: status,
             accessState: accessState,
             errorMessage: errorMessage

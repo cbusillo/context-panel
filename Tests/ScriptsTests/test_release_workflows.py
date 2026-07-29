@@ -1,5 +1,6 @@
 import unittest
 from pathlib import Path
+import base64
 import subprocess
 import re
 import tempfile
@@ -12,6 +13,8 @@ import textwrap
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+FIXTURE_SIGNING_CERTIFICATE = b"context-panel-fixture-signing-certificate"
+FIXTURE_SIGNING_FINGERPRINT = hashlib.sha1(FIXTURE_SIGNING_CERTIFICATE).hexdigest().upper()
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
@@ -325,6 +328,30 @@ class ReleaseWorkflowTests(unittest.TestCase):
             check=False,
         )
 
+    def run_widget_timeline_freshness_fixture(self, timeline_mtime: int, reference_mtime: int) -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            timeline_dir = root / "timelines/ContextPanelWidget"
+            timeline_dir.mkdir(parents=True)
+            timeline = timeline_dir / "systemMedium344.00w-164.00h.timeline.chrono-timeline"
+            reference = root / "ContextPanelBuildFingerprint.txt"
+            timeline.write_text("timeline")
+            reference.write_text("fingerprint")
+            os.utime(timeline, (timeline_mtime, timeline_mtime))
+            os.utime(reference, (reference_mtime, reference_mtime))
+            command = f"""
+            source scripts/context-panel-runtime-baseline.sh --source-only
+            widget_timeline_cache_is_current_for_build "{root}" "{reference}"
+            """
+            return subprocess.run(
+                ["bash", "-lc", command],
+                cwd=REPO_ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+
     def run_runtime_identity_fixture(
         self,
         app_entitlements: str | None,
@@ -401,7 +428,13 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 check=False,
             )
 
-    def run_package_script_preflight(self, args: list[str], profiles: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    def run_package_script_preflight(
+        self,
+        args: list[str],
+        profiles: dict[str, str] | None = None,
+        identity_output: str | None = None,
+        identity_status: int = 0,
+    ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             tool_dir = root / "tools"
@@ -415,6 +448,11 @@ class ReleaseWorkflowTests(unittest.TestCase):
             expanded_args = [str(profile_paths.get(arg, arg)) for arg in args]
             env = os.environ.copy()
             env["PATH"] = f"{tool_dir}:{env['PATH']}"
+            env["FAKE_SECURITY_IDENTITIES"] = identity_output if identity_output is not None else (
+                f'  1) {FIXTURE_SIGNING_FINGERPRINT} "Apple Development: Test"\n'
+                "     1 valid identities found"
+            )
+            env["FAKE_SECURITY_STATUS"] = str(identity_status)
             return subprocess.run(
                 ["/bin/bash", str(REPO_ROOT / "scripts/package-native-macos-app.sh"), *expanded_args],
                 cwd=REPO_ROOT,
@@ -433,7 +471,8 @@ if [[ "${1:-}" == "cms" && "${2:-}" == "-D" && "${3:-}" == "-i" ]]; then
   exit 0
 fi
 if [[ "${1:-}" == "find-identity" ]]; then
-  exit 0
+  printf '%s\n' "${FAKE_SECURITY_IDENTITIES:-}"
+  exit "${FAKE_SECURITY_STATUS:-0}"
 fi
 echo "unexpected fake security invocation: $*" >&2
 exit 42
@@ -451,8 +490,10 @@ exit 42
         bundle_id: str,
         services: list[str] | None = None,
         cloudkit_environment: str = "Production",
+        developer_certificate: bytes = FIXTURE_SIGNING_CERTIFICATE,
     ) -> str:
         team_id = "MM5YXC7T6E"
+        certificate_data = base64.b64encode(developer_certificate).decode()
         service_items = "\n".join(
             f"        <string>{service}</string>" for service in (services or ["CloudDocuments", "CloudKit"])
         )
@@ -465,6 +506,10 @@ exit 42
   <key>TeamIdentifier</key>
   <array>
     <string>{team_id}</string>
+  </array>
+  <key>DeveloperCertificates</key>
+  <array>
+    <data>{certificate_data}</data>
   </array>
   <key>Entitlements</key>
   <dict>
@@ -495,6 +540,41 @@ exit 42
     <key>keychain-access-groups</key>
     <array>
       <string>{team_id}.com.shinycomputers.contextpanel.provider-credentials</string>
+    </array>
+  </dict>
+</dict>
+</plist>
+"""
+
+    def widget_profile_plist(self, developer_certificate: bytes = FIXTURE_SIGNING_CERTIFICATE) -> str:
+        team_id = "MM5YXC7T6E"
+        bundle_id = "com.shinycomputers.contextpanel.widget"
+        certificate_data = base64.b64encode(developer_certificate).decode()
+        return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Name</key>
+  <string>Test Profile {bundle_id}</string>
+  <key>TeamIdentifier</key>
+  <array>
+    <string>{team_id}</string>
+  </array>
+  <key>DeveloperCertificates</key>
+  <array>
+    <data>{certificate_data}</data>
+  </array>
+  <key>Entitlements</key>
+  <dict>
+    <key>application-identifier</key>
+    <string>{team_id}.{bundle_id}</string>
+    <key>com.apple.application-identifier</key>
+    <string>{team_id}.{bundle_id}</string>
+    <key>com.apple.developer.team-identifier</key>
+    <string>{team_id}</string>
+    <key>com.apple.security.application-groups</key>
+    <array>
+      <string>{team_id}.group.com.shinycomputers.contextpanel</string>
     </array>
   </dict>
 </dict>
@@ -768,6 +848,15 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn('MARKETING_VERSION="$version"', package_script)
         self.assertIn('CURRENT_PROJECT_VERSION="$build_number"', package_script)
 
+    def test_release_workflow_pins_the_identity_imported_from_the_p12(self):
+        workflow = self.read(".github/workflows/release.yml")
+
+        self.assertIn('identity_output="$(security find-identity -v -p codesigning "${keychain_path}")"', workflow)
+        self.assertIn('identity="${identities[0]}"', workflow)
+        self.assertIn("expected exactly one Developer ID Application identity", workflow)
+        self.assertIn("requires app, widget, and refresh-agent provisioning profiles", workflow)
+        self.assertNotIn('identity="auto"', workflow)
+
     def test_release_package_signing_preserves_profile_application_identifier(self):
         package_script = self.read("scripts/package-native-macos-app.sh")
 
@@ -784,6 +873,57 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn('assert_entitlement_present "$app_path" "Context Panel app" "com.apple.application-identifier"', package_script)
         self.assertIn('assert_entitlement_present "$refresh_agent_path" "Context Panel refresh agent" "com.apple.application-identifier"', package_script)
 
+    def test_release_and_runtime_gates_reject_profile_certificate_mismatches(self):
+        package_script = self.read("scripts/package-native-macos-app.sh")
+        runtime_script = self.read("scripts/context-panel-runtime-baseline.sh")
+
+        self.assertIn("assert_profile_matches_signing_certificate()", package_script)
+        self.assertIn("assert_profile_authorizes_signing_identity()", package_script)
+        self.assertIn("DeveloperCertificates.$index", package_script)
+        self.assertIn("does not authorize the actual signing certificate", package_script)
+        preflight = (
+            'assert_profile_authorizes_signing_identity "$widget_provisioning_profile" "Context Panel widget"'
+        )
+        self.assertIn(preflight, package_script)
+        self.assertLess(package_script.index(preflight), package_script.index("xcodegen generate --spec project.yml"))
+        self.assertIn(
+            'assert_profile_matches_signing_certificate "$widget_path" "$widget_provisioning_profile" "Context Panel widget"',
+            package_script,
+        )
+        self.assertIn("DeveloperCertificates.$index", runtime_script)
+        self.assertIn("does not authorize the actual signing certificate", runtime_script)
+
+    def test_runtime_gate_accepts_widget_timeline_from_installed_build(self):
+        result = self.run_widget_timeline_freshness_fixture(timeline_mtime=200, reference_mtime=100)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_runtime_gate_rejects_widget_timeline_from_previous_build(self):
+        result = self.run_widget_timeline_freshness_fixture(timeline_mtime=100, reference_mtime=200)
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+
+    def test_runtime_gate_rejects_widget_timeline_without_build_reference(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            timeline_dir = root / "timelines/ContextPanelWidget"
+            timeline_dir.mkdir(parents=True)
+            (timeline_dir / "systemMedium344.00w-164.00h.timeline.chrono-timeline").write_text("timeline")
+            command = f"""
+            source scripts/context-panel-runtime-baseline.sh --source-only
+            widget_timeline_cache_is_current_for_build "{root}" "{root / 'missing-fingerprint.txt'}"
+            """
+            result = subprocess.run(
+                ["bash", "-lc", command],
+                cwd=REPO_ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+
     def test_release_package_rejects_cloudkit_without_profiles_before_building(self):
         result = self.run_package_script_preflight([
             "--identity",
@@ -794,15 +934,145 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("Context Panel app uses CloudKit entitlements and requires an embedded provisioning profile", result.stdout)
         self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
 
+    def test_release_package_rejects_ambiguous_auto_identity_before_building(self):
+        second_fingerprint = hashlib.sha1(b"second-signing-certificate").hexdigest().upper()
+        identities = (
+            f'  1) {FIXTURE_SIGNING_FINGERPRINT} "Developer ID Application: Test (MM5YXC7T6E)"\n'
+            f'  2) {second_fingerprint} "Developer ID Application: Test (MM5YXC7T6E)"\n'
+            "     2 valid identities found"
+        )
+
+        result = self.run_package_script_preflight(["--identity", "auto"], identity_output=identities)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("multiple valid Developer ID Application signing certificates are available", result.stdout)
+        self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
+
+    def test_release_package_rejects_identity_lookup_failure_before_building(self):
+        identities = f'  1) {FIXTURE_SIGNING_FINGERPRINT} "Developer ID Application: Test (MM5YXC7T6E)"'
+
+        result = self.run_package_script_preflight(
+            ["--identity", "auto"],
+            identity_output=identities,
+            identity_status=77,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("could not list valid codesigning identities", result.stdout)
+        self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
+
+    def test_release_package_requires_widget_profile_for_signed_builds(self):
+        result = self.run_package_script_preflight(
+            [
+                "--identity",
+                FIXTURE_SIGNING_FINGERPRINT,
+                "--app-provisioning-profile",
+                "app.plist",
+                "--refresh-agent-provisioning-profile",
+                "refresh.plist",
+            ],
+            profiles={
+                "app.plist": self.cloudkit_profile_plist("com.shinycomputers.contextpanel"),
+                "refresh.plist": self.cloudkit_profile_plist("com.shinycomputers.contextpanel.refresh-agent"),
+            },
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Context Panel widget requires an embedded provisioning profile", result.stdout)
+        self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
+
+    def test_release_package_rejects_each_profile_for_a_different_signing_certificate(self):
+        mismatch_cases = (
+            ("app.plist", "Context Panel app"),
+            ("widget.plist", "Context Panel widget"),
+            ("refresh.plist", "Context Panel refresh agent"),
+        )
+        for mismatched_profile, label in mismatch_cases:
+            with self.subTest(profile=mismatched_profile):
+                profiles = {
+                    "app.plist": self.cloudkit_profile_plist("com.shinycomputers.contextpanel"),
+                    "widget.plist": self.widget_profile_plist(),
+                    "refresh.plist": self.cloudkit_profile_plist("com.shinycomputers.contextpanel.refresh-agent"),
+                }
+                if mismatched_profile == "app.plist":
+                    profiles[mismatched_profile] = self.cloudkit_profile_plist(
+                        "com.shinycomputers.contextpanel",
+                        developer_certificate=b"different-signing-certificate",
+                    )
+                elif mismatched_profile == "widget.plist":
+                    profiles[mismatched_profile] = self.widget_profile_plist(b"different-signing-certificate")
+                else:
+                    profiles[mismatched_profile] = self.cloudkit_profile_plist(
+                        "com.shinycomputers.contextpanel.refresh-agent",
+                        developer_certificate=b"different-signing-certificate",
+                    )
+
+                result = self.run_package_script_preflight(
+                    [
+                        "--identity",
+                        FIXTURE_SIGNING_FINGERPRINT,
+                        "--app-provisioning-profile",
+                        "app.plist",
+                        "--widget-provisioning-profile",
+                        "widget.plist",
+                        "--refresh-agent-provisioning-profile",
+                        "refresh.plist",
+                    ],
+                    profiles=profiles,
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(f"{label} provisioning profile does not authorize signing certificate", result.stdout)
+                self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
+
+    def test_release_package_accepts_one_matching_certificate_profile_set(self):
+        result = self.run_package_script_preflight(
+            [
+                "--identity",
+                FIXTURE_SIGNING_FINGERPRINT,
+                "--app-provisioning-profile",
+                "app.plist",
+                "--widget-provisioning-profile",
+                "widget.plist",
+                "--refresh-agent-provisioning-profile",
+                "refresh.plist",
+            ],
+            profiles={
+                "app.plist": self.cloudkit_profile_plist("com.shinycomputers.contextpanel"),
+                "widget.plist": self.widget_profile_plist(),
+                "refresh.plist": self.cloudkit_profile_plist("com.shinycomputers.contextpanel.refresh-agent"),
+            },
+        )
+
+        self.assertEqual(result.returncode, 42)
+        self.assertIn("unexpected fake xcodegen invocation", result.stdout)
+        self.assertNotIn("does not authorize signing certificate", result.stdout)
+
     def test_release_package_allows_ad_hoc_validation_without_cloudkit_profiles(self):
         result = self.run_package_script_preflight([
             "--identity",
             "-",
-        ])
+        ], identity_status=77)
 
         self.assertEqual(result.returncode, 42)
         self.assertIn("unexpected fake xcodegen invocation", result.stdout)
         self.assertNotIn("uses CloudKit entitlements and requires an embedded provisioning profile", result.stdout)
+
+    def test_release_package_rejects_ad_hoc_widget_profile_before_building(self):
+        result = self.run_package_script_preflight(
+            [
+                "--identity",
+                "-",
+                "--widget-provisioning-profile",
+                "widget.plist",
+            ],
+            profiles={"widget.plist": self.widget_profile_plist()},
+            identity_status=77,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("provisioning profiles requires a non-ad-hoc signing identity", result.stdout)
+        self.assertNotIn("unexpected fake xcodegen invocation", result.stdout)
 
     def test_release_package_rejects_ad_hoc_cloudkit_profiles_before_building(self):
         result = self.run_package_script_preflight(
