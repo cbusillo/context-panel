@@ -251,6 +251,8 @@ targets:
         outputFiles:
           - "$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/\
             ContextPanelBuildFingerprint.txt"
+          - "$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/\
+            ContextPanelSurfaceManifest.json"
         basedOnDependencyAnalysis: false
     settings:
       base:
@@ -283,6 +285,12 @@ targets:
     dependencies:
       - target: ContextPanelCore
       - target: ContextPanelCloudKitSync
+    postBuildScripts:
+      - name: Stamp Surface Manifest
+        script: |
+          "$SRCROOT/scripts/stamp-context-panel-build.sh" \
+            "$TARGET_BUILD_DIR/$FULL_PRODUCT_NAME"
+        basedOnDependencyAnalysis: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.shinycomputers.contextpanel.refresh-agent
@@ -319,6 +327,12 @@ targets:
         ITSAppUsesNonExemptEncryption: false
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    postBuildScripts:
+      - name: Stamp Surface Manifest
+        script: |
+          "$SRCROOT/scripts/stamp-context-panel-build.sh" \
+            "$TARGET_BUILD_DIR/$FULL_PRODUCT_NAME"
+        basedOnDependencyAnalysis: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.shinycomputers.contextpanel.widget
@@ -355,6 +369,12 @@ targets:
       - target: ContextPanelWatch
         embed: true
         destinationFilters: [iOS]
+    postBuildScripts:
+      - name: Stamp Surface Manifest
+        script: |
+          "$SRCROOT/scripts/stamp-context-panel-build.sh" \
+            "$TARGET_BUILD_DIR/$FULL_PRODUCT_NAME"
+        basedOnDependencyAnalysis: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.shinycomputers.contextpanel
@@ -401,6 +421,12 @@ targets:
         ITSAppUsesNonExemptEncryption: false
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    postBuildScripts:
+      - name: Stamp Surface Manifest
+        script: |
+          "$SRCROOT/scripts/stamp-context-panel-build.sh" \
+            "$TARGET_BUILD_DIR/$FULL_PRODUCT_NAME"
+        basedOnDependencyAnalysis: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.shinycomputers.contextpanel.widget
@@ -434,6 +460,12 @@ targets:
       - target: ContextPanelCloudKitSyncWatch
       - target: ContextPanelWatchWidgetExtension
         embed: true
+    postBuildScripts:
+      - name: Stamp Surface Manifest
+        script: |
+          "$SRCROOT/scripts/stamp-context-panel-build.sh" \
+            "$TARGET_BUILD_DIR/$FULL_PRODUCT_NAME"
+        basedOnDependencyAnalysis: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.shinycomputers.contextpanel.watch
@@ -476,6 +508,12 @@ targets:
         ITSAppUsesNonExemptEncryption: false
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    postBuildScripts:
+      - name: Stamp Surface Manifest
+        script: |
+          "$SRCROOT/scripts/stamp-context-panel-build.sh" \
+            "$TARGET_BUILD_DIR/$FULL_PRODUCT_NAME"
+        basedOnDependencyAnalysis: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.shinycomputers.contextpanel.watch.widget
@@ -489,7 +527,8 @@ targets:
       configs:
         Release:
           CODE_SIGN_IDENTITY: Apple Distribution
-          CODE_SIGN_ENTITLEMENTS: Config/ContextPanelWatchWidgetAppStore.entitlements
+          CODE_SIGN_ENTITLEMENTS: >-
+            Config/ContextPanelWatchWidgetAppStore.entitlements
           PROVISIONING_PROFILE_SPECIFIER: >-
             $(CONTEXT_PANEL_APP_STORE_WATCH_WIDGET_PROFILE_SPECIFIER)
 
@@ -506,6 +545,12 @@ targets:
       - target: ContextPanelTVSupport
       - target: ContextPanelTVTopShelfExtension
         embed: true
+    postBuildScripts:
+      - name: Stamp Surface Manifest
+        script: |
+          "$SRCROOT/scripts/stamp-context-panel-build.sh" \
+            "$TARGET_BUILD_DIR/$FULL_PRODUCT_NAME"
+        basedOnDependencyAnalysis: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.shinycomputers.contextpanel
@@ -537,6 +582,12 @@ targets:
     dependencies:
       - target: ContextPanelCoreTV
       - target: ContextPanelTVSupport
+    postBuildScripts:
+      - name: Stamp Surface Manifest
+        script: |
+          "$SRCROOT/scripts/stamp-context-panel-build.sh" \
+            "$TARGET_BUILD_DIR/$FULL_PRODUCT_NAME"
+        basedOnDependencyAnalysis: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.shinycomputers.contextpanel.topshelf

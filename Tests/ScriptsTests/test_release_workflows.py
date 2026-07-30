@@ -45,6 +45,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
         fake_swift = bin_path / "swift"
         fake_swift.write_text('#!/bin/bash\nprintf \'swift %s\\n\' "$*"\n')
         fake_swift.chmod(0o755)
+        fake_python = bin_path / "python3"
+        fake_python.write_text("#!/bin/bash\nexit 0\n")
+        fake_python.chmod(0o755)
 
         path_entries = [str(bin_path)]
         if include_standard_path:
@@ -1315,34 +1318,65 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
 
         archive_index = upload_script.index('run_xcodebuild "${archive_args[@]}" archive')
         verify_index = upload_script.index("verify_archived_build_fingerprint", archive_index)
-        export_index = upload_script.index("-exportArchive", verify_index)
+        manifest_index = upload_script.index(
+            "scripts/context-panel-write-expected-build.sh", verify_index
+        )
+        export_index = upload_script.index("-exportArchive", manifest_index)
         self.assertLess(archive_index, verify_index)
-        self.assertLess(verify_index, export_index)
+        self.assertLess(verify_index, manifest_index)
+        self.assertLess(manifest_index, export_index)
         self.assertIn("archived app is missing the build fingerprint", upload_script)
         self.assertIn("archived app build fingerprint does not match the source tree", upload_script)
+        self.assertIn("--layout macos", upload_script)
 
-    def test_build_fingerprint_covers_release_sources_without_generated_output(self):
+    def test_build_fingerprint_delegates_to_reviewed_surface_contract(self):
         fingerprint_script = self.read("scripts/context-panel-build-fingerprint.sh")
 
-        for required_input in (
-            "Config/ContextPanelAppStore.entitlements",
-            "Config/ContextPanelRefreshAgent-Info.plist",
-            "Config/ContextPanelRefreshAgentAppStore.entitlements",
-            "Package.swift",
-            "project.yml",
-            "Sources/ContextPanelApp",
-            "Sources/ContextPanelCloudKitSync",
-            "Sources/ContextPanelCore",
-            "Sources/ContextPanelRefreshAgent",
-            "Sources/ContextPanelSettingsUI",
-            "Sources/ContextPanelWidget",
-            "Sources/ContextPanelWidgetUI",
-            "Resources/Assets.xcassets",
-        ):
-            with self.subTest(required_input=required_input):
-                self.assertIn(required_input, fingerprint_script)
-        self.assertNotIn("ContextPanel.xcodeproj/project.pbxproj", fingerprint_script)
-        self.assertIn("missing build fingerprint input", fingerprint_script)
+        self.assertIn("context-panel-surface-manifest.py", fingerprint_script)
+        self.assertIn("--surface macos.app", fingerprint_script)
+        self.assertIn("--kind combined", fingerprint_script)
+        self.assertNotIn("find Sources", fingerprint_script)
+
+    def test_every_shipping_target_stamps_the_surface_manifest(self):
+        project = self.read("project.yml")
+        target_names = (
+            "ContextPanel",
+            "ContextPanelRefreshAgent",
+            "ContextPanelWidgetExtension",
+            "ContextPanelCompanion",
+            "ContextPanelCompanionWidgetExtension",
+            "ContextPanelWatch",
+            "ContextPanelWatchWidgetExtension",
+            "ContextPanelTV",
+            "ContextPanelTVTopShelfExtension",
+        )
+        target_positions = [project.index(f"  {name}:") for name in target_names]
+        schemes_index = project.index("schemes:")
+        for index, target_name in enumerate(target_names):
+            start = target_positions[index]
+            end = target_positions[index + 1] if index + 1 < len(target_positions) else schemes_index
+            target = project[start:end]
+            with self.subTest(target=target_name):
+                self.assertIn("postBuildScripts:", target)
+                self.assertIn("stamp-context-panel-build.sh", target)
+                self.assertIn("basedOnDependencyAnalysis: false", target)
+
+    def test_companion_archives_emit_expected_signed_build_manifests(self):
+        upload_script = self.read("scripts/upload-app-store-connect-companion-app.sh")
+        archive_index = upload_script.index('run_xcodebuild "${archive_args[@]}" archive')
+        manifest_index = upload_script.index(
+            "scripts/context-panel-write-expected-build.sh", archive_index
+        )
+        export_index = upload_script.index("-exportArchive", manifest_index)
+        self.assertLess(archive_index, manifest_index)
+        self.assertLess(manifest_index, export_index)
+        self.assertIn('--layout "$platform"', upload_script)
+        self.assertIn('--version "$marketing_version"', upload_script)
+        self.assertIn('--build-number "$build_number"', upload_script)
+        self.assertIn('companion.ios.app=$app_profile', upload_script)
+        self.assertIn('companion.visionos.widget=$widget_profile', upload_script)
+        self.assertIn('watchos.widget=$watch_widget_profile', upload_script)
+        self.assertIn('tvos.top-shelf=$tv_top_shelf_profile', upload_script)
 
     def test_upload_scripts_guard_against_app_store_marketing_version_regression(self):
         for script_path, expected_platform in (

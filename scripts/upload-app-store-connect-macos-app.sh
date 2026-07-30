@@ -375,6 +375,15 @@ fi
 rm -rf "$archive_path" "$derived_data_path" "$export_path"
 run_xcodebuild "${archive_args[@]}" archive
 verify_archived_build_fingerprint
+scripts/context-panel-write-expected-build.sh \
+	--archive "$archive_path" \
+	--layout macos \
+	--version "$marketing_version" \
+	--build-number "$build_number" \
+	--configuration "$configuration" \
+	--profile "macos.app=$app_profile" \
+	--profile "macos.widget=$widget_profile" \
+	--profile "macos.refresh-agent=$refresh_agent_profile"
 
 run_xcodebuild \
 	-exportArchive \

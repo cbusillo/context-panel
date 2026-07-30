@@ -1174,6 +1174,30 @@ else
 		assert_ios_watch_archive_ready
 	fi
 fi
+expected_build_args=(
+	--archive "$archive_path"
+	--layout "$platform"
+	--version "$marketing_version"
+	--build-number "$build_number"
+	--configuration "$configuration"
+)
+case "$platform" in
+ios)
+	expected_build_args+=(--profile "companion.ios.app=$app_profile")
+	expected_build_args+=(--profile "companion.ios.widget=$widget_profile")
+	expected_build_args+=(--profile "watchos.app=$watch_profile")
+	expected_build_args+=(--profile "watchos.widget=$watch_widget_profile")
+	;;
+visionos)
+	expected_build_args+=(--profile "companion.visionos.app=$app_profile")
+	expected_build_args+=(--profile "companion.visionos.widget=$widget_profile")
+	;;
+tvos)
+	expected_build_args+=(--profile "tvos.app=$app_profile")
+	expected_build_args+=(--profile "tvos.top-shelf=$tv_top_shelf_profile")
+	;;
+esac
+scripts/context-panel-write-expected-build.sh "${expected_build_args[@]}"
 
 run_xcodebuild \
 	-exportArchive \

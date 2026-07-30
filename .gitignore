@@ -29,6 +29,8 @@ DerivedData/
 *.xcodeproj/xcuserdata/
 *.xcworkspace/xcuserdata/
 .swiftpm/
+__pycache__/
+*.pyc
 .code/
 .idea/
 dist/

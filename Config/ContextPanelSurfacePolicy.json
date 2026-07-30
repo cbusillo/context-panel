@@ -1,0 +1,603 @@
+{
+  "schemaVersion": 1,
+  "algorithm": "sha256",
+  "digestDomain": "context-panel-surface/v1",
+  "project": {
+    "path": "project.yml",
+    "reader": "scripts/context-panel-project-spec-json.rb"
+  },
+  "archiveLayouts": {
+    "macos": {
+      "macos.app": "Products/Applications/Context Panel.app",
+      "macos.widget": "Products/Applications/Context Panel.app/Contents/PlugIns/ContextPanelWidgetExtension.appex",
+      "macos.refresh-agent": "Products/Applications/Context Panel.app/Contents/Library/LoginItems/ContextPanelRefreshAgent.app"
+    },
+    "ios": {
+      "companion.ios.app": "Products/Applications/Context Panel.app",
+      "companion.ios.widget": "Products/Applications/Context Panel.app/PlugIns/ContextPanelCompanionWidgetExtension.appex",
+      "watchos.app": "Products/Applications/Context Panel.app/Watch/Context Panel.app",
+      "watchos.widget": "Products/Applications/Context Panel.app/Watch/Context Panel.app/PlugIns/ContextPanelWatchWidgetExtension.appex"
+    },
+    "visionos": {
+      "companion.visionos.app": "Products/Applications/Context Panel.app",
+      "companion.visionos.widget": "Products/Applications/Context Panel.app/PlugIns/ContextPanelCompanionWidgetExtension.appex"
+    },
+    "tvos": {
+      "tvos.app": "Products/Applications/Context Panel.app",
+      "tvos.top-shelf": "Products/Applications/Context Panel.app/PlugIns/ContextPanelTVTopShelfExtension.appex"
+    }
+  },
+  "toolchain": {
+    "swiftLanguageVersion": "6.0",
+    "releaseXcodeMajor": "26"
+  },
+  "evidencePolicy": {
+    "classes": ["shared-view", "actual-runtime", "os-composited-placement"],
+    "trainMinimumEvidence": {
+      "beta": ["shared-view"],
+      "rc": ["shared-view", "actual-runtime"],
+      "release": ["shared-view", "actual-runtime"]
+    },
+    "changeRequirements": {
+      "render": ["shared-view", "actual-runtime", "os-composited-placement"],
+      "runtime": ["actual-runtime"],
+      "unknown": ["shared-view", "actual-runtime", "os-composited-placement"],
+      "placement": ["actual-runtime", "os-composited-placement"]
+    },
+    "releaseRequiresApprovedRCTarget": true
+  },
+  "inventory": {
+    "governedPatterns": [
+      "Sources/**/*.swift",
+      "Config/*.plist",
+      "Config/*.entitlements",
+      "CloudKit/**/*.json",
+      "Resources/Assets.xcassets/**/*",
+      "Resources/TVAssets.xcassets/**/*",
+      "Package.swift",
+      "Config/ContextPanelSurfacePolicy.json",
+      "scripts/context-panel-build-fingerprint.sh",
+      "scripts/context-panel-project-spec-json.rb",
+      "scripts/context-panel-surface-manifest.py",
+      "scripts/stamp-context-panel-build.sh",
+      "scripts/context-panel-write-expected-build.sh",
+      "scripts/context_panel_surface_manifest/**/*.py"
+    ],
+    "excludedBasenames": [".DS_Store"],
+    "ignoredInputs": [
+      {
+        "pattern": "Sources/CodexRateLimitProbe/**/*.swift",
+        "reason": "Developer-only SwiftPM probe; no shipping Xcode target compiles it."
+      },
+      {
+        "pattern": "Sources/OpenAILimitProbe/**/*.swift",
+        "reason": "Developer-only SwiftPM probe; no shipping Xcode target compiles it."
+      },
+      {
+        "pattern": "Sources/PromptCacheTelemetryMirror/**/*.swift",
+        "reason": "Developer-only SwiftPM utility; shipping products use the shared core service."
+      },
+      {
+        "pattern": "Sources/PromptCacheTelemetryProbe/**/*.swift",
+        "reason": "Developer-only SwiftPM probe; no shipping Xcode target compiles it."
+      },
+      {
+        "pattern": "Sources/SnapshotStoreProbe/**/*.swift",
+        "reason": "Developer-only SwiftPM probe; no shipping Xcode target compiles it."
+      },
+      {
+        "pattern": "Package.swift",
+        "reason": "SwiftPM development and test graph; shipping artifacts are defined by project.yml."
+      }
+    ]
+  },
+  "inputGroups": {
+    "surface-tooling": {
+      "include": [
+        "Config/ContextPanelSurfacePolicy.json",
+        "scripts/context-panel-build-fingerprint.sh",
+        "scripts/context-panel-project-spec-json.rb",
+        "scripts/context-panel-surface-manifest.py",
+        "scripts/stamp-context-panel-build.sh",
+        "scripts/context-panel-write-expected-build.sh",
+        "scripts/context_panel_surface_manifest/**/*.py"
+      ]
+    },
+    "core": {
+      "include": ["Sources/ContextPanelCore/**/*.swift"]
+    },
+    "cloudkit-sync": {
+      "include": ["Sources/ContextPanelCloudKitSync/**/*.swift"],
+      "forbidPresentationImports": true
+    },
+    "cloudkit-contract": {
+      "include": ["CloudKit/**/*.json"]
+    },
+    "widget-ui": {
+      "include": ["Sources/ContextPanelWidgetUI/**/*.swift"]
+    },
+    "settings-ui": {
+      "include": ["Sources/ContextPanelSettingsUI/**/*.swift"]
+    },
+    "mac-app": {
+      "include": ["Sources/ContextPanelApp/**/*.swift"]
+    },
+    "mac-widget": {
+      "include": ["Sources/ContextPanelWidget/**/*.swift"]
+    },
+    "refresh-agent": {
+      "include": ["Sources/ContextPanelRefreshAgent/**/*.swift"]
+    },
+    "companion-app": {
+      "include": ["Sources/ContextPanelCompanion/**/*.swift"]
+    },
+    "companion-support": {
+      "include": ["Sources/ContextPanelCompanionSupport/**/*.swift"]
+    },
+    "companion-widget": {
+      "include": ["Sources/ContextPanelCompanionWidget/**/*.swift"]
+    },
+    "watch-app": {
+      "include": ["Sources/ContextPanelWatch/**/*.swift"]
+    },
+    "watch-support-app": {
+      "include": ["Sources/ContextPanelWatchSupport/**/*.swift"]
+    },
+    "watch-support-widget": {
+      "include": ["Sources/ContextPanelWatchSupport/**/*.swift"],
+      "exclude": [
+        "Sources/ContextPanelWatchSupport/WatchSyncPresentation.swift"
+      ]
+    },
+    "watch-widget": {
+      "include": ["Sources/ContextPanelWatchWidget/**/*.swift"]
+    },
+    "tv-app": {
+      "include": ["Sources/ContextPanelTV/**/*.swift"]
+    },
+    "tv-support": {
+      "include": ["Sources/ContextPanelTVSupport/**/*.swift"]
+    },
+    "tv-top-shelf": {
+      "include": ["Sources/ContextPanelTVTopShelf/**/*.swift"]
+    },
+    "shared-assets": {
+      "include": ["Resources/Assets.xcassets/**/*"],
+      "exclude": ["**/.DS_Store"]
+    },
+    "tv-assets": {
+      "include": ["Resources/TVAssets.xcassets/**/*"],
+      "exclude": ["**/.DS_Store"]
+    },
+    "mac-widget-host": {
+      "include": ["Sources/ContextPanelApp/ContextPanelApp.swift"]
+    },
+    "refresh-agent-host": {
+      "include": ["Sources/ContextPanelApp/RefreshAgentRegistration.swift"]
+    },
+    "companion-widget-host": {
+      "include": [
+        "Sources/ContextPanelCompanion/ContextPanelCompanionApp.swift"
+      ]
+    },
+    "watch-widget-host": {
+      "include": ["Sources/ContextPanelWatch/ContextPanelWatchApp.swift"]
+    },
+    "tv-top-shelf-host": {
+      "include": [
+        "Sources/ContextPanelTV/ContextPanelTVApp.swift",
+        "Sources/ContextPanelTV/TVSystemSurfaces.swift"
+      ]
+    },
+    "config-macos-app": {
+      "include": [
+        "Config/ContextPanel-Info.plist",
+        "Config/ContextPanel.entitlements",
+        "Config/ContextPanelAppStore.entitlements"
+      ]
+    },
+    "config-macos-widget": {
+      "include": [
+        "Config/ContextPanelWidget-Info.plist",
+        "Config/ContextPanelWidget.entitlements"
+      ]
+    },
+    "config-refresh-agent": {
+      "include": [
+        "Config/ContextPanelRefreshAgent-Info.plist",
+        "Config/ContextPanelRefreshAgent.entitlements",
+        "Config/ContextPanelRefreshAgentAppStore.entitlements"
+      ]
+    },
+    "config-companion-app": {
+      "include": [
+        "Config/ContextPanelCompanion-Info.plist",
+        "Config/ContextPanelCompanion.entitlements"
+      ]
+    },
+    "config-companion-widget": {
+      "include": [
+        "Config/ContextPanelCompanionWidget-Info.plist",
+        "Config/ContextPanelCompanionWidget.entitlements",
+        "Config/ContextPanelCompanionWidgetAppStore.entitlements"
+      ]
+    },
+    "config-watch-app": {
+      "include": [
+        "Config/ContextPanelWatch-Info.plist",
+        "Config/ContextPanelWatch.entitlements",
+        "Config/ContextPanelWatchAppStore.entitlements"
+      ]
+    },
+    "config-watch-widget": {
+      "include": [
+        "Config/ContextPanelWatchWidget-Info.plist",
+        "Config/ContextPanelWatchWidget.entitlements",
+        "Config/ContextPanelWatchWidgetAppStore.entitlements"
+      ]
+    },
+    "config-tv-app": {
+      "include": [
+        "Config/ContextPanelTV-Info.plist",
+        "Config/ContextPanelTV.entitlements"
+      ]
+    },
+    "config-tv-top-shelf": {
+      "include": [
+        "Config/ContextPanelTVTopShelf-Info.plist",
+        "Config/ContextPanelTVTopShelf.entitlements"
+      ]
+    },
+    "placement-macos-widget": {
+      "include": [
+        "Config/ContextPanelWidget-Info.plist",
+        "Sources/ContextPanelApp/ContextPanelApp.swift"
+      ]
+    },
+    "placement-companion-widget": {
+      "include": [
+        "Config/ContextPanelCompanionWidget-Info.plist",
+        "Sources/ContextPanelCompanion/ContextPanelCompanionApp.swift"
+      ]
+    },
+    "placement-watch-widget": {
+      "include": [
+        "Config/ContextPanelWatchWidget-Info.plist",
+        "Sources/ContextPanelWatch/ContextPanelWatchApp.swift"
+      ]
+    },
+    "placement-tv-top-shelf": {
+      "include": [
+        "Config/ContextPanelTVTopShelf-Info.plist",
+        "Sources/ContextPanelTV/ContextPanelTVApp.swift",
+        "Sources/ContextPanelTV/TVSystemSurfaces.swift"
+      ]
+    }
+  },
+  "surfaces": [
+    {
+      "id": "macos.app",
+      "artifactId": "macos.app",
+      "displayName": "Mac app",
+      "platform": "macOS",
+      "deviceClass": "Mac",
+      "projectTarget": "ContextPanel",
+      "projectDestination": "macOS",
+      "scheme": "ContextPanel",
+      "productType": "application",
+      "bundleIdentifier": "com.shinycomputers.contextpanel",
+      "embeds": ["macos.widget", "macos.refresh-agent"],
+      "evidenceCapabilities": ["shared-view", "actual-runtime"],
+      "inputs": {
+        "shared": ["core", "mac-app"],
+        "render": ["settings-ui", "shared-assets"],
+        "runtime": ["cloudkit-sync", "cloudkit-contract", "config-macos-app"],
+        "placement": []
+      }
+    },
+    {
+      "id": "macos.widget",
+      "artifactId": "macos.widget",
+      "displayName": "Mac widget",
+      "platform": "macOS",
+      "deviceClass": "Mac",
+      "projectTarget": "ContextPanelWidgetExtension",
+      "projectDestination": "macOS",
+      "scheme": "ContextPanel",
+      "productType": "app-extension",
+      "bundleIdentifier": "com.shinycomputers.contextpanel.widget",
+      "embeds": [],
+      "evidenceCapabilities": [
+        "shared-view",
+        "actual-runtime",
+        "os-composited-placement"
+      ],
+      "inputs": {
+        "shared": ["core", "mac-widget"],
+        "render": ["widget-ui"],
+        "runtime": ["config-macos-widget", "mac-widget-host"],
+        "placement": ["placement-macos-widget"]
+      }
+    },
+    {
+      "id": "macos.refresh-agent",
+      "artifactId": "macos.refresh-agent",
+      "displayName": "Mac refresh agent",
+      "platform": "macOS",
+      "deviceClass": "Mac",
+      "projectTarget": "ContextPanelRefreshAgent",
+      "projectDestination": "macOS",
+      "scheme": "ContextPanel",
+      "productType": "application",
+      "bundleIdentifier": "com.shinycomputers.contextpanel.refresh-agent",
+      "embeds": [],
+      "evidenceCapabilities": ["actual-runtime"],
+      "inputs": {
+        "shared": [],
+        "render": [],
+        "runtime": [
+          "core",
+          "cloudkit-sync",
+          "cloudkit-contract",
+          "refresh-agent",
+          "refresh-agent-host",
+          "config-refresh-agent"
+        ],
+        "placement": []
+      }
+    },
+    {
+      "id": "ios.app",
+      "artifactId": "companion.ios.app",
+      "displayName": "iPhone app",
+      "platform": "iOS",
+      "deviceClass": "iPhone",
+      "projectTarget": "ContextPanelCompanion",
+      "projectDestination": "iOS",
+      "scheme": "ContextPanelCompanion",
+      "productType": "application",
+      "bundleIdentifier": "com.shinycomputers.contextpanel",
+      "embeds": ["ios.widget", "watchos.app"],
+      "evidenceCapabilities": ["shared-view", "actual-runtime"],
+      "inputs": {
+        "shared": ["core", "companion-app", "companion-support"],
+        "render": ["widget-ui", "settings-ui", "shared-assets"],
+        "runtime": [
+          "cloudkit-sync",
+          "cloudkit-contract",
+          "config-companion-app"
+        ],
+        "placement": []
+      }
+    },
+    {
+      "id": "ipados.app",
+      "artifactId": "companion.ios.app",
+      "displayName": "iPad app",
+      "platform": "iPadOS",
+      "deviceClass": "iPad",
+      "projectTarget": "ContextPanelCompanion",
+      "projectDestination": "iOS",
+      "scheme": "ContextPanelCompanion",
+      "productType": "application",
+      "bundleIdentifier": "com.shinycomputers.contextpanel",
+      "embeds": ["ipados.widget", "watchos.app"],
+      "evidenceCapabilities": ["shared-view", "actual-runtime"],
+      "inputs": {
+        "shared": ["core", "companion-app", "companion-support"],
+        "render": ["widget-ui", "settings-ui", "shared-assets"],
+        "runtime": [
+          "cloudkit-sync",
+          "cloudkit-contract",
+          "config-companion-app"
+        ],
+        "placement": []
+      }
+    },
+    {
+      "id": "ios.widget",
+      "artifactId": "companion.ios.widget",
+      "displayName": "iPhone widget",
+      "platform": "iOS",
+      "deviceClass": "iPhone",
+      "projectTarget": "ContextPanelCompanionWidgetExtension",
+      "projectDestination": "iOS",
+      "scheme": "ContextPanelCompanion",
+      "productType": "app-extension",
+      "bundleIdentifier": "com.shinycomputers.contextpanel.widget",
+      "embeds": [],
+      "evidenceCapabilities": [
+        "shared-view",
+        "actual-runtime",
+        "os-composited-placement"
+      ],
+      "inputs": {
+        "shared": ["core", "companion-widget", "companion-support"],
+        "render": ["widget-ui"],
+        "runtime": [
+          "cloudkit-sync",
+          "cloudkit-contract",
+          "companion-widget-host",
+          "config-companion-widget"
+        ],
+        "placement": ["placement-companion-widget"]
+      }
+    },
+    {
+      "id": "ipados.widget",
+      "artifactId": "companion.ios.widget",
+      "displayName": "iPad widget",
+      "platform": "iPadOS",
+      "deviceClass": "iPad",
+      "projectTarget": "ContextPanelCompanionWidgetExtension",
+      "projectDestination": "iOS",
+      "scheme": "ContextPanelCompanion",
+      "productType": "app-extension",
+      "bundleIdentifier": "com.shinycomputers.contextpanel.widget",
+      "embeds": [],
+      "evidenceCapabilities": [
+        "shared-view",
+        "actual-runtime",
+        "os-composited-placement"
+      ],
+      "inputs": {
+        "shared": ["core", "companion-widget", "companion-support"],
+        "render": ["widget-ui"],
+        "runtime": [
+          "cloudkit-sync",
+          "cloudkit-contract",
+          "companion-widget-host",
+          "config-companion-widget"
+        ],
+        "placement": ["placement-companion-widget"]
+      }
+    },
+    {
+      "id": "visionos.app",
+      "artifactId": "companion.visionos.app",
+      "displayName": "Vision Pro app",
+      "platform": "visionOS",
+      "deviceClass": "Vision Pro",
+      "projectTarget": "ContextPanelCompanion",
+      "projectDestination": "visionOS",
+      "scheme": "ContextPanelCompanion",
+      "productType": "application",
+      "bundleIdentifier": "com.shinycomputers.contextpanel",
+      "embeds": ["visionos.widget"],
+      "evidenceCapabilities": ["shared-view", "actual-runtime"],
+      "inputs": {
+        "shared": ["core", "companion-app", "companion-support"],
+        "render": ["widget-ui", "settings-ui", "shared-assets"],
+        "runtime": [
+          "cloudkit-sync",
+          "cloudkit-contract",
+          "config-companion-app"
+        ],
+        "placement": []
+      }
+    },
+    {
+      "id": "visionos.widget",
+      "artifactId": "companion.visionos.widget",
+      "displayName": "Vision Pro widget",
+      "platform": "visionOS",
+      "deviceClass": "Vision Pro",
+      "projectTarget": "ContextPanelCompanionWidgetExtension",
+      "projectDestination": "visionOS",
+      "scheme": "ContextPanelCompanion",
+      "productType": "app-extension",
+      "bundleIdentifier": "com.shinycomputers.contextpanel.widget",
+      "embeds": [],
+      "evidenceCapabilities": [
+        "shared-view",
+        "actual-runtime",
+        "os-composited-placement"
+      ],
+      "inputs": {
+        "shared": ["core", "companion-widget", "companion-support"],
+        "render": ["widget-ui"],
+        "runtime": [
+          "cloudkit-sync",
+          "cloudkit-contract",
+          "companion-widget-host",
+          "config-companion-widget"
+        ],
+        "placement": ["placement-companion-widget"]
+      }
+    },
+    {
+      "id": "watchos.app",
+      "artifactId": "watchos.app",
+      "displayName": "Watch app",
+      "platform": "watchOS",
+      "deviceClass": "Apple Watch",
+      "projectTarget": "ContextPanelWatch",
+      "projectDestination": "watchOS",
+      "scheme": "ContextPanelWatch",
+      "productType": "application",
+      "bundleIdentifier": "com.shinycomputers.contextpanel.watch",
+      "embeds": ["watchos.complication"],
+      "evidenceCapabilities": ["shared-view", "actual-runtime"],
+      "inputs": {
+        "shared": ["core", "watch-app", "watch-support-app"],
+        "render": ["shared-assets"],
+        "runtime": ["cloudkit-sync", "cloudkit-contract", "config-watch-app"],
+        "placement": []
+      }
+    },
+    {
+      "id": "watchos.complication",
+      "artifactId": "watchos.widget",
+      "displayName": "Watch complication",
+      "platform": "watchOS",
+      "deviceClass": "Apple Watch",
+      "projectTarget": "ContextPanelWatchWidgetExtension",
+      "projectDestination": "watchOS",
+      "scheme": "ContextPanelWatch",
+      "productType": "app-extension",
+      "bundleIdentifier": "com.shinycomputers.contextpanel.watch.widget",
+      "embeds": [],
+      "evidenceCapabilities": [
+        "shared-view",
+        "actual-runtime",
+        "os-composited-placement"
+      ],
+      "inputs": {
+        "shared": ["core", "watch-widget", "watch-support-widget"],
+        "render": [],
+        "runtime": [
+          "cloudkit-sync",
+          "cloudkit-contract",
+          "watch-widget-host",
+          "config-watch-widget"
+        ],
+        "placement": ["placement-watch-widget"]
+      }
+    },
+    {
+      "id": "tvos.app",
+      "artifactId": "tvos.app",
+      "displayName": "Apple TV app",
+      "platform": "tvOS",
+      "deviceClass": "Apple TV",
+      "projectTarget": "ContextPanelTV",
+      "projectDestination": "tvOS",
+      "scheme": "ContextPanelTV",
+      "productType": "application",
+      "bundleIdentifier": "com.shinycomputers.contextpanel",
+      "embeds": ["tvos.top-shelf"],
+      "evidenceCapabilities": ["shared-view", "actual-runtime"],
+      "inputs": {
+        "shared": ["core", "tv-app", "tv-support"],
+        "render": ["tv-assets"],
+        "runtime": ["cloudkit-sync", "cloudkit-contract", "config-tv-app"],
+        "placement": []
+      }
+    },
+    {
+      "id": "tvos.top-shelf",
+      "artifactId": "tvos.top-shelf",
+      "displayName": "Apple TV Top Shelf",
+      "platform": "tvOS",
+      "deviceClass": "Apple TV",
+      "projectTarget": "ContextPanelTVTopShelfExtension",
+      "projectDestination": "tvOS",
+      "scheme": "ContextPanelTV",
+      "productType": "app-extension",
+      "bundleIdentifier": "com.shinycomputers.contextpanel.topshelf",
+      "embeds": [],
+      "evidenceCapabilities": [
+        "shared-view",
+        "actual-runtime",
+        "os-composited-placement"
+      ],
+      "inputs": {
+        "shared": ["core", "tv-top-shelf", "tv-support"],
+        "render": ["tv-assets"],
+        "runtime": ["config-tv-top-shelf", "tv-top-shelf-host"],
+        "placement": ["placement-tv-top-shelf"]
+      }
+    }
+  ],
+  "contractInputs": ["surface-tooling"]
+}

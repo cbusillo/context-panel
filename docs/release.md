@@ -219,16 +219,21 @@ The upload summary and artifact names include the App Store marketing version,
 build number, target SHA, upload/export mode, and the fact that TestFlight beta
 distribution is handled by the separate TestFlight workflow.
 
-The generated `ContextPanel` Xcode target stamps
-`ContextPanelBuildFingerprint.txt` into the app bundle before Xcode signs the
-archive. The upload script verifies that the archived fingerprint matches the
-current source tree before export, so TestFlight installs can satisfy the
-canonical runtime receipt without modifying or re-signing the exported app. The
-fingerprint hashes `project.yml`, the source-of-truth project specification,
-rather than generated `ContextPanel.xcodeproj` output so XcodeGen version changes
-cannot make identical source trees produce different runtime fingerprints. It
-also covers the Release entitlements, embedded Mac target sources, and app asset
-catalog used by the signed archive.
+Every shipping Xcode target stamps a structured
+`ContextPanelSurfaceManifest.json` before code signing. The macOS app also keeps
+`ContextPanelBuildFingerprint.txt`, now sourced from the `macos.app` combined
+fingerprint. Before export, the upload scripts verify the signed bundles against
+the exact source manifest and write `ExpectedBuildManifest-<platform>.json` with
+the executable hashes/UUIDs, signed-entitlement hashes, provisioning-profile
+hashes, and per-surface fingerprints. The reviewed input mapping, evidence
+classes, carry-forward rules, and CLI are documented in
+[Signed Validation Fingerprints](signed-validation-fingerprints.md).
+
+The fingerprint contract hashes normalized target slices from `project.yml`,
+not generated `ContextPanel.xcodeproj` output. XcodeGen formatting or object-ID
+changes therefore cannot invalidate unrelated evidence. Unknown or unmapped
+inputs produce an `unknown` embedded manifest during ordinary builds and fail
+the commit/release gates before prior evidence can carry forward.
 
 ## TestFlight Beta Distribution
 
@@ -430,7 +435,9 @@ For signed iOS companion archives, the upload script also emits a generic
 `WatchArchiveReceipt-iOS.txt` after validating the nested iOS app, Watch app, and
 Watch widget identities, marketing-version/build parity, code signatures,
 signed entitlements, executable SHA-256 fingerprints, and dSYM UUID coverage.
-The companion upload workflow retains that receipt and the signed `.xcarchive`
+It also emits `ExpectedBuildManifest-ios.json`, which binds those signed
+artifacts to the iPhone, iPad, Watch app, and complication surface fingerprints.
+The companion upload workflow retains both receipts and the signed `.xcarchive`
 as release evidence.
 
 For physical TestFlight validation, exercise both a cold complication load and a
@@ -675,10 +682,10 @@ release needs to upload both Mac and companion builds while distributing only th
 Mac build to TestFlight, run that as separate `Ship` dispatches so the TestFlight
 source remains unambiguous.
 
-Use `companion_platform=visionos` for native visionOS validation. Issues #168,
-#230, and #231 record the completed initial packaging, profile, icon, metadata,
-App Store Connect, and signed-device proof. The normal companion dogfood path
-remains `ios` for iPhone/iPad.
+Use `companion_platform=visionos` for native visionOS validation. Completed
+issues #168, #230, and #231 record the initial packaging, profile, icon,
+metadata, App Store Connect, and signed-device proof. The normal companion
+dogfood path remains `ios` for iPhone/iPad.
 
 Use `companion_platform=tvos` for the signed tvOS lane recorded by #379. Both
 tvOS profile secrets remain required. The signed candidate includes Couch Mode,
@@ -758,6 +765,7 @@ Panel.app`.
    `refresh-agent-cloudkit=Production`. Do not run `install` or `reset`; those
    modes build a local Development-CloudKit runtime and refuse to replace the
    signed Production publisher.
+
 3. Trigger a Mac refresh that publishes the sanitized companion snapshot to
    CloudKit.
 4. Open the app Diagnostics view and confirm `Companion publish` is healthy or,
