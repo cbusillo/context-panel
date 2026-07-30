@@ -31,6 +31,13 @@ jobs:
       - name: Run commit gate
         run: scripts/commit-gate.sh
 
+      - name: Validate signed coordinator scripts
+        timeout-minutes: 5
+        run: >-
+          python3 -m unittest
+          Tests/ScriptsTests/test_validation_coordinator.py
+          Tests/ScriptsTests/test_release_workflows.py
+
       - name: Install XcodeGen
         run: |
           if ! command -v xcodegen >/dev/null 2>&1; then
