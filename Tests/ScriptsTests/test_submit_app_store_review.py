@@ -1,6 +1,7 @@
 import importlib.util
 import io
 import unittest
+import urllib.error
 from unittest.mock import patch
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -279,6 +280,20 @@ class PaginationTests(unittest.TestCase):
         self.assertEqual(client.requests[1][1], "/other-things")
         self.assertEqual(client.requests[0][2], {"filter[app]": "app-id", "limit": 50})
         self.assertEqual(client.requests[1][2], {"cursor": "next-page", "limit": "50"})
+
+    def test_asc_client_wraps_url_error(self):
+        client = submit_app_store_review.ASCClient("token")
+
+        with patch.object(
+            submit_app_store_review.urllib.request,
+            "urlopen",
+            side_effect=urllib.error.URLError("offline"),
+        ):
+            with self.assertRaisesRegex(
+                submit_app_store_review.AppStoreConnectError,
+                "App Store Connect request failed: GET /apps",
+            ):
+                client.request("GET", "/apps")
 
 
 class RemoveActiveReviewVersionTests(unittest.TestCase):
@@ -1952,7 +1967,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         ]
         self.assertEqual(review_paths, [])
 
-    def test_ensure_review_submission_reuses_empty_ready_submission(self):
+    def test_ensure_review_submission_does_not_reuse_empty_ready_submission(self):
         class EmptyReviewSubmissionClient:
             def __init__(self):
                 self.requests: list[tuple[Any, ...]] = []
@@ -1964,17 +1979,23 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
                         "data": [
                             {
                                 "id": "empty-submission",
-                                "attributes": {"state": "READY_FOR_REVIEW"},
+                                "attributes": {"state": "READY_FOR_REVIEW", "platform": "MAC_OS"},
                                 "relationships": {"items": {"data": []}},
                             }
                         ]
                     }
-                if method == "GET" and path == "/reviewSubmissions/empty-submission/items":
-                    return {"data": []}
+                if method == "POST" and path == "/reviewSubmissions":
+                    assert body is not None
+                    return {"data": {"id": "new-submission", "attributes": {"state": "READY_FOR_REVIEW"}}}
                 if method == "POST" and path == "/reviewSubmissionItems":
+                    assert body is not None
+                    assert (
+                        body["data"]["relationships"]["reviewSubmission"]["data"]["id"]
+                        == "new-submission"
+                    )
                     return {"data": {"id": "item-1"}}
-                if method == "PATCH" and path == "/reviewSubmissions/empty-submission":
-                    return {"data": {"id": "empty-submission", "attributes": {"state": "WAITING_FOR_REVIEW"}}}
+                if method == "PATCH" and path == "/reviewSubmissions/new-submission":
+                    return {"data": {"id": "new-submission", "attributes": {"state": "WAITING_FOR_REVIEW"}}}
                 raise AssertionError(f"unexpected request: {method} {path}")
 
         client = EmptyReviewSubmissionClient()
@@ -1983,15 +2004,22 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             client,
             "app-id",
             "version-1-0-14",
+            "MAC_OS",
         )
 
-        self.assertEqual(submission["id"], "empty-submission")
+        self.assertEqual(submission["id"], "new-submission")
         post_paths = [request[1] for request in client.requests if request[0] == "POST"]
-        self.assertEqual(post_paths, ["/reviewSubmissionItems"])
+        self.assertEqual(post_paths, ["/reviewSubmissions", "/reviewSubmissionItems"])
         patch_paths = [request[1] for request in client.requests if request[0] == "PATCH"]
-        self.assertEqual(patch_paths, ["/reviewSubmissions/empty-submission"])
+        self.assertEqual(patch_paths, ["/reviewSubmissions/new-submission"])
         patch_body = next(request[3] for request in client.requests if request[0] == "PATCH")
         assert_review_submission_submit_body(self, patch_body)
+        submission_post_body = next(
+            request[3]
+            for request in client.requests
+            if request[0] == "POST" and request[1] == "/reviewSubmissions"
+        )
+        self.assertEqual(submission_post_body["data"]["attributes"], {"platform": "MAC_OS"})
 
     def test_ensure_review_submission_does_not_reuse_cross_platform_ready_for_sale_orphan(self):
         class CrossPlatformOrphanReviewSubmissionClient:
@@ -2061,7 +2089,8 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         post_paths = [request[1] for request in client.requests if request[0] == "POST"]
         self.assertEqual(post_paths, ["/reviewSubmissions", "/reviewSubmissionItems"])
 
-    def test_ensure_review_submission_reports_active_reviews_at_limit(self):
+    @patch.object(submit_app_store_review, "wait_for_active_review_submission_for_version", return_value=None)
+    def test_ensure_review_submission_reports_active_reviews_at_limit(self, _wait_for_owner):
         class LegitimateReviewSubmissionLimitClient:
             def __init__(self):
                 self.requests: list[tuple[Any, ...]] = []
@@ -2120,6 +2149,137 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             if request[0] == "PATCH"
         ]
         self.assertEqual(canceled_requests, [])
+
+    @patch.object(submit_app_store_review, "wait_for_active_review_submission_for_version", return_value=None)
+    def test_ensure_review_submission_rejects_ambiguous_empty_submission_at_limit(self, _wait_for_owner):
+        class AmbiguousReviewSubmissionLimitClient:
+            def __init__(self):
+                self.requests: list[tuple[Any, ...]] = []
+
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                self.requests.append((method, path, params, body, allowed))
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {
+                        "data": [
+                            {
+                                "id": "ownerless-submission",
+                                "attributes": {"state": "READY_FOR_REVIEW", "platform": "VISION_OS"},
+                                "relationships": {"items": {"data": []}},
+                            }
+                        ]
+                    }
+                if method == "POST" and path == "/reviewSubmissions":
+                    raise submit_app_store_review.AppStoreConnectError(
+                        "review submission limit exceeded",
+                        status=409,
+                        payload={
+                            "errors": [
+                                {
+                                    "code": "STATE_ERROR.CONCURRENT_REVIEW_SUBMISSION_LIMIT_EXCEEDED"
+                                }
+                            ]
+                        },
+                    )
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        client = AmbiguousReviewSubmissionLimitClient()
+
+        with self.assertRaisesRegex(
+            submit_app_store_review.AppStoreConnectError,
+            "itemless submissions are not reused",
+        ):
+            submit_app_store_review.ensure_review_submission(
+                client,
+                "app-id",
+                "target-version",
+                "VISION_OS",
+            )
+
+        self.assertFalse(any(request[1] == "/reviewSubmissionItems" for request in client.requests))
+        self.assertFalse(any(request[0] == "PATCH" for request in client.requests))
+
+    def test_ensure_review_submission_recovers_exact_owner_when_creation_hits_limit(self):
+        class ExactOwnerReviewSubmissionLimitClient:
+            def __init__(self):
+                self.requests: list[tuple[Any, ...]] = []
+                self.review_submissions_get_count = 0
+
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                self.requests.append((method, path, params, body, allowed))
+                if method == "GET" and path == "/reviewSubmissions":
+                    self.review_submissions_get_count += 1
+                    if self.review_submissions_get_count == 1:
+                        return {"data": [], "included": []}
+                    return {
+                        "data": [
+                            {
+                                "id": "winning-submission",
+                                "attributes": {"state": "READY_FOR_REVIEW", "platform": "IOS"},
+                                "relationships": {
+                                    "items": {"data": [{"type": "reviewSubmissionItems", "id": "item-1"}]}
+                                },
+                            }
+                        ],
+                        "included": [
+                            {
+                                "id": "item-1",
+                                "type": "reviewSubmissionItems",
+                                "relationships": {
+                                    "appStoreVersion": {
+                                        "data": {"type": "appStoreVersions", "id": "target-version"}
+                                    }
+                                },
+                            }
+                        ],
+                    }
+                if method == "POST" and path == "/reviewSubmissions":
+                    raise submit_app_store_review.AppStoreConnectError(
+                        "review submission limit exceeded",
+                        status=409,
+                        payload={
+                            "errors": [
+                                {
+                                    "code": "STATE_ERROR.CONCURRENT_REVIEW_SUBMISSION_LIMIT_EXCEEDED"
+                                }
+                            ]
+                        },
+                    )
+                if method == "GET" and path == "/reviewSubmissions/winning-submission/items":
+                    return {
+                        "data": [
+                            {
+                                "id": "item-1",
+                                "type": "reviewSubmissionItems",
+                                "relationships": {
+                                    "appStoreVersion": {
+                                        "data": {"type": "appStoreVersions", "id": "target-version"}
+                                    }
+                                },
+                            }
+                        ]
+                    }
+                if method == "PATCH" and path == "/reviewSubmissions/winning-submission":
+                    return {
+                        "data": {
+                            "id": "winning-submission",
+                            "attributes": {"state": "WAITING_FOR_REVIEW"},
+                        }
+                    }
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        client = ExactOwnerReviewSubmissionLimitClient()
+
+        submission = submit_app_store_review.ensure_review_submission(
+            client,
+            "app-id",
+            "target-version",
+            "IOS",
+        )
+
+        self.assertEqual(submission["id"], "winning-submission")
+        self.assertFalse(any(request[1] == "/reviewSubmissionItems" for request in client.requests))
+        patch_paths = [request[1] for request in client.requests if request[0] == "PATCH"]
+        self.assertEqual(patch_paths, ["/reviewSubmissions/winning-submission"])
 
     def test_ensure_review_submission_ignores_ready_submission_for_other_version(self):
         class StaleReadyReviewSubmissionClient:
@@ -2194,6 +2354,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
                     assert body is not None
                     relationships = body["data"]["relationships"]
                     assert "appStoreVersionForReview" not in relationships
+                    assert body["data"]["attributes"] == {"platform": "TV_OS"}
                     return {"data": {"id": "app-only-submission", "attributes": {"state": "READY_FOR_REVIEW"}}}
                 if method == "POST" and path == "/reviewSubmissionItems":
                     return {"data": {"id": "app-only-item"}}
@@ -2207,6 +2368,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             client,
             "app-id",
             "version-1-0-35",
+            "TV_OS",
         )
 
         self.assertEqual(submission["id"], "app-only-submission")
@@ -2218,6 +2380,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         self.assertEqual(len(submission_posts), 1)
         assert submission_posts[0] is not None
         self.assertNotIn("appStoreVersionForReview", submission_posts[0]["data"]["relationships"])
+        self.assertEqual(submission_posts[0]["data"]["attributes"], {"platform": "TV_OS"})
         review_item_posts = [
             request[3]
             for request in client.requests
@@ -2295,14 +2458,38 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
         class ExistingItemDelayedVisibilityClient:
             def __init__(self):
                 self.requests: list[tuple[Any, ...]] = []
-                self.item_get_count = 0
+                self.review_submissions_get_count = 0
 
             def request(self, method, path, params=None, body=None, allowed=(200,)):
                 self.requests.append((method, path, params, body, allowed))
                 if method == "GET" and path == "/reviewSubmissions":
-                    return {"data": [], "included": []}
+                    self.review_submissions_get_count += 1
+                    if self.review_submissions_get_count < 3:
+                        return {"data": [], "included": []}
+                    return {
+                        "data": [
+                            {
+                                "id": "winning-submission",
+                                "attributes": {"state": "READY_FOR_REVIEW"},
+                                "relationships": {
+                                    "items": {"data": [{"type": "reviewSubmissionItems", "id": "item-1"}]}
+                                },
+                            }
+                        ],
+                        "included": [
+                            {
+                                "id": "item-1",
+                                "type": "reviewSubmissionItems",
+                                "relationships": {
+                                    "appStoreVersion": {
+                                        "data": {"type": "appStoreVersions", "id": "version-1-0-40"}
+                                    }
+                                },
+                            }
+                        ],
+                    }
                 if method == "POST" and path == "/reviewSubmissions":
-                    return {"data": {"id": "prepared-submission", "attributes": {"state": "READY_FOR_REVIEW"}}}
+                    return {"data": {"id": "losing-submission", "attributes": {"state": "READY_FOR_REVIEW"}}}
                 if method == "POST" and path == "/reviewSubmissionItems":
                     raise submit_app_store_review.AppStoreConnectError(
                         "App Store Connect request failed: POST /reviewSubmissionItems",
@@ -2318,25 +2505,14 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
                             ]
                         },
                     )
-                if method == "GET" and path == "/reviewSubmissions/prepared-submission/items":
-                    self.item_get_count += 1
-                    if self.item_get_count == 1:
-                        return {"data": []}
-                    return {
-                        "data": [
-                            {
-                                "id": "item-1",
-                                "type": "reviewSubmissionItems",
-                                "relationships": {
-                                    "appStoreVersion": {
-                                        "data": {"type": "appStoreVersions", "id": "version-1-0-40"}
-                                    }
-                                },
-                            }
-                        ]
-                    }
-                if method == "PATCH" and path == "/reviewSubmissions/prepared-submission":
-                    return {"data": {"id": "prepared-submission", "attributes": {"state": "WAITING_FOR_REVIEW"}}}
+                if method == "GET" and path == "/reviewSubmissions/losing-submission/items":
+                    return {"data": []}
+                if method == "PATCH" and path == "/reviewSubmissions/losing-submission":
+                    assert body is not None
+                    assert body["data"]["attributes"] == {"canceled": True}
+                    return {"data": {"id": "losing-submission", "attributes": {"state": "CANCELED"}}}
+                if method == "PATCH" and path == "/reviewSubmissions/winning-submission":
+                    return {"data": {"id": "winning-submission", "attributes": {"state": "WAITING_FOR_REVIEW"}}}
                 raise AssertionError(f"unexpected request: {method} {path}")
 
         client = ExistingItemDelayedVisibilityClient()
@@ -2347,30 +2523,512 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             "version-1-0-40",
         )
 
-        self.assertEqual(submission["id"], "prepared-submission")
-        self.assertGreaterEqual(client.item_get_count, 2)
+        self.assertEqual(submission["id"], "winning-submission")
+        self.assertEqual(client.review_submissions_get_count, 3)
         patch_paths = [request[1] for request in client.requests if request[0] == "PATCH"]
-        self.assertEqual(patch_paths, ["/reviewSubmissions/prepared-submission"])
+        self.assertEqual(
+            patch_paths,
+            [
+                "/reviewSubmissions/losing-submission",
+                "/reviewSubmissions/winning-submission",
+            ],
+        )
 
-    def test_wait_for_review_submission_item_version_ids_returns_empty_after_timeout(self):
-        class InvisibleItemClient:
+    def test_ensure_review_submission_does_not_cancel_unresolved_item_owner(self):
+        class UnresolvedItemOwnerClient:
             def __init__(self):
                 self.requests: list[tuple[Any, ...]] = []
 
             def request(self, method, path, params=None, body=None, allowed=(200,)):
                 self.requests.append((method, path, params, body, allowed))
-                if method == "GET" and path == "/reviewSubmissions/prepared-submission/items":
-                    return {"data": []}
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {"data": [], "included": []}
+                if method == "POST" and path == "/reviewSubmissions":
+                    return {"data": {"id": "new-submission", "attributes": {"state": "READY_FOR_REVIEW"}}}
+                if method == "POST" and path == "/reviewSubmissionItems":
+                    raise submit_app_store_review.AppStoreConnectError(
+                        "App Store Connect request failed: POST /reviewSubmissionItems",
+                        status=409,
+                        payload={
+                            "errors": [
+                                {
+                                    "title": (
+                                        "appStoreVersion with id target-version was already added "
+                                        "to this reviewSubmission."
+                                    )
+                                }
+                            ]
+                        },
+                    )
+                if method == "GET" and path == "/reviewSubmissions/new-submission/items":
+                    return {
+                        "data": [
+                            {
+                                "id": "unresolved-item",
+                                "type": "reviewSubmissionItems",
+                                "relationships": {},
+                            }
+                        ]
+                    }
                 raise AssertionError(f"unexpected request: {method} {path}")
 
-        version_ids = submit_app_store_review.wait_for_review_submission_item_version_ids(
-            InvisibleItemClient(),
-            "prepared-submission",
+        client = UnresolvedItemOwnerClient()
+
+        with self.assertRaisesRegex(
+            submit_app_store_review.AppStoreConnectError,
+            "ownership is unavailable",
+        ):
+            submit_app_store_review.ensure_review_submission(
+                client,
+                "app-id",
+                "target-version",
+                "IOS",
+            )
+
+        self.assertFalse(any(request[0] == "PATCH" for request in client.requests))
+
+    @patch.object(submit_app_store_review.time, "sleep", return_value=None)
+    def test_ensure_review_submission_continues_when_losing_draft_cleanup_fails(self, _sleep):
+        class CleanupFailureClient:
+            def __init__(self):
+                self.requests: list[tuple[Any, ...]] = []
+                self.review_submissions_get_count = 0
+
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                self.requests.append((method, path, params, body, allowed))
+                if method == "GET" and path == "/reviewSubmissions":
+                    self.review_submissions_get_count += 1
+                    if self.review_submissions_get_count == 1:
+                        return {"data": [], "included": []}
+                    return {
+                        "data": [
+                            {
+                                "id": "winning-submission",
+                                "attributes": {"state": "READY_FOR_REVIEW"},
+                                "relationships": {
+                                    "items": {"data": [{"type": "reviewSubmissionItems", "id": "item-1"}]}
+                                },
+                            }
+                        ],
+                        "included": [
+                            {
+                                "id": "item-1",
+                                "type": "reviewSubmissionItems",
+                                "relationships": {
+                                    "appStoreVersion": {
+                                        "data": {"type": "appStoreVersions", "id": "target-version"}
+                                    }
+                                },
+                            }
+                        ],
+                    }
+                if method == "POST" and path == "/reviewSubmissions":
+                    return {"data": {"id": "losing-submission", "attributes": {"state": "READY_FOR_REVIEW"}}}
+                if method == "POST" and path == "/reviewSubmissionItems":
+                    raise submit_app_store_review.AppStoreConnectError(
+                        "App Store Connect request failed: POST /reviewSubmissionItems",
+                        status=409,
+                        payload={
+                            "errors": [
+                                {
+                                    "title": (
+                                        "appStoreVersion with id target-version was already added "
+                                        "to this reviewSubmission."
+                                    )
+                                }
+                            ]
+                        },
+                    )
+                if method == "GET" and path == "/reviewSubmissions/losing-submission/items":
+                    return {"data": []}
+                if method == "PATCH" and path == "/reviewSubmissions/losing-submission":
+                    raise urllib.error.URLError("temporary cleanup failure")
+                if method == "PATCH" and path == "/reviewSubmissions/winning-submission":
+                    return {
+                        "data": {
+                            "id": "winning-submission",
+                            "attributes": {"state": "WAITING_FOR_REVIEW"},
+                        }
+                    }
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        client = CleanupFailureClient()
+
+        submission = submit_app_store_review.ensure_review_submission(
+            client,
+            "app-id",
+            "target-version",
+            "IOS",
+        )
+
+        self.assertEqual(submission["id"], "winning-submission")
+        patch_paths = [request[1] for request in client.requests if request[0] == "PATCH"]
+        self.assertEqual(
+            patch_paths,
+            [
+                "/reviewSubmissions/losing-submission",
+                "/reviewSubmissions/winning-submission",
+            ],
+        )
+
+    def test_ensure_review_submission_revalidates_before_canceling_after_owner_error(self):
+        class DelayedUnresolvedOwnerClient:
+            def __init__(self):
+                self.requests: list[tuple[Any, ...]] = []
+                self.review_submissions_get_count = 0
+                self.item_get_count = 0
+
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                self.requests.append((method, path, params, body, allowed))
+                if method == "GET" and path == "/reviewSubmissions":
+                    self.review_submissions_get_count += 1
+                    if self.review_submissions_get_count == 1:
+                        return {"data": [], "included": []}
+                    return {
+                        "data": [
+                            {
+                                "id": "created-submission",
+                                "attributes": {"state": "READY_FOR_REVIEW"},
+                                "relationships": {
+                                    "items": {
+                                        "data": [
+                                            {
+                                                "type": "reviewSubmissionItems",
+                                                "id": "late-item",
+                                            }
+                                        ]
+                                    }
+                                },
+                            }
+                        ],
+                        "included": [],
+                    }
+                if method == "POST" and path == "/reviewSubmissions":
+                    return {
+                        "data": {
+                            "id": "created-submission",
+                            "attributes": {"state": "READY_FOR_REVIEW"},
+                        }
+                    }
+                if method == "POST" and path == "/reviewSubmissionItems":
+                    raise submit_app_store_review.AppStoreConnectError(
+                        "App Store Connect request failed: POST /reviewSubmissionItems",
+                        status=409,
+                        payload={
+                            "errors": [
+                                {
+                                    "title": (
+                                        "appStoreVersion with id target-version was already added "
+                                        "to this reviewSubmission."
+                                    )
+                                }
+                            ]
+                        },
+                    )
+                if method == "GET" and path == "/reviewSubmissions/created-submission/items":
+                    self.item_get_count += 1
+                    if self.item_get_count == 1:
+                        return {"data": []}
+                    return {
+                        "data": [
+                            {
+                                "id": "late-item",
+                                "type": "reviewSubmissionItems",
+                                "relationships": {},
+                            }
+                        ]
+                    }
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        client = DelayedUnresolvedOwnerClient()
+
+        with self.assertRaisesRegex(
+            submit_app_store_review.AppStoreConnectError,
+            "ownership is unavailable",
+        ):
+            submit_app_store_review.ensure_review_submission(
+                client,
+                "app-id",
+                "target-version",
+                "IOS",
+            )
+
+        self.assertGreaterEqual(client.item_get_count, 3)
+        self.assertFalse(any(request[0] == "PATCH" for request in client.requests))
+
+    def test_ensure_review_submission_cleans_empty_draft_when_owner_discovery_transport_fails(self):
+        class OwnerDiscoveryTransportFailureClient:
+            def __init__(self):
+                self.requests: list[tuple[Any, ...]] = []
+                self.review_submissions_get_count = 0
+                self.item_get_count = 0
+
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                self.requests.append((method, path, params, body, allowed))
+                if method == "GET" and path == "/reviewSubmissions":
+                    self.review_submissions_get_count += 1
+                    if self.review_submissions_get_count == 1:
+                        return {"data": [], "included": []}
+                    raise urllib.error.URLError("offline")
+                if method == "POST" and path == "/reviewSubmissions":
+                    return {
+                        "data": {
+                            "id": "created-submission",
+                            "attributes": {"state": "READY_FOR_REVIEW"},
+                        }
+                    }
+                if method == "POST" and path == "/reviewSubmissionItems":
+                    raise submit_app_store_review.AppStoreConnectError(
+                        "App Store Connect request failed: POST /reviewSubmissionItems",
+                        status=409,
+                        payload={
+                            "errors": [
+                                {
+                                    "title": (
+                                        "appStoreVersion with id target-version was already added "
+                                        "to this reviewSubmission."
+                                    )
+                                }
+                            ]
+                        },
+                    )
+                if method == "GET" and path == "/reviewSubmissions/created-submission/items":
+                    self.item_get_count += 1
+                    return {"data": []}
+                if method == "PATCH" and path == "/reviewSubmissions/created-submission":
+                    assert body is not None
+                    assert body["data"]["attributes"] == {"canceled": True}
+                    return {
+                        "data": {
+                            "id": "created-submission",
+                            "attributes": {"state": "CANCELED"},
+                        }
+                    }
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        client = OwnerDiscoveryTransportFailureClient()
+
+        with self.assertRaisesRegex(
+            submit_app_store_review.AppStoreConnectError,
+            "owner discovery failed",
+        ):
+            submit_app_store_review.ensure_review_submission(
+                client,
+                "app-id",
+                "target-version",
+                "IOS",
+            )
+
+        self.assertEqual(client.item_get_count, 2)
+        patch_paths = [request[1] for request in client.requests if request[0] == "PATCH"]
+        self.assertEqual(patch_paths, ["/reviewSubmissions/created-submission"])
+
+    def test_wait_for_active_review_submission_for_version_returns_none_after_timeout(self):
+        class InvisibleOwnerClient:
+            def __init__(self):
+                self.requests: list[tuple[Any, ...]] = []
+
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                self.requests.append((method, path, params, body, allowed))
+                if method == "GET" and path == "/reviewSubmissions":
+                    return {"data": [], "included": []}
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        submission = submit_app_store_review.wait_for_active_review_submission_for_version(
+            InvisibleOwnerClient(),
+            "app-id",
             "version-1-0-40",
             timeout_seconds=0,
         )
 
-        self.assertEqual(version_ids, set())
+        self.assertIsNone(submission)
+
+    def test_active_review_submission_rejects_mixed_version_ownership(self):
+        class NoRequestsClient:
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        submissions = {
+            "data": [
+                {
+                    "id": "mixed-submission",
+                    "attributes": {"state": "READY_FOR_REVIEW"},
+                    "relationships": {
+                        "appStoreVersionForReview": {
+                            "data": {"type": "appStoreVersions", "id": "target-version"}
+                        },
+                        "items": {"data": [{"type": "reviewSubmissionItems", "id": "other-item"}]},
+                    },
+                }
+            ],
+            "included": [
+                {
+                    "id": "other-item",
+                    "type": "reviewSubmissionItems",
+                    "relationships": {
+                        "appStoreVersion": {
+                            "data": {"type": "appStoreVersions", "id": "other-version"}
+                        }
+                    },
+                }
+            ],
+        }
+
+        with self.assertRaisesRegex(
+            submit_app_store_review.AppStoreConnectError,
+            "already contains another App Store version",
+        ):
+            submit_app_store_review.active_review_submission_for_version(
+                NoRequestsClient(),
+                submissions,
+                "target-version",
+            )
+
+    def test_active_review_submission_rejects_multiple_exact_owners(self):
+        class NoRequestsClient:
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        submissions = {
+            "data": [
+                {
+                    "id": "submission-1",
+                    "attributes": {"state": "READY_FOR_REVIEW"},
+                    "relationships": {
+                        "items": {"data": [{"type": "reviewSubmissionItems", "id": "item-1"}]}
+                    },
+                },
+                {
+                    "id": "submission-2",
+                    "attributes": {"state": "READY_FOR_REVIEW"},
+                    "relationships": {
+                        "items": {"data": [{"type": "reviewSubmissionItems", "id": "item-2"}]}
+                    },
+                },
+            ],
+            "included": [
+                {
+                    "id": "item-1",
+                    "type": "reviewSubmissionItems",
+                    "relationships": {
+                        "appStoreVersion": {
+                            "data": {"type": "appStoreVersions", "id": "target-version"}
+                        }
+                    },
+                },
+                {
+                    "id": "item-2",
+                    "type": "reviewSubmissionItems",
+                    "relationships": {
+                        "appStoreVersion": {
+                            "data": {"type": "appStoreVersions", "id": "target-version"}
+                        }
+                    },
+                },
+            ],
+        }
+
+        with self.assertRaisesRegex(
+            submit_app_store_review.AppStoreConnectError,
+            "multiple active review submissions claim",
+        ):
+            submit_app_store_review.active_review_submission_for_version(
+                NoRequestsClient(),
+                submissions,
+                "target-version",
+            )
+
+    def test_active_review_submission_resolves_missing_included_item_owner(self):
+        class ItemOwnerClient:
+            def __init__(self):
+                self.requests: list[tuple[Any, ...]] = []
+
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                self.requests.append((method, path, params, body, allowed))
+                if method == "GET" and path == "/reviewSubmissions/submission-1/items":
+                    return {
+                        "data": [
+                            {
+                                "id": "item-1",
+                                "type": "reviewSubmissionItems",
+                                "relationships": {
+                                    "appStoreVersion": {
+                                        "data": {"type": "appStoreVersions", "id": "target-version"}
+                                    }
+                                },
+                            }
+                        ]
+                    }
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        submissions = {
+            "data": [
+                {
+                    "id": "submission-1",
+                    "attributes": {"state": "READY_FOR_REVIEW"},
+                    "relationships": {
+                        "items": {"data": [{"type": "reviewSubmissionItems", "id": "item-1"}]}
+                    },
+                }
+            ],
+            "included": [],
+        }
+        client = ItemOwnerClient()
+
+        submission = submit_app_store_review.active_review_submission_for_version(
+            client,
+            submissions,
+            "target-version",
+        )
+
+        self.assertEqual(submission["id"], "submission-1")
+        self.assertEqual(
+            [request[1] for request in client.requests],
+            ["/reviewSubmissions/submission-1/items"],
+        )
+
+    def test_active_review_submission_ignores_ready_for_sale_orphan(self):
+        class NoRequestsClient:
+            def request(self, method, path, params=None, body=None, allowed=(200,)):
+                raise AssertionError(f"unexpected request: {method} {path}")
+
+        submissions = {
+            "data": [
+                {
+                    "id": "released-orphan",
+                    "attributes": {
+                        "state": "READY_FOR_REVIEW",
+                        "platform": None,
+                        "submittedDate": None,
+                    },
+                    "relationships": {
+                        "appStoreVersionForReview": {
+                            "data": {"type": "appStoreVersions", "id": "target-version"}
+                        },
+                        "items": {"data": []},
+                    },
+                }
+            ],
+            "included": [
+                {
+                    "id": "target-version",
+                    "type": "appStoreVersions",
+                    "attributes": {
+                        "platform": "IOS",
+                        "versionString": "1.0.50",
+                        "appStoreState": "READY_FOR_SALE",
+                    },
+                }
+            ],
+        }
+
+        submission = submit_app_store_review.active_review_submission_for_version(
+            NoRequestsClient(),
+            submissions,
+            "target-version",
+        )
+
+        self.assertIsNone(submission)
 
     def test_ensure_review_submission_rejects_taken_version_slot(self):
         class TakenVersionSlotClient:

@@ -65,6 +65,7 @@ DEFAULT_VERSION_UNLOCK_WAIT_TIMEOUT_SECONDS = 2 * 60
 DEFAULT_VERSION_UNLOCK_POLL_SECONDS = 5
 DEFAULT_REVIEW_ITEM_OWNER_WAIT_TIMEOUT_SECONDS = 2 * 60
 DEFAULT_REVIEW_ITEM_OWNER_POLL_SECONDS = 5
+DEFAULT_REVIEW_LIMIT_OWNER_WAIT_TIMEOUT_SECONDS = 20
 TVOS_DEMO_NOTES_HEADING = "Physical Apple TV demo (reviewer-accessible, no login required):"
 
 
@@ -137,6 +138,10 @@ class ASCClient:
                 f"App Store Connect request failed: {method} {path}",
                 error.code,
                 payload,
+            ) from error
+        except (urllib.error.URLError, TimeoutError) as error:
+            raise AppStoreConnectError(
+                f"App Store Connect request failed: {method} {path}"
             ) from error
 
 
@@ -587,6 +592,50 @@ def cancel_review_submission(
         },
     )
     print(f"Canceled App Store version {version_string} review submission: {submission_id}")
+
+
+def cancel_unowned_review_submission(client: ASCClient, submission_id: str) -> bool:
+    try:
+        client.request(
+            "PATCH",
+            f"/reviewSubmissions/{submission_id}",
+            body={
+                "data": {
+                    "type": "reviewSubmissions",
+                    "id": submission_id,
+                    "attributes": {"canceled": True},
+                }
+            },
+        )
+    except Exception:
+        print(
+            f"Warning: could not cancel unowned review submission created by this run: {submission_id}",
+            file=sys.stderr,
+        )
+        return False
+    print(f"Canceled unowned review submission created by this run: {submission_id}")
+    return True
+
+
+def cancel_unowned_review_submission_if_still_empty(
+    client: ASCClient,
+    submission_id: str,
+) -> bool:
+    try:
+        version_ids = review_submission_item_version_ids(client, submission_id)
+    except Exception:
+        print(
+            f"Warning: could not verify that review submission is still empty; leaving it untouched: {submission_id}",
+            file=sys.stderr,
+        )
+        return False
+    if version_ids:
+        print(
+            f"Review submission gained an item before cleanup; leaving it untouched: {submission_id}",
+            file=sys.stderr,
+        )
+        return False
+    return cancel_unowned_review_submission(client, submission_id)
 
 
 def cancel_app_store_version_submission(
@@ -1171,13 +1220,18 @@ def ensure_metadata(client: ASCClient, version_id: str, source_localization: dic
             print("Cleared copied prior-version TV_OS review notes")
 
 
-def create_review_submission(client: ASCClient, app_id: str) -> dict[str, Any]:
-    body = {
-        "data": {
-            "type": "reviewSubmissions",
-            "relationships": {"app": {"data": {"type": "apps", "id": app_id}}},
-        }
+def create_review_submission(
+    client: ASCClient,
+    app_id: str,
+    platform: str | None = None,
+) -> dict[str, Any]:
+    data: dict[str, Any] = {
+        "type": "reviewSubmissions",
+        "relationships": {"app": {"data": {"type": "apps", "id": app_id}}},
     }
+    if platform is not None:
+        data["attributes"] = {"platform": platform}
+    body = {"data": data}
     return client.request("POST", "/reviewSubmissions", body=body, allowed=(201,))["data"]
 
 
@@ -1195,6 +1249,11 @@ def review_submission_item_version_ids(
         },
         limit=20,
     )
+    if any(relationship_id(item, "appStoreVersion") is None for item in payload.get("data", [])):
+        raise AppStoreConnectError(
+            "review submission contains an item whose App Store version ownership is unavailable; "
+            "inspect App Store Connect before retrying"
+        )
     return {
         version_id
         for item in payload.get("data", [])
@@ -1202,31 +1261,11 @@ def review_submission_item_version_ids(
     }
 
 
-def wait_for_review_submission_item_version_ids(
-    client: ASCClient,
-    submission_id: str,
-    version_id: str,
-    timeout_seconds: int = DEFAULT_REVIEW_ITEM_OWNER_WAIT_TIMEOUT_SECONDS,
-    poll_seconds: int = DEFAULT_REVIEW_ITEM_OWNER_POLL_SECONDS,
-) -> set[str]:
-    deadline = time.monotonic() + max(0, timeout_seconds)
-    while True:
-        version_ids = review_submission_item_version_ids(client, submission_id)
-        if version_ids or time.monotonic() >= deadline:
-            return version_ids
-        print(
-            "Review submission item is not visible yet; "
-            f"waiting {poll_seconds}s for App Store Connect consistency"
-        )
-        time.sleep(max(1, poll_seconds))
-
-
-def ensure_review_submission(
+def review_submissions_for_app(
     client: ASCClient,
     app_id: str,
-    version_id: str,
 ) -> dict[str, Any]:
-    submissions = paginated_get(
+    return paginated_get(
         client,
         "/reviewSubmissions",
         {
@@ -1238,26 +1277,80 @@ def ensure_review_submission(
         },
         limit=20,
     )
-    existing = None
-    reusable_empty_submission = None
+
+
+def active_review_submission_for_version(
+    client: ASCClient,
+    submissions: dict[str, Any],
+    version_id: str,
+) -> dict[str, Any] | None:
     included = included_by_id(submissions)
+    matches: list[dict[str, Any]] = []
     for submission in submissions.get("data", []):
         state = submission["attributes"].get("state")
         if state not in ACTIVE_REVIEW_SUBMISSION_STATES:
             continue
         submission_version_id = relationship_id(submission, "appStoreVersionForReview")
-        item_ids = [item["id"] for item in submission.get("relationships", {}).get("items", {}).get("data", [])]
-        item_version_ids = {relationship_id(included.get(item_id, {}), "appStoreVersion") for item_id in item_ids}
-        if state == "READY_FOR_REVIEW" and submission_version_id is None and not item_ids:
-            reusable_empty_submission = reusable_empty_submission or submission
-        if submission_version_id == version_id:
-            existing = submission
-            break
-        if version_id in item_version_ids and submission_version_id is None:
-            existing = submission
-            break
-    if existing is None and reusable_empty_submission is not None:
-        existing = reusable_empty_submission
+        submission_version = included.get(submission_version_id or "")
+        if is_orphan_ready_for_sale_review_draft(submission, submission_version):
+            continue
+        version_ids = review_submission_version_ids(submission, included)
+        item_ids = review_submission_item_ids(submission)
+        unresolved_item_ids = [
+            item_id
+            for item_id in item_ids
+            if relationship_id(included.get(item_id, {}), "appStoreVersion") is None
+        ]
+        if unresolved_item_ids:
+            version_ids.update(review_submission_item_version_ids(client, submission["id"]))
+        if version_id not in version_ids:
+            continue
+        if version_ids != {version_id}:
+            raise AppStoreConnectError(
+                "review submission already contains another App Store version; "
+                "submit each platform and version in a separate review submission"
+            )
+        matches.append(submission)
+    if len(matches) > 1:
+        raise AppStoreConnectError(
+            "multiple active review submissions claim the same App Store version; "
+            "inspect App Store Connect before retrying"
+        )
+    return matches[0] if matches else None
+
+
+def wait_for_active_review_submission_for_version(
+    client: ASCClient,
+    app_id: str,
+    version_id: str,
+    timeout_seconds: int = DEFAULT_REVIEW_ITEM_OWNER_WAIT_TIMEOUT_SECONDS,
+    poll_seconds: int = DEFAULT_REVIEW_ITEM_OWNER_POLL_SECONDS,
+) -> dict[str, Any] | None:
+    deadline = time.monotonic() + max(0, timeout_seconds)
+    while True:
+        submission = active_review_submission_for_version(
+            client,
+            review_submissions_for_app(client, app_id),
+            version_id,
+        )
+        if submission is not None or time.monotonic() >= deadline:
+            return submission
+        print(
+            "Review submission item owner is not visible yet; "
+            f"waiting {poll_seconds}s for App Store Connect consistency"
+        )
+        time.sleep(max(1, poll_seconds))
+
+
+def ensure_review_submission(
+    client: ASCClient,
+    app_id: str,
+    version_id: str,
+    platform: str | None = None,
+) -> dict[str, Any]:
+    submissions = review_submissions_for_app(client, app_id)
+    existing = active_review_submission_for_version(client, submissions, version_id)
+    created_submission_id = None
     if existing:
         state = existing["attributes"].get("state")
         if state in {"WAITING_FOR_REVIEW", "IN_REVIEW", "UNRESOLVED_ISSUES"}:
@@ -1267,17 +1360,30 @@ def ensure_review_submission(
         submission = existing
     else:
         try:
-            submission = create_review_submission(client, app_id)
+            submission = create_review_submission(client, app_id, platform)
+            created_submission_id = submission["id"]
             print(f"Created review submission: {submission['id']}")
         except AppStoreConnectError as error:
             if not is_review_submission_limit_exceeded(error):
                 raise
-            print_active_review_submissions(submissions)
-            raise AppStoreConnectError(
-                "review submission limit exceeded; inspect the active submissions before retrying",
-                status=error.status,
-                payload=error.payload,
-            ) from error
+            owner = wait_for_active_review_submission_for_version(
+                client,
+                app_id,
+                version_id,
+                timeout_seconds=DEFAULT_REVIEW_LIMIT_OWNER_WAIT_TIMEOUT_SECONDS,
+            )
+            if owner is not None:
+                submission = owner
+                existing = owner
+                print(f"Using existing review submission: {submission['id']} ({submission['attributes'].get('state')})")
+            else:
+                print_active_review_submissions(review_submissions_for_app(client, app_id))
+                raise AppStoreConnectError(
+                    "review submission limit exceeded; itemless submissions are not reused because "
+                    "their marketing-version ownership is ambiguous; inspect the active submissions before retrying",
+                    status=error.status,
+                    payload=error.payload,
+                ) from error
     existing_version_ids = review_submission_item_version_ids(client, submission["id"]) if existing else set()
     if version_id in existing_version_ids:
         print(f"Review submission item already exists for App Store version: {version_id}")
@@ -1309,11 +1415,7 @@ def ensure_review_submission(
                 or is_review_submission_version_slot_taken(error)
             ):
                 raise
-            visible_version_ids = wait_for_review_submission_item_version_ids(
-                client,
-                submission["id"],
-                version_id,
-            )
+            visible_version_ids = review_submission_item_version_ids(client, submission["id"])
             if version_id in visible_version_ids:
                 print(f"Review submission item already exists for App Store version: {version_id}")
             elif visible_version_ids:
@@ -1324,12 +1426,33 @@ def ensure_review_submission(
                     payload=error.payload,
                 ) from error
             else:
-                raise AppStoreConnectError(
-                    "review submission item conflict did not resolve to a visible item; "
-                    "inspect App Store Connect before retrying",
-                    status=error.status,
-                    payload=error.payload,
-                ) from error
+                try:
+                    owner = wait_for_active_review_submission_for_version(
+                        client,
+                        app_id,
+                        version_id,
+                    )
+                except Exception as owner_error:
+                    if created_submission_id is not None:
+                        cancel_unowned_review_submission_if_still_empty(client, created_submission_id)
+                    if isinstance(owner_error, AppStoreConnectError):
+                        raise
+                    raise AppStoreConnectError(
+                        "review submission owner discovery failed; inspect App Store Connect before retrying"
+                    ) from owner_error
+                if owner is None:
+                    if created_submission_id is not None:
+                        cancel_unowned_review_submission_if_still_empty(client, created_submission_id)
+                    raise AppStoreConnectError(
+                        "review submission item conflict did not resolve to an active owning review submission; "
+                        "inspect App Store Connect before retrying",
+                        status=error.status,
+                        payload=error.payload,
+                    ) from error
+                if created_submission_id is not None and owner["id"] != created_submission_id:
+                    cancel_unowned_review_submission_if_still_empty(client, created_submission_id)
+                submission = owner
+                print(f"Review submission item already exists for App Store version: {version_id}")
     state = submission["attributes"].get("state") if submission.get("attributes") else None
     if state in {"WAITING_FOR_REVIEW", "IN_REVIEW", "UNRESOLVED_ISSUES"}:
         print(f"Review submission is already submitted: {submission['id']} ({state})")
@@ -1548,6 +1671,7 @@ def main() -> int:
             client,
             app_id,
             version["id"],
+            args.platform,
         )
         final = client.request(
             "GET",

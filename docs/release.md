@@ -837,9 +837,22 @@ Preferred operator flow:
 App Store Connect accepts exactly one App Store version item per review
 submission. Run `Submit App Store Review` separately for each platform and
 marketing version; do not group internal version IDs into one submission. The
-helper creates an app-only review submission, attaches exactly one version item,
-and reuses that same item when a partial same-version retry reaches App Store
-Connect after item creation but before submission.
+helper creates a platform-tagged, app-only review submission and immediately
+attaches exactly one version item. That item is the ownership record: a retry
+may reuse a submission only when App Store Connect exposes the exact target
+version through the item or a legacy direct-version relationship. Itemless
+submissions are never reused because they do not identify a marketing version;
+if they exhaust App Store Connect's active-submission limit, the helper fails
+closed and prints the active submissions for operator inspection. A partial
+same-version retry remains idempotent after item creation, including when two
+jobs race and the winning item becomes visible on a different submission. The
+losing job revalidates its own submission immediately before cleanup and attempts
+to cancel it only while the authoritative items endpoint still reports it empty.
+Cleanup verification or cancellation failure is reported without blocking the
+valid owner's submission. A process interruption before item creation can still
+leave an ownerless draft. The helper never guesses its version and instead fails
+closed with active-submission diagnostics if those drafts exhaust the service
+limit.
 
 Rejected App Store versions are not release candidates. They may be useful as
 audit targets while cleaning screenshots or copying metadata, but do not submit
