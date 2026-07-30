@@ -1636,6 +1636,15 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         workflow = self.read(".github/workflows/ci.yml")
         script = self.read("scripts/validate-companion-builds.sh")
 
+        self.assertIn(
+            "- name: Validate signed coordinator scripts\n"
+            "        timeout-minutes: 5\n"
+            "        run: >-\n"
+            "          python3 -m unittest\n"
+            "          Tests/ScriptsTests/test_validation_coordinator.py\n"
+            "          Tests/ScriptsTests/test_release_workflows.py",
+            workflow,
+        )
         self.assertIn("scripts/validate-companion-builds.sh", workflow)
         self.assertIn("--configuration Release --archive ios", workflow)
         self.assertIn("scripts/validate-companion-builds.sh --configuration Release watchos", workflow)

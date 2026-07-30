@@ -695,6 +695,51 @@ build.
 Before treating a companion TestFlight build as release evidence, validate this
 sequence from signed runtimes:
 
+Start with the read-only validation coordinator so waiting and access states are
+classified before anyone begins opening devices:
+
+```sh
+scripts/context-panel-validation.py status \
+  --version <marketing-version> \
+  --build-number <coordinated-build-number>
+```
+
+The coordinator reads App Store Connect through GET-only requests, runs the
+canonical Mac Production receipt, and inspects physical-device reachability and
+installed app versions through CoreDevice list/info commands. It never installs,
+launches app or device UI, wakes, reboots, captures, resets, submits, cancels, or
+changes App Store Connect state. The canonical receipt may execute the refresh
+agent's privacy-safe bookmark-access, provider-credential-presence, and
+webhook-credential-presence summaries. Locked, sleeping, unreachable,
+processing, and unavailable states are reported as waiting or unknown rather
+than application failures.
+
+This first coordinator slice is orientation, not release evidence. Its footer
+always states that companion CloudKit reads, extension runtime receipts, and
+visual approval remain unproven. Continue the signed smoke sequence below and
+do not infer widget, complication, or Top Shelf runtime from an installed app
+version.
+
+Coordinator status exits with `0` while waiting or after all evidence available
+to this slice is collected, `10` when a human action is ready, `20` for a real
+blocker, `30` when local or remote evidence cannot establish a state, and `1`
+for an internal coordinator error. Exit `30` is soft unknown evidence, not a
+failed build.
+
+When the exact Watch build is confirmed, the coordinator requests the existing
+post-install restart without performing it. After the physical restart, record
+the operator attestation so later status reads do not repeat the request:
+
+```sh
+scripts/context-panel-validation.py record-watch-restart \
+  --version <marketing-version> \
+  --build-number <coordinated-build-number>
+```
+
+The record command first confirms that the exact Watch build is still observable
+and otherwise exits `30` without writing the attestation. That local record does
+not prove complication runtime; the routine Watch test below remains authoritative.
+
 The sandbox-local widget mirror is a local-development fallback, not a
 substitute for release app-group entitlements. The `install` and `reset` runtime
 baseline modes unregister stale PluginKit and Launch Services paths and
