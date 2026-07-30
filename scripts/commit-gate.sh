@@ -41,5 +41,10 @@ fi
 
 echo "commit gate SwiftPM scratch path: $swiftpm_scratch_path"
 
+PYTHONDONTWRITEBYTECODE=1 \
+	python3 scripts/context-panel-surface-manifest.py validate
+PYTHONDONTWRITEBYTECODE=1 \
+	python3 -m unittest Tests/ScriptsTests/test_surface_manifest.py
+
 swift build "${swift_args[@]}"
 swift test "${swift_args[@]}"

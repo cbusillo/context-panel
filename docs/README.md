@@ -8,4 +8,5 @@
 - [Provider Usage Access Research](provider-usage-access.md)
 - [TODO](todo.md)
 - [Release Path](release.md)
+- [Signed Validation Fingerprints](signed-validation-fingerprints.md)
 - [Repository Settings](repo-settings.md)

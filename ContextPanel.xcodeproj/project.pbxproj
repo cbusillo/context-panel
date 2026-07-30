@@ -1130,6 +1130,7 @@
 				E19DC463B21AC83359768E1D /* Frameworks */,
 				53324BC33A4238FEBDBB257E /* Embed Foundation Extensions */,
 				FC5FEACD525A67C52DD5AD8B /* Embed Watch Content */,
+				02AC143F791F90EA763E5FF5 /* Stamp Surface Manifest */,
 			);
 			buildRules = (
 			);
@@ -1173,6 +1174,7 @@
 			buildPhases = (
 				77969DC24638A98197EC0211 /* Sources */,
 				B8497808399846766439FAE7 /* Frameworks */,
+				52CC875A1C7A65C364DCB6F5 /* Stamp Surface Manifest */,
 			);
 			buildRules = (
 			);
@@ -1289,6 +1291,7 @@
 				97F271F3922765D045C65D50 /* Resources */,
 				13F2E3B1A0C83D1D271D7194 /* Frameworks */,
 				8AE21D3C42205AF496134C9A /* Embed Foundation Extensions */,
+				C2E40960D3CE50F6845F7A6D /* Stamp Surface Manifest */,
 			);
 			buildRules = (
 			);
@@ -1329,6 +1332,7 @@
 			buildPhases = (
 				255CF9DC3E13CC5E897143A3 /* Sources */,
 				7BFE158EBBBAE213DE50F249 /* Frameworks */,
+				2144B433CDB336080A03E218 /* Stamp Surface Manifest */,
 			);
 			buildRules = (
 			);
@@ -1367,6 +1371,7 @@
 			buildPhases = (
 				452887858E02950E4AFE7F54 /* Sources */,
 				A5039728358148B207C157F4 /* Frameworks */,
+				EA23DA3E8C2C705DA04E7F5D /* Stamp Surface Manifest */,
 			);
 			buildRules = (
 			);
@@ -1387,6 +1392,7 @@
 			buildPhases = (
 				DEDB3D1DF608B658FB638711 /* Sources */,
 				9DD7695DA1A87FB0DAAF1653 /* Frameworks */,
+				93565B0F1AE02DEEE19C43E2 /* Stamp Surface Manifest */,
 			);
 			buildRules = (
 			);
@@ -1409,6 +1415,7 @@
 				477C2264C23E16DADE8E9678 /* Resources */,
 				552AB015F92B2D6B7F58C307 /* Frameworks */,
 				73F7EE8C1FCE97B9F45FDD80 /* Embed Foundation Extensions */,
+				46045CBF357CBD804C49E343 /* Stamp Surface Manifest */,
 			);
 			buildRules = (
 			);
@@ -1431,6 +1438,7 @@
 			buildPhases = (
 				D3E2E8BC46B59DA09E5FE5E0 /* Sources */,
 				B1405DFCD153893D6B1AC535 /* Frameworks */,
+				C91121D67501930724CAEA9E /* Stamp Surface Manifest */,
 			);
 			buildRules = (
 			);
@@ -1710,6 +1718,25 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		02AC143F791F90EA763E5FF5 /* Stamp Surface Manifest */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Stamp Surface Manifest";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/scripts/stamp-context-panel-build.sh\" \\\n  \"$TARGET_BUILD_DIR/$FULL_PRODUCT_NAME\"\n";
+		};
 		0C8E201B850E07E4C579CD21 /* Copy Swift Objective-C Interface Header */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
@@ -1758,6 +1785,25 @@
 			shellPath = /bin/sh;
 			shellScript = "ditto \"${SCRIPT_INPUT_FILE_0}\" \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 		};
+		2144B433CDB336080A03E218 /* Stamp Surface Manifest */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Stamp Surface Manifest";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/scripts/stamp-context-panel-build.sh\" \\\n  \"$TARGET_BUILD_DIR/$FULL_PRODUCT_NAME\"\n";
+		};
 		42C568EE8999C20F1272DA57 /* Copy Swift Objective-C Interface Header */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
@@ -1774,6 +1820,25 @@
 			shellPath = /bin/sh;
 			shellScript = "ditto \"${SCRIPT_INPUT_FILE_0}\" \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 		};
+		46045CBF357CBD804C49E343 /* Stamp Surface Manifest */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Stamp Surface Manifest";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/scripts/stamp-context-panel-build.sh\" \\\n  \"$TARGET_BUILD_DIR/$FULL_PRODUCT_NAME\"\n";
+		};
 		4AA6585020386CCD0F2EA2F3 /* Copy Swift Objective-C Interface Header */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
@@ -1789,6 +1854,25 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "ditto \"${SCRIPT_INPUT_FILE_0}\" \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+		};
+		52CC875A1C7A65C364DCB6F5 /* Stamp Surface Manifest */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Stamp Surface Manifest";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/scripts/stamp-context-panel-build.sh\" \\\n  \"$TARGET_BUILD_DIR/$FULL_PRODUCT_NAME\"\n";
 		};
 		55804627F33974933F070E4C /* Copy Swift Objective-C Interface Header */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -1870,6 +1954,25 @@
 			shellPath = /bin/sh;
 			shellScript = "ditto \"${SCRIPT_INPUT_FILE_0}\" \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 		};
+		93565B0F1AE02DEEE19C43E2 /* Stamp Surface Manifest */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Stamp Surface Manifest";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/scripts/stamp-context-panel-build.sh\" \\\n  \"$TARGET_BUILD_DIR/$FULL_PRODUCT_NAME\"\n";
+		};
 		A6FD12E22FB2385AD98885D1 /* Copy Swift Objective-C Interface Header */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
@@ -1885,6 +1988,44 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "ditto \"${SCRIPT_INPUT_FILE_0}\" \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+		};
+		C2E40960D3CE50F6845F7A6D /* Stamp Surface Manifest */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Stamp Surface Manifest";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/scripts/stamp-context-panel-build.sh\" \\\n  \"$TARGET_BUILD_DIR/$FULL_PRODUCT_NAME\"\n";
+		};
+		C91121D67501930724CAEA9E /* Stamp Surface Manifest */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Stamp Surface Manifest";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/scripts/stamp-context-panel-build.sh\" \\\n  \"$TARGET_BUILD_DIR/$FULL_PRODUCT_NAME\"\n";
 		};
 		D83305A48C78C12DB5AD314F /* Copy Swift Objective-C Interface Header */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -1917,6 +2058,26 @@
 			);
 			outputPaths = (
 				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/ContextPanelBuildFingerprint.txt",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/ContextPanelSurfaceManifest.json",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/scripts/stamp-context-panel-build.sh\" \\\n  \"$TARGET_BUILD_DIR/$FULL_PRODUCT_NAME\"\n";
+		};
+		EA23DA3E8C2C705DA04E7F5D /* Stamp Surface Manifest */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Stamp Surface Manifest";
+			outputFileListPaths = (
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
