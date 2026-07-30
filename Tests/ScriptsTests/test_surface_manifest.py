@@ -400,6 +400,12 @@ class SurfaceManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(SurfacePolicyError, "changeRequirements is invalid"):
             compare_manifests(self.baseline, malformed, "release")
 
+    def test_manifest_surface_capabilities_fail_closed(self):
+        malformed = json.loads(json.dumps(self.baseline))
+        malformed["surfaces"][0].pop("evidenceCapabilities")
+        with self.assertRaisesRegex(SurfacePolicyError, "evidence capabilities are invalid"):
+            compare_manifests(self.baseline, malformed, "release")
+
     def test_unsupported_project_top_level_key_fails_closed(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = self.fixture(temporary_directory)

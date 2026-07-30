@@ -951,6 +951,17 @@ def manifest_surface_map(manifest: dict[str, Any], label: str) -> dict[str, dict
         surface_id = str(raw_surface.get("id") or "")
         if not surface_id or surface_id in surfaces:
             raise SurfacePolicyError(f"{label} manifest surface id is missing or duplicated")
+        raw_capabilities = raw_surface.get("evidenceCapabilities")
+        if (
+            not isinstance(raw_capabilities, list)
+            or not raw_capabilities
+            or any(not isinstance(value, str) for value in raw_capabilities)
+            or len(raw_capabilities) != len(set(raw_capabilities))
+            or not set(raw_capabilities) <= set(EVIDENCE_CLASSES)
+        ):
+            raise SurfacePolicyError(
+                f"{label} manifest surface evidence capabilities are invalid: {surface_id}"
+            )
         fingerprints = raw_surface.get("fingerprints")
         if not isinstance(fingerprints, dict) or any(
             not SHA256_PATTERN.fullmatch(str(fingerprints.get(kind) or ""))

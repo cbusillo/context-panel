@@ -150,7 +150,7 @@ artifact in the selected archive layout and emits
 - bundle ID and per-surface render/runtime/placement/combined fingerprints
 - executable SHA-256 and Mach-O UUIDs
 - canonical signed-entitlement SHA-256
-- embedded provisioning-profile SHA-256
+- selected signing provisioning-profile SHA-256
 - successful strict code-signature verification
 - the source-manifest and expected-build IDs
 
