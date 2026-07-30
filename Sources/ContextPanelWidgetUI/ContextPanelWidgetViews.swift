@@ -37,12 +37,25 @@ public struct ContextPanelWidgetLinks: Sendable {
     public let overview: URL
     public let reconnect: URL
     public let cacheStatsSettings: URL
+    public let resetCreditInteraction: ContextPanelResetCreditInteraction
 
-    public init(overview: URL, reconnect: URL, cacheStatsSettings: URL) {
+    public init(
+        overview: URL,
+        reconnect: URL,
+        cacheStatsSettings: URL,
+        resetCreditInteraction: ContextPanelResetCreditInteraction = .native
+    ) {
         self.overview = overview
         self.reconnect = reconnect
         self.cacheStatsSettings = cacheStatsSettings
+        self.resetCreditInteraction = resetCreditInteraction
     }
+}
+
+public enum ContextPanelResetCreditInteraction: Sendable {
+    case native
+    case destination(URL, accessibilityHint: String)
+    case none
 }
 
 public struct ContextPanelWidgetContentView: View {
@@ -51,19 +64,25 @@ public struct ContextPanelWidgetContentView: View {
     let displayPreferences: WidgetDisplayPreferences
     let links: ContextPanelWidgetLinks
     let showsResetCreditSurfaces: Bool
+    let resetCreditMaximumAge: TimeInterval
+    let presentationDate: Date
 
     public init(
         family: WidgetFamily,
         snapshot: WidgetSnapshot,
         displayPreferences: WidgetDisplayPreferences,
         links: ContextPanelWidgetLinks,
-        showsResetCreditSurfaces: Bool = false
+        showsResetCreditSurfaces: Bool = false,
+        resetCreditMaximumAge: TimeInterval = SnapshotFreshness.widgetMaximumAge,
+        presentationDate: Date = Date()
     ) {
         self.family = family
         self.snapshot = snapshot
         self.displayPreferences = displayPreferences
         self.links = links
         self.showsResetCreditSurfaces = showsResetCreditSurfaces
+        self.resetCreditMaximumAge = resetCreditMaximumAge
+        self.presentationDate = presentationDate
     }
 
     public var body: some View {
@@ -87,14 +106,19 @@ public struct ContextPanelWidgetContentView: View {
                     snapshot: snapshot,
                     displayPreferences: displayPreferences,
                     links: links,
-                    showsResetCreditSurfaces: showsResetCreditSurfaces
+                    showsResetCreditSurfaces: showsResetCreditSurfaces,
+                    resetCreditMaximumAge: resetCreditMaximumAge,
+                    presentationDate: presentationDate,
+                    layout: family == .systemExtraLarge ? .extraLarge : .large
                 )
             default:
                 ContextPanelMediumWidget(
                     snapshot: snapshot,
                     displayPreferences: displayPreferences,
                     links: links,
-                    showsResetCreditSurfaces: showsResetCreditSurfaces
+                    showsResetCreditSurfaces: showsResetCreditSurfaces,
+                    resetCreditMaximumAge: resetCreditMaximumAge,
+                    presentationDate: presentationDate
                 )
             }
         }
@@ -412,14 +436,16 @@ struct ContextPanelMediumWidget: View {
     let displayPreferences: WidgetDisplayPreferences
     let links: ContextPanelWidgetLinks
     let showsResetCreditSurfaces: Bool
+    let resetCreditMaximumAge: TimeInterval
+    let presentationDate: Date
 
     var body: some View {
-        let now = Date()
+        let now = presentationDate
         let primaryLane = displayPreferences.mainLimitAnswerSelection(
             from: snapshot.usageSnapshot.mainLimitSummaries
         ).primary
         let resetCreditSummary = showsResetCreditSurfaces
-            ? snapshot.resetCreditSurfaceSummary(now: now)
+            ? snapshot.resetCreditSurfaceSummary(now: now, maximumAge: resetCreditMaximumAge)
             : nil
         HStack(spacing: 6) {
             VStack(alignment: .leading, spacing: 5) {
@@ -459,7 +485,7 @@ struct ContextPanelMediumWidget: View {
                         now: now,
                         state: snapshot.promptCacheWidgetState,
                         summary: snapshot.promptCacheSummary,
-                        cacheStatsSettingsURL: links.cacheStatsSettings
+                        links: links
                     )
                 }
                 if snapshot.shouldShowMainLimitEmptyRow {
@@ -482,14 +508,17 @@ struct ContextPanelLargeWidget: View {
     let displayPreferences: WidgetDisplayPreferences
     let links: ContextPanelWidgetLinks
     let showsResetCreditSurfaces: Bool
+    let resetCreditMaximumAge: TimeInterval
+    let presentationDate: Date
+    fileprivate let layout: CPWMainLimitHeaderLayout
 
     var body: some View {
-        let now = Date()
+        let now = presentationDate
         let primaryLane = displayPreferences.mainLimitAnswerSelection(
             from: snapshot.usageSnapshot.mainLimitSummaries
         ).primary
         let resetCreditSummary = showsResetCreditSurfaces
-            ? snapshot.resetCreditSurfaceSummary(now: now)
+            ? snapshot.resetCreditSurfaceSummary(now: now, maximumAge: resetCreditMaximumAge)
             : nil
         VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .top, spacing: 10) {
@@ -526,12 +555,12 @@ struct ContextPanelLargeWidget: View {
                 )
                 CPWSectionHeader(title: "Main Limits") {
                     CPWMainLimitHeaderAccessory(
-                        layout: .large,
+                        layout: layout,
                         resetCreditSummary: resetCreditSummary,
                         now: now,
                         state: snapshot.promptCacheWidgetState,
                         summary: snapshot.promptCacheSummary,
-                        cacheStatsSettingsURL: links.cacheStatsSettings
+                        links: links
                     )
                 }
                 if snapshot.shouldShowMainLimitEmptyRow {
@@ -548,9 +577,10 @@ struct ContextPanelLargeWidget: View {
     }
 }
 
-private enum CPWMainLimitHeaderLayout {
+fileprivate enum CPWMainLimitHeaderLayout {
     case medium
     case large
+    case extraLarge
 }
 
 private enum CPWPromptCacheAvailableLayout: Equatable {
@@ -571,7 +601,7 @@ private struct CPWMainLimitHeaderAccessory: View {
     let now: Date
     let state: PromptCacheWidgetState
     let summary: PromptCacheSummary
-    let cacheStatsSettingsURL: URL
+    let links: ContextPanelWidgetLinks
 
     private var showsCache: Bool {
         state != .unavailable
@@ -581,7 +611,7 @@ private struct CPWMainLimitHeaderAccessory: View {
         CPWPromptCacheInlineStat(
             state: state,
             summary: summary,
-            cacheStatsSettingsURL: cacheStatsSettingsURL,
+            cacheStatsSettingsURL: links.cacheStatsSettings,
             availableLayout: availableLayout
         )
     }
@@ -594,7 +624,8 @@ private struct CPWMainLimitHeaderAccessory: View {
             layout: layout,
             summary: resetSummary,
             now: now,
-            density: density
+            density: density,
+            interaction: links.resetCreditInteraction
         )
     }
 
@@ -617,6 +648,16 @@ private struct CPWMainLimitHeaderAccessory: View {
                 ViewThatFits(in: .horizontal) {
                     pairedAccessory(
                         resetCreditSummary,
+                        cacheLayout: .full,
+                        resetDensity: .standard
+                    )
+                    pairedAccessory(
+                        resetCreditSummary,
+                        cacheLayout: .compact,
+                        resetDensity: .standard
+                    )
+                    pairedAccessory(
+                        resetCreditSummary,
                         cacheLayout: .compact,
                         resetDensity: .compact
                     )
@@ -636,9 +677,14 @@ private struct CPWMainLimitHeaderAccessory: View {
             } else if let resetCreditSummary {
                 resetCredit(resetCreditSummary, density: .standard)
             }
-        case .large:
+        case .large, .extraLarge:
             if let resetCreditSummary, showsCache {
                 ViewThatFits(in: .horizontal) {
+                    pairedAccessory(
+                        resetCreditSummary,
+                        cacheLayout: .full,
+                        resetDensity: .standard
+                    )
                     pairedAccessory(
                         resetCreditSummary,
                         cacheLayout: .compact,
@@ -675,17 +721,20 @@ private struct CPWResetCreditHeaderToken: View {
     let summary: ProviderResetCreditSurfaceSummary
     let now: Date
     let density: CPWResetCreditTokenDensity
+    let interaction: ContextPanelResetCreditInteraction
 
     init(
         layout: CPWMainLimitHeaderLayout,
         summary: ProviderResetCreditSurfaceSummary,
         now: Date,
-        density: CPWResetCreditTokenDensity = .standard
+        density: CPWResetCreditTokenDensity = .standard,
+        interaction: ContextPanelResetCreditInteraction = .native
     ) {
         self.layout = layout
         self.summary = summary
         self.now = now
         self.density = density
+        self.interaction = interaction
     }
 
     private var guidance: ProviderResetCreditGuidance? {
@@ -706,16 +755,48 @@ private struct CPWResetCreditHeaderToken: View {
         status.map(CPWTheme.statusColor) ?? CPWTheme.secondaryText(variant: themeVariant)
     }
 
-    private var destination: URL {
+    private var nativeDestination: URL {
         if let guidance {
             return guidance.widgetDeepLinkURL
         }
         return URL(string: "contextpanel://provider/\(summary.provider.rawValue)")!
     }
 
+    private var nativeAccessibilityHint: String {
+        guidance == nil
+            ? "Opens OpenAI detail in Context Panel"
+            : "Opens account detail in Context Panel"
+    }
+
+    private var linkConfiguration: (destination: URL, accessibilityHint: String)? {
+        switch interaction {
+        case .native:
+            (nativeDestination, nativeAccessibilityHint)
+        case let .destination(destination, accessibilityHint):
+            (destination, accessibilityHint)
+        case .none:
+            nil
+        }
+    }
+
+    @ViewBuilder
     var body: some View {
-        Link(destination: destination) {
-            tokenContent
+        if let linkConfiguration {
+            Link(destination: linkConfiguration.destination) {
+                styledToken
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(accessibilityText)
+            .accessibilityHint(linkConfiguration.accessibilityHint)
+        } else {
+            styledToken
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(accessibilityText)
+        }
+    }
+
+    private var styledToken: some View {
+        tokenContent
             .padding(.horizontal, horizontalPadding)
             .padding(.vertical, 2)
             .background(tone.opacity(status == nil ? 0.08 : 0.13))
@@ -724,12 +805,6 @@ private struct CPWResetCreditHeaderToken: View {
                 Capsule(style: .continuous)
                     .stroke(tone.opacity(0.24), lineWidth: 1)
             }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(accessibilityText)
-        .accessibilityHint(guidance == nil
-            ? "Opens OpenAI detail in Context Panel"
-            : "Opens account detail in Context Panel")
     }
 
     private var tokenContent: some View {
@@ -739,14 +814,14 @@ private struct CPWResetCreditHeaderToken: View {
                     .font(.system(size: 9, weight: .semibold))
                 switch density {
                 case .standard:
-                    if case .large = layout {
+                    if layout != .medium {
                         CPWProviderBadge(provider: guidance.provider, compact: true)
                     }
                     Text(guidance.accountName)
                         .font(.system(size: 8, weight: .medium))
                         .lineLimit(1)
                         .truncationMode(.tail)
-                        .frame(maxWidth: layout == .medium ? 42 : 64)
+                        .frame(maxWidth: accountNameMaximumWidth)
                     Text(layout == .medium ? "\(guidance.resetCredits.availableCount)×" : guidance.countText)
                         .font(.system(size: 8, weight: .semibold, design: .monospaced))
                         .lineLimit(1)
@@ -772,7 +847,7 @@ private struct CPWResetCreditHeaderToken: View {
             } else {
                 switch density {
                 case .standard:
-                    if layout == .large {
+                    if layout != .medium {
                         CPWProviderBadge(provider: summary.provider, compact: true)
                         Text("Reset credits · \(compactAccountCountText)")
                             .font(.system(size: 8, weight: .semibold))
@@ -813,6 +888,17 @@ private struct CPWResetCreditHeaderToken: View {
 
     private var compactAccountCountText: String {
         summary.accountCount == 1 ? "1 acct" : "\(summary.accountCount) accts"
+    }
+
+    private var accountNameMaximumWidth: CGFloat {
+        switch layout {
+        case .medium:
+            42
+        case .large:
+            64
+        case .extraLarge:
+            160
+        }
     }
 
     private var horizontalPadding: CGFloat {

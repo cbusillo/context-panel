@@ -87,9 +87,14 @@ horizontal slots rather than adding cards or reducing visible limit rows.
 - Widgets suppress reset-credit signals when the widget is stale, failed, needs
   setup, or when the credit observation is inconsistent or has elapsed. The app
   remains the place to explain and recover those states.
-- Small widgets, Watch surfaces, companion apps, complications, tvOS, and Top
-  Shelf remain unchanged until an explicit companion-data and glance-hierarchy
-  decision is made.
+- The iPhone, iPad, and visionOS companion app reuses its existing large usage
+  instrument rather than adding a card or section. Its in-app reset token is
+  static; medium, large, and extra-large companion widgets use the same header
+  treatment and open the synced overview. Companion surfaces use current
+  observations only and never show the Mac app's `last seen` fallback.
+- Small widgets, Watch surfaces, complications, tvOS, and Top Shelf remain
+  unchanged. Their one-value, ten-foot, or highly constrained hierarchies do not
+  have an honest secondary slot for account-owned reset-credit metadata.
 
 Every Apple Watch complication family is a glance surface and shows remaining
 capacity, matching the primary macOS widget answer. Circular and corner gauges

@@ -1409,6 +1409,146 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(entries[1].snapshot.refreshAttentionSummary?.expiredResetLimits.map(\.accountID) == ["claude-timeline-reset"])
 }
 
+@Test func timelineProviderSchedulesResetCreditExpiryBeforeSnapshotStaleness() throws {
+    let root = try widgetSnapshotTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 100)
+    let creditExpiry = now.addingTimeInterval(60)
+    let primaryStore = JSONSnapshotStore(rootDirectory: root.appending(path: "snapshots", directoryHint: .isDirectory))
+    try primaryStore.save(StoredUsageSnapshot(
+        savedAt: now,
+        snapshot: UsageSnapshot(generatedAt: now, limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "openai-reset-credit",
+                accountName: "OpenAI",
+                label: "Codex Weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 100,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(3 * 60 * 60),
+                lastUpdatedAt: now,
+                confidence: .observed
+            ),
+        ]),
+        reports: [
+            StoredProviderReport(
+                provider: .openAI,
+                accountID: "openai-reset-credit",
+                accountName: "OpenAI",
+                generatedAt: now,
+                resetCredits: ProviderResetCreditSummary(
+                    availableCount: 1,
+                    observedAt: now,
+                    coverage: .complete,
+                    earliestKnownExpiry: creditExpiry
+                ),
+                status: .limited,
+                errorMessage: nil
+            ),
+        ]
+    ))
+    let provider = ContextPanelTimelineProvider(
+        store: primaryStore,
+        containerFallbackStore: JSONSnapshotStore(rootDirectory: root.appending(path: "fallback", directoryHint: .isDirectory)),
+        preferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "widget-prefs.json")),
+        containerFallbackPreferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "fallback-widget-prefs.json")),
+        forecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "forecast.json")),
+        containerFallbackForecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "fallback-forecast.json")),
+        accountStore: AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json")),
+        bookmarkStore: SecureFileBookmarkStore(storeURL: root.appending(path: "bookmarks.json"))
+    )
+
+    let entries = provider.timelineEntries(date: now)
+
+    #expect(entries.count == 3)
+    #expect(entries[0].snapshot.resetCreditSurfaceSummary(now: now) != nil)
+    #expect(entries[1].date == creditExpiry)
+    #expect(entries[1].snapshot.state == .ready)
+    #expect(entries[1].snapshot.resetCreditSurfaceSummary(now: creditExpiry) == nil)
+    #expect(entries[2].date == now.addingTimeInterval(SnapshotFreshness.widgetMaximumAge + 1))
+    #expect(entries[2].snapshot.state == .stale)
+}
+
+@Test func timelineProviderKeepsResetCreditExpiryAfterUnrelatedLimitRefreshBoundary() throws {
+    let root = try widgetSnapshotTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 100)
+    let limitReset = now.addingTimeInterval(60)
+    let creditExpiry = now.addingTimeInterval(300)
+    let ageTransition = now.addingTimeInterval(SnapshotFreshness.widgetMaximumAge + 1)
+    let primaryStore = JSONSnapshotStore(rootDirectory: root.appending(path: "snapshots", directoryHint: .isDirectory))
+    try primaryStore.save(StoredUsageSnapshot(
+        savedAt: now,
+        snapshot: UsageSnapshot(generatedAt: now, limits: [
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "claude-reset-transition",
+                accountName: "Claude",
+                label: "Claude 5-hour",
+                windowLabel: "5-hour",
+                unit: .percent,
+                used: 20,
+                limit: 100,
+                resetsAt: limitReset,
+                lastUpdatedAt: now
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "openai-reset-credit",
+                accountName: "OpenAI",
+                label: "Codex Weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 100,
+                limit: 100,
+                resetsAt: now.addingTimeInterval(3 * 60 * 60),
+                lastUpdatedAt: now,
+                confidence: .observed
+            ),
+        ]),
+        reports: [
+            StoredProviderReport(
+                provider: .openAI,
+                accountID: "openai-reset-credit",
+                accountName: "OpenAI",
+                generatedAt: now,
+                resetCredits: ProviderResetCreditSummary(
+                    availableCount: 1,
+                    observedAt: now,
+                    coverage: .complete,
+                    earliestKnownExpiry: creditExpiry
+                ),
+                status: .limited,
+                errorMessage: nil
+            ),
+        ]
+    ))
+    let provider = ContextPanelTimelineProvider(
+        store: primaryStore,
+        containerFallbackStore: JSONSnapshotStore(rootDirectory: root.appending(path: "fallback", directoryHint: .isDirectory)),
+        preferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "widget-prefs.json")),
+        containerFallbackPreferencesStore: WidgetDisplayPreferencesStore(preferencesURL: root.appending(path: "fallback-widget-prefs.json")),
+        forecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "forecast.json")),
+        containerFallbackForecastSettingsStore: FastModeForecastSettingsStore(settingsURL: root.appending(path: "fallback-forecast.json")),
+        accountStore: AccountConfigurationStore(configurationURL: root.appending(path: "accounts.json")),
+        bookmarkStore: SecureFileBookmarkStore(storeURL: root.appending(path: "bookmarks.json"))
+    )
+
+    let entries = provider.timelineEntries(date: now)
+
+    #expect(entries.map(\.date) == [
+        now,
+        limitReset.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace),
+        creditExpiry,
+        ageTransition,
+    ])
+    #expect(entries[1].snapshot.state == .ready)
+    #expect(entries[2].snapshot.resetCreditSurfaceSummary(now: creditExpiry) == nil)
+    #expect(entries[3].snapshot.state == .stale)
+}
+
 @Test func snapshotStaleTransitionCrossesStrictFreshnessBoundary() {
     let generatedAt = Date(timeIntervalSince1970: 100)
     let lastFreshDate = generatedAt.addingTimeInterval(SnapshotFreshness.widgetMaximumAge)
@@ -1445,6 +1585,10 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(
         policy.nextStaleTransitionDate(for: snapshot, now: now)
             == resetsAt.addingTimeInterval(SnapshotFreshness.resetExpiryRefreshGrace)
+    )
+    #expect(
+        policy.nextAgeStaleTransitionDate(for: snapshot, now: now)
+            == now.addingTimeInterval(SnapshotFreshness.widgetMaximumAge + 1)
     )
 }
 

@@ -53,7 +53,7 @@ private enum CompanionWidgetLoadQueue {
                 date: date,
                 result: CompanionSyncLoader.loadWidgetMirror(now: date),
                 stalenessPolicy: SnapshotStoreStalenessPolicy.appDefault(
-                    maximumAge: SnapshotFreshness.widgetMaximumAge
+                    maximumAge: SnapshotFreshness.companionProviderMaximumAge
                 )
             ))
         }
@@ -65,7 +65,9 @@ private enum CompanionWidgetLoadQueue {
     ) {
         let completion = CompanionWidgetCompletion(completion)
         Task.detached(priority: .utility) {
-            let policy = SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
+            let policy = SnapshotStoreStalenessPolicy.appDefault(
+                maximumAge: SnapshotFreshness.companionProviderMaximumAge
+            )
             let result = await CompanionSyncLoader.loadWidgetTimeline(
                 remoteStore: remoteStore,
                 now: date
@@ -78,20 +80,36 @@ private enum CompanionWidgetLoadQueue {
                 ? SnapshotFreshness.widgetTimelineInterval
                 : settings.widgetInterval
             let refreshPolicy = TimelineReloadPolicy.after(date.addingTimeInterval(refreshInterval))
-            guard currentEntry.snapshot.state == .ready,
-                  let staleDate = policy.nextStaleTransitionDate(
-                    for: currentEntry.snapshot.usageSnapshot,
-                    now: date
-                  )
-            else {
+            guard currentEntry.snapshot.state == .ready else {
+                completion.call(Timeline(entries: [currentEntry], policy: refreshPolicy))
+                return
+            }
+            let staleTransition = policy.nextStaleTransitionDate(
+                for: currentEntry.snapshot.usageSnapshot,
+                now: date
+            )
+            let ageTransition = policy.nextAgeStaleTransitionDate(
+                for: currentEntry.snapshot.usageSnapshot,
+                now: date
+            )
+            let resetTransitions = currentEntry.snapshot.resetCreditSurfaceTransitionDates(
+                now: date,
+                maximumAge: SnapshotFreshness.companionProviderMaximumAge
+            ).filter {
+                guard let ageTransition else { return true }
+                return $0 <= ageTransition
+            }
+            let transitionDates = Set(
+                [staleTransition].compactMap { $0 } + resetTransitions
+            ).filter { $0 > date }.sorted()
+            guard !transitionDates.isEmpty else {
                 completion.call(Timeline(entries: [currentEntry], policy: refreshPolicy))
                 return
             }
             completion.call(Timeline(
-                entries: [
-                    currentEntry,
-                    entry(date: staleDate, result: result, stalenessPolicy: policy),
-                ],
+                entries: [currentEntry] + transitionDates.map {
+                    entry(date: $0, result: result, stalenessPolicy: policy)
+                },
                 policy: refreshPolicy
             ))
         }
@@ -152,7 +170,10 @@ struct ContextPanelCompanionWidgetView: View {
             family: family,
             snapshot: entry.snapshot,
             displayPreferences: entry.displayPreferences,
-            links: CompanionDeepLinks.links
+            links: CompanionDeepLinks.widgetLinks,
+            showsResetCreditSurfaces: true,
+            resetCreditMaximumAge: SnapshotFreshness.companionProviderMaximumAge,
+            presentationDate: entry.date
         )
         .visionOSWidgetAppearance(entry.appearanceSettings)
     }

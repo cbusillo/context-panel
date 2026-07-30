@@ -37,7 +37,9 @@ private struct CompanionWidgetRenderSignature: Equatable {
         let snapshot = WidgetSnapshot.fromCompanionSync(
             result,
             now: now,
-            stalenessPolicy: SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
+            stalenessPolicy: SnapshotStoreStalenessPolicy.appDefault(
+                maximumAge: SnapshotFreshness.companionProviderMaximumAge
+            )
         )
         state = snapshot.state
         generatedAt = snapshot.generatedAt
@@ -306,17 +308,22 @@ private struct CompanionRootView: View {
     }
 
     private var widgetPreview: some View {
-        ContextPanelWidgetContentView(
-            family: .systemLarge,
-            snapshot: model.snapshot,
-            displayPreferences: model.displayPreferences,
-            links: CompanionDeepLinks.links
-        )
-        .cpwThemeVariant(previewThemeVariant)
-        .background(
-            CPWTheme.surface(variant: previewThemeVariant),
-            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-        )
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            ContextPanelWidgetContentView(
+                family: .systemLarge,
+                snapshot: model.snapshot,
+                displayPreferences: model.displayPreferences,
+                links: CompanionDeepLinks.previewLinks,
+                showsResetCreditSurfaces: true,
+                resetCreditMaximumAge: SnapshotFreshness.companionProviderMaximumAge,
+                presentationDate: context.date
+            )
+            .cpwThemeVariant(previewThemeVariant)
+            .background(
+                CPWTheme.surface(variant: previewThemeVariant),
+                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+            )
+        }
     }
 
     private func settingsColumn(layoutMode: CompanionLayoutMode) -> some View {
