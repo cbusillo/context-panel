@@ -110,11 +110,13 @@ response supplies the newer count. If that read fails or violates the required
 shape, the summary count from the usage response remains available as count-only
 evidence and no detail timing is retained.
 
-Local persistence is deliberately narrow: available count, observation time,
-coverage (`countOnly`, `partial`, or `complete`), and earliest known expiry.
-Provider credit IDs, status/reset-type strings, titles, descriptions, and raw
-rows are discarded. Reset-credit summaries are not sent through companion or
-CloudKit payloads.
+Persistence and companion sync are deliberately narrow: available count,
+observation time, coverage (`countOnly`, `partial`, or `complete`), and earliest
+known expiry. Provider credit IDs, status/reset-type strings, titles,
+descriptions, and raw rows are discarded. Companion payloads attach the same
+optional sanitized summary to the matching account observation without changing
+the strict schema version; older payloads decode as no companion signal, and
+older readers ignore the additive field.
 
 After a full account refresh failure, storage may retain only the prior count
 with its original observation time. Detail coverage is reduced to `countOnly`
@@ -136,10 +138,13 @@ inconsistent, count-only, elapsed-expiry, or unknown weekly-reset evidence uses
 
 The Mac app shows each account's positive observed count, earliest known expiry
 or `expiry unknown`, observation freshness, and advisory reason. Medium and
-large macOS widgets may show one currently actionable account note; hold and
-unknown states remain app-only, and the small widget and companion surfaces do
-not include reset-credit copy. Selecting the widget note opens the matching
-Context Panel account detail. It does not open an OpenAI action surface.
+large macOS widgets may show one currently actionable account note; selecting it
+opens the matching Context Panel account detail. The iPhone, iPad, and visionOS
+companion app reuses its existing large usage instrument for current-only reset
+visibility, while medium, large, and extra-large companion widgets use the same
+header treatment and open the synced overview. Small widgets, Watch, tvOS, and
+Top Shelf do not include reset-credit copy. No surface opens an OpenAI action
+surface.
 
 Context Panel's reset-credit integration is permanently read-only. It performs
 GET requests only and will not implement redemption, consumption, or any other

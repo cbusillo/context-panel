@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import SwiftUI
@@ -11,6 +12,16 @@ private let renderTestWidgetLinks = ContextPanelWidgetLinks(
     overview: URL(string: "contextpanel://overview")!,
     reconnect: URL(string: "contextpanel://reconnect")!,
     cacheStatsSettings: URL(string: "contextpanel://settings/cache-stats")!
+)
+
+private let renderCompanionWidgetLinks = ContextPanelWidgetLinks(
+    overview: URL(string: "contextpanelcompanion://overview")!,
+    reconnect: URL(string: "contextpanelcompanion://overview")!,
+    cacheStatsSettings: URL(string: "contextpanelcompanion://overview")!,
+    resetCreditInteraction: .destination(
+        URL(string: "contextpanelcompanion://overview")!,
+        accessibilityHint: "Opens the synced usage overview"
+    )
 )
 
 @Test func widgetProblemCopySurfacesBlockedProviderAccess() {
@@ -209,7 +220,8 @@ private let renderTestWidgetLinks = ContextPanelWidgetLinks(
             snapshot: snapshot,
             displayPreferences: .defaultPreferences,
             links: renderTestWidgetLinks,
-            showsResetCreditSurfaces: true
+            showsResetCreditSurfaces: true,
+            presentationDate: now
         )
         .cpwThemeVariant(.light)
         .frame(width: width, height: height)
@@ -239,7 +251,8 @@ private let renderTestWidgetLinks = ContextPanelWidgetLinks(
             snapshot: constrainedSnapshot,
             displayPreferences: .defaultPreferences,
             links: renderTestWidgetLinks,
-            showsResetCreditSurfaces: true
+            showsResetCreditSurfaces: true,
+            presentationDate: now
         )
         .cpwThemeVariant(.light)
         .frame(width: 320, height: 164)
@@ -265,7 +278,8 @@ private let renderTestWidgetLinks = ContextPanelWidgetLinks(
         snapshot: considerBeforeSnapshot,
         displayPreferences: .defaultPreferences,
         links: renderTestWidgetLinks,
-        showsResetCreditSurfaces: true
+        showsResetCreditSurfaces: true,
+        presentationDate: now
     )
     .cpwThemeVariant(.light)
     .frame(width: 344, height: 164)
@@ -291,7 +305,8 @@ private let renderTestWidgetLinks = ContextPanelWidgetLinks(
         snapshot: neutralSnapshot,
         displayPreferences: .defaultPreferences,
         links: renderTestWidgetLinks,
-        showsResetCreditSurfaces: true
+        showsResetCreditSurfaces: true,
+        presentationDate: now
     )
     .cpwThemeVariant(.light)
     .frame(width: 344, height: 344)
@@ -300,6 +315,48 @@ private let renderTestWidgetLinks = ContextPanelWidgetLinks(
     #expect(nonBackgroundPixelCount(in: neutralImage) > 5_000)
     #expect(pixelCount(in: neutralImage, near: (74, 122, 91), rows: 125..<155) > 20)
     #expect(pixelCount(in: neutralImage, near: (87, 87, 92), rows: 125..<155, columns: 250..<344) > 5)
+}
+
+@MainActor
+@Test func companionResetCreditRendersInSupportedWidgetFamilies() throws {
+    let now = Date()
+    let snapshot = resetCreditRenderSnapshot(
+        now: now,
+        promptCacheObservations: resetCreditPromptCacheObservations(now: now),
+        promptCacheWidgetState: .available
+    )
+    let scenarios: [(String, WidgetFamily, CGFloat, CGFloat, Int)] = [
+        ("medium", .systemMedium, 344, 164, 2_500),
+        ("large", .systemLarge, 344, 344, 5_000),
+        ("extra-large", .systemExtraLarge, 720, 344, 8_000),
+    ]
+    let variants: [(String, CPWThemeVariant)] = [
+        ("light", .light),
+        ("dark", .dark),
+    ]
+
+    for (variantName, variant) in variants {
+        for (name, family, width, height, minimumPixels) in scenarios {
+            let view = ContextPanelWidgetContentView(
+                family: family,
+                snapshot: snapshot,
+                displayPreferences: .defaultPreferences,
+                links: renderCompanionWidgetLinks,
+                showsResetCreditSurfaces: true,
+                resetCreditMaximumAge: SnapshotFreshness.companionProviderMaximumAge,
+                presentationDate: now
+            )
+            .cpwThemeVariant(variant)
+            .frame(width: width, height: height)
+            .background(CPWTheme.surface(variant: variant))
+
+            let image = try #require(renderedImage(from: view, width: width, height: height))
+            try writeRenderArtifact(image, name: "companion-reset-\(name)-\(variantName).png")
+            #expect(nonBackgroundPixelCount(in: image) > minimumPixels)
+            #expect(pixelCount(in: image, near: (74, 122, 91)) > 20)
+            #expect(pixelCount(in: image, near: (138, 106, 42)) > 20)
+        }
+    }
 }
 
 @MainActor
@@ -582,6 +639,19 @@ private func renderedImage<V: View>(from view: V, width: CGFloat, height: CGFloa
     renderer.scale = 1
     renderer.proposedSize = ProposedViewSize(width: width, height: height)
     return renderer.cgImage
+}
+
+private func writeRenderArtifact(_ image: CGImage, name: String) throws {
+    guard let outputDirectory = ProcessInfo.processInfo.environment["CONTEXT_PANEL_RENDER_OUTPUT_DIR"],
+          !outputDirectory.isEmpty
+    else {
+        return
+    }
+    let directoryURL = URL(fileURLWithPath: outputDirectory, isDirectory: true)
+    try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+    let representation = NSBitmapImageRep(cgImage: image)
+    let data = try #require(representation.representation(using: .png, properties: [:]))
+    try data.write(to: directoryURL.appending(path: name), options: .atomic)
 }
 
 private func nonBackgroundPixelCount(in image: CGImage) -> Int {

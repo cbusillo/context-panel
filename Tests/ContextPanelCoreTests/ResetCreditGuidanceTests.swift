@@ -532,6 +532,84 @@ import Testing
     #expect(!summary.isLastSeenOnly)
 }
 
+@Test func resetCreditGlanceTransitionUsesEarliestTrustBoundary() throws {
+    let now = resetGuidanceDate()
+    let report = resetGuidanceReport(
+        now: now,
+        count: 2,
+        coverage: .complete,
+        expiry: now.addingTimeInterval(2 * 86_400)
+    )
+    let limited = resetGuidanceLimit(
+        accountID: report.accountID,
+        window: .weekly,
+        used: 100,
+        resetsAt: now.addingTimeInterval(3 * 60 * 60)
+    )
+
+    #expect(ResetCreditSurfaceAdvisor.nextGlanceTransitionDate(
+        reports: [report],
+        limits: [limited],
+        now: now
+    ) == now.addingTimeInterval(SnapshotFreshness.widgetMaximumAge + 1))
+
+    #expect(ResetCreditSurfaceAdvisor.nextGlanceTransitionDate(
+        reports: [report],
+        limits: [limited],
+        now: now,
+        maximumAge: 7 * 86_400
+    ) == now.addingTimeInterval(2 * 60 * 60))
+
+    let expiringSoon = resetGuidanceReport(
+        now: now,
+        count: 2,
+        coverage: .complete,
+        expiry: now.addingTimeInterval(30 * 60)
+    )
+    #expect(ResetCreditSurfaceAdvisor.nextGlanceTransitionDate(
+        reports: [expiringSoon],
+        limits: [limited],
+        now: now,
+        maximumAge: 7 * 86_400
+    ) == now.addingTimeInterval(30 * 60))
+}
+
+@Test func widgetSnapshotDoesNotScheduleResetCreditTransitionsWhenSurfaceIsUnavailable() {
+    let now = resetGuidanceDate()
+    let report = resetGuidanceReport(
+        now: now,
+        count: 2,
+        coverage: .complete,
+        expiry: now.addingTimeInterval(86_400)
+    )
+    let limit = resetGuidanceLimit(
+        accountID: report.accountID,
+        window: .weekly,
+        used: 100,
+        resetsAt: now.addingTimeInterval(3 * 60 * 60)
+    )
+    let stale = WidgetSnapshot(
+        state: .stale,
+        generatedAt: now,
+        limits: [limit],
+        reports: [report],
+        status: .stale,
+        message: "Showing saved usage."
+    )
+    let syncFailure = WidgetSnapshot(
+        state: .ready,
+        generatedAt: now,
+        limits: [limit],
+        reports: [report],
+        status: .close,
+        message: "Usage synced.",
+        syncErrorMessage: "Sync failed."
+    )
+
+    #expect(stale.resetCreditSurfaceTransitionDates(now: now).isEmpty)
+    #expect(syncFailure.resetCreditSurfaceTransitionDates(now: now).isEmpty)
+}
+
 private func resetGuidanceDate() -> Date {
     Date(timeIntervalSince1970: 1_800_000_000)
 }

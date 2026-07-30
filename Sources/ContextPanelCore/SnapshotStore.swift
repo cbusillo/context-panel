@@ -613,15 +613,19 @@ public struct SnapshotStoreStalenessPolicy: Equatable, Sendable {
     }
 
     public func nextStaleTransitionDate(for snapshot: UsageSnapshot, now: Date) -> Date? {
-        let ageTransition = hasAgeSensitiveLimits(in: snapshot)
-            ? snapshot.generatedAt.addingTimeInterval(maximumAge + 1)
-            : nil
+        let ageTransition = nextAgeStaleTransitionDate(for: snapshot, now: now)
         let resetTransition = resetExpiryRefreshState?.nextRefreshCheckDate(for: snapshot, now: now)
             ?? snapshot.nextResetRefreshDate(now: now)
         return [ageTransition, resetTransition]
             .compactMap { $0 }
             .filter { $0 > now }
             .min()
+    }
+
+    public func nextAgeStaleTransitionDate(for snapshot: UsageSnapshot, now: Date) -> Date? {
+        guard hasAgeSensitiveLimits(in: snapshot) else { return nil }
+        let transition = snapshot.generatedAt.addingTimeInterval(maximumAge + 1)
+        return transition > now ? transition : nil
     }
 
     public func refreshAttentionSummary(for storedSnapshot: StoredUsageSnapshot?, now: Date) -> RefreshAttentionSummary? {

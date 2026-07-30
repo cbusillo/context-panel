@@ -1101,6 +1101,7 @@ public struct CompanionProviderStatus: Codable, Equatable, Sendable {
     public let generatedAt: Date
     public let status: UsageStatus
     public let accessState: ProviderAccessState
+    public let resetCredits: ProviderResetCreditSummary?
 
     enum CodingKeys: String, CodingKey {
         case provider
@@ -1109,6 +1110,7 @@ public struct CompanionProviderStatus: Codable, Equatable, Sendable {
         case generatedAt
         case status
         case accessState
+        case resetCredits
     }
 
     public init(report: StoredProviderReport) {
@@ -1122,6 +1124,7 @@ public struct CompanionProviderStatus: Codable, Equatable, Sendable {
         generatedAt = report.generatedAt
         status = report.status
         accessState = report.accessState.retainingCurrentProviderObservation(for: report.status)
+        resetCredits = report.resetCredits
     }
 
     public init(from decoder: Decoder) throws {
@@ -1133,6 +1136,7 @@ public struct CompanionProviderStatus: Codable, Equatable, Sendable {
         status = try container.decode(UsageStatus.self, forKey: .status)
         accessState = try container.decodeIfPresent(ProviderAccessState.self, forKey: .accessState)?
             .retainingCurrentProviderObservation(for: status) ?? .unknown
+        resetCredits = try container.decodeIfPresent(ProviderResetCreditSummary.self, forKey: .resetCredits)
     }
 
     public var storedProviderReport: StoredProviderReport {
@@ -1142,6 +1146,7 @@ public struct CompanionProviderStatus: Codable, Equatable, Sendable {
             configuredAccountID: companionAccountID,
             accountName: accountName,
             generatedAt: generatedAt,
+            resetCredits: resetCredits,
             status: status,
             accessState: accessState,
             errorMessage: nil

@@ -458,9 +458,19 @@ public enum CompanionDeepLinks {
     public static let overview = URL(string: "contextpanelcompanion://overview")!
     public static let reconnect = URL(string: "contextpanelcompanion://overview")!
     public static let cacheStatsSettings = URL(string: "contextpanelcompanion://overview")!
-    public static let links = ContextPanelWidgetLinks(
+    public static let widgetLinks = ContextPanelWidgetLinks(
         overview: overview,
         reconnect: reconnect,
-        cacheStatsSettings: cacheStatsSettings
+        cacheStatsSettings: cacheStatsSettings,
+        resetCreditInteraction: .destination(
+            overview,
+            accessibilityHint: "Opens the synced usage overview"
+        )
+    )
+    public static let previewLinks = ContextPanelWidgetLinks(
+        overview: overview,
+        reconnect: reconnect,
+        cacheStatsSettings: cacheStatsSettings,
+        resetCreditInteraction: .none
     )
 }

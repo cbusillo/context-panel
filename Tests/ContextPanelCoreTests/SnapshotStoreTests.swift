@@ -1478,7 +1478,7 @@ import Testing
     #expect((explicitZero.coverage, explicitZero.earliestKnownExpiry) == (.countOnly, nil))
 }
 
-@Test func companionSnapshotOmitsResetCreditSummary() throws {
+@Test func companionSnapshotIncludesOnlySanitizedResetCreditSummary() throws {
     let observedAt = Date(timeIntervalSince1970: 100)
     let stored = StoredUsageSnapshot(
         savedAt: observedAt,
@@ -1492,7 +1492,12 @@ import Testing
     let data = try encoder.encode(CompanionSnapshot(storedSnapshot: stored, publishedAt: observedAt))
     let json = try #require(String(data: data, encoding: .utf8))
 
-    #expect(["resetCredits", "availableCount", "earliestKnownExpiry"].allSatisfy { !json.contains($0) })
+    #expect(["resetCredits", "availableCount", "observedAt", "coverage", "earliestKnownExpiry"].allSatisfy {
+        json.contains($0)
+    })
+    #expect(!json.contains("creditID"))
+    #expect(!json.contains("resetType"))
+    #expect(!json.contains("description"))
 }
 
 @Test func storedProviderReportRoundTripsProviderAccessStateWithoutProviderPayload() throws {

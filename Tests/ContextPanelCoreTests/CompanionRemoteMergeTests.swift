@@ -391,6 +391,83 @@ import Testing
     #expect(firstThenSecond.snapshot == secondThenFirst.snapshot)
 }
 
+@Test func companionRemoteMergeKeepsResetCreditsFromNewerPublisher() {
+    let legacyDate = Date(timeIntervalSince1970: 56_760)
+    let currentDate = legacyDate.addingTimeInterval(60)
+    let legacy = companionRemoteDocument(
+        generatedAt: legacyDate,
+        accounts: [
+            companionRemoteAccount(
+                name: "OpenAI A",
+                accountID: "openai-a",
+                used: 20,
+                generatedAt: legacyDate
+            ),
+        ]
+    )
+    let current = companionRemoteDocument(
+        generatedAt: currentDate,
+        accounts: [
+            companionRemoteAccount(
+                name: "OpenAI A",
+                accountID: "openai-a",
+                used: 30,
+                generatedAt: currentDate,
+                resetCredits: ProviderResetCreditSummary(
+                    availableCount: 2,
+                    observedAt: currentDate,
+                    coverage: .complete,
+                    earliestKnownExpiry: currentDate.addingTimeInterval(86_400)
+                )
+            ),
+        ]
+    )
+
+    let merged = current.mergingForRemotePublish(existing: legacy)
+
+    #expect(merged.snapshot.limits.first?.used == 30)
+    #expect(merged.snapshot.providerStatuses.first?.resetCredits?.availableCount == 2)
+    #expect(merged.snapshot.providerStatuses.first?.resetCredits?.observedAt == currentDate)
+}
+
+@Test func companionRemoteMergeDropsResetCreditsWhenNewerPublisherCannotReportThem() {
+    let currentDate = Date(timeIntervalSince1970: 56_770)
+    let legacyDate = currentDate.addingTimeInterval(60)
+    let current = companionRemoteDocument(
+        generatedAt: currentDate,
+        accounts: [
+            companionRemoteAccount(
+                name: "OpenAI A",
+                accountID: "openai-a",
+                used: 20,
+                generatedAt: currentDate,
+                resetCredits: ProviderResetCreditSummary(
+                    availableCount: 2,
+                    observedAt: currentDate,
+                    coverage: .complete,
+                    earliestKnownExpiry: currentDate.addingTimeInterval(86_400)
+                )
+            ),
+        ]
+    )
+    let legacy = companionRemoteDocument(
+        generatedAt: legacyDate,
+        accounts: [
+            companionRemoteAccount(
+                name: "OpenAI A",
+                accountID: "openai-a",
+                used: 30,
+                generatedAt: legacyDate
+            ),
+        ]
+    )
+
+    let merged = legacy.mergingForRemotePublish(existing: current)
+
+    #expect(merged.snapshot.limits.first?.used == 30)
+    #expect(merged.snapshot.providerStatuses.first?.resetCredits == nil)
+}
+
 @Test func companionRemoteMergeRejectsFailedRepublishAuthorityAndBurnRate() {
     let observationDate = Date(timeIntervalSince1970: 56_800)
     let failureDate = observationDate.addingTimeInterval(60)
@@ -1129,6 +1206,7 @@ private struct CompanionRemoteTestAccount {
     let statusGeneratedAt: Date
     let limitStatus: UsageStatus
     let labels: [String]
+    let resetCredits: ProviderResetCreditSummary?
 }
 
 private extension CompanionSyncDocument {
@@ -1154,7 +1232,8 @@ private func companionRemoteAccount(
     status: UsageStatus = .healthy,
     statusGeneratedAt: Date? = nil,
     limitStatus: UsageStatus? = nil,
-    labels: [String] = ["Weekly"]
+    labels: [String] = ["Weekly"],
+    resetCredits: ProviderResetCreditSummary? = nil
 ) -> CompanionRemoteTestAccount {
     CompanionRemoteTestAccount(
         name: name,
@@ -1164,7 +1243,8 @@ private func companionRemoteAccount(
         status: status,
         statusGeneratedAt: statusGeneratedAt ?? generatedAt,
         limitStatus: limitStatus ?? status,
-        labels: labels
+        labels: labels,
+        resetCredits: resetCredits
     )
 }
 
@@ -1209,6 +1289,7 @@ private func companionRemoteDocument(
             configuredAccountID: "openai-code-default",
             accountName: account.name,
             generatedAt: account.statusGeneratedAt,
+            resetCredits: account.resetCredits,
             status: account.status,
             errorMessage: account.status == .failure ? "Authentication unavailable" : nil
         )

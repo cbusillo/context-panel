@@ -144,6 +144,14 @@ import Testing
         contentsOf: root.appending(path: "Sources/ContextPanelCompanionWidget/ContextPanelCompanionWidget.swift"),
         encoding: .utf8
     )
+    let companionAppSource = try String(
+        contentsOf: root.appending(path: "Sources/ContextPanelCompanion/ContextPanelCompanionApp.swift"),
+        encoding: .utf8
+    )
+    let companionSupportSource = try String(
+        contentsOf: root.appending(path: "Sources/ContextPanelCompanionSupport/CompanionSyncLoader.swift"),
+        encoding: .utf8
+    )
     let appResetRow = try userFacingCopySection(
         in: appSource,
         startingAt: "private struct OpenAIResetCreditRow",
@@ -180,6 +188,10 @@ import Testing
     #expect(!smallWidget.contains("ResetCredit"))
     #expect(mediumWidget.contains("CPWMainLimitHeaderAccessory"))
     #expect(largeWidget.contains("CPWMainLimitHeaderAccessory"))
+    #expect(mediumWidget.contains("let now = presentationDate"))
+    #expect(largeWidget.contains("let now = presentationDate"))
+    #expect(!mediumWidget.contains("let now = Date()"))
+    #expect(!largeWidget.contains("let now = Date()"))
     #expect(mediumWidget.contains("maximumCount: 3"))
     #expect(largeWidget.contains("maximumCount: 5"))
     #expect(!mediumWidget.contains("maximumCount: resetCredit"))
@@ -189,8 +201,13 @@ import Testing
     #expect(widgetSource.contains("Text(\"Reset credits · \\(compactAccountCountText)\")"))
     #expect(widgetSource.contains("guidance.glanceActionText"))
     #expect(headerAccessory.contains("ViewThatFits(in: .horizontal)"))
+    let fullCache = try #require(headerAccessory.range(of: "cacheLayout: .full"))
+    let compactCache = try #require(headerAccessory.range(of: "cacheLayout: .compact"))
+    #expect(fullCache.lowerBound < compactCache.lowerBound)
+    #expect(headerAccessory.components(separatedBy: "cacheLayout: .full").count - 1 == 2)
     #expect(headerAccessory.contains("cacheLayout: .compact"))
     #expect(headerAccessory.contains("cacheLayout: .minimal"))
+    #expect(headerAccessory.contains("resetDensity: .standard"))
     #expect(headerAccessory.contains("resetDensity: .compact"))
     #expect(headerAccessory.contains("resetDensity: .minimal"))
     #expect(headerAccessory.contains("cache(cacheLayout)"))
@@ -201,7 +218,17 @@ import Testing
     #expect(widgetSource.contains("clock.fill"))
     #expect(widgetSource.contains("showsResetCreditSurfaces: Bool = false"))
     #expect(macWidgetSource.contains("showsResetCreditSurfaces: true"))
-    #expect(!companionWidgetSource.contains("showsResetCreditSurfaces: true"))
+    #expect(companionWidgetSource.contains("showsResetCreditSurfaces: true"))
+    #expect(companionWidgetSource.contains("SnapshotFreshness.companionProviderMaximumAge"))
+    #expect(companionWidgetSource.contains("presentationDate: entry.date"))
+    #expect(macWidgetSource.contains("presentationDate: entry.date"))
+    #expect(companionAppSource.contains("showsResetCreditSurfaces: true"))
+    #expect(companionAppSource.contains("CompanionDeepLinks.previewLinks"))
+    #expect(companionAppSource.contains("TimelineView(.periodic(from: .now, by: 60))"))
+    #expect(companionAppSource.contains("presentationDate: context.date"))
+    #expect(companionSupportSource.contains("resetCreditInteraction: .destination"))
+    #expect(companionSupportSource.contains("resetCreditInteraction: .none"))
+    #expect(companionSupportSource.contains("Opens the synced usage overview"))
     #expect(appSource.contains("ResetCreditAvailabilityTag"))
     #expect(appSource.contains("Reset credits last seen"))
     #expect(appSource.contains("arrow.counterclockwise.circle"))
@@ -209,6 +236,8 @@ import Testing
     #expect(widgetSource.contains("components.host = \"provider\""))
     #expect(widgetSource.contains("\"Opens account detail in Context Panel\""))
     #expect(widgetSource.contains("\"Opens OpenAI detail in Context Panel\""))
+    #expect(widgetSource.contains("case destination(URL, accessibilityHint: String)"))
+    #expect(widgetSource.contains("case none"))
 }
 
 private func userFacingCopyRepositoryRoot() throws -> URL {

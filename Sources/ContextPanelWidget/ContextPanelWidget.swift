@@ -73,10 +73,25 @@ struct ContextPanelTimelineProvider: TimelineProvider {
     func timelineEntries(date: Date) -> [ContextPanelWidgetEntry] {
         let policy = SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
         let currentEntry = entry(date: date, stalenessPolicy: policy)
-        guard currentEntry.snapshot.state == .ready,
-              let staleDate = policy.nextStaleTransitionDate(for: currentEntry.snapshot.usageSnapshot, now: date)
-        else { return [currentEntry] }
-        return [currentEntry, entry(date: staleDate, stalenessPolicy: policy)]
+        guard currentEntry.snapshot.state == .ready else { return [currentEntry] }
+        let staleTransition = policy.nextStaleTransitionDate(
+            for: currentEntry.snapshot.usageSnapshot,
+            now: date
+        )
+        let ageTransition = policy.nextAgeStaleTransitionDate(
+            for: currentEntry.snapshot.usageSnapshot,
+            now: date
+        )
+        let resetTransitions = currentEntry.snapshot.resetCreditSurfaceTransitionDates(now: date).filter {
+            guard let ageTransition else { return true }
+            return $0 <= ageTransition
+        }
+        let transitionDates = Set(
+            [staleTransition].compactMap { $0 } + resetTransitions
+        ).filter { $0 > date }.sorted()
+        return [currentEntry] + transitionDates.map {
+            entry(date: $0, stalenessPolicy: policy)
+        }
     }
 
     func entry(date: Date) -> ContextPanelWidgetEntry {
@@ -161,7 +176,8 @@ struct ContextPanelWidgetView: View {
             snapshot: entry.snapshot,
             displayPreferences: entry.displayPreferences,
             links: ContextPanelWidgetURL.links,
-            showsResetCreditSurfaces: true
+            showsResetCreditSurfaces: true,
+            presentationDate: entry.date
         )
     }
 }

@@ -188,6 +188,52 @@ public enum ResetCreditSurfaceAdvisor {
         )
     }
 
+    public static func glanceTransitionDates(
+        reports: [StoredProviderReport],
+        limits: [UsageLimit],
+        now: Date,
+        maximumAge: TimeInterval = SnapshotFreshness.widgetMaximumAge
+    ) -> [Date] {
+        precondition(maximumAge >= 0, "maximumAge must not be negative")
+        let guidance = ResetCreditGuidanceAdvisor.guidance(
+            reports: reports,
+            limits: limits,
+            now: now,
+            maximumAge: maximumAge
+        ).filter { $0.state.supportsResetCreditGlance }
+        guard !guidance.isEmpty else { return [] }
+
+        let transitions = guidance.flatMap { guidance -> [Date] in
+            var transitions = [guidance.resetCredits.observedAt.addingTimeInterval(maximumAge + 1)]
+            if let expiry = guidance.resetCredits.earliestKnownExpiry {
+                transitions.append(expiry)
+            }
+            if guidance.state.isActionable,
+               let weeklyReset = guidance.weeklyResetsAt {
+                transitions.append(
+                    weeklyReset.addingTimeInterval(-ResetCreditGuidanceAdvisor.imminentNaturalResetInterval)
+                )
+            }
+            return transitions
+        }
+        .filter { $0 > now }
+        return Array(Set(transitions)).sorted()
+    }
+
+    public static func nextGlanceTransitionDate(
+        reports: [StoredProviderReport],
+        limits: [UsageLimit],
+        now: Date,
+        maximumAge: TimeInterval = SnapshotFreshness.widgetMaximumAge
+    ) -> Date? {
+        glanceTransitionDates(
+            reports: reports,
+            limits: limits,
+            now: now,
+            maximumAge: maximumAge
+        ).first
+    }
+
     private static func summary(
         reports: [StoredProviderReport],
         limits: [UsageLimit],

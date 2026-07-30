@@ -6,6 +6,12 @@ import Testing
 
 @Test func companionSnapshotOmitsSensitiveStoredFields() throws {
     let generatedAt = Date(timeIntervalSince1970: 1_000)
+    let resetCredits = ProviderResetCreditSummary(
+        availableCount: 2,
+        observedAt: generatedAt,
+        coverage: .complete,
+        earliestKnownExpiry: generatedAt.addingTimeInterval(86_400)
+    )
     let stored = StoredUsageSnapshot(
         savedAt: generatedAt,
         snapshot: UsageSnapshot(generatedAt: generatedAt, limits: [
@@ -34,6 +40,7 @@ import Testing
                 configuredAccountID: "configured-local-account-id",
                 accountName: "Work OpenAI",
                 generatedAt: generatedAt,
+                resetCredits: resetCredits,
                 status: .failure,
                 errorMessage: "Token sk-secret-123 read from /Users/chris/.code/auth.json failed"
             ),
@@ -59,6 +66,9 @@ import Testing
     #expect(json.contains("Every Code"))
     #expect(json.contains("schemaVersion"))
     #expect(json.contains("companionAccountID"))
+    #expect(json.contains("resetCredits"))
+    #expect(json.contains("availableCount"))
+    #expect(json.contains("earliestKnownExpiry"))
     #expect(json.contains("raw-provider-account-id") == false)
     #expect(json.contains("configured-local-account-id") == false)
     #expect(json.contains("prompt-cache-account-id") == false)
@@ -75,6 +85,8 @@ import Testing
     #expect(roundTrip.schemaVersion == CompanionSnapshot.schemaVersion)
     #expect(roundTrip.limits.first?.status == .close)
     #expect(roundTrip.providerStatuses.first?.status == .failure)
+    #expect(roundTrip.providerStatuses.first?.resetCredits == resetCredits)
+    #expect(roundTrip.providerStatuses.first?.storedProviderReport.resetCredits == resetCredits)
     #expect(roundTrip.promptCacheSummaries.first?.latestHitRate == 0.9)
 }
 
@@ -111,6 +123,134 @@ import Testing
     #expect(managedRoundTrip.snapshot.schemaVersion == 1)
     #expect(managedRoundTrip.accountRetentionStates?.first?.firstIncompleteObservationAt == observedAt)
     #expect(legacyRoundTrip.accountRetentionStates == nil)
+}
+
+@Test func companionResetCreditsRoundTripWithoutSchemaBumpAndLegacyPayloadsDecodeWithoutThem() throws {
+    let observedAt = Date(timeIntervalSince1970: 1_300)
+    let base = companionStoredSnapshot(generatedAt: observedAt)
+    let resetCredits = ProviderResetCreditSummary(
+        availableCount: 3,
+        observedAt: observedAt,
+        coverage: .complete,
+        earliestKnownExpiry: observedAt.addingTimeInterval(2 * 86_400)
+    )
+    let report = try #require(base.reports.first)
+    let stored = StoredUsageSnapshot(
+        savedAt: base.savedAt,
+        snapshot: base.snapshot,
+        reports: [
+            StoredProviderReport(
+                provider: report.provider,
+                accountID: report.accountID,
+                configuredAccountID: report.configuredAccountID,
+                accountName: report.accountName,
+                generatedAt: report.generatedAt,
+                resetCredits: resetCredits,
+                status: report.status,
+                accessState: report.accessState,
+                errorMessage: report.errorMessage
+            ),
+        ],
+        promptCacheObservations: base.promptCacheObservations
+    )
+    let document = CompanionSyncDocument(storedSnapshot: stored, publishedAt: observedAt)
+    let encoded = try CompanionSyncPayloadCodec.encode(document)
+    let current = try CompanionSyncPayloadCodec.decode(encoded)
+
+    #expect(current.schemaVersion == 1)
+    #expect(current.snapshot.schemaVersion == 1)
+    #expect(current.snapshot.providerStatuses.first?.resetCredits == resetCredits)
+    #expect(current.snapshot.providerStatuses.first?.storedProviderReport.resetCredits == resetCredits)
+
+    var legacyJSON = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    var snapshotJSON = try #require(legacyJSON["snapshot"] as? [String: Any])
+    var statusesJSON = try #require(snapshotJSON["providerStatuses"] as? [[String: Any]])
+    statusesJSON[0].removeValue(forKey: "resetCredits")
+    snapshotJSON["providerStatuses"] = statusesJSON
+    legacyJSON["snapshot"] = snapshotJSON
+    let legacyData = try JSONSerialization.data(withJSONObject: legacyJSON)
+    let legacy = try CompanionSyncPayloadCodec.decode(legacyData)
+
+    #expect(legacy.schemaVersion == 1)
+    #expect(legacy.snapshot.schemaVersion == 1)
+    #expect(legacy.snapshot.providerStatuses.first?.resetCredits == nil)
+    #expect(legacy.snapshot.providerStatuses.first?.storedProviderReport.resetCredits == nil)
+}
+
+@Test func companionWidgetSnapshotPreservesCurrentResetCreditGuidance() throws {
+    let now = Date(timeIntervalSince1970: 1_350)
+    let resetCredits = ProviderResetCreditSummary(
+        availableCount: 2,
+        observedAt: now,
+        coverage: .complete,
+        earliestKnownExpiry: now.addingTimeInterval(2 * 86_400)
+    )
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now, resetCredits: resetCredits),
+        publishedAt: now
+    )
+    let snapshot = WidgetSnapshot.fromCompanionSync(
+        CompanionSyncLoadResult(document: document, status: .close),
+        now: now,
+        stalenessPolicy: SnapshotStoreStalenessPolicy(
+            maximumAge: SnapshotFreshness.companionProviderMaximumAge
+        )
+    )
+    let summary = try #require(snapshot.resetCreditSurfaceSummary(
+        now: now,
+        maximumAge: SnapshotFreshness.companionProviderMaximumAge
+    ))
+
+    #expect(snapshot.reports.first?.resetCredits == resetCredits)
+    #expect(summary.accountCount == 1)
+    #expect(summary.primaryActionableGuidance?.accountName == "Work OpenAI")
+    #expect(summary.primaryActionableGuidance?.state == .considerBefore(now.addingTimeInterval(2 * 86_400)))
+}
+
+@Test func companionWidgetSnapshotSuppressesStaleResetCreditGuidanceForAFreshLimit() throws {
+    let now = Date(timeIntervalSince1970: 1_375)
+    let observedAt = now.addingTimeInterval(-(SnapshotFreshness.companionProviderMaximumAge + 1))
+    let base = companionStoredSnapshot(generatedAt: now)
+    let stored = StoredUsageSnapshot(
+        savedAt: now,
+        snapshot: base.snapshot,
+        reports: [
+            StoredProviderReport(
+                provider: .openAI,
+                accountID: "raw-openai",
+                configuredAccountID: "configured-openai",
+                accountName: "Work OpenAI",
+                generatedAt: observedAt,
+                resetCredits: ProviderResetCreditSummary(
+                    availableCount: 2,
+                    observedAt: observedAt,
+                    coverage: .complete,
+                    earliestKnownExpiry: now.addingTimeInterval(2 * 86_400)
+                ),
+                status: .close,
+                errorMessage: nil
+            ),
+        ],
+        promptCacheObservations: base.promptCacheObservations
+    )
+    let snapshot = WidgetSnapshot.fromCompanionSync(
+        CompanionSyncLoadResult(
+            document: CompanionSyncDocument(storedSnapshot: stored, publishedAt: now),
+            status: .close
+        ),
+        now: now,
+        stalenessPolicy: SnapshotStoreStalenessPolicy(
+            maximumAge: SnapshotFreshness.companionProviderMaximumAge
+        )
+    )
+
+    #expect(snapshot.state == .ready)
+    #expect(snapshot.limits.first?.status == .close)
+    #expect(snapshot.reports.first?.resetCredits?.observedAt == observedAt)
+    #expect(snapshot.resetCreditSurfaceSummary(
+        now: now,
+        maximumAge: SnapshotFreshness.companionProviderMaximumAge
+    ) == nil)
 }
 
 @Test func companionSyncStoreLoadHidesExpiredAccountObservation() throws {
@@ -2877,7 +3017,10 @@ import Testing
     #expect(retriedCompanion?.snapshot.limits.isEmpty == true)
 }
 
-private func companionStoredSnapshot(generatedAt: Date) -> StoredUsageSnapshot {
+private func companionStoredSnapshot(
+    generatedAt: Date,
+    resetCredits: ProviderResetCreditSummary? = nil
+) -> StoredUsageSnapshot {
     StoredUsageSnapshot(
         savedAt: generatedAt,
         snapshot: UsageSnapshot(generatedAt: generatedAt, limits: [
@@ -2904,6 +3047,7 @@ private func companionStoredSnapshot(generatedAt: Date) -> StoredUsageSnapshot {
                 configuredAccountID: "configured-openai",
                 accountName: "Work OpenAI",
                 generatedAt: generatedAt,
+                resetCredits: resetCredits,
                 status: .close,
                 errorMessage: "sk-secret should not sync"
             ),

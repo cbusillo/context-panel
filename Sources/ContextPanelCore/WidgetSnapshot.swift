@@ -79,20 +79,42 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     }
 
     public func primaryActionableResetCreditGuidance(
-        now: Date = Date()
+        now: Date = Date(),
+        maximumAge: TimeInterval = SnapshotFreshness.widgetMaximumAge
     ) -> ProviderResetCreditGuidance? {
-        resetCreditSurfaceSummary(now: now)?.primaryActionableGuidance
+        resetCreditSurfaceSummary(now: now, maximumAge: maximumAge)?.primaryActionableGuidance
     }
 
     public func resetCreditSurfaceSummary(
-        now: Date = Date()
+        now: Date = Date(),
+        maximumAge: TimeInterval = SnapshotFreshness.widgetMaximumAge
     ) -> ProviderResetCreditSurfaceSummary? {
         guard state == .ready, syncErrorMessage == nil else { return nil }
         return ResetCreditSurfaceAdvisor.widgetSummary(
             reports: reports,
             limits: limits,
             now: now,
-            maximumAge: SnapshotFreshness.widgetMaximumAge
+            maximumAge: maximumAge
+        )
+    }
+
+    public func nextResetCreditSurfaceTransitionDate(
+        now: Date = Date(),
+        maximumAge: TimeInterval = SnapshotFreshness.widgetMaximumAge
+    ) -> Date? {
+        resetCreditSurfaceTransitionDates(now: now, maximumAge: maximumAge).first
+    }
+
+    public func resetCreditSurfaceTransitionDates(
+        now: Date = Date(),
+        maximumAge: TimeInterval = SnapshotFreshness.widgetMaximumAge
+    ) -> [Date] {
+        guard state == .ready, syncErrorMessage == nil else { return [] }
+        return ResetCreditSurfaceAdvisor.glanceTransitionDates(
+            reports: reports,
+            limits: limits,
+            now: now,
+            maximumAge: maximumAge
         )
     }
 
