@@ -26,7 +26,7 @@ The policy owns:
 - source, resource, Info.plist, entitlement, CloudKit, and build-tool inputs
 - target, scheme, destination, product, bundle, and embedding relationships
 - archive bundle paths for each release platform
-- render, runtime, and shared input classifications
+- render, runtime, placement, and shared input classifications
 - evidence floors and escalation rules
 - explicit developer-only inputs that do not ship
 
@@ -36,21 +36,25 @@ while global project settings remain conservatively shared.
 
 ## Fingerprints
 
-Every surface has three SHA-256 fingerprints:
+Every surface has four SHA-256 fingerprints:
 
 - `render`: presentation inputs plus shared inputs and target settings
 - `runtime`: transport, storage, entitlement, signing-source, host-integration,
   shared inputs, and target settings
-- `combined`: render plus runtime plus the combined fingerprints of embedded
-  child artifacts
+- `placement`: extension metadata and host declarations that affect OS-owned
+  placement
+- `combined`: render plus runtime plus placement plus the combined fingerprints
+  of embedded child artifacts
 
 Digests use a versioned domain, canonical JSON, length-prefixed fields, and
 byte-sorted repository-relative paths. Absolute paths, credentials, account
 identifiers, raw provider data, and App Store Connect identifiers are excluded.
 
-The policy and fingerprint implementation are themselves shared inputs. A
-change to the mapping or algorithm therefore invalidates every surface rather
-than silently reinterpreting prior approvals.
+The policy and fingerprint implementation produce a separate contract
+fingerprint. A contract change makes prior manifests incomparable and requires
+fresh evidence without falsely labeling every surface as a render change.
+`Package.swift` is explicitly non-shipping: XcodeGen's `project.yml` owns the
+signed artifact graph.
 
 Run the contract gate with:
 
@@ -96,6 +100,7 @@ Escalation rules:
 
 - render change: all supported evidence classes are fresh
 - runtime-only change: actual-runtime evidence is fresh
+- placement change: actual-runtime and OS-composited placement are fresh
 - unknown or unmapped change: all supported evidence classes are fresh
 
 Compare two manifests with:
@@ -114,8 +119,9 @@ Carry-forward is derived, never written back into prior evidence:
 - shared-view evidence is eligible only when the render fingerprint is equal
 - actual-runtime evidence is eligible only when the runtime fingerprint and
   exact version, build, commit, configuration, Xcode build, and tree state match
-- placement evidence additionally requires the matching current runtime receipt
-  and compatible host OS evidence
+- placement evidence additionally requires equal render and placement
+  fingerprints, the matching current runtime receipt, and compatible host OS
+  evidence
 
 Host OS major/minor changes invalidate placement by default. Patch/build changes
 are evaluated by the compositor-sensitive surface policy and active regression
@@ -130,13 +136,18 @@ app also keeps the legacy text fingerprint. If the policy cannot be resolved,
 ordinary compilation is not blocked: the bundle receives an `unknown` manifest.
 CI and release archive validation reject that state.
 
+The embedded manifest is deliberately minimal: manifest/contract IDs, public
+bundle IDs, surface IDs, and fingerprints only. The full source-path inventory,
+file hashes, commit, and ignored-input rationale remain build-system evidence
+and are not shipped in App Store bundles.
+
 Release upload scripts call
 `scripts/context-panel-write-expected-build.sh` before export. It verifies every
 artifact in the selected archive layout and emits
 `ExpectedBuildManifest-<platform>.json` containing:
 
 - exact version, build, commit, configuration, Xcode build, and clean-tree state
-- bundle ID and per-surface render/runtime/combined fingerprints
+- bundle ID and per-surface render/runtime/placement/combined fingerprints
 - executable SHA-256 and Mach-O UUIDs
 - canonical signed-entitlement SHA-256
 - embedded provisioning-profile SHA-256

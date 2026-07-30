@@ -41,7 +41,8 @@
     "changeRequirements": {
       "render": ["shared-view", "actual-runtime", "os-composited-placement"],
       "runtime": ["actual-runtime"],
-      "unknown": ["shared-view", "actual-runtime", "os-composited-placement"]
+      "unknown": ["shared-view", "actual-runtime", "os-composited-placement"],
+      "placement": ["actual-runtime", "os-composited-placement"]
     },
     "releaseRequiresApprovedRCTarget": true
   },
@@ -83,13 +84,12 @@
       {
         "pattern": "Sources/SnapshotStoreProbe/**/*.swift",
         "reason": "Developer-only SwiftPM probe; no shipping Xcode target compiles it."
+      },
+      {
+        "pattern": "Package.swift",
+        "reason": "SwiftPM development and test graph; shipping artifacts are defined by project.yml."
       }
     ]
-  },
-  "globalInputs": {
-    "shared": ["surface-tooling"],
-    "render": [],
-    "runtime": []
   },
   "inputGroups": {
     "surface-tooling": {
@@ -103,14 +103,12 @@
         "scripts/context_panel_surface_manifest/**/*.py"
       ]
     },
-    "package-manifest": {
-      "include": ["Package.swift"]
-    },
     "core": {
       "include": ["Sources/ContextPanelCore/**/*.swift"]
     },
     "cloudkit-sync": {
-      "include": ["Sources/ContextPanelCloudKitSync/**/*.swift"]
+      "include": ["Sources/ContextPanelCloudKitSync/**/*.swift"],
+      "forbidPresentationImports": true
     },
     "cloudkit-contract": {
       "include": ["CloudKit/**/*.json"]
@@ -249,6 +247,31 @@
         "Config/ContextPanelTVTopShelf-Info.plist",
         "Config/ContextPanelTVTopShelf.entitlements"
       ]
+    },
+    "placement-macos-widget": {
+      "include": [
+        "Config/ContextPanelWidget-Info.plist",
+        "Sources/ContextPanelApp/ContextPanelApp.swift"
+      ]
+    },
+    "placement-companion-widget": {
+      "include": [
+        "Config/ContextPanelCompanionWidget-Info.plist",
+        "Sources/ContextPanelCompanion/ContextPanelCompanionApp.swift"
+      ]
+    },
+    "placement-watch-widget": {
+      "include": [
+        "Config/ContextPanelWatchWidget-Info.plist",
+        "Sources/ContextPanelWatch/ContextPanelWatchApp.swift"
+      ]
+    },
+    "placement-tv-top-shelf": {
+      "include": [
+        "Config/ContextPanelTVTopShelf-Info.plist",
+        "Sources/ContextPanelTV/ContextPanelTVApp.swift",
+        "Sources/ContextPanelTV/TVSystemSurfaces.swift"
+      ]
     }
   },
   "surfaces": [
@@ -264,20 +287,12 @@
       "productType": "application",
       "bundleIdentifier": "com.shinycomputers.contextpanel",
       "embeds": ["macos.widget", "macos.refresh-agent"],
-      "evidenceCapabilities": [
-        "shared-view",
-        "actual-runtime",
-        "os-composited-placement"
-      ],
+      "evidenceCapabilities": ["shared-view", "actual-runtime"],
       "inputs": {
         "shared": ["core", "mac-app"],
         "render": ["settings-ui", "shared-assets"],
-        "runtime": [
-          "cloudkit-sync",
-          "cloudkit-contract",
-          "config-macos-app",
-          "package-manifest"
-        ]
+        "runtime": ["cloudkit-sync", "cloudkit-contract", "config-macos-app"],
+        "placement": []
       }
     },
     {
@@ -300,11 +315,8 @@
       "inputs": {
         "shared": ["core", "mac-widget"],
         "render": ["widget-ui"],
-        "runtime": [
-          "config-macos-widget",
-          "mac-widget-host",
-          "package-manifest"
-        ]
+        "runtime": ["config-macos-widget", "mac-widget-host"],
+        "placement": ["placement-macos-widget"]
       }
     },
     {
@@ -329,9 +341,9 @@
           "cloudkit-contract",
           "refresh-agent",
           "refresh-agent-host",
-          "config-refresh-agent",
-          "package-manifest"
-        ]
+          "config-refresh-agent"
+        ],
+        "placement": []
       }
     },
     {
@@ -346,20 +358,16 @@
       "productType": "application",
       "bundleIdentifier": "com.shinycomputers.contextpanel",
       "embeds": ["ios.widget", "watchos.app"],
-      "evidenceCapabilities": [
-        "shared-view",
-        "actual-runtime",
-        "os-composited-placement"
-      ],
+      "evidenceCapabilities": ["shared-view", "actual-runtime"],
       "inputs": {
         "shared": ["core", "companion-app", "companion-support"],
         "render": ["widget-ui", "settings-ui", "shared-assets"],
         "runtime": [
           "cloudkit-sync",
           "cloudkit-contract",
-          "config-companion-app",
-          "package-manifest"
-        ]
+          "config-companion-app"
+        ],
+        "placement": []
       }
     },
     {
@@ -374,20 +382,16 @@
       "productType": "application",
       "bundleIdentifier": "com.shinycomputers.contextpanel",
       "embeds": ["ipados.widget", "watchos.app"],
-      "evidenceCapabilities": [
-        "shared-view",
-        "actual-runtime",
-        "os-composited-placement"
-      ],
+      "evidenceCapabilities": ["shared-view", "actual-runtime"],
       "inputs": {
         "shared": ["core", "companion-app", "companion-support"],
         "render": ["widget-ui", "settings-ui", "shared-assets"],
         "runtime": [
           "cloudkit-sync",
           "cloudkit-contract",
-          "config-companion-app",
-          "package-manifest"
-        ]
+          "config-companion-app"
+        ],
+        "placement": []
       }
     },
     {
@@ -414,9 +418,9 @@
           "cloudkit-sync",
           "cloudkit-contract",
           "companion-widget-host",
-          "config-companion-widget",
-          "package-manifest"
-        ]
+          "config-companion-widget"
+        ],
+        "placement": ["placement-companion-widget"]
       }
     },
     {
@@ -443,9 +447,9 @@
           "cloudkit-sync",
           "cloudkit-contract",
           "companion-widget-host",
-          "config-companion-widget",
-          "package-manifest"
-        ]
+          "config-companion-widget"
+        ],
+        "placement": ["placement-companion-widget"]
       }
     },
     {
@@ -460,20 +464,16 @@
       "productType": "application",
       "bundleIdentifier": "com.shinycomputers.contextpanel",
       "embeds": ["visionos.widget"],
-      "evidenceCapabilities": [
-        "shared-view",
-        "actual-runtime",
-        "os-composited-placement"
-      ],
+      "evidenceCapabilities": ["shared-view", "actual-runtime"],
       "inputs": {
         "shared": ["core", "companion-app", "companion-support"],
         "render": ["widget-ui", "settings-ui", "shared-assets"],
         "runtime": [
           "cloudkit-sync",
           "cloudkit-contract",
-          "config-companion-app",
-          "package-manifest"
-        ]
+          "config-companion-app"
+        ],
+        "placement": []
       }
     },
     {
@@ -500,9 +500,9 @@
           "cloudkit-sync",
           "cloudkit-contract",
           "companion-widget-host",
-          "config-companion-widget",
-          "package-manifest"
-        ]
+          "config-companion-widget"
+        ],
+        "placement": ["placement-companion-widget"]
       }
     },
     {
@@ -517,20 +517,12 @@
       "productType": "application",
       "bundleIdentifier": "com.shinycomputers.contextpanel.watch",
       "embeds": ["watchos.complication"],
-      "evidenceCapabilities": [
-        "shared-view",
-        "actual-runtime",
-        "os-composited-placement"
-      ],
+      "evidenceCapabilities": ["shared-view", "actual-runtime"],
       "inputs": {
         "shared": ["core", "watch-app", "watch-support-app"],
         "render": ["shared-assets"],
-        "runtime": [
-          "cloudkit-sync",
-          "cloudkit-contract",
-          "config-watch-app",
-          "package-manifest"
-        ]
+        "runtime": ["cloudkit-sync", "cloudkit-contract", "config-watch-app"],
+        "placement": []
       }
     },
     {
@@ -557,9 +549,9 @@
           "cloudkit-sync",
           "cloudkit-contract",
           "watch-widget-host",
-          "config-watch-widget",
-          "package-manifest"
-        ]
+          "config-watch-widget"
+        ],
+        "placement": ["placement-watch-widget"]
       }
     },
     {
@@ -574,20 +566,12 @@
       "productType": "application",
       "bundleIdentifier": "com.shinycomputers.contextpanel",
       "embeds": ["tvos.top-shelf"],
-      "evidenceCapabilities": [
-        "shared-view",
-        "actual-runtime",
-        "os-composited-placement"
-      ],
+      "evidenceCapabilities": ["shared-view", "actual-runtime"],
       "inputs": {
         "shared": ["core", "tv-app", "tv-support"],
         "render": ["tv-assets"],
-        "runtime": [
-          "cloudkit-sync",
-          "cloudkit-contract",
-          "config-tv-app",
-          "package-manifest"
-        ]
+        "runtime": ["cloudkit-sync", "cloudkit-contract", "config-tv-app"],
+        "placement": []
       }
     },
     {
@@ -610,12 +594,10 @@
       "inputs": {
         "shared": ["core", "tv-top-shelf", "tv-support"],
         "render": ["tv-assets"],
-        "runtime": [
-          "config-tv-top-shelf",
-          "tv-top-shelf-host",
-          "package-manifest"
-        ]
+        "runtime": ["config-tv-top-shelf", "tv-top-shelf-host"],
+        "placement": ["placement-tv-top-shelf"]
       }
     }
-  ]
+  ],
+  "contractInputs": ["surface-tooling"]
 }

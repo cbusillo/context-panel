@@ -13,6 +13,7 @@ from .core import (
     DEFAULT_POLICY_PATH,
     SurfacePolicyError,
     compare_manifests,
+    embedded_manifest,
     generate_manifest,
     load_json_object,
     manifest_surface_map,
@@ -107,6 +108,12 @@ def build_parser() -> argparse.ArgumentParser:
     seal_parser.add_argument("--manifest", type=Path, required=True)
     seal_parser.add_argument("--artifact-evidence", type=Path, required=True)
     seal_parser.add_argument("--output", type=Path)
+
+    embed_parser = subparsers.add_parser(
+        "embed", help="Reduce a full source manifest to its privacy-safe bundle form."
+    )
+    embed_parser.add_argument("--manifest", type=Path, required=True)
+    embed_parser.add_argument("--output", type=Path)
 
     collect_parser = subparsers.add_parser(
         "collect-archive",
@@ -243,6 +250,10 @@ def run(arguments: argparse.Namespace) -> None:
         manifest = load_json_object(arguments.manifest, "surface manifest")
         artifact_evidence = load_json_object(arguments.artifact_evidence, "artifact evidence")
         write_json(seal_expected_build(manifest, artifact_evidence), arguments.output)
+        return
+    if arguments.command == "embed":
+        manifest = load_json_object(arguments.manifest, "surface manifest")
+        write_json(embedded_manifest(manifest), arguments.output)
         return
     if arguments.command == "collect-archive":
         manifest = load_json_object(arguments.manifest, "surface manifest")

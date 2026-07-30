@@ -4,7 +4,8 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 app_path="${1:-$repo_root/.build/DerivedData/Build/Products/Debug/Context Panel.app}"
 manifest_tmp="$(mktemp)"
-trap 'rm -f "$manifest_tmp"' EXIT
+embedded_manifest_tmp="$(mktemp)"
+trap 'rm -f "$manifest_tmp" "$embedded_manifest_tmp"' EXIT
 
 marketing_version="${MARKETING_VERSION:-1.0}"
 build_number="${CURRENT_PROJECT_VERSION:-1}"
@@ -33,9 +34,12 @@ if ! "$repo_root/scripts/context-panel-surface-manifest.py" generate \
 	--configuration "$configuration" \
 	--xcode-build "$xcode_build" \
 	--tree-state "$tree_state" \
-	--output "$manifest_tmp"; then
+	--output "$manifest_tmp" ||
+	! "$repo_root/scripts/context-panel-surface-manifest.py" embed \
+		--manifest "$manifest_tmp" \
+		--output "$embedded_manifest_tmp"; then
 	manifest_status="unknown"
-	cat >"$manifest_tmp" <<JSON
+	cat >"$embedded_manifest_tmp" <<JSON
 {
   "schemaVersion": 1,
   "kind": "context-panel-surface-build-intent",
@@ -72,7 +76,7 @@ stamp_bundle() {
 		resources="$bundle/Contents/Resources"
 	fi
 	mkdir -p "$resources"
-	cp "$manifest_tmp" "$resources/ContextPanelSurfaceManifest.json"
+	cp "$embedded_manifest_tmp" "$resources/ContextPanelSurfaceManifest.json"
 	if [[ -f "$bundle/Contents/MacOS/Context Panel" ]]; then
 		printf '%s\n' "$fingerprint" >"$resources/ContextPanelBuildFingerprint.txt"
 	fi

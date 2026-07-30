@@ -22,6 +22,7 @@ evidence_template = cli_module.evidence_template
 SurfacePolicyError = core_module.SurfacePolicyError
 compare_manifests = core_module.compare_manifests
 collect_archive_evidence = artifact_module.collect_archive_evidence
+embedded_manifest = core_module.embedded_manifest
 generate_manifest = core_module.generate_manifest
 resolve_policy = core_module.resolve_policy
 seal_expected_build = core_module.seal_expected_build
@@ -91,7 +92,7 @@ class SurfaceManifestTests(unittest.TestCase):
         summary = validation_summary(resolved)
         self.assertEqual(summary["surfaceCount"], 13)
         self.assertEqual(summary["artifactCount"], 11)
-        self.assertEqual(summary["governedInputCount"], summary["mappedInputCount"] + 5)
+        self.assertEqual(summary["governedInputCount"], summary["mappedInputCount"] + 6)
         self.assertEqual(
             summary["surfaceIds"],
             [
@@ -121,6 +122,7 @@ class SurfaceManifestTests(unittest.TestCase):
                 "Sources/PromptCacheTelemetryMirror/**/*.swift",
                 "Sources/PromptCacheTelemetryProbe/**/*.swift",
                 "Sources/SnapshotStoreProbe/**/*.swift",
+                "Package.swift",
             },
         )
 
@@ -328,6 +330,94 @@ class SurfaceManifestTests(unittest.TestCase):
                 baseline[surface_id]["fingerprints"], mutated[surface_id]["fingerprints"]
             )
 
+    def test_swiftpm_manifest_is_explicitly_non_shipping(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = self.fixture(temporary_directory)
+            self.append(root / "Package.swift")
+            mutated = self.manifest(root)
+        self.assertEqual(mutated, self.baseline)
+
+    def test_contract_tooling_change_invalidates_carry_forward_without_relabeling_ui(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = self.fixture(temporary_directory)
+            self.append(root / "scripts/context_panel_surface_manifest/cli.py")
+            mutated = self.manifest(root)
+        baseline_surfaces = self.surfaces(self.baseline)
+        mutated_surfaces = self.surfaces(mutated)
+        for surface_id in baseline_surfaces:
+            self.assertEqual(
+                baseline_surfaces[surface_id]["fingerprints"],
+                mutated_surfaces[surface_id]["fingerprints"],
+            )
+        self.assertNotEqual(
+            self.baseline["contractFingerprint"], mutated["contractFingerprint"]
+        )
+        comparison = compare_manifests(self.baseline, mutated, "release")
+        widget = {surface["surfaceId"]: surface for surface in comparison["surfaces"]}[
+            "macos.widget"
+        ]
+        self.assertIn("contract-fingerprint-changed", widget["reasonCodes"])
+        self.assertEqual(
+            widget["freshEvidence"],
+            ["shared-view", "actual-runtime", "os-composited-placement"],
+        )
+        self.assertTrue(comparison["contractChanged"])
+
+    def test_placement_host_change_requires_fresh_runtime_and_placement(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = self.fixture(temporary_directory)
+            self.append(root / "Sources/ContextPanelTV/TVSystemSurfaces.swift")
+            mutated = self.manifest(root)
+        baseline_surface = self.surfaces(self.baseline)["tvos.top-shelf"]
+        mutated_surface = self.surfaces(mutated)["tvos.top-shelf"]
+        self.assertEqual(
+            baseline_surface["fingerprints"]["render"],
+            mutated_surface["fingerprints"]["render"],
+        )
+        self.assertNotEqual(
+            baseline_surface["fingerprints"]["runtime"],
+            mutated_surface["fingerprints"]["runtime"],
+        )
+        self.assertNotEqual(
+            baseline_surface["fingerprints"]["placement"],
+            mutated_surface["fingerprints"]["placement"],
+        )
+        comparison = compare_manifests(self.baseline, mutated, "release")
+        surface = {item["surfaceId"]: item for item in comparison["surfaces"]}[
+            "tvos.top-shelf"
+        ]
+        self.assertEqual(
+            surface["freshEvidence"],
+            ["actual-runtime", "os-composited-placement"],
+        )
+        self.assertFalse(
+            surface["carryForward"]["os-composited-placement"]["eligible"]
+        )
+
+    def test_evidence_policy_typos_fail_closed(self):
+        malformed = json.loads(json.dumps(self.baseline))
+        malformed["evidencePolicy"]["changeRequirements"].pop("placement")
+        with self.assertRaisesRegex(SurfacePolicyError, "changeRequirements is invalid"):
+            compare_manifests(self.baseline, malformed, "release")
+
+    def test_unsupported_project_top_level_key_fails_closed(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = self.fixture(temporary_directory)
+            project = root / "project.yml"
+            project.write_text(project.read_text() + "\nconfigs: {}\n")
+            with self.assertRaisesRegex(SurfacePolicyError, "unsupported top-level keys"):
+                resolve_policy(root)
+
+    def test_runtime_only_group_rejects_presentation_imports(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = self.fixture(temporary_directory)
+            self.append(
+                root / "Sources/ContextPanelCloudKitSync/CompanionCloudKitSyncStore.swift",
+                "\nimport SwiftUI\n",
+            )
+            with self.assertRaisesRegex(SurfacePolicyError, "imports a presentation framework"):
+                resolve_policy(root)
+
     def test_version_only_change_preserves_source_fingerprints_but_requires_runtime(self):
         next_build = self.manifest(REPO_ROOT, version="1.0.54", build="2026073002")
         baseline_surfaces = self.surfaces(self.baseline)
@@ -444,7 +534,7 @@ class SurfaceManifestTests(unittest.TestCase):
                     f"profile-{artifact_id}".encode("utf-8")
                 )
                 (bundle / "Contents/Resources/ContextPanelSurfaceManifest.json").write_text(
-                    json.dumps(self.baseline)
+                    json.dumps(embedded_manifest(self.baseline))
                 )
 
             entitlements = plistlib.dumps(
@@ -526,7 +616,10 @@ class SurfaceManifestTests(unittest.TestCase):
             manifest = json.loads(
                 (bundle / "Contents/Resources/ContextPanelSurfaceManifest.json").read_text()
             )
-            self.assertIn(manifest["source"]["treeState"], {"clean", "dirty"})
+            self.assertNotIn("source", manifest)
+            self.assertNotIn("files", manifest)
+            self.assertNotIn("ignoredInputs", manifest)
+            self.assertNotIn("Sources/", json.dumps(manifest, sort_keys=True))
             macos_app = self.surfaces(manifest)["macos.app"]
             legacy = (
                 bundle / "Contents/Resources/ContextPanelBuildFingerprint.txt"

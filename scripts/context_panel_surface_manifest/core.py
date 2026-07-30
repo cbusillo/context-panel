@@ -12,7 +12,20 @@ from typing import Any, Iterable
 
 
 DEFAULT_POLICY_PATH = Path("Config/ContextPanelSurfacePolicy.json")
-INPUT_CLASSES = ("shared", "render", "runtime")
+BASE_INPUT_CLASSES = ("shared", "render", "runtime")
+INPUT_CLASSES = (*BASE_INPUT_CLASSES, "placement")
+EVIDENCE_CLASSES = (
+    "shared-view",
+    "actual-runtime",
+    "os-composited-placement",
+)
+TRAIN_NAMES = ("beta", "rc", "release")
+CHANGE_KINDS = ("render", "runtime", "placement", "unknown")
+SUPPORTED_PROJECT_KEYS = {"name", "options", "settings", "packages", "targets", "schemes"}
+PRESENTATION_IMPORT_PATTERN = re.compile(
+    r"^\s*import\s+(?:SwiftUI|WidgetKit|AppKit|UIKit)\b",
+    re.MULTILINE,
+)
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 UUID_PATTERN = re.compile(
     r"^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$"
@@ -42,6 +55,8 @@ class ResolvedPolicy:
     surfaces: tuple[ResolvedSurface, ...]
     governed_files: tuple[str, ...]
     ignored_files: tuple[str, ...]
+    contract_files: tuple[str, ...]
+    contract_fingerprint: str
     file_hashes: dict[str, str]
 
 
@@ -215,11 +230,7 @@ def target_source_files(root: Path, target: dict[str, Any]) -> tuple[str, ...]:
             if not candidate.is_file() or candidate.name == ".DS_Store":
                 continue
             within_source = candidate.relative_to(source_path).as_posix() if source_path.is_dir() else candidate.name
-            if any(
-                fnmatch.fnmatchcase(within_source, pattern)
-                or fnmatch.fnmatchcase(candidate.name, pattern)
-                for pattern in excludes
-            ):
+            if any(fnmatch.fnmatchcase(within_source, pattern) for pattern in excludes):
                 continue
             files.add(candidate.relative_to(root).as_posix())
     return tuple(sorted(files, key=lambda value: value.encode("utf-8")))
@@ -248,10 +259,9 @@ def surface_project_projection(
     scheme_name = str(surface["scheme"])
     return {
         "global": {
-            "name": project.get("name"),
-            "options": project.get("options") or {},
-            "settings": project.get("settings") or {},
-            "packages": project.get("packages") or {},
+            key: copy.deepcopy(value)
+            for key, value in project.items()
+            if key not in {"targets", "schemes"}
         },
         "destination": destination,
         "scheme": schemes.get(scheme_name),
@@ -259,6 +269,64 @@ def surface_project_projection(
             target_name: filtered_target(targets[target_name], destination)
             for target_name in closure
         },
+    }
+
+
+def validate_evidence_policy(evidence_policy: Any) -> dict[str, Any]:
+    if not isinstance(evidence_policy, dict):
+        raise SurfacePolicyError("surface evidence policy is missing")
+    classes = evidence_policy.get("classes")
+    if (
+        not isinstance(classes, list)
+        or any(not isinstance(value, str) for value in classes)
+        or len(classes) != len(set(classes))
+        or set(classes) != set(EVIDENCE_CLASSES)
+    ):
+        raise SurfacePolicyError("surface evidence classes are invalid")
+
+    def validate_mapping(key: str, expected_keys: tuple[str, ...]) -> dict[str, list[str]]:
+        mapping = evidence_policy.get(key)
+        if not isinstance(mapping, dict) or set(mapping) != set(expected_keys):
+            raise SurfacePolicyError(f"surface evidence policy {key} is invalid")
+        normalized: dict[str, list[str]] = {}
+        for mapping_key in expected_keys:
+            raw_values = mapping.get(mapping_key)
+            if (
+                not isinstance(raw_values, list)
+                or any(not isinstance(value, str) for value in raw_values)
+                or len(raw_values) != len(set(raw_values))
+            ):
+                raise SurfacePolicyError(
+                    f"surface evidence policy {key}.{mapping_key} is invalid"
+                )
+            values = [str(value) for value in raw_values]
+            if not set(values) <= set(EVIDENCE_CLASSES):
+                raise SurfacePolicyError(
+                    f"surface evidence policy {key}.{mapping_key} is invalid"
+                )
+            normalized[mapping_key] = values
+        return normalized
+
+    train_minimums = validate_mapping("trainMinimumEvidence", TRAIN_NAMES)
+    change_requirements = validate_mapping("changeRequirements", CHANGE_KINDS)
+    required_change_evidence = {
+        "render": {"shared-view", "actual-runtime", "os-composited-placement"},
+        "runtime": {"actual-runtime"},
+        "placement": {"actual-runtime", "os-composited-placement"},
+        "unknown": set(EVIDENCE_CLASSES),
+    }
+    for change_kind, required in required_change_evidence.items():
+        if not required <= set(change_requirements[change_kind]):
+            raise SurfacePolicyError(
+                f"surface evidence policy changeRequirements.{change_kind} is unsafe"
+            )
+    if evidence_policy.get("releaseRequiresApprovedRCTarget") is not True:
+        raise SurfacePolicyError("release evidence policy must require an approved RC target")
+    return {
+        **evidence_policy,
+        "classes": [str(value) for value in classes],
+        "trainMinimumEvidence": train_minimums,
+        "changeRequirements": change_requirements,
     }
 
 
@@ -330,7 +398,9 @@ def validate_surface_project_contract(
     compiled_files: set[str] = set()
     for target_name in closure:
         compiled_files.update(target_source_files(root, targets[target_name]))
-    mapped_files = set().union(*(set(surface_files[class_name]) for class_name in INPUT_CLASSES))
+    mapped_files = set().union(
+        *(set(surface_files[class_name]) for class_name in BASE_INPUT_CLASSES)
+    )
     missing_compiled = sorted(compiled_files - mapped_files)
     if missing_compiled:
         raise SurfacePolicyError(
@@ -414,19 +484,20 @@ def resolve_policy(root: Path, policy_path: Path = DEFAULT_POLICY_PATH) -> Resol
 
     inventory = policy.get("inventory")
     groups_definition = policy.get("inputGroups")
-    global_inputs = policy.get("globalInputs")
+    contract_group_names = policy.get("contractInputs")
     surfaces_definition = policy.get("surfaces")
-    evidence_policy = policy.get("evidencePolicy")
     if (
         not isinstance(inventory, dict)
         or not isinstance(groups_definition, dict)
-        or not isinstance(global_inputs, dict)
+        or not isinstance(contract_group_names, list)
+        or not contract_group_names
+        or len(contract_group_names) != len(set(contract_group_names))
     ):
         raise SurfacePolicyError("surface policy inventory or input groups are missing")
     if not isinstance(surfaces_definition, list) or not surfaces_definition:
         raise SurfacePolicyError("surface policy contains no surfaces")
-    if not isinstance(evidence_policy, dict):
-        raise SurfacePolicyError("surface evidence policy is missing")
+    evidence_policy = validate_evidence_policy(policy.get("evidencePolicy"))
+    policy["evidencePolicy"] = evidence_policy
 
     excluded_basenames = tuple(str(value) for value in inventory.get("excludedBasenames") or [])
     governed_files = expand_patterns(
@@ -452,18 +523,38 @@ def resolve_policy(root: Path, policy_path: Path = DEFAULT_POLICY_PATH) -> Resol
     for group_name, group in groups_definition.items():
         if not isinstance(group, dict):
             raise SurfacePolicyError(f"input group must be an object: {group_name}")
-        groups[str(group_name)] = expand_patterns(
+        group_files = expand_patterns(
             root,
             (str(value) for value in group.get("include") or []),
             excludes=(str(value) for value in group.get("exclude") or []),
             excluded_basenames=excluded_basenames,
         )
+        if group.get("forbidPresentationImports") is True:
+            for relative_path in group_files:
+                if relative_path.endswith(".swift") and PRESENTATION_IMPORT_PATTERN.search(
+                    (root / relative_path).read_text()
+                ):
+                    raise SurfacePolicyError(
+                        f"runtime-only input imports a presentation framework: {relative_path}"
+                    )
+        elif group.get("forbidPresentationImports") not in (None, False):
+            raise SurfacePolicyError(
+                f"input group presentation-import policy is invalid: {group_name}"
+            )
+        groups[str(group_name)] = group_files
 
     surface_ids: set[str] = set()
     surfaces_by_id: dict[str, dict[str, Any]] = {}
     artifact_contracts: dict[str, tuple[str, str, str]] = {}
     evidence_classes = set(evidence_policy.get("classes") or [])
     used_groups: set[str] = set()
+    contract_files: set[str] = set()
+    for raw_group_name in contract_group_names:
+        group_name = str(raw_group_name)
+        if group_name not in groups:
+            raise SurfacePolicyError(f"contract references an unknown group: {group_name}")
+        used_groups.add(group_name)
+        contract_files.update(groups[group_name])
     resolved_files: dict[str, dict[str, tuple[str, ...]]] = {}
     for raw_surface in surfaces_definition:
         if not isinstance(raw_surface, dict):
@@ -488,20 +579,27 @@ def resolve_policy(root: Path, policy_path: Path = DEFAULT_POLICY_PATH) -> Resol
         if previous_artifact_contract is not None and previous_artifact_contract != artifact_contract:
             raise SurfacePolicyError(f"shared artifact contract drifted: {artifact_id}")
         artifact_contracts[artifact_id] = artifact_contract
-        capabilities = set(surface.get("evidenceCapabilities") or [])
-        if not capabilities or not capabilities <= evidence_classes:
+        raw_capabilities = surface.get("evidenceCapabilities") or []
+        capabilities = set(raw_capabilities)
+        if (
+            not isinstance(raw_capabilities, list)
+            or not capabilities
+            or len(raw_capabilities) != len(capabilities)
+            or not capabilities <= evidence_classes
+        ):
             raise SurfacePolicyError(f"surface evidence capabilities are invalid: {surface_id}")
         inputs = surface.get("inputs")
-        if not isinstance(inputs, dict):
+        if not isinstance(inputs, dict) or set(inputs) != set(INPUT_CLASSES):
             raise SurfacePolicyError(f"surface inputs are missing: {surface_id}")
         class_files: dict[str, tuple[str, ...]] = {}
         class_membership: dict[str, str] = {}
         for class_name in INPUT_CLASSES:
             files: set[str] = set()
-            group_names = [
-                *(global_inputs.get(class_name) or []),
-                *(inputs.get(class_name) or []),
-            ]
+            group_names = inputs.get(class_name)
+            if not isinstance(group_names, list):
+                raise SurfacePolicyError(
+                    f"surface input class is invalid: {surface_id}: {class_name}"
+                )
             for group_name in group_names:
                 group_key = str(group_name)
                 if group_key not in groups:
@@ -509,17 +607,22 @@ def resolve_policy(root: Path, policy_path: Path = DEFAULT_POLICY_PATH) -> Resol
                 used_groups.add(group_key)
                 files.update(groups[group_key])
             class_files[class_name] = tuple(sorted(files, key=lambda value: value.encode("utf-8")))
-            for file_path in class_files[class_name]:
-                previous_class = class_membership.get(file_path)
-                if previous_class is not None and previous_class != class_name:
-                    raise SurfacePolicyError(
-                        f"surface input is assigned to multiple classes: {surface_id}: {file_path}"
-                    )
-                class_membership[file_path] = class_name
+            if class_name in BASE_INPUT_CLASSES:
+                for file_path in class_files[class_name]:
+                    previous_class = class_membership.get(file_path)
+                    if previous_class is not None and previous_class != class_name:
+                        raise SurfacePolicyError(
+                            f"surface input is assigned to multiple classes: {surface_id}: {file_path}"
+                        )
+                    class_membership[file_path] = class_name
         if "shared-view" in capabilities and not (class_files["shared"] or class_files["render"]):
             raise SurfacePolicyError(f"visual surface has no render inputs: {surface_id}")
         if "actual-runtime" in capabilities and not (class_files["shared"] or class_files["runtime"]):
             raise SurfacePolicyError(f"runtime surface has no runtime inputs: {surface_id}")
+        if "os-composited-placement" in capabilities and not class_files["placement"]:
+            raise SurfacePolicyError(f"placement surface has no placement inputs: {surface_id}")
+        if "os-composited-placement" not in capabilities and class_files["placement"]:
+            raise SurfacePolicyError(f"non-placement surface has placement inputs: {surface_id}")
         resolved_files[surface_id] = class_files
 
     unused_groups = sorted(set(groups) - used_groups)
@@ -554,6 +657,7 @@ def resolve_policy(root: Path, policy_path: Path = DEFAULT_POLICY_PATH) -> Resol
     mapped_files: set[str] = set()
     for class_files in resolved_files.values():
         mapped_files.update(*class_files.values())
+    mapped_files.update(contract_files)
     ignored_and_mapped = sorted(ignored_files & mapped_files)
     if ignored_and_mapped:
         raise SurfacePolicyError(f"ignored inputs are also mapped: {', '.join(ignored_and_mapped)}")
@@ -567,6 +671,11 @@ def resolve_policy(root: Path, policy_path: Path = DEFAULT_POLICY_PATH) -> Resol
 
     project_payload = load_project_payload(root, policy)
     project = project_payload["project"]
+    unsupported_project_keys = sorted(set(project) - SUPPORTED_PROJECT_KEYS)
+    if unsupported_project_keys:
+        raise SurfacePolicyError(
+            f"project specification uses unsupported top-level keys: {', '.join(unsupported_project_keys)}"
+        )
     resolved_surfaces: list[ResolvedSurface] = []
     digest_domain = str(policy["digestDomain"])
     for surface in surfaces_definition:
@@ -592,6 +701,11 @@ def resolve_policy(root: Path, policy_path: Path = DEFAULT_POLICY_PATH) -> Resol
             )
         )
 
+    contract_parts: list[bytes | str] = []
+    for relative_path in sorted(contract_files, key=lambda value: value.encode("utf-8")):
+        contract_parts.extend((relative_path, file_hashes[relative_path]))
+    contract_fingerprint = hash_parts(f"{digest_domain}/contract", contract_parts)
+
     return ResolvedPolicy(
         root,
         absolute_policy_path,
@@ -601,6 +715,8 @@ def resolve_policy(root: Path, policy_path: Path = DEFAULT_POLICY_PATH) -> Resol
         tuple(resolved_surfaces),
         governed_files,
         tuple(sorted(ignored_files)),
+        tuple(sorted(contract_files)),
+        contract_fingerprint,
         file_hashes,
     )
 
@@ -671,6 +787,7 @@ def generate_manifest(
         shared_files = resolved_surface.files["shared"]
         render_files = resolved_surface.files["render"]
         runtime_files = resolved_surface.files["runtime"]
+        placement_files = resolved_surface.files["placement"]
         common_parts: list[bytes | str] = [
             canonical_json(metadata),
             canonical_json(toolchain),
@@ -690,9 +807,17 @@ def generate_manifest(
                 *fingerprint_input_parts(resolved, (*shared_files, *runtime_files)),
             ],
         )
+        placement_fingerprint = hash_parts(
+            f"{digest_domain}/placement",
+            [
+                *common_parts,
+                *fingerprint_input_parts(resolved, placement_files),
+            ],
+        )
         fingerprint_entries[surface_id] = {
             "render": render_fingerprint,
             "runtime": runtime_fingerprint,
+            "placement": placement_fingerprint,
         }
         surface_entries[surface_id] = {
             **metadata,
@@ -727,7 +852,13 @@ def generate_manifest(
         fingerprints = fingerprint_entries[surface_id]
         value = hash_parts(
             f"{digest_domain}/combined",
-            [surface_id, fingerprints["render"], fingerprints["runtime"], *child_parts],
+            [
+                surface_id,
+                fingerprints["render"],
+                fingerprints["runtime"],
+                fingerprints["placement"],
+                *child_parts,
+            ],
         )
         cache[surface_id] = value
         return value
@@ -743,6 +874,7 @@ def generate_manifest(
         "schemaVersion": 1,
         "algorithm": policy["algorithm"],
         "digestDomain": digest_domain,
+        "contractFingerprint": resolved.contract_fingerprint,
         "source": {
             "marketingVersion": marketing_version,
             "buildNumber": build_number,
@@ -781,6 +913,33 @@ def generate_manifest(
     return payload
 
 
+def embedded_manifest(source_manifest: dict[str, Any]) -> dict[str, Any]:
+    if source_manifest.get("schemaVersion") != 1:
+        raise SurfacePolicyError("source manifest schema is unsupported")
+    manifest_id = str(source_manifest.get("manifestId") or "")
+    contract_fingerprint = str(source_manifest.get("contractFingerprint") or "")
+    if not SHA256_PATTERN.fullmatch(manifest_id) or not SHA256_PATTERN.fullmatch(
+        contract_fingerprint
+    ):
+        raise SurfacePolicyError("source manifest identity is invalid")
+    surfaces = manifest_surface_map(source_manifest, "source")
+    return {
+        "schemaVersion": 1,
+        "kind": "context-panel-surface-build-intent",
+        "manifestId": manifest_id,
+        "contractFingerprint": contract_fingerprint,
+        "surfaces": [
+            {
+                "id": surface_id,
+                "artifactId": surfaces[surface_id].get("artifactId"),
+                "bundleIdentifier": surfaces[surface_id].get("bundleIdentifier"),
+                "fingerprints": surfaces[surface_id].get("fingerprints"),
+            }
+            for surface_id in sorted(surfaces)
+        ],
+    }
+
+
 def manifest_surface_map(manifest: dict[str, Any], label: str) -> dict[str, dict[str, Any]]:
     raw_surfaces = manifest.get("surfaces")
     if not isinstance(raw_surfaces, list) or not raw_surfaces:
@@ -795,7 +954,7 @@ def manifest_surface_map(manifest: dict[str, Any], label: str) -> dict[str, dict
         fingerprints = raw_surface.get("fingerprints")
         if not isinstance(fingerprints, dict) or any(
             not SHA256_PATTERN.fullmatch(str(fingerprints.get(kind) or ""))
-            for kind in ("render", "runtime", "combined")
+            for kind in ("render", "runtime", "placement", "combined")
         ):
             raise SurfacePolicyError(f"{label} manifest surface fingerprints are invalid: {surface_id}")
         surfaces[surface_id] = raw_surface
@@ -897,6 +1056,7 @@ def seal_expected_build(
         "algorithm": source_manifest.get("algorithm"),
         "digestDomain": source_manifest.get("digestDomain"),
         "sourceManifestId": source_manifest.get("manifestId"),
+        "contractFingerprint": source_manifest.get("contractFingerprint"),
         "layout": layout_name,
         "archive": {
             "layout": layout_name,
@@ -934,16 +1094,21 @@ def compare_manifests(
 ) -> dict[str, Any]:
     if previous.get("schemaVersion") != 1 or current.get("schemaVersion") != 1:
         raise SurfacePolicyError("surface manifest schema is unsupported")
-    evidence_policy = current.get("evidencePolicy")
-    if not isinstance(evidence_policy, dict):
-        raise SurfacePolicyError("current manifest has no evidence policy")
-    class_order = [str(value) for value in evidence_policy.get("classes") or []]
-    train_minimums = evidence_policy.get("trainMinimumEvidence") or {}
-    if train not in train_minimums:
+    evidence_policy = validate_evidence_policy(current.get("evidencePolicy"))
+    class_order = [str(value) for value in evidence_policy["classes"]]
+    train_minimums = evidence_policy["trainMinimumEvidence"]
+    if train not in TRAIN_NAMES:
         raise SurfacePolicyError(f"unknown release train: {train}")
-    change_requirements = evidence_policy.get("changeRequirements") or {}
+    change_requirements = evidence_policy["changeRequirements"]
     previous_surfaces = manifest_surface_map(previous, "previous")
     current_surfaces = manifest_surface_map(current, "current")
+    previous_contract_fingerprint = str(previous.get("contractFingerprint") or "")
+    current_contract_fingerprint = str(current.get("contractFingerprint") or "")
+    if not SHA256_PATTERN.fullmatch(previous_contract_fingerprint) or not SHA256_PATTERN.fullmatch(
+        current_contract_fingerprint
+    ):
+        raise SurfacePolicyError("surface manifest contract fingerprint is invalid")
+    contract_changed = previous_contract_fingerprint != current_contract_fingerprint
     previous_source = previous.get("source") or {}
     current_source = current.get("source") or {}
     exact_build_same = all(
@@ -966,6 +1131,7 @@ def compare_manifests(
         minimum = ordered_intersection(train_minimums[train], capabilities, class_order)
         render_changed = True
         runtime_changed = True
+        placement_changed = True
         reason_codes: list[str] = []
         if previous_surface is None:
             reason_codes.append("new-surface")
@@ -974,23 +1140,33 @@ def compare_manifests(
             current_fingerprints = surface.get("fingerprints") or {}
             render_changed = previous_fingerprints.get("render") != current_fingerprints.get("render")
             runtime_changed = previous_fingerprints.get("runtime") != current_fingerprints.get("runtime")
+            placement_changed = (
+                previous_fingerprints.get("placement")
+                != current_fingerprints.get("placement")
+            )
             if render_changed:
                 reason_codes.append("render-fingerprint-changed")
             if runtime_changed:
                 reason_codes.append("runtime-fingerprint-changed")
+            if placement_changed:
+                reason_codes.append("placement-fingerprint-changed")
+            if contract_changed:
+                reason_codes.append("contract-fingerprint-changed")
             if not exact_build_same:
                 reason_codes.append("exact-build-changed")
             if not reason_codes:
                 reason_codes.append("unchanged")
 
         fresh: set[str] = set()
-        if previous_surface is None:
-            fresh.update(change_requirements.get("unknown") or class_order)
+        if previous_surface is None or contract_changed:
+            fresh.update(change_requirements["unknown"])
         else:
             if render_changed:
-                fresh.update(change_requirements.get("render") or [])
+                fresh.update(change_requirements["render"])
             if runtime_changed:
-                fresh.update(change_requirements.get("runtime") or [])
+                fresh.update(change_requirements["runtime"])
+            if placement_changed:
+                fresh.update(change_requirements["placement"])
             if not exact_build_same and "actual-runtime" in capabilities:
                 fresh.add("actual-runtime")
         fresh_evidence = ordered_intersection(fresh, capabilities, class_order)
@@ -1001,11 +1177,15 @@ def compare_manifests(
             conditions: list[str] = []
             if previous_surface is not None:
                 if evidence_class == "shared-view":
-                    eligible = not render_changed
+                    eligible = not render_changed and not contract_changed
                 elif evidence_class == "actual-runtime":
-                    eligible = not runtime_changed and exact_build_same
+                    eligible = not runtime_changed and exact_build_same and not contract_changed
                 elif evidence_class == "os-composited-placement":
-                    eligible = not render_changed
+                    eligible = (
+                        not render_changed
+                        and not placement_changed
+                        and not contract_changed
+                    )
                     if eligible:
                         conditions = ["matching-host-os", "matching-current-runtime-receipt"]
             if evidence_class in fresh_evidence:
@@ -1024,6 +1204,8 @@ def compare_manifests(
                 "changes": {
                     "render": render_changed,
                     "runtime": runtime_changed,
+                    "placement": placement_changed,
+                    "contract": contract_changed,
                     "exactBuild": not exact_build_same,
                 },
                 "minimumEvidence": minimum,
@@ -1038,6 +1220,7 @@ def compare_manifests(
         "train": train,
         "previousManifestId": previous.get("manifestId"),
         "currentManifestId": current.get("manifestId"),
+        "contractChanged": contract_changed,
         "exactBuildSame": exact_build_same,
         "removedSurfaces": removed_surfaces,
         "surfaces": results,
