@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Name</key>
+	<string>Context Panel Production-Only Environment Array Profile</string>
+	<key>TeamIdentifier</key>
+	<array>
+		<string>MM5YXC7T6E</string>
+	</array>
+	<key>Entitlements</key>
+	<dict>
+		<key>application-identifier</key>
+		<string>MM5YXC7T6E.com.shinycomputers.contextpanel</string>
+		<key>com.apple.application-identifier</key>
+		<string>MM5YXC7T6E.com.shinycomputers.contextpanel</string>
+		<key>com.apple.developer.icloud-container-identifiers</key>
+		<array>
+			<string>iCloud.com.shinycomputers.contextpanel</string>
+		</array>
+		<key>com.apple.developer.icloud-container-environment</key>
+		<array>
+			<string>Production</string>
+		</array>
+		<key>com.apple.developer.icloud-services</key>
+		<array>
+			<string>CloudDocuments</string>
+		</array>
+		<key>com.apple.developer.team-identifier</key>
+		<string>MM5YXC7T6E</string>
+		<key>com.apple.developer.ubiquity-container-identifiers</key>
+		<array>
+			<string>iCloud.com.shinycomputers.contextpanel</string>
+		</array>
+		<key>com.apple.security.application-groups</key>
+		<array>
+			<string>MM5YXC7T6E.group.com.shinycomputers.contextpanel</string>
+		</array>
+		<key>keychain-access-groups</key>
+		<array>
+			<string>MM5YXC7T6E.com.shinycomputers.contextpanel.provider-credentials</string>
+		</array>
+	</dict>
+</dict>
+</plist>
