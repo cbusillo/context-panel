@@ -765,13 +765,18 @@ check_profile_authorizes_scalar_entitlement() {
 	local entitlements_plist="$2"
 	local label="$3"
 	local entitlement="$4"
-	local expected profile_value
+	local expected profile_value value
 	expected="$(signed_entitlement_value "$entitlements_plist" "$entitlement")"
 	[[ -n "$expected" ]] || return 0
 	profile_value="$(profile_entitlement_value "$profile_plist" "$entitlement")"
 	if [[ "$profile_value" == "$expected" || "$profile_value" == "*" ]]; then
 		return 0
 	fi
+	while IFS= read -r value; do
+		if [[ "$value" == "$expected" ]]; then
+			return 0
+		fi
+	done < <(plist_array_values "$profile_plist" "Entitlements:$entitlement")
 	fail "$label provisioning profile does not authorize $entitlement: $expected"
 	return 1
 }

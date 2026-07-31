@@ -3041,6 +3041,18 @@ exit 65
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("fixture-app provisioning profile covers signed entitlements", result.stdout)
 
+    def test_runtime_baseline_profile_fixture_accepts_environment_array_grant(self):
+        result = self.run_runtime_preflight_fixture("profile-environment-array.plist")
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("fixture-app provisioning profile covers signed entitlements", result.stdout)
+
+    def test_runtime_baseline_profile_fixture_rejects_environment_array_without_expected_value(self):
+        result = self.run_runtime_preflight_fixture("profile-environment-array-production-only.plist")
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("does not authorize com.apple.developer.icloud-container-environment", result.stdout)
+
     def test_runtime_baseline_profile_fixture_rejects_cloudkit_environment_mismatch(self):
         result = self.run_runtime_preflight_fixture(
             "profile-good.plist",
