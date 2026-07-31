@@ -748,6 +748,7 @@ public actor RuntimeReceiptRelayCoordinator {
     private let remoteStore: RuntimeReceiptRemoteStore
     private var sessionSyncTask: Task<RuntimeReceiptSessionRelayResult, Never>?
     private var receiptSyncTask: Task<RuntimeReceiptRelaySummary, Never>?
+    private var receiptSyncTaskID: UUID?
 
     public init(
         role: RuntimeReceiptRelayRole,
@@ -1002,11 +1003,28 @@ public actor RuntimeReceiptRelayCoordinator {
         if let receiptSyncTask {
             return await receiptSyncTask.value
         }
+        let taskID = UUID()
         let task = Task { await self.performRelayReceipts(now: now) }
+        receiptSyncTaskID = taskID
         receiptSyncTask = task
         let result = await task.value
-        receiptSyncTask = nil
+        if receiptSyncTaskID == taskID {
+            receiptSyncTask = nil
+            receiptSyncTaskID = nil
+        }
         return result
+    }
+
+    private func relayReceiptsFresh(now: Date) async -> RuntimeReceiptRelaySummary {
+        if let taskID = receiptSyncTaskID,
+           let receiptSyncTask {
+            _ = await receiptSyncTask.value
+            if receiptSyncTaskID == taskID {
+                self.receiptSyncTask = nil
+                receiptSyncTaskID = nil
+            }
+        }
+        return await relayReceipts(now: now)
     }
 
     private func performRelayReceipts(now: Date) async -> RuntimeReceiptRelaySummary {
@@ -1185,6 +1203,26 @@ public actor RuntimeReceiptRelayCoordinator {
             isHealthy: sessionResult.isHealthy && receiptResult.isHealthy,
             messages: messages
         )
+    }
+
+    @discardableResult
+    public func completeReceiptRelay(
+        after initialResult: RuntimeReceiptRecordResult,
+        observedAt: Date,
+        relayAt: Date = Date(),
+        retry: @Sendable () -> RuntimeReceiptRecordResult
+    ) async -> RuntimeReceiptRecordResult {
+        var recordResult = initialResult
+        if recordResult == .inactiveSession {
+            _ = await synchronizeSession(now: observedAt)
+            recordResult = retry()
+        }
+        if recordResult == .saved {
+            _ = await relayReceiptsFresh(now: relayAt)
+        } else {
+            _ = await relayReceipts(now: relayAt)
+        }
+        return recordResult
     }
 }
 

@@ -113,12 +113,13 @@ private struct TVRootView: View {
             .onChange(of: scenePhase, initial: true) { _, phase in
                 if phase == .active {
                     model.reload()
+                    model.recordRuntimeReceipt(runtimeReceiptPresentation)
                 }
             }
             .onChange(of: systemSurfacePublication, initial: true) { _, publication in
                 model.publishSystemSurfaces(publication)
             }
-            .onChange(of: runtimeReceiptPresentation, initial: true) { _, presentation in
+            .onChange(of: runtimeReceiptPresentation) { _, presentation in
                 model.recordRuntimeReceipt(presentation)
             }
             .onReceive(NotificationCenter.default.publisher(
@@ -439,17 +440,25 @@ private final class TVSyncModel {
             additionalVisibleError: presentation.hasVisibleError,
             presentationDate: presentationDate
         )
-        runtimeReceiptRecorder.record(
-            trigger: .appSnapshotLoad,
-            presentationMode: .appOverview,
-            selectedSource: evidence.selectedSource,
-            presentationDigest: evidence.presentationDigest,
-            stateBranch: evidence.stateBranch,
-            outcome: evidence.outcome,
-            observedAt: presentationDate
-        )
+        let recordReceipt: @Sendable () -> RuntimeReceiptRecordResult = { [runtimeReceiptRecorder] in
+            runtimeReceiptRecorder.record(
+                trigger: .appSnapshotLoad,
+                presentationMode: .appOverview,
+                selectedSource: evidence.selectedSource,
+                presentationDigest: evidence.presentationDigest,
+                stateBranch: evidence.stateBranch,
+                outcome: evidence.outcome,
+                observedAt: presentationDate
+            )
+        }
+        let initialResult = recordReceipt()
         Task { [runtimeReceiptRelay] in
-            _ = await runtimeReceiptRelay?.relayReceipts(now: Date())
+            guard let runtimeReceiptRelay else { return }
+            _ = await runtimeReceiptRelay.completeReceiptRelay(
+                after: initialResult,
+                observedAt: presentationDate,
+                retry: recordReceipt
+            )
         }
     }
 
