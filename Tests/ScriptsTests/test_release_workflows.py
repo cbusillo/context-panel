@@ -590,6 +590,7 @@ exit 42
         *,
         management_token: str | None = None,
         require_token: bool = False,
+        checked_in_schema: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -597,6 +598,11 @@ exit 42
             tool_dir.mkdir()
             live_schema_path = root / "live.ckdb"
             live_schema_path.write_text(live_schema)
+            checked_in_schema_args: list[str] = []
+            if checked_in_schema is not None:
+                checked_in_schema_path = root / "checked-in.ckdb"
+                checked_in_schema_path.write_text(checked_in_schema)
+                checked_in_schema_args = ["--cktool-schema", str(checked_in_schema_path)]
             fake_xcrun = """#!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1:-}" != "cktool" || "${2:-}" != "export-schema" ]]; then
@@ -647,7 +653,8 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                     "--live",
                     "--environment",
                     "production",
-                ],
+                ]
+                + checked_in_schema_args,
                 cwd=REPO_ROOT,
                 env=env,
                 text=True,
@@ -1219,6 +1226,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             "runtime-validation-session-current-v1",
         )
         session_fields = {field["name"]: field["type"] for field in session_record["fields"]}
+        self.assertEqual(session_record["publicDatabaseGrants"], [])
         self.assertEqual(session_fields["retentionExpiresAt"], "TIMESTAMP")
         self.assertEqual(session_fields["sessionState"], "STRING")
         self.assertEqual(session_fields["stateUpdatedAt"], "TIMESTAMP")
@@ -1228,8 +1236,10 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             "runtime-receipt-<sha256>",
         )
         receipt_fields = {field["name"]: field for field in receipt_record["fields"]}
+        self.assertEqual(receipt_record["publicDatabaseGrants"], [])
         self.assertTrue(receipt_fields["sessionID"]["queryable"])
         self.assertTrue(receipt_fields["retentionExpiresAt"]["queryable"])
+        self.assertTrue(receipt_fields["retentionExpiresAt"]["sortable"])
         self.assertIn('cloudKitSessionRecordType = "RuntimeValidationSession"', runtime_sync)
         self.assertIn('cloudKitReceiptRecordType = "RuntimeReceipt"', runtime_sync)
         for record in (session_record, receipt_record):
@@ -1244,53 +1254,22 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("CLOUDKIT_MANAGEMENT_TOKEN", script)
         self.assertIn("live_schema_has_field_type", script)
         self.assertIn("live_schema_field_is_queryable", script)
+        self.assertIn("live_schema_field_is_sortable", script)
+        self.assertIn("live_schema_record_has_grant", script)
+        self.assertIn("CloudKit/companion-sync.schema.ckdb", script)
         self.assertIn("CompanionSyncDocument", script)
         self.assertIn("RuntimeValidationSession", script)
         self.assertIn("RuntimeReceipt", script)
         self.assertIn("iCloud.com.shinycomputers.contextpanel", script)
         self.assertIn("CloudKit Production Schema Gate", release_docs)
         self.assertIn("scripts/validate-cloudkit-companion-schema.sh --live --environment production", release_docs)
+        self.assertIn("CloudKit Console's **Deploy Schema Changes** action", release_docs)
+        self.assertIn("never use `cktool reset-schema`", release_docs)
         self.assertIn("CompanionSyncDocumentV2", release_docs)
 
     def test_cloudkit_companion_schema_validator_accepts_ckdb_export(self):
         result = self.run_cloudkit_schema_validator_with_fake_cktool(
-            """RECORD TYPE CompanionSyncDocument {
-  payload BYTES;
-  schemaVersion INT64;
-  documentSchemaVersion INT64;
-  snapshotSchemaVersion INT64 QUERYABLE;
-  generatedAt TIMESTAMP;
-  publishedAt TIMESTAMP;
-  payloadByteCount INT64;
-}
-RECORD TYPE RuntimeValidationSession {
-  payload BYTES;
-  schemaVersion INT64;
-  sessionSchemaVersion INT64;
-  sessionID STRING;
-  createdAt TIMESTAMP;
-  expiresAt TIMESTAMP;
-  retentionExpiresAt TIMESTAMP;
-  expectedManifestID STRING;
-  publishedAt TIMESTAMP;
-  sessionState STRING;
-  stateUpdatedAt TIMESTAMP;
-  payloadByteCount INT64;
-}
-RECORD TYPE RuntimeReceipt {
-  payload BYTES;
-  schemaVersion INT64;
-  receiptSchemaVersion INT64;
-  sessionID STRING QUERYABLE;
-  receiptID STRING;
-  surface STRING;
-  observedAt TIMESTAMP;
-  retentionExpiresAt TIMESTAMP QUERYABLE;
-  processInstanceID STRING;
-  processSequence INT64;
-  payloadByteCount INT64;
-}
-"""
+            self.read("CloudKit/companion-sync.schema.ckdb")
         )
 
         self.assertEqual(result.returncode, 0, result.stdout)
@@ -1298,43 +1277,7 @@ RECORD TYPE RuntimeReceipt {
 
     def test_cloudkit_companion_schema_validator_forwards_management_token(self):
         result = self.run_cloudkit_schema_validator_with_fake_cktool(
-            """RECORD TYPE CompanionSyncDocument {
-  payload BYTES;
-  schemaVersion INT64;
-  documentSchemaVersion INT64;
-  snapshotSchemaVersion INT64 QUERYABLE;
-  generatedAt TIMESTAMP;
-  publishedAt TIMESTAMP;
-  payloadByteCount INT64;
-}
-RECORD TYPE RuntimeValidationSession {
-  payload BYTES;
-  schemaVersion INT64;
-  sessionSchemaVersion INT64;
-  sessionID STRING;
-  createdAt TIMESTAMP;
-  expiresAt TIMESTAMP;
-  retentionExpiresAt TIMESTAMP;
-  expectedManifestID STRING;
-  publishedAt TIMESTAMP;
-  sessionState STRING;
-  stateUpdatedAt TIMESTAMP;
-  payloadByteCount INT64;
-}
-RECORD TYPE RuntimeReceipt {
-  payload BYTES;
-  schemaVersion INT64;
-  receiptSchemaVersion INT64;
-  sessionID STRING QUERYABLE;
-  receiptID STRING;
-  surface STRING;
-  observedAt TIMESTAMP;
-  retentionExpiresAt TIMESTAMP QUERYABLE;
-  processInstanceID STRING;
-  processSequence INT64;
-  payloadByteCount INT64;
-}
-""",
+            self.read("CloudKit/companion-sync.schema.ckdb"),
             management_token="test-management-token",
             require_token=True,
         )
@@ -1342,68 +1285,90 @@ RECORD TYPE RuntimeReceipt {
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertNotIn("test-management-token", result.stdout)
 
-    def test_cloudkit_companion_schema_validator_rejects_wrong_ckdb_field_type(self):
-        result = self.run_cloudkit_schema_validator_with_fake_cktool(
-            """RECORD TYPE CompanionSyncDocument {
-  payload STRING;
-  schemaVersion INT64;
-  documentSchemaVersion INT64;
-  snapshotSchemaVersion INT64;
-  generatedAt TIMESTAMP;
-  publishedAt TIMESTAMP;
-  payloadByteCount INT64;
-}
-"""
+    def test_cloudkit_schema_validator_rejects_non_sortable_retention_field(self):
+        live_schema = self.read("CloudKit/companion-sync.schema.ckdb").replace(
+            "retentionExpiresAt   TIMESTAMP QUERYABLE SORTABLE",
+            "retentionExpiresAt   TIMESTAMP QUERYABLE",
         )
+
+        result = self.run_cloudkit_schema_validator_with_fake_cktool(live_schema)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("RuntimeReceipt.retentionExpiresAt", result.stdout)
+        self.assertIn("not sortable", result.stdout)
+
+    def test_cloudkit_schema_validator_rejects_runtime_public_grant(self):
+        live_schema = self.read("CloudKit/companion-sync.schema.ckdb").replace(
+            "        surface              STRING\n    );",
+            '        surface              STRING,\n        GRANT READ TO "_world"\n    );',
+        )
+
+        result = self.run_cloudkit_schema_validator_with_fake_cktool(live_schema)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must not grant public database access", result.stdout)
+        self.assertIn("RuntimeReceipt", result.stdout)
+
+    def test_cloudkit_schema_validator_rejects_changed_users_grants(self):
+        checked_in_schema = self.read("CloudKit/companion-sync.schema.ckdb").replace(
+            '        GRANT WRITE TO "_creator",\n        GRANT READ TO "_world"\n    );',
+            '        GRANT WRITE TO "_creator"\n    );',
+        )
+
+        result = self.run_cloudkit_schema_validator_with_fake_cktool(
+            self.read("CloudKit/companion-sync.schema.ckdb"),
+            checked_in_schema=checked_in_schema,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("grants changed for record type: Users", result.stdout)
+
+    def test_cloudkit_schema_validator_rejects_unexpected_checked_in_record_type(self):
+        checked_in_schema = self.read("CloudKit/companion-sync.schema.ckdb").replace(
+            "\n    RECORD TYPE Users (",
+            "\n    RECORD TYPE UnexpectedType (\n        value STRING\n    );\n\n    RECORD TYPE Users (",
+        )
+
+        result = self.run_cloudkit_schema_validator_with_fake_cktool(
+            self.read("CloudKit/companion-sync.schema.ckdb"),
+            checked_in_schema=checked_in_schema,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("record types differ from the additive companion/runtime baseline", result.stdout)
+
+    def test_cloudkit_companion_schema_validator_rejects_wrong_ckdb_field_type(self):
+        live_schema = self.read("CloudKit/companion-sync.schema.ckdb").replace(
+            "payload               BYTES QUERYABLE SORTABLE",
+            "payload               STRING QUERYABLE SORTABLE",
+        )
+
+        result = self.run_cloudkit_schema_validator_with_fake_cktool(live_schema)
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("CompanionSyncDocument.payload BYTES", result.stdout)
 
     def test_cloudkit_companion_schema_validator_rejects_nonqueryable_subscription_field(self):
-        result = self.run_cloudkit_schema_validator_with_fake_cktool(
-            """RECORD TYPE CompanionSyncDocument {
-  payload BYTES;
-  schemaVersion INT64;
-  documentSchemaVersion INT64;
-  snapshotSchemaVersion INT64;
-  generatedAt TIMESTAMP;
-  publishedAt TIMESTAMP;
-  payloadByteCount INT64;
-}
-"""
+        live_schema = self.read("CloudKit/companion-sync.schema.ckdb").replace(
+            "snapshotSchemaVersion INT64 QUERYABLE SORTABLE",
+            "snapshotSchemaVersion INT64 SORTABLE",
         )
+
+        result = self.run_cloudkit_schema_validator_with_fake_cktool(live_schema)
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("snapshotSchemaVersion", result.stdout)
         self.assertIn("not queryable", result.stdout)
 
     def test_cloudkit_schema_validator_rejects_missing_runtime_receipt_boundary(self):
-        result = self.run_cloudkit_schema_validator_with_fake_cktool(
-            """RECORD TYPE CompanionSyncDocument {
-  payload BYTES;
-  schemaVersion INT64;
-  documentSchemaVersion INT64;
-  snapshotSchemaVersion INT64 QUERYABLE;
-  generatedAt TIMESTAMP;
-  publishedAt TIMESTAMP;
-  payloadByteCount INT64;
-}
-RECORD TYPE RuntimeValidationSession {
-  payload BYTES;
-  schemaVersion INT64;
-  sessionSchemaVersion INT64;
-  sessionID STRING;
-  createdAt TIMESTAMP;
-  expiresAt TIMESTAMP;
-  retentionExpiresAt TIMESTAMP;
-  expectedManifestID STRING;
-  publishedAt TIMESTAMP;
-  sessionState STRING;
-  stateUpdatedAt TIMESTAMP;
-  payloadByteCount INT64;
-}
-"""
+        live_schema = re.sub(
+            r"\n    RECORD TYPE RuntimeReceipt \(.*?\n    \);\n",
+            "\n",
+            self.read("CloudKit/companion-sync.schema.ckdb"),
+            flags=re.DOTALL,
         )
+
+        result = self.run_cloudkit_schema_validator_with_fake_cktool(live_schema)
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("missing record type: RuntimeReceipt", result.stdout)

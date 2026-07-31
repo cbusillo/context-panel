@@ -505,14 +505,23 @@ CloudKit-backed companion snapshot and runtime-evidence contracts:
   `runtime-receipt-<sha256>` record names, the existing redacted receipt payload,
   session/receipt/surface/process metadata, observed and retention dates, and
   payload byte count
-- `RuntimeReceipt.sessionID` and `RuntimeReceipt.retentionExpiresAt` marked
-  queryable for current-session extraction and bounded remote cleanup
+- `RuntimeReceipt.sessionID` marked queryable for current-session extraction
+- `RuntimeReceipt.retentionExpiresAt` marked queryable and sortable because
+  bounded remote cleanup uses a range predicate
+- no public-database grants on either runtime record type; the relay uses only
+  each signed-in user's private CloudKit database
 
 Run the offline repo contract check before packaging:
 
 ```sh
 scripts/validate-cloudkit-companion-schema.sh
 ```
+
+The checked-in `CloudKit/companion-sync.schema.ckdb` file is the exact additive
+schema candidate. It preserves the existing companion and `Users` definitions,
+adds the two runtime record types, includes the required range index, and omits
+public-database grants for runtime evidence. Do not reconstruct the candidate by
+hand in CloudKit Console.
 
 The live gate uses Apple's `cktool`, not the App Store Connect API key. `cktool`
 needs a CloudKit management token. Apple documents that management tokens are
@@ -579,11 +588,35 @@ If Keychain storage is unavailable, provide the token only to the command
 process with `CLOUDKIT_MANAGEMENT_TOKEN`; do not write the token into tracked
 files, shell history, GitHub issues, PRs, agent summaries, or release notes.
 
-If the live gate reports a missing record type or field, create and verify the
-schema in Development, then deploy the CloudKit schema to Production before
-re-running Mac publish, receipt relay, and companion TestFlight validation. A
-missing runtime record type is `unknown` evidence, not permission to fall back to
-the companion snapshot record. If Production already contains an incompatible
+If the live gate reports a missing runtime record type or index, re-export both
+environments and require Production and Development to contain no unrelated
+schema drift. Validate and import the checked-in candidate into Development:
+
+```sh
+xcrun cktool validate-schema \
+  --team-id "${APPLE_TEAM_ID:-MM5YXC7T6E}" \
+  --container-id iCloud.com.shinycomputers.contextpanel \
+  --environment development \
+  --file CloudKit/companion-sync.schema.ckdb
+
+xcrun cktool import-schema \
+  --team-id "${APPLE_TEAM_ID:-MM5YXC7T6E}" \
+  --container-id iCloud.com.shinycomputers.contextpanel \
+  --environment development \
+  --validate \
+  --file CloudKit/companion-sync.schema.ckdb
+```
+
+Re-export Development, run the live Development gate, and canary session
+publish/load/clear, receipt lookup, and expired-receipt pruning before using
+CloudKit Console's **Deploy Schema Changes** action. Do not import directly into
+Production and never use `cktool reset-schema`; reset deletes Development data.
+After deployment, re-export Production and require the live Production gate to
+pass before re-running Mac publish, receipt relay, and companion TestFlight
+validation.
+
+A missing runtime record type is `unknown` evidence, not permission to fall back
+to the companion snapshot record. If Production already contains an incompatible
 field type, do not try to patch the existing field in place; add a
 forward-compatible record type such as `CompanionSyncDocumentV2`, or new field
 names for the affected runtime record, and update the app constants and schema

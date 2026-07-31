@@ -1,0 +1,49 @@
+DEFINE SCHEMA
+
+    RECORD TYPE CompanionSyncDocument (
+        documentSchemaVersion INT64 QUERYABLE SORTABLE,
+        generatedAt           TIMESTAMP QUERYABLE SORTABLE,
+        payload               BYTES QUERYABLE SORTABLE,
+        payloadByteCount      INT64 QUERYABLE SORTABLE,
+        publishedAt           TIMESTAMP QUERYABLE SORTABLE,
+        schemaVersion         INT64 QUERYABLE SORTABLE,
+        snapshotSchemaVersion INT64 QUERYABLE SORTABLE,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_world"
+    );
+
+    RECORD TYPE RuntimeReceipt (
+        observedAt           TIMESTAMP,
+        payload              BYTES,
+        payloadByteCount     INT64,
+        processInstanceID    STRING,
+        processSequence      INT64,
+        receiptID            STRING,
+        receiptSchemaVersion INT64,
+        retentionExpiresAt   TIMESTAMP QUERYABLE SORTABLE,
+        schemaVersion        INT64,
+        sessionID            STRING QUERYABLE,
+        surface              STRING
+    );
+
+    RECORD TYPE RuntimeValidationSession (
+        createdAt            TIMESTAMP,
+        expectedManifestID   STRING,
+        expiresAt            TIMESTAMP,
+        payload              BYTES,
+        payloadByteCount     INT64,
+        publishedAt          TIMESTAMP,
+        retentionExpiresAt   TIMESTAMP,
+        schemaVersion        INT64,
+        sessionID            STRING,
+        sessionSchemaVersion INT64,
+        sessionState         STRING,
+        stateUpdatedAt       TIMESTAMP
+    );
+
+    RECORD TYPE Users (
+        roles LIST<INT64>,
+        GRANT WRITE TO "_creator",
+        GRANT READ TO "_world"
+    );
