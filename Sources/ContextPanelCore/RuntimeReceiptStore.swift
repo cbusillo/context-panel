@@ -43,28 +43,54 @@ public struct RuntimeValidationSession: Codable, Equatable, Sendable {
         _ identity: RuntimeSurfaceBuildIdentity,
         now: Date
     ) -> Bool {
-        guard schemaVersion == Self.schemaVersion,
-              RuntimeSurfaceFingerprints.isSHA256(expectedManifestID),
-              createdAt <= expiresAt,
-              expiresAt.timeIntervalSince(createdAt) <= Self.maximumDuration,
-              createdAt <= now.addingTimeInterval(Self.maximumClockSkew),
-              now < expiresAt,
+        guard isStructurallyValid(now: now, requiresActive: true),
               expectedManifestID == identity.build.manifestID,
-              !enabledSurfaces.isEmpty,
-              Set(enabledSurfaces).count == enabledSurfaces.count,
-              enabledSurfaces.contains(identity.surface),
-              minimumWriteIntervalSeconds >= 0,
-              minimumWriteIntervalSeconds <= 5 * 60,
-              minimumWriteIntervalSeconds.rounded(.down) == minimumWriteIntervalSeconds,
-              receiptTTLSeconds >= 60,
-              receiptTTLSeconds <= Self.maximumReceiptTTL,
-              receiptTTLSeconds.rounded(.down) == receiptTTLSeconds,
-              maximumReceiptCount > 0,
-              maximumReceiptCount <= Self.maximumReceiptCount
+              enabledSurfaces.contains(identity.surface)
         else {
             return false
         }
         return true
+    }
+
+    public func isStructurallyValid(
+        now: Date,
+        requiresActive: Bool
+    ) -> Bool {
+        schemaVersion == Self.schemaVersion
+            && RuntimeSurfaceFingerprints.isSHA256(expectedManifestID)
+            && createdAt <= expiresAt
+            && expiresAt.timeIntervalSince(createdAt) <= Self.maximumDuration
+            && createdAt <= now.addingTimeInterval(Self.maximumClockSkew)
+            && (!requiresActive || now < expiresAt)
+            && !enabledSurfaces.isEmpty
+            && Set(enabledSurfaces).count == enabledSurfaces.count
+            && minimumWriteIntervalSeconds >= 0
+            && minimumWriteIntervalSeconds <= 5 * 60
+            && minimumWriteIntervalSeconds.rounded(.down) == minimumWriteIntervalSeconds
+            && receiptTTLSeconds >= 60
+            && receiptTTLSeconds <= Self.maximumReceiptTTL
+            && receiptTTLSeconds.rounded(.down) == receiptTTLSeconds
+            && maximumReceiptCount > 0
+            && maximumReceiptCount <= Self.maximumReceiptCount
+    }
+
+    public func permitsRelay(
+        expectedManifestID: String,
+        eligibleSurfaces: [RuntimeSurface],
+        now: Date
+    ) -> Bool {
+        isStructurallyValid(now: now, requiresActive: true)
+            && self.expectedManifestID == expectedManifestID
+            && !Set(enabledSurfaces).isDisjoint(with: eligibleSurfaces)
+    }
+
+    public var receiptRetentionExpiresAt: Date {
+        Self.wholeSecond(expiresAt.addingTimeInterval(receiptTTLSeconds))
+    }
+
+    public func isRetained(now: Date) -> Bool {
+        isStructurallyValid(now: now, requiresActive: false)
+            && now < receiptRetentionExpiresAt
     }
 
     static func wholeSecond(_ date: Date) -> Date {
@@ -75,6 +101,23 @@ public struct RuntimeValidationSession: Codable, Equatable, Sendable {
 public struct RuntimeValidationSessionStore: Sendable {
     public let sessionURL: URL
 
+    public var archivedSessionURL: URL {
+        sessionURL.deletingLastPathComponent().appending(path: "runtime-session-last.json")
+    }
+
+    public var sessionsDirectoryURL: URL {
+        sessionURL.deletingLastPathComponent().appending(
+            path: "Runtime Sessions",
+            directoryHint: .isDirectory
+        )
+    }
+
+    public var remoteStateURL: URL {
+        sessionURL.deletingLastPathComponent().appending(
+            path: "runtime-session-remote-state.json"
+        )
+    }
+
     public init(sessionURL: URL) {
         self.sessionURL = sessionURL
     }
@@ -83,8 +126,7 @@ public struct RuntimeValidationSessionStore: Sendable {
         for identity: RuntimeSurfaceBuildIdentity,
         now: Date = Date()
     ) -> RuntimeValidationSession? {
-        guard let data = try? Data(contentsOf: sessionURL),
-              let session = try? Self.makeDecoder().decode(RuntimeValidationSession.self, from: data),
+        guard let session = activeSession(now: now),
               session.permits(identity, now: now)
         else {
             return nil
@@ -92,12 +134,247 @@ public struct RuntimeValidationSessionStore: Sendable {
         return session
     }
 
+    public func activeSession(now: Date = Date()) -> RuntimeValidationSession? {
+        loadSession(at: sessionURL, now: now, requiresActive: true)
+    }
+
+    public func latestSession(now: Date = Date()) -> RuntimeValidationSession? {
+        if let current = loadSession(at: sessionURL, now: now, requiresActive: false) {
+            return current
+        }
+        return retainedSessions(now: now).last
+    }
+
+    public func retainedSessions(now: Date = Date()) -> [RuntimeValidationSession] {
+        var urls = [sessionURL, archivedSessionURL]
+        if let journalURLs = try? FileManager.default.contentsOfDirectory(
+            at: sessionsDirectoryURL,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) {
+            urls.append(contentsOf: journalURLs.filter { $0.pathExtension == "json" })
+        }
+
+        var sessionsByID: [UUID: RuntimeValidationSession] = [:]
+        var conflictingIDs: Set<UUID> = []
+        for url in urls {
+            guard let session = loadSession(at: url, now: now, requiresActive: false),
+                  session.isRetained(now: now)
+            else {
+                continue
+            }
+            if let existing = sessionsByID[session.id], existing != session {
+                sessionsByID.removeValue(forKey: session.id)
+                conflictingIDs.insert(session.id)
+            } else if !conflictingIDs.contains(session.id) {
+                sessionsByID[session.id] = session
+            }
+        }
+        return sessionsByID.values.sorted { lhs, rhs in
+            if lhs.createdAt != rhs.createdAt {
+                return lhs.createdAt < rhs.createdAt
+            }
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
+    }
+
     public func save(_ session: RuntimeValidationSession) throws {
+        try save(session, now: session.createdAt)
+    }
+
+    public func save(
+        _ session: RuntimeValidationSession,
+        now: Date
+    ) throws {
+        let directoryURL = sessionURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(
-            at: sessionURL.deletingLastPathComponent(),
+            at: sessionsDirectoryURL,
             withIntermediateDirectories: true
         )
-        try Self.makeEncoder().encode(session).write(to: sessionURL, options: [.atomic])
+        guard let lock = try RuntimeReceiptDirectoryLock(directoryURL: directoryURL) else {
+            throw RuntimeReceiptRemoteSyncError.busy
+        }
+        defer { lock.unlock() }
+
+        try saveUnlocked(session, now: now)
+    }
+
+    public func removeActiveSession() throws {
+        let current = loadSession(at: sessionURL, now: Date(), requiresActive: false)
+        try removeActiveSession(now: current?.createdAt ?? Date())
+    }
+
+    public func removeActiveSession(now: Date) throws {
+        let directoryURL = sessionURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        guard let lock = try RuntimeReceiptDirectoryLock(directoryURL: directoryURL) else {
+            throw RuntimeReceiptRemoteSyncError.busy
+        }
+        defer { lock.unlock() }
+
+        try removeActiveSessionUnlocked(now: now)
+    }
+
+    @discardableResult
+    public func applyRemoteState(
+        _ state: RuntimeValidationSessionRemoteState,
+        session: RuntimeValidationSession?,
+        stateUpdatedAt: Date?,
+        now: Date
+    ) throws -> Bool {
+        guard state != .missing,
+              let stateUpdatedAt,
+              stateUpdatedAt <= now.addingTimeInterval(
+                  RuntimeValidationSession.maximumClockSkew
+              )
+        else {
+            return false
+        }
+        let directoryURL = sessionURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        guard let lock = try RuntimeReceiptDirectoryLock(directoryURL: directoryURL) else {
+            throw RuntimeReceiptRemoteSyncError.busy
+        }
+        defer { lock.unlock() }
+
+        if let currentState = loadRemoteState() {
+            if currentState.stateUpdatedAt > stateUpdatedAt {
+                return false
+            }
+            if currentState.stateUpdatedAt == stateUpdatedAt {
+                if currentState.state == state {
+                    return false
+                }
+                if currentState.state == .cleared, state == .active {
+                    return false
+                }
+            }
+        }
+        switch state {
+        case .active:
+            guard let session,
+                  session.isStructurallyValid(now: now, requiresActive: true)
+            else {
+                throw RuntimeReceiptRemoteSyncError.invalidSession
+            }
+            try FileManager.default.createDirectory(
+                at: sessionsDirectoryURL,
+                withIntermediateDirectories: true
+            )
+            try saveUnlocked(session, now: now)
+        case .cleared:
+            try removeActiveSessionUnlocked(now: now)
+        case .missing:
+            return false
+        }
+        let remoteState = RuntimeValidationSessionRemoteMirrorState(
+            state: state,
+            stateUpdatedAt: stateUpdatedAt
+        )
+        try Self.makeRemoteStateEncoder().encode(remoteState).write(
+            to: remoteStateURL,
+            options: [.atomic]
+        )
+        return true
+    }
+
+    private func saveUnlocked(
+        _ session: RuntimeValidationSession,
+        now: Date
+    ) throws {
+        if let current = loadSession(at: sessionURL, now: now, requiresActive: false) {
+            try archive(current)
+        }
+        let data = try Self.makeEncoder().encode(session)
+        try data.write(to: sessionURL, options: [.atomic])
+        try data.write(to: archivedSessionURL, options: [.atomic])
+        try archive(session)
+        pruneJournal(now: now)
+    }
+
+    private func removeActiveSessionUnlocked(now: Date) throws {
+        let current = loadSession(at: sessionURL, now: now, requiresActive: false)
+        if let current {
+            try FileManager.default.createDirectory(
+                at: sessionsDirectoryURL,
+                withIntermediateDirectories: true
+            )
+            try archive(current)
+            try Self.makeEncoder().encode(current).write(to: archivedSessionURL, options: [.atomic])
+        }
+        if FileManager.default.fileExists(atPath: sessionURL.path) {
+            try FileManager.default.removeItem(at: sessionURL)
+        }
+        pruneJournal(now: now)
+    }
+
+    private func loadRemoteState() -> RuntimeValidationSessionRemoteMirrorState? {
+        guard let data = try? Data(contentsOf: remoteStateURL),
+              let state = try? Self.makeRemoteStateDecoder().decode(
+                  RuntimeValidationSessionRemoteMirrorState.self,
+                  from: data
+              ),
+              state.schemaVersion == RuntimeValidationSessionRemoteMirrorState.schemaVersion
+        else {
+            return nil
+        }
+        return state
+    }
+
+    private func archive(_ session: RuntimeValidationSession) throws {
+        let url = sessionsDirectoryURL.appending(
+            path: "\(session.id.uuidString.lowercased()).json"
+        )
+        let data = try Self.makeEncoder().encode(session)
+        if let existingData = try? Data(contentsOf: url) {
+            guard let existing = try? Self.makeDecoder().decode(
+                RuntimeValidationSession.self,
+                from: existingData
+            ),
+            existing == session
+            else {
+                throw RuntimeReceiptRemoteSyncError.conflictingSession
+            }
+            return
+        }
+        try data.write(to: url, options: [.atomic])
+    }
+
+    private func pruneJournal(now: Date) {
+        guard let urls = try? FileManager.default.contentsOfDirectory(
+            at: sessionsDirectoryURL,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else {
+            return
+        }
+        let known = urls.compactMap { url -> (URL, RuntimeValidationSession)? in
+            guard url.pathExtension == "json",
+                  let session = loadSession(at: url, now: now, requiresActive: false)
+            else {
+                return nil
+            }
+            return (url, session)
+        }
+        let retainedURLs = Set(known.filter { $0.1.isRetained(now: now) }.map { $0.0 })
+        for (url, _) in known where !retainedURLs.contains(url) {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    private func loadSession(
+        at url: URL,
+        now: Date,
+        requiresActive: Bool
+    ) -> RuntimeValidationSession? {
+        guard let data = try? Data(contentsOf: url),
+              let session = try? Self.makeDecoder().decode(RuntimeValidationSession.self, from: data),
+              session.isStructurallyValid(now: now, requiresActive: requiresActive)
+        else {
+            return nil
+        }
+        return session
     }
 
     private static func makeEncoder() -> JSONEncoder {
@@ -111,6 +388,33 @@ public struct RuntimeValidationSessionStore: Sendable {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return decoder
+    }
+
+    private static func makeRemoteStateEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        return encoder
+    }
+
+    private static func makeRemoteStateDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .millisecondsSince1970
+        return decoder
+    }
+}
+
+private struct RuntimeValidationSessionRemoteMirrorState: Codable, Equatable, Sendable {
+    static let schemaVersion = 2
+
+    let schemaVersion: Int
+    let state: RuntimeValidationSessionRemoteState
+    let stateUpdatedAt: Date
+
+    init(state: RuntimeValidationSessionRemoteState, stateUpdatedAt: Date) {
+        schemaVersion = Self.schemaVersion
+        self.state = state
+        self.stateUpdatedAt = stateUpdatedAt
     }
 }
 
@@ -161,7 +465,7 @@ public struct RuntimeReceiptStore: Sendable {
             at: directoryURL,
             withIntermediateDirectories: true
         )
-        guard let lock = try ReceiptDirectoryLock(directoryURL: directoryURL) else {
+        guard let lock = try RuntimeReceiptDirectoryLock(directoryURL: directoryURL) else {
             return .busy
         }
         defer { lock.unlock() }
@@ -191,7 +495,7 @@ public struct RuntimeReceiptStore: Sendable {
             return []
         }
 
-        return urls
+        return RuntimeReceipt.ordered(urls
             .filter { $0.pathExtension == "json" }
             .compactMap { url in
                 guard let data = try? Data(contentsOf: url),
@@ -201,14 +505,31 @@ public struct RuntimeReceiptStore: Sendable {
                     return nil
                 }
                 return receipt
+            })
+    }
+
+    public func loadUnexpiredReceipts(now: Date = Date()) -> [RuntimeReceipt] {
+        loadReceipts().filter { now < $0.retentionExpiresAt }
+    }
+
+    public func pruneExpiredReceipts(now: Date = Date()) {
+        do {
+            try FileManager.default.createDirectory(
+                at: directoryURL,
+                withIntermediateDirectories: true
+            )
+            guard let lock = try RuntimeReceiptDirectoryLock(directoryURL: directoryURL) else {
+                return
             }
-            .sorted { lhs, rhs in
-                if lhs.observedAt != rhs.observedAt { return lhs.observedAt < rhs.observedAt }
-                if lhs.processInstanceID != rhs.processInstanceID {
-                    return lhs.processInstanceID.uuidString < rhs.processInstanceID.uuidString
-                }
-                return lhs.processSequence < rhs.processSequence
+            defer { lock.unlock() }
+            for receipt in loadReceipts() where now >= receipt.retentionExpiresAt {
+                try? FileManager.default.removeItem(
+                    at: directoryURL.appending(path: "\(receipt.id).json")
+                )
             }
+        } catch {
+            return
+        }
     }
 
     private func prune(
@@ -217,26 +538,14 @@ public struct RuntimeReceiptStore: Sendable {
         now: Date
     ) {
         let unexpired = receipts.filter { now < $0.retentionExpiresAt }
-        let currentSessionReceipts = unexpired
-            .filter { $0.sessionID == session.id }
-            .sorted { lhs, rhs in
-                if lhs.observedAt != rhs.observedAt { return lhs.observedAt < rhs.observedAt }
-                if lhs.processInstanceID != rhs.processInstanceID {
-                    return lhs.processInstanceID.uuidString < rhs.processInstanceID.uuidString
-                }
-                return lhs.processSequence < rhs.processSequence
-            }
+        let currentSessionReceipts = RuntimeReceipt.ordered(
+            unexpired.filter { $0.sessionID == session.id }
+        )
             .suffix(session.maximumReceiptCount)
-        let retained = (
+        let retained = RuntimeReceipt.ordered(
             unexpired.filter { $0.sessionID != session.id }
                 + currentSessionReceipts
-        ).sorted { lhs, rhs in
-            if lhs.observedAt != rhs.observedAt { return lhs.observedAt < rhs.observedAt }
-            if lhs.processInstanceID != rhs.processInstanceID {
-                return lhs.processInstanceID.uuidString < rhs.processInstanceID.uuidString
-            }
-            return lhs.processSequence < rhs.processSequence
-        }.suffix(maximumRetainedReceiptCount)
+        ).suffix(maximumRetainedReceiptCount)
         let retainedIDs = Set(retained.map(\.id))
 
         for receipt in receipts where !retainedIDs.contains(receipt.id) {
@@ -405,7 +714,7 @@ public final class RuntimeReceiptRecorder: @unchecked Sendable {
 
 }
 
-private final class ReceiptDirectoryLock {
+final class RuntimeReceiptDirectoryLock {
     private let descriptor: Int32
 
     init?(directoryURL: URL) throws {

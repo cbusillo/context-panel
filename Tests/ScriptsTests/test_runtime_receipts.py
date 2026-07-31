@@ -35,7 +35,7 @@ class RuntimeReceiptIntegrationTests(unittest.TestCase):
         store = self.read("Sources/ContextPanelCore/RuntimeReceiptStore.swift")
 
         self.assertIn(".appGroupRequired(", app)
-        self.assertIn(".companionApp(for: companionRuntimeDeviceClass())", app)
+        self.assertIn("let appSurface = RuntimeSurface.companionApp(for: deviceClass)", app)
         self.assertIn("ContextPanelLocations.companionAppGroupID", app)
         self.assertIn("CompanionRuntimeReceiptEvidence(", app)
         self.assertIn("trigger: .appSnapshotLoad", app)
@@ -125,6 +125,58 @@ class RuntimeReceiptIntegrationTests(unittest.TestCase):
         rate_limit_key = receipt.split("var rateLimitKey", 1)[1]
         self.assertIn("presentationDigest", rate_limit_key)
         self.assertIn("executableUUIDs", rate_limit_key)
+
+    def test_entitled_hosts_relay_receipts_without_extension_upload_loops(self) -> None:
+        app = self.read("Sources/ContextPanelApp/ContextPanelApp.swift")
+        refresh_agent = self.read(
+            "Sources/ContextPanelRefreshAgent/ContextPanelRefreshAgent.swift"
+        )
+        companion_app = self.read(
+            "Sources/ContextPanelCompanion/ContextPanelCompanionApp.swift"
+        )
+        watch_app = self.read("Sources/ContextPanelWatch/ContextPanelWatchApp.swift")
+        tv_app = self.read("Sources/ContextPanelTV/ContextPanelTVApp.swift")
+        tv_delegate = self.read("Sources/ContextPanelTV/TVSystemSurfaces.swift")
+        extensions = [
+            self.read("Sources/ContextPanelWidget/ContextPanelWidget.swift"),
+            self.read("Sources/ContextPanelCompanionWidget/ContextPanelCompanionWidget.swift"),
+            self.read("Sources/ContextPanelWatchWidget/ContextPanelWatchWidget.swift"),
+            self.read("Sources/ContextPanelTVTopShelf/ContextPanelTVTopShelfProvider.swift"),
+        ]
+
+        self.assertIn("RuntimeReceiptCloudKitStoreFactory.make()", app)
+        self.assertIn("runtimeReceiptRelay.synchronize()", app)
+        self.assertIn('"--sync-runtime-receipts"', refresh_agent)
+        self.assertIn("RuntimeReceiptCloudKitStoreFactory.make()", refresh_agent)
+        self.assertIn("runtimeReceiptRelay.synchronize()", refresh_agent)
+        self.assertIn("RuntimeReceiptCloudKitStoreFactory.make()", companion_app)
+        self.assertIn("synchronizeSession(now: now)", companion_app)
+        self.assertIn("relayReceipts(now: Date())", companion_app)
+        self.assertIn("RuntimeReceiptCloudKitStoreFactory.make()", watch_app)
+        self.assertIn("eligibleSurfaces: [.watchOSApp, .watchOSComplication]", watch_app)
+        self.assertIn("RuntimeReceiptCloudKitStoreFactory.make()", tv_app)
+        self.assertIn("eligibleSurfaces: [.tvOSApp, .tvOSTopShelf]", tv_app)
+        self.assertIn("runtimeReceiptRelay?.synchronize()", tv_delegate)
+        for extension in extensions:
+            self.assertNotIn("RuntimeReceiptCloudKitStoreFactory", extension)
+            self.assertNotIn("relayReceipts", extension)
+
+    def test_runtime_receipts_use_dedicated_cloudkit_records_without_subscriptions(self) -> None:
+        relay = self.read(
+            "Sources/ContextPanelCloudKitSync/RuntimeReceiptCloudKitSyncStore.swift"
+        )
+        core = self.read("Sources/ContextPanelCore/RuntimeReceiptRemoteSync.swift")
+        companion = self.read(
+            "Sources/ContextPanelCloudKitSync/CompanionCloudKitSyncStore.swift"
+        )
+
+        self.assertIn('cloudKitSessionRecordType = "RuntimeValidationSession"', core)
+        self.assertIn('cloudKitReceiptRecordType = "RuntimeReceipt"', core)
+        self.assertIn('recordName: "runtime-receipt-\\(receipt.id)"', relay)
+        self.assertIn("retentionExpiresAtFieldName", relay)
+        self.assertIn("allowsTruncatedResults: true", relay)
+        self.assertNotIn("CKQuerySubscription", relay)
+        self.assertIn("CKQuerySubscription", companion)
 
 
 if __name__ == "__main__":

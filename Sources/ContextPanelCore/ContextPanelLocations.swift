@@ -267,9 +267,29 @@ public enum ContextPanelLocations {
             .appending(path: "runtime-session.json")
     }
 
+    public static func archivedRuntimeValidationSessionURL(appGroupID: String? = nil) -> URL {
+        runtimeValidationDirectory(appGroupID: appGroupID)
+            .appending(path: "runtime-session-last.json")
+    }
+
+    public static func runtimeValidationSessionsDirectory(appGroupID: String? = nil) -> URL {
+        runtimeValidationDirectory(appGroupID: appGroupID)
+            .appending(path: "Runtime Sessions", directoryHint: .isDirectory)
+    }
+
     public static func runtimeReceiptDirectory(appGroupID: String? = nil) -> URL {
         runtimeValidationDirectory(appGroupID: appGroupID)
             .appending(path: "Runtime Receipts", directoryHint: .isDirectory)
+    }
+
+    public static func runtimeReceiptInboxDirectory(appGroupID: String? = nil) -> URL {
+        runtimeValidationDirectory(appGroupID: appGroupID)
+            .appending(path: "Remote Runtime Receipts", directoryHint: .isDirectory)
+    }
+
+    public static func runtimeReceiptRelayStateURL(appGroupID: String? = nil) -> URL {
+        runtimeValidationDirectory(appGroupID: appGroupID)
+            .appending(path: "runtime-receipt-relay-state.json")
     }
 
     public static func resetExpiryRefreshStateURL(appGroupID: String? = nil) -> URL {

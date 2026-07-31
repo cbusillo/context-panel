@@ -69,6 +69,17 @@ class RuntimeSessionScriptTests(unittest.TestCase):
             self.assertFalse(session_path.exists())
             self.assertTrue(receipt_path.exists())
 
+            archived_status = self.run_script(
+                "status",
+                "--root",
+                str(root / "validation"),
+            )
+            self.assertEqual(archived_status.returncode, 0, archived_status.stderr)
+            archived_payload = json.loads(archived_status.stdout)
+            self.assertFalse(archived_payload["active"])
+            self.assertTrue(archived_payload["valid"])
+            self.assertEqual(archived_payload["receiptCount"], 1)
+
     def test_start_rejects_a_surface_outside_the_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -118,6 +129,363 @@ class RuntimeSessionScriptTests(unittest.TestCase):
             self.assertFalse(payload["valid"])
             self.assertEqual(payload["receiptCount"], 0)
 
+            stopped = self.run_script("stop", "--root", str(validation_root))
+            self.assertEqual(stopped.returncode, 0, stopped.stderr)
+            self.assertEqual(json.loads(stopped.stdout), {"active": False, "closed": True})
+            self.assertFalse((validation_root / "runtime-session.json").exists())
+
+    def test_start_all_surfaces_archives_the_exact_session(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            manifest = root / "manifest.json"
+            payload = self.manifest()
+            surfaces = payload["surfaces"]
+            assert isinstance(surfaces, list)
+            surfaces.append(
+                {
+                    "id": "watchos.complication",
+                    "artifactId": "watchos.complication",
+                    "bundleIdentifier": "com.shinycomputers.contextpanel.watch.widget",
+                    "fingerprints": {
+                        "render": "1" * 64,
+                        "runtime": "2" * 64,
+                        "placement": "3" * 64,
+                        "combined": "4" * 64,
+                    },
+                }
+            )
+            manifest.write_text(json.dumps(payload))
+
+            completed = self.run_script(
+                "start",
+                "--root",
+                str(root / "validation"),
+                "--manifest",
+                str(manifest),
+                "--all-surfaces",
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            started = json.loads(completed.stdout)
+            self.assertEqual(
+                started["enabledSurfaces"],
+                ["macos.widget", "watchos.complication"],
+            )
+            active = json.loads((root / "validation" / "runtime-session.json").read_text())
+            archived = json.loads((root / "validation" / "runtime-session-last.json").read_text())
+            self.assertEqual(active, archived)
+
+    def test_status_and_export_merge_remote_receipts_without_upload_loops(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            validation_root = root / "validation"
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps(self.manifest()))
+            started = self.run_script(
+                "start",
+                "--root",
+                str(validation_root),
+                "--manifest",
+                str(manifest),
+                "--surface",
+                "macos.widget",
+            )
+            self.assertEqual(started.returncode, 0, started.stderr)
+            session = json.loads((validation_root / "runtime-session.json").read_text())
+            first = self.receipt(session, process_sequence=1, observed_offset_seconds=2)
+            second = self.receipt(session, process_sequence=2, observed_offset_seconds=1)
+            local_directory = validation_root / "Runtime Receipts"
+            local_directory.mkdir()
+            (local_directory / f"{second['id']}.json").write_text(json.dumps(second))
+            remote_directory = validation_root / "Remote Runtime Receipts"
+            remote_directory.mkdir()
+            server_received_at = datetime.strptime(
+                str(session["createdAt"]), "%Y-%m-%dT%H:%M:%SZ"
+            ).replace(tzinfo=timezone.utc) + timedelta(seconds=10)
+            for receipt in (first, second):
+                (remote_directory / f"{receipt['id']}.json").write_text(
+                    json.dumps(
+                        {
+                            "schemaVersion": 1,
+                            "receipt": receipt,
+                            "serverReceivedAt": server_received_at.strftime(
+                                "%Y-%m-%dT%H:%M:%SZ"
+                            ),
+                        }
+                    )
+                )
+
+            status = self.run_script("status", "--root", str(validation_root))
+            exported = self.run_script("export", "--root", str(validation_root))
+
+            self.assertEqual(status.returncode, 0, status.stderr)
+            status_payload = json.loads(status.stdout)
+            self.assertEqual(status_payload["receiptCount"], 2)
+            self.assertEqual(status_payload["localReceiptCount"], 1)
+            self.assertEqual(status_payload["remoteReceiptCount"], 2)
+            self.assertEqual(exported.returncode, 0, exported.stderr)
+            export_payload = json.loads(exported.stdout)
+            self.assertEqual(
+                [entry["receipt"]["processSequence"] for entry in export_payload["receipts"]],
+                [1, 2],
+            )
+            self.assertEqual(
+                next(
+                    entry["source"]
+                    for entry in export_payload["receipts"]
+                    if entry["receipt"]["id"] == second["id"]
+                ),
+                "cloudkit",
+            )
+
+    def test_start_rejects_a_second_active_session_and_retains_closed_sessions(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            validation_root = root / "validation"
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps(self.manifest()))
+            first_start = self.run_script(
+                "start",
+                "--root",
+                str(validation_root),
+                "--manifest",
+                str(manifest),
+                "--surface",
+                "macos.widget",
+            )
+            self.assertEqual(first_start.returncode, 0, first_start.stderr)
+            first_session = json.loads(first_start.stdout)
+
+            rejected = self.run_script(
+                "start",
+                "--root",
+                str(validation_root),
+                "--manifest",
+                str(manifest),
+                "--surface",
+                "macos.widget",
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("already active", rejected.stderr)
+
+            receipt = self.receipt(first_session)
+            receipt_directory = validation_root / "Runtime Receipts"
+            receipt_directory.mkdir()
+            (receipt_directory / f"{receipt['id']}.json").write_text(json.dumps(receipt))
+            self.assertEqual(
+                self.run_script("stop", "--root", str(validation_root)).returncode,
+                0,
+            )
+            second_start = self.run_script(
+                "start",
+                "--root",
+                str(validation_root),
+                "--manifest",
+                str(manifest),
+                "--surface",
+                "macos.widget",
+            )
+            self.assertEqual(second_start.returncode, 0, second_start.stderr)
+            second_session = json.loads(second_start.stdout)
+            self.assertGreater(second_session["createdAt"], first_session["createdAt"])
+
+            status = self.run_script(
+                "status",
+                "--root",
+                str(validation_root),
+                "--session-id",
+                str(first_session["id"]),
+            )
+            exported = self.run_script(
+                "export",
+                "--root",
+                str(validation_root),
+                "--session-id",
+                str(first_session["id"]),
+            )
+
+            self.assertEqual(status.returncode, 0, status.stderr)
+            self.assertEqual(json.loads(status.stdout)["receiptCount"], 1)
+            self.assertEqual(exported.returncode, 0, exported.stderr)
+            self.assertEqual(json.loads(exported.stdout)["session"]["id"], first_session["id"])
+            self.assertEqual(len(list((validation_root / "Runtime Sessions").glob("*.json"))), 2)
+
+    def test_export_rejects_injected_fields_and_expired_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            validation_root = root / "validation"
+            validation_root.mkdir()
+            now = datetime.now(timezone.utc).replace(microsecond=0)
+            created_at = now - timedelta(hours=3)
+            expires_at = now - timedelta(hours=1)
+            session: dict[str, object] = {
+                "schemaVersion": 1,
+                "id": "10000000-0000-0000-0000-000000000001",
+                "createdAt": created_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "expiresAt": expires_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "expectedManifestID": "a" * 64,
+                "enabledSurfaces": ["macos.widget"],
+                "minimumWriteIntervalSeconds": 0,
+                "receiptTTLSeconds": 2 * 60 * 60,
+                "maximumReceiptCount": 128,
+            }
+            for path in (
+                validation_root / "runtime-session-last.json",
+                validation_root
+                / "Runtime Sessions"
+                / "10000000-0000-0000-0000-000000000001.json",
+            ):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(session))
+
+            expired = self.receipt(session, observed_offset_seconds=1)
+            injected = self.receipt(session, process_sequence=2, observed_offset_seconds=2)
+            injected["accountID"] = "must-not-leak"
+            nested = self.receipt(session, process_sequence=3, observed_offset_seconds=3)
+            nested_build = nested["buildIdentity"]
+            self.assertIsInstance(nested_build, dict)
+            nested_build["privatePath"] = "/Users/example/private"
+            local_directory = validation_root / "Runtime Receipts"
+            local_directory.mkdir()
+            for index, receipt in enumerate((expired, injected, nested)):
+                (local_directory / f"local-{index}.json").write_text(json.dumps(receipt))
+            remote_directory = validation_root / "Remote Runtime Receipts"
+            remote_directory.mkdir()
+            (remote_directory / "expired.json").write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "receipt": expired,
+                        "serverReceivedAt": (
+                            created_at + timedelta(seconds=10)
+                        ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    }
+                )
+            )
+
+            exported = self.run_script("export", "--root", str(validation_root))
+
+            self.assertEqual(exported.returncode, 0, exported.stderr)
+            payload = json.loads(exported.stdout)
+            self.assertEqual(payload["receiptCount"], 0)
+            self.assertNotIn("must-not-leak", exported.stdout)
+            self.assertNotIn("/Users/example/private", exported.stdout)
+
+    def test_export_rejects_an_injected_session(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            validation_root = root / "validation"
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps(self.manifest()))
+            started = self.run_script(
+                "start",
+                "--root",
+                str(validation_root),
+                "--manifest",
+                str(manifest),
+                "--surface",
+                "macos.widget",
+            )
+            self.assertEqual(started.returncode, 0, started.stderr)
+            for path in (
+                validation_root / "runtime-session.json",
+                validation_root / "runtime-session-last.json",
+                next((validation_root / "Runtime Sessions").glob("*.json")),
+            ):
+                session = json.loads(path.read_text())
+                session["accountID"] = "must-not-leak"
+                path.write_text(json.dumps(session))
+
+            exported = self.run_script("export", "--root", str(validation_root))
+
+            self.assertNotEqual(exported.returncode, 0)
+            self.assertNotIn("must-not-leak", exported.stdout)
+
+    def test_export_order_is_stable_for_server_time_cycle_and_clock_rollback(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            validation_root = root / "validation"
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps(self.manifest()))
+            started = self.run_script(
+                "start",
+                "--root",
+                str(validation_root),
+                "--manifest",
+                str(manifest),
+                "--surface",
+                "macos.widget",
+            )
+            self.assertEqual(started.returncode, 0, started.stderr)
+            session = json.loads(started.stdout)
+            first_process = "00000000-0000-0000-0000-000000000001"
+            other_process = "00000000-0000-0000-0000-000000000002"
+            first = self.receipt(
+                session,
+                process_sequence=1,
+                observed_offset_seconds=20,
+                process_uuid=first_process,
+            )
+            second = self.receipt(
+                session,
+                process_sequence=2,
+                observed_offset_seconds=10,
+                process_uuid=first_process,
+            )
+            other = self.receipt(
+                session,
+                process_sequence=1,
+                observed_offset_seconds=15,
+                process_uuid=other_process,
+            )
+            created_at = datetime.strptime(
+                str(session["createdAt"]), "%Y-%m-%dT%H:%M:%SZ"
+            ).replace(tzinfo=timezone.utc)
+            remote_directory = validation_root / "Remote Runtime Receipts"
+            remote_directory.mkdir()
+            for name, receipt, offset in (
+                ("z.json", second, 10),
+                ("x.json", other, 15),
+                ("y.json", first, 20),
+            ):
+                (remote_directory / name).write_text(
+                    json.dumps(
+                        {
+                            "schemaVersion": 1,
+                            "receipt": receipt,
+                            "serverReceivedAt": (
+                                created_at + timedelta(seconds=offset)
+                            ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        }
+                    )
+                )
+
+            exported = self.run_script("export", "--root", str(validation_root))
+
+            self.assertEqual(exported.returncode, 0, exported.stderr)
+            ordered = [entry["receipt"]["id"] for entry in json.loads(exported.stdout)["receipts"]]
+            self.assertEqual(ordered, [other["id"], first["id"], second["id"]])
+
+    def test_sync_uses_the_signed_host_result_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            agent = Path(temporary_directory) / "agent"
+            agent.write_text(
+                "#!/bin/sh\n"
+                "cat <<'JSON'\n"
+                '{"healthy":true,"sessionAction":"published",'
+                '"uploadedReceiptCount":2,"downloadedReceiptCount":3,'
+                '"deletedRemoteReceiptCount":1,"messages":[]}\n'
+                "JSON\n"
+            )
+            agent.chmod(0o755)
+
+            completed = self.run_script("sync", "--agent", str(agent))
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            payload = json.loads(completed.stdout)
+            self.assertTrue(payload["healthy"])
+            self.assertEqual(payload["uploadedReceiptCount"], 2)
+
     @staticmethod
     def manifest() -> dict[str, object]:
         return {
@@ -141,16 +509,20 @@ class RuntimeSessionScriptTests(unittest.TestCase):
         }
 
     @staticmethod
-    def receipt(session: dict[str, object]) -> dict[str, object]:
+    def receipt(
+        session: dict[str, object],
+        process_sequence: int = 1,
+        observed_offset_seconds: int = 1,
+        process_uuid: str = "00000000-0000-0000-0000-000000000001",
+    ) -> dict[str, object]:
         created_at = datetime.strptime(
             str(session["createdAt"]), "%Y-%m-%dT%H:%M:%SZ"
         ).replace(tzinfo=timezone.utc)
-        observed_at = created_at + timedelta(seconds=1)
+        observed_at = created_at + timedelta(seconds=observed_offset_seconds)
         retention_expires_at = observed_at + timedelta(
             seconds=int(session["receiptTTLSeconds"])
         )
         executable_uuid = "11111111-2222-3333-4444-555555555555"
-        process_uuid = "00000000-0000-0000-0000-000000000001"
         receipt: dict[str, object] = {
             "schemaVersion": 1,
             "evidenceClass": "actual-runtime",
@@ -160,7 +532,7 @@ class RuntimeSessionScriptTests(unittest.TestCase):
             "observedAt": observed_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "retentionExpiresAt": retention_expires_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "processInstanceID": process_uuid,
-            "processSequence": 1,
+            "processSequence": process_sequence,
             "buildIdentity": {
                 "surface": "macos.widget",
                 "platform": "macOS",
@@ -213,7 +585,7 @@ class RuntimeSessionScriptTests(unittest.TestCase):
             str(fingerprints["combined"]),
             executable_uuid,
             process_uuid.lower(),
-            "1",
+            str(process_sequence),
             str(receipt["trigger"]),
             str(receipt["presentationMode"]),
             str(receipt["selectedSource"]),

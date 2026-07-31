@@ -239,6 +239,24 @@ CloudKit transport clients retain their `CKContainer` for the full client
 lifetime so asynchronous record operations cannot outlive the underlying
 CloudKit client.
 
+Signed-validation runtime evidence uses a separate private CloudKit boundary.
+`RuntimeValidationSession/runtime-validation-session-current-v1` carries the
+bounded manifest-bound session as a compare-and-swap `active` or `cleared`
+document, and the App Group keeps a per-session journal through each receipt
+retention horizon,
+and each `RuntimeReceipt` record uses the deterministic
+`runtime-receipt-<receipt-hash>` name plus the existing redacted receipt payload. These
+record types do not share `CompanionSyncDocument` names or subscriptions.
+Extensions remain local-only receipt writers; the macOS app/refresh agent,
+companion app, Watch app, and tvOS app mirror sessions and drain the App Group
+queue they share with their extensions. Upload acknowledgement, retry deadlines,
+session refresh, cleanup cadence, and retained-session extraction cursor are
+stored in a bounded local sidecar, while downloaded envelopes live in a separate
+inbox that is never considered for upload. Per-process streams are ordered by
+sequence first, assigned a monotonic effective server/observation time, and then
+merged with stable ties. This preserves process order across offline delivery
+without treating device clocks as causal truth.
+
 The watchOS app and complication each read the same sanitized Production
 CloudKit records directly. Both processes also use the same Watch-device App
 Group cache for the latest document and effective display preferences, so a

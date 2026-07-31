@@ -426,6 +426,7 @@ private final class CompanionSyncModel {
     private let remoteStore = CompanionCloudKitSyncStoreFactory.make()
     private let presentationPreferencesRemoteStore: CompanionPresentationRemoteStore?
     private let runtimeReceiptRecorder: RuntimeReceiptRecorder
+    private let runtimeReceiptRelay: RuntimeReceiptRelayCoordinator?
 
     private(set) var result = CompanionSyncLoadResult(document: nil, status: .unknown)
     private(set) var snapshot = WidgetSnapshot.fromCompanionSync(
@@ -446,9 +447,25 @@ private final class CompanionSyncModel {
     private var lastSyncedPresentationPreferences: WidgetDisplayPreferences?
     private var desiredPresentationPreferences: WidgetDisplayPreferences?
 
-    init(runtimeReceiptRecorder: RuntimeReceiptRecorder? = nil) {
+    init(
+        runtimeReceiptRecorder: RuntimeReceiptRecorder? = nil,
+        runtimeReceiptRelay: RuntimeReceiptRelayCoordinator? = nil
+    ) {
+        let deviceClass = companionRuntimeDeviceClass()
+        let appSurface = RuntimeSurface.companionApp(for: deviceClass)
         self.runtimeReceiptRecorder = runtimeReceiptRecorder ?? .appGroupRequired(
-            surface: .companionApp(for: companionRuntimeDeviceClass()),
+            surface: appSurface,
+            appGroupID: ContextPanelLocations.companionAppGroupID
+        )
+        self.runtimeReceiptRelay = runtimeReceiptRelay ?? .appGroupReceiver(
+            remoteStore: RuntimeReceiptCloudKitStoreFactory.make(),
+            expectedManifestID: RuntimeBuildIdentityLoader.load(
+                surface: appSurface
+            )?.build.manifestID,
+            eligibleSurfaces: [
+                appSurface,
+                .companionWidget(for: deviceClass),
+            ],
             appGroupID: ContextPanelLocations.companionAppGroupID
         )
         #if os(iOS)
@@ -510,6 +527,8 @@ private final class CompanionSyncModel {
             let remoteStore = self?.remoteStore
             let presentationPreferencesRemoteStore = self?.presentationPreferencesRemoteStore
             let displayPreferencesStore = self?.displayPreferencesStore
+            let runtimeReceiptRelay = self?.runtimeReceiptRelay
+            async let sessionRelayResult = runtimeReceiptRelay?.synchronizeSession(now: now)
             let (loaded, presentationDocument, localDisplayPreferences) = await Task.detached(priority: .userInitiated) {
                 let localDisplayPreferences = displayPreferencesStore?.loadIfAvailable()
                 async let loaded = CompanionSyncLoader.load(remoteStore: remoteStore, now: now)
@@ -522,6 +541,7 @@ private final class CompanionSyncModel {
             }.value
             guard !Task.isCancelled else { return }
             guard let self else { return }
+            _ = await sessionRelayResult
             let effectiveDisplayPreferences = WidgetDisplayPreferences.companionEffectivePreferences(
                 localOverride: localDisplayPreferences,
                 synced: presentationDocument?.widgetDisplayPreferences ?? loaded.document?.widgetDisplayPreferences
@@ -541,6 +561,9 @@ private final class CompanionSyncModel {
                 displayPreferences: loadedSignature.displayPreferences,
                 presentationDate: now
             )
+            Task { [runtimeReceiptRelay] in
+                _ = await runtimeReceiptRelay?.relayReceipts(now: Date())
+            }
             if let presentationPreferences = presentationDocument?.widgetDisplayPreferences {
                 lastSyncedPresentationPreferences = presentationPreferences
             }

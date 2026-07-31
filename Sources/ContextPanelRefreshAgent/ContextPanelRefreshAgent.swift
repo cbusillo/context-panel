@@ -19,6 +19,7 @@ struct ContextPanelRefreshAgent {
                 "--webhook-credentials-present",
                 "--bookmark-access-summary",
                 "--ingest-antigravity-status-line",
+                "--sync-runtime-receipts",
             ].contains($0)
         }
         if !recognizedUtilityArguments.isEmpty {
@@ -39,6 +40,8 @@ struct ContextPanelRefreshAgent {
                 printBookmarkAccessSummary()
             case "--ingest-antigravity-status-line":
                 ingestAntigravityStatusLine()
+            case "--sync-runtime-receipts":
+                await syncRuntimeReceipts()
             default:
                 Foundation.exit(64)
             }
@@ -56,6 +59,9 @@ struct ContextPanelRefreshAgent {
             settingsURL: ContextPanelLocations.backgroundRefreshSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
         )
         let runtimeReceiptRecorder = RuntimeReceiptRecorder.appDefault(surface: .macOSRefreshAgent)
+        let runtimeReceiptRelay = RuntimeReceiptRelayCoordinator.appDefaultPublisher(
+            remoteStore: RuntimeReceiptCloudKitStoreFactory.make()
+        )
         let runtimeSnapshotStore = JSONSnapshotStore(
             rootDirectory: ContextPanelLocations.snapshotDirectory(appGroupID: ContextPanelLocations.appGroupID)
         )
@@ -73,6 +79,7 @@ struct ContextPanelRefreshAgent {
                     evidence: evidence,
                     observedAt: Date()
                 )
+                _ = await runtimeReceiptRelay.synchronize()
                 reloadContextPanelWidgetTimeline(
                     force: decision.wasRefreshed,
                     lastReloadAt: &lastWidgetTimelineReloadAt
@@ -90,6 +97,7 @@ struct ContextPanelRefreshAgent {
                     evidence: nil,
                     observedAt: Date()
                 )
+                _ = await runtimeReceiptRelay.synchronize()
                 fputs("ContextPanelRefreshAgent: \(ConnectorRedactor.safeErrorDescription(error))\n", stderr)
             }
             Foundation.exit(0)
@@ -117,6 +125,7 @@ struct ContextPanelRefreshAgent {
                     evidence: evidence,
                     observedAt: Date()
                 )
+                _ = await runtimeReceiptRelay.synchronize()
                 reloadContextPanelWidgetTimeline(
                     force: decision.wasRefreshed,
                     lastReloadAt: &lastWidgetTimelineReloadAt
@@ -134,6 +143,7 @@ struct ContextPanelRefreshAgent {
                     evidence: nil,
                     observedAt: Date()
                 )
+                _ = await runtimeReceiptRelay.synchronize()
                 fputs("ContextPanelRefreshAgent: \(ConnectorRedactor.safeErrorDescription(error))\n", stderr)
             }
 
@@ -149,6 +159,29 @@ struct ContextPanelRefreshAgent {
                 return
             }
         }
+    }
+
+    private static func syncRuntimeReceipts() async -> Never {
+        let relay = RuntimeReceiptRelayCoordinator.appDefaultPublisher(
+            remoteStore: RuntimeReceiptCloudKitStoreFactory.make()
+        )
+        let summary = await relay.synchronize()
+        let payload: [String: Any] = [
+            "healthy": summary.isHealthy,
+            "sessionAction": summary.sessionAction.rawValue,
+            "uploadedReceiptCount": summary.uploadedReceiptCount,
+            "downloadedReceiptCount": summary.downloadedReceiptCount,
+            "deletedRemoteReceiptCount": summary.deletedRemoteReceiptCount,
+            "messages": summary.messages,
+        ]
+        if let data = try? JSONSerialization.data(
+            withJSONObject: payload,
+            options: [.prettyPrinted, .sortedKeys]
+        ) {
+            FileHandle.standardOutput.write(data)
+            FileHandle.standardOutput.write(Data("\n".utf8))
+        }
+        Foundation.exit(summary.isHealthy ? 0 : 2)
     }
 
     private static func printBookmarkAccessSummary() {

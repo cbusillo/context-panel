@@ -9,7 +9,7 @@ struct ContextPanelTVApp: App {
 
     var body: some Scene {
         WindowGroup {
-            TVRootView()
+            TVRootView(runtimeReceiptRelay: appDelegate.runtimeReceiptRelay)
         }
     }
 }
@@ -20,11 +20,14 @@ private struct TVRootView: View {
     @AppStorage(TVPreferenceKeys.presentationMode) private var presentationModeRawValue = TVPresentationMode.fullDetail.rawValue
     @AppStorage(TVPreferenceKeys.cloudKitSubscriptionError) private var subscriptionErrorMessage = ""
     @AppStorage(TVPreferenceKeys.remoteNotificationRegistrationError) private var remoteNotificationErrorMessage = ""
-    @State private var model = TVSyncModel()
+    @State private var model: TVSyncModel
     @State private var navigationPath: [String] = []
     @State private var pendingProviderRawValue: String?
 
-    init() {
+    init(runtimeReceiptRelay: RuntimeReceiptRelayCoordinator?) {
+        _model = State(
+            initialValue: TVSyncModel(runtimeReceiptRelay: runtimeReceiptRelay)
+        )
         #if DEBUG
         if let providerRawValue = TVPreviewFixtures.requestedProviderRawValue {
             _navigationPath = State(initialValue: [providerRawValue])
@@ -181,6 +184,7 @@ private final class TVSyncModel {
     private let cacheStore: CompanionSyncStore
     private let receiptStore: TVSyncReceiptStore
     private let runtimeReceiptRecorder: RuntimeReceiptRecorder
+    private let runtimeReceiptRelay: RuntimeReceiptRelayCoordinator?
     private let usesPreviewFixture: Bool
     private let forcesRemoteFailure: Bool
     private var reloadTask: Task<Void, Never>?
@@ -205,11 +209,20 @@ private final class TVSyncModel {
 
     init(
         now: Date = Date(),
-        runtimeReceiptRecorder: RuntimeReceiptRecorder? = nil
+        runtimeReceiptRecorder: RuntimeReceiptRecorder? = nil,
+        runtimeReceiptRelay: RuntimeReceiptRelayCoordinator? = nil
     ) {
         remoteStore = CompanionCloudKitSyncStoreFactory.make()
         self.runtimeReceiptRecorder = runtimeReceiptRecorder ?? .appGroupRequired(
             surface: .tvOSApp,
+            appGroupID: ContextPanelLocations.companionAppGroupID
+        )
+        self.runtimeReceiptRelay = runtimeReceiptRelay ?? .appGroupReceiver(
+            remoteStore: RuntimeReceiptCloudKitStoreFactory.make(),
+            expectedManifestID: RuntimeBuildIdentityLoader.load(
+                surface: .tvOSApp
+            )?.build.manifestID,
+            eligibleSurfaces: [.tvOSApp, .tvOSTopShelf],
             appGroupID: ContextPanelLocations.companionAppGroupID
         )
         let localCacheLocations = TVLocalCacheLocations.live()
@@ -270,7 +283,7 @@ private final class TVSyncModel {
         result = CompanionSyncLoadResult(document: result.document, status: .loading)
         let shouldForceRemoteFailure = forcesRemoteFailure
 
-        reloadTask = Task { [weak self, remoteStore, cacheStore, receiptStore] in
+        reloadTask = Task { [weak self, remoteStore, cacheStore, receiptStore, runtimeReceiptRelay] in
             defer {
                 if let self {
                     isLoading = false
@@ -278,10 +291,12 @@ private final class TVSyncModel {
                 }
             }
 
+            async let sessionRelayResult = runtimeReceiptRelay?.synchronizeSession(now: startedAt)
             let remoteLoad = shouldForceRemoteFailure
                 ? Self.forcedRemoteFailureLoadResult()
                 : await remoteStore.load(now: startedAt)
             guard !Task.isCancelled, let self else { return }
+            _ = await sessionRelayResult
             let completedAt = Date()
             let loaded = remoteLoad.result
             result = loaded
@@ -433,6 +448,9 @@ private final class TVSyncModel {
             outcome: evidence.outcome,
             observedAt: presentationDate
         )
+        Task { [runtimeReceiptRelay] in
+            _ = await runtimeReceiptRelay?.relayReceipts(now: Date())
+        }
     }
 
     private static let stalenessPolicy = SnapshotStoreStalenessPolicy.appDefault(
