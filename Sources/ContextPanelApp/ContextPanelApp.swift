@@ -4209,6 +4209,7 @@ final class ContextPanelAppModel: ObservableObject {
         }
     )
     private let runtimeReceiptRecorder: RuntimeReceiptRecorder
+    private let runtimeReceiptRelay: RuntimeReceiptRelayCoordinator
 
     private var observedSnapshot: UsageSnapshot {
         storedSnapshot?.snapshot ?? UsageSnapshot(generatedAt: Date(), limits: [])
@@ -4404,11 +4405,15 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     init(
-        runtimeReceiptRecorder: RuntimeReceiptRecorder = .appDefault(surface: .macOSApp)
+        runtimeReceiptRecorder: RuntimeReceiptRecorder = .appDefault(surface: .macOSApp),
+        runtimeReceiptRelay: RuntimeReceiptRelayCoordinator? = nil
     ) {
         refreshService = .appDefault(companionRemoteStore: CompanionCloudKitSyncStoreFactory.make())
         refreshRunner = SnapshotRefreshRunner(service: refreshService)
         self.runtimeReceiptRecorder = runtimeReceiptRecorder
+        self.runtimeReceiptRelay = runtimeReceiptRelay ?? .appDefaultPublisher(
+            remoteStore: RuntimeReceiptCloudKitStoreFactory.make()
+        )
     }
 
     func loadSnapshot(reloadWidgetTimelines: Bool = true) {
@@ -4476,6 +4481,9 @@ final class ContextPanelAppModel: ObservableObject {
             stateBranch: stateBranch,
             outcome: outcome
         )
+        Task { [runtimeReceiptRelay] in
+            _ = await runtimeReceiptRelay.synchronize()
+        }
     }
 
     private func refreshObservedBurnRates(now: Date = Date()) {

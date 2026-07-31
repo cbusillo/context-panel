@@ -234,9 +234,11 @@ app and widget, Watch app and complication, and tvOS app and dynamic Top Shelf
 extension can also emit session-gated, privacy-safe proof from their actual
 process boundaries. Receipt collection is dormant by default and remains
 distinct from shared-view and OS placement evidence. Device writers fail closed
-without their App Group; physical-device session delivery, extraction, and
-relay remain later validation-system work. The schema, local queues, operator
-session lifecycle, privacy boundary, and current limits are documented in
+without their App Group; existing entitled host apps now deliver sessions,
+upload extension-local queues, and extract private CloudKit receipts. Production
+schema deployment and signed physical-device proof remain required validation
+steps. The schema, local queues, operator session lifecycle, privacy boundary,
+and current limits are documented in
 [Signed Validation Runtime Receipts](signed-validation-runtime-receipts.md).
 
 The fingerprint contract hashes normalized target slices from `project.yml`,
@@ -481,8 +483,9 @@ environment for `iCloud.com.shinycomputers.contextpanel`. Private database
 records still depend on the container's Production schema, so a production-
 entitled Mac build cannot rely on runtime schema creation.
 
-Before companion TestFlight distribution or App Store Review, validate that
-Production contains the CloudKit-backed companion snapshot record contract:
+Before companion TestFlight distribution, App Store Review, or signed runtime
+receipt relay, validate that Production contains the
+CloudKit-backed companion snapshot and runtime-evidence contracts:
 
 - private database record type `CompanionSyncDocument`
 - fixed versioned record name `current-v2`; current clients also read the
@@ -494,6 +497,16 @@ Production contains the CloudKit-backed companion snapshot record contract:
 - `snapshotSchemaVersion` marked queryable for transport diagnostics and schema
   compatibility
 - `generatedAt` and `publishedAt` as date/time fields
+- private database record type `RuntimeValidationSession` with fixed record name
+  `runtime-validation-session-current-v1`, a bytes `payload`, session/schema
+  identity, bounded session and retention dates, expected manifest ID, publish
+  date, `active`/`cleared` state, state-update date, and payload byte count
+- private database record type `RuntimeReceipt` with deterministic
+  `runtime-receipt-<sha256>` record names, the existing redacted receipt payload,
+  session/receipt/surface/process metadata, observed and retention dates, and
+  payload byte count
+- `RuntimeReceipt.sessionID` and `RuntimeReceipt.retentionExpiresAt` marked
+  queryable for current-session extraction and bounded remote cleanup
 
 Run the offline repo contract check before packaging:
 
@@ -507,8 +520,10 @@ generated from CloudKit Console settings, are scoped to the developer team and
 user, default to a one-year lifetime, and can be revoked from CloudKit Dashboard
 settings. `cktool` can then save the token securely in the Mac Keychain.
 
-The schema gate does not promote a new `CKSubscription` definition. Context
-Panel's Production companion contract currently uses subscription ID
+The schema gate does not promote a new `CKSubscription` definition. Runtime
+session and receipt record types intentionally have no subscription, so uploads,
+deletions, and extraction cannot wake the companion snapshot loop. Context
+Panel's Production companion contract continues to use subscription ID
 `companion-sync-updates` with a query for the fixed legacy `current` wake record.
 The versioned `current-v2` record remains authoritative, while clients reload and
 merge both records after a wake notification. Keep any existing
@@ -566,10 +581,13 @@ files, shell history, GitHub issues, PRs, agent summaries, or release notes.
 
 If the live gate reports a missing record type or field, create and verify the
 schema in Development, then deploy the CloudKit schema to Production before
-re-running Mac publish and companion TestFlight validation. If Production already
-contains an incompatible field type, do not try to patch the existing field in
-place; add a forward-compatible `CompanionSyncDocumentV2` record type or new
-field names and update the app constants and schema contract together.
+re-running Mac publish, receipt relay, and companion TestFlight validation. A
+missing runtime record type is `unknown` evidence, not permission to fall back to
+the companion snapshot record. If Production already contains an incompatible
+field type, do not try to patch the existing field in place; add a
+forward-compatible record type such as `CompanionSyncDocumentV2`, or new field
+names for the affected runtime record, and update the app constants and schema
+contract together.
 
 ### Export-Only Canary
 

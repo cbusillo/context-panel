@@ -100,6 +100,12 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
     private static let retiredProviderBadgesPreferenceKey = "tv-provider-badges-enabled"
 
     private let remoteStore = CompanionCloudKitSyncStoreFactory.make()
+    let runtimeReceiptRelay = RuntimeReceiptRelayCoordinator.appGroupReceiver(
+        remoteStore: RuntimeReceiptCloudKitStoreFactory.make(),
+        expectedManifestID: RuntimeBuildIdentityLoader.load(surface: .tvOSApp)?.build.manifestID,
+        eligibleSurfaces: [.tvOSApp, .tvOSTopShelf],
+        appGroupID: ContextPanelLocations.companionAppGroupID
+    )
     private let notificationCenter = UNUserNotificationCenter.current()
     private var subscriptionRegistrationTask: Task<Void, Never>?
 
@@ -110,6 +116,7 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
         clearRetiredProviderBadge()
         application.registerForRemoteNotifications()
         registerCloudKitSubscription()
+        synchronizeRuntimeReceipts()
         return true
     }
 
@@ -117,6 +124,7 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
         clearRetiredProviderBadge()
         application.registerForRemoteNotifications()
         registerCloudKitSubscription()
+        synchronizeRuntimeReceipts()
     }
 
     func application(
@@ -148,7 +156,7 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
             completionHandler(.noData)
             return
         }
-        Task { [remoteStore] in
+        Task { [remoteStore, runtimeReceiptRelay] in
             let currentUserRecordName: String?
             if notificationMetadata.subscriptionOwnerRecordName == nil {
                 currentUserRecordName = nil
@@ -168,6 +176,9 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
             }
             let result = await TVBackgroundSyncCoordinator(remoteStore: remoteStore).refresh()
             completionHandler(result)
+            Task { [runtimeReceiptRelay] in
+                _ = await runtimeReceiptRelay?.synchronize()
+            }
         }
     }
 
@@ -207,6 +218,12 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
                 )
             }
             subscriptionRegistrationTask = nil
+        }
+    }
+
+    private func synchronizeRuntimeReceipts() {
+        Task { [runtimeReceiptRelay] in
+            _ = await runtimeReceiptRelay?.synchronize()
         }
     }
 

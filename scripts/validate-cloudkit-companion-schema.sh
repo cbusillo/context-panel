@@ -11,8 +11,8 @@ usage() {
 	cat <<'USAGE'
 Usage: scripts/validate-cloudkit-companion-schema.sh [options]
 
-Validates the checked-in companion CloudKit schema contract and, when requested
-and authorized, compares it with the live CloudKit container schema.
+Validates the checked-in companion and runtime-receipt CloudKit schema contract
+and, when requested and authorized, compares it with the live container schema.
 
 Options:
   --environment NAME   CloudKit environment for live validation. Default: production
@@ -76,6 +76,8 @@ if [[ ! -f "$schema_path" ]]; then
 fi
 
 contract_record_type="CompanionSyncDocument"
+runtime_session_record_type="RuntimeValidationSession"
+runtime_receipt_record_type="RuntimeReceipt"
 required_fields=(
 	payload
 	schemaVersion
@@ -85,20 +87,50 @@ required_fields=(
 	publishedAt
 	payloadByteCount
 )
+runtime_session_required_fields=(
+	payload
+	schemaVersion
+	sessionSchemaVersion
+	sessionID
+	createdAt
+	expiresAt
+	retentionExpiresAt
+	expectedManifestID
+	publishedAt
+	sessionState
+	stateUpdatedAt
+	payloadByteCount
+)
+runtime_receipt_required_fields=(
+	payload
+	schemaVersion
+	receiptSchemaVersion
+	sessionID
+	receiptID
+	surface
+	observedAt
+	retentionExpiresAt
+	processInstanceID
+	processSequence
+	payloadByteCount
+)
 
 required_field_type() {
 	case "$1" in
 	payload)
 		printf 'BYTES\n'
 		;;
-	schemaVersion | documentSchemaVersion | snapshotSchemaVersion | payloadByteCount)
+	schemaVersion | documentSchemaVersion | snapshotSchemaVersion | sessionSchemaVersion | receiptSchemaVersion | processSequence | payloadByteCount)
 		printf 'INT64\n'
 		;;
-	generatedAt | publishedAt)
+	generatedAt | publishedAt | createdAt | expiresAt | observedAt | retentionExpiresAt | stateUpdatedAt)
 		printf 'TIMESTAMP\n'
 		;;
+	sessionID | receiptID | surface | expectedManifestID | processInstanceID | sessionState)
+		printf 'STRING\n'
+		;;
 	*)
-		echo "unknown CloudKit companion schema field: $1" >&2
+		echo "unknown CloudKit schema field: $1" >&2
 		exit 1
 		;;
 	esac
@@ -204,8 +236,54 @@ if [[ "$contract_queryable" != "true" ]]; then
 	exit 1
 fi
 
+runtime_session_record_name="$(jq -r --arg name "$runtime_session_record_type" '.recordTypes[]? | select(.name == $name) | .recordName // empty' "$schema_path")"
+if [[ "$runtime_session_record_name" != "runtime-validation-session-current-v1" ]]; then
+	echo "schema contract record name mismatch: expected runtime-validation-session-current-v1, found ${runtime_session_record_name:-missing}" >&2
+	exit 1
+fi
+runtime_receipt_record_name_pattern="$(jq -r --arg name "$runtime_receipt_record_type" '.recordTypes[]? | select(.name == $name) | .recordNamePattern // empty' "$schema_path")"
+if [[ "$runtime_receipt_record_name_pattern" != "runtime-receipt-<sha256>" ]]; then
+	echo "schema contract record name pattern mismatch: expected runtime-receipt-<sha256>, found ${runtime_receipt_record_name_pattern:-missing}" >&2
+	exit 1
+fi
+for record_type in "$runtime_session_record_type" "$runtime_receipt_record_type"; do
+	if ! jq -e --arg name "$record_type" '.recordTypes[]? | select(.name == $name)' "$schema_path" >/dev/null; then
+		echo "schema contract is missing record type: $record_type" >&2
+		exit 1
+	fi
+done
+for field in "${runtime_session_required_fields[@]}"; do
+	expected_type="$(required_field_type "$field")"
+	actual_type="$(jq -r --arg record "$runtime_session_record_type" --arg field "$field" \
+		'.recordTypes[]? | select(.name == $record) | .fields[]? | select(.name == $field) | .type // empty' \
+		"$schema_path")"
+	if [[ "$actual_type" != "$expected_type" ]]; then
+		echo "schema contract field mismatch: $runtime_session_record_type.$field expected $expected_type, found ${actual_type:-missing}" >&2
+		exit 1
+	fi
+done
+for field in "${runtime_receipt_required_fields[@]}"; do
+	expected_type="$(required_field_type "$field")"
+	actual_type="$(jq -r --arg record "$runtime_receipt_record_type" --arg field "$field" \
+		'.recordTypes[]? | select(.name == $record) | .fields[]? | select(.name == $field) | .type // empty' \
+		"$schema_path")"
+	if [[ "$actual_type" != "$expected_type" ]]; then
+		echo "schema contract field mismatch: $runtime_receipt_record_type.$field expected $expected_type, found ${actual_type:-missing}" >&2
+		exit 1
+	fi
+done
+for field in sessionID retentionExpiresAt; do
+	contract_queryable="$(jq -r --arg record "$runtime_receipt_record_type" --arg field "$field" \
+		'.recordTypes[]? | select(.name == $record) | .fields[]? | select(.name == $field) | .queryable // false' \
+		"$schema_path")"
+	if [[ "$contract_queryable" != "true" ]]; then
+		echo "schema contract field must be queryable: $runtime_receipt_record_type.$field" >&2
+		exit 1
+	fi
+done
+
 if [[ "$live" != "true" ]]; then
-	echo "CloudKit companion schema contract OK: $schema_path"
+	echo "CloudKit companion and runtime receipt schema contract OK: $schema_path"
 	exit 0
 fi
 
@@ -248,4 +326,31 @@ if ! live_schema_field_is_queryable "$live_schema" "$contract_record_type" "$sub
 	exit 1
 fi
 
-echo "CloudKit companion live schema contains $contract_record_type with required field types and queryable subscription field in $environment."
+for record_type in "$runtime_session_record_type" "$runtime_receipt_record_type"; do
+	if ! live_schema_has_record_type "$live_schema" "$record_type"; then
+		echo "live CloudKit $environment schema is missing record type: $record_type" >&2
+		exit 1
+	fi
+done
+for field in "${runtime_session_required_fields[@]}"; do
+	expected_type="$(required_field_type "$field")"
+	if ! live_schema_has_field_type "$live_schema" "$runtime_session_record_type" "$field" "$expected_type"; then
+		echo "live CloudKit $environment schema is missing field/type: $runtime_session_record_type.$field $expected_type" >&2
+		exit 1
+	fi
+done
+for field in "${runtime_receipt_required_fields[@]}"; do
+	expected_type="$(required_field_type "$field")"
+	if ! live_schema_has_field_type "$live_schema" "$runtime_receipt_record_type" "$field" "$expected_type"; then
+		echo "live CloudKit $environment schema is missing field/type: $runtime_receipt_record_type.$field $expected_type" >&2
+		exit 1
+	fi
+done
+for field in sessionID retentionExpiresAt; do
+	if ! live_schema_field_is_queryable "$live_schema" "$runtime_receipt_record_type" "$field"; then
+		echo "live CloudKit $environment schema field is not queryable: $runtime_receipt_record_type.$field" >&2
+		exit 1
+	fi
+done
+
+echo "CloudKit live schema contains companion sync, runtime session, and runtime receipt contracts with required queryable fields in $environment."

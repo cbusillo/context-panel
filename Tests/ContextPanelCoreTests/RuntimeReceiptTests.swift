@@ -495,7 +495,10 @@ import Testing
     #expect(runtimeRecord(recorder, at: now) == .inactiveSession)
     try sessionStore.save(runtimeSession(now: now, manifestID: runtimeHash("9")))
     #expect(runtimeRecord(recorder, at: now) == .inactiveSession)
-    try sessionStore.save(runtimeSession(now: now))
+    try sessionStore.save(runtimeSession(
+        id: UUID(uuidString: "10000000-0000-0000-0000-000000000002")!,
+        now: now
+    ))
     #expect(runtimeRecord(recorder, at: now) == .saved)
 
     let receipts = receiptStore.loadReceipts()

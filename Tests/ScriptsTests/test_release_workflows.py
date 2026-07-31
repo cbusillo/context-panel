@@ -1188,6 +1188,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
     def test_cloudkit_companion_schema_contract_matches_app_constants(self):
         schema = json.loads(self.read("CloudKit/companion-sync.schema.json"))
         remote_sync = self.read("Sources/ContextPanelCore/CompanionRemoteSync.swift")
+        runtime_sync = self.read("Sources/ContextPanelCore/RuntimeReceiptRemoteSync.swift")
 
         self.assertEqual(schema["containerIdentifier"], "iCloud.com.shinycomputers.contextpanel")
         self.assertEqual(schema["database"], "private")
@@ -1212,6 +1213,29 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         for field_name in fields:
             self.assertIn(f'= "{field_name}"', remote_sync)
 
+        session_record = record_types["RuntimeValidationSession"]
+        self.assertEqual(
+            session_record["recordName"],
+            "runtime-validation-session-current-v1",
+        )
+        session_fields = {field["name"]: field["type"] for field in session_record["fields"]}
+        self.assertEqual(session_fields["retentionExpiresAt"], "TIMESTAMP")
+        self.assertEqual(session_fields["sessionState"], "STRING")
+        self.assertEqual(session_fields["stateUpdatedAt"], "TIMESTAMP")
+        receipt_record = record_types["RuntimeReceipt"]
+        self.assertEqual(
+            receipt_record["recordNamePattern"],
+            "runtime-receipt-<sha256>",
+        )
+        receipt_fields = {field["name"]: field for field in receipt_record["fields"]}
+        self.assertTrue(receipt_fields["sessionID"]["queryable"])
+        self.assertTrue(receipt_fields["retentionExpiresAt"]["queryable"])
+        self.assertIn('cloudKitSessionRecordType = "RuntimeValidationSession"', runtime_sync)
+        self.assertIn('cloudKitReceiptRecordType = "RuntimeReceipt"', runtime_sync)
+        for record in (session_record, receipt_record):
+            for field in record["fields"]:
+                self.assertIn(f'= "{field["name"]}"', runtime_sync)
+
     def test_cloudkit_companion_schema_validator_documents_live_cktool_gate(self):
         script = self.read("scripts/validate-cloudkit-companion-schema.sh")
         release_docs = self.read("docs/release.md")
@@ -1221,6 +1245,8 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("live_schema_has_field_type", script)
         self.assertIn("live_schema_field_is_queryable", script)
         self.assertIn("CompanionSyncDocument", script)
+        self.assertIn("RuntimeValidationSession", script)
+        self.assertIn("RuntimeReceipt", script)
         self.assertIn("iCloud.com.shinycomputers.contextpanel", script)
         self.assertIn("CloudKit Production Schema Gate", release_docs)
         self.assertIn("scripts/validate-cloudkit-companion-schema.sh --live --environment production", release_docs)
@@ -1237,11 +1263,38 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
   publishedAt TIMESTAMP;
   payloadByteCount INT64;
 }
+RECORD TYPE RuntimeValidationSession {
+  payload BYTES;
+  schemaVersion INT64;
+  sessionSchemaVersion INT64;
+  sessionID STRING;
+  createdAt TIMESTAMP;
+  expiresAt TIMESTAMP;
+  retentionExpiresAt TIMESTAMP;
+  expectedManifestID STRING;
+  publishedAt TIMESTAMP;
+  sessionState STRING;
+  stateUpdatedAt TIMESTAMP;
+  payloadByteCount INT64;
+}
+RECORD TYPE RuntimeReceipt {
+  payload BYTES;
+  schemaVersion INT64;
+  receiptSchemaVersion INT64;
+  sessionID STRING QUERYABLE;
+  receiptID STRING;
+  surface STRING;
+  observedAt TIMESTAMP;
+  retentionExpiresAt TIMESTAMP QUERYABLE;
+  processInstanceID STRING;
+  processSequence INT64;
+  payloadByteCount INT64;
+}
 """
         )
 
         self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertIn("queryable subscription field in production", result.stdout)
+        self.assertIn("runtime receipt contracts", result.stdout)
 
     def test_cloudkit_companion_schema_validator_forwards_management_token(self):
         result = self.run_cloudkit_schema_validator_with_fake_cktool(
@@ -1252,6 +1305,33 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
   snapshotSchemaVersion INT64 QUERYABLE;
   generatedAt TIMESTAMP;
   publishedAt TIMESTAMP;
+  payloadByteCount INT64;
+}
+RECORD TYPE RuntimeValidationSession {
+  payload BYTES;
+  schemaVersion INT64;
+  sessionSchemaVersion INT64;
+  sessionID STRING;
+  createdAt TIMESTAMP;
+  expiresAt TIMESTAMP;
+  retentionExpiresAt TIMESTAMP;
+  expectedManifestID STRING;
+  publishedAt TIMESTAMP;
+  sessionState STRING;
+  stateUpdatedAt TIMESTAMP;
+  payloadByteCount INT64;
+}
+RECORD TYPE RuntimeReceipt {
+  payload BYTES;
+  schemaVersion INT64;
+  receiptSchemaVersion INT64;
+  sessionID STRING QUERYABLE;
+  receiptID STRING;
+  surface STRING;
+  observedAt TIMESTAMP;
+  retentionExpiresAt TIMESTAMP QUERYABLE;
+  processInstanceID STRING;
+  processSequence INT64;
   payloadByteCount INT64;
 }
 """,
@@ -1296,6 +1376,37 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("snapshotSchemaVersion", result.stdout)
         self.assertIn("not queryable", result.stdout)
+
+    def test_cloudkit_schema_validator_rejects_missing_runtime_receipt_boundary(self):
+        result = self.run_cloudkit_schema_validator_with_fake_cktool(
+            """RECORD TYPE CompanionSyncDocument {
+  payload BYTES;
+  schemaVersion INT64;
+  documentSchemaVersion INT64;
+  snapshotSchemaVersion INT64 QUERYABLE;
+  generatedAt TIMESTAMP;
+  publishedAt TIMESTAMP;
+  payloadByteCount INT64;
+}
+RECORD TYPE RuntimeValidationSession {
+  payload BYTES;
+  schemaVersion INT64;
+  sessionSchemaVersion INT64;
+  sessionID STRING;
+  createdAt TIMESTAMP;
+  expiresAt TIMESTAMP;
+  retentionExpiresAt TIMESTAMP;
+  expectedManifestID STRING;
+  publishedAt TIMESTAMP;
+  sessionState STRING;
+  stateUpdatedAt TIMESTAMP;
+  payloadByteCount INT64;
+}
+"""
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("missing record type: RuntimeReceipt", result.stdout)
 
     def test_app_store_export_preserves_archived_build_number(self):
         upload_script = self.read("scripts/upload-app-store-connect-macos-app.sh")

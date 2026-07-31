@@ -20,9 +20,11 @@ Implemented writers cover these process boundaries:
 - the tvOS app from the exact runway publication shown by the shipping app
 - the dynamic Top Shelf extension from `loadTopShelfContent()` after it selects its final content or nil result
 
-Validation-session delivery to companion devices, receipt extraction, host
-relay, and private CloudKit receipt transport remain follow-up work under issue
-#520.
+Validation sessions and receipts cross devices through two dedicated private
+CloudKit record types. Extensions still write only to their local App Group;
+the macOS app/refresh agent and the companion, Watch, and tvOS host apps mirror
+sessions and drain those local queues. Receipt records never share the companion
+snapshot record type, record names, or subscription.
 
 ## Receipt Contract
 
@@ -62,6 +64,14 @@ without assuming that equal version strings identify equal artifacts.
 
 Receipts never contain account names or IDs, credentials, provider payloads, raw
 errors, device UDIDs, filesystem paths, or App Store Connect object IDs.
+
+The CloudKit relay stores the existing receipt JSON as bytes plus only bounded
+transport metadata: schema versions, random session/process identifiers,
+surface, timestamps, sequence, receipt hash, and payload size. Deterministic
+`runtime-receipt-<sha256>` record names make retry idempotent without introducing a
+device identifier. The session and receipt record types have no subscriptions,
+so receipt upload or extraction cannot trigger the companion snapshot update
+loop.
 
 Presentation digests are computed from a canonical sanitized structure. The
 structure may include generated timestamps, provider type, closed status enums,
@@ -118,26 +128,51 @@ Open a session for the canonical installed Mac build with:
 scripts/context-panel-runtime-session.py start
 ```
 
+To target every surface embedded in the installed manifest, use:
+
+```sh
+scripts/context-panel-runtime-session.py start --all-surfaces
+```
+
 The helper reads the embedded manifest from
 `/Applications/Context Panel.app`, enables the three macOS surfaces, and writes
 the session to the canonical app-group container. It does not install, launch,
 replace, sign, or modify the app bundle.
 
+Publish or clear the current session, upload pending Mac receipts, and extract
+current-session receipts through the canonical signed refresh agent with:
+
+```sh
+scripts/context-panel-runtime-session.py sync
+```
+
+The helper itself never receives CloudKit credentials or entitlements. It asks
+the installed signed refresh agent to use its existing Production CloudKit and
+App Group authority, validates the agent's closed result contract, and reports a
+degraded result without printing raw CloudKit errors.
+
 Companion, Watch, tvOS, widget, complication, and Top Shelf writers require the
 signed companion App Group and fail closed when that shared container is
-unavailable. They read the same session schema from the device-local companion
-container:
+unavailable. Entitled host apps load the active private CloudKit session and
+mirror the same schema into the device-local companion container:
 
 ```text
 group.com.shinycomputers.contextpanel/Context Panel/Validation
 ```
 
-The current operator helper does not deliver a session to a physical companion,
-Watch, or Apple TV device and does not extract their receipts. Those writers
-therefore remain dormant until a later validation-session delivery/private relay
-slice supplies the exact manifest-bound session on that device. Do not copy a
-Mac session file manually and treat the resulting receipt as coordinated
-signed-device evidence.
+The companion app mirrors sessions for its app and widget surfaces. The Watch
+app mirrors sessions for the Watch app and complication. The tvOS app mirrors
+sessions for the app and Top Shelf. Each host rejects a session whose manifest
+does not match its loaded build or whose enabled surfaces do not intersect the
+local pair. A missing remote session clears the active local session only after
+a successful CloudKit read; transient failures preserve the still-valid local
+session until expiration.
+
+After publishing a session, open each companion host once before expecting its
+extension receipt. Open the Watch app before the complication and the tvOS app
+before Top Shelf; the existing post-install Watch restart rule still applies.
+Receipt silence before host delivery remains unknown/waiting rather than a
+failed extension execution.
 
 Inspect the current session and structurally valid observed surface count with:
 
@@ -145,14 +180,31 @@ Inspect the current session and structurally valid observed surface count with:
 scripts/context-panel-runtime-session.py status
 ```
 
+Export the validated, de-duplicated local and CloudKit inbox as a redacted JSON
+bundle with:
+
+```sh
+scripts/context-panel-runtime-session.py export --output runtime-receipts.json
+```
+
+Within one process, `processSequence` is authoritative even when offline upload
+changes server arrival order. Across processes/devices, the export uses the
+CloudKit server receipt time and retains the device-observed timestamp without
+claiming cross-device causality.
+
 Close collection without deleting queued receipts with:
 
 ```sh
 scripts/context-panel-runtime-session.py stop
+scripts/context-panel-runtime-session.py sync
 ```
 
+The second command writes a compare-and-swap remote tombstone for the closed
+session and performs one final upload/extraction pass using the retained session
+identity.
+
 Use `--manifest`, `--root`, and explicit `--surface` arguments only for isolated
-fixtures or when a later coordinator supplies another exact signed-build
+fixtures or when a coordinator supplies another exact signed-build
 manifest. Do not use a source manifest to claim execution by an installed build.
 
 ## Local Storage
@@ -176,6 +228,13 @@ awaiting relay from an earlier session. A separate hard safety cap removes the
 oldest current-schema receipts only if all active session queues collectively
 exceed 4,096 records. Stopping a session otherwise leaves receipts available
 until their original deadline and preserves process ordering.
+
+Every valid session is also stored in the bounded `Runtime Sessions` journal.
+The operator refuses to start a second active session and refuses a new session
+when 128 unexpired session identities are already retained, rather than silently
+discarding evidence. Use `status --session-id <uuid>` or
+`export --session-id <uuid>` to inspect an earlier retained session after a later
+session begins.
 
 Refresh receipts use the exact `StoredUsageSnapshot` captured by the refresh
 runner while making its decision. They do not reload the mutable snapshot after
@@ -204,6 +263,26 @@ extension execution; only the extension's `loadTopShelfContent()` callback can
 write a `tvos.top-shelf` receipt. Missing documents remain degraded, renderer
 errors can report failure, and OS cancellation remains receipt silence.
 
+Entitled hosts acknowledge only receipt IDs that CloudKit accepted or already
+stored with an identical payload. A small atomic sidecar keeps acknowledged IDs
+until their receipt retention deadline, records capped exponential retry and
+CloudKit retry-after deadlines, and schedules session refresh, extraction, and
+cleanup work. This lets an offline failure retry in order without repeatedly
+uploading the oldest batch. Retained-session extraction advances through a
+persisted round-robin cursor while always including the active session.
+Downloaded CloudKit envelopes are written to a separate
+`Remote Runtime Receipts` inbox and are never read by the upload path. Local copies are removed
+after their original receipt deadline. Remote copies become eligible at the same
+deadline and are deleted in bounded batches by the next successful macOS host
+cleanup.
+
+The singleton remote session document uses CloudKit change-tag compare-and-swap
+updates. Closing writes an `active`/`cleared` tombstone state instead of deleting
+the record, so an older publish or clear cannot overwrite a newer session. The
+receiver applies the server `stateUpdatedAt` revision and its local mirror update
+under one App Group lock; an unversioned missing record does not erase a valid
+local mirror.
+
 ## Evidence Limits
 
 A receipt proves that the named exact-build process reached the recorded code
@@ -229,6 +308,7 @@ swift test --filter \
 uv run python -m unittest \
   Tests.ScriptsTests.test_runtime_receipts \
   Tests.ScriptsTests.test_runtime_session
+scripts/validate-cloudkit-companion-schema.sh
 ```
 
 The Swift tests cover manifest and loaded-executable binding, redaction,
@@ -236,8 +316,13 @@ deterministic digesting, widget preferences, companion platform/source mapping,
 stable no-document companion states, effective visionOS appearance, Watch
 deadline provenance, exact complication families, tvOS local-cache provenance,
 Top Shelf privacy/freshness state, exact refresh evidence, session expiration,
-loaded-executable-aware throttling, process ordering, tamper rejection, and
-per-session retention. Script tests verify every shipping process hook, required
-App Group routing, strict receipt validation, and the operator session lifecycle.
+loaded-executable-aware throttling, process ordering, tamper rejection,
+host-only relay, de-duplication, retry acknowledgement, remote inbox isolation,
+and per-session retention. Script tests verify every shipping process hook,
+required App Group routing, strict local/remote receipt validation, and the
+operator session/sync/export lifecycle. The checked-in CloudKit gate covers the
+companion snapshot plus the dedicated runtime session and receipt record types.
+Its `--live --environment production` form is read-only and must pass before a
+signed release relies on the relay.
 Generic iOS, visionOS, watchOS, and tvOS Xcode builds remain required because
 SwiftPM tests run only host-compatible modules.

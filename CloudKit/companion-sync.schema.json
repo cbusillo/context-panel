@@ -36,6 +36,112 @@
           "type": "INT64"
         }
       ]
+    },
+    {
+      "name": "RuntimeValidationSession",
+      "recordName": "runtime-validation-session-current-v1",
+      "fields": [
+        {
+          "name": "payload",
+          "type": "BYTES"
+        },
+        {
+          "name": "schemaVersion",
+          "type": "INT64"
+        },
+        {
+          "name": "sessionSchemaVersion",
+          "type": "INT64"
+        },
+        {
+          "name": "sessionID",
+          "type": "STRING"
+        },
+        {
+          "name": "createdAt",
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "expiresAt",
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "retentionExpiresAt",
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "expectedManifestID",
+          "type": "STRING"
+        },
+        {
+          "name": "publishedAt",
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "sessionState",
+          "type": "STRING"
+        },
+        {
+          "name": "stateUpdatedAt",
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "payloadByteCount",
+          "type": "INT64"
+        }
+      ]
+    },
+    {
+      "name": "RuntimeReceipt",
+      "recordNamePattern": "runtime-receipt-<sha256>",
+      "fields": [
+        {
+          "name": "payload",
+          "type": "BYTES"
+        },
+        {
+          "name": "schemaVersion",
+          "type": "INT64"
+        },
+        {
+          "name": "receiptSchemaVersion",
+          "type": "INT64"
+        },
+        {
+          "name": "sessionID",
+          "type": "STRING",
+          "queryable": true
+        },
+        {
+          "name": "receiptID",
+          "type": "STRING"
+        },
+        {
+          "name": "surface",
+          "type": "STRING"
+        },
+        {
+          "name": "observedAt",
+          "type": "TIMESTAMP"
+        },
+        {
+          "name": "retentionExpiresAt",
+          "type": "TIMESTAMP",
+          "queryable": true
+        },
+        {
+          "name": "processInstanceID",
+          "type": "STRING"
+        },
+        {
+          "name": "processSequence",
+          "type": "INT64"
+        },
+        {
+          "name": "payloadByteCount",
+          "type": "INT64"
+        }
+      ]
     }
   ]
 }

@@ -559,12 +559,13 @@ public struct RuntimeReceipt: Codable, Equatable, Identifiable, Sendable {
         )
     }
 
-    var isStructurallyValid: Bool {
+    public var isStructurallyValid: Bool {
         schemaVersion == Self.schemaVersion
             && evidenceClass == .actualRuntime
             && RuntimeSurfaceFingerprints.isSHA256(id)
             && RuntimeSurfaceFingerprints.isSHA256(presentationDigest)
             && processSequence > 0
+            && processSequence <= UInt64(Int64.max)
             && buildIdentity.isValid
             && sessionCreatedAt <= sessionExpiresAt
             && sessionExpiresAt.timeIntervalSince(sessionCreatedAt) <= RuntimeValidationSession.maximumDuration
@@ -588,6 +589,51 @@ public struct RuntimeReceipt: Codable, Equatable, Identifiable, Sendable {
                 stateBranch: stateBranch,
                 outcome: outcome
             )
+    }
+
+    public static func ordered(_ receipts: [RuntimeReceipt]) -> [RuntimeReceipt] {
+        struct OrderedReceipt {
+            let receipt: RuntimeReceipt
+            let effectiveObservedAt: Date
+        }
+
+        var orderedReceipts: [OrderedReceipt] = []
+        for processReceipts in Dictionary(grouping: receipts, by: \.processInstanceID).values {
+            var effectiveObservedAt = Date.distantPast
+            for receipt in processReceipts.sorted(by: processOrder) {
+                effectiveObservedAt = max(effectiveObservedAt, receipt.observedAt)
+                orderedReceipts.append(
+                    OrderedReceipt(
+                        receipt: receipt,
+                        effectiveObservedAt: effectiveObservedAt
+                    )
+                )
+            }
+        }
+
+        return orderedReceipts.sorted { lhs, rhs in
+            if lhs.effectiveObservedAt != rhs.effectiveObservedAt {
+                return lhs.effectiveObservedAt < rhs.effectiveObservedAt
+            }
+            if lhs.receipt.processInstanceID != rhs.receipt.processInstanceID {
+                return lhs.receipt.processInstanceID.uuidString
+                    < rhs.receipt.processInstanceID.uuidString
+            }
+            if lhs.receipt.processSequence != rhs.receipt.processSequence {
+                return lhs.receipt.processSequence < rhs.receipt.processSequence
+            }
+            return lhs.receipt.id < rhs.receipt.id
+        }.map(\.receipt)
+    }
+
+    private static func processOrder(_ lhs: RuntimeReceipt, _ rhs: RuntimeReceipt) -> Bool {
+        if lhs.processSequence != rhs.processSequence {
+            return lhs.processSequence < rhs.processSequence
+        }
+        if lhs.observedAt != rhs.observedAt {
+            return lhs.observedAt < rhs.observedAt
+        }
+        return lhs.id < rhs.id
     }
 
     var rateLimitKey: String {

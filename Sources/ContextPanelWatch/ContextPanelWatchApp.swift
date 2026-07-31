@@ -71,6 +71,7 @@ private struct WatchRootView: View {
 private final class WatchSyncModel {
     private let companionLoader: WatchCompanionLoader
     private let runtimeReceiptRecorder: RuntimeReceiptRecorder
+    private let runtimeReceiptRelay: RuntimeReceiptRelayCoordinator?
     private var reloadTask: Task<Void, Never>?
     private var needsReloadAfterCurrentTask = false
 
@@ -83,12 +84,23 @@ private final class WatchSyncModel {
     private(set) var lastSyncErrorMessage: String?
     private(set) var isLoading = false
 
-    init(runtimeReceiptRecorder: RuntimeReceiptRecorder? = nil) {
+    init(
+        runtimeReceiptRecorder: RuntimeReceiptRecorder? = nil,
+        runtimeReceiptRelay: RuntimeReceiptRelayCoordinator? = nil
+    ) {
         let cache = WatchCompanionCache()
         let remoteStore = CompanionCloudKitSyncStoreFactory.make()
         let presentationStore = CompanionCloudKitSyncStoreFactory.makePresentationPreferences()
         self.runtimeReceiptRecorder = runtimeReceiptRecorder ?? .appGroupRequired(
             surface: .watchOSApp,
+            appGroupID: ContextPanelLocations.watchAppGroupID
+        )
+        self.runtimeReceiptRelay = runtimeReceiptRelay ?? .appGroupReceiver(
+            remoteStore: RuntimeReceiptCloudKitStoreFactory.make(),
+            expectedManifestID: RuntimeBuildIdentityLoader.load(
+                surface: .watchOSApp
+            )?.build.manifestID,
+            eligibleSurfaces: [.watchOSApp, .watchOSComplication],
             appGroupID: ContextPanelLocations.watchAppGroupID
         )
         companionLoader = WatchCompanionLoader(
@@ -117,7 +129,7 @@ private final class WatchSyncModel {
         displayResult = CompanionSyncLoadResult(document: displayResult.document, status: .loading)
         lastSyncErrorMessage = nil
 
-        reloadTask = Task { [weak self, companionLoader] in
+        reloadTask = Task { [weak self, companionLoader, runtimeReceiptRelay] in
             defer {
                 if let self {
                     isLoading = false
@@ -127,9 +139,11 @@ private final class WatchSyncModel {
                     }
                 }
             }
+            async let sessionRelayResult = runtimeReceiptRelay?.synchronizeSession(now: now)
             let loaded = await companionLoader.load(now: now)
             guard !Task.isCancelled else { return }
             guard let self else { return }
+            _ = await sessionRelayResult
             result = loaded.result
             displayResult = loaded.result
             lastSyncErrorMessage = loaded.result.errorMessage
@@ -150,6 +164,9 @@ private final class WatchSyncModel {
                 displayPreferences: effectiveDisplayPreferences,
                 presentationDate: now
             )
+            Task { [runtimeReceiptRelay] in
+                _ = await runtimeReceiptRelay?.relayReceipts(now: Date())
+            }
             if WatchComplicationTimelineReloadPolicy.shouldReload(after: loaded) {
                 WidgetCenter.shared.reloadTimelines(ofKind: ContextPanelWatchWidgetIdentity.kind)
             }
