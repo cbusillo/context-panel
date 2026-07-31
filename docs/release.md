@@ -484,8 +484,8 @@ records still depend on the container's Production schema, so a production-
 entitled Mac build cannot rely on runtime schema creation.
 
 Before companion TestFlight distribution, App Store Review, or signed runtime
-receipt relay, validate that Production contains the CloudKit-backed companion
-snapshot and runtime-evidence contracts:
+receipt relay, validate that Production contains the
+CloudKit-backed companion snapshot and runtime-evidence contracts:
 
 - private database record type `CompanionSyncDocument`
 - fixed versioned record name `current-v2`; current clients also read the
