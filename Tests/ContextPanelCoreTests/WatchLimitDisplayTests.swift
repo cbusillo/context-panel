@@ -687,6 +687,189 @@ import Testing
     #expect(weekly.status == .unknown)
 }
 
+@Test func watchComplicationKeepsOpenAICapacityAheadOfAnthropicAccessAlert() throws {
+    let generatedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let resetsAt = generatedAt.addingTimeInterval(2 * 24 * 3_600)
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: generatedAt,
+        limits: [
+            openAIWeeklyPercentLimit(accountID: "primary", used: 36),
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "claude",
+                accountName: "Claude",
+                label: "Claude weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 100,
+                limit: 100,
+                resetsAt: resetsAt,
+                lastUpdatedAt: generatedAt,
+                confidence: .observed
+            ),
+        ],
+        reports: [
+            StoredProviderReport(
+                provider: .anthropic,
+                accountID: "claude",
+                accountName: "Claude",
+                generatedAt: generatedAt,
+                status: .limited,
+                accessState: ProviderAccessState(kind: .blockedUntilReset, resetsAt: resetsAt),
+                errorMessage: nil
+            ),
+        ],
+        status: .limited,
+        message: "Claude limited"
+    )
+    #expect(snapshot.primaryProviderAccessAlert?.provider == .anthropic)
+
+    let compactContent = WatchComplicationContent.mainLane(
+        from: snapshot,
+        preferences: .defaultPreferences,
+        maximumCount: 1
+    )
+    let rectangularContent = WatchComplicationContent.mainLane(
+        from: snapshot,
+        preferences: .defaultPreferences,
+        maximumCount: 2
+    )
+    let inlineContent = WatchComplicationContent.inline(
+        from: snapshot,
+        preferences: .defaultPreferences
+    )
+
+    let primary = try #require(compactContent.limits.first)
+    #expect(primary.provider == .openAI)
+    #expect(primary.remainingText == "64%")
+    #expect(compactContent.providerAccessFallback == nil)
+    #expect(rectangularContent.providerAccessFallback == nil)
+    #expect(inlineContent.providerAccessFallback == nil)
+}
+
+@Test func watchComplicationUsesProviderAccessWhenSelectedCapacityIsUnavailable() throws {
+    let generatedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let resetsAt = generatedAt.addingTimeInterval(2 * 24 * 3_600)
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: generatedAt,
+        limits: [],
+        reports: [
+            StoredProviderReport(
+                provider: .anthropic,
+                accountID: "claude",
+                accountName: "Claude",
+                generatedAt: generatedAt,
+                status: .limited,
+                accessState: ProviderAccessState(kind: .blockedUntilReset, resetsAt: resetsAt),
+                errorMessage: nil
+            ),
+        ],
+        status: .limited,
+        message: "Claude limited"
+    )
+
+    let compactContent = WatchComplicationContent.mainLane(
+        from: snapshot,
+        preferences: .defaultPreferences,
+        maximumCount: 1
+    )
+    let rectangularContent = WatchComplicationContent.mainLane(
+        from: snapshot,
+        preferences: .defaultPreferences,
+        maximumCount: 2
+    )
+    let inlineContent = WatchComplicationContent.inline(
+        from: snapshot,
+        preferences: .defaultPreferences
+    )
+
+    for content in [compactContent, rectangularContent, inlineContent] {
+        #expect(content.limits.first?.remainingCapacity.isIndeterminate == true)
+        #expect(content.providerAccessFallback?.provider == .anthropic)
+        #expect(content.providerAccessFallback?.accessState.kind == .blockedUntilReset)
+    }
+}
+
+@Test func watchComplicationPreservesKnownPooledCapacityForDegradedProviderAccess() throws {
+    let generatedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: generatedAt,
+        limits: [
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "degraded",
+                accountName: "Degraded Claude",
+                label: "Claude weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 72,
+                limit: 100,
+                lastUpdatedAt: generatedAt,
+                confidence: .observed
+            ),
+            UsageLimit(
+                provider: .anthropic,
+                accountID: "available",
+                accountName: "Available Claude",
+                label: "Claude weekly",
+                windowLabel: "Weekly",
+                unit: .percent,
+                used: 0,
+                limit: 100,
+                lastUpdatedAt: generatedAt,
+                confidence: .observed
+            ),
+        ],
+        reports: [
+            StoredProviderReport(
+                provider: .anthropic,
+                accountID: "degraded",
+                accountName: "Degraded Claude",
+                generatedAt: generatedAt,
+                status: .healthy,
+                accessState: ProviderAccessState(kind: .degraded),
+                errorMessage: nil
+            ),
+            StoredProviderReport(
+                provider: .anthropic,
+                accountID: "available",
+                accountName: "Available Claude",
+                generatedAt: generatedAt,
+                status: .healthy,
+                accessState: ProviderAccessState(kind: .available),
+                errorMessage: nil
+            ),
+        ],
+        status: .unknown,
+        message: "Claude availability uncertain"
+    )
+    let preferences = WidgetDisplayPreferences(mainLimits: [
+        WidgetMainLimitPreference(
+            provider: .anthropic,
+            window: .weekly,
+            isVisible: true,
+            sortOrder: 0
+        ),
+    ])
+
+    let content = WatchComplicationContent.mainLane(
+        from: snapshot,
+        preferences: preferences,
+        maximumCount: 1
+    )
+
+    let primary = try #require(content.limits.first)
+    #expect(primary.provider == .anthropic)
+    #expect(primary.context == "2 accounts")
+    #expect(primary.remainingText == "64%")
+    #expect(primary.remainingCapacity.ratio == 0.64)
+    #expect(primary.status == .unknown)
+    #expect(content.providerAccessFallback == nil)
+}
+
 @Test func watchLimitDisplayKeepsPercentUnknownWhenLimitIsMissing() throws {
     let snapshot = WidgetSnapshot(
         state: .ready,

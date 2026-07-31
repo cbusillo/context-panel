@@ -254,6 +254,11 @@ cache is empty or damaged. Opening the Watch app invalidates the complication
 timeline whenever it has a usable document, and the timeline includes a future
 stale transition. The watch app list follows the synced saved main-limit
 visibility and order instead of promoting auxiliary provider buckets.
+Watch complications evaluate the lanes selected for each family. When any of
+those lanes has usable capacity, they keep the normal capacity presentation even
+when another provider has a prominent access alert. The access alert becomes the
+complication's primary fallback only when every selected lane lacks usable
+capacity; the Watch app continues to present provider access independently.
 The Watch app may show one bounded operational detail from a failed sync after
 reapplying the shared connector redaction boundary. That boundary removes C0,
 C1, and standalone Unicode format controls before final matching so they cannot
