@@ -3,6 +3,7 @@ set -euo pipefail
 
 environment="production"
 schema_path="CloudKit/companion-sync.schema.json"
+cktool_schema_path="CloudKit/companion-sync.schema.ckdb"
 team_id="${APPLE_TEAM_ID:-MM5YXC7T6E}"
 container_id="iCloud.com.shinycomputers.contextpanel"
 live="false"
@@ -19,6 +20,7 @@ Options:
   --team-id TEAM       Apple Developer Program team ID. Default: APPLE_TEAM_ID or MM5YXC7T6E
   --container-id ID    iCloud container ID. Default: iCloud.com.shinycomputers.contextpanel
   --schema PATH        Checked-in schema contract. Default: CloudKit/companion-sync.schema.json
+  --cktool-schema PATH Checked-in cktool import schema. Default: CloudKit/companion-sync.schema.ckdb
   --live               Export and validate the live schema with xcrun cktool.
   -h, --help           Show this help.
 
@@ -43,6 +45,10 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--schema)
 		schema_path="${2:?--schema requires a value}"
+		shift 2
+		;;
+	--cktool-schema)
+		cktool_schema_path="${2:?--cktool-schema requires a value}"
 		shift 2
 		;;
 	--live)
@@ -74,10 +80,15 @@ if [[ ! -f "$schema_path" ]]; then
 	echo "CloudKit companion schema contract not found: $schema_path" >&2
 	exit 1
 fi
+if [[ ! -f "$cktool_schema_path" ]]; then
+	echo "CloudKit cktool import schema not found: $cktool_schema_path" >&2
+	exit 1
+fi
 
 contract_record_type="CompanionSyncDocument"
 runtime_session_record_type="RuntimeValidationSession"
 runtime_receipt_record_type="RuntimeReceipt"
+subscription_query_field="snapshotSchemaVersion"
 required_fields=(
 	payload
 	schemaVersion
@@ -194,6 +205,189 @@ live_schema_field_is_queryable() {
 	' "$schema"
 }
 
+live_schema_field_is_sortable() {
+	local schema="$1"
+	local record_type="$2"
+	local field_name="$3"
+	awk -v record_type="$record_type" -v field_name="$field_name" '
+		$0 ~ "^[[:space:]]*RECORD[[:space:]]+TYPE[[:space:]]+\\\"?" record_type "\\\"?([[:space:]]|\\{|\\(|$)" {
+			inside = 1
+			next
+		}
+		inside && $0 ~ /^[[:space:]]*(\)|\};|})/ {
+			inside = 0
+		}
+		inside {
+			line = $0
+			sub(/\/\/.*/, "", line)
+			if (line ~ "^[[:space:]]*(FIELD[[:space:]]+)?\\\"?" field_name "\\\"?[[:space:]]*(:|[[:space:]])" && line ~ /(^|[[:space:]])SORTABLE([[:space:],;}]|$)/) {
+				found = 1
+			}
+		}
+		END { exit(found ? 0 : 1) }
+	' "$schema"
+}
+
+live_schema_record_has_grant() {
+	local schema="$1"
+	local record_type="$2"
+	awk -v record_type="$record_type" '
+		$0 ~ "^[[:space:]]*RECORD[[:space:]]+TYPE[[:space:]]+\\\"?" record_type "\\\"?([[:space:]]|\\{|\\(|$)" {
+			inside = 1
+			next
+		}
+		inside && $0 ~ /^[[:space:]]*(\)|\};|})/ {
+			inside = 0
+		}
+		inside {
+			line = $0
+			sub(/\/\/.*/, "", line)
+			if (line ~ /^[[:space:]]*GRANT[[:space:]]/) {
+				found = 1
+			}
+		}
+		END { exit(found ? 0 : 1) }
+	' "$schema"
+}
+
+live_schema_record_grants() {
+	local schema="$1"
+	local record_type="$2"
+	awk -v record_type="$record_type" '
+		$0 ~ "^[[:space:]]*RECORD[[:space:]]+TYPE[[:space:]]+\\\"?" record_type "\\\"?([[:space:]]|\\{|\\(|$)" {
+			inside = 1
+			next
+		}
+		inside && $0 ~ /^[[:space:]]*(\)|\};|})/ {
+			inside = 0
+		}
+		inside {
+			line = $0
+			sub(/\/\/.*/, "", line)
+			gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+			gsub(/[\",;]/, "", line)
+			count = split(line, parts, /[[:space:]]+/)
+			if (count >= 4 && parts[1] == "GRANT" && parts[3] == "TO") {
+				print parts[2] ":" parts[4]
+			}
+		}
+	' "$schema"
+}
+
+live_schema_record_types() {
+	local schema="$1"
+	awk '
+		$0 ~ /^[[:space:]]*RECORD[[:space:]]+TYPE[[:space:]]+/ {
+			line = $0
+			gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+			split(line, parts, /[[:space:]]+/)
+			record_type = parts[3]
+			gsub(/\"/, "", record_type)
+			print record_type
+		}
+	' "$schema"
+}
+
+validate_ckdb_grants() {
+	local schema="$1"
+	local record_type="$2"
+	local expected="$3"
+	local label="$4"
+	local actual
+	actual="$(live_schema_record_grants "$schema" "$record_type" | LC_ALL=C sort)"
+	if [[ "$actual" != "$expected" ]]; then
+		echo "$label schema grants changed for record type: $record_type" >&2
+		return 1
+	fi
+}
+
+validate_ckdb_schema() {
+	local schema="$1"
+	local label="$2"
+	local require_exact_record_types="${3:-false}"
+	local expected_record_types
+	local actual_record_types
+
+	if [[ "$require_exact_record_types" == "true" ]]; then
+		expected_record_types=$'CompanionSyncDocument\nRuntimeReceipt\nRuntimeValidationSession\nUsers'
+		actual_record_types="$(live_schema_record_types "$schema" | LC_ALL=C sort -u)"
+		if [[ "$actual_record_types" != "$expected_record_types" ]]; then
+			echo "$label schema record types differ from the additive companion/runtime baseline" >&2
+			return 1
+		fi
+	fi
+
+	if ! live_schema_has_record_type "$schema" "$contract_record_type"; then
+		echo "$label schema is missing record type: $contract_record_type" >&2
+		return 1
+	fi
+	for field in "${required_fields[@]}"; do
+		expected_type="$(required_field_type "$field")"
+		if ! live_schema_has_field_type "$schema" "$contract_record_type" "$field" "$expected_type"; then
+			echo "$label schema is missing field/type: $contract_record_type.$field $expected_type" >&2
+			return 1
+		fi
+		if ! live_schema_field_is_queryable "$schema" "$contract_record_type" "$field"; then
+			echo "$label schema field is not queryable: $contract_record_type.$field" >&2
+			return 1
+		fi
+		if ! live_schema_field_is_sortable "$schema" "$contract_record_type" "$field"; then
+			echo "$label schema field is not sortable: $contract_record_type.$field" >&2
+			return 1
+		fi
+	done
+	if ! validate_ckdb_grants "$schema" "$contract_record_type" $'CREATE:_icloud\nREAD:_world\nWRITE:_creator' "$label"; then
+		return 1
+	fi
+
+	if ! live_schema_has_record_type "$schema" Users; then
+		echo "$label schema is missing record type: Users" >&2
+		return 1
+	fi
+	if ! live_schema_has_field_type "$schema" Users roles 'LIST<INT64>'; then
+		echo "$label schema is missing field/type: Users.roles LIST<INT64>" >&2
+		return 1
+	fi
+	if ! validate_ckdb_grants "$schema" Users $'READ:_world\nWRITE:_creator' "$label"; then
+		return 1
+	fi
+
+	for record_type in "$runtime_session_record_type" "$runtime_receipt_record_type"; do
+		if ! live_schema_has_record_type "$schema" "$record_type"; then
+			echo "$label schema is missing record type: $record_type" >&2
+			return 1
+		fi
+		if ! validate_ckdb_grants "$schema" "$record_type" "" "$label"; then
+			echo "$label schema must not grant public database access for record type: $record_type" >&2
+			return 1
+		fi
+	done
+	for field in "${runtime_session_required_fields[@]}"; do
+		expected_type="$(required_field_type "$field")"
+		if ! live_schema_has_field_type "$schema" "$runtime_session_record_type" "$field" "$expected_type"; then
+			echo "$label schema is missing field/type: $runtime_session_record_type.$field $expected_type" >&2
+			return 1
+		fi
+	done
+	for field in "${runtime_receipt_required_fields[@]}"; do
+		expected_type="$(required_field_type "$field")"
+		if ! live_schema_has_field_type "$schema" "$runtime_receipt_record_type" "$field" "$expected_type"; then
+			echo "$label schema is missing field/type: $runtime_receipt_record_type.$field $expected_type" >&2
+			return 1
+		fi
+	done
+	for field in sessionID retentionExpiresAt; do
+		if ! live_schema_field_is_queryable "$schema" "$runtime_receipt_record_type" "$field"; then
+			echo "$label schema field is not queryable: $runtime_receipt_record_type.$field" >&2
+			return 1
+		fi
+	done
+	if ! live_schema_field_is_sortable "$schema" "$runtime_receipt_record_type" retentionExpiresAt; then
+		echo "$label schema field is not sortable: $runtime_receipt_record_type.retentionExpiresAt" >&2
+		return 1
+	fi
+}
+
 contract_container="$(jq -r '.containerIdentifier // empty' "$schema_path")"
 contract_database="$(jq -r '.database // empty' "$schema_path")"
 if [[ "$contract_container" != "$container_id" ]]; then
@@ -227,7 +421,6 @@ for field in "${required_fields[@]}"; do
 		exit 1
 	fi
 done
-subscription_query_field="snapshotSchemaVersion"
 contract_queryable="$(jq -r --arg record "$contract_record_type" --arg field "$subscription_query_field" \
 	'.recordTypes[]? | select(.name == $record) | .fields[]? | select(.name == $field) | .queryable // false' \
 	"$schema_path")"
@@ -249,6 +442,10 @@ fi
 for record_type in "$runtime_session_record_type" "$runtime_receipt_record_type"; do
 	if ! jq -e --arg name "$record_type" '.recordTypes[]? | select(.name == $name)' "$schema_path" >/dev/null; then
 		echo "schema contract is missing record type: $record_type" >&2
+		exit 1
+	fi
+	if ! jq -e --arg name "$record_type" '.recordTypes[]? | select(.name == $name) | .publicDatabaseGrants == []' "$schema_path" >/dev/null; then
+		echo "schema contract must prohibit public database grants for record type: $record_type" >&2
 		exit 1
 	fi
 done
@@ -281,9 +478,18 @@ for field in sessionID retentionExpiresAt; do
 		exit 1
 	fi
 done
+contract_sortable="$(jq -r --arg record "$runtime_receipt_record_type" --arg field retentionExpiresAt \
+	'.recordTypes[]? | select(.name == $record) | .fields[]? | select(.name == $field) | .sortable // false' \
+	"$schema_path")"
+if [[ "$contract_sortable" != "true" ]]; then
+	echo "schema contract field must be sortable: $runtime_receipt_record_type.retentionExpiresAt" >&2
+	exit 1
+fi
+
+validate_ckdb_schema "$cktool_schema_path" "checked-in cktool" "true"
 
 if [[ "$live" != "true" ]]; then
-	echo "CloudKit companion and runtime receipt schema contract OK: $schema_path"
+	echo "CloudKit companion and runtime receipt schema contracts OK: $schema_path and $cktool_schema_path"
 	exit 0
 fi
 
@@ -310,47 +516,6 @@ if ! xcrun "${cktool_export_args[@]}" >/dev/null 2>&1; then
 	exit 77
 fi
 
-if ! live_schema_has_record_type "$live_schema" "$contract_record_type"; then
-	echo "live CloudKit $environment schema is missing record type: $contract_record_type" >&2
-	exit 1
-fi
-for field in "${required_fields[@]}"; do
-	expected_type="$(required_field_type "$field")"
-	if ! live_schema_has_field_type "$live_schema" "$contract_record_type" "$field" "$expected_type"; then
-		echo "live CloudKit $environment schema is missing field/type: $contract_record_type.$field $expected_type" >&2
-		exit 1
-	fi
-done
-if ! live_schema_field_is_queryable "$live_schema" "$contract_record_type" "$subscription_query_field"; then
-	echo "live CloudKit $environment schema field is not queryable: $contract_record_type.$subscription_query_field" >&2
-	exit 1
-fi
+validate_ckdb_schema "$live_schema" "live CloudKit $environment"
 
-for record_type in "$runtime_session_record_type" "$runtime_receipt_record_type"; do
-	if ! live_schema_has_record_type "$live_schema" "$record_type"; then
-		echo "live CloudKit $environment schema is missing record type: $record_type" >&2
-		exit 1
-	fi
-done
-for field in "${runtime_session_required_fields[@]}"; do
-	expected_type="$(required_field_type "$field")"
-	if ! live_schema_has_field_type "$live_schema" "$runtime_session_record_type" "$field" "$expected_type"; then
-		echo "live CloudKit $environment schema is missing field/type: $runtime_session_record_type.$field $expected_type" >&2
-		exit 1
-	fi
-done
-for field in "${runtime_receipt_required_fields[@]}"; do
-	expected_type="$(required_field_type "$field")"
-	if ! live_schema_has_field_type "$live_schema" "$runtime_receipt_record_type" "$field" "$expected_type"; then
-		echo "live CloudKit $environment schema is missing field/type: $runtime_receipt_record_type.$field $expected_type" >&2
-		exit 1
-	fi
-done
-for field in sessionID retentionExpiresAt; do
-	if ! live_schema_field_is_queryable "$live_schema" "$runtime_receipt_record_type" "$field"; then
-		echo "live CloudKit $environment schema field is not queryable: $runtime_receipt_record_type.$field" >&2
-		exit 1
-	fi
-done
-
-echo "CloudKit live schema contains companion sync, runtime session, and runtime receipt contracts with required queryable fields in $environment."
+echo "CloudKit live schema contains private-only companion sync and runtime receipt contracts with required query and range indexes in $environment."

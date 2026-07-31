@@ -40,6 +40,7 @@
     {
       "name": "RuntimeValidationSession",
       "recordName": "runtime-validation-session-current-v1",
+      "publicDatabaseGrants": [],
       "fields": [
         {
           "name": "payload",
@@ -94,6 +95,7 @@
     {
       "name": "RuntimeReceipt",
       "recordNamePattern": "runtime-receipt-<sha256>",
+      "publicDatabaseGrants": [],
       "fields": [
         {
           "name": "payload",
@@ -127,7 +129,8 @@
         {
           "name": "retentionExpiresAt",
           "type": "TIMESTAMP",
-          "queryable": true
+          "queryable": true,
+          "sortable": true
         },
         {
           "name": "processInstanceID",
