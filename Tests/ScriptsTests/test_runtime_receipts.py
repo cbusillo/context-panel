@@ -51,6 +51,55 @@ class RuntimeReceiptIntegrationTests(unittest.TestCase):
         self.assertIn("sharedRuntimeValidationDirectory", store)
         self.assertIn("return RuntimeReceiptRecorder()", store)
 
+    def test_watch_and_tv_surfaces_author_real_process_receipts(self) -> None:
+        watch_app = self.read("Sources/ContextPanelWatch/ContextPanelWatchApp.swift")
+        watch_widget = self.read(
+            "Sources/ContextPanelWatchWidget/ContextPanelWatchWidget.swift"
+        )
+        tv_app = self.read("Sources/ContextPanelTV/ContextPanelTVApp.swift")
+        top_shelf = self.read(
+            "Sources/ContextPanelTVTopShelf/ContextPanelTVTopShelfProvider.swift"
+        )
+        companion_store = self.read("Sources/ContextPanelCore/CompanionSnapshot.swift")
+
+        self.assertIn("surface: .watchOSApp", watch_app)
+        self.assertIn("ContextPanelLocations.watchAppGroupID", watch_app)
+        self.assertIn("loaded: loaded", watch_app)
+        self.assertIn("presentationMode: .watchApp", watch_app)
+        self.assertIn("loaded.disposition == .deadlineExceeded", watch_app)
+
+        self.assertIn("surface: .watchOSComplication", watch_widget)
+        self.assertIn("trigger: .widgetSnapshot", watch_widget)
+        self.assertIn("trigger: .widgetTimeline", watch_widget)
+        self.assertIn("loaded: loaded", watch_widget)
+        self.assertIn("selection.current", watch_widget)
+        self.assertIn("selection.loaded.disposition == .deadlineExceeded", watch_widget)
+        self.assertIn("case .accessoryCircular", watch_widget)
+        self.assertIn("case .accessoryRectangular", watch_widget)
+        self.assertIn("case .accessoryInline", watch_widget)
+        self.assertIn("case .accessoryCorner", watch_widget)
+
+        self.assertIn("surface: .tvOSApp", tv_app)
+        self.assertIn("result: model.displayResult", tv_app)
+        self.assertIn("tvPresentationMode: publication.mode.runtimeTVPresentationMode", tv_app)
+        self.assertIn("hasVisibleError: visibleNoticeMessage != nil", tv_app)
+        self.assertIn(".onChange(of: runtimeReceiptPresentation", tv_app)
+        self.assertIn("source: .localCache", tv_app)
+        visible_notice = tv_app.split("private var visibleNoticeMessage", 1)[1].split(
+            "private var backgroundUpdateNoticeMessage", 1
+        )[0]
+        self.assertIn("model.syncNoticeMessage", visible_notice)
+        self.assertIn("backgroundUpdateNoticeMessage", visible_notice)
+        self.assertIn("model.systemSurfaceNoticeMessage", visible_notice)
+        self.assertIn("private let source: CompanionSyncSource?", companion_store)
+
+        self.assertIn("surface: .tvOSTopShelf", top_shelf)
+        self.assertIn("override func loadTopShelfContent()", top_shelf)
+        self.assertIn("TVTopShelfRuntimeReceiptEvidence(", top_shelf)
+        self.assertIn("trigger: .topShelfContentLoad", top_shelf)
+        self.assertIn("contentReturned: false", top_shelf)
+        self.assertIn("guard !Task.isCancelled else { return nil }", top_shelf)
+
     def test_receipt_schema_cannot_claim_visual_or_placement_evidence(self) -> None:
         receipt = self.read("Sources/ContextPanelCore/RuntimeReceipt.swift")
 
@@ -73,7 +122,9 @@ class RuntimeReceiptIntegrationTests(unittest.TestCase):
         self.assertIn("LC_UUID", receipt)
         self.assertIn("executableUUIDs", receipt)
         self.assertIn("receipt.isStructurallyValid", store)
-        self.assertIn("presentationDigest", receipt.split("var rateLimitKey", 1)[1])
+        rate_limit_key = receipt.split("var rateLimitKey", 1)[1]
+        self.assertIn("presentationDigest", rate_limit_key)
+        self.assertIn("executableUUIDs", rate_limit_key)
 
 
 if __name__ == "__main__":

@@ -733,6 +733,7 @@ import Testing
     #expect(loaded.result.transportMetadata?.source == .localCache)
     #expect(loaded.result.transportMetadata?.deliveryStatus == .delayed)
     #expect(loaded.displayPreferences == preferences)
+    #expect(loaded.disposition == .deadlineExceeded)
     await blocker.resume(returning: 1)
 }
 
@@ -1021,6 +1022,32 @@ import Testing
     #expect(loaded.result.document == nil)
     #expect(loaded.result.status == .failure)
     #expect(loaded.result.errorMessage != nil)
+    #expect(loaded.disposition == .completed)
+}
+
+@Test func watchCompanionLoaderReportsUnknownWhenDeadlineExpiresWithoutCache() async throws {
+    let root = try watchCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let blocker = WatchDeadlineBlocker()
+    let loader = WatchCompanionLoader(
+        cache: WatchCompanionCache(cacheURL: root.appending(path: "watch-cache.json")),
+        timeout: .milliseconds(20),
+        loadDocument: { _ in
+            _ = await blocker.wait()
+            return CompanionRemoteSyncLoadResult(
+                result: CompanionSyncLoadResult(document: nil, status: .unknown),
+                outcome: CompanionRemoteSyncOutcome(succeeded: true)
+            )
+        },
+        loadPresentation: { watchPresentationLoad() }
+    )
+
+    let loaded = await loader.load()
+
+    #expect(loaded.result.document == nil)
+    #expect(loaded.result.status == .unknown)
+    #expect(loaded.disposition == .deadlineExceeded)
+    await blocker.resume(returning: 1)
 }
 
 @Test func watchAsyncDeadlineReturnsWithoutWaitingForANonCooperativeOperation() async {

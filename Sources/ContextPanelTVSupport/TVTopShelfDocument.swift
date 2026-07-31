@@ -86,6 +86,10 @@ public struct TVTopShelfDocument: Codable, Equatable, Sendable {
         cards.contains { $0.provider != nil }
     }
 
+    public var renderedCards: [TVTopShelfCard] {
+        Array(cards.prefix(Provider.allCases.count))
+    }
+
     public func isStale(
         at now: Date,
         maximumAge: TimeInterval = SnapshotFreshness.companionProviderMaximumAge
@@ -255,6 +259,114 @@ public struct TVTopShelfDocument: Codable, Equatable, Sendable {
         let hours = minutes / 60
         if hours < 24 { return "\(hours)h ago" }
         return "\(hours / 24)d ago"
+    }
+}
+
+public struct TVTopShelfRuntimeReceiptEvidence: Equatable, Sendable {
+    public let selectedSource: RuntimeReceiptSelectedSource
+    public let presentationDigest: String
+    public let stateBranch: RuntimeReceiptStateBranch
+    public let outcome: RuntimeReceiptOutcome
+
+    public init(
+        document: TVTopShelfDocument,
+        loadedDocument: Bool,
+        contentReturned: Bool,
+        now: Date
+    ) {
+        selectedSource = loadedDocument ? .companionAppGroup : .none
+        let isStale = loadedDocument && document.isStale(at: now)
+        stateBranch = if isStale {
+            .stale
+        } else {
+            switch document.snapshotState {
+            case .ready:
+                .ready
+            case .setupNeeded:
+                .setupNeeded
+            case .stale:
+                .stale
+            case .failure:
+                .failure
+            }
+        }
+        if !contentReturned || stateBranch == .failure {
+            outcome = .failure
+        } else if stateBranch == .ready, selectedSource != .none {
+            outcome = .success
+        } else {
+            outcome = .degraded
+        }
+        presentationDigest = RuntimePresentationDigest.topShelfDocument(
+            generatedAt: loadedDocument ? document.generatedAt : nil,
+            renderedAt: loadedDocument ? document.renderedAt : nil,
+            state: document.snapshotState,
+            tvPresentationMode: document.presentationMode.runtimeTVPresentationMode,
+            freshness: Self.freshness(
+                document: document,
+                loadedDocument: loadedDocument,
+                now: now
+            ),
+            cards: document.renderedCards.map { card in
+                RuntimeTopShelfCardPresentation(
+                    provider: card.provider,
+                    status: card.status,
+                    remainingPercent: card.remainingPercent
+                )
+            },
+            contentReturned: contentReturned
+        )
+    }
+
+    private static func freshness(
+        document: TVTopShelfDocument,
+        loadedDocument: Bool,
+        now: Date
+    ) -> RuntimeTopShelfFreshness {
+        guard loadedDocument else {
+            return RuntimeTopShelfFreshness(unit: .now, value: 0, isStale: false)
+        }
+        let seconds = max(Int(now.timeIntervalSince(document.generatedAt)), 0)
+        if seconds < 60 {
+            return RuntimeTopShelfFreshness(
+                unit: .now,
+                value: 0,
+                isStale: document.isStale(at: now)
+            )
+        }
+        if seconds < 60 * 60 {
+            return RuntimeTopShelfFreshness(
+                unit: .minute,
+                value: seconds / 60,
+                isStale: document.isStale(at: now)
+            )
+        }
+        if seconds < 24 * 60 * 60 {
+            return RuntimeTopShelfFreshness(
+                unit: .hour,
+                value: seconds / (60 * 60),
+                isStale: document.isStale(at: now)
+            )
+        }
+        return RuntimeTopShelfFreshness(
+            unit: .day,
+            value: seconds / (24 * 60 * 60),
+            isStale: document.isStale(at: now)
+        )
+    }
+
+}
+
+private extension TVPresentationMode {
+    var runtimeTVPresentationMode: RuntimeTVPresentationMode {
+        switch self {
+        case .fullDetail:
+            .fullDetail
+        case .projectOnly:
+            .projectOnly
+        case .countsOnly:
+            .countsOnly
+        }
     }
 }
 

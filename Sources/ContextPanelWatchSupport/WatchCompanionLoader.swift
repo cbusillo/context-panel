@@ -63,7 +63,8 @@ public actor WatchCompanionLoader {
         guard let documentLoad else {
             return fallback(
                 cached: cached,
-                errorMessage: "Context Panel Watch timed out while refreshing usage."
+                errorMessage: "Context Panel Watch timed out while refreshing usage.",
+                disposition: .deadlineExceeded
             )
         }
         if documentLoad.outcome.missingRecord {
@@ -161,16 +162,18 @@ public actor WatchCompanionLoader {
 
     private static func fallback(
         cached: WatchCompanionCacheLoadResult,
-        errorMessage: String
+        errorMessage: String,
+        disposition: WatchCompanionLoadDisposition = .completed
     ) -> WatchCompanionCacheLoadResult {
         guard let document = cached.result.document else {
             return WatchCompanionCacheLoadResult(
                 result: CompanionSyncLoadResult(
                     document: nil,
-                    status: .failure,
+                    status: disposition == .deadlineExceeded ? .unknown : .failure,
                     errorMessage: errorMessage
                 ),
-                displayPreferences: cached.displayPreferences
+                displayPreferences: cached.displayPreferences,
+                disposition: disposition
             )
         }
         return WatchCompanionCacheLoadResult(
@@ -185,7 +188,8 @@ public actor WatchCompanionLoader {
                     deliveryStatus: .delayed
                 )
             ),
-            displayPreferences: cached.displayPreferences
+            displayPreferences: cached.displayPreferences,
+            disposition: disposition
         )
     }
 }

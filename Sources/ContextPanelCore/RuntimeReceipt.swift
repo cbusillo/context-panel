@@ -331,6 +331,7 @@ public enum RuntimeReceiptTrigger: String, Codable, Equatable, Sendable {
     case widgetTimeline = "widget-timeline"
     case refreshOnce = "refresh-once"
     case backgroundRefresh = "background-refresh"
+    case topShelfContentLoad = "top-shelf-content-load"
 }
 
 public enum RuntimeReceiptPresentationMode: String, Codable, Equatable, Sendable {
@@ -343,10 +344,52 @@ public enum RuntimeReceiptPresentationMode: String, Codable, Equatable, Sendable
     case widgetAccessoryRectangular = "widget-accessory-rectangular"
     case widgetAccessoryInline = "widget-accessory-inline"
     case widgetAccessoryCorner = "widget-accessory-corner"
+    case widgetAccessoryUnknown = "widget-accessory-unknown"
     case widgetUnknown = "widget-unknown"
     case refreshAgent = "refresh-agent"
     case watchApp = "watch-app"
     case topShelf = "top-shelf"
+}
+
+public enum RuntimeTVPresentationMode: String, Codable, Equatable, Sendable {
+    case fullDetail = "full-detail"
+    case projectOnly = "project-only"
+    case countsOnly = "counts-only"
+}
+
+public enum RuntimeTopShelfFreshnessUnit: String, Codable, Equatable, Sendable {
+    case now
+    case minute
+    case hour
+    case day
+}
+
+public struct RuntimeTopShelfFreshness: Equatable, Sendable {
+    public let unit: RuntimeTopShelfFreshnessUnit
+    public let value: Int
+    public let isStale: Bool
+
+    public init(unit: RuntimeTopShelfFreshnessUnit, value: Int, isStale: Bool) {
+        self.unit = unit
+        self.value = max(value, 0)
+        self.isStale = isStale
+    }
+}
+
+public struct RuntimeTopShelfCardPresentation: Equatable, Sendable {
+    public let provider: Provider?
+    public let status: UsageStatus
+    public let remainingBucket: Int?
+
+    public init(
+        provider: Provider?,
+        status: UsageStatus,
+        remainingPercent: Int?
+    ) {
+        self.provider = provider
+        self.status = status
+        remainingBucket = remainingPercent.map { min(max($0, 0), 100) / 5 }
+    }
 }
 
 public enum RuntimeReceiptSelectedSource: String, Codable, Equatable, Sendable {
@@ -396,6 +439,8 @@ public struct CompanionRuntimeReceiptEvidence: Equatable, Sendable {
         appearanceSettings: CompanionAppearanceSettings?,
         presentationSurface: CompanionRuntimePresentationSurface,
         presentationMode: RuntimeReceiptPresentationMode,
+        tvPresentationMode: RuntimeTVPresentationMode? = nil,
+        additionalVisibleError: Bool = false,
         presentationDate: Date
     ) {
         selectedSource = switch result.transportMetadata?.source {
@@ -420,10 +465,11 @@ public struct CompanionRuntimeReceiptEvidence: Equatable, Sendable {
         case .failure:
             .failure
         }
+        let hasVisibleError = snapshot.syncErrorMessage != nil || additionalVisibleError
         if stateBranch == .failure {
             outcome = .failure
         } else if stateBranch == .ready,
-                  snapshot.syncErrorMessage == nil,
+                  !hasVisibleError,
                   selectedSource != .none {
             outcome = .success
         } else {
@@ -436,6 +482,8 @@ public struct CompanionRuntimeReceiptEvidence: Equatable, Sendable {
             appearanceSettings: appearanceSettings,
             presentationSurface: presentationSurface,
             presentationMode: presentationMode,
+            tvPresentationMode: tvPresentationMode,
+            additionalVisibleError: additionalVisibleError,
             presentationDate: presentationDate
         )
     }
@@ -546,6 +594,14 @@ public struct RuntimeReceipt: Codable, Equatable, Identifiable, Sendable {
         [
             sessionID.uuidString.lowercased(),
             buildIdentity.surface.rawValue,
+            buildIdentity.artifactID,
+            buildIdentity.bundleIdentifier,
+            buildIdentity.build.marketingVersion,
+            buildIdentity.build.buildNumber,
+            buildIdentity.build.manifestID,
+            buildIdentity.build.contractFingerprint,
+            buildIdentity.fingerprints.combined,
+            buildIdentity.executableUUIDs.joined(separator: ","),
             trigger.rawValue,
             presentationMode.rawValue,
             selectedSource.rawValue,
@@ -714,6 +770,8 @@ public enum RuntimePresentationDigest {
         appearanceSettings: CompanionAppearanceSettings?,
         presentationSurface: CompanionRuntimePresentationSurface,
         presentationMode: RuntimeReceiptPresentationMode,
+        tvPresentationMode: RuntimeTVPresentationMode?,
+        additionalVisibleError: Bool,
         presentationDate: Date
     ) -> String {
         let payload = CompanionSnapshotDigestPayload(
@@ -726,11 +784,12 @@ public enum RuntimePresentationDigest {
                 includesPresentationDates: result.document != nil
             ),
             deliveryStatus: result.transportMetadata?.deliveryStatus.rawValue,
-            hasSyncError: snapshot.syncErrorMessage != nil,
+            hasSyncError: snapshot.syncErrorMessage != nil || additionalVisibleError,
             refreshAttentionProviders: snapshot.refreshAttentionSummary?.providers
                 .map(\.rawValue)
                 .sorted() ?? [],
             refreshAttentionSnapshotAgeStale: snapshot.refreshAttentionSummary?.isSnapshotAgeStale ?? false,
+            tvPresentationMode: tvPresentationMode?.rawValue,
             visionOSAppAppearance: presentationSurface == .app
                 ? appearanceSettings?.visionOSAppAppearance.rawValue
                 : nil,
@@ -740,6 +799,36 @@ public enum RuntimePresentationDigest {
             resolvedVisionOSWidgetAppearance: presentationSurface == .widget
                 ? appearanceSettings?.resolvedVisionOSWidgetAppearance.rawValue
                 : nil
+        )
+        return RuntimeReceiptDigest.canonicalDigest(payload)
+    }
+
+    public static func topShelfDocument(
+        generatedAt: Date?,
+        renderedAt: Date?,
+        state: WidgetSnapshotState,
+        tvPresentationMode: RuntimeTVPresentationMode,
+        freshness: RuntimeTopShelfFreshness,
+        cards: [RuntimeTopShelfCardPresentation],
+        contentReturned: Bool
+    ) -> String {
+        let payload = TopShelfDocumentDigestPayload(
+            schemaVersion: 1,
+            generatedAtMilliseconds: generatedAt.map(milliseconds),
+            renderedAtMilliseconds: renderedAt.map(milliseconds),
+            state: state.rawValue,
+            tvPresentationMode: tvPresentationMode.rawValue,
+            freshnessUnit: freshness.unit.rawValue,
+            freshnessValue: freshness.value,
+            isStale: freshness.isStale,
+            contentReturned: contentReturned,
+            cards: cards.map { card in
+                SanitizedTopShelfCardDigestPayload(
+                    provider: card.provider?.rawValue,
+                    status: card.status.rawValue,
+                    remainingBucket: card.remainingBucket
+                )
+            }
         )
         return RuntimeReceiptDigest.canonicalDigest(payload)
     }
@@ -799,9 +888,24 @@ public enum RuntimePresentationDigest {
             lanes = displayPreferences.visibleMainLimitLanes(from: summaries, maximumCount: 3)
         case .widgetSystemLarge, .widgetSystemExtraLarge:
             lanes = displayPreferences.visibleMainLimitLanes(from: summaries, maximumCount: 5)
-        case .appOverview, .widgetAccessoryCircular, .widgetAccessoryRectangular,
-             .widgetAccessoryInline, .widgetAccessoryCorner, .widgetUnknown,
-             .refreshAgent, .watchApp, .topShelf:
+        case .watchApp:
+            lanes = Array(displayPreferences.mainLimitAnswerSelection(from: summaries).saved.prefix(8))
+        case .widgetAccessoryCircular, .widgetAccessoryCorner:
+            lanes = Array(displayPreferences.mainLimitAnswerSelection(from: summaries).saved.prefix(1))
+        case .widgetAccessoryRectangular, .widgetAccessoryUnknown:
+            lanes = Array(displayPreferences.mainLimitAnswerSelection(from: summaries).saved.prefix(2))
+        case .widgetAccessoryInline:
+            let selection = displayPreferences.mainLimitAnswerSelection(from: summaries)
+            var selected: [WidgetMainLimitLane] = []
+            var representedIDs = Set<String>()
+            for lane in [selection.primary].compactMap({ $0 })
+                + selection.compactSupportingLanes(maximumCount: 2) {
+                guard representedIDs.insert(lane.id).inserted else { continue }
+                selected.append(lane)
+                guard selected.count < 2 else { break }
+            }
+            lanes = selected
+        case .appOverview, .widgetUnknown, .refreshAgent, .topShelf:
             lanes = displayPreferences.visibleMainLimitLanes(from: summaries, maximumCount: 5)
         }
         return lanes.map { lane in
@@ -923,9 +1027,29 @@ private struct CompanionSnapshotDigestPayload: Encodable {
     let hasSyncError: Bool
     let refreshAttentionProviders: [String]
     let refreshAttentionSnapshotAgeStale: Bool
+    let tvPresentationMode: String?
     let visionOSAppAppearance: String?
     let visionOSWidgetAppearance: String?
     let resolvedVisionOSWidgetAppearance: String?
+}
+
+private struct TopShelfDocumentDigestPayload: Encodable {
+    let schemaVersion: Int
+    let generatedAtMilliseconds: Int64?
+    let renderedAtMilliseconds: Int64?
+    let state: String
+    let tvPresentationMode: String
+    let freshnessUnit: String
+    let freshnessValue: Int
+    let isStale: Bool
+    let contentReturned: Bool
+    let cards: [SanitizedTopShelfCardDigestPayload]
+}
+
+private struct SanitizedTopShelfCardDigestPayload: Encodable {
+    let provider: String?
+    let status: String
+    let remainingBucket: Int?
 }
 
 private struct SanitizedPromptCacheDigestPayload: Encodable {

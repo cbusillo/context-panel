@@ -399,6 +399,53 @@ import Testing
     #expect(first.outcome == .degraded)
 }
 
+@Test func companionRuntimeDigestTracksTVModeAndVisibleErrors() {
+    let now = Date(timeIntervalSince1970: 1_700_000_000)
+    let result = runtimeCompanionLoadResult(source: .cloudKit)
+    let snapshot = runtimeWidgetSnapshot(
+        now: now,
+        accountID: "account",
+        accountName: "Account",
+        errorMessage: nil
+    )
+    let fullDetail = CompanionRuntimeReceiptEvidence(
+        result: result,
+        snapshot: snapshot,
+        displayPreferences: .defaultPreferences,
+        appearanceSettings: nil,
+        presentationSurface: .app,
+        presentationMode: .appOverview,
+        tvPresentationMode: .fullDetail,
+        presentationDate: now
+    )
+    let projectOnly = CompanionRuntimeReceiptEvidence(
+        result: result,
+        snapshot: snapshot,
+        displayPreferences: .defaultPreferences,
+        appearanceSettings: nil,
+        presentationSurface: .app,
+        presentationMode: .appOverview,
+        tvPresentationMode: .projectOnly,
+        presentationDate: now
+    )
+    let visibleError = CompanionRuntimeReceiptEvidence(
+        result: result,
+        snapshot: snapshot,
+        displayPreferences: .defaultPreferences,
+        appearanceSettings: nil,
+        presentationSurface: .app,
+        presentationMode: .appOverview,
+        tvPresentationMode: .fullDetail,
+        additionalVisibleError: true,
+        presentationDate: now
+    )
+
+    #expect(fullDetail.presentationDigest != projectOnly.presentationDigest)
+    #expect(fullDetail.outcome == .success)
+    #expect(visibleError.presentationDigest != fullDetail.presentationDigest)
+    #expect(visibleError.outcome == .degraded)
+}
+
 @Test func runtimeSessionStoreLoadsTheOperatorSchema() throws {
     let root = try runtimeReceiptTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -496,6 +543,33 @@ import Testing
         observedAt: now.addingTimeInterval(12)
     ) == .saved)
     #expect(receiptStore.loadReceipts().count == 3)
+}
+
+@Test func runtimeReceiptRecorderDoesNotThrottleANewLoadedExecutable() throws {
+    let root = try runtimeReceiptTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 1_700_000_000)
+    let sessionStore = RuntimeValidationSessionStore(
+        sessionURL: root.appending(path: "runtime-session.json")
+    )
+    let receiptStore = RuntimeReceiptStore(
+        directoryURL: root.appending(path: "receipts", directoryHint: .isDirectory)
+    )
+    try sessionStore.save(runtimeSession(now: now, minimumWriteIntervalSeconds: 60))
+    let first = RuntimeReceiptRecorder(
+        identity: runtimeIdentity(executableUUID: runtimeExecutableUUID()),
+        sessionStore: sessionStore,
+        receiptStore: receiptStore
+    )
+    let second = RuntimeReceiptRecorder(
+        identity: runtimeIdentity(executableUUID: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"),
+        sessionStore: sessionStore,
+        receiptStore: receiptStore
+    )
+
+    #expect(runtimeRecord(first, at: now) == .saved)
+    #expect(runtimeRecord(second, at: now.addingTimeInterval(1)) == .saved)
+    #expect(receiptStore.loadReceipts().count == 2)
 }
 
 @Test func runtimeReceiptStoreBoundsTheSessionQueue() throws {
@@ -801,7 +875,9 @@ private func runtimeSession(
     )
 }
 
-private func runtimeIdentity() -> RuntimeSurfaceBuildIdentity {
+private func runtimeIdentity(
+    executableUUID: String = runtimeExecutableUUID()
+) -> RuntimeSurfaceBuildIdentity {
     RuntimeSurfaceBuildIdentity(
         surface: .macOSWidget,
         artifactID: "macos.widget",
@@ -818,7 +894,7 @@ private func runtimeIdentity() -> RuntimeSurfaceBuildIdentity {
             placement: runtimeHash("e"),
             combined: runtimeHash("f")
         ),
-        executableUUIDs: [runtimeExecutableUUID()]
+        executableUUIDs: [executableUUID]
     )
 }
 
