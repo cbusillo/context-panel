@@ -31,15 +31,21 @@ public struct SnapshotRefreshOutcome: Equatable, Sendable {
     public let savedAt: Date
     public let refreshResult: ConnectorRefreshResult
     public let didSaveSnapshot: Bool
+    public let storedSnapshot: StoredUsageSnapshot?
+    public let storedStatus: UsageStatus
 
     public init(
         savedAt: Date,
         refreshResult: ConnectorRefreshResult,
-        didSaveSnapshot: Bool = true
+        didSaveSnapshot: Bool = true,
+        storedSnapshot: StoredUsageSnapshot? = nil,
+        storedStatus: UsageStatus = .unknown
     ) {
         self.savedAt = savedAt
         self.refreshResult = refreshResult
         self.didSaveSnapshot = didSaveSnapshot
+        self.storedSnapshot = storedSnapshot
+        self.storedStatus = storedStatus
     }
 }
 
@@ -80,6 +86,22 @@ public enum SnapshotRefreshRunDecision: Equatable, Sendable {
     public var diagnosticsSavedSnapshotAt: Date? {
         guard case let .refreshed(outcome) = self else { return nil }
         return outcome.savedAt
+    }
+}
+
+public struct SnapshotRefreshRunEvidence: Equatable, Sendable {
+    public let decision: SnapshotRefreshRunDecision
+    public let selectedSnapshot: StoredUsageSnapshot?
+    public let status: UsageStatus
+
+    public init(
+        decision: SnapshotRefreshRunDecision,
+        selectedSnapshot: StoredUsageSnapshot?,
+        status: UsageStatus
+    ) {
+        self.decision = decision
+        self.selectedSnapshot = selectedSnapshot
+        self.status = status
     }
 }
 
@@ -141,6 +163,12 @@ public struct SnapshotRefreshRunner: Sendable {
     }
 
     public func refreshIfNeeded(now: Date = Date()) async throws -> SnapshotRefreshRunDecision {
+        try await refreshIfNeededWithEvidence(now: now).decision
+    }
+
+    public func refreshIfNeededWithEvidence(
+        now: Date = Date()
+    ) async throws -> SnapshotRefreshRunEvidence {
         service.importConfiguredAuthFiles(now: now)
         let stalenessPolicy = effectiveStalenessPolicy()
         let current = service.loadCurrent(policy: stalenessPolicy, now: now)
@@ -152,7 +180,7 @@ public struct SnapshotRefreshRunner: Sendable {
             promptCacheObservations: promptCacheObservations,
             now: now
         ) {
-            return try await saveMerged(
+            return try await saveMergedWithEvidence(
                 refreshResult: ConnectorRefreshResult(
                     generatedAt: now,
                     reports: [],
@@ -164,7 +192,11 @@ public struct SnapshotRefreshRunner: Sendable {
             )
         }
         if isFreshPromptCacheOnly(current: current.snapshot, promptCacheObservations: promptCacheObservations, now: now) {
-            return .skippedFresh
+            return SnapshotRefreshRunEvidence(
+                decision: .skippedFresh,
+                selectedSnapshot: current.snapshot,
+                status: current.status
+            )
         }
         guard current.snapshot == nil
             || current.status == .unknown
@@ -172,13 +204,24 @@ public struct SnapshotRefreshRunner: Sendable {
             || current.status == .failure
             || resetRefreshIsDue
         else {
-            return .skippedFresh
+            return SnapshotRefreshRunEvidence(
+                decision: .skippedFresh,
+                selectedSnapshot: current.snapshot,
+                status: current.status
+            )
         }
-        return try await refresh(now: now)
+        return try await refreshWithEvidence(now: now)
     }
 
     public func refresh(now: Date = Date()) async throws -> SnapshotRefreshRunDecision {
-        let previousSnapshot = service.loadCurrent().snapshot?.snapshot
+        try await refreshWithEvidence(now: now).decision
+    }
+
+    public func refreshWithEvidence(
+        now: Date = Date()
+    ) async throws -> SnapshotRefreshRunEvidence {
+        let previous = service.loadCurrent()
+        let previousSnapshot = previous.snapshot?.snapshot
         if let lock {
             guard let outcome = try await lock.withLock({
                 try await service.refresh(now: now)
@@ -188,7 +231,11 @@ public struct SnapshotRefreshRunner: Sendable {
                     savedAt: now,
                     retryDelay: SnapshotFreshness.resetExpiryRetryDelay
                 )
-                return .skippedAlreadyRunning
+                return SnapshotRefreshRunEvidence(
+                    decision: .skippedAlreadyRunning,
+                    selectedSnapshot: previous.snapshot,
+                    status: previous.status
+                )
             }
             guard outcome.didSaveSnapshot else {
                 deferResetExpiryRefresh(
@@ -196,16 +243,24 @@ public struct SnapshotRefreshRunner: Sendable {
                     savedAt: outcome.savedAt,
                     retryDelay: SnapshotFreshness.refreshNeededAge
                 )
-                return .skippedNoReports
+                return SnapshotRefreshRunEvidence(
+                    decision: .skippedNoReports,
+                    selectedSnapshot: outcome.storedSnapshot ?? previous.snapshot,
+                    status: outcome.storedStatus == .unknown ? previous.status : outcome.storedStatus
+                )
             }
             recordResetExpiryRefreshAttempt(
                 previousSnapshot: previousSnapshot,
-                refreshedSnapshot: service.loadCurrent().snapshot?.snapshot ?? outcome.refreshResult.snapshot,
+                refreshedSnapshot: outcome.storedSnapshot?.snapshot ?? outcome.refreshResult.snapshot,
                 refreshResult: outcome.refreshResult,
                 savedAt: outcome.savedAt,
                 unattemptedRetryDelay: SnapshotFreshness.refreshNeededAge
             )
-            return .refreshed(outcome)
+            return SnapshotRefreshRunEvidence(
+                decision: .refreshed(outcome),
+                selectedSnapshot: outcome.storedSnapshot,
+                status: outcome.storedStatus
+            )
         }
 
         let outcome = try await service.refresh(now: now)
@@ -215,16 +270,24 @@ public struct SnapshotRefreshRunner: Sendable {
                 savedAt: outcome.savedAt,
                 retryDelay: SnapshotFreshness.refreshNeededAge
             )
-            return .skippedNoReports
+            return SnapshotRefreshRunEvidence(
+                decision: .skippedNoReports,
+                selectedSnapshot: outcome.storedSnapshot ?? previous.snapshot,
+                status: outcome.storedStatus == .unknown ? previous.status : outcome.storedStatus
+            )
         }
         recordResetExpiryRefreshAttempt(
             previousSnapshot: previousSnapshot,
-            refreshedSnapshot: service.loadCurrent().snapshot?.snapshot ?? outcome.refreshResult.snapshot,
+            refreshedSnapshot: outcome.storedSnapshot?.snapshot ?? outcome.refreshResult.snapshot,
             refreshResult: outcome.refreshResult,
             savedAt: outcome.savedAt,
             unattemptedRetryDelay: SnapshotFreshness.refreshNeededAge
         )
-        return .refreshed(outcome)
+        return SnapshotRefreshRunEvidence(
+            decision: .refreshed(outcome),
+            selectedSnapshot: outcome.storedSnapshot,
+            status: outcome.storedStatus
+        )
     }
 
     public func nextRefreshCheckDate(now: Date = Date()) -> Date? {
@@ -257,7 +320,11 @@ public struct SnapshotRefreshRunner: Sendable {
     }
 
     public func saveMerged(refreshResult: ConnectorRefreshResult, savedAt: Date) async throws -> SnapshotRefreshRunDecision {
-        try await saveMerged(refreshResult: refreshResult, savedAt: savedAt, retryFor: .zero)
+        try await saveMergedWithEvidence(
+            refreshResult: refreshResult,
+            savedAt: savedAt,
+            retryFor: .zero
+        ).decision
     }
 
     public func saveMerged(
@@ -267,19 +334,35 @@ public struct SnapshotRefreshRunner: Sendable {
         retryInterval: Duration = .milliseconds(250),
         preservesUnreportedAccounts: Bool = false
     ) async throws -> SnapshotRefreshRunDecision {
+        try await saveMergedWithEvidence(
+            refreshResult: refreshResult,
+            savedAt: savedAt,
+            retryFor: retryFor,
+            retryInterval: retryInterval,
+            preservesUnreportedAccounts: preservesUnreportedAccounts
+        ).decision
+    }
+
+    public func saveMergedWithEvidence(
+        refreshResult: ConnectorRefreshResult,
+        savedAt: Date,
+        retryFor: Duration,
+        retryInterval: Duration = .milliseconds(250),
+        preservesUnreportedAccounts: Bool = false
+    ) async throws -> SnapshotRefreshRunEvidence {
         let startedAt = ContinuousClock.now
 
         while true {
-            let decision = try await saveMergedOnce(
+            let evidence = try await saveMergedOnce(
                 refreshResult: refreshResult,
                 savedAt: savedAt,
                 preservesUnreportedAccounts: preservesUnreportedAccounts
             )
-            if decision != .skippedAlreadyRunning {
-                return decision
+            if evidence.decision != .skippedAlreadyRunning {
+                return evidence
             }
             if startedAt.duration(to: ContinuousClock.now) >= retryFor {
-                return decision
+                return evidence
             }
             try await Task.sleep(for: retryInterval)
         }
@@ -289,9 +372,16 @@ public struct SnapshotRefreshRunner: Sendable {
         refreshResult: ConnectorRefreshResult,
         savedAt: Date,
         preservesUnreportedAccounts: Bool
-    ) async throws -> SnapshotRefreshRunDecision {
-        guard refreshResult.hasSnapshotPayload else { return .skippedNoReports }
-        let previousSnapshot = service.loadCurrent().snapshot?.snapshot
+    ) async throws -> SnapshotRefreshRunEvidence {
+        let previous = service.loadCurrent()
+        guard refreshResult.hasSnapshotPayload else {
+            return SnapshotRefreshRunEvidence(
+                decision: .skippedNoReports,
+                selectedSnapshot: previous.snapshot,
+                status: previous.status
+            )
+        }
+        let previousSnapshot = previous.snapshot?.snapshot
         if let lock {
             guard let outcome = try await lock.withLock({
                 try await service.saveMergedAsync(
@@ -299,14 +389,24 @@ public struct SnapshotRefreshRunner: Sendable {
                     savedAt: savedAt,
                     preservesUnreportedAccounts: preservesUnreportedAccounts
                 )
-            }) else { return .skippedAlreadyRunning }
+            }) else {
+                return SnapshotRefreshRunEvidence(
+                    decision: .skippedAlreadyRunning,
+                    selectedSnapshot: previous.snapshot,
+                    status: previous.status
+                )
+            }
             recordResetExpiryRefreshAttempt(
                 previousSnapshot: previousSnapshot,
-                refreshedSnapshot: service.loadCurrent().snapshot?.snapshot ?? refreshResult.snapshot,
+                refreshedSnapshot: outcome.storedSnapshot?.snapshot ?? refreshResult.snapshot,
                 refreshResult: refreshResult,
                 savedAt: savedAt
             )
-            return .refreshed(outcome)
+            return SnapshotRefreshRunEvidence(
+                decision: .refreshed(outcome),
+                selectedSnapshot: outcome.storedSnapshot,
+                status: outcome.storedStatus
+            )
         }
 
         let outcome = try await service.saveMergedAsync(
@@ -316,11 +416,15 @@ public struct SnapshotRefreshRunner: Sendable {
         )
         recordResetExpiryRefreshAttempt(
             previousSnapshot: previousSnapshot,
-            refreshedSnapshot: service.loadCurrent().snapshot?.snapshot ?? refreshResult.snapshot,
+            refreshedSnapshot: outcome.storedSnapshot?.snapshot ?? refreshResult.snapshot,
             refreshResult: refreshResult,
             savedAt: savedAt
         )
-        return .refreshed(outcome)
+        return SnapshotRefreshRunEvidence(
+            decision: .refreshed(outcome),
+            selectedSnapshot: outcome.storedSnapshot,
+            status: outcome.storedStatus
+        )
     }
 
     private func effectiveStalenessPolicy() -> SnapshotStoreStalenessPolicy {
@@ -542,7 +646,8 @@ public struct SnapshotRefreshService: Sendable {
         importConfiguredAuthFiles(now: now)
         let accountResult = accountStore.load(now: now)
         let enabledAccountCount = accountResult.document.accounts.filter(\.isEnabled).count
-        let previousStoredSnapshot = stores.primary.loadCurrent().snapshot
+        let previousLoadResult = stores.primary.loadCurrent()
+        let previousStoredSnapshot = previousLoadResult.snapshot
         migrateClaudeStateIfNeeded(accounts: accountResult.document.accounts, now: now)
         let connectors = AccountConnectorFactory.connectors(
             from: accountResult.document,
@@ -573,7 +678,13 @@ public struct SnapshotRefreshService: Sendable {
                 )
             }
             RefreshDiagnostics.logRefreshSkippedNoPayload(reportCount: refreshResult.reports.count)
-            return SnapshotRefreshOutcome(savedAt: now, refreshResult: refreshResult, didSaveSnapshot: false)
+            return SnapshotRefreshOutcome(
+                savedAt: now,
+                refreshResult: refreshResult,
+                didSaveSnapshot: false,
+                storedSnapshot: previousStoredSnapshot,
+                storedStatus: previousLoadResult.status
+            )
         }
         return try await saveMergedAsync(refreshResult: refreshResult, savedAt: now)
     }
@@ -588,7 +699,8 @@ public struct SnapshotRefreshService: Sendable {
             savedAt: savedAt,
             preservesUnreportedAccounts: preservesUnreportedAccounts
         )
-        if let storedSnapshot = stores.primary.loadCurrent().snapshot {
+        let storedResult = stores.primary.loadCurrent()
+        if let storedSnapshot = storedResult.snapshot {
             mirrorSnapshotToFallbackStores(storedSnapshot)
             let companionResult: CompanionSyncSaveResult? = if let companionSyncPublisher {
                 await companionSyncPublisher.publishAll(
@@ -615,7 +727,12 @@ public struct SnapshotRefreshService: Sendable {
                 }
             }
         }
-        return SnapshotRefreshOutcome(savedAt: savedAt, refreshResult: refreshResult)
+        return SnapshotRefreshOutcome(
+            savedAt: savedAt,
+            refreshResult: refreshResult,
+            storedSnapshot: storedResult.snapshot,
+            storedStatus: storedResult.status
+        )
     }
 
     private func mirrorSnapshotToFallbackStores(_ storedSnapshot: StoredUsageSnapshot) {
@@ -634,7 +751,8 @@ public struct SnapshotRefreshService: Sendable {
             savedAt: savedAt,
             preservesUnreportedAccounts: preservesUnreportedAccounts
         )
-        if let storedSnapshot = stores.primary.loadCurrent().snapshot {
+        let storedResult = stores.primary.loadCurrent()
+        if let storedSnapshot = storedResult.snapshot {
             mirrorSnapshotToFallbackStores(storedSnapshot)
             let companionResult = companionSyncPublisher?.publish(
                 storedSnapshot: storedSnapshot,
@@ -657,7 +775,12 @@ public struct SnapshotRefreshService: Sendable {
                 }
             }
         }
-        return SnapshotRefreshOutcome(savedAt: savedAt, refreshResult: refreshResult)
+        return SnapshotRefreshOutcome(
+            savedAt: savedAt,
+            refreshResult: refreshResult,
+            storedSnapshot: storedResult.snapshot,
+            storedStatus: storedResult.status
+        )
     }
 
     private func companionObservedBurnRates(

@@ -55,12 +55,24 @@ struct ContextPanelRefreshAgent {
         let settingsStore = BackgroundRefreshSettingsStore(
             settingsURL: ContextPanelLocations.backgroundRefreshSettingsURL(appGroupID: ContextPanelLocations.appGroupID)
         )
+        let runtimeReceiptRecorder = RuntimeReceiptRecorder.appDefault(surface: .macOSRefreshAgent)
+        let runtimeSnapshotStore = JSONSnapshotStore(
+            rootDirectory: ContextPanelLocations.snapshotDirectory(appGroupID: ContextPanelLocations.appGroupID)
+        )
         if arguments.contains("--refresh-once") {
             let startedAt = Date()
             let runID = recordRefreshStarted(diagnosticsStore, source: .refreshAgent, startedAt: startedAt)
             do {
-                let decision = try await runner.refresh()
+                let evidence = try await runner.refreshWithEvidence()
+                let decision = evidence.decision
                 recordRefreshFinished(diagnosticsStore, runID: runID, decision: decision, finishedAt: Date())
+                recordRuntimeReceipt(
+                    runtimeReceiptRecorder,
+                    snapshotStore: runtimeSnapshotStore,
+                    trigger: .refreshOnce,
+                    evidence: evidence,
+                    observedAt: Date()
+                )
                 reloadContextPanelWidgetTimeline(
                     force: decision.wasRefreshed,
                     lastReloadAt: &lastWidgetTimelineReloadAt
@@ -71,6 +83,13 @@ struct ContextPanelRefreshAgent {
                 }
             } catch {
                 recordRefreshFailed(diagnosticsStore, runID: runID, finishedAt: Date(), error: error)
+                recordRuntimeReceipt(
+                    runtimeReceiptRecorder,
+                    snapshotStore: runtimeSnapshotStore,
+                    trigger: .refreshOnce,
+                    evidence: nil,
+                    observedAt: Date()
+                )
                 fputs("ContextPanelRefreshAgent: \(ConnectorRedactor.safeErrorDescription(error))\n", stderr)
             }
             Foundation.exit(0)
@@ -88,8 +107,16 @@ struct ContextPanelRefreshAgent {
             )
 
             do {
-                let decision = try await runner.refreshIfNeeded()
+                let evidence = try await runner.refreshIfNeededWithEvidence()
+                let decision = evidence.decision
                 recordRefreshFinished(diagnosticsStore, runID: runID, decision: decision, finishedAt: Date())
+                recordRuntimeReceipt(
+                    runtimeReceiptRecorder,
+                    snapshotStore: runtimeSnapshotStore,
+                    trigger: .backgroundRefresh,
+                    evidence: evidence,
+                    observedAt: Date()
+                )
                 reloadContextPanelWidgetTimeline(
                     force: decision.wasRefreshed,
                     lastReloadAt: &lastWidgetTimelineReloadAt
@@ -100,6 +127,13 @@ struct ContextPanelRefreshAgent {
                 }
             } catch {
                 recordRefreshFailed(diagnosticsStore, runID: runID, finishedAt: Date(), error: error)
+                recordRuntimeReceipt(
+                    runtimeReceiptRecorder,
+                    snapshotStore: runtimeSnapshotStore,
+                    trigger: .backgroundRefresh,
+                    evidence: nil,
+                    observedAt: Date()
+                )
                 fputs("ContextPanelRefreshAgent: \(ConnectorRedactor.safeErrorDescription(error))\n", stderr)
             }
 
@@ -316,6 +350,59 @@ struct ContextPanelRefreshAgent {
             fputs("ContextPanelRefreshAgent: webhook credential check failed: \(ConnectorRedactor.safeErrorDescription(error))\n", stderr)
             Foundation.exit(1)
         }
+    }
+
+    private static func recordRuntimeReceipt(
+        _ recorder: RuntimeReceiptRecorder,
+        snapshotStore: JSONSnapshotStore,
+        trigger: RuntimeReceiptTrigger,
+        evidence: SnapshotRefreshRunEvidence?,
+        observedAt: Date
+    ) {
+        let fallback = evidence == nil ? snapshotStore.loadCurrent() : nil
+        let selectedSnapshot = evidence?.selectedSnapshot ?? fallback?.snapshot
+        let selectedStatus = evidence?.status ?? fallback?.status ?? .unknown
+        let selectedSource: RuntimeReceiptSelectedSource
+        let stateBranch: RuntimeReceiptStateBranch
+        let outcome: RuntimeReceiptOutcome
+
+        switch evidence?.decision {
+        case let .refreshed(refreshOutcome):
+            selectedSource = refreshOutcome.didSaveSnapshot
+                ? .refreshedSnapshot
+                : (selectedSnapshot == nil ? .none : .appGroupSnapshot)
+            stateBranch = .refreshed
+            outcome = refreshOutcome.didSaveSnapshot ? .success : .degraded
+        case .skippedFresh:
+            selectedSource = selectedSnapshot == nil ? .none : .appGroupSnapshot
+            stateBranch = .skippedFresh
+            outcome = .success
+        case .skippedAlreadyRunning:
+            selectedSource = selectedSnapshot == nil ? .none : .appGroupSnapshot
+            stateBranch = .skippedAlreadyRunning
+            outcome = .degraded
+        case .skippedNoReports:
+            selectedSource = selectedSnapshot == nil ? .none : .appGroupSnapshot
+            stateBranch = .skippedNoReports
+            outcome = .degraded
+        case nil:
+            selectedSource = selectedSnapshot == nil ? .none : .appGroupSnapshot
+            stateBranch = .failure
+            outcome = .failure
+        }
+
+        recorder.record(
+            trigger: trigger,
+            presentationMode: .refreshAgent,
+            selectedSource: selectedSource,
+            presentationDigest: RuntimePresentationDigest.storedSnapshot(
+                selectedSnapshot,
+                status: selectedStatus
+            ),
+            stateBranch: stateBranch,
+            outcome: outcome,
+            observedAt: observedAt
+        )
     }
 }
 

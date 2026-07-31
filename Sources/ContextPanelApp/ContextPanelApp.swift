@@ -4208,6 +4208,7 @@ final class ContextPanelAppModel: ObservableObject {
             SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.appMaximumAge)
         }
     )
+    private let runtimeReceiptRecorder: RuntimeReceiptRecorder
 
     private var observedSnapshot: UsageSnapshot {
         storedSnapshot?.snapshot ?? UsageSnapshot(generatedAt: Date(), limits: [])
@@ -4402,9 +4403,12 @@ final class ContextPanelAppModel: ObservableObject {
             } ?? []
     }
 
-    init() {
+    init(
+        runtimeReceiptRecorder: RuntimeReceiptRecorder = .appDefault(surface: .macOSApp)
+    ) {
         refreshService = .appDefault(companionRemoteStore: CompanionCloudKitSyncStoreFactory.make())
         refreshRunner = SnapshotRefreshRunner(service: refreshService)
+        self.runtimeReceiptRecorder = runtimeReceiptRecorder
     }
 
     func loadSnapshot(reloadWidgetTimelines: Bool = true) {
@@ -4430,9 +4434,48 @@ final class ContextPanelAppModel: ObservableObject {
         }
         historyCount = refreshService.historyCount()
         refreshObservedBurnRates()
+        recordRuntimeReceipt(result)
         if reloadWidgetTimelines {
             reloadContextPanelWidgetTimeline()
         }
+    }
+
+    private func recordRuntimeReceipt(_ result: SnapshotStoreLoadResult) {
+        let stateBranch: RuntimeReceiptStateBranch
+        if result.snapshot == nil {
+            stateBranch = result.status == .failure ? .failure : .setupNeeded
+        } else {
+            stateBranch = switch result.status {
+            case .failure:
+                .failure
+            case .stale:
+                .stale
+            case .healthy, .close, .limited:
+                .ready
+            case .loading, .unknown:
+                .unknown
+            }
+        }
+        let outcome: RuntimeReceiptOutcome = switch stateBranch {
+        case .ready:
+            .success
+        case .failure:
+            .failure
+        case .setupNeeded, .stale, .unknown, .refreshed, .skippedFresh,
+             .skippedAlreadyRunning, .skippedNoReports:
+            .degraded
+        }
+        runtimeReceiptRecorder.record(
+            trigger: .appSnapshotLoad,
+            presentationMode: .appOverview,
+            selectedSource: result.snapshot == nil ? .none : .appGroupSnapshot,
+            presentationDigest: RuntimePresentationDigest.storedSnapshot(
+                result.snapshot,
+                status: result.status
+            ),
+            stateBranch: stateBranch,
+            outcome: outcome
+        )
     }
 
     private func refreshObservedBurnRates(now: Date = Date()) {

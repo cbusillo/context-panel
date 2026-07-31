@@ -9,6 +9,11 @@ struct ContextPanelWidgetEntry: TimelineEntry {
     let displayPreferences: WidgetDisplayPreferences
 }
 
+private struct ContextPanelWidgetSelection {
+    let entry: ContextPanelWidgetEntry
+    let selectedSource: RuntimeReceiptSelectedSource
+}
+
 struct ContextPanelTimelineProvider: TimelineProvider {
     let store: JSONSnapshotStore
     let containerFallbackStore: JSONSnapshotStore
@@ -18,6 +23,7 @@ struct ContextPanelTimelineProvider: TimelineProvider {
     let containerFallbackForecastSettingsStore: FastModeForecastSettingsStore
     let accountStore: AccountConfigurationStore
     let bookmarkStore: SecureFileBookmarkStore
+    let runtimeReceiptRecorder: RuntimeReceiptRecorder
 
     init(
         store: JSONSnapshotStore = JSONSnapshotStore(
@@ -44,7 +50,8 @@ struct ContextPanelTimelineProvider: TimelineProvider {
         ),
         bookmarkStore: SecureFileBookmarkStore = SecureFileBookmarkStore(
             storeURL: ContextPanelLocations.bookmarkStoreURL()
-        )
+        ),
+        runtimeReceiptRecorder: RuntimeReceiptRecorder = .appDefault(surface: .macOSWidget)
     ) {
         self.store = store
         self.containerFallbackStore = containerFallbackStore
@@ -54,6 +61,7 @@ struct ContextPanelTimelineProvider: TimelineProvider {
         self.containerFallbackForecastSettingsStore = containerFallbackForecastSettingsStore
         self.accountStore = accountStore
         self.bookmarkStore = bookmarkStore
+        self.runtimeReceiptRecorder = runtimeReceiptRecorder
     }
 
     func placeholder(in context: Context) -> ContextPanelWidgetEntry {
@@ -61,19 +69,38 @@ struct ContextPanelTimelineProvider: TimelineProvider {
     }
 
     func getSnapshot(in context: Context, completion: @escaping (ContextPanelWidgetEntry) -> Void) {
-        completion(entry(date: Date()))
+        let selection = entrySelection(date: Date())
+        recordRuntimeReceipt(
+            selection,
+            trigger: .widgetSnapshot,
+            family: context.family
+        )
+        completion(selection.entry)
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<ContextPanelWidgetEntry>) -> Void) {
         let now = Date()
         let nextRefresh = now.addingTimeInterval(SnapshotFreshness.widgetTimelineInterval)
-        completion(Timeline(entries: timelineEntries(date: now), policy: .after(nextRefresh)))
+        let selection = timelineSelection(date: now)
+        recordRuntimeReceipt(
+            selection.current,
+            trigger: .widgetTimeline,
+            family: context.family
+        )
+        completion(Timeline(entries: selection.entries, policy: .after(nextRefresh)))
     }
 
     func timelineEntries(date: Date) -> [ContextPanelWidgetEntry] {
+        timelineSelection(date: date).entries
+    }
+
+    private func timelineSelection(
+        date: Date
+    ) -> (entries: [ContextPanelWidgetEntry], current: ContextPanelWidgetSelection) {
         let policy = SnapshotStoreStalenessPolicy.appDefault(maximumAge: SnapshotFreshness.widgetMaximumAge)
-        let currentEntry = entry(date: date, stalenessPolicy: policy)
-        guard currentEntry.snapshot.state == .ready else { return [currentEntry] }
+        let current = entrySelection(date: date, stalenessPolicy: policy)
+        let currentEntry = current.entry
+        guard currentEntry.snapshot.state == .ready else { return ([currentEntry], current) }
         let staleTransition = policy.nextStaleTransitionDate(
             for: currentEntry.snapshot.usageSnapshot,
             now: date
@@ -89,9 +116,10 @@ struct ContextPanelTimelineProvider: TimelineProvider {
         let transitionDates = Set(
             [staleTransition].compactMap { $0 } + resetTransitions
         ).filter { $0 > date }.sorted()
-        return [currentEntry] + transitionDates.map {
+        let entries = [currentEntry] + transitionDates.map {
             entry(date: $0, stalenessPolicy: policy)
         }
+        return (entries, current)
     }
 
     func entry(date: Date) -> ContextPanelWidgetEntry {
@@ -103,10 +131,26 @@ struct ContextPanelTimelineProvider: TimelineProvider {
         )
     }
 
+    private func entrySelection(date: Date) -> ContextPanelWidgetSelection {
+        entrySelection(
+            date: date,
+            stalenessPolicy: SnapshotStoreStalenessPolicy.appDefault(
+                maximumAge: SnapshotFreshness.widgetMaximumAge
+            )
+        )
+    }
+
     private func entry(
         date: Date,
         stalenessPolicy policy: SnapshotStoreStalenessPolicy
     ) -> ContextPanelWidgetEntry {
+        entrySelection(date: date, stalenessPolicy: policy).entry
+    }
+
+    private func entrySelection(
+        date: Date,
+        stalenessPolicy policy: SnapshotStoreStalenessPolicy
+    ) -> ContextPanelWidgetSelection {
         let displayPreferences = loadDisplayPreferences()
         let forecastSettings = loadForecastSettings()
         let promptCacheWidgetState = WidgetSnapshot.promptCacheWidgetState(
@@ -121,32 +165,94 @@ struct ContextPanelTimelineProvider: TimelineProvider {
                 now: date
             )
             if fallback.snapshot != nil {
-                return ContextPanelWidgetEntry(
-                    date: date,
-                    snapshot: WidgetSnapshot.fromStore(
-                        fallback,
-                        now: date,
-                        history: containerFallbackStore.loadHistory(),
-                        fastModeForecastSettings: forecastSettings,
-                        promptCacheWidgetState: promptCacheWidgetState,
-                        stalenessPolicy: policy
+                return ContextPanelWidgetSelection(
+                    entry: ContextPanelWidgetEntry(
+                        date: date,
+                        snapshot: WidgetSnapshot.fromStore(
+                            fallback,
+                            now: date,
+                            history: containerFallbackStore.loadHistory(),
+                            fastModeForecastSettings: forecastSettings,
+                            promptCacheWidgetState: promptCacheWidgetState,
+                            stalenessPolicy: policy
+                        ),
+                        displayPreferences: displayPreferences
                     ),
-                    displayPreferences: displayPreferences
+                    selectedSource: .widgetSandboxMirror
                 )
             }
         }
-        return ContextPanelWidgetEntry(
-            date: date,
-            snapshot: WidgetSnapshot.fromStore(
-                result,
-                now: date,
-                history: store.loadHistory(),
-                fastModeForecastSettings: forecastSettings,
-                promptCacheWidgetState: promptCacheWidgetState,
-                stalenessPolicy: policy
+        return ContextPanelWidgetSelection(
+            entry: ContextPanelWidgetEntry(
+                date: date,
+                snapshot: WidgetSnapshot.fromStore(
+                    result,
+                    now: date,
+                    history: store.loadHistory(),
+                    fastModeForecastSettings: forecastSettings,
+                    promptCacheWidgetState: promptCacheWidgetState,
+                    stalenessPolicy: policy
+                ),
+                displayPreferences: displayPreferences
             ),
-            displayPreferences: displayPreferences
+            selectedSource: result.snapshot == nil ? .none : .appGroupSnapshot
         )
+    }
+
+    private func recordRuntimeReceipt(
+        _ selection: ContextPanelWidgetSelection,
+        trigger: RuntimeReceiptTrigger,
+        family: WidgetFamily
+    ) {
+        let stateBranch: RuntimeReceiptStateBranch = switch selection.entry.snapshot.state {
+        case .ready:
+            .ready
+        case .setupNeeded:
+            .setupNeeded
+        case .stale:
+            .stale
+        case .failure:
+            .failure
+        }
+        let outcome: RuntimeReceiptOutcome = switch stateBranch {
+        case .ready:
+            .success
+        case .failure:
+            .failure
+        case .setupNeeded, .stale, .unknown, .refreshed, .skippedFresh,
+             .skippedAlreadyRunning, .skippedNoReports:
+            .degraded
+        }
+        let presentationMode = runtimePresentationMode(for: family)
+        runtimeReceiptRecorder.record(
+            trigger: trigger,
+            presentationMode: presentationMode,
+            selectedSource: selection.selectedSource,
+            presentationDigest: RuntimePresentationDigest.widgetSnapshot(
+                selection.entry.snapshot,
+                displayPreferences: selection.entry.displayPreferences,
+                presentationMode: presentationMode,
+                presentationDate: selection.entry.date
+            ),
+            stateBranch: stateBranch,
+            outcome: outcome,
+            observedAt: selection.entry.date
+        )
+    }
+
+    private func runtimePresentationMode(
+        for family: WidgetFamily
+    ) -> RuntimeReceiptPresentationMode {
+        switch family {
+        case .systemSmall:
+            .widgetSystemSmall
+        case .systemMedium:
+            .widgetSystemMedium
+        case .systemLarge:
+            .widgetSystemLarge
+        default:
+            .widgetUnknown
+        }
     }
 
     private func loadDisplayPreferences() -> WidgetDisplayPreferences {
