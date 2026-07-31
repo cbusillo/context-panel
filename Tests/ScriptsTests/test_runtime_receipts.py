@@ -27,6 +27,30 @@ class RuntimeReceiptIntegrationTests(unittest.TestCase):
         self.assertIn("trigger: .refreshOnce", refresh_agent)
         self.assertIn("trigger: .backgroundRefresh", refresh_agent)
 
+    def test_companion_app_and_widget_author_real_process_receipts(self) -> None:
+        app = self.read("Sources/ContextPanelCompanion/ContextPanelCompanionApp.swift")
+        widget = self.read(
+            "Sources/ContextPanelCompanionWidget/ContextPanelCompanionWidget.swift"
+        )
+        store = self.read("Sources/ContextPanelCore/RuntimeReceiptStore.swift")
+
+        self.assertIn(".appGroupRequired(", app)
+        self.assertIn(".companionApp(for: companionRuntimeDeviceClass())", app)
+        self.assertIn("ContextPanelLocations.companionAppGroupID", app)
+        self.assertIn("CompanionRuntimeReceiptEvidence(", app)
+        self.assertIn("trigger: .appSnapshotLoad", app)
+
+        self.assertIn(".appGroupRequired(", widget)
+        self.assertIn(".companionWidget(for: companionRuntimeDeviceClass())", widget)
+        self.assertIn("ContextPanelLocations.companionAppGroupID", widget)
+        self.assertIn("trigger: .widgetSnapshot", widget)
+        self.assertIn("trigger: .widgetTimeline", widget)
+        self.assertIn("case .systemExtraLarge", widget)
+        self.assertIn("result: selection.result", widget)
+
+        self.assertIn("sharedRuntimeValidationDirectory", store)
+        self.assertIn("return RuntimeReceiptRecorder()", store)
+
     def test_receipt_schema_cannot_claim_visual_or_placement_evidence(self) -> None:
         receipt = self.read("Sources/ContextPanelCore/RuntimeReceipt.swift")
 

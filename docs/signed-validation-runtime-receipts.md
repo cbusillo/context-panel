@@ -6,14 +6,19 @@ receipts are diagnostic evidence only: they never claim that a human reviewed a
 shared view or that the OS displayed final widget, complication, or Top Shelf
 pixels.
 
-The first implementation slice covers the three macOS process boundaries:
+Implemented writers cover these process boundaries:
 
 - the app after it loads the snapshot used by the overview
 - the WidgetKit extension from `getSnapshot` and `getTimeline`
 - the refresh agent after one-shot and background refresh decisions
+- the iOS and iPadOS companion app after it selects synced usage for the visible overview
+- the iOS and iPadOS companion widget from its real snapshot and timeline callbacks
+- the visionOS companion app and widget through the same shipping entry points,
+  with distinct surface identity and effective appearance in the presentation digest
 
-Companion app, widget, Watch, complication, tvOS, Top Shelf, host relay, and
-private CloudKit receipt transport remain follow-up work under issue #520.
+Watch, complication, tvOS, Top Shelf, validation-session delivery to companion
+devices, host relay, and private CloudKit receipt transport remain follow-up
+work under issue #520.
 
 ## Receipt Contract
 
@@ -64,6 +69,15 @@ account-keyed source identifiers. It excludes account identity, labels, notes,
 messages, raw prompt-cache token values, bookmark paths, and raw error text. Only
 the final digest is written to the receipt.
 
+Companion presentation digests additionally include the closed delivery state,
+whether a redacted sync error is visibly active, privacy-safe refresh-attention
+provider categories, and the effective visionOS appearance. A setup or failure
+screen with no selected companion document omits synthetic generated and
+presentation timestamps so equivalent repeated executions remain rate-limitable.
+Companion source identity is a separate closed receipt field; CloudKit, iCloud,
+App Group, and local-cache selections remain distinct. Unsupported or missing
+source metadata is recorded as `none` and cannot produce a successful outcome.
+
 ## Session Gate
 
 Receipt collection is dormant unless an explicit local session is active. A
@@ -90,6 +104,20 @@ The helper reads the embedded manifest from
 `/Applications/Context Panel.app`, enables the three macOS surfaces, and writes
 the session to the canonical app-group container. It does not install, launch,
 replace, sign, or modify the app bundle.
+
+Companion app and widget writers require the signed companion App Group and fail
+closed when that shared container is unavailable. They read the same session
+schema from the device-local companion container:
+
+```text
+group.com.shinycomputers.contextpanel/Context Panel/Validation
+```
+
+The current operator helper does not deliver a session to a physical companion
+device and does not extract its receipts. Those writers therefore remain dormant
+until a later validation-session delivery/private relay slice supplies the exact
+manifest-bound session on that device. Do not copy a Mac session file manually
+and treat the resulting receipt as coordinated signed-device evidence.
 
 Inspect the current session and structurally valid observed surface count with:
 
@@ -134,6 +162,13 @@ runner while making its decision. They do not reload the mutable snapshot after
 the refresh lock has been released. Equivalent-state throttling includes the
 presentation digest, so a changed selected document can record immediately.
 
+Companion app and widget writers share only their device-local companion App
+Group queue. The app records after the exact loaded result, effective display
+preferences, and visible appearance become model state. Widget receipts retain
+the exact `CompanionSyncLoadResult` that produced the current entry, record only
+that current entry once per callback, and distinguish iPhone, iPad, and visionOS
+surface identities even though the iOS targets share bundle identifiers.
+
 ## Evidence Limits
 
 A receipt proves that the named exact-build process reached the recorded code
@@ -162,7 +197,10 @@ uv run python -m unittest \
 ```
 
 The Swift tests cover manifest and loaded-executable binding, redaction,
-deterministic digesting, widget preferences, exact refresh evidence, session
-expiration, digest-aware throttling, process ordering, tamper rejection, and
-per-session retention. Script tests verify the three macOS process hooks, strict
-receipt validation, and the operator session lifecycle.
+deterministic digesting, widget preferences, companion platform/source mapping,
+stable no-document companion states, effective visionOS appearance, exact
+refresh evidence, session expiration, digest-aware throttling, process ordering,
+tamper rejection, and per-session retention. Script tests verify the macOS and
+companion process hooks, required App Group routing, strict receipt validation,
+and the operator session lifecycle. Generic iOS and visionOS Xcode builds remain
+required because SwiftPM tests run only the host-platform Core target.
