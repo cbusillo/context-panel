@@ -290,8 +290,8 @@ public final class RuntimeReceiptProcessContext: @unchecked Sendable {
 
 public final class RuntimeReceiptRecorder: @unchecked Sendable {
     private let identity: RuntimeSurfaceBuildIdentity?
-    private let sessionStore: RuntimeValidationSessionStore
-    private let receiptStore: RuntimeReceiptStore
+    private let sessionStore: RuntimeValidationSessionStore?
+    private let receiptStore: RuntimeReceiptStore?
     private let processContext: RuntimeReceiptProcessContext
 
     public init(
@@ -303,6 +303,13 @@ public final class RuntimeReceiptRecorder: @unchecked Sendable {
         self.identity = identity
         self.sessionStore = sessionStore
         self.receiptStore = receiptStore
+        self.processContext = processContext
+    }
+
+    private init(processContext: RuntimeReceiptProcessContext = .shared) {
+        identity = nil
+        sessionStore = nil
+        receiptStore = nil
         self.processContext = processContext
     }
 
@@ -322,6 +329,30 @@ public final class RuntimeReceiptRecorder: @unchecked Sendable {
         )
     }
 
+    public static func appGroupRequired(
+        surface: RuntimeSurface,
+        bundle: Bundle = .main,
+        appGroupID: String
+    ) -> RuntimeReceiptRecorder {
+        guard let validationDirectory = ContextPanelLocations.sharedRuntimeValidationDirectory(
+            appGroupID: appGroupID
+        ) else {
+            return RuntimeReceiptRecorder()
+        }
+        return RuntimeReceiptRecorder(
+            identity: RuntimeBuildIdentityLoader.load(surface: surface, bundle: bundle),
+            sessionStore: RuntimeValidationSessionStore(
+                sessionURL: validationDirectory.appending(path: "runtime-session.json")
+            ),
+            receiptStore: RuntimeReceiptStore(
+                directoryURL: validationDirectory.appending(
+                    path: "Runtime Receipts",
+                    directoryHint: .isDirectory
+                )
+            )
+        )
+    }
+
     @discardableResult
     public func record(
         trigger: RuntimeReceiptTrigger,
@@ -333,6 +364,8 @@ public final class RuntimeReceiptRecorder: @unchecked Sendable {
         observedAt: Date = Date()
     ) -> RuntimeReceiptRecordResult {
         guard let identity,
+              let sessionStore,
+              let receiptStore,
               let session = sessionStore.activeSession(for: identity, now: observedAt)
         else {
             return .inactiveSession

@@ -80,6 +80,7 @@ SELECTED_SOURCES = {
     "companion-app-group",
     "companion-local-cache",
     "cloudkit",
+    "icloud",
     "none",
 }
 STATE_BRANCHES = {

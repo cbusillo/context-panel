@@ -203,6 +203,202 @@ import Testing
     #expect(baselineDigest != forecastDigest)
 }
 
+@Test func runtimeCompanionDeviceClassesMapToDistinctSurfaces() {
+    #expect(RuntimeSurface.companionApp(for: .phone) == .iPhoneApp)
+    #expect(RuntimeSurface.companionWidget(for: .phone) == .iPhoneWidget)
+    #expect(RuntimeSurface.companionApp(for: .pad) == .iPadApp)
+    #expect(RuntimeSurface.companionWidget(for: .pad) == .iPadWidget)
+    #expect(RuntimeSurface.companionApp(for: .vision) == .visionOSApp)
+    #expect(RuntimeSurface.companionWidget(for: .vision) == .visionOSWidget)
+}
+
+@Test func companionRuntimeEvidenceMapsSourcesAndVisibleDegradation() {
+    let now = Date(timeIntervalSince1970: 1_700_000_000)
+    let readySnapshot = runtimeWidgetSnapshot(
+        now: now,
+        accountID: "account",
+        accountName: "Account",
+        errorMessage: nil
+    )
+    let cloudKit = CompanionRuntimeReceiptEvidence(
+        result: runtimeCompanionLoadResult(source: .cloudKit),
+        snapshot: readySnapshot,
+        displayPreferences: .defaultPreferences,
+        appearanceSettings: nil,
+        presentationSurface: .app,
+        presentationMode: .appOverview,
+        presentationDate: now
+    )
+    let appGroup = CompanionRuntimeReceiptEvidence(
+        result: runtimeCompanionLoadResult(source: .appGroup),
+        snapshot: readySnapshot,
+        displayPreferences: .defaultPreferences,
+        appearanceSettings: nil,
+        presentationSurface: .widget,
+        presentationMode: .widgetSystemMedium,
+        presentationDate: now
+    )
+    let localCache = CompanionRuntimeReceiptEvidence(
+        result: runtimeCompanionLoadResult(source: .localCache),
+        snapshot: readySnapshot,
+        displayPreferences: .defaultPreferences,
+        appearanceSettings: nil,
+        presentationSurface: .widget,
+        presentationMode: .widgetSystemMedium,
+        presentationDate: now
+    )
+    let iCloud = CompanionRuntimeReceiptEvidence(
+        result: runtimeCompanionLoadResult(source: .iCloud),
+        snapshot: readySnapshot,
+        displayPreferences: .defaultPreferences,
+        appearanceSettings: nil,
+        presentationSurface: .app,
+        presentationMode: .appOverview,
+        presentationDate: now
+    )
+    let unknownSource = CompanionRuntimeReceiptEvidence(
+        result: runtimeCompanionLoadResult(source: .custom),
+        snapshot: readySnapshot,
+        displayPreferences: .defaultPreferences,
+        appearanceSettings: nil,
+        presentationSurface: .app,
+        presentationMode: .appOverview,
+        presentationDate: now
+    )
+    let savedAfterFailure = CompanionRuntimeReceiptEvidence(
+        result: runtimeCompanionLoadResult(source: .localCache, deliveryStatus: .delayed),
+        snapshot: runtimeWidgetSnapshot(
+            now: now,
+            accountID: "account",
+            accountName: "Account",
+            errorMessage: "latest sync failed"
+        ),
+        displayPreferences: .defaultPreferences,
+        appearanceSettings: nil,
+        presentationSurface: .app,
+        presentationMode: .appOverview,
+        presentationDate: now
+    )
+
+    #expect(cloudKit.selectedSource == .cloudKit)
+    #expect(cloudKit.stateBranch == .ready)
+    #expect(cloudKit.outcome == .success)
+    #expect(appGroup.selectedSource == .companionAppGroup)
+    #expect(localCache.selectedSource == .companionLocalCache)
+    #expect(iCloud.selectedSource == .iCloud)
+    #expect(unknownSource.selectedSource == .none)
+    #expect(unknownSource.outcome == .degraded)
+    #expect(savedAfterFailure.stateBranch == .ready)
+    #expect(savedAfterFailure.outcome == .degraded)
+}
+
+@Test func companionRuntimeDigestIsPrivateStableAndPresentationAware() {
+    let now = Date(timeIntervalSince1970: 1_700_000_000)
+    let result = runtimeCompanionLoadResult(source: .cloudKit)
+    let first = CompanionRuntimeReceiptEvidence(
+        result: result,
+        snapshot: runtimeWidgetSnapshot(
+            now: now,
+            accountID: "secret-a",
+            accountName: "Private A",
+            errorMessage: "token-a at /Users/private-a"
+        ),
+        displayPreferences: .defaultPreferences,
+        appearanceSettings: CompanionAppearanceSettings(
+            visionOSAppAppearance: .dark,
+            visionOSWidgetAppearance: .matchApp
+        ),
+        presentationSurface: .app,
+        presentationMode: .appOverview,
+        presentationDate: now
+    )
+    let privateDetailsChanged = CompanionRuntimeReceiptEvidence(
+        result: result,
+        snapshot: runtimeWidgetSnapshot(
+            now: now,
+            accountID: "secret-b",
+            accountName: "Private B",
+            errorMessage: "token-b at /Users/private-b"
+        ),
+        displayPreferences: .defaultPreferences,
+        appearanceSettings: CompanionAppearanceSettings(
+            visionOSAppAppearance: .dark,
+            visionOSWidgetAppearance: .matchApp
+        ),
+        presentationSurface: .app,
+        presentationMode: .appOverview,
+        presentationDate: now
+    )
+    let appearanceChanged = CompanionRuntimeReceiptEvidence(
+        result: result,
+        snapshot: runtimeWidgetSnapshot(
+            now: now,
+            accountID: "secret-a",
+            accountName: "Private A",
+            errorMessage: "token-a at /Users/private-a"
+        ),
+        displayPreferences: .defaultPreferences,
+        appearanceSettings: CompanionAppearanceSettings(
+            visionOSAppAppearance: .light,
+            visionOSWidgetAppearance: .matchApp
+        ),
+        presentationSurface: .app,
+        presentationMode: .appOverview,
+        presentationDate: now
+    )
+    let deliveryChanged = CompanionRuntimeReceiptEvidence(
+        result: runtimeCompanionLoadResult(source: .cloudKit, deliveryStatus: .delayed),
+        snapshot: runtimeWidgetSnapshot(
+            now: now,
+            accountID: "secret-a",
+            accountName: "Private A",
+            errorMessage: "token-a at /Users/private-a"
+        ),
+        displayPreferences: .defaultPreferences,
+        appearanceSettings: CompanionAppearanceSettings(
+            visionOSAppAppearance: .dark,
+            visionOSWidgetAppearance: .matchApp
+        ),
+        presentationSurface: .app,
+        presentationMode: .appOverview,
+        presentationDate: now
+    )
+
+    #expect(first.presentationDigest == privateDetailsChanged.presentationDigest)
+    #expect(first.presentationDigest != appearanceChanged.presentationDigest)
+    #expect(first.presentationDigest != deliveryChanged.presentationDigest)
+    #expect(RuntimeSurfaceFingerprints.isSHA256(first.presentationDigest))
+}
+
+@Test func companionRuntimeDigestStabilizesNoDocumentPresentations() {
+    let firstDate = Date(timeIntervalSince1970: 1_700_000_000)
+    let secondDate = firstDate.addingTimeInterval(120)
+    let result = CompanionSyncLoadResult(document: nil, status: .unknown)
+    let first = CompanionRuntimeReceiptEvidence(
+        result: result,
+        snapshot: WidgetSnapshot.fromCompanionSync(result, now: firstDate),
+        displayPreferences: .defaultPreferences,
+        appearanceSettings: nil,
+        presentationSurface: .app,
+        presentationMode: .appOverview,
+        presentationDate: firstDate
+    )
+    let second = CompanionRuntimeReceiptEvidence(
+        result: result,
+        snapshot: WidgetSnapshot.fromCompanionSync(result, now: secondDate),
+        displayPreferences: .defaultPreferences,
+        appearanceSettings: nil,
+        presentationSurface: .app,
+        presentationMode: .appOverview,
+        presentationDate: secondDate
+    )
+
+    #expect(first.presentationDigest == second.presentationDigest)
+    #expect(first.selectedSource == .none)
+    #expect(first.stateBranch == .setupNeeded)
+    #expect(first.outcome == .degraded)
+}
+
 @Test func runtimeSessionStoreLoadsTheOperatorSchema() throws {
     let root = try runtimeReceiptTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -630,7 +826,7 @@ private func runtimeWidgetSnapshot(
     now: Date,
     accountID: String,
     accountName: String,
-    errorMessage: String
+    errorMessage: String?
 ) -> WidgetSnapshot {
     WidgetSnapshot(
         state: .ready,
@@ -661,8 +857,22 @@ private func runtimeWidgetSnapshot(
             ),
         ],
         status: .healthy,
-        message: errorMessage,
+        message: errorMessage ?? "Ready",
         syncErrorMessage: errorMessage
+    )
+}
+
+private func runtimeCompanionLoadResult(
+    source: CompanionSyncSource,
+    deliveryStatus: CompanionSyncDeliveryStatus = .healthy
+) -> CompanionSyncLoadResult {
+    CompanionSyncLoadResult(
+        document: nil,
+        status: .healthy,
+        transportMetadata: CompanionSyncTransportMetadata(
+            source: source,
+            deliveryStatus: deliveryStatus
+        )
     )
 }
 

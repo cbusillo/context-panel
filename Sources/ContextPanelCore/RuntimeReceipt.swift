@@ -15,6 +15,12 @@ public enum RuntimePlatform: String, Codable, Equatable, Sendable {
     case tvOS
 }
 
+public enum RuntimeCompanionDeviceClass: Equatable, Sendable {
+    case phone
+    case pad
+    case vision
+}
+
 public enum RuntimeSurface: String, Codable, CaseIterable, Equatable, Sendable {
     case macOSApp = "macos.app"
     case macOSWidget = "macos.widget"
@@ -44,6 +50,28 @@ public enum RuntimeSurface: String, Codable, CaseIterable, Equatable, Sendable {
             .watchOS
         case .tvOSApp, .tvOSTopShelf:
             .tvOS
+        }
+    }
+
+    public static func companionApp(for deviceClass: RuntimeCompanionDeviceClass) -> RuntimeSurface {
+        switch deviceClass {
+        case .phone:
+            .iPhoneApp
+        case .pad:
+            .iPadApp
+        case .vision:
+            .visionOSApp
+        }
+    }
+
+    public static func companionWidget(for deviceClass: RuntimeCompanionDeviceClass) -> RuntimeSurface {
+        switch deviceClass {
+        case .phone:
+            .iPhoneWidget
+        case .pad:
+            .iPadWidget
+        case .vision:
+            .visionOSWidget
         }
     }
 }
@@ -328,6 +356,7 @@ public enum RuntimeReceiptSelectedSource: String, Codable, Equatable, Sendable {
     case companionAppGroup = "companion-app-group"
     case companionLocalCache = "companion-local-cache"
     case cloudKit = "cloudkit"
+    case iCloud = "icloud"
     case none
 }
 
@@ -347,6 +376,69 @@ public enum RuntimeReceiptOutcome: String, Codable, Equatable, Sendable {
     case success
     case degraded
     case failure
+}
+
+public enum CompanionRuntimePresentationSurface: Equatable, Sendable {
+    case app
+    case widget
+}
+
+public struct CompanionRuntimeReceiptEvidence: Equatable, Sendable {
+    public let selectedSource: RuntimeReceiptSelectedSource
+    public let presentationDigest: String
+    public let stateBranch: RuntimeReceiptStateBranch
+    public let outcome: RuntimeReceiptOutcome
+
+    public init(
+        result: CompanionSyncLoadResult,
+        snapshot: WidgetSnapshot,
+        displayPreferences: WidgetDisplayPreferences,
+        appearanceSettings: CompanionAppearanceSettings?,
+        presentationSurface: CompanionRuntimePresentationSurface,
+        presentationMode: RuntimeReceiptPresentationMode,
+        presentationDate: Date
+    ) {
+        selectedSource = switch result.transportMetadata?.source {
+        case .some(.appGroup):
+            .companionAppGroup
+        case .some(.localCache):
+            .companionLocalCache
+        case .some(.cloudKit):
+            .cloudKit
+        case .some(.iCloud):
+            .iCloud
+        case .some(.custom), .none:
+            .none
+        }
+        stateBranch = switch snapshot.state {
+        case .ready:
+            .ready
+        case .setupNeeded:
+            .setupNeeded
+        case .stale:
+            .stale
+        case .failure:
+            .failure
+        }
+        if stateBranch == .failure {
+            outcome = .failure
+        } else if stateBranch == .ready,
+                  snapshot.syncErrorMessage == nil,
+                  selectedSource != .none {
+            outcome = .success
+        } else {
+            outcome = .degraded
+        }
+        presentationDigest = RuntimePresentationDigest.companionSnapshot(
+            result: result,
+            snapshot: snapshot,
+            displayPreferences: displayPreferences,
+            appearanceSettings: appearanceSettings,
+            presentationSurface: presentationSurface,
+            presentationMode: presentationMode,
+            presentationDate: presentationDate
+        )
+    }
 }
 
 public struct RuntimeReceipt: Codable, Equatable, Identifiable, Sendable {
@@ -543,11 +635,31 @@ public enum RuntimePresentationDigest {
         presentationMode: RuntimeReceiptPresentationMode,
         presentationDate: Date
     ) -> String {
+        widgetSnapshot(
+            snapshot,
+            displayPreferences: displayPreferences,
+            presentationMode: presentationMode,
+            presentationDate: presentationDate,
+            includesPresentationDates: true
+        )
+    }
+
+    private static func widgetSnapshot(
+        _ snapshot: WidgetSnapshot,
+        displayPreferences: WidgetDisplayPreferences,
+        presentationMode: RuntimeReceiptPresentationMode,
+        presentationDate: Date,
+        includesPresentationDates: Bool
+    ) -> String {
         let promptCacheSummary = snapshot.promptCacheSummary
         let payload = WidgetSnapshotDigestPayload(
             schemaVersion: 1,
-            generatedAtMilliseconds: milliseconds(snapshot.generatedAt),
-            presentationDateMilliseconds: milliseconds(presentationDate),
+            generatedAtMilliseconds: includesPresentationDates
+                ? milliseconds(snapshot.generatedAt)
+                : nil,
+            presentationDateMilliseconds: includesPresentationDates
+                ? milliseconds(presentationDate)
+                : nil,
             state: snapshot.state.rawValue,
             status: snapshot.status.rawValue,
             promptCacheState: snapshot.promptCacheWidgetState.rawValue,
@@ -591,6 +703,43 @@ public enum RuntimePresentationDigest {
             ),
             limits: sanitizedLimits(snapshot.limits),
             reports: sanitizedReports(snapshot.reports)
+        )
+        return RuntimeReceiptDigest.canonicalDigest(payload)
+    }
+
+    public static func companionSnapshot(
+        result: CompanionSyncLoadResult,
+        snapshot: WidgetSnapshot,
+        displayPreferences: WidgetDisplayPreferences,
+        appearanceSettings: CompanionAppearanceSettings?,
+        presentationSurface: CompanionRuntimePresentationSurface,
+        presentationMode: RuntimeReceiptPresentationMode,
+        presentationDate: Date
+    ) -> String {
+        let payload = CompanionSnapshotDigestPayload(
+            schemaVersion: 1,
+            widgetSnapshotDigest: widgetSnapshot(
+                snapshot,
+                displayPreferences: displayPreferences,
+                presentationMode: presentationMode,
+                presentationDate: presentationDate,
+                includesPresentationDates: result.document != nil
+            ),
+            deliveryStatus: result.transportMetadata?.deliveryStatus.rawValue,
+            hasSyncError: snapshot.syncErrorMessage != nil,
+            refreshAttentionProviders: snapshot.refreshAttentionSummary?.providers
+                .map(\.rawValue)
+                .sorted() ?? [],
+            refreshAttentionSnapshotAgeStale: snapshot.refreshAttentionSummary?.isSnapshotAgeStale ?? false,
+            visionOSAppAppearance: presentationSurface == .app
+                ? appearanceSettings?.visionOSAppAppearance.rawValue
+                : nil,
+            visionOSWidgetAppearance: presentationSurface == .app
+                ? appearanceSettings?.visionOSWidgetAppearance.rawValue
+                : nil,
+            resolvedVisionOSWidgetAppearance: presentationSurface == .widget
+                ? appearanceSettings?.resolvedVisionOSWidgetAppearance.rawValue
+                : nil
         )
         return RuntimeReceiptDigest.canonicalDigest(payload)
     }
@@ -752,8 +901,8 @@ private struct StoredSnapshotDigestPayload: Encodable {
 
 private struct WidgetSnapshotDigestPayload: Encodable {
     let schemaVersion: Int
-    let generatedAtMilliseconds: Int64
-    let presentationDateMilliseconds: Int64
+    let generatedAtMilliseconds: Int64?
+    let presentationDateMilliseconds: Int64?
     let state: String
     let status: String
     let promptCacheState: String
@@ -765,6 +914,18 @@ private struct WidgetSnapshotDigestPayload: Encodable {
     let selectedMainLimits: [SanitizedWidgetLaneDigestPayload]
     let limits: [SanitizedLimitDigestPayload]
     let reports: [SanitizedReportDigestPayload]
+}
+
+private struct CompanionSnapshotDigestPayload: Encodable {
+    let schemaVersion: Int
+    let widgetSnapshotDigest: String
+    let deliveryStatus: String?
+    let hasSyncError: Bool
+    let refreshAttentionProviders: [String]
+    let refreshAttentionSnapshotAgeStale: Bool
+    let visionOSAppAppearance: String?
+    let visionOSWidgetAppearance: String?
+    let resolvedVisionOSWidgetAppearance: String?
 }
 
 private struct SanitizedPromptCacheDigestPayload: Encodable {
