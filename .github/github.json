@@ -9,6 +9,7 @@
     "designDirection": "docs/design-direction.md",
     "release": "docs/release.md",
     "signedValidationFingerprints": "docs/signed-validation-fingerprints.md",
+    "signedValidationRuntimeReceipts": "docs/signed-validation-runtime-receipts.md",
     "localLimitProbe": "docs/local-limit-probe.md",
     "providerUsageAccess": "docs/provider-usage-access.md",
     "repoSettings": "docs/repo-settings.md"
@@ -33,6 +34,8 @@
       "companionTVArchive": "scripts/validate-companion-builds.sh --configuration Release --archive tvos",
       "signedValidationOrientation": "scripts/context-panel-validation.py status --version <version> --build-number <build-number>",
       "signedValidationOrientationTests": "python3 -m unittest Tests/ScriptsTests/test_validation_coordinator.py Tests/ScriptsTests/test_release_workflows.py",
+      "runtimeReceiptSession": "scripts/context-panel-runtime-session.py status",
+      "runtimeReceiptTests": "swift test --filter 'ContextPanelCoreTests.runtime|ContextPanelCoreTests.snapshotRefreshEvidence' && uv run python -m unittest Tests.ScriptsTests.test_runtime_receipts Tests.ScriptsTests.test_runtime_session",
       "surfaceFingerprintContract": "scripts/context-panel-surface-manifest.py validate",
       "surfaceFingerprintTests": "python3 -m unittest Tests/ScriptsTests/test_surface_manifest.py"
     },

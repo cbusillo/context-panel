@@ -246,6 +246,27 @@ public enum ContextPanelLocations {
         return applicationSupportDirectory().appending(path: "refresh-diagnostics-state.json")
     }
 
+    public static func runtimeValidationDirectory(appGroupID: String? = nil) -> URL {
+        if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
+            return containerURL
+                .appending(path: "Context Panel", directoryHint: .isDirectory)
+                .appending(path: "Validation", directoryHint: .isDirectory)
+        }
+
+        return applicationSupportDirectory()
+            .appending(path: "Validation", directoryHint: .isDirectory)
+    }
+
+    public static func runtimeValidationSessionURL(appGroupID: String? = nil) -> URL {
+        runtimeValidationDirectory(appGroupID: appGroupID)
+            .appending(path: "runtime-session.json")
+    }
+
+    public static func runtimeReceiptDirectory(appGroupID: String? = nil) -> URL {
+        runtimeValidationDirectory(appGroupID: appGroupID)
+            .appending(path: "Runtime Receipts", directoryHint: .isDirectory)
+    }
+
     public static func resetExpiryRefreshStateURL(appGroupID: String? = nil) -> URL {
         if let containerURL = appGroupContainerURL(appGroupID: appGroupID) {
             return containerURL

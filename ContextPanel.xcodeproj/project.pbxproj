@@ -19,6 +19,7 @@
 		0BBD1DF433F345E62C6A26EF /* LimitProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */; };
 		0C3D1DA4C86DB8BD95BDE3D1 /* CompanionAppearanceSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 696876833ECD43AEF639C9B2 /* CompanionAppearanceSettings.swift */; };
 		0CBB7ADA380F90E045F4AD9F /* ClaudeOAuthUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 895A979571D5E5C14830B41D /* ClaudeOAuthUsage.swift */; };
+		0E7AF66A9FF4789136FCD673 /* RuntimeReceipt.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAE37DEC3E2AA1F35C74FCA7 /* RuntimeReceipt.swift */; };
 		0FF2EE405686EB21167A520B /* SnapshotRefreshService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45E8D3C3E45C1B6B3FACE828 /* SnapshotRefreshService.swift */; };
 		10A1AF02A23FA0087A6C11C1 /* libContextPanelCloudKitSyncWatch.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 41278A75CCCF83C9E0220F40 /* libContextPanelCloudKitSyncWatch.a */; };
 		12E5050FE84C58CBA30CF4D4 /* CompanionCloudKitSyncStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F188796FF19C3A0564D5EEAB /* CompanionCloudKitSyncStore.swift */; };
@@ -32,6 +33,7 @@
 		1899D45682D3ACB2525FC6AA /* BackgroundRefreshSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15DC14CB07B8BA4756DAB731 /* BackgroundRefreshSettings.swift */; };
 		198493F605C07AB87B0BDFA9 /* CapacityPool.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8862B929FE544FCB2C3D06B /* CapacityPool.swift */; };
 		1CF087117C13CB9EAE4ED5FD /* CompanionRemoteMerge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C28E693A6A73B61184A5288 /* CompanionRemoteMerge.swift */; };
+		20072FDFE14D62C0693ABD93 /* RuntimeReceiptStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90A18CA34B97DF772F4DD489 /* RuntimeReceiptStore.swift */; };
 		206412EFA28E871ADCA8246C /* libContextPanelWidgetUICompanion.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A3C9122F0E0741C701520316 /* libContextPanelWidgetUICompanion.a */; };
 		206D119AB834D38BBB5B4D0E /* CompanionSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8211A4CCCDD1AA6113F22D1 /* CompanionSnapshot.swift */; };
 		230821CB850C701C4D7A068D /* CompanionCloudKitSyncStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F188796FF19C3A0564D5EEAB /* CompanionCloudKitSyncStore.swift */; };
@@ -48,6 +50,7 @@
 		2ADBB5A7E4963EDDE12DAC48 /* CompanionSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8211A4CCCDD1AA6113F22D1 /* CompanionSnapshot.swift */; };
 		2AFE0782353A1B7564C045C4 /* CompanionCloudKitNotificationPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED98452A7C68BF1FAE2A2DBC /* CompanionCloudKitNotificationPolicy.swift */; };
 		2B307D35600C2C87226FB7B2 /* libContextPanelCloudKitSyncCompanion.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 4EF1C31059DCFA7FFC3969EC /* libContextPanelCloudKitSyncCompanion.a */; };
+		2B70701A21DA7CEC264F9BE9 /* RuntimeReceiptStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90A18CA34B97DF772F4DD489 /* RuntimeReceiptStore.swift */; };
 		2D53BD76E94E68A54CF36F92 /* SnapshotFreshness.swift in Sources */ = {isa = PBXBuildFile; fileRef = D03C19BEA1C610711A048EB7 /* SnapshotFreshness.swift */; };
 		2EBF1D50D1530377171B2FBF /* libContextPanelTVSupport.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 44FF54AE4BAF0EF490CAD694 /* libContextPanelTVSupport.a */; };
 		3110B4EC8EFDD00AEC978791 /* libContextPanelWidgetUI.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 4CDAD640E6A641A427B87752 /* libContextPanelWidgetUI.a */; };
@@ -99,12 +102,14 @@
 		5F2ABF0B8566DC46BBEC6615 /* BurnRateEstimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FB4BEA57ACE8B84CAE71E75 /* BurnRateEstimator.swift */; };
 		61016C04BC25FB490A10B2EB /* ProviderConnector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 350ED5589FB23C42ED32704A /* ProviderConnector.swift */; };
 		6234444D0DD8D8136CB59A1F /* ClaudeAccountMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BBC1080557704B2EF023A7B /* ClaudeAccountMigration.swift */; };
+		630564CAE2E39E91C82E6FC8 /* RuntimeReceiptStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90A18CA34B97DF772F4DD489 /* RuntimeReceiptStore.swift */; };
 		642684C666F2BEC487CEB7A2 /* SecureFileBookmark.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FA0C66F95091A96B8F7CBF4 /* SecureFileBookmark.swift */; };
 		652E3352E67082CBC13D4064 /* UsageLimit.swift in Sources */ = {isa = PBXBuildFile; fileRef = D459054C90410A784EBD308B /* UsageLimit.swift */; };
 		66A9008C342403F14896E0DB /* CompanionCloudKitSyncStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F188796FF19C3A0564D5EEAB /* CompanionCloudKitSyncStore.swift */; };
 		68A9CA020103CBBA585813A4 /* TVSystemSurfaces.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8C0573DE5DB1DBE4E963FB2 /* TVSystemSurfaces.swift */; };
 		6B8C7E3ADAA341D886D8CCCD /* UsageLimit.swift in Sources */ = {isa = PBXBuildFile; fileRef = D459054C90410A784EBD308B /* UsageLimit.swift */; };
 		6D165C4F73D82702B76CB91A /* ResetCreditGuidance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 889A754ED35365DB1AAB2089 /* ResetCreditGuidance.swift */; };
+		6DE54A2E25332D2D5A377E63 /* RuntimeReceiptStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90A18CA34B97DF772F4DD489 /* RuntimeReceiptStore.swift */; };
 		6E1A0333F84CA8A43597430C /* CompanionCloudKitSyncStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F188796FF19C3A0564D5EEAB /* CompanionCloudKitSyncStore.swift */; };
 		70156A1E7C885A1E66F95D68 /* TVSyncReceipt.swift in Sources */ = {isa = PBXBuildFile; fileRef = 544FE80ADC4650CDB85B4640 /* TVSyncReceipt.swift */; };
 		73FCB559A49D7474E51023C4 /* CompanionSyncPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47DB9468EE997E9DAD1CE6D3 /* CompanionSyncPresentation.swift */; };
@@ -148,12 +153,15 @@
 		9D7098AB5C83051676B31188 /* OAuthPKCE.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB0E4D0FF6DD744B87D215B9 /* OAuthPKCE.swift */; };
 		9D8AF2D95FF9A28EC504BC6C /* RefreshDiagnosticsState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DAF08B3CB69404A37DECA39 /* RefreshDiagnosticsState.swift */; };
 		9EBBE957FA988AA36704E9A5 /* TVAssets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 0B2F27D01900C53EC77A72BC /* TVAssets.xcassets */; };
+		9F6B4EC1FB823816886666F8 /* RuntimeReceipt.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAE37DEC3E2AA1F35C74FCA7 /* RuntimeReceipt.swift */; };
 		A101488BBBE552136B8CDF4E /* MetricProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B5621100867602BDE8B426A /* MetricProgress.swift */; };
 		A1DB7CDCDD4A29AF1B157B83 /* UsageLimit.swift in Sources */ = {isa = PBXBuildFile; fileRef = D459054C90410A784EBD308B /* UsageLimit.swift */; };
 		A1E12E6C1FA3E1356F93519B /* PromptCacheTelemetryMirrorService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3B93DAA06AE42D89A02C5EE /* PromptCacheTelemetryMirrorService.swift */; };
+		A466B05348C2BFF29F95911B /* RuntimeReceipt.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAE37DEC3E2AA1F35C74FCA7 /* RuntimeReceipt.swift */; };
 		A4B76105A6FA2C709A418147 /* WatchAsyncDeadline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14572C20D47B490CFD13D719 /* WatchAsyncDeadline.swift */; };
 		A78C35127BB0471865FD6A8B /* WidgetDisplayPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBDCF9F49A90CA3576BF2792 /* WidgetDisplayPreferences.swift */; };
 		A83D074D710D28DEF7375292 /* libContextPanelCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = F09182E1FD96DAEEC38F3909 /* libContextPanelCore.a */; };
+		A84DDCA01CD333BF1E88B28F /* RuntimeReceipt.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAE37DEC3E2AA1F35C74FCA7 /* RuntimeReceipt.swift */; };
 		A9464088796B38105C01F7D3 /* MainLimitSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FC2DAEDD38483FC3A5D4880 /* MainLimitSummary.swift */; };
 		AA2B1A4265AA6530B7F8DB67 /* ContextPanelWidgetViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1973426645A7260EC4F9B396 /* ContextPanelWidgetViews.swift */; };
 		ABB09CD19650E726362EBD26 /* RefreshAgentRegistration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66A9D24D7A74AB11733E1FEF /* RefreshAgentRegistration.swift */; };
@@ -670,6 +678,7 @@
 		8F69BC9358E3C7F9853C0A53 /* ContextPanelWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ContextPanelWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8FA0C66F95091A96B8F7CBF4 /* SecureFileBookmark.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureFileBookmark.swift; sourceTree = "<group>"; };
 		8FB4BEA57ACE8B84CAE71E75 /* BurnRateEstimator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BurnRateEstimator.swift; sourceTree = "<group>"; };
+		90A18CA34B97DF772F4DD489 /* RuntimeReceiptStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeReceiptStore.swift; sourceTree = "<group>"; };
 		934D321CC0D5C25A3369D023 /* libContextPanelCoreWatch.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libContextPanelCoreWatch.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		944A3154A0C2E33C5971E571 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		95C575E8B51C3D7972F23956 /* ContextPanelTV.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = ContextPanelTV.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -702,6 +711,7 @@
 		F3B93DAA06AE42D89A02C5EE /* PromptCacheTelemetryMirrorService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptCacheTelemetryMirrorService.swift; sourceTree = "<group>"; };
 		F7E0CE227A384064BE08DD1D /* libContextPanelCloudKitSync.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libContextPanelCloudKitSync.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		F8211A4CCCDD1AA6113F22D1 /* CompanionSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionSnapshot.swift; sourceTree = "<group>"; };
+		FAE37DEC3E2AA1F35C74FCA7 /* RuntimeReceipt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeReceipt.swift; sourceTree = "<group>"; };
 		FB0E4D0FF6DD744B87D215B9 /* OAuthPKCE.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OAuthPKCE.swift; sourceTree = "<group>"; };
 		FBDCF9F49A90CA3576BF2792 /* WidgetDisplayPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetDisplayPreferences.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -891,6 +901,8 @@
 				2DAF08B3CB69404A37DECA39 /* RefreshDiagnosticsState.swift */,
 				889A754ED35365DB1AAB2089 /* ResetCreditGuidance.swift */,
 				58B71A183966EEC56B955CD3 /* ResetExpiryRefreshState.swift */,
+				FAE37DEC3E2AA1F35C74FCA7 /* RuntimeReceipt.swift */,
+				90A18CA34B97DF772F4DD489 /* RuntimeReceiptStore.swift */,
 				8FA0C66F95091A96B8F7CBF4 /* SecureFileBookmark.swift */,
 				D03C19BEA1C610711A048EB7 /* SnapshotFreshness.swift */,
 				45E8D3C3E45C1B6B3FACE828 /* SnapshotRefreshService.swift */,
@@ -2204,6 +2216,8 @@
 				762B3AD1D74922F681D202DF /* RefreshDiagnosticsState.swift in Sources */,
 				3A2F5A5A87BF4CA4F2DB84F0 /* ResetCreditGuidance.swift in Sources */,
 				EE22EBA64F60246CD4EFE93C /* ResetExpiryRefreshState.swift in Sources */,
+				9F6B4EC1FB823816886666F8 /* RuntimeReceipt.swift in Sources */,
+				6DE54A2E25332D2D5A377E63 /* RuntimeReceiptStore.swift in Sources */,
 				B929FCB2C981C6CCCFC72B7C /* SecureFileBookmark.swift in Sources */,
 				B59F4707B276A4C93680E7F6 /* SnapshotFreshness.swift in Sources */,
 				0FF2EE405686EB21167A520B /* SnapshotRefreshService.swift in Sources */,
@@ -2314,6 +2328,8 @@
 				E3A8EF704692B59DF4727D9A /* RefreshDiagnosticsState.swift in Sources */,
 				4FBB77266BE1FAEB540C283A /* ResetCreditGuidance.swift in Sources */,
 				7D389D52287E9778C1742B44 /* ResetExpiryRefreshState.swift in Sources */,
+				A84DDCA01CD333BF1E88B28F /* RuntimeReceipt.swift in Sources */,
+				20072FDFE14D62C0693ABD93 /* RuntimeReceiptStore.swift in Sources */,
 				E755DFF9AC42460A40C2102E /* SecureFileBookmark.swift in Sources */,
 				2D53BD76E94E68A54CF36F92 /* SnapshotFreshness.swift in Sources */,
 				28FDF54D88C9CB4A982643A6 /* SnapshotRefreshService.swift in Sources */,
@@ -2384,6 +2400,8 @@
 				9D8AF2D95FF9A28EC504BC6C /* RefreshDiagnosticsState.swift in Sources */,
 				6D165C4F73D82702B76CB91A /* ResetCreditGuidance.swift in Sources */,
 				8A926EF24F018FCD884C2254 /* ResetExpiryRefreshState.swift in Sources */,
+				A466B05348C2BFF29F95911B /* RuntimeReceipt.swift in Sources */,
+				630564CAE2E39E91C82E6FC8 /* RuntimeReceiptStore.swift in Sources */,
 				642684C666F2BEC487CEB7A2 /* SecureFileBookmark.swift in Sources */,
 				F240827E65E98A1749285EF0 /* SnapshotFreshness.swift in Sources */,
 				58B675DA547BC49D9A99A67F /* SnapshotRefreshService.swift in Sources */,
@@ -2466,6 +2484,8 @@
 				3265E9C3827536C0FFE36A28 /* RefreshDiagnosticsState.swift in Sources */,
 				B1CDE4B115C6B084E7DB8310 /* ResetCreditGuidance.swift in Sources */,
 				EC6D05FFECBDD2F8D65FAB49 /* ResetExpiryRefreshState.swift in Sources */,
+				0E7AF66A9FF4789136FCD673 /* RuntimeReceipt.swift in Sources */,
+				2B70701A21DA7CEC264F9BE9 /* RuntimeReceiptStore.swift in Sources */,
 				5D8378E4CD9964F003CB078B /* SecureFileBookmark.swift in Sources */,
 				50076A9A7443826CAA1C9561 /* SnapshotFreshness.swift in Sources */,
 				3462843349545C7A4A018467 /* SnapshotRefreshService.swift in Sources */,

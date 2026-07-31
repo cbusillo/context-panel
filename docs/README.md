@@ -9,4 +9,5 @@
 - [TODO](todo.md)
 - [Release Path](release.md)
 - [Signed Validation Fingerprints](signed-validation-fingerprints.md)
+- [Signed Validation Runtime Receipts](signed-validation-runtime-receipts.md)
 - [Repository Settings](repo-settings.md)

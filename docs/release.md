@@ -229,6 +229,13 @@ hashes, and per-surface fingerprints. The reviewed input mapping, evidence
 classes, carry-forward rules, and CLI are documented in
 [Signed Validation Fingerprints](signed-validation-fingerprints.md).
 
+The macOS app, widget extension, and refresh agent can also emit session-gated,
+privacy-safe proof from their actual process boundaries. Receipt collection is
+dormant by default and remains distinct from shared-view and OS placement
+evidence. The schema, local queue, operator session lifecycle, privacy boundary,
+and current first-slice limits are documented in
+[Signed Validation Runtime Receipts](signed-validation-runtime-receipts.md).
+
 The fingerprint contract hashes normalized target slices from `project.yml`,
 not generated `ContextPanel.xcodeproj` output. XcodeGen formatting or object-ID
 changes therefore cannot invalidate unrelated evidence. Unknown or unmapped
