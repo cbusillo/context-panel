@@ -239,7 +239,8 @@ private struct TVBackgroundSyncCoordinator: Sendable {
             maximumAge: SnapshotFreshness.companionProviderMaximumAge
         )
         let cacheSaveResult = CompanionSyncStore(
-            documentURL: localLocations.companionDocumentURL
+            documentURL: localLocations.companionDocumentURL,
+            source: .localCache
         ).saveResult(
             document,
             policy: stalenessPolicy,

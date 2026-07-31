@@ -229,13 +229,14 @@ hashes, and per-surface fingerprints. The reviewed input mapping, evidence
 classes, carry-forward rules, and CLI are documented in
 [Signed Validation Fingerprints](signed-validation-fingerprints.md).
 
-The macOS app, widget extension, refresh agent, and the iOS/iPadOS/visionOS
-companion app and widget can also emit session-gated, privacy-safe proof from
-their actual process boundaries. Receipt collection is dormant by default and
-remains distinct from shared-view and OS placement evidence. Companion writers
-fail closed without their App Group; physical-device session delivery and relay
-remain later validation-system work. The schema, local queues, operator session
-lifecycle, privacy boundary, and current limits are documented in
+The macOS app, widget extension, refresh agent, iOS/iPadOS/visionOS companion
+app and widget, Watch app and complication, and tvOS app and dynamic Top Shelf
+extension can also emit session-gated, privacy-safe proof from their actual
+process boundaries. Receipt collection is dormant by default and remains
+distinct from shared-view and OS placement evidence. Device writers fail closed
+without their App Group; physical-device session delivery, extraction, and
+relay remain later validation-system work. The schema, local queues, operator
+session lifecycle, privacy boundary, and current limits are documented in
 [Signed Validation Runtime Receipts](signed-validation-runtime-receipts.md).
 
 The fingerprint contract hashes normalized target slices from `project.yml`,

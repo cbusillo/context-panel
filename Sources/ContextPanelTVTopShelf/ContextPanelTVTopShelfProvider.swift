@@ -5,13 +5,60 @@ import Foundation
 import UIKit
 
 final class ContextPanelTVTopShelfProvider: TVTopShelfContentProvider {
+    private let runtimeReceiptRecorder = RuntimeReceiptRecorder.appGroupRequired(
+        surface: .tvOSTopShelf,
+        appGroupID: ContextPanelLocations.companionAppGroupID
+    )
+
     override func loadTopShelfContent() async -> (any TVTopShelfContent)? {
         let now = Date()
         guard let locations = TVTopShelfSharedLocations.live() else { return nil }
-        let document = TVTopShelfDocumentStore(documentURL: locations.documentURL).load()
-            ?? Self.missingDocument(now: now)
-        return try? TVTopShelfRenderer(imageDirectory: locations.imageDirectoryURL)
-            .content(document: document, now: now)
+        let storedDocument = TVTopShelfDocumentStore(documentURL: locations.documentURL).load()
+        let document = storedDocument ?? Self.missingDocument(now: now)
+        do {
+            let content = try TVTopShelfRenderer(imageDirectory: locations.imageDirectoryURL)
+                .content(document: document, now: now)
+            guard !Task.isCancelled else { return nil }
+            recordRuntimeReceipt(
+                document: document,
+                loadedDocument: storedDocument != nil,
+                contentReturned: true,
+                observedAt: now
+            )
+            return content
+        } catch {
+            guard !Task.isCancelled else { return nil }
+            recordRuntimeReceipt(
+                document: document,
+                loadedDocument: storedDocument != nil,
+                contentReturned: false,
+                observedAt: now
+            )
+            return nil
+        }
+    }
+
+    private func recordRuntimeReceipt(
+        document: TVTopShelfDocument,
+        loadedDocument: Bool,
+        contentReturned: Bool,
+        observedAt: Date
+    ) {
+        let evidence = TVTopShelfRuntimeReceiptEvidence(
+            document: document,
+            loadedDocument: loadedDocument,
+            contentReturned: contentReturned,
+            now: observedAt
+        )
+        runtimeReceiptRecorder.record(
+            trigger: .topShelfContentLoad,
+            presentationMode: .topShelf,
+            selectedSource: evidence.selectedSource,
+            presentationDigest: evidence.presentationDigest,
+            stateBranch: evidence.stateBranch,
+            outcome: evidence.outcome,
+            observedAt: observedAt
+        )
     }
 
     private static func missingDocument(now: Date) -> TVTopShelfDocument {
@@ -30,7 +77,6 @@ final class ContextPanelTVTopShelfProvider: TVTopShelfContentProvider {
 }
 
 private struct TVTopShelfRenderer {
-    private static let maximumCardCount = Provider.allCases.count
     private static let renderVersion = 3
     private let imageDirectory: URL
     private let fileManager: FileManager
@@ -46,7 +92,7 @@ private struct TVTopShelfRenderer {
             String(Int64(document.renderedAt.timeIntervalSince1970 * 1_000)),
             freshnessCacheToken(document: document, now: now),
         ].joined(separator: "-")
-        let cards = Array(document.cards.prefix(Self.maximumCardCount))
+        let cards = document.renderedCards
         guard !cards.isEmpty else { throw CocoaError(.fileReadCorruptFile) }
         let item = TVTopShelfItem(identifier: "provider-portfolio")
         item.title = semanticTitle(document: document, cards: cards, now: now)

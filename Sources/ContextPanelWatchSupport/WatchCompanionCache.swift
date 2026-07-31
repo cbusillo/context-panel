@@ -7,18 +7,26 @@ private let watchCompanionCacheLogger = Logger(
     category: "watch-companion-cache"
 )
 
+public enum WatchCompanionLoadDisposition: Equatable, Sendable {
+    case completed
+    case deadlineExceeded
+}
+
 public struct WatchCompanionCacheLoadResult: Equatable, Sendable {
     public let result: CompanionSyncLoadResult
     public let displayPreferences: WidgetDisplayPreferences?
+    public let disposition: WatchCompanionLoadDisposition
     let displayPreferencesUpdatedAt: Date?
     let cacheRevision: UUID?
 
     public init(
         result: CompanionSyncLoadResult,
-        displayPreferences: WidgetDisplayPreferences?
+        displayPreferences: WidgetDisplayPreferences?,
+        disposition: WatchCompanionLoadDisposition = .completed
     ) {
         self.result = result
         self.displayPreferences = displayPreferences
+        self.disposition = disposition
         displayPreferencesUpdatedAt = nil
         cacheRevision = nil
     }
@@ -27,10 +35,12 @@ public struct WatchCompanionCacheLoadResult: Equatable, Sendable {
         result: CompanionSyncLoadResult,
         displayPreferences: WidgetDisplayPreferences?,
         displayPreferencesUpdatedAt: Date?,
-        cacheRevision: UUID?
+        cacheRevision: UUID?,
+        disposition: WatchCompanionLoadDisposition = .completed
     ) {
         self.result = result
         self.displayPreferences = displayPreferences
+        self.disposition = disposition
         self.displayPreferencesUpdatedAt = displayPreferencesUpdatedAt
         self.cacheRevision = cacheRevision
     }
@@ -39,7 +49,9 @@ public struct WatchCompanionCacheLoadResult: Equatable, Sendable {
         lhs: WatchCompanionCacheLoadResult,
         rhs: WatchCompanionCacheLoadResult
     ) -> Bool {
-        lhs.result == rhs.result && lhs.displayPreferences == rhs.displayPreferences
+        lhs.result == rhs.result
+            && lhs.displayPreferences == rhs.displayPreferences
+            && lhs.disposition == rhs.disposition
     }
 }
 

@@ -698,6 +698,26 @@ import Testing
     #expect(stale.status == .stale)
 }
 
+@Test func companionSyncStorePreservesAnExplicitLocalCacheSource() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let generatedAt = Date(timeIntervalSince1970: 3_000)
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: generatedAt),
+        publishedAt: generatedAt
+    )
+    let store = CompanionSyncStore(
+        documentURL: root.appending(path: "companion.json"),
+        source: .localCache
+    )
+
+    try store.save(document)
+    let loaded = store.load()
+
+    #expect(loaded.document == document)
+    #expect(loaded.transportMetadata?.source == .localCache)
+}
+
 @Test func companionSyncStoreStalenessUsesSourceGenerationTime() throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }

@@ -47,10 +47,18 @@ private struct TVRootView: View {
 
     private var systemSurfacePublication: TVSystemSurfacePublication {
         TVSystemSurfacePublication(
+            result: model.displayResult,
             snapshot: model.snapshot,
             preferences: model.displayPreferences,
             version: model.displayVersion,
             mode: presentationMode
+        )
+    }
+
+    private var runtimeReceiptPresentation: TVRuntimeReceiptPresentation {
+        TVRuntimeReceiptPresentation(
+            publication: systemSurfacePublication,
+            hasVisibleError: visibleNoticeMessage != nil
         )
     }
 
@@ -107,6 +115,9 @@ private struct TVRootView: View {
             .onChange(of: systemSurfacePublication, initial: true) { _, publication in
                 model.publishSystemSurfaces(publication)
             }
+            .onChange(of: runtimeReceiptPresentation, initial: true) { _, presentation in
+                model.recordRuntimeReceipt(presentation)
+            }
             .onReceive(NotificationCenter.default.publisher(
                 for: .contextPanelTVBackgroundSyncDidUpdateCache
             )) { _ in
@@ -151,10 +162,16 @@ private struct TVRootView: View {
 }
 
 private struct TVSystemSurfacePublication: Equatable, Sendable {
+    let result: CompanionSyncLoadResult
     let snapshot: WidgetSnapshot
     let preferences: WidgetDisplayPreferences
     let version: TVCompanionSyncVersion?
     let mode: TVPresentationMode
+}
+
+private struct TVRuntimeReceiptPresentation: Equatable, Sendable {
+    let publication: TVSystemSurfacePublication
+    let hasVisibleError: Bool
 }
 
 @MainActor
@@ -163,6 +180,7 @@ private final class TVSyncModel {
     private let remoteStore: CompanionRemoteSyncStore
     private let cacheStore: CompanionSyncStore
     private let receiptStore: TVSyncReceiptStore
+    private let runtimeReceiptRecorder: RuntimeReceiptRecorder
     private let usesPreviewFixture: Bool
     private let forcesRemoteFailure: Bool
     private var reloadTask: Task<Void, Never>?
@@ -185,11 +203,19 @@ private final class TVSyncModel {
         displayResult.document.map { TVCompanionSyncVersion(document: $0) }
     }
 
-    init(now: Date = Date()) {
+    init(
+        now: Date = Date(),
+        runtimeReceiptRecorder: RuntimeReceiptRecorder? = nil
+    ) {
         remoteStore = CompanionCloudKitSyncStoreFactory.make()
+        self.runtimeReceiptRecorder = runtimeReceiptRecorder ?? .appGroupRequired(
+            surface: .tvOSApp,
+            appGroupID: ContextPanelLocations.companionAppGroupID
+        )
         let localCacheLocations = TVLocalCacheLocations.live()
         cacheStore = CompanionSyncStore(
-            documentURL: localCacheLocations.companionDocumentURL
+            documentURL: localCacheLocations.companionDocumentURL,
+            source: .localCache
         )
         let localReceiptStore = TVSyncReceiptStore(
             receiptURL: localCacheLocations.receiptURL
@@ -382,6 +408,33 @@ private final class TVSyncModel {
         }
     }
 
+    func recordRuntimeReceipt(
+        _ presentation: TVRuntimeReceiptPresentation,
+        presentationDate: Date = Date()
+    ) {
+        let publication = presentation.publication
+        let evidence = CompanionRuntimeReceiptEvidence(
+            result: publication.result,
+            snapshot: publication.snapshot,
+            displayPreferences: publication.preferences,
+            appearanceSettings: nil,
+            presentationSurface: .app,
+            presentationMode: .appOverview,
+            tvPresentationMode: publication.mode.runtimeTVPresentationMode,
+            additionalVisibleError: presentation.hasVisibleError,
+            presentationDate: presentationDate
+        )
+        runtimeReceiptRecorder.record(
+            trigger: .appSnapshotLoad,
+            presentationMode: .appOverview,
+            selectedSource: evidence.selectedSource,
+            presentationDigest: evidence.presentationDigest,
+            stateBranch: evidence.stateBranch,
+            outcome: evidence.outcome,
+            observedAt: presentationDate
+        )
+    }
+
     private static let stalenessPolicy = SnapshotStoreStalenessPolicy.appDefault(
         maximumAge: SnapshotFreshness.companionProviderMaximumAge
     )
@@ -416,6 +469,19 @@ private final class TVSyncModel {
                 errorMessage: message
             )
         )
+    }
+}
+
+private extension TVPresentationMode {
+    var runtimeTVPresentationMode: RuntimeTVPresentationMode {
+        switch self {
+        case .fullDetail:
+            .fullDetail
+        case .projectOnly:
+            .projectOnly
+        case .countsOnly:
+            .countsOnly
+        }
     }
 }
 

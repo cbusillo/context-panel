@@ -15,10 +15,14 @@ Implemented writers cover these process boundaries:
 - the iOS and iPadOS companion widget from its real snapshot and timeline callbacks
 - the visionOS companion app and widget through the same shipping entry points,
   with distinct surface identity and effective appearance in the presentation digest
+- the watchOS app after its bounded companion load selects the visible result
+- the Watch WidgetKit extension from the real complication snapshot and timeline callbacks
+- the tvOS app from the exact runway publication shown by the shipping app
+- the dynamic Top Shelf extension from `loadTopShelfContent()` after it selects its final content or nil result
 
-Watch, complication, tvOS, Top Shelf, validation-session delivery to companion
-devices, host relay, and private CloudKit receipt transport remain follow-up
-work under issue #520.
+Validation-session delivery to companion devices, receipt extraction, host
+relay, and private CloudKit receipt transport remain follow-up work under issue
+#520.
 
 ## Receipt Contract
 
@@ -78,6 +82,20 @@ Companion source identity is a separate closed receipt field; CloudKit, iCloud,
 App Group, and local-cache selections remain distinct. Unsupported or missing
 source metadata is recorded as `none` and cannot produce a successful outcome.
 
+Watch receipts use the exact saved-lane selection rendered by the app or the
+requested accessory family. A Watch companion deadline with no saved document
+is recorded as unknown/degraded rather than a false runtime failure. A deadline
+with saved data preserves the stale local source. Cancellation, process
+termination, a busy receipt lock, or an OS budget that prevents callback
+completion produces no receipt and therefore remains unknown/waiting.
+
+tvOS app digests include the closed Full Detail, Hide Account Names, or
+Percentages Only presentation mode without including account values. Top Shelf
+digests use only document timestamps, closed state and mode values, a coarse
+freshness bucket, ordered provider/status/capacity categories, and whether the
+extension returned content. They never hash card titles, detail strings, paths,
+or raw errors.
+
 ## Session Gate
 
 Receipt collection is dormant unless an explicit local session is active. A
@@ -105,19 +123,21 @@ The helper reads the embedded manifest from
 the session to the canonical app-group container. It does not install, launch,
 replace, sign, or modify the app bundle.
 
-Companion app and widget writers require the signed companion App Group and fail
-closed when that shared container is unavailable. They read the same session
-schema from the device-local companion container:
+Companion, Watch, tvOS, widget, complication, and Top Shelf writers require the
+signed companion App Group and fail closed when that shared container is
+unavailable. They read the same session schema from the device-local companion
+container:
 
 ```text
 group.com.shinycomputers.contextpanel/Context Panel/Validation
 ```
 
-The current operator helper does not deliver a session to a physical companion
-device and does not extract its receipts. Those writers therefore remain dormant
-until a later validation-session delivery/private relay slice supplies the exact
-manifest-bound session on that device. Do not copy a Mac session file manually
-and treat the resulting receipt as coordinated signed-device evidence.
+The current operator helper does not deliver a session to a physical companion,
+Watch, or Apple TV device and does not extract their receipts. Those writers
+therefore remain dormant until a later validation-session delivery/private relay
+slice supplies the exact manifest-bound session on that device. Do not copy a
+Mac session file manually and treat the resulting receipt as coordinated
+signed-device evidence.
 
 Inspect the current session and structurally valid observed surface count with:
 
@@ -169,6 +189,21 @@ the exact `CompanionSyncLoadResult` that produced the current entry, record only
 that current entry once per callback, and distinguish iPhone, iPad, and visionOS
 surface identities even though the iOS targets share bundle identifiers.
 
+The Watch app and complication share only their Watch-local App Group queue.
+The app records after the exact bounded load becomes visible. The complication
+retains the exact cache or remote load that produced the current entry and
+records only that entry, never synthetic future stale-transition entries.
+Receipt throttling includes loaded executable identity so an old surviving
+extension cannot suppress the first receipt after the required physical Watch
+restart.
+
+The tvOS app and Top Shelf extension share only their Apple-TV-local App Group
+queue. The app records from its visible runway publication before asynchronous
+Top Shelf publication. `topShelfContentDidChange()` remains an invalid proof of
+extension execution; only the extension's `loadTopShelfContent()` callback can
+write a `tvos.top-shelf` receipt. Missing documents remain degraded, renderer
+errors can report failure, and OS cancellation remains receipt silence.
+
 ## Evidence Limits
 
 A receipt proves that the named exact-build process reached the recorded code
@@ -198,9 +233,11 @@ uv run python -m unittest \
 
 The Swift tests cover manifest and loaded-executable binding, redaction,
 deterministic digesting, widget preferences, companion platform/source mapping,
-stable no-document companion states, effective visionOS appearance, exact
-refresh evidence, session expiration, digest-aware throttling, process ordering,
-tamper rejection, and per-session retention. Script tests verify the macOS and
-companion process hooks, required App Group routing, strict receipt validation,
-and the operator session lifecycle. Generic iOS and visionOS Xcode builds remain
-required because SwiftPM tests run only the host-platform Core target.
+stable no-document companion states, effective visionOS appearance, Watch
+deadline provenance, exact complication families, tvOS local-cache provenance,
+Top Shelf privacy/freshness state, exact refresh evidence, session expiration,
+loaded-executable-aware throttling, process ordering, tamper rejection, and
+per-session retention. Script tests verify every shipping process hook, required
+App Group routing, strict receipt validation, and the operator session lifecycle.
+Generic iOS, visionOS, watchOS, and tvOS Xcode builds remain required because
+SwiftPM tests run only host-compatible modules.

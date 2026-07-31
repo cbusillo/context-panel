@@ -57,6 +57,7 @@ RECEIPT_TRIGGERS = {
     "widget-timeline",
     "refresh-once",
     "background-refresh",
+    "top-shelf-content-load",
 }
 PRESENTATION_MODES = {
     "app-overview",
@@ -68,6 +69,7 @@ PRESENTATION_MODES = {
     "widget-accessory-rectangular",
     "widget-accessory-inline",
     "widget-accessory-corner",
+    "widget-accessory-unknown",
     "widget-unknown",
     "refresh-agent",
     "watch-app",

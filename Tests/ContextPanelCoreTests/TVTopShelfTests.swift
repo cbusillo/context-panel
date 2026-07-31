@@ -37,6 +37,148 @@ import Testing
     #expect(!countsOpenAI.detail.contains("Resets"))
 }
 
+@Test func tvTopShelfRuntimeReceiptEvidenceIsPrivateStableAndStateful() throws {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let firstDocument = TVTopShelfDocument(
+        snapshot: makeRecoveredTopShelfSnapshot(now: now, identitySuffix: "-a"),
+        mode: .fullDetail,
+        now: now
+    )
+    let renamedDocument = TVTopShelfDocument(
+        snapshot: makeRecoveredTopShelfSnapshot(now: now, identitySuffix: "-b"),
+        mode: .fullDetail,
+        now: now
+    )
+    let first = TVTopShelfRuntimeReceiptEvidence(
+        document: firstDocument,
+        loadedDocument: true,
+        contentReturned: true,
+        now: now
+    )
+    let renamed = TVTopShelfRuntimeReceiptEvidence(
+        document: renamedDocument,
+        loadedDocument: true,
+        contentReturned: true,
+        now: now
+    )
+    let actionChanged = TVTopShelfRuntimeReceiptEvidence(
+        document: try mutatedTopShelfDocument(firstDocument) { cards in
+            cards[0]["actionURLString"] = "contextpaneltv://ignored-action"
+        },
+        loadedDocument: true,
+        contentReturned: true,
+        now: now
+    )
+    let sameCapacityBucket = TVTopShelfRuntimeReceiptEvidence(
+        document: try mutatedTopShelfDocument(firstDocument) { cards in
+            guard let index = cards.firstIndex(where: { $0["remainingPercent"] != nil }),
+                  let remaining = cards[index]["remainingPercent"] as? Int else {
+                return
+            }
+            cards[index]["remainingPercent"] = min((remaining / 5) * 5 + 4, 100)
+        },
+        loadedDocument: true,
+        contentReturned: true,
+        now: now
+    )
+    let fullDocument = TVTopShelfDocument(
+        snapshot: makeTopShelfSnapshot(now: now),
+        mode: .fullDetail,
+        now: now
+    )
+    let full = TVTopShelfRuntimeReceiptEvidence(
+        document: fullDocument,
+        loadedDocument: true,
+        contentReturned: true,
+        now: now
+    )
+    let unrenderedCard = TVTopShelfRuntimeReceiptEvidence(
+        document: try mutatedTopShelfDocument(fullDocument) { cards in
+            cards.append(cards[0])
+        },
+        loadedDocument: true,
+        contentReturned: true,
+        now: now
+    )
+    let countsOnly = TVTopShelfRuntimeReceiptEvidence(
+        document: TVTopShelfDocument(
+            snapshot: makeRecoveredTopShelfSnapshot(now: now),
+            mode: .countsOnly,
+            now: now
+        ),
+        loadedDocument: true,
+        contentReturned: true,
+        now: now
+    )
+    let stale = TVTopShelfRuntimeReceiptEvidence(
+        document: firstDocument,
+        loadedDocument: true,
+        contentReturned: true,
+        now: now.addingTimeInterval(SnapshotFreshness.companionProviderMaximumAge + 60)
+    )
+    let renderFailure = TVTopShelfRuntimeReceiptEvidence(
+        document: firstDocument,
+        loadedDocument: true,
+        contentReturned: false,
+        now: now
+    )
+
+    #expect(first.presentationDigest == renamed.presentationDigest)
+    #expect(first.presentationDigest == actionChanged.presentationDigest)
+    #expect(first.presentationDigest == sameCapacityBucket.presentationDigest)
+    #expect(full.presentationDigest == unrenderedCard.presentationDigest)
+    #expect(first.presentationDigest != countsOnly.presentationDigest)
+    #expect(first.presentationDigest != stale.presentationDigest)
+    #expect(first.selectedSource == .companionAppGroup)
+    #expect(first.stateBranch == .ready)
+    #expect(first.outcome == .success)
+    #expect(stale.stateBranch == .stale)
+    #expect(stale.outcome == .degraded)
+    #expect(renderFailure.outcome == .failure)
+}
+
+@Test func tvTopShelfMissingRuntimeReceiptEvidenceIsStableAndDegraded() {
+    let firstDate = Date(timeIntervalSince1970: 1_750_000_000)
+    let secondDate = firstDate.addingTimeInterval(120)
+    let first = TVTopShelfRuntimeReceiptEvidence(
+        document: TVTopShelfDocument(
+            snapshot: WidgetSnapshot(
+                state: .setupNeeded,
+                generatedAt: firstDate,
+                limits: [],
+                status: .unknown,
+                message: "Waiting for your Mac."
+            ),
+            mode: .countsOnly,
+            now: firstDate
+        ),
+        loadedDocument: false,
+        contentReturned: true,
+        now: firstDate
+    )
+    let second = TVTopShelfRuntimeReceiptEvidence(
+        document: TVTopShelfDocument(
+            snapshot: WidgetSnapshot(
+                state: .setupNeeded,
+                generatedAt: secondDate,
+                limits: [],
+                status: .unknown,
+                message: "Waiting for your Mac."
+            ),
+            mode: .countsOnly,
+            now: secondDate
+        ),
+        loadedDocument: false,
+        contentReturned: true,
+        now: secondDate
+    )
+
+    #expect(first.presentationDigest == second.presentationDigest)
+    #expect(first.selectedSource == .none)
+    #expect(first.stateBranch == .setupNeeded)
+    #expect(first.outcome == .degraded)
+}
+
 @Test func tvTopShelfDocumentUsesSavedPrimaryLane() throws {
     let now = Date(timeIntervalSince1970: 1_750_000_000)
     let snapshot = WidgetSnapshot(
@@ -686,16 +828,34 @@ private func makeTVCompanionDocument(
     ))
 }
 
-private func makeRecoveredTopShelfSnapshot(now: Date) -> WidgetSnapshot {
+private func mutatedTopShelfDocument(
+    _ document: TVTopShelfDocument,
+    mutate: (inout [[String: Any]]) -> Void
+) throws -> TVTopShelfDocument {
+    let data = try JSONEncoder().encode(document)
+    var object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    var cards = try #require(object["cards"] as? [[String: Any]])
+    mutate(&cards)
+    object["cards"] = cards
+    return try JSONDecoder().decode(
+        TVTopShelfDocument.self,
+        from: JSONSerialization.data(withJSONObject: object)
+    )
+}
+
+private func makeRecoveredTopShelfSnapshot(
+    now: Date,
+    identitySuffix: String = ""
+) -> WidgetSnapshot {
     WidgetSnapshot(
         state: .ready,
         generatedAt: now,
         limits: [
             UsageLimit(
                 provider: .openAI,
-                accountID: "openai",
-                configuredAccountID: "openai",
-                accountName: "OpenAI",
+                accountID: "openai\(identitySuffix)",
+                configuredAccountID: "openai\(identitySuffix)",
+                accountName: "OpenAI\(identitySuffix)",
                 label: "OpenAI weekly",
                 windowLabel: "Weekly",
                 unit: .percent,
@@ -705,9 +865,9 @@ private func makeRecoveredTopShelfSnapshot(now: Date) -> WidgetSnapshot {
             ),
             UsageLimit(
                 provider: .anthropic,
-                accountID: "anthropic",
-                configuredAccountID: "anthropic",
-                accountName: "Anthropic",
+                accountID: "anthropic\(identitySuffix)",
+                configuredAccountID: "anthropic\(identitySuffix)",
+                accountName: "Anthropic\(identitySuffix)",
                 label: "Claude weekly",
                 windowLabel: "Weekly",
                 unit: .percent,

@@ -9,7 +9,23 @@ struct ContextPanelWatchWidgetEntry: TimelineEntry {
     let displayPreferences: WidgetDisplayPreferences
 }
 
+private struct ContextPanelWatchWidgetSelection {
+    let entry: ContextPanelWatchWidgetEntry
+    let loaded: WatchCompanionCacheLoadResult
+}
+
+private struct ContextPanelWatchWidgetTimelineSelection {
+    let timeline: Timeline<ContextPanelWatchWidgetEntry>
+    let current: ContextPanelWatchWidgetSelection
+}
+
 struct ContextPanelWatchWidgetProvider: TimelineProvider {
+    let runtimeReceiptRecorder: RuntimeReceiptRecorder
+
+    init(runtimeReceiptRecorder: RuntimeReceiptRecorder) {
+        self.runtimeReceiptRecorder = runtimeReceiptRecorder
+    }
+
     func placeholder(in context: Context) -> ContextPanelWatchWidgetEntry {
         let date = Date()
         return ContextPanelWatchWidgetEntry(
@@ -20,12 +36,69 @@ struct ContextPanelWatchWidgetProvider: TimelineProvider {
     }
 
     func getSnapshot(in context: Context, completion: @escaping (ContextPanelWatchWidgetEntry) -> Void) {
-        WatchWidgetLoadQueue.loadSnapshot(date: Date(), completion: completion)
+        WatchWidgetLoadQueue.loadSnapshot(date: Date()) { selection in
+            recordRuntimeReceipt(
+                selection,
+                trigger: .widgetSnapshot,
+                family: context.family
+            )
+            completion(selection.entry)
+        }
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<ContextPanelWatchWidgetEntry>) -> Void) {
         let date = Date()
-        WatchWidgetLoadQueue.loadTimeline(date: date, completion: completion)
+        WatchWidgetLoadQueue.loadTimeline(date: date) { selection in
+            recordRuntimeReceipt(
+                selection.current,
+                trigger: .widgetTimeline,
+                family: context.family
+            )
+            completion(selection.timeline)
+        }
+    }
+
+    private func recordRuntimeReceipt(
+        _ selection: ContextPanelWatchWidgetSelection,
+        trigger: RuntimeReceiptTrigger,
+        family: WidgetFamily
+    ) {
+        let presentationMode = runtimePresentationMode(for: family)
+        let evidence = CompanionRuntimeReceiptEvidence(
+            result: selection.loaded.result,
+            snapshot: selection.entry.snapshot,
+            displayPreferences: selection.entry.displayPreferences,
+            appearanceSettings: nil,
+            presentationSurface: .widget,
+            presentationMode: presentationMode,
+            presentationDate: selection.entry.date
+        )
+        let exceededDeadlineWithoutSavedData = selection.loaded.disposition == .deadlineExceeded
+            && selection.loaded.result.document == nil
+        runtimeReceiptRecorder.record(
+            trigger: trigger,
+            presentationMode: presentationMode,
+            selectedSource: evidence.selectedSource,
+            presentationDigest: evidence.presentationDigest,
+            stateBranch: exceededDeadlineWithoutSavedData ? .unknown : evidence.stateBranch,
+            outcome: exceededDeadlineWithoutSavedData ? .degraded : evidence.outcome,
+            observedAt: selection.entry.date
+        )
+    }
+
+    private func runtimePresentationMode(for family: WidgetFamily) -> RuntimeReceiptPresentationMode {
+        switch family {
+        case .accessoryCircular:
+            .widgetAccessoryCircular
+        case .accessoryRectangular:
+            .widgetAccessoryRectangular
+        case .accessoryInline:
+            .widgetAccessoryInline
+        case .accessoryCorner:
+            .widgetAccessoryCorner
+        default:
+            .widgetAccessoryUnknown
+        }
     }
 
     private func placeholderSnapshot(date: Date) -> WidgetSnapshot {
@@ -55,7 +128,7 @@ private enum WatchWidgetLoadQueue {
         )
     }()
 
-    static func loadSnapshot(date: Date, completion: @escaping (ContextPanelWatchWidgetEntry) -> Void) {
+    static func loadSnapshot(date: Date, completion: @escaping (ContextPanelWatchWidgetSelection) -> Void) {
         let completion = WatchWidgetCompletion(completion)
         queue.async {
             completion.call(entry(
@@ -68,16 +141,17 @@ private enum WatchWidgetLoadQueue {
 
     static func loadTimeline(
         date: Date,
-        completion: @escaping (Timeline<ContextPanelWatchWidgetEntry>) -> Void
+        completion: @escaping (ContextPanelWatchWidgetTimelineSelection) -> Void
     ) {
         let completion = WatchWidgetCompletion(completion)
         Task.detached(priority: .utility) {
             let loaded = await loader.load(now: date)
-            let currentEntry = entry(
+            let current = entry(
                 date: date,
                 loaded: loaded,
                 stalenessPolicy: stalenessPolicy
             )
+            let currentEntry = current.entry
             let refreshInterval: TimeInterval = switch loaded.result.status {
             case .failure, .stale:
                 5 * 60
@@ -91,19 +165,25 @@ private enum WatchWidgetLoadQueue {
                     now: date
                   )
             else {
-                completion.call(Timeline(entries: [currentEntry], policy: refreshPolicy))
+                completion.call(ContextPanelWatchWidgetTimelineSelection(
+                    timeline: Timeline(entries: [currentEntry], policy: refreshPolicy),
+                    current: current
+                ))
                 return
             }
-            completion.call(Timeline(
-                entries: [
-                    currentEntry,
-                    entry(
-                        date: staleDate,
-                        loaded: loaded,
-                        stalenessPolicy: stalenessPolicy
-                    ),
-                ],
-                policy: refreshPolicy
+            completion.call(ContextPanelWatchWidgetTimelineSelection(
+                timeline: Timeline(
+                    entries: [
+                        currentEntry,
+                        entry(
+                            date: staleDate,
+                            loaded: loaded,
+                            stalenessPolicy: stalenessPolicy
+                        ).entry,
+                    ],
+                    policy: refreshPolicy
+                ),
+                current: current
             ))
         }
     }
@@ -116,19 +196,22 @@ private enum WatchWidgetLoadQueue {
         date: Date,
         loaded: WatchCompanionCacheLoadResult,
         stalenessPolicy: SnapshotStoreStalenessPolicy
-    ) -> ContextPanelWatchWidgetEntry {
+    ) -> ContextPanelWatchWidgetSelection {
         let result = loaded.result
-        return ContextPanelWatchWidgetEntry(
-            date: date,
-            snapshot: WidgetSnapshot.fromCompanionSync(
-                result,
-                now: date,
-                stalenessPolicy: stalenessPolicy
+        return ContextPanelWatchWidgetSelection(
+            entry: ContextPanelWatchWidgetEntry(
+                date: date,
+                snapshot: WidgetSnapshot.fromCompanionSync(
+                    result,
+                    now: date,
+                    stalenessPolicy: stalenessPolicy
+                ),
+                displayPreferences: WidgetDisplayPreferences.companionEffectivePreferences(
+                    localOverride: loaded.displayPreferences,
+                    synced: result.document?.widgetDisplayPreferences
+                )
             ),
-            displayPreferences: WidgetDisplayPreferences.companionEffectivePreferences(
-                localOverride: loaded.displayPreferences,
-                synced: result.document?.widgetDisplayPreferences
-            )
+            loaded: loaded
         )
     }
 }
@@ -468,7 +551,15 @@ struct ContextPanelWatchWidget: Widget {
     let kind = ContextPanelWatchWidgetIdentity.kind
 
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: kind, provider: ContextPanelWatchWidgetProvider()) { entry in
+        StaticConfiguration(
+            kind: kind,
+            provider: ContextPanelWatchWidgetProvider(
+                runtimeReceiptRecorder: .appGroupRequired(
+                    surface: .watchOSComplication,
+                    appGroupID: ContextPanelLocations.watchAppGroupID
+                )
+            )
+        ) { entry in
             ContextPanelWatchWidgetView(entry: entry)
                 .containerBackground(.clear, for: .widget)
         }

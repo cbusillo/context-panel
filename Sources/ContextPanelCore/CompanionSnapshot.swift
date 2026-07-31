@@ -363,17 +363,24 @@ public struct CompanionSyncStoreOutcome: Equatable, Sendable {
 
 public struct CompanionSyncStore: Sendable {
     public let documentURL: URL
+    private let source: CompanionSyncSource?
     private let readCoordinator: @Sendable (URL, @Sendable (URL) throws -> Data) throws -> Data?
 
-    public init(documentURL: URL) {
-        self.init(documentURL: documentURL, readCoordinator: Self.readWithFileCoordinator)
+    public init(documentURL: URL, source: CompanionSyncSource? = nil) {
+        self.init(
+            documentURL: documentURL,
+            source: source,
+            readCoordinator: Self.readWithFileCoordinator
+        )
     }
 
     init(
         documentURL: URL,
+        source: CompanionSyncSource? = nil,
         readCoordinator: @escaping @Sendable (URL, @Sendable (URL) throws -> Data) throws -> Data?
     ) {
         self.documentURL = documentURL
+        self.source = source
         self.readCoordinator = readCoordinator
     }
 
@@ -393,7 +400,7 @@ public struct CompanionSyncStore: Sendable {
                 document: document,
                 status: document.companionStatus,
                 transportMetadata: CompanionSyncTransportMetadata(
-                    source: .storeRole(CompanionSyncStoreFailure.storeRole(for: documentURL)),
+                    source: source ?? .storeRole(CompanionSyncStoreFailure.storeRole(for: documentURL)),
                     receivedAt: nil,
                     mirroredAt: nil,
                     deliveryStatus: .healthy
