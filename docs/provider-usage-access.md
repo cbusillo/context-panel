@@ -428,8 +428,12 @@ Preferred v1 connector scope:
 - Treat `unknown`, `manual`, `observed`, and `official` as distinct confidence
   levels in the data model and UI.
 - Never overload quota pressure to answer whether the next provider request can
-  run. Present effective provider access independently on the app, widgets,
-  Watch, and tvOS surfaces, and do not let saved lane ordering hide a hard block.
+  run. Present effective provider access independently on the app, full widgets,
+  Watch app, and tvOS surfaces. Space-constrained Watch complications keep their
+  selected capacity presentation whenever any selected lane has a usable value,
+  and use the access alert as primary content only when every selected lane is
+  indeterminate. This prevents one provider's access state from replacing
+  current capacity for another provider.
 - Do not block the whole widget when one provider cannot expose usage. Show stale
   or estimated state for that account and keep official data for other accounts.
 - Prioritize OpenAI ChatGPT forecasting in the UX even if the first automated

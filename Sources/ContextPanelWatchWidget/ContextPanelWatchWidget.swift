@@ -150,27 +150,23 @@ struct ContextPanelWatchWidgetView: View {
 
     let entry: ContextPanelWatchWidgetEntry
 
-    private var limit: WatchLimitDisplay? {
-        limits(maximumCount: 1).first
+    private var compactContent: WatchComplicationContent {
+        mainLaneContent(maximumCount: 1)
     }
 
-    private var rectangularLimits: [WatchLimitDisplay] {
-        limits(maximumCount: 2)
+    private var rectangularContent: WatchComplicationContent {
+        mainLaneContent(maximumCount: 2)
     }
 
-    private var inlineLimits: [WatchLimitDisplay] {
-        WatchLimitDisplay.inlineRows(
+    private var inlineContent: WatchComplicationContent {
+        WatchComplicationContent.inline(
             from: entry.snapshot,
             preferences: entry.displayPreferences
         )
     }
 
-    private var accessAlert: ProviderAccessAlert? {
-        entry.snapshot.primaryProviderAccessAlert
-    }
-
-    private func limits(maximumCount: Int) -> [WatchLimitDisplay] {
-        WatchLimitDisplay.mainLaneRows(
+    private func mainLaneContent(maximumCount: Int) -> WatchComplicationContent {
+        WatchComplicationContent.mainLane(
             from: entry.snapshot,
             preferences: entry.displayPreferences,
             maximumCount: maximumCount
@@ -178,31 +174,36 @@ struct ContextPanelWatchWidgetView: View {
     }
 
     var body: some View {
-        if let accessAlert {
-            switch family {
-            case .accessoryCircular:
-                WatchCircularProviderAccessComplication(alert: accessAlert)
-            case .accessoryRectangular:
-                WatchRectangularProviderAccessComplication(alert: accessAlert)
-            case .accessoryInline:
-                WatchInlineProviderAccessComplication(alert: accessAlert)
-            case .accessoryCorner:
-                WatchCornerProviderAccessComplication(alert: accessAlert)
-            default:
-                WatchRectangularProviderAccessComplication(alert: accessAlert)
+        switch family {
+        case .accessoryCircular:
+            if let alert = compactContent.providerAccessFallback {
+                WatchCircularProviderAccessComplication(alert: alert)
+            } else {
+                WatchCircularComplication(limit: compactContent.limits.first, snapshot: entry.snapshot)
             }
-        } else {
-            switch family {
-            case .accessoryCircular:
-                WatchCircularComplication(limit: limit, snapshot: entry.snapshot)
-            case .accessoryRectangular:
-                WatchRectangularComplication(limits: rectangularLimits, snapshot: entry.snapshot)
-            case .accessoryInline:
-                WatchInlineComplication(limits: inlineLimits, snapshot: entry.snapshot)
-            case .accessoryCorner:
-                WatchCornerComplication(limit: limit, snapshot: entry.snapshot)
-            default:
-                WatchRectangularComplication(limits: rectangularLimits, snapshot: entry.snapshot)
+        case .accessoryRectangular:
+            if let alert = rectangularContent.providerAccessFallback {
+                WatchRectangularProviderAccessComplication(alert: alert)
+            } else {
+                WatchRectangularComplication(limits: rectangularContent.limits, snapshot: entry.snapshot)
+            }
+        case .accessoryInline:
+            if let alert = inlineContent.providerAccessFallback {
+                WatchInlineProviderAccessComplication(alert: alert)
+            } else {
+                WatchInlineComplication(limits: inlineContent.limits, snapshot: entry.snapshot)
+            }
+        case .accessoryCorner:
+            if let alert = compactContent.providerAccessFallback {
+                WatchCornerProviderAccessComplication(alert: alert)
+            } else {
+                WatchCornerComplication(limit: compactContent.limits.first, snapshot: entry.snapshot)
+            }
+        default:
+            if let alert = rectangularContent.providerAccessFallback {
+                WatchRectangularProviderAccessComplication(alert: alert)
+            } else {
+                WatchRectangularComplication(limits: rectangularContent.limits, snapshot: entry.snapshot)
             }
         }
     }
@@ -460,6 +461,7 @@ struct WatchCornerComplication: View {
                 .foregroundStyle(limit.map { watchStatusColor($0.status) } ?? watchStatusColor(snapshot.status))
         }
     }
+
 }
 
 struct ContextPanelWatchWidget: Widget {

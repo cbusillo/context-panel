@@ -6,6 +6,52 @@ public enum WatchMetricDirection: Equatable, Sendable {
     case used
 }
 
+public struct WatchComplicationContent: Sendable {
+    public let limits: [WatchLimitDisplay]
+    public let providerAccessFallback: ProviderAccessAlert?
+
+    public static func mainLane(
+        from snapshot: WidgetSnapshot,
+        preferences: WidgetDisplayPreferences,
+        maximumCount: Int
+    ) -> WatchComplicationContent {
+        content(
+            limits: WatchLimitDisplay.mainLaneRows(
+                from: snapshot,
+                preferences: preferences,
+                maximumCount: maximumCount
+            ),
+            snapshot: snapshot
+        )
+    }
+
+    public static func inline(
+        from snapshot: WidgetSnapshot,
+        preferences: WidgetDisplayPreferences,
+        maximumCount: Int = 2
+    ) -> WatchComplicationContent {
+        content(
+            limits: WatchLimitDisplay.inlineRows(
+                from: snapshot,
+                preferences: preferences,
+                maximumCount: maximumCount
+            ),
+            snapshot: snapshot
+        )
+    }
+
+    private static func content(
+        limits: [WatchLimitDisplay],
+        snapshot: WidgetSnapshot
+    ) -> WatchComplicationContent {
+        let hasUsableCapacity = limits.contains { !$0.remainingCapacity.isIndeterminate }
+        return WatchComplicationContent(
+            limits: limits,
+            providerAccessFallback: hasUsableCapacity ? nil : snapshot.primaryProviderAccessAlert
+        )
+    }
+}
+
 public struct WatchLimitDisplay: Identifiable, Sendable {
     public let id: String
     public let provider: Provider
@@ -231,10 +277,14 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
             provider: summary.provider,
             snapshot: snapshot
         )
+        let capacityStatus = displayStatus(
+            source: pooledLimit.status,
+            snapshotState: snapshot.state
+        )
         let metrics = metricValues(
             remainingRatio: pooledLimit.remainingCapacityRatio,
             usedRatio: pooledLimit.usageRatio,
-            status: status
+            status: capacityStatus
         )
         return WatchLimitDisplay(
             id: summaryID(provider: summary.provider, window: summary.window),
@@ -296,10 +346,14 @@ public struct WatchLimitDisplay: Identifiable, Sendable {
             provider: limit.provider,
             snapshot: snapshot
         )
+        let capacityStatus = displayStatus(
+            source: limit.status,
+            snapshotState: snapshot.state
+        )
         let metrics = metricValues(
             remainingRatio: limit.remainingCapacityRatio,
             usedRatio: limit.usageRatio,
-            status: status
+            status: capacityStatus
         )
         return WatchLimitDisplay(
             id: "limit:\(limit.id)",
