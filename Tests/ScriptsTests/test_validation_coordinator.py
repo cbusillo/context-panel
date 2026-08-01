@@ -4,11 +4,12 @@ import io
 import json
 import os
 import plistlib
+import stat
 import sys
 import tempfile
 import unittest
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -27,6 +28,7 @@ sys.modules[SPEC.name] = context_panel_validation
 SPEC.loader.exec_module(context_panel_validation)
 asc_module = sys.modules["context_panel_validation.asc"]
 cli_module = __import__("context_panel_validation.cli", fromlist=["main"])
+session_module = sys.modules["context_panel_validation.session"]
 system_module = sys.modules["context_panel_validation.system"]
 
 
@@ -337,6 +339,41 @@ class AppStoreConnectTests(unittest.TestCase):
 
 
 class ParserTests(unittest.TestCase):
+    def test_session_commands_parse_bounded_public_arguments(self):
+        start = cli_module.parse_args(
+            [
+                "start-session",
+                "--version",
+                "1.0.53",
+                "--build-number",
+                "202607301200",
+                "--surface",
+                "macos.app",
+                "--duration-hours",
+                "24",
+                "--retention-days",
+                "14",
+                "--json",
+            ]
+        )
+        pause = cli_module.parse_args(
+            [
+                "pause-session",
+                "--version",
+                "1.0.53",
+                "--build-number",
+                "202607301200",
+                "--reason",
+                "hardware-unavailable",
+            ]
+        )
+
+        self.assertEqual(start.command, "start-session")
+        self.assertEqual(start.surfaces, ["macos.app"])
+        self.assertEqual(start.duration_hours, 24)
+        self.assertEqual(start.retention_days, 14)
+        self.assertEqual(pause.reason, "hardware-unavailable")
+
     def test_install_classification_distinguishes_current_old_and_superseded(self):
         target = Target("1.0.53", "202607301200")
 
@@ -725,6 +762,73 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(recorded.exit_code, 0)
         self.assertFalse(recorded.actions)
 
+    def test_requested_surface_scope_excludes_out_of_scope_blockers_and_actions(self):
+        asc = ASCEvidence(
+            "available",
+            "direct_local_api",
+            tuple(
+                ASCPlatformEvidence(
+                    platform,
+                    "invalid" if platform == "IOS" else "valid",
+                    "available",
+                    "INVALID" if platform == "IOS" else "VALID",
+                )
+                for platform in context_panel_validation.ASC_PLATFORMS
+            ),
+        )
+        devices = (device("Apple Watch", "watchOS", "superseded"),)
+
+        unscoped = context_panel_validation.build_report(
+            self.target,
+            asc,
+            proven_mac(),
+            devices,
+            None,
+            self.now,
+        )
+        mac_only = context_panel_validation.build_report(
+            self.target,
+            asc,
+            proven_mac(),
+            devices,
+            None,
+            self.now,
+            requested_surfaces=("macos.app",),
+        )
+
+        self.assertEqual(unscoped.state, "blocked")
+        self.assertEqual(mac_only.state, "complete_for_slice")
+        self.assertFalse(mac_only.actions)
+        self.assertEqual(mac_only.devices, devices)
+        self.assertEqual(len(mac_only.asc.platforms), len(context_panel_validation.ASC_PLATFORMS))
+
+    def test_watch_scope_ignores_out_of_scope_mac_failure(self):
+        blocked_mac = MacEvidence(
+            "1.0.53",
+            "202607301200",
+            "current",
+            "failed",
+            "running",
+            "development",
+            "Development",
+            "Development",
+            "fixture",
+        )
+
+        report = context_panel_validation.build_report(
+            self.target,
+            valid_asc(),
+            blocked_mac,
+            (device("Apple Watch", "watchOS"),),
+            None,
+            self.now,
+            requested_surfaces=("watchos.app", "watchos.complication"),
+        )
+
+        self.assertEqual(report.state, "ready_for_you")
+        self.assertEqual(report.exit_code, 10)
+        self.assertEqual(report.actions[0].device, "Apple Watch")
+
     def test_superseded_device_blocks_target_evidence(self):
         report = self.report(
             valid_asc(),
@@ -945,6 +1049,20 @@ class ReportTests(unittest.TestCase):
 
 
 class StateStoreTests(unittest.TestCase):
+    def test_default_state_root_is_the_canonical_app_group_validation_boundary(self):
+        root = context_panel_validation.DEFAULT_STATE_ROOT
+
+        self.assertEqual(
+            root,
+            Path.home()
+            / "Library"
+            / "Group Containers"
+            / "MM5YXC7T6E.group.com.shinycomputers.contextpanel"
+            / "Context Panel"
+            / "Validation"
+            / "Coordinator",
+        )
+
     def test_watch_restart_attestation_persists_without_device_identifiers(self):
         target = Target("1.0.53", "202607301200")
         recorded_at = datetime(2026, 7, 30, 17, 0, tzinfo=timezone.utc)
@@ -954,9 +1072,758 @@ class StateStoreTests(unittest.TestCase):
             store.record_watch_restart(target, recorded_at)
 
             self.assertTrue(store.watch_restart_recorded(target))
-            payload = json.loads(store.path(target).read_text())
+            payload = json.loads(store.legacy_path(target).read_text())
             self.assertNotIn("device", json.dumps(payload).casefold())
             self.assertEqual(payload["watchRestartRecordedAt"], "2026-07-30T17:00:00Z")
+
+    def test_missing_session_reads_do_not_create_state(self):
+        target = Target("1.0.53", "202607301200")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "Coordinator"
+            store = context_panel_validation.SessionStateStore(root)
+
+            self.assertIsNone(store.load(target))
+            self.assertIsNone(store.watch_restart_recorded_at(target))
+            self.assertFalse(root.exists())
+
+    def test_missing_session_read_uses_lock_when_store_exists(self):
+        target = Target("1.0.53", "202607301200")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "Coordinator"
+            root.mkdir()
+            store = context_panel_validation.SessionStateStore(root)
+
+            with mock.patch.object(session_module.fcntl, "flock") as flock:
+                self.assertIsNone(store.load(target))
+
+            self.assertEqual(flock.call_count, 2)
+
+    def test_start_session_is_private_atomic_and_idempotent(self):
+        target = Target("1.0.53", "202607301200")
+        now = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = context_panel_validation.SessionStateStore(Path(temp_dir))
+
+            state, created = store.start_session(
+                target,
+                ("macos.app", "watchos.complication"),
+                now,
+                timedelta(hours=72),
+                timedelta(days=30),
+            )
+            recovered, created_again = store.start_session(
+                target,
+                ("macos.app",),
+                now + timedelta(minutes=1),
+                timedelta(hours=24),
+                timedelta(days=7),
+            )
+
+            self.assertTrue(created)
+            self.assertFalse(created_again)
+            self.assertEqual(recovered, state)
+            self.assertEqual(state.requested_surfaces, ("macos.app", "watchos.complication"))
+            payload = json.loads(store.path(target).read_text())
+            self.assertEqual(payload["schemaVersion"], 1)
+            self.assertNotIn("device", json.dumps(payload).casefold())
+            self.assertEqual(stat.S_IMODE(store.path(target).stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(Path(temp_dir).stat().st_mode), 0o700)
+
+    def test_conflicting_active_target_is_blocked(self):
+        now = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = context_panel_validation.SessionStateStore(Path(temp_dir))
+            store.start_session(
+                Target("1.0.53", "202607301200"),
+                ("macos.app",),
+                now,
+                timedelta(hours=72),
+                timedelta(days=30),
+            )
+
+            with self.assertRaises(context_panel_validation.CoordinatorSessionConflictError):
+                store.start_session(
+                    Target("1.0.54", "202608010100"),
+                    ("macos.app",),
+                    now,
+                    timedelta(hours=72),
+                    timedelta(days=30),
+                )
+
+            with self.assertRaises(context_panel_validation.CoordinatorSessionConflictError):
+                store.load(
+                    Target("1.0.54", "202608010100"),
+                    now=now + timedelta(minutes=1),
+                )
+
+    def test_multiple_active_state_files_fail_closed(self):
+        target = Target("1.0.53", "202607301200")
+        other_target = Target("1.0.54", "202608010100")
+        now = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = context_panel_validation.SessionStateStore(Path(temp_dir))
+            store.start_session(
+                target,
+                ("macos.app",),
+                now,
+                timedelta(hours=72),
+                timedelta(days=30),
+            )
+            other_state = context_panel_validation.create_session_state(
+                other_target,
+                ("macos.app",),
+                now,
+                timedelta(hours=72),
+                timedelta(days=30),
+            )
+            store._write_state(store.path(other_target), other_state)
+
+            with self.assertRaises(context_panel_validation.CoordinatorSessionConflictError):
+                store.start_session(
+                    target,
+                    ("macos.app",),
+                    now + timedelta(minutes=1),
+                    timedelta(hours=72),
+                    timedelta(days=30),
+                )
+
+    def test_explicit_replacement_archives_a_closed_prior_session(self):
+        target = Target("1.0.53", "202607301200")
+        now = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = context_panel_validation.SessionStateStore(Path(temp_dir))
+            original, _ = store.start_session(
+                target,
+                ("macos.app",),
+                now,
+                timedelta(hours=72),
+                timedelta(days=30),
+            )
+            replacement, created = store.start_session(
+                target,
+                ("macos.app", "macos.widget"),
+                now + timedelta(hours=1),
+                timedelta(hours=72),
+                timedelta(days=30),
+                replace_existing=True,
+            )
+
+            archived = context_panel_validation.CoordinatorSessionState.from_dict(
+                json.loads(
+                    (store.archive_directory / f"{original.id.lower()}.json").read_text()
+                )
+            )
+            self.assertTrue(created)
+            self.assertNotEqual(replacement.id, original.id)
+            self.assertEqual(archived.lifecycle, "stopped")
+            self.assertEqual(archived.lifecycle_reason, "operator-stopped")
+
+    def test_same_target_replacement_preserves_watch_restart_attestation(self):
+        target = Target("1.0.53", "202607301200")
+        now = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        recorded_at = now + timedelta(minutes=5)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = context_panel_validation.SessionStateStore(Path(temp_dir))
+            original, _ = store.start_session(
+                target,
+                ("watchos.app", "watchos.complication"),
+                now,
+                timedelta(hours=72),
+                timedelta(days=30),
+            )
+            store.record_watch_restart(target, recorded_at)
+
+            replacement, _ = store.start_session(
+                target,
+                ("watchos.app", "watchos.complication"),
+                now + timedelta(hours=1),
+                timedelta(hours=72),
+                timedelta(days=30),
+                replace_existing=True,
+            )
+
+            self.assertNotEqual(replacement.id, original.id)
+            self.assertEqual(replacement.watch_restart_recorded_at, "2026-08-01T14:05:00Z")
+            self.assertEqual(replacement.events[-1].kind, "watch-restart-recorded")
+            self.assertEqual(replacement.events[-1].occurred_at, replacement.created_at)
+
+    def test_failed_atomic_replace_preserves_previous_revision(self):
+        target = Target("1.0.53", "202607301200")
+        now = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = context_panel_validation.SessionStateStore(Path(temp_dir))
+            store.start_session(
+                target,
+                ("macos.app",),
+                now,
+                timedelta(hours=72),
+                timedelta(days=30),
+            )
+            before = store.path(target).read_bytes()
+
+            with (
+                mock.patch.object(session_module.os, "replace", side_effect=OSError("fixture")),
+                self.assertRaises(OSError),
+            ):
+                store.transition(
+                    target,
+                    "paused",
+                    now + timedelta(minutes=1),
+                    "operator-unavailable",
+                )
+
+            self.assertEqual(store.path(target).read_bytes(), before)
+            self.assertFalse(list(store.sessions_directory.glob(".*.json.*")))
+
+    def test_pause_resume_extends_deadline_and_stop_preserves_state(self):
+        target = Target("1.0.53", "202607301200")
+        now = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = context_panel_validation.SessionStateStore(Path(temp_dir))
+            started, _ = store.start_session(
+                target,
+                ("macos.app",),
+                now,
+                timedelta(hours=4),
+                timedelta(days=30),
+            )
+            paused = store.transition(
+                target,
+                "paused",
+                now + timedelta(hours=1),
+                "operator-unavailable",
+            )
+
+            still_paused = store.load(target, now=now + timedelta(hours=8))
+            resumed = store.transition(target, "resumed", now + timedelta(hours=3))
+            stopped = store.transition(
+                target,
+                "stopped",
+                now + timedelta(hours=4),
+                "operator-stopped",
+            )
+
+            self.assertEqual(paused.lifecycle, "paused")
+            self.assertEqual(still_paused.lifecycle, "paused")
+            self.assertEqual(resumed.lifecycle, "active")
+            self.assertEqual(resumed.accumulated_pause_seconds, 2 * 60 * 60)
+            self.assertEqual(
+                context_panel_validation.parse_iso8601(resumed.expires_at),
+                context_panel_validation.parse_iso8601(started.expires_at) + timedelta(hours=2),
+            )
+            self.assertEqual(stopped.lifecycle, "stopped")
+            self.assertTrue(store.path(target).is_file())
+
+    def test_paused_session_can_record_watch_restart_after_nominal_deadline(self):
+        target = Target("1.0.53", "202607301200")
+        now = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = context_panel_validation.SessionStateStore(Path(temp_dir))
+            store.start_session(
+                target,
+                ("watchos.app", "watchos.complication"),
+                now,
+                timedelta(hours=1),
+                timedelta(days=30),
+            )
+            store.transition(
+                target,
+                "paused",
+                now + timedelta(minutes=30),
+                "operator-unavailable",
+            )
+
+            store.record_watch_restart(target, now + timedelta(hours=2))
+            resumed = store.transition(target, "resumed", now + timedelta(hours=3))
+
+            self.assertEqual(resumed.watch_restart_recorded_at, "2026-08-01T16:00:00Z")
+            self.assertEqual(resumed.lifecycle, "active")
+            self.assertEqual(
+                context_panel_validation.parse_iso8601(resumed.expires_at),
+                now + timedelta(hours=3, minutes=30),
+            )
+
+    def test_watch_restart_is_rejected_outside_requested_surfaces(self):
+        target = Target("1.0.53", "202607301200")
+        now = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = context_panel_validation.SessionStateStore(Path(temp_dir))
+            store.start_session(
+                target,
+                ("macos.app",),
+                now,
+                timedelta(hours=72),
+                timedelta(days=30),
+            )
+
+            with self.assertRaises(
+                context_panel_validation.CoordinatorSessionTransitionError
+            ):
+                store.record_watch_restart(target, now + timedelta(minutes=1))
+
+    def test_legacy_watch_restart_migrates_into_new_session(self):
+        target = Target("1.0.53", "202607301200")
+        recorded_at = datetime(2026, 7, 30, 17, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "Coordinator"
+            legacy_root = Path(temp_dir) / "Legacy"
+            store = context_panel_validation.SessionStateStore(root, legacy_root)
+            store.record_watch_restart(target, recorded_at)
+
+            state, _ = store.start_session(
+                target,
+                ("watchos.app", "watchos.complication"),
+                now,
+                timedelta(hours=72),
+                timedelta(days=30),
+            )
+
+            self.assertEqual(state.watch_restart_recorded_at, "2026-07-30T17:00:00Z")
+            self.assertEqual(state.events[-1].occurred_at, state.created_at)
+            self.assertFalse(store.legacy_path(target).exists())
+            self.assertTrue(store.path(target).exists())
+
+    def test_terminal_session_defers_legacy_watch_migration_until_replacement(self):
+        target = Target("1.0.53", "202607301200")
+        now = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        recorded_at = now + timedelta(minutes=5)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = context_panel_validation.SessionStateStore(Path(temp_dir))
+            terminal, _ = store.start_session(
+                target,
+                ("watchos.app", "watchos.complication"),
+                now,
+                timedelta(hours=72),
+                timedelta(days=30),
+            )
+            terminal = store.transition(
+                target,
+                "stopped",
+                now + timedelta(minutes=1),
+                "operator-stopped",
+            )
+            store._write_legacy_watch_restart(target, recorded_at)
+
+            recovered, created = store.start_session(
+                target,
+                ("watchos.app", "watchos.complication"),
+                now + timedelta(minutes=10),
+                timedelta(hours=72),
+                timedelta(days=30),
+            )
+            self.assertFalse(created)
+            self.assertEqual(recovered, terminal)
+            self.assertTrue(store.legacy_path(target).exists())
+
+            replacement, replaced = store.start_session(
+                target,
+                ("watchos.app", "watchos.complication"),
+                now + timedelta(minutes=11),
+                timedelta(hours=72),
+                timedelta(days=30),
+                replace_existing=True,
+            )
+
+            self.assertTrue(replaced)
+            self.assertEqual(replacement.watch_restart_recorded_at, "2026-08-01T14:05:00Z")
+            self.assertFalse(store.legacy_path(target).exists())
+
+    def test_expired_session_refuses_watch_restart_without_legacy_fallback(self):
+        target = Target("1.0.53", "202607301200")
+        now = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = context_panel_validation.SessionStateStore(Path(temp_dir))
+            store.start_session(
+                target,
+                ("watchos.app", "watchos.complication"),
+                now,
+                timedelta(hours=1),
+                timedelta(days=30),
+            )
+
+            with self.assertRaises(
+                context_panel_validation.CoordinatorSessionTransitionError
+            ):
+                store.record_watch_restart(target, now + timedelta(hours=2))
+
+            state = store.load(target)
+            self.assertEqual(state.lifecycle, "expired")
+            self.assertIsNone(state.watch_restart_recorded_at)
+            self.assertFalse(store.legacy_path(target).exists())
+
+    def test_corrupt_session_fails_closed(self):
+        target = Target("1.0.53", "202607301200")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = context_panel_validation.SessionStateStore(Path(temp_dir))
+            store.path(target).parent.mkdir(parents=True)
+            store.path(target).write_text("{not-json")
+
+            with self.assertRaises(context_panel_validation.CoordinatorSessionStateError):
+                store.load(target)
+
+    def test_session_target_must_match_its_state_path(self):
+        target = Target("1.0.53", "202607301200")
+        other_target = Target("1.0.54", "202608010100")
+        now = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = context_panel_validation.SessionStateStore(Path(temp_dir))
+            state = context_panel_validation.create_session_state(
+                other_target,
+                ("macos.app",),
+                now,
+                timedelta(hours=72),
+                timedelta(days=30),
+            )
+            store.path(target).parent.mkdir(parents=True)
+            store.path(target).write_text(json.dumps(state.to_dict()))
+
+            with self.assertRaises(context_panel_validation.CoordinatorSessionStateError):
+                store.load(target)
+
+    def test_mixed_type_requested_surfaces_fail_with_state_error(self):
+        now = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        state = context_panel_validation.create_session_state(
+            Target("1.0.53", "202607301200"),
+            ("macos.app",),
+            now,
+            timedelta(hours=72),
+            timedelta(days=30),
+        )
+        payload = state.to_dict()
+        payload["requestedSurfaces"] = ["macos.app", 7]
+
+        with self.assertRaises(context_panel_validation.CoordinatorSessionStateError):
+            context_panel_validation.CoordinatorSessionState.from_dict(payload)
+
+    def test_invalid_target_cannot_escape_state_root(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = context_panel_validation.SessionStateStore(Path(temp_dir))
+
+            with self.assertRaises(context_panel_validation.CoordinatorSessionStateError):
+                store.path(Target("../private", "1"))
+
+    def test_transition_without_session_fails_closed(self):
+        target = Target("1.0.53", "202607301200")
+        now = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = context_panel_validation.SessionStateStore(Path(temp_dir))
+
+            with self.assertRaises(context_panel_validation.CoordinatorSessionStateError):
+                store.transition(
+                    target,
+                    "paused",
+                    now,
+                    "operator-unavailable",
+                )
+
+    def test_symlinked_session_state_is_rejected(self):
+        target = Target("1.0.53", "202607301200")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            store = context_panel_validation.SessionStateStore(root / "Coordinator")
+            outside = root / "outside.json"
+            outside.write_text("{}")
+            store.path(target).parent.mkdir(parents=True)
+            store.path(target).symlink_to(outside)
+
+            with self.assertRaises(context_panel_validation.CoordinatorSessionStateError):
+                store.load(target)
+
+    def test_broken_symlinked_session_state_is_rejected(self):
+        target = Target("1.0.53", "202607301200")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            store = context_panel_validation.SessionStateStore(root / "Coordinator")
+            store.path(target).parent.mkdir(parents=True)
+            store.path(target).symlink_to(root / "missing.json")
+
+            with self.assertRaises(context_panel_validation.CoordinatorSessionStateError):
+                store.load(target)
+
+    def test_broken_symlinked_state_root_is_rejected(self):
+        target = Target("1.0.53", "202607301200")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            coordinator_root = root / "Coordinator"
+            coordinator_root.symlink_to(root / "missing")
+            store = context_panel_validation.SessionStateStore(coordinator_root)
+
+            with self.assertRaises(context_panel_validation.CoordinatorSessionStateError):
+                store.load(target)
+
+    def test_non_directory_state_boundaries_fail_closed(self):
+        target = Target("1.0.53", "202607301200")
+        now = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        for boundary in ("Sessions", "Archive"):
+            with self.subTest(boundary=boundary), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir) / "Coordinator"
+                root.mkdir()
+                (root / boundary).write_text("fixture")
+                store = context_panel_validation.SessionStateStore(root)
+
+                with self.assertRaises(context_panel_validation.CoordinatorSessionStateError):
+                    store.load(target, now=now)
+
+    def test_symlinked_legacy_boundary_cannot_mutate_session_or_external_file(self):
+        target = Target("1.0.53", "202607301200")
+        now = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            coordinator_root = root / "Coordinator"
+            legacy_root = root / "Legacy"
+            outside = root / "Outside"
+            store = context_panel_validation.SessionStateStore(
+                coordinator_root,
+                legacy_root,
+            )
+            state, _ = store.start_session(
+                target,
+                ("watchos.app", "watchos.complication"),
+                now,
+                timedelta(hours=72),
+                timedelta(days=30),
+            )
+            outside.mkdir()
+            outside_state = outside / f"{target.version}-{target.build_number}.json"
+            outside_state.write_text("external fixture")
+            legacy_root.symlink_to(outside, target_is_directory=True)
+
+            with self.assertRaises(context_panel_validation.CoordinatorSessionStateError):
+                store.record_watch_restart(target, now + timedelta(minutes=1))
+
+            persisted = store.load(target)
+            self.assertEqual(persisted.revision, state.revision)
+            self.assertIsNone(persisted.watch_restart_recorded_at)
+            self.assertEqual(outside_state.read_text(), "external fixture")
+
+    def test_invalid_legacy_boundary_precedes_refresh_and_replacement_mutations(self):
+        target = Target("1.0.53", "202607301200")
+        now = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            coordinator_root = root / "Coordinator"
+            legacy_root = root / "Legacy"
+            outside = root / "Outside"
+            store = context_panel_validation.SessionStateStore(
+                coordinator_root,
+                legacy_root,
+            )
+            original, _ = store.start_session(
+                target,
+                ("watchos.app", "watchos.complication"),
+                now,
+                timedelta(hours=1),
+                timedelta(days=30),
+            )
+            outside.mkdir()
+            legacy_root.symlink_to(outside, target_is_directory=True)
+
+            with self.assertRaises(context_panel_validation.CoordinatorSessionStateError):
+                store.load(target, now=now + timedelta(hours=2))
+            with self.assertRaises(context_panel_validation.CoordinatorSessionStateError):
+                store.start_session(
+                    target,
+                    ("watchos.app", "watchos.complication"),
+                    now + timedelta(hours=2),
+                    timedelta(hours=72),
+                    timedelta(days=30),
+                    replace_existing=True,
+                )
+
+            persisted = store.load(target)
+            self.assertEqual(persisted, original)
+            self.assertFalse(store.archive_directory.exists())
+
+    def test_expired_session_is_persisted_then_pruned(self):
+        target = Target("1.0.53", "202607301200")
+        now = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = context_panel_validation.SessionStateStore(Path(temp_dir))
+            store.start_session(
+                target,
+                ("macos.app",),
+                now,
+                timedelta(hours=1),
+                timedelta(days=1),
+            )
+
+            expired = store.load(target, now=now + timedelta(hours=2))
+            store.prune(now + timedelta(days=2))
+
+            self.assertEqual(expired.lifecycle, "expired")
+            self.assertFalse(store.path(target).exists())
+
+    def test_normal_load_enforces_terminal_retention(self):
+        target = Target("1.0.53", "202607301200")
+        now = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = context_panel_validation.SessionStateStore(Path(temp_dir))
+            store.start_session(
+                target,
+                ("macos.app",),
+                now,
+                timedelta(hours=1),
+                timedelta(days=1),
+            )
+            store.transition(
+                target,
+                "stopped",
+                now + timedelta(minutes=30),
+                "operator-stopped",
+            )
+
+            retained = store.load(target, now=now + timedelta(hours=24))
+            pruned = store.load(target, now=now + timedelta(hours=26))
+
+            self.assertEqual(retained.lifecycle, "stopped")
+            self.assertIsNone(pruned)
+            self.assertFalse(store.path(target).exists())
+
+    def test_pure_reducer_supports_terminal_states(self):
+        now = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        for event, reason, lifecycle in (
+            ("blocked", "explicit-block", "blocked"),
+            ("superseded", "newer-build-observed", "superseded"),
+            ("completed", "evidence-complete", "completed"),
+        ):
+            with self.subTest(event=event):
+                state = context_panel_validation.create_session_state(
+                    Target("1.0.53", "202607301200"),
+                    ("macos.app",),
+                    now,
+                    timedelta(hours=72),
+                    timedelta(days=30),
+                )
+                transitioned = context_panel_validation.transition_session_state(
+                    state,
+                    event,
+                    now + timedelta(minutes=1),
+                    reason,
+                )
+                self.assertEqual(transitioned.lifecycle, lifecycle)
+                self.assertEqual(transitioned.lifecycle_reason, reason)
+
+    def test_event_history_is_bounded_without_losing_start_provenance(self):
+        now = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        state = context_panel_validation.create_session_state(
+            Target("1.0.53", "202607301200"),
+            ("macos.app",),
+            now,
+            timedelta(hours=72),
+            timedelta(days=30),
+        )
+        for index in range(70):
+            state = context_panel_validation.transition_session_state(
+                state,
+                "paused",
+                now + timedelta(minutes=index * 2 + 1),
+                "operator-unavailable",
+            )
+            state = context_panel_validation.transition_session_state(
+                state,
+                "resumed",
+                now + timedelta(minutes=index * 2 + 2),
+            )
+
+        self.assertEqual(len(state.events), 128)
+        self.assertEqual(state.events[0].kind, "started")
+        self.assertEqual(state.events[-1].kind, "resumed")
+
+    def test_paused_session_suppresses_ready_actions(self):
+        now = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        report = context_panel_validation.build_report(
+            Target("1.0.53", "202607301200"),
+            valid_asc(),
+            proven_mac(),
+            (device("Apple Watch", "watchOS"),),
+            None,
+            now,
+        )
+        session = context_panel_validation.create_session_state(
+            report.target,
+            ("watchos.app", "watchos.complication"),
+            now,
+            timedelta(hours=72),
+            timedelta(days=30),
+        )
+        paused = context_panel_validation.transition_session_state(
+            session,
+            "paused",
+            now + timedelta(minutes=1),
+            "operator-unavailable",
+        )
+
+        updated = context_panel_validation.apply_session_state_to_report(report, paused)
+
+        self.assertEqual(updated.state, "waiting")
+        self.assertEqual(updated.stage, "paused")
+        self.assertFalse(updated.actions)
+        self.assertEqual(updated.session["lifecycle"], "paused")
+
+    def test_paused_session_never_hides_blocked_or_unknown_evidence(self):
+        now = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        target = Target("1.0.53", "202607301200")
+        session = context_panel_validation.create_session_state(
+            target,
+            ("macos.app",),
+            now,
+            timedelta(hours=72),
+            timedelta(days=30),
+        )
+        paused = context_panel_validation.transition_session_state(
+            session,
+            "paused",
+            now + timedelta(minutes=1),
+            "operator-unavailable",
+        )
+        blocked_mac = MacEvidence(
+            "1.0.53",
+            "202607301200",
+            "current",
+            "failed",
+            "running",
+            "development",
+            "Development",
+            "Development",
+            "fixture",
+        )
+        unknown_asc = ASCEvidence(
+            "unavailable",
+            "none",
+            tuple(
+                ASCPlatformEvidence(platform, "unknown", "unknown", reason="unavailable")
+                for platform in context_panel_validation.ASC_PLATFORMS
+            ),
+            "unavailable",
+        )
+        reports = (
+            context_panel_validation.build_report(
+                target,
+                valid_asc(),
+                blocked_mac,
+                (device("iPhone", "iOS"),),
+                None,
+                now,
+            ),
+            context_panel_validation.build_report(
+                target,
+                unknown_asc,
+                proven_mac(),
+                (device("iPhone", "iOS"),),
+                None,
+                now,
+            ),
+        )
+
+        for report in reports:
+            with self.subTest(state=report.state):
+                updated = context_panel_validation.apply_session_state_to_report(report, paused)
+                self.assertEqual(updated.state, report.state)
+                self.assertEqual(updated.stage, report.stage)
+                self.assertEqual(updated.exit_code, report.exit_code)
+                self.assertEqual(updated.headline, report.headline)
+                self.assertEqual(updated.session["lifecycle"], "paused")
 
 
 class CLITests(unittest.TestCase):
@@ -988,6 +1855,140 @@ class CLITests(unittest.TestCase):
         self.assertNotIn("/Users", stderr.getvalue())
         self.assertNotIn("secret.p8", stderr.getvalue())
 
+    def test_status_refuses_another_active_target_before_collecting_evidence(self):
+        active_target = Target("1.0.53", "202607301200")
+        now = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = context_panel_validation.SessionStateStore(Path(temp_dir))
+            store.start_session(
+                active_target,
+                ("macos.app",),
+                now,
+                timedelta(hours=72),
+                timedelta(days=30),
+            )
+            args = SimpleNamespace(
+                command="status",
+                version="1.0.54",
+                build_number="202608010100",
+                asc_env_file=Path("/unused"),
+                json=True,
+            )
+            stderr = io.StringIO()
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {"CONTEXT_PANEL_VALIDATION_STATE_ROOT": temp_dir},
+                    clear=False,
+                ),
+                mock.patch.object(cli_module, "parse_args", return_value=args),
+                mock.patch.object(cli_module, "utc_now", return_value=now + timedelta(minutes=1)),
+                mock.patch.object(cli_module, "collect_asc_evidence") as collect_asc,
+                mock.patch.object(cli_module, "collect_mac_evidence") as collect_mac,
+                mock.patch.object(cli_module, "collect_device_evidence") as collect_devices,
+                contextlib.redirect_stderr(stderr),
+            ):
+                exit_code = cli_module.main([])
+
+            self.assertEqual(exit_code, 20)
+            self.assertIn("another signed validation session is active", stderr.getvalue())
+            collect_asc.assert_not_called()
+            collect_mac.assert_not_called()
+            collect_devices.assert_not_called()
+
+    def test_status_honors_requested_surface_scope(self):
+        target = Target("1.0.53", "202607301200")
+        now = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = context_panel_validation.SessionStateStore(Path(temp_dir))
+            store.start_session(
+                target,
+                ("macos.app",),
+                now,
+                timedelta(hours=72),
+                timedelta(days=30),
+            )
+            stdout = io.StringIO()
+            args = SimpleNamespace(
+                version=target.version,
+                build_number=target.build_number,
+                asc_env_file=Path("/unused"),
+                json=True,
+            )
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {"CONTEXT_PANEL_VALIDATION_STATE_ROOT": temp_dir},
+                    clear=False,
+                ),
+                mock.patch.object(cli_module, "utc_now", return_value=now + timedelta(minutes=1)),
+                mock.patch.object(cli_module, "collect_asc_evidence", return_value=valid_asc()),
+                mock.patch.object(cli_module, "collect_mac_evidence", return_value=proven_mac()),
+                mock.patch.object(
+                    cli_module,
+                    "collect_device_evidence",
+                    return_value=(device("Apple Watch", "watchOS"),),
+                ),
+                contextlib.redirect_stdout(stdout),
+            ):
+                exit_code = cli_module.run_status(args)
+
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(payload["summary"]["state"], "complete_for_slice")
+            self.assertFalse(payload["actions"])
+            self.assertEqual(payload["session"]["requestedSurfaces"], ["macos.app"])
+            self.assertEqual(payload["evidence"]["devices"][0]["platform"], "watchOS")
+
+    def test_status_reports_paused_session_without_ready_actions(self):
+        target = Target("1.0.53", "202607301200")
+        now = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = context_panel_validation.SessionStateStore(Path(temp_dir))
+            store.start_session(
+                target,
+                ("watchos.app", "watchos.complication"),
+                now,
+                timedelta(hours=72),
+                timedelta(days=30),
+            )
+            store.transition(
+                target,
+                "paused",
+                now + timedelta(minutes=1),
+                "operator-unavailable",
+            )
+            stdout = io.StringIO()
+            args = SimpleNamespace(
+                version=target.version,
+                build_number=target.build_number,
+                asc_env_file=Path("/unused"),
+                json=True,
+            )
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {"CONTEXT_PANEL_VALIDATION_STATE_ROOT": temp_dir},
+                    clear=False,
+                ),
+                mock.patch.object(cli_module, "utc_now", return_value=now + timedelta(minutes=2)),
+                mock.patch.object(cli_module, "collect_asc_evidence", return_value=valid_asc()),
+                mock.patch.object(cli_module, "collect_mac_evidence", return_value=proven_mac()),
+                mock.patch.object(
+                    cli_module,
+                    "collect_device_evidence",
+                    return_value=(device("Apple Watch", "watchOS"),),
+                ),
+                contextlib.redirect_stdout(stdout),
+            ):
+                exit_code = cli_module.run_status(args)
+
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(payload["summary"]["stage"], "paused")
+            self.assertFalse(payload["summary"]["needsHumanAction"])
+            self.assertEqual(payload["session"]["lifecycle"], "paused")
+
     def test_record_watch_restart_writes_only_local_attestation(self):
         recorded_at = datetime(2026, 7, 30, 17, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1014,7 +2015,7 @@ class CLITests(unittest.TestCase):
                 exit_code = cli_module.run_record_watch_restart(args)
 
             payload = json.loads(stdout.getvalue())
-            state_files = list(Path(temp_dir).glob("*.json"))
+            state_files = list(Path(temp_dir).rglob("*.json"))
             self.assertEqual(exit_code, 0)
             self.assertEqual(payload["proof"], "operator_attestation")
             self.assertEqual(len(state_files), 1)
@@ -1056,7 +2057,90 @@ class CLITests(unittest.TestCase):
             payload = json.loads(stdout.getvalue())
             self.assertEqual(exit_code, 30)
             self.assertFalse(payload["recorded"])
-            self.assertFalse(list(Path(temp_dir).glob("*.json")))
+            self.assertFalse(list(Path(temp_dir).rglob("*.json")))
+
+    def test_session_lifecycle_commands_share_one_persisted_state(self):
+        target_args = {
+            "version": "1.0.53",
+            "build_number": "202607301200",
+            "json": True,
+        }
+        started_at = datetime(2026, 8, 1, 14, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stdout = io.StringIO()
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {"CONTEXT_PANEL_VALIDATION_STATE_ROOT": temp_dir},
+                    clear=False,
+                ),
+                mock.patch.object(cli_module, "utc_now", return_value=started_at),
+                contextlib.redirect_stdout(stdout),
+            ):
+                exit_code = cli_module.run_start_session(
+                    SimpleNamespace(
+                        **target_args,
+                        surfaces=["macos.app"],
+                        duration_hours=72,
+                        retention_days=30,
+                        replace=False,
+                    )
+                )
+
+            start_payload = json.loads(stdout.getvalue())
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(start_payload["created"])
+            self.assertEqual(start_payload["session"]["lifecycle"], "active")
+
+            for function, offset, arguments, lifecycle in (
+                (
+                    cli_module.run_pause_session,
+                    timedelta(hours=1),
+                    {"reason": "operator-unavailable"},
+                    "paused",
+                ),
+                (cli_module.run_resume_session, timedelta(hours=2), {}, "active"),
+                (cli_module.run_stop_session, timedelta(hours=3), {}, "stopped"),
+            ):
+                stdout = io.StringIO()
+                with (
+                    mock.patch.dict(
+                        os.environ,
+                        {"CONTEXT_PANEL_VALIDATION_STATE_ROOT": temp_dir},
+                        clear=False,
+                    ),
+                    mock.patch.object(cli_module, "utc_now", return_value=started_at + offset),
+                    contextlib.redirect_stdout(stdout),
+                ):
+                    self.assertEqual(function(SimpleNamespace(**target_args, **arguments)), 0)
+                self.assertEqual(json.loads(stdout.getvalue())["session"]["lifecycle"], lifecycle)
+
+    def test_invalid_session_bounds_exit_unknown_without_writing_state(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stderr = io.StringIO()
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {"CONTEXT_PANEL_VALIDATION_STATE_ROOT": temp_dir},
+                    clear=False,
+                ),
+                contextlib.redirect_stderr(stderr),
+            ):
+                exit_code = cli_module.main(
+                    [
+                        "start-session",
+                        "--version",
+                        "1.0.53",
+                        "--build-number",
+                        "202607301200",
+                        "--duration-hours",
+                        "0",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 30)
+            self.assertIn("session duration must be between", stderr.getvalue())
+            self.assertFalse(list(Path(temp_dir).rglob("*.json")))
 
 
 if __name__ == "__main__":
