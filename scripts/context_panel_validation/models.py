@@ -113,9 +113,10 @@ class ValidationReport:
     actions: tuple[OperatorAction, ...]
     watch_restart_recorded_at: str | None
     limitations: tuple[str, ...]
+    session: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "schemaVersion": 1,
             "generatedAt": self.generated_at,
             "target": {
@@ -172,6 +173,9 @@ class ValidationReport:
             ],
             "limitations": list(self.limitations),
         }
+        if self.session is not None:
+            payload["session"] = self.session
+        return payload
 
 
 def utc_now() -> datetime:
@@ -214,13 +218,55 @@ def classify_install(
     return "different"
 
 
+def report_scope(
+    requested_surfaces: tuple[str, ...] | None,
+) -> tuple[bool, frozenset[str], frozenset[str]]:
+    if requested_surfaces is None:
+        return True, frozenset(ASC_PLATFORMS), frozenset(
+            {"iPhone", "iPad", "Vision Pro", "Apple Watch", "Apple TV"}
+        )
+    prefixes = {surface.split(".", 1)[0] for surface in requested_surfaces}
+    asc_platforms: set[str] = set()
+    device_labels: set[str] = set()
+    if "macos" in prefixes:
+        asc_platforms.add("MAC_OS")
+    if prefixes & {"ios", "ipados", "watchos"}:
+        asc_platforms.add("IOS")
+    if "visionos" in prefixes:
+        asc_platforms.add("VISION_OS")
+    if "tvos" in prefixes:
+        asc_platforms.add("TV_OS")
+    if "ios" in prefixes:
+        device_labels.add("iPhone")
+    if "ipados" in prefixes:
+        device_labels.add("iPad")
+    if "visionos" in prefixes:
+        device_labels.add("Vision Pro")
+    if "watchos" in prefixes:
+        device_labels.add("Apple Watch")
+    if "tvos" in prefixes:
+        device_labels.add("Apple TV")
+    return "macos" in prefixes, frozenset(asc_platforms), frozenset(device_labels)
+
+
+def device_is_in_scope(device: DeviceEvidence, labels: frozenset[str]) -> bool:
+    return any(device.label == label or device.label.startswith(f"{label} ") for label in labels)
+
+
 def install_counts(
     mac: MacEvidence,
     devices: tuple[DeviceEvidence, ...],
+    requested_surfaces: tuple[str, ...] | None = None,
 ) -> tuple[int, int, int]:
+    include_mac, _, device_labels = report_scope(requested_surfaces)
+    scoped_devices = tuple(device for device in devices if device_is_in_scope(device, device_labels))
     states = [
-        mac.install_state,
-        *(device.install_state for device in devices if device.condition != "not_found"),
+        *([mac.install_state] if include_mac else []),
+        *(
+            device.install_state
+            for device in scoped_devices
+            if device.condition != "not_found"
+        ),
     ]
     known_states = [state for state in states if state != "unknown"]
     return (
@@ -237,49 +283,65 @@ def build_report(
     devices: tuple[DeviceEvidence, ...],
     watch_restart_recorded_at: str | None,
     generated_at: datetime,
+    requested_surfaces: tuple[str, ...] | None = None,
 ) -> ValidationReport:
+    include_mac, asc_platforms, device_labels = report_scope(requested_surfaces)
+    scoped_asc_platforms = tuple(
+        item for item in asc.platforms if item.platform in asc_platforms
+    )
+    scoped_devices = tuple(
+        item for item in devices if device_is_in_scope(item, device_labels)
+    )
     blocked_reasons: list[str] = []
-    if mac.baseline_state == "failed":
+    if include_mac and mac.baseline_state == "failed":
         blocked_reasons.append("Mac publisher is not a verified Production runtime")
-    if mac.install_state == "superseded":
+    if include_mac and mac.install_state == "superseded":
         blocked_reasons.append("Mac moved to a newer build")
     blocked_platform = next(
         (
             item
-            for item in asc.platforms
+            for item in scoped_asc_platforms
             if item.build_state in {"failed", "invalid", "expired"}
         ),
         None,
     )
     if blocked_platform is not None:
         blocked_reasons.append(f"{blocked_platform.platform} build is {blocked_platform.build_state}")
-    superseded = next((item for item in devices if item.install_state == "superseded"), None)
+    superseded = next(
+        (item for item in scoped_devices if item.install_state == "superseded"),
+        None,
+    )
     if superseded is not None:
         blocked_reasons.append(f"{superseded.label} moved to a newer build")
 
-    asc_build_states = {item.build_state for item in asc.platforms}
-    testflight_states = {item.testflight_state for item in asc.platforms}
-    install_states = {mac.install_state, *(item.install_state for item in devices)}
-    device_conditions = {item.condition for item in devices}
+    asc_build_states = {item.build_state for item in scoped_asc_platforms}
+    testflight_states = {item.testflight_state for item in scoped_asc_platforms}
+    install_states = {
+        *([mac.install_state] if include_mac else []),
+        *(item.install_state for item in scoped_devices),
+    }
+    device_conditions = {item.condition for item in scoped_devices}
     no_tool_evidence = (
-        bool(devices)
+        (include_mac or bool(scoped_devices))
         and asc.status == "unavailable"
-        and mac.baseline_state == "unknown"
-        and mac.install_state == "unknown"
-        and all(item.condition == "unavailable" for item in devices)
+        and (
+            not include_mac
+            or (mac.baseline_state == "unknown" and mac.install_state == "unknown")
+        )
+        and all(item.condition == "unavailable" for item in scoped_devices)
     )
     asc_unknown = (
         asc.status == "unavailable"
         or "unknown" in asc_build_states
         or "unknown" in testflight_states
     )
-    mac_unknown = (
+    mac_unknown = include_mac and (
         mac.baseline_state in {"unknown", "identity_verified", "runtime_unverified"}
         or mac.install_state == "unknown"
     )
     device_install_unknown = any(
         item.install_state == "unknown" and item.condition == "reachable"
-        for item in devices
+        for item in scoped_devices
     )
     upstream_unknown = asc_unknown or mac_unknown or device_install_unknown
     waiting_on_processing = "processing" in asc_build_states or "missing" in asc_build_states
@@ -299,6 +361,7 @@ def build_report(
     if (
         mac.baseline_state == "identity_verified_app_not_running"
         and mac.install_state == "current"
+        and include_mac
         and not blocked_reasons
         and not upstream_unknown
         and not machine_waiting
@@ -307,7 +370,8 @@ def build_report(
             OperatorAction("Mac", "about 1 minute", "Open the canonical Mac app once, then rerun status.")
         )
     watch_current = any(
-        item.platform == "watchOS" and item.install_state == "current" for item in devices
+        item.platform == "watchOS" and item.install_state == "current"
+        for item in scoped_devices
     )
     if (
         watch_current
@@ -361,7 +425,11 @@ def build_report(
         state, stage, exit_code = "complete_for_slice", "available evidence collected", EXIT_OK
         closing = "nothing needs you right now"
 
-    current_count, known_count, unknown_count = install_counts(mac, devices)
+    current_count, known_count, unknown_count = install_counts(
+        mac,
+        devices,
+        requested_surfaces,
+    )
     if known_count:
         install_summary = f"{current_count} of {known_count} known installs current"
     else:
@@ -407,6 +475,12 @@ def asc_summary(asc: ASCEvidence) -> str:
 
 def render_text(report: ValidationReport) -> str:
     lines = [report.headline]
+    if report.session is not None:
+        lines.append(
+            "Session "
+            f"{report.session['lifecycle']} · revision {report.session['revision']} · "
+            f"expires {report.session['expiresAt']}"
+        )
     mac_summary = {
         "proven": "Mac target Production runtime proven",
         "identity_verified_app_not_running": "Mac target Production identity verified; app not running",

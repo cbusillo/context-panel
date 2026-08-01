@@ -6,7 +6,6 @@ import plistlib
 import re
 import subprocess
 import tempfile
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,14 +18,13 @@ from .models import (
     Runner,
     Target,
     classify_install,
-    iso8601,
 )
+from .session import SessionStateStore
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CANONICAL_APP = Path("/Applications/Context Panel.app")
 CANONICAL_INFO_PLIST = CANONICAL_APP / "Contents/Info.plist"
-DEFAULT_STATE_ROOT = Path("~/Library/Application Support/Context Panel Validation").expanduser()
 
 
 class SubprocessRunner:
@@ -348,39 +346,3 @@ def collect_device_evidence(runner: Runner, target: Target) -> tuple[DeviceEvide
                 )
             )
     return tuple(evidence)
-
-
-class SessionStateStore:
-    def __init__(self, root: Path | None = None):
-        configured = os.environ.get("CONTEXT_PANEL_VALIDATION_STATE_ROOT", "").strip()
-        self.root = root or (Path(configured).expanduser() if configured else DEFAULT_STATE_ROOT)
-
-    def path(self, target: Target) -> Path:
-        return self.root / f"{target.version}-{target.build_number}.json"
-
-    def watch_restart_recorded_at(self, target: Target) -> str | None:
-        path = self.path(target)
-        if not path.is_file():
-            return None
-        try:
-            payload = json.loads(path.read_text())
-        except (OSError, json.JSONDecodeError):
-            return None
-        recorded_at = payload.get("watchRestartRecordedAt")
-        return recorded_at if isinstance(recorded_at, str) else None
-
-    def watch_restart_recorded(self, target: Target) -> bool:
-        return self.watch_restart_recorded_at(target) is not None
-
-    def record_watch_restart(self, target: Target, recorded_at: datetime) -> None:
-        self.root.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "schemaVersion": 1,
-            "version": target.version,
-            "buildNumber": target.build_number,
-            "watchRestartRecordedAt": iso8601(recorded_at),
-        }
-        destination = self.path(target)
-        temporary = destination.with_suffix(".tmp")
-        temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-        temporary.replace(destination)

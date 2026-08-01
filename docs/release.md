@@ -763,10 +763,37 @@ build.
 ### Signed Device Smoke Test
 
 Before treating a companion TestFlight build as release evidence, validate this
-sequence from signed runtimes:
+sequence from signed runtimes.
 
-Start with the read-only validation coordinator so waiting and access states are
-classified before anyone begins opening devices:
+Create or recover the durable coordinator session for the exact train before
+anyone begins opening devices:
+
+```sh
+scripts/context-panel-validation.py start-session \
+  --version <marketing-version> \
+  --build-number <coordinated-build-number>
+```
+
+The default session requests every shipping surface. Pass repeated `--surface`
+arguments only for an explicitly scoped validation slice. A matching existing
+session is recovered unchanged; replacing it requires `--replace`, and a
+different active target is rejected by both lifecycle and status commands.
+Status continues to show collected out-of-scope evidence for diagnostics, but
+only requested surfaces can block the slice or produce operator actions.
+
+The schema-versioned coordinator state lives under the canonical App Group at
+`Context Panel/Validation/Coordinator`, separate from signed runtime session and
+receipt files. Session writes are lock-protected, atomic, mode `0600`, bounded
+by retention, and contain no device identifiers, account data, credentials, raw
+provider payloads, App Store Connect object IDs, or private paths. Tests may set
+`CONTEXT_PANEL_VALIDATION_STATE_ROOT`; release operators should use the default.
+Compatibility-only Watch attestations recorded before a session exists remain
+in the older local store until the first matching session migrates them.
+Normal status reads enforce terminal retention and remove expired coordinator
+documents without touching runtime receipts or App Group relay queues.
+
+Then collect coordinator status so waiting and access states are classified
+before anyone begins opening devices:
 
 ```sh
 scripts/context-panel-validation.py status \
@@ -778,17 +805,41 @@ The coordinator reads App Store Connect through GET-only requests, runs the
 canonical Mac Production receipt, and inspects physical-device reachability and
 installed app versions through CoreDevice list/info commands. It never installs,
 launches app or device UI, wakes, reboots, captures, resets, submits, cancels, or
-changes App Store Connect state. The canonical receipt may execute the refresh
-agent's privacy-safe bookmark-access, provider-credential-presence, and
+changes App Store Connect state. Status may persist only local coordinator
+lifecycle changes such as deadline expiry. The canonical receipt may execute the
+refresh agent's privacy-safe bookmark-access, provider-credential-presence, and
 webhook-credential-presence summaries. Locked, sleeping, unreachable,
 processing, and unavailable states are reported as waiting or unknown rather
 than application failures.
 
-This first coordinator slice is orientation, not release evidence. Its footer
-always states that companion CloudKit reads, extension runtime receipts, and
-visual approval remain unproven. Continue the signed smoke sequence below and
-do not infer widget, complication, or Top Shelf runtime from an installed app
-version.
+Pause and resume coordinator timers without deleting runtime evidence or App
+Group relay queues:
+
+```sh
+scripts/context-panel-validation.py pause-session \
+  --version <marketing-version> \
+  --build-number <coordinated-build-number> \
+  --reason operator-unavailable
+
+scripts/context-panel-validation.py resume-session \
+  --version <marketing-version> \
+  --build-number <coordinated-build-number>
+```
+
+Close the workflow session without deleting collected evidence:
+
+```sh
+scripts/context-panel-validation.py stop-session \
+  --version <marketing-version> \
+  --build-number <coordinated-build-number>
+```
+
+This durable coordinator slice still treats the existing collectors as
+orientation, not release evidence. Its footer states that companion CloudKit
+reads, extension runtime receipts, and visual approval remain unproven until the
+later receipt-ingestion and approval slices land. Continue the signed smoke
+sequence below and do not infer widget, complication, or Top Shelf runtime from
+an installed app version.
 
 Coordinator status exits with `0` while waiting or after all evidence available
 to this slice is collected, `10` when a human action is ready, `20` for a real
@@ -807,8 +858,10 @@ scripts/context-panel-validation.py record-watch-restart \
 ```
 
 The record command first confirms that the exact Watch build is still observable
-and otherwise exits `30` without writing the attestation. That local record does
-not prove complication runtime; the routine Watch test below remains authoritative.
+and otherwise exits `30` without writing the attestation. When a durable session
+is active, the attestation is stored in that session. Older flat local
+attestations migrate on first session creation. That local record does not prove
+complication runtime; the routine Watch test below remains authoritative.
 
 The sandbox-local widget mirror is a local-development fallback, not a
 substitute for release app-group entitlements. The `install` and `reset` runtime
