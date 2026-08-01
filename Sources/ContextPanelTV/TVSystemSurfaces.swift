@@ -95,17 +95,42 @@ actor TVSystemSurfaceCoordinator {
 }
 
 @MainActor
+final class TVRuntimeReceiptRelayProvider {
+    private let makeRuntimeReceiptRelay: () -> RuntimeReceiptRelayCoordinator?
+    private var runtimeReceiptRelay: RuntimeReceiptRelayCoordinator?
+
+    init(
+        makeRuntimeReceiptRelay: @escaping () -> RuntimeReceiptRelayCoordinator? = {
+            RuntimeReceiptRelayCoordinator.appGroupReceiver(
+                remoteStore: RuntimeReceiptCloudKitStoreFactory.make(),
+                expectedManifestID: RuntimeBuildIdentityLoader.load(surface: .tvOSApp)?.build.manifestID,
+                eligibleSurfaces: [.tvOSApp, .tvOSTopShelf],
+                appGroupID: ContextPanelLocations.companionAppGroupID
+            )
+        }
+    ) {
+        self.makeRuntimeReceiptRelay = makeRuntimeReceiptRelay
+    }
+
+    func resolve() -> RuntimeReceiptRelayCoordinator? {
+        if let runtimeReceiptRelay {
+            return runtimeReceiptRelay
+        }
+        guard let resolved = makeRuntimeReceiptRelay() else {
+            return nil
+        }
+        runtimeReceiptRelay = resolved
+        return resolved
+    }
+}
+
+@MainActor
 final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
     private static let retiredBadgeExpiryRequestIdentifier = "context-panel-provider-badge-expiry"
     private static let retiredProviderBadgesPreferenceKey = "tv-provider-badges-enabled"
 
     private let remoteStore = CompanionCloudKitSyncStoreFactory.make()
-    let runtimeReceiptRelay = RuntimeReceiptRelayCoordinator.appGroupReceiver(
-        remoteStore: RuntimeReceiptCloudKitStoreFactory.make(),
-        expectedManifestID: RuntimeBuildIdentityLoader.load(surface: .tvOSApp)?.build.manifestID,
-        eligibleSurfaces: [.tvOSApp, .tvOSTopShelf],
-        appGroupID: ContextPanelLocations.companionAppGroupID
-    )
+    let runtimeReceiptRelayProvider = TVRuntimeReceiptRelayProvider()
     private let notificationCenter = UNUserNotificationCenter.current()
     private var subscriptionRegistrationTask: Task<Void, Never>?
 
@@ -116,7 +141,6 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
         clearRetiredProviderBadge()
         application.registerForRemoteNotifications()
         registerCloudKitSubscription()
-        synchronizeRuntimeReceipts()
         return true
     }
 
@@ -156,6 +180,7 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
             completionHandler(.noData)
             return
         }
+        let runtimeReceiptRelay = runtimeReceiptRelayProvider.resolve()
         Task { [remoteStore, runtimeReceiptRelay] in
             let currentUserRecordName: String?
             if notificationMetadata.subscriptionOwnerRecordName == nil {
@@ -222,6 +247,7 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
     }
 
     private func synchronizeRuntimeReceipts() {
+        let runtimeReceiptRelay = runtimeReceiptRelayProvider.resolve()
         Task { [runtimeReceiptRelay] in
             _ = await runtimeReceiptRelay?.synchronize()
         }

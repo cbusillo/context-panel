@@ -1859,6 +1859,8 @@ exit 65
 
     def test_companion_upload_requires_tvos_layered_app_icon(self):
         script = self.read("scripts/upload-app-store-connect-companion-app.sh")
+        project = self.read("project.yml")
+        entitlements = self.read("Config/ContextPanelTV.entitlements")
 
         self.assertIn("assert_tvos_archive_ready()", script)
         self.assertIn("tvOS archive unexpectedly contains the iOS/visionOS companion widget", script)
@@ -1868,6 +1870,20 @@ exit 65
         self.assertIn("tvOS archive is missing compiled brand assets", script)
         self.assertIn("tvOS archive is missing the primary layered app icon", script)
         self.assertIn("tvOS archive is missing required standard or wide Top Shelf artwork", script)
+        self.assertIn('extract_signed_entitlements "$app_path" "tvOS app"', script)
+        self.assertIn(
+            "'com.apple.developer.icloud-container-environment' 'Production'",
+            script,
+        )
+        self.assertIn("'aps-environment' 'production'", script)
+        self.assertIn(
+            "'com.apple.developer.user-management' 'runs-as-current-user-with-user-independent-keychain'",
+            script,
+        )
+        self.assertIn("<key>com.apple.developer.icloud-container-environment</key>", entitlements)
+        self.assertIn("<string>$(CLOUDKIT_ENVIRONMENT)</string>", entitlements)
+        self.assertIn("CLOUDKIT_ENVIRONMENT: Development", project)
+        self.assertIn("CLOUDKIT_ENVIRONMENT: Production", project)
         self.assertIn('if [[ "$platform" == "tvos" ]]; then\n\tassert_tvos_archive_ready', script)
 
     def test_visionos_dogfood_script_uses_development_signing_and_devicectl(self):
@@ -2531,11 +2547,11 @@ exit 65
         )
         self.assertEqual(
             script.count("'com.apple.developer.icloud-container-identifiers' 'iCloud.com.shinycomputers.contextpanel'"),
-            3,
+            4,
         )
         self.assertEqual(
             script.count("'com.apple.developer.icloud-container-environment' 'Production'"),
-            3,
+            4,
         )
         archive_index = script.index('run_xcodebuild "${archive_args[@]}" archive')
         widget_validation_index = script.index("\tassert_companion_widget_archive_ready\n", archive_index)

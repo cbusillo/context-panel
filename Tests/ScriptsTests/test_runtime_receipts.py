@@ -114,6 +114,14 @@ class RuntimeReceiptIntegrationTests(unittest.TestCase):
         self.assertIn("ContextPanelLocations.appGroupID", store)
         self.assertNotIn('group.com.shinycomputers.contextpanel"', store)
 
+    def test_tvos_runtime_validation_uses_the_writable_shared_cache(self) -> None:
+        locations = self.read("Sources/ContextPanelCore/ContextPanelLocations.swift")
+        tvos_path = locations.split("#if os(tvOS)", 1)[1].split("#else", 1)[0]
+
+        self.assertIn('.appending(path: "Library"', tvos_path)
+        self.assertIn('.appending(path: "Caches"', tvos_path)
+        self.assertNotIn("Application Support", tvos_path)
+
     def test_receipts_bind_loaded_code_and_reject_tampering(self) -> None:
         receipt = self.read("Sources/ContextPanelCore/RuntimeReceipt.swift")
         store = self.read("Sources/ContextPanelCore/RuntimeReceiptStore.swift")
@@ -154,8 +162,8 @@ class RuntimeReceiptIntegrationTests(unittest.TestCase):
         self.assertIn("relayReceipts(now: Date())", companion_app)
         self.assertIn("RuntimeReceiptCloudKitStoreFactory.make()", watch_app)
         self.assertIn("eligibleSurfaces: [.watchOSApp, .watchOSComplication]", watch_app)
-        self.assertIn("RuntimeReceiptCloudKitStoreFactory.make()", tv_app)
-        self.assertIn("eligibleSurfaces: [.tvOSApp, .tvOSTopShelf]", tv_app)
+        self.assertIn("RuntimeReceiptCloudKitStoreFactory.make()", tv_delegate)
+        self.assertIn("eligibleSurfaces: [.tvOSApp, .tvOSTopShelf]", tv_delegate)
         self.assertIn("runtimeReceiptRelay?.synchronize()", tv_delegate)
         for extension in extensions:
             self.assertNotIn("RuntimeReceiptCloudKitStoreFactory", extension)
