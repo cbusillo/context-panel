@@ -114,6 +114,7 @@ class ValidationReport:
     watch_restart_recorded_at: str | None
     limitations: tuple[str, ...]
     session: dict[str, Any] | None = None
+    runtime_evidence: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -175,6 +176,8 @@ class ValidationReport:
         }
         if self.session is not None:
             payload["session"] = self.session
+        if self.runtime_evidence is not None:
+            payload["evidence"]["runtimeReceipts"] = self.runtime_evidence
         return payload
 
 
@@ -491,7 +494,14 @@ def render_text(report: ValidationReport) -> str:
         "failed": "Mac Production identity blocked",
         "unknown": "Mac Production runtime unknown",
     }.get(report.mac.baseline_state, "Mac Production runtime unknown")
-    lines.append(f"{asc_summary(report.asc)} · {mac_summary} · extension runtime not proven by this slice")
+    if report.runtime_evidence is None:
+        runtime_summary = "extension runtime not proven by this slice"
+    else:
+        runtime_summary = (
+            f"{report.runtime_evidence['provenSurfaceCount']}/"
+            f"{report.runtime_evidence['requestedSurfaceCount']} exact-build runtime surfaces proven"
+        )
+    lines.append(f"{asc_summary(report.asc)} · {mac_summary} · {runtime_summary}")
     lines.extend(["", "DEVICE         OBSERVED BUILD                 APP          CONDITION       NOTE"])
     lines.append(
         f"{'Mac':14} {observed_build(report.mac.observed_version, report.mac.observed_build)[:30]:30} "
@@ -514,6 +524,12 @@ def render_text(report: ValidationReport) -> str:
                 "This does not prove complication runtime.",
             ]
         )
+    if report.runtime_evidence is not None:
+        lines.extend(["", "Runtime receipts"])
+        for surface in report.runtime_evidence["surfaces"]:
+            lines.append(
+                f"  {surface['surface']}: {surface['state']} · {surface['reason']}"
+            )
     lines.extend(["", "Not proven by this slice:"])
     lines.extend(f"  · {item}" for item in report.limitations)
     return "\n".join(lines)
