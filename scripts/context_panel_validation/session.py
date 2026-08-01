@@ -563,21 +563,29 @@ def apply_session_state_to_report(
             "nothing needs you right now",
         ),
     }[session.lifecycle]
-    current_count, known_count, unknown_count = install_counts(
-        report.mac,
-        report.devices,
-        session.requested_surfaces,
-    )
-    install_summary = (
-        f"{current_count} of {known_count} known installs current"
-        if known_count
-        else "no install versions known"
-    )
-    if unknown_count:
-        install_summary += f" · {unknown_count} install{'s' if unknown_count != 1 else ''} unknown"
+    if report.runtime_evidence is not None:
+        evidence_summary = (
+            f"{report.runtime_evidence['provenSurfaceCount']} of "
+            f"{report.runtime_evidence['requestedSurfaceCount']} surfaces proven"
+        )
+    else:
+        current_count, known_count, unknown_count = install_counts(
+            report.mac,
+            report.devices,
+            session.requested_surfaces,
+        )
+        evidence_summary = (
+            f"{current_count} of {known_count} known installs current"
+            if known_count
+            else "no install versions known"
+        )
+        if unknown_count:
+            evidence_summary += (
+                f" · {unknown_count} install{'s' if unknown_count != 1 else ''} unknown"
+            )
     headline = (
         f"{report.target.version} ({report.target.build_number}) — {stage} · "
-        f"{install_summary} · {closing}"
+        f"{evidence_summary} · {closing}"
     )
     return replace(
         report,
@@ -609,6 +617,10 @@ class SessionStateStore:
     def archive_directory(self) -> Path:
         return self.root / "Archive"
 
+    @property
+    def runtime_evidence_directory(self) -> Path:
+        return self.root / "Runtime Evidence"
+
     def path(self, target: Target) -> Path:
         validate_target(target)
         return self.sessions_directory / f"{target.version}-{target.build_number}.json"
@@ -616,6 +628,13 @@ class SessionStateStore:
     def legacy_path(self, target: Target) -> Path:
         validate_target(target)
         return self.legacy_root / f"{target.version}-{target.build_number}.json"
+
+    def runtime_evidence_path(self, session_id: str) -> Path:
+        try:
+            normalized_id = str(uuid.UUID(session_id)).lower()
+        except (AttributeError, TypeError, ValueError) as error:
+            raise CoordinatorSessionStateError("coordinator session identifier is invalid") from error
+        return self.runtime_evidence_directory / f"{normalized_id}.json"
 
     @contextmanager
     def lock(self) -> Iterator[None]:
@@ -631,6 +650,11 @@ class SessionStateStore:
             or (
                 self.archive_directory.exists()
                 and not self.archive_directory.is_dir()
+            )
+            or self.runtime_evidence_directory.is_symlink()
+            or (
+                self.runtime_evidence_directory.exists()
+                and not self.runtime_evidence_directory.is_dir()
             )
         ):
             raise CoordinatorSessionStateError("coordinator session root is invalid")
@@ -850,6 +874,7 @@ class SessionStateStore:
                     and normalize_utc(now) >= retention_expires_at
                 ):
                     path.unlink(missing_ok=True)
+                    self.runtime_evidence_path(refreshed.id).unlink(missing_ok=True)
 
     def _load_path(
         self,
