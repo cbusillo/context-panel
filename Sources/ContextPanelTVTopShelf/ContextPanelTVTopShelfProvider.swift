@@ -5,11 +5,6 @@ import Foundation
 import UIKit
 
 final class ContextPanelTVTopShelfProvider: TVTopShelfContentProvider {
-    private let runtimeReceiptRecorder = RuntimeReceiptRecorder.appGroupRequired(
-        surface: .tvOSTopShelf,
-        appGroupID: ContextPanelLocations.companionAppGroupID
-    )
-
     override func loadTopShelfContent() async -> (any TVTopShelfContent)? {
         let now = Date()
         guard let locations = TVTopShelfSharedLocations.live() else { return nil }
@@ -44,6 +39,10 @@ final class ContextPanelTVTopShelfProvider: TVTopShelfContentProvider {
         contentReturned: Bool,
         observedAt: Date
     ) {
+        let runtimeReceiptRecorder = RuntimeReceiptRecorder.appGroupRequired(
+            surface: .tvOSTopShelf,
+            appGroupID: ContextPanelLocations.companionAppGroupID
+        )
         let evidence = TVTopShelfRuntimeReceiptEvidence(
             document: document,
             loadedDocument: loadedDocument,

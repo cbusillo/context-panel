@@ -582,6 +582,7 @@ run_xcodebuild() {
 assert_tvos_archive_ready() {
 	local app_path="$archive_path/Products/Applications/Context Panel.app"
 	local top_shelf_path="$app_path/PlugIns/ContextPanelTVTopShelfExtension.appex"
+	local entitlements_dir app_entitlements top_shelf_entitlements
 	local icon_name top_shelf_image top_shelf_image_wide
 	if [[ -e "$app_path/PlugIns/ContextPanelCompanionWidgetExtension.appex" ]]; then
 		echo "tvOS archive unexpectedly contains the iOS/visionOS companion widget" >&2
@@ -611,6 +612,36 @@ assert_tvos_archive_ready() {
 		echo "tvOS archive is missing required standard or wide Top Shelf artwork" >&2
 		exit 1
 	fi
+	assert_code_signature_valid "$top_shelf_path" "tvOS Top Shelf extension"
+	assert_code_signature_valid "$app_path" "tvOS app"
+	entitlements_dir="$(mktemp -d)"
+	app_entitlements="$entitlements_dir/tvos-app.plist"
+	top_shelf_entitlements="$entitlements_dir/tvos-top-shelf.plist"
+	extract_signed_entitlements "$app_path" "tvOS app" "$app_entitlements"
+	extract_signed_entitlements "$top_shelf_path" "tvOS Top Shelf extension" "$top_shelf_entitlements"
+	assert_signed_entitlement_array_value "$app_entitlements" "tvOS app" \
+		'com.apple.security.application-groups' 'group.com.shinycomputers.contextpanel'
+	assert_signed_entitlement_array_value "$app_entitlements" "tvOS app" \
+		'com.apple.developer.icloud-container-identifiers' 'iCloud.com.shinycomputers.contextpanel'
+	assert_signed_entitlement_array_value "$app_entitlements" "tvOS app" \
+		'com.apple.developer.icloud-services' 'CloudKit'
+	assert_signed_entitlement_value "$app_entitlements" "tvOS app" \
+		'com.apple.developer.icloud-container-environment' 'Production'
+	assert_signed_entitlement_value "$app_entitlements" "tvOS app" \
+		'aps-environment' 'production'
+	assert_signed_entitlement_array_value "$app_entitlements" "tvOS app" \
+		'com.apple.developer.user-management' 'runs-as-current-user-with-user-independent-keychain'
+	assert_signed_entitlement_array_value "$top_shelf_entitlements" "tvOS Top Shelf extension" \
+		'com.apple.security.application-groups' 'group.com.shinycomputers.contextpanel'
+	assert_signed_entitlement_array_value "$top_shelf_entitlements" "tvOS Top Shelf extension" \
+		'com.apple.developer.user-management' 'runs-as-current-user-with-user-independent-keychain'
+	assert_signed_entitlement_absent "$top_shelf_entitlements" "tvOS Top Shelf extension" \
+		'com.apple.developer.icloud-container-environment'
+	assert_signed_entitlement_absent "$top_shelf_entitlements" "tvOS Top Shelf extension" \
+		'com.apple.developer.icloud-services'
+	assert_signed_entitlement_absent "$top_shelf_entitlements" "tvOS Top Shelf extension" \
+		'aps-environment'
+	rm -rf "$entitlements_dir"
 }
 
 extract_signed_entitlements() {

@@ -62,6 +62,249 @@ import Testing
     #expect(sessionStore.latestSession(now: now) == session)
 }
 
+@Test func runtimeReceiptReceiverRetriesRecordingAfterSessionMirror() async throws {
+    let now = Date(timeIntervalSince1970: 225_000)
+    let session = relaySession(now: now, surfaces: [.tvOSApp])
+    let root = try relayTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let sessionStore = RuntimeValidationSessionStore(
+        sessionURL: root.appending(path: "runtime-session.json")
+    )
+    let receiptStore = RuntimeReceiptStore(directoryURL: root.appending(path: "receipts"))
+    let remoteRecorder = RelayRemoteRecorder()
+    let remoteStore = relayRemoteStore(
+        loadSession: {
+            RuntimeValidationSessionRemoteLoadResult(
+                session: session,
+                stateUpdatedAt: now,
+                outcome: RuntimeReceiptRemoteOutcome(succeeded: true)
+            )
+        },
+        saveReceipts: { receipts, _ in
+            await remoteRecorder.recordSave(receipts.map(\.id))
+            return RuntimeReceiptRemoteSaveResult(
+                acceptedReceiptIDs: receipts.map(\.id),
+                outcome: RuntimeReceiptRemoteOutcome(succeeded: true)
+            )
+        }
+    )
+    let coordinator = RuntimeReceiptRelayCoordinator(
+        role: .receiver(
+            expectedManifestID: relayHash("a"),
+            eligibleSurfaces: [.tvOSApp, .tvOSTopShelf]
+        ),
+        sessionStore: sessionStore,
+        receiptStore: receiptStore,
+        relayStateStore: RuntimeReceiptRelayStateStore(
+            stateURL: root.appending(path: "relay-state.json")
+        ),
+        inboxStore: nil,
+        remoteStore: remoteStore
+    )
+    let recorder = RuntimeReceiptRecorder(
+        identity: relayIdentity(surface: .tvOSApp),
+        sessionStore: sessionStore,
+        receiptStore: receiptStore,
+        processContext: RuntimeReceiptProcessContext(
+            id: UUID(uuidString: "20000000-0000-0000-0000-000000000010")!
+        )
+    )
+    let recordReceipt: @Sendable () -> RuntimeReceiptRecordResult = {
+        recorder.record(
+            trigger: .appSnapshotLoad,
+            presentationMode: .appOverview,
+            selectedSource: .cloudKit,
+            presentationDigest: relayHash("8"),
+            stateBranch: .ready,
+            outcome: .success,
+            observedAt: now
+        )
+    }
+
+    let initialResult = recordReceipt()
+    let finalResult = await coordinator.completeReceiptRelay(
+        after: initialResult,
+        observedAt: now,
+        relayAt: now,
+        retry: recordReceipt
+    )
+
+    #expect(initialResult == .inactiveSession)
+    #expect(finalResult == .saved)
+    #expect(sessionStore.activeSession(now: now) == session)
+    #expect(receiptStore.loadUnexpiredReceipts(now: now).count == 1)
+    #expect(await remoteRecorder.saveCallCount == 1)
+}
+
+@Test func runtimeReceiptReceiverRetryRemainsRateLimitedAndAcknowledged() async throws {
+    let now = Date(timeIntervalSince1970: 235_000)
+    let session = relaySession(
+        now: now,
+        surfaces: [.tvOSApp],
+        minimumWriteIntervalSeconds: 30
+    )
+    let root = try relayTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let sessionStore = RuntimeValidationSessionStore(
+        sessionURL: root.appending(path: "runtime-session.json")
+    )
+    let receiptStore = RuntimeReceiptStore(directoryURL: root.appending(path: "receipts"))
+    let remoteRecorder = RelayRemoteRecorder()
+    let remoteStore = relayRemoteStore(
+        loadSession: {
+            RuntimeValidationSessionRemoteLoadResult(
+                session: session,
+                stateUpdatedAt: now,
+                outcome: RuntimeReceiptRemoteOutcome(succeeded: true)
+            )
+        },
+        saveReceipts: { receipts, _ in
+            await remoteRecorder.recordSave(receipts.map(\.id))
+            return RuntimeReceiptRemoteSaveResult(
+                acceptedReceiptIDs: receipts.map(\.id),
+                outcome: RuntimeReceiptRemoteOutcome(succeeded: true)
+            )
+        }
+    )
+    let coordinator = RuntimeReceiptRelayCoordinator(
+        role: .receiver(
+            expectedManifestID: relayHash("a"),
+            eligibleSurfaces: [.tvOSApp]
+        ),
+        sessionStore: sessionStore,
+        receiptStore: receiptStore,
+        relayStateStore: RuntimeReceiptRelayStateStore(
+            stateURL: root.appending(path: "relay-state.json")
+        ),
+        inboxStore: nil,
+        remoteStore: remoteStore
+    )
+    let recorder = RuntimeReceiptRecorder(
+        identity: relayIdentity(surface: .tvOSApp),
+        sessionStore: sessionStore,
+        receiptStore: receiptStore,
+        processContext: RuntimeReceiptProcessContext(
+            id: UUID(uuidString: "20000000-0000-0000-0000-000000000011")!
+        )
+    )
+    let recordReceipt: @Sendable () -> RuntimeReceiptRecordResult = {
+        recorder.record(
+            trigger: .appSnapshotLoad,
+            presentationMode: .appOverview,
+            selectedSource: .cloudKit,
+            presentationDigest: relayHash("8"),
+            stateBranch: .ready,
+            outcome: .success,
+            observedAt: now
+        )
+    }
+
+    let first = await coordinator.completeReceiptRelay(
+        after: recordReceipt(),
+        observedAt: now,
+        relayAt: now,
+        retry: recordReceipt
+    )
+    let second = await coordinator.completeReceiptRelay(
+        after: recordReceipt(),
+        observedAt: now,
+        relayAt: now,
+        retry: recordReceipt
+    )
+
+    #expect(first == .saved)
+    #expect(second == .rateLimited)
+    #expect(receiptStore.loadUnexpiredReceipts(now: now).count == 1)
+    #expect(await remoteRecorder.saveCallCount == 1)
+}
+
+@Test func runtimeReceiptReceiverRunsFreshRelayAfterConcurrentStalePass() async throws {
+    let now = Date(timeIntervalSince1970: 245_000)
+    let session = relaySession(now: now, surfaces: [.tvOSApp])
+    let root = try relayTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let sessionStore = RuntimeValidationSessionStore(
+        sessionURL: root.appending(path: "runtime-session.json")
+    )
+    try sessionStore.save(session, now: now)
+    let receiptStore = RuntimeReceiptStore(directoryURL: root.appending(path: "receipts"))
+    let staleReceipt = relayReceipt(
+        session: session,
+        observedAt: now.addingTimeInterval(-1),
+        processSequence: 1,
+        surface: .tvOSApp
+    )
+    #expect(try receiptStore.save(staleReceipt, session: session, now: now) == .saved)
+    let remoteRecorder = RelayRemoteRecorder()
+    let firstSaveGate = RelayRemoteSaveGate()
+    let remoteStore = relayRemoteStore(saveReceipts: { receipts, _ in
+        await remoteRecorder.recordSave(receipts.map(\.id))
+        await firstSaveGate.waitIfNeeded()
+        return RuntimeReceiptRemoteSaveResult(
+            acceptedReceiptIDs: receipts.map(\.id),
+            outcome: RuntimeReceiptRemoteOutcome(succeeded: true)
+        )
+    })
+    let coordinator = RuntimeReceiptRelayCoordinator(
+        role: .receiver(
+            expectedManifestID: relayHash("a"),
+            eligibleSurfaces: [.tvOSApp]
+        ),
+        sessionStore: sessionStore,
+        receiptStore: receiptStore,
+        relayStateStore: RuntimeReceiptRelayStateStore(
+            stateURL: root.appending(path: "relay-state.json")
+        ),
+        inboxStore: nil,
+        remoteStore: remoteStore
+    )
+    let staleRelay = Task {
+        await coordinator.relayReceipts(now: now)
+    }
+    #expect(await firstSaveGate.waitUntilStarted())
+
+    let recorder = RuntimeReceiptRecorder(
+        identity: relayIdentity(surface: .tvOSApp),
+        sessionStore: sessionStore,
+        receiptStore: receiptStore,
+        processContext: RuntimeReceiptProcessContext(
+            id: UUID(uuidString: "20000000-0000-0000-0000-000000000012")!
+        )
+    )
+    let recordReceipt: @Sendable () -> RuntimeReceiptRecordResult = {
+        recorder.record(
+            trigger: .appSnapshotLoad,
+            presentationMode: .appOverview,
+            selectedSource: .cloudKit,
+            presentationDigest: relayHash("7"),
+            stateBranch: .ready,
+            outcome: .success,
+            observedAt: now
+        )
+    }
+    let initialResult = recordReceipt()
+    let completion = Task {
+        await coordinator.completeReceiptRelay(
+            after: initialResult,
+            observedAt: now,
+            relayAt: now,
+            retry: recordReceipt
+        )
+    }
+
+    await firstSaveGate.release()
+    _ = await staleRelay.value
+    let finalResult = await completion.value
+    let localReceiptIDs = Set(receiptStore.loadUnexpiredReceipts(now: now).map(\.id))
+    let remoteReceiptIDs = Set(await remoteRecorder.savedReceiptIDs.flatMap { $0 })
+
+    #expect(initialResult == .saved)
+    #expect(finalResult == .saved)
+    #expect(await remoteRecorder.saveCallCount == 2)
+    #expect(localReceiptIDs.count == 2)
+    #expect(remoteReceiptIDs == localReceiptIDs)
+}
+
 @Test func runtimeReceiptPublisherClearsOnlyItsArchivedSession() async throws {
     let now = Date(timeIntervalSince1970: 250_000)
     let root = try relayTemporaryDirectory()
@@ -732,6 +975,7 @@ import Testing
 
 private actor RelayRemoteRecorder {
     private(set) var saveCallCount = 0
+    private(set) var savedReceiptIDs: [[String]] = []
     private(set) var remoteCallCount = 0
     private(set) var pruneCallCount = 0
     private(set) var sessionMutations: [RuntimeValidationSessionRemoteMutation] = []
@@ -739,6 +983,7 @@ private actor RelayRemoteRecorder {
     func recordSave(_ receiptIDs: [String]) {
         if !receiptIDs.isEmpty {
             saveCallCount += 1
+            savedReceiptIDs.append(receiptIDs)
         }
     }
 
@@ -752,6 +997,33 @@ private actor RelayRemoteRecorder {
 
     func recordPrune() {
         pruneCallCount += 1
+    }
+}
+
+private actor RelayRemoteSaveGate {
+    private var started = false
+    private var released = false
+    private var hasWaited = false
+
+    func waitIfNeeded() async {
+        guard !hasWaited else { return }
+        hasWaited = true
+        started = true
+        while !released {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
+    func waitUntilStarted() async -> Bool {
+        for _ in 0..<200 {
+            if started { return true }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return started
+    }
+
+    func release() {
+        released = true
     }
 }
 
@@ -796,7 +1068,8 @@ private func relayRemoteStore(
 private func relaySession(
     id: UUID = UUID(uuidString: "10000000-0000-0000-0000-000000000001")!,
     now: Date,
-    surfaces: [RuntimeSurface]
+    surfaces: [RuntimeSurface],
+    minimumWriteIntervalSeconds: TimeInterval = 0
 ) -> RuntimeValidationSession {
     RuntimeValidationSession(
         id: id,
@@ -804,7 +1077,28 @@ private func relaySession(
         expiresAt: now.addingTimeInterval(30 * 60),
         expectedManifestID: relayHash("a"),
         enabledSurfaces: surfaces,
-        minimumWriteIntervalSeconds: 0
+        minimumWriteIntervalSeconds: minimumWriteIntervalSeconds
+    )
+}
+
+private func relayIdentity(surface: RuntimeSurface) -> RuntimeSurfaceBuildIdentity {
+    RuntimeSurfaceBuildIdentity(
+        surface: surface,
+        artifactID: surface.rawValue,
+        bundleIdentifier: "com.shinycomputers.contextpanel.test",
+        build: RuntimeBuildCoordinate(
+            marketingVersion: "1.0.54",
+            buildNumber: "2026073101",
+            manifestID: relayHash("a"),
+            contractFingerprint: relayHash("b")
+        ),
+        fingerprints: RuntimeSurfaceFingerprints(
+            render: relayHash("c"),
+            runtime: relayHash("d"),
+            placement: relayHash("e"),
+            combined: relayHash("f")
+        ),
+        executableUUIDs: ["11111111-2222-3333-4444-555555555555"]
     )
 }
 
@@ -820,24 +1114,7 @@ private func relayReceipt(
         observedAt: observedAt,
         processInstanceID: processInstanceID,
         processSequence: processSequence,
-        buildIdentity: RuntimeSurfaceBuildIdentity(
-            surface: surface,
-            artifactID: surface.rawValue,
-            bundleIdentifier: "com.shinycomputers.contextpanel.test",
-            build: RuntimeBuildCoordinate(
-                marketingVersion: "1.0.54",
-                buildNumber: "2026073101",
-                manifestID: relayHash("a"),
-                contractFingerprint: relayHash("b")
-            ),
-            fingerprints: RuntimeSurfaceFingerprints(
-                render: relayHash("c"),
-                runtime: relayHash("d"),
-                placement: relayHash("e"),
-                combined: relayHash("f")
-            ),
-            executableUUIDs: ["11111111-2222-3333-4444-555555555555"]
-        ),
+        buildIdentity: relayIdentity(surface: surface),
         trigger: .widgetTimeline,
         presentationMode: .widgetSystemSmall,
         selectedSource: .appGroupSnapshot,

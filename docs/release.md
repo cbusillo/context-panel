@@ -304,7 +304,9 @@ targets and does not request iCloud Documents or ubiquity entitlements. It does
 share `group.com.shinycomputers.contextpanel` with its Top Shelf extension and
 runs both targets as the current Apple TV user. App Store Connect requires
 `aps-environment` when the tvOS binary declares CloudKit, so Release uses the
-production APNs environment for best-effort background sync. The tvOS app does
+production APNs environment for best-effort background sync. Debug signs the
+tvOS app for Development CloudKit and Release signs it for Production; the
+archive gate verifies the signed environment before export. The tvOS app does
 not request badge permission: physical validation showed that badge-only local
 expiry is not reliable while the app is suspended, so the live/stale truth
 remains in the app and dynamic Top Shelf surface.

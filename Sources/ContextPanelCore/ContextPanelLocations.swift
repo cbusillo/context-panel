@@ -257,9 +257,20 @@ public enum ContextPanelLocations {
     }
 
     public static func sharedRuntimeValidationDirectory(appGroupID: String) -> URL? {
-        appGroupContainerURL(appGroupID: appGroupID)?
+        guard let containerURL = appGroupContainerURL(appGroupID: appGroupID) else {
+            return nil
+        }
+        #if os(tvOS)
+        return containerURL
+            .appending(path: "Library", directoryHint: .isDirectory)
+            .appending(path: "Caches", directoryHint: .isDirectory)
             .appending(path: "Context Panel", directoryHint: .isDirectory)
             .appending(path: "Validation", directoryHint: .isDirectory)
+        #else
+        return containerURL
+            .appending(path: "Context Panel", directoryHint: .isDirectory)
+            .appending(path: "Validation", directoryHint: .isDirectory)
+        #endif
     }
 
     public static func runtimeValidationSessionURL(appGroupID: String? = nil) -> URL {
