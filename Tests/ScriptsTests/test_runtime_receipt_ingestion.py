@@ -867,6 +867,8 @@ class RuntimeReceiptIngestionTests(unittest.TestCase):
         self.assertEqual(payload["session"]["id"], session.id)
         self.assertEqual(payload["evidence"]["runtimeReceipts"]["state"], "proven")
         self.assertEqual(payload["summary"]["stage"], "exact-build runtime proven")
+        self.assertEqual(payload["operatorFlow"]["readyActionCount"], 0)
+        self.assertFalse(payload["operatorFlow"]["notificationDecisions"])
 
     def test_coordinator_status_persists_newer_runtime_evidence_as_superseded(self):
         surfaces = ("macos.app",)

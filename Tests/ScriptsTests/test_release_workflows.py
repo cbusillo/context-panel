@@ -1752,6 +1752,8 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             "        run: >-\n"
             "          python3 -m unittest\n"
             "          Tests/ScriptsTests/test_validation_coordinator.py\n"
+            "          Tests/ScriptsTests/test_runtime_receipt_ingestion.py\n"
+            "          Tests/ScriptsTests/test_validation_operator_flow.py\n"
             "          Tests/ScriptsTests/test_release_workflows.py",
             workflow,
         )

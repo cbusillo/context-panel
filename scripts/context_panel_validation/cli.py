@@ -20,6 +20,16 @@ from .models import (
     render_text,
     utc_now,
 )
+from .operator_flow import (
+    DEFERRAL_REASONS,
+    MAXIMUM_DEFERRAL_HOURS,
+    RESIDUAL_RISKS,
+    OperatorFlowError,
+    OperatorFlowStore,
+    apply_operator_flow_to_report,
+    build_final_report_payload,
+    render_final_report,
+)
 from .runtime_evidence import (
     RuntimeEvidenceError,
     RuntimeEvidenceStore,
@@ -77,6 +87,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_ASC_ENV_FILE,
         help="Private App Store Connect env file; values are never printed",
     )
+    final_report = subparsers.add_parser(
+        "final-report",
+        help="Render a privacy-safe GitHub-ready validation report",
+    )
+    add_target_arguments(final_report)
+    add_expected_build_arguments(final_report)
+    final_report.add_argument(
+        "--asc-env-file",
+        type=Path,
+        default=DEFAULT_ASC_ENV_FILE,
+        help="Private App Store Connect env file; values are never printed",
+    )
     record = subparsers.add_parser(
         "record-watch-restart",
         help="Record operator confirmation of the required post-install Watch restart",
@@ -120,6 +142,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     add_target_arguments(sync_runtime)
     add_expected_build_arguments(sync_runtime)
+    defer_action = subparsers.add_parser(
+        "defer-action",
+        help="Temporarily defer one outstanding operator action without satisfying evidence",
+    )
+    add_target_arguments(defer_action)
+    defer_action.add_argument("--action-id", required=True)
+    defer_action.add_argument("--owner", required=True)
+    defer_action.add_argument("--reason", required=True, choices=DEFERRAL_REASONS)
+    defer_action.add_argument(
+        "--residual-risk",
+        required=True,
+        choices=RESIDUAL_RISKS,
+    )
+    defer_action.add_argument("--duration-hours", required=True, type=int)
+    clear_deferral = subparsers.add_parser(
+        "clear-deferral",
+        help="Clear the active deferral for one outstanding operator action",
+    )
+    add_target_arguments(clear_deferral)
+    clear_deferral.add_argument("--action-id", required=True)
     args = parser.parse_args(argv)
     if not VERSION_PATTERN.fullmatch(args.version):
         parser.error("--version must contain numeric dot-separated components")
@@ -128,7 +170,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
-def run_status(args: argparse.Namespace) -> int:
+def collect_validation_report(args: argparse.Namespace):
     target = Target(args.version, args.build_number)
     generated_at = utc_now()
     store = SessionStateStore()
@@ -182,10 +224,34 @@ def run_status(args: argparse.Namespace) -> int:
             build_runtime_evidence_report(runtime_state, generated_at),
         )
     report = apply_session_state_to_report(report, session)
+    if session is not None:
+        _, operator_flow = OperatorFlowStore(store).reconcile(
+            session,
+            report,
+            report.runtime_evidence,
+            generated_at,
+        )
+        report = apply_operator_flow_to_report(report, operator_flow)
+    return report
+
+
+def run_status(args: argparse.Namespace) -> int:
+    report = collect_validation_report(args)
     if args.json:
         print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
     else:
         print(render_text(report))
+    return report.exit_code
+
+
+def run_final_report(args: argparse.Namespace) -> int:
+    report = collect_validation_report(args)
+    if report.session is None:
+        raise OperatorFlowError("signed validation session does not exist")
+    if args.json:
+        print(json.dumps(build_final_report_payload(report), indent=2, sort_keys=True))
+    else:
+        print(render_final_report(report))
     return report.exit_code
 
 
@@ -321,6 +387,72 @@ def run_stop_session(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_defer_action(args: argparse.Namespace) -> int:
+    if not 1 <= args.duration_hours <= MAXIMUM_DEFERRAL_HOURS:
+        raise OperatorFlowError(
+            f"deferral duration must be between 1 and {MAXIMUM_DEFERRAL_HOURS} hours"
+        )
+    target = Target(args.version, args.build_number)
+    now = utc_now()
+    session_store = SessionStateStore()
+    session = session_store.load(target, now=now)
+    if session is None:
+        raise OperatorFlowError("signed validation session does not exist")
+    state, deferral = OperatorFlowStore(session_store).defer_action(
+        session,
+        args.action_id,
+        args.owner,
+        args.reason,
+        args.residual_risk,
+        now,
+        timedelta(hours=args.duration_hours),
+    )
+    payload = {
+        "schemaVersion": 1,
+        "session": session.public_dict(),
+        "operatorFlowRevision": state.revision,
+        "deferral": {**deferral.to_dict(), "status": "active"},
+        "evidenceSatisfied": False,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(
+            f"Deferred {deferral.action_id} until {deferral.expires_at}.\n"
+            f"Residual risk remains: {deferral.residual_risk}."
+        )
+    return 0
+
+
+def run_clear_deferral(args: argparse.Namespace) -> int:
+    target = Target(args.version, args.build_number)
+    now = utc_now()
+    session_store = SessionStateStore()
+    session = session_store.load(target, now=now)
+    if session is None:
+        raise OperatorFlowError("signed validation session does not exist")
+    state, deferral = OperatorFlowStore(session_store).clear_deferral(
+        session,
+        args.action_id,
+        now,
+    )
+    payload = {
+        "schemaVersion": 1,
+        "session": session.public_dict(),
+        "operatorFlowRevision": state.revision,
+        "deferral": {**deferral.to_dict(), "status": "cleared"},
+        "evidenceSatisfied": False,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(
+            f"Cleared the deferral for {deferral.action_id}.\n"
+            f"Residual risk remains until evidence is satisfied: {deferral.residual_risk}."
+        )
+    return 0
+
+
 def run_record_watch_restart(args: argparse.Namespace) -> int:
     target = Target(args.version, args.build_number)
     devices = collect_device_evidence(SubprocessRunner(), target)
@@ -369,6 +501,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "status":
             return run_status(args)
+        if args.command == "final-report":
+            return run_final_report(args)
         if args.command == "record-watch-restart":
             return run_record_watch_restart(args)
         if args.command == "start-session":
@@ -381,6 +515,10 @@ def main(argv: list[str] | None = None) -> int:
             return run_stop_session(args)
         if args.command == "sync-runtime-evidence":
             return run_sync_runtime_evidence(args)
+        if args.command == "defer-action":
+            return run_defer_action(args)
+        if args.command == "clear-deferral":
+            return run_clear_deferral(args)
         raise RuntimeError(f"unsupported command: {args.command}")
     except KeyboardInterrupt:
         print("Interrupted.", file=sys.stderr)

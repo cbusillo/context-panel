@@ -805,6 +805,12 @@ with the parent session. The lifecycle document remains schema v1 and is never
 silently rewritten to add receipt fields. The sidecar contains expected public
 build identity, receipt IDs, ordering metadata, closed outcomes, and diagnostic
 codes only; it does not persist raw exports or receipt documents.
+Operator queue state uses a second additive schema-v1 sidecar under
+`Coordinator/Operator Flow`, also keyed by the coordinator session ID and
+pruned with the parent. It stores only public action IDs/device classes, bounded
+wait timestamps, allowlisted notification decisions, and expiring deferral
+codes. See [Signed Validation Operator Flow](signed-validation-operator-flow.md)
+for the queue, privacy, and recovery contract.
 
 After opening the bounded runtime receipt window described in
 [Signed Validation Runtime Receipts](signed-validation-runtime-receipts.md),
@@ -886,6 +892,50 @@ failed build.
 `sync-runtime-evidence` follows the same non-failure waiting rule: it exits `0`
 for an active bounded receipt wait or proven runtime slice, `20` when newer
 evidence supersedes the target, and `30` for an unknown/diagnostic result.
+
+Status groups operator actions by device after evidence and lifecycle
+reconciliation. Apple/TestFlight/install/receipt propagation remains quiet.
+Locked or sleeping devices remain quiet for 15 minutes before one unlock/wake
+request; reachability loss remains quiet for 30 minutes before a bounded
+decision request. The queue never requests an extended awake period.
+Notification decisions are persisted and limited to `readyForHumanReview`,
+`restartRequired`, `manualUnlockRequired`, and `blockedDecisionRequired`; the
+coordinator contains no notification delivery integration.
+
+Defer an action shown by `status --json` without satisfying its evidence:
+
+```sh
+scripts/context-panel-validation.py defer-action \
+  --version <marketing-version> \
+  --build-number <coordinated-build-number> \
+  --action-id <action-id> \
+  --owner release-operator \
+  --reason operator-unavailable \
+  --residual-risk review-pending \
+  --duration-hours 4
+```
+
+The owner is a public-safe label, and reason/residual-risk values are
+allowlisted. Active deferrals suppress the current notification decision but
+remain visible in the queue, expire automatically, retain residual-risk history,
+and never change proof or completion. A fully deferred queue remains exit `10`
+so shell callers cannot treat unresolved evidence as green. Use
+`clear-deferral` with the same target and action ID to end one early.
+
+Render the current privacy-safe GitHub report without posting it:
+
+```sh
+scripts/context-panel-validation.py final-report \
+  --version <marketing-version> \
+  --build-number <coordinated-build-number>
+```
+
+Pass `--json` for the stable machine contract. The report includes the exact
+target, required and obtained evidence classes, runtime surface state, grouped
+queue, decisions, deferrals, blockers, residual risks, and the explicit
+carry-forward boundary. It excludes the coordinator session ID and all device,
+account, credential, path, raw receipt, raw provider, and App Store Connect
+identifiers.
 
 When the exact Watch build is confirmed, the coordinator requests the existing
 post-install restart without performing it. After the physical restart, record

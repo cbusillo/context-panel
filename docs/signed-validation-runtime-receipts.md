@@ -222,6 +222,11 @@ does not store raw receipt/export documents, signed-host messages, private
 paths, device identifiers, account data, credentials, provider responses, or
 App Store Connect IDs. The original coordinator lifecycle document remains
 schema v1, and the sidecar is removed with its parent session retention.
+Operator workflow state is separate again: grouped actions, bounded wait
+timestamps, notification decisions, and expiring deferrals live in the additive
+`Coordinator/Operator Flow` sidecar. They never change receipt proof, ordering,
+session identity, or silence/diagnostic classification. See
+[Signed Validation Operator Flow](signed-validation-operator-flow.md).
 
 Within one process, `processSequence` is authoritative even when offline upload
 changes server arrival order. Across processes/devices, the export uses the

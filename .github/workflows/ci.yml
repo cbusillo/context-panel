@@ -36,6 +36,8 @@ jobs:
         run: >-
           python3 -m unittest
           Tests/ScriptsTests/test_validation_coordinator.py
+          Tests/ScriptsTests/test_runtime_receipt_ingestion.py
+          Tests/ScriptsTests/test_validation_operator_flow.py
           Tests/ScriptsTests/test_release_workflows.py
 
       - name: Install XcodeGen

@@ -621,6 +621,10 @@ class SessionStateStore:
     def runtime_evidence_directory(self) -> Path:
         return self.root / "Runtime Evidence"
 
+    @property
+    def operator_flow_directory(self) -> Path:
+        return self.root / "Operator Flow"
+
     def path(self, target: Target) -> Path:
         validate_target(target)
         return self.sessions_directory / f"{target.version}-{target.build_number}.json"
@@ -635,6 +639,13 @@ class SessionStateStore:
         except (AttributeError, TypeError, ValueError) as error:
             raise CoordinatorSessionStateError("coordinator session identifier is invalid") from error
         return self.runtime_evidence_directory / f"{normalized_id}.json"
+
+    def operator_flow_path(self, session_id: str) -> Path:
+        try:
+            normalized_id = str(uuid.UUID(session_id)).lower()
+        except (AttributeError, TypeError, ValueError) as error:
+            raise CoordinatorSessionStateError("coordinator session identifier is invalid") from error
+        return self.operator_flow_directory / f"{normalized_id}.json"
 
     @contextmanager
     def lock(self) -> Iterator[None]:
@@ -655,6 +666,11 @@ class SessionStateStore:
             or (
                 self.runtime_evidence_directory.exists()
                 and not self.runtime_evidence_directory.is_dir()
+            )
+            or self.operator_flow_directory.is_symlink()
+            or (
+                self.operator_flow_directory.exists()
+                and not self.operator_flow_directory.is_dir()
             )
         ):
             raise CoordinatorSessionStateError("coordinator session root is invalid")
@@ -875,6 +891,7 @@ class SessionStateStore:
                 ):
                     path.unlink(missing_ok=True)
                     self.runtime_evidence_path(refreshed.id).unlink(missing_ok=True)
+                    self.operator_flow_path(refreshed.id).unlink(missing_ok=True)
 
     def _load_path(
         self,

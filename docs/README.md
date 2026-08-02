@@ -10,4 +10,5 @@
 - [Release Path](release.md)
 - [Signed Validation Fingerprints](signed-validation-fingerprints.md)
 - [Signed Validation Runtime Receipts](signed-validation-runtime-receipts.md)
+- [Signed Validation Operator Flow](signed-validation-operator-flow.md)
 - [Repository Settings](repo-settings.md)
