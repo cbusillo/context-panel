@@ -8,6 +8,13 @@ Context Panel is expected to split into a few native boundaries:
   limit summaries. It consumes normalized snapshots and display preferences but
   does not own WidgetKit timelines, local stores, provider refresh, or platform
   storage roots.
+- `ContextPanelValidationFixtures`: Foundation-only synthetic fixture contract
+  for signed validation galleries. It has no product-model, storage, CloudKit,
+  credential, runtime-receipt, WidgetKit, app, or extension dependency.
+- `ContextPanelValidationGalleryUI`: read-only host-app presentation that adapts
+  validation fixtures into normalized models and invokes production SwiftUI
+  entry points. It is not linked into extensions and cannot publish fixture
+  state, reload timelines, or record runtime receipts.
 - `ContextPanelSettingsUI`: portable, value-driven SwiftUI controls for
   companion-safe presentation settings. It depends only on `ContextPanelCore`
   and emits user intent through closures; app-group storage, widget reloads,

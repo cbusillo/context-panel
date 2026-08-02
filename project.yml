@@ -36,6 +36,32 @@ targets:
         PRODUCT_NAME: ContextPanelWidgetUI
         SKIP_INSTALL: true
 
+  ContextPanelValidationFixtures:
+    type: library.static
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/ContextPanelValidationFixtures
+    settings:
+      base:
+        PRODUCT_NAME: ContextPanelValidationFixtures
+        SKIP_INSTALL: true
+
+  ContextPanelValidationGalleryUI:
+    type: library.static
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/ContextPanelValidationGalleryUI
+    dependencies:
+      - target: ContextPanelCore
+      - target: ContextPanelValidationFixtures
+      - target: ContextPanelWidgetUI
+    settings:
+      base:
+        PRODUCT_NAME: ContextPanelValidationGalleryUI
+        SKIP_INSTALL: true
+
   ContextPanelSettingsUI:
     type: library.static
     platform: macOS
@@ -81,6 +107,44 @@ targets:
       base:
         PRODUCT_NAME: ContextPanelWidgetUICompanion
         PRODUCT_MODULE_NAME: ContextPanelWidgetUI
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        XROS_DEPLOYMENT_TARGET: "26.0"
+        SKIP_INSTALL: true
+
+  ContextPanelValidationFixturesCompanion:
+    type: library.static
+    platform: auto
+    supportedDestinations: [iOS, visionOS]
+    deploymentTarget:
+      iOS: "17.0"
+      visionOS: "26.0"
+    sources:
+      - path: Sources/ContextPanelValidationFixtures
+    settings:
+      base:
+        PRODUCT_NAME: ContextPanelValidationFixturesCompanion
+        PRODUCT_MODULE_NAME: ContextPanelValidationFixtures
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        XROS_DEPLOYMENT_TARGET: "26.0"
+        SKIP_INSTALL: true
+
+  ContextPanelValidationGalleryUICompanion:
+    type: library.static
+    platform: auto
+    supportedDestinations: [iOS, visionOS]
+    deploymentTarget:
+      iOS: "17.0"
+      visionOS: "26.0"
+    sources:
+      - path: Sources/ContextPanelValidationGalleryUI
+    dependencies:
+      - target: ContextPanelCoreCompanion
+      - target: ContextPanelValidationFixturesCompanion
+      - target: ContextPanelWidgetUICompanion
+    settings:
+      base:
+        PRODUCT_NAME: ContextPanelValidationGalleryUICompanion
+        PRODUCT_MODULE_NAME: ContextPanelValidationGalleryUI
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         XROS_DEPLOYMENT_TARGET: "26.0"
         SKIP_INSTALL: true
@@ -236,6 +300,9 @@ targets:
       - target: ContextPanelCore
       - target: ContextPanelCloudKitSync
       - target: ContextPanelSettingsUI
+      - target: ContextPanelWidgetUI
+      - target: ContextPanelValidationFixtures
+      - target: ContextPanelValidationGalleryUI
       - target: ContextPanelWidgetExtension
         embed: true
       - target: ContextPanelRefreshAgent
@@ -364,6 +431,8 @@ targets:
       - target: ContextPanelCompanionSupport
       - target: ContextPanelSettingsUICompanion
       - target: ContextPanelCloudKitSyncCompanion
+      - target: ContextPanelValidationFixturesCompanion
+      - target: ContextPanelValidationGalleryUICompanion
       - target: ContextPanelCompanionWidgetExtension
         embed: true
       - target: ContextPanelWatch

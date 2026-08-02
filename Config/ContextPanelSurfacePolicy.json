@@ -116,6 +116,12 @@
     "widget-ui": {
       "include": ["Sources/ContextPanelWidgetUI/**/*.swift"]
     },
+    "validation-fixtures": {
+      "include": ["Sources/ContextPanelValidationFixtures/**/*.swift"]
+    },
+    "validation-gallery-ui": {
+      "include": ["Sources/ContextPanelValidationGalleryUI/**/*.swift"]
+    },
     "settings-ui": {
       "include": ["Sources/ContextPanelSettingsUI/**/*.swift"]
     },
@@ -290,7 +296,13 @@
       "evidenceCapabilities": ["shared-view", "actual-runtime"],
       "inputs": {
         "shared": ["core", "mac-app"],
-        "render": ["settings-ui", "shared-assets"],
+        "render": [
+          "widget-ui",
+          "settings-ui",
+          "validation-fixtures",
+          "validation-gallery-ui",
+          "shared-assets"
+        ],
         "runtime": ["cloudkit-sync", "cloudkit-contract", "config-macos-app"],
         "placement": []
       }
@@ -361,7 +373,13 @@
       "evidenceCapabilities": ["shared-view", "actual-runtime"],
       "inputs": {
         "shared": ["core", "companion-app", "companion-support"],
-        "render": ["widget-ui", "settings-ui", "shared-assets"],
+        "render": [
+          "widget-ui",
+          "settings-ui",
+          "validation-fixtures",
+          "validation-gallery-ui",
+          "shared-assets"
+        ],
         "runtime": [
           "cloudkit-sync",
           "cloudkit-contract",
@@ -385,7 +403,13 @@
       "evidenceCapabilities": ["shared-view", "actual-runtime"],
       "inputs": {
         "shared": ["core", "companion-app", "companion-support"],
-        "render": ["widget-ui", "settings-ui", "shared-assets"],
+        "render": [
+          "widget-ui",
+          "settings-ui",
+          "validation-fixtures",
+          "validation-gallery-ui",
+          "shared-assets"
+        ],
         "runtime": [
           "cloudkit-sync",
           "cloudkit-contract",
@@ -467,7 +491,13 @@
       "evidenceCapabilities": ["shared-view", "actual-runtime"],
       "inputs": {
         "shared": ["core", "companion-app", "companion-support"],
-        "render": ["widget-ui", "settings-ui", "shared-assets"],
+        "render": [
+          "widget-ui",
+          "settings-ui",
+          "validation-fixtures",
+          "validation-gallery-ui",
+          "shared-assets"
+        ],
         "runtime": [
           "cloudkit-sync",
           "cloudkit-contract",

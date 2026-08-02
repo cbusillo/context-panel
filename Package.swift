@@ -59,6 +59,15 @@ let package = Package(
             name: "ContextPanelWidgetUI",
             dependencies: ["ContextPanelCore"]
         ),
+        .target(name: "ContextPanelValidationFixtures"),
+        .target(
+            name: "ContextPanelValidationGalleryUI",
+            dependencies: [
+                "ContextPanelCore",
+                "ContextPanelValidationFixtures",
+                "ContextPanelWidgetUI",
+            ]
+        ),
         .target(
             name: "ContextPanelSettingsUI",
             dependencies: ["ContextPanelCore"]
@@ -81,7 +90,12 @@ let package = Package(
         ),
         .executableTarget(
             name: "ContextPanelApp",
-            dependencies: ["ContextPanelCore", "ContextPanelCloudKitSync", "ContextPanelSettingsUI"]
+            dependencies: [
+                "ContextPanelCore",
+                "ContextPanelCloudKitSync",
+                "ContextPanelSettingsUI",
+                "ContextPanelValidationGalleryUI",
+            ]
         ),
         .executableTarget(
             name: "ContextPanelRefreshAgent",
@@ -120,6 +134,8 @@ let package = Package(
                 "ContextPanelCompanionSupport",
                 "ContextPanelSettingsUI",
                 "ContextPanelTVSupport",
+                "ContextPanelValidationFixtures",
+                "ContextPanelValidationGalleryUI",
                 "ContextPanelWatchSupport",
                 "ContextPanelWidget",
                 "ContextPanelWidgetUI",

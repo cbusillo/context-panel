@@ -1,6 +1,6 @@
 # Design Direction
 
-Last updated: 2026-07-28.
+Last updated: 2026-08-02.
 
 ## Accepted Direction
 
@@ -271,6 +271,19 @@ The semantic defaults are:
   named or announced as capacity or pressure.
 - Missing, non-finite, unavailable, and unknown ratios are indeterminate. They
   never become a determinate zero-length or zero-capacity instrument.
+
+## Validation Gallery Direction
+
+Validation galleries are calm diagnostic instruments, not developer preview
+grids. A fixed `Sample data` boundary remains visible outside scrolling and on
+every render tile. The selected state, family, and appearance are secondary to
+the rendered production surface; controls should stay compact and native.
+
+Gallery fixtures use synthetic account labels and a fixed presentation time.
+They must never resemble live account data, mutate production state, or imply
+that a shared SwiftUI render proves WidgetKit, complication, Top Shelf, or
+visionOS host composition. Actual placement review remains an explicit,
+change-triggered step when the operating-system host can affect the result.
 
 ## State Coverage
 
