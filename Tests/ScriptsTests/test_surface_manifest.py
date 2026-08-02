@@ -212,7 +212,7 @@ class SurfaceManifestTests(unittest.TestCase):
             self.append(root / "Sources/ContextPanelWidgetUI/ContextPanelWidgetViews.swift")
             mutated = self.surfaces(self.manifest(root))
         baseline = self.surfaces(self.baseline)
-        for surface_id in ("macos.widget", "ios.app", "visionos.widget"):
+        for surface_id in ("macos.app", "macos.widget", "ios.app", "visionos.widget"):
             self.assertNotEqual(
                 baseline[surface_id]["fingerprints"]["render"],
                 mutated[surface_id]["fingerprints"]["render"],
@@ -221,14 +221,43 @@ class SurfaceManifestTests(unittest.TestCase):
                 baseline[surface_id]["fingerprints"]["runtime"],
                 mutated[surface_id]["fingerprints"]["runtime"],
             )
-        self.assertEqual(
-            baseline["macos.app"]["fingerprints"]["render"],
-            mutated["macos.app"]["fingerprints"]["render"],
-        )
         self.assertNotEqual(
             baseline["macos.app"]["fingerprints"]["combined"],
             mutated["macos.app"]["fingerprints"]["combined"],
         )
+
+    def test_validation_gallery_change_moves_only_host_app_render_fingerprints(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = self.fixture(temporary_directory)
+            self.append(
+                root
+                / "Sources/ContextPanelValidationFixtures/ValidationFixtureCatalog.swift"
+            )
+            mutated = self.surfaces(self.manifest(root))
+        baseline = self.surfaces(self.baseline)
+        for surface_id in ("macos.app", "ios.app", "ipados.app", "visionos.app"):
+            self.assertNotEqual(
+                baseline[surface_id]["fingerprints"]["render"],
+                mutated[surface_id]["fingerprints"]["render"],
+            )
+            self.assertEqual(
+                baseline[surface_id]["fingerprints"]["runtime"],
+                mutated[surface_id]["fingerprints"]["runtime"],
+            )
+        for surface_id in (
+            "macos.widget",
+            "ios.widget",
+            "ipados.widget",
+            "visionos.widget",
+            "watchos.app",
+            "watchos.complication",
+            "tvos.app",
+            "tvos.top-shelf",
+        ):
+            self.assertEqual(
+                baseline[surface_id]["fingerprints"],
+                mutated[surface_id]["fingerprints"],
+            )
 
     def test_extension_host_change_invalidates_extension_runtime(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

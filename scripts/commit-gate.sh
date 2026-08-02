@@ -47,7 +47,8 @@ PYTHONDONTWRITEBYTECODE=1 \
 	python3 -m unittest \
 		Tests/ScriptsTests/test_surface_manifest.py \
 		Tests/ScriptsTests/test_runtime_receipts.py \
-		Tests/ScriptsTests/test_runtime_session.py
+		Tests/ScriptsTests/test_runtime_session.py \
+		Tests/ScriptsTests/test_validation_gallery_target_graph.py
 
 swift build "${swift_args[@]}"
 swift test "${swift_args[@]}"

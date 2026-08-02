@@ -57,7 +57,10 @@ not create duplicate decisions. Active deferrals suppress the current decision;
 they do not alter evidence or mark a surface complete.
 `readyForHumanReview` is reserved for the dedicated approval flow. Exact runtime
 proof alone remains a successful coordinator result and does not create an
-unfinishable visual-review action in this slice.
+unfinishable visual-review action in this slice. Signed validation galleries
+provide separately labeled shared-view evidence; they do not become coordinator
+approval records until the visual approval ledger supplies an explicit review
+requirement and matching decision.
 
 ## Deferrals
 

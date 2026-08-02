@@ -812,6 +812,14 @@ wait timestamps, allowlisted notification decisions, and expiring deferral
 codes. See [Signed Validation Operator Flow](signed-validation-operator-flow.md)
 for the queue, privacy, and recovery contract.
 
+Signed host apps also contain the fixture-isolated shared widget gallery
+documented in [Signed Validation Galleries](signed-validation-galleries.md).
+Gallery renders are shared-view evidence only. They do not satisfy exact-build
+runtime receipts, OS-composited placement approval, or the current release
+runbook's physical-device requirements. Until the visual approval ledger and
+release carry-forward work are complete, gallery review is diagnostic and the
+existing signed validation safeguards remain authoritative.
+
 After opening the bounded runtime receipt window described in
 [Signed Validation Runtime Receipts](signed-validation-runtime-receipts.md),
 relay through the existing signed host and reconcile the sanitized export:

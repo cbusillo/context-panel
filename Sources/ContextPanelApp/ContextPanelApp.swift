@@ -1,6 +1,7 @@
 import ContextPanelCore
 import ContextPanelCloudKitSync
 import ContextPanelSettingsUI
+import ContextPanelValidationGalleryUI
 import AppKit
 import Combine
 import os
@@ -41,6 +42,7 @@ struct SettingsNavigationRequest: Equatable {
     enum Destination: Equatable {
         case accounts
         case cacheStats
+        case validationGallery(ValidationGalleryRoute)
     }
 
     let id = UUID()
@@ -326,7 +328,7 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func presentWindow(for url: URL) {
-        if url.host?.lowercased() == "settings" {
+        if url.host?.lowercased() == "settings" || ValidationGalleryRoute(url: url) != nil {
             presentSettingsWindow(destination: settingsDestination(for: url))
         } else {
             presentMainWindowWhenAvailable()
@@ -334,6 +336,9 @@ final class ContextPanelAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func settingsDestination(for url: URL) -> SettingsNavigationRequest.Destination? {
+        if let galleryRoute = ValidationGalleryRoute(url: url) {
+            return .validationGallery(galleryRoute)
+        }
         let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
         if path == "cache-stats" {
             return .cacheStats
@@ -382,6 +387,7 @@ struct SettingsPane: View {
     @ObservedObject var navigation: SettingsNavigationModel
     @StateObject private var model = SettingsPaneModel()
     @State private var focusedDestination: SettingsNavigationRequest.Destination?
+    @State private var galleryRoute: ValidationGalleryRoute?
 
     var body: some View {
         Form {
@@ -551,6 +557,23 @@ struct SettingsPane: View {
                         .foregroundStyle(CPTheme.statusColor(.healthy))
                         .textSelection(.enabled)
                 }
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 7) {
+                    Button {
+                        galleryRoute = ValidationGalleryRoute()
+                    } label: {
+                        Label("Open Validation Gallery", systemImage: "rectangle.on.rectangle.badge.eye")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Text("Review fixed sample states through the production widget presentation. The gallery is read-only and never uses live account data.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(CPTheme.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             Section("Background Refresh") {
@@ -700,6 +723,9 @@ struct SettingsPane: View {
         .sheet(isPresented: $model.isClaudeOAuthCodeSheetPresented) {
             ClaudeOAuthCodeSheet(model: model) {}
         }
+        .sheet(item: $galleryRoute) { route in
+            SettingsValidationGallerySheet(route: route)
+        }
         .onAppear {
             model.load()
             consumeNavigationRequest(clearWhenEmpty: true)
@@ -734,7 +760,12 @@ struct SettingsPane: View {
             }
             return
         }
-        focusedDestination = request.destination
+        if case let .validationGallery(route) = request.destination {
+            galleryRoute = route
+            focusedDestination = nil
+        } else {
+            focusedDestination = request.destination
+        }
     }
 
     private func authorizeAuthFile(for account: LocalProviderAccountConfiguration) {
@@ -792,6 +823,26 @@ struct SettingsPane: View {
             await appModel.refreshLocalConnectors()
             model.load()
         }
+    }
+}
+
+private struct SettingsValidationGallerySheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let route: ValidationGalleryRoute
+
+    var body: some View {
+        NavigationStack {
+            ValidationGalleryView(route: route)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Done") {
+                            dismiss()
+                        }
+                    }
+                }
+        }
+        .frame(minWidth: 900, minHeight: 620)
     }
 }
 
