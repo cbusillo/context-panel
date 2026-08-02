@@ -97,6 +97,8 @@ class OperatorAction:
     device: str
     estimate: str
     instruction: str
+    id: str | None = None
+    notification_kind: str | None = None
 
 
 @dataclass(frozen=True)
@@ -115,8 +117,16 @@ class ValidationReport:
     limitations: tuple[str, ...]
     session: dict[str, Any] | None = None
     runtime_evidence: dict[str, Any] | None = None
+    operator_flow: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        needs_human_action = bool(self.actions) or bool(
+            self.operator_flow
+            and (
+                self.operator_flow.get("readyActionCount", 0)
+                or self.operator_flow.get("deferredActionCount", 0)
+            )
+        )
         payload: dict[str, Any] = {
             "schemaVersion": 1,
             "generatedAt": self.generated_at,
@@ -129,7 +139,7 @@ class ValidationReport:
                 "stage": self.stage,
                 "headline": self.headline,
                 "exitCode": self.exit_code,
-                "needsHumanAction": bool(self.actions),
+                "needsHumanAction": needs_human_action,
             },
             "evidence": {
                 "appStoreConnect": {
@@ -166,9 +176,11 @@ class ValidationReport:
             },
             "actions": [
                 {
+                    "id": item.id,
                     "device": item.device,
                     "estimate": item.estimate,
                     "instruction": item.instruction,
+                    "notificationKind": item.notification_kind,
                 }
                 for item in self.actions
             ],
@@ -178,6 +190,8 @@ class ValidationReport:
             payload["session"] = self.session
         if self.runtime_evidence is not None:
             payload["evidence"]["runtimeReceipts"] = self.runtime_evidence
+        if self.operator_flow is not None:
+            payload["operatorFlow"] = self.operator_flow
         return payload
 
 
@@ -512,7 +526,28 @@ def render_text(report: ValidationReport) -> str:
             f"{item.label[:14]:14} {observed_build(item.observed_version, item.observed_build)[:30]:30} "
             f"{item.install_state[:12]:12} {item.condition[:15]:15} {item.note}"
         )
-    if report.actions:
+    if report.operator_flow is not None and report.operator_flow["groups"]:
+        lines.extend(["", "Operator queue"])
+        for group in report.operator_flow["groups"]:
+            lines.extend(["", f"  {group['device']} — {group['estimate']}"])
+            for action in group["actions"]:
+                status = "deferred" if action["state"] == "deferred" else "ready"
+                lines.append(
+                    f"    · [{status}] {action['instruction']}"
+                )
+                if action["deferral"] is not None:
+                    lines.append(
+                        "      Deferred until "
+                        f"{action['deferral']['expiresAt']} · residual risk "
+                        f"{action['deferral']['residualRisk']}"
+                    )
+        if report.operator_flow["notificationDecisions"]:
+            lines.extend(["", "Notification decisions"])
+            for decision in report.operator_flow["notificationDecisions"]:
+                lines.append(
+                    f"  · {decision['kind']} for {decision['actionID']}"
+                )
+    elif report.actions:
         lines.extend(["", "Ready for you"])
         for action in report.actions:
             lines.extend(["", f"  {action.device} — {action.estimate}", f"    · {action.instruction}"])
