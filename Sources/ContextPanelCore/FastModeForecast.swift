@@ -272,12 +272,14 @@ public struct FastModeCapacityForecast: Codable, Equatable, Sendable {
     public let nextResetAt: Date?
     public let hoursUntilReset: Double?
     public let standardBurnRateUnitsPerHour: Double?
+    public let standardBurnRateObservedDurationHours: Double?
     public let fastBurnRateUnitsPerHour: Double?
     public let standardModeRunwayHours: Double?
     public let fastModeRunwayHours: Double?
     public let projectedStandardUseUntilReset: Double?
     public let projectedFastUseUntilReset: Double?
     public let reserveUnits: Double
+    public let accountCount: Int
 
     public var window: MainLimitWindow? {
         limitID.split(separator: ":").last.flatMap { MainLimitWindow(rawValue: String($0)) }
@@ -312,31 +314,32 @@ public struct FastModeCapacityForecast: Codable, Equatable, Sendable {
     }
 
     public var detailCopy: String {
-        if let percent = remainingPercent {
-            let remaining = "\(Int(percent.rounded()))% left"
-            if let standardBurnRatePercentPerHour {
-                return "\(remaining) · \(Self.format(percentPerHour: standardBurnRatePercentPerHour))/h active"
-            }
-            return remaining
-        }
-
-        guard let remainingUnits else {
-            return "No capacity data"
-        }
-        if let standardBurnRateUnitsPerHour {
-            return "\(Int(remainingUnits.rounded())) left · \(Self.format(unitsPerHour: standardBurnRateUnitsPerHour))/h active"
-        }
-        return "\(Int(remainingUnits.rounded())) left"
+        guard remainingUnits != nil else { return capacityCopy }
+        guard standardBurnRateUnitsPerHour != nil else { return capacityCopy }
+        return "\(capacityCopy) · \(burnRateCopy)"
     }
 
     public var burnRateCopy: String {
         if let standardBurnRatePercentPerHour {
-            return "\(Self.format(percentPerHour: standardBurnRatePercentPerHour))/h active"
+            return "\(Self.format(percentPerHour: standardBurnRatePercentPerHour))/h \(burnRateContextCopy)"
         }
         if let standardBurnRateUnitsPerHour {
-            return "\(Self.format(unitsPerHour: standardBurnRateUnitsPerHour))/h active"
+            return "\(Self.format(unitsPerHour: standardBurnRateUnitsPerHour))/h \(burnRateContextCopy)"
         }
-        return "pace unknown"
+        return "measuring"
+    }
+
+    public var capacityCopy: String {
+        let capacity: String
+        if let percent = remainingPercent {
+            capacity = "\(Int(percent.rounded()))% available"
+        } else if let remainingUnits {
+            capacity = "\(Int(remainingUnits.rounded())) available"
+        } else {
+            return "No capacity data"
+        }
+        guard accountCount > 1 else { return capacity }
+        return "\(capacity) across \(accountCount) accounts"
     }
 
     public var runwayCopy: String {
@@ -393,7 +396,7 @@ public struct FastModeCapacityForecast: Codable, Equatable, Sendable {
     }
 
     public var burnPaceCopy: String {
-        guard let burnPaceRatio else { return "pace unknown" }
+        guard let burnPaceRatio else { return "measuring" }
         if !burnPaceRatio.isFinite { return "over pace" }
         if burnPaceRatio <= 0.05 { return "idle" }
         if burnPaceRatio <= 0.9 { return "under pace" }
@@ -407,6 +410,7 @@ public struct FastModeCapacityForecast: Codable, Equatable, Sendable {
         providerLimits: [UsageLimit],
         now: Date,
         standardBurnRate: BurnRate? = nil,
+        standardBurnRateObservedDurationHours: Double? = nil,
         fastBurnRate: BurnRate?,
         reserveUnits: Double = 6,
         minimumSafeHours: Double = 1
@@ -427,7 +431,9 @@ public struct FastModeCapacityForecast: Codable, Equatable, Sendable {
         unit = Self.sharedUnit(numericLimits)
         confidence = Self.worstConfidence(providerLimits.map(\.confidence))
         standardBurnRateUnitsPerHour = standardBurnRate?.unitsPerHour
+        self.standardBurnRateObservedDurationHours = standardBurnRateObservedDurationHours
         fastBurnRateUnitsPerHour = fastBurnRate?.unitsPerHour
+        accountCount = Set(numericLimits.map(\.accountID)).count
 
         let nextReset = capacityPool.nextReset(after: now)
         nextResetAt = nextReset
@@ -483,6 +489,13 @@ public struct FastModeCapacityForecast: Codable, Equatable, Sendable {
     private var remainingPercent: Double? {
         guard let remainingUnits, let totalUnits, totalUnits > 0 else { return nil }
         return max(min(remainingUnits / totalUnits, 1), 0) * 100
+    }
+
+    private var burnRateContextCopy: String {
+        guard let standardBurnRateObservedDurationHours, standardBurnRateObservedDurationHours > 0 else {
+            return "planning"
+        }
+        return "avg \(Self.format(hours: standardBurnRateObservedDurationHours))"
     }
 
     private static func worstConfidence(_ confidences: [UsageConfidence]) -> UsageConfidence {
@@ -560,13 +573,17 @@ public struct FastModeCapacityPortfolioForecast: Codable, Equatable, Sendable {
         bestForecast?.copy ?? "Add OpenAI weekly limits to forecast fast mode."
     }
 
+    public var accountCount: Int {
+        bestForecast?.accountCount ?? 0
+    }
+
     public var detailCopy: String {
         guard let bestForecast else { return "OpenAI account needed for fast-mode forecast" }
         let guardrail = forecasts.first { $0.window == .fiveHour }
         if bestForecast.window == .weekly, let guardrail, guardrail.recommendation == .saveFastMode || guardrail.recommendation == .limited {
-            return "\(bestForecast.burnRateCopy) · \(bestForecast.runwayCopy) · 5h: \(guardrail.runwayCopy)"
+            return "\(bestForecast.capacityCopy) · \(bestForecast.burnRateCopy) · \(bestForecast.runwayCopy) · 5h: \(guardrail.runwayCopy)"
         }
-        return "\(bestForecast.burnRateCopy) · \(bestForecast.runwayCopy)"
+        return "\(bestForecast.capacityCopy) · \(bestForecast.burnRateCopy) · \(bestForecast.runwayCopy)"
     }
 }
 
@@ -602,7 +619,8 @@ public extension Sequence where Element == MainLimitSummary {
         }
         .filter { $0.provider == .openAI && $0.unit == .percent }
         .map { summary in
-            let observedRate = observedBurnRates[summary.id].map(\.unitsPerHour)
+            let observedBurnRate = observedBurnRates[summary.id]
+            let observedRate = observedBurnRate.map(\.unitsPerHour)
             let standardRate = observedRate ?? defaultStandardBurnRateUnitsPerHour
             return FastModeCapacityForecast(
                 limitID: summary.id,
@@ -610,6 +628,7 @@ public extension Sequence where Element == MainLimitSummary {
                 providerLimits: summary.liveLimits,
                 now: now,
                 standardBurnRate: standardRate.map { BurnRate(mode: .standard, unitsPerHour: $0) },
+                standardBurnRateObservedDurationHours: observedBurnRate?.observedDurationHours,
                 fastBurnRate: standardRate.map { BurnRate(mode: .fast, unitsPerHour: $0 * fastModeMultiplier) },
                 reserveUnits: reserveUnits,
                 minimumSafeHours: minimumSafeHours

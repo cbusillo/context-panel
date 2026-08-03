@@ -3380,7 +3380,7 @@ struct HeaderCard: View {
                 .accessibilityElement(children: .combine)
                 HStack(spacing: 8) {
                     TagLabel("\(snapshot.mainLimitSummaries.count) main windows")
-                    TagLabel("Accounts pooled")
+                    TagLabel("Pooled capacity")
                     if let resetCreditSummary {
                         ResetCreditAvailabilityTag(summary: resetCreditSummary)
                     }
