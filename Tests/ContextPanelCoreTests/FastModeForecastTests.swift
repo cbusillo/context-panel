@@ -466,6 +466,42 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(estimate.sampleCount == 5)
 }
 
+@Test func observedBurnRateDoesNotCountCounterRecoveryAsNewUsage() throws {
+    let reset = now.addingTimeInterval(96 * 3_600)
+    let history = [
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-4 * 3_600), used: 16, reset: reset),
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-3 * 3_600), used: 1, reset: reset),
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-2 * 3_600), used: 17, reset: reset),
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-1 * 3_600), used: 18, reset: reset),
+        storedOpenAIWeekly(savedAt: now, used: 20, reset: reset),
+    ]
+    let current = try #require(history.last?.snapshot)
+
+    let estimates = MainLimitBurnRateEstimator.observedBurnRates(current: current, history: history, now: now)
+    let estimate = try #require(estimates["openai:weekly"])
+
+    #expect(abs(estimate.unitsPerHour - 1) < 0.0001)
+    #expect(abs(estimate.observedDurationHours - 4) < 0.0001)
+    #expect(estimate.sampleCount == 5)
+}
+
+@Test func observedBurnRateResumesAfterUnsignaledReset() throws {
+    let history = [
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-3 * 3_600), used: 20, reset: now, includeReset: false),
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-2 * 3_600), used: 2, reset: now, includeReset: false),
+        storedOpenAIWeekly(savedAt: now.addingTimeInterval(-1 * 3_600), used: 5, reset: now, includeReset: false),
+        storedOpenAIWeekly(savedAt: now, used: 7, reset: now, includeReset: false),
+    ]
+    let current = try #require(history.last?.snapshot)
+
+    let estimates = MainLimitBurnRateEstimator.observedBurnRates(current: current, history: history, now: now)
+    let estimate = try #require(estimates["openai:weekly"])
+
+    #expect(abs(estimate.unitsPerHour - 2.5) < 0.0001)
+    #expect(abs(estimate.observedDurationHours - 2) < 0.0001)
+    #expect(estimate.sampleCount == 3)
+}
+
 @Test func observedBurnRateUsesRecentDrainWhenLongerAverageIsTooOptimistic() throws {
     let reset = now.addingTimeInterval(96 * 3_600)
     let history = [

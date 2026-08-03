@@ -138,28 +138,44 @@ public enum MainLimitBurnRateEstimator {
             var observedSeconds: TimeInterval = 0
             var usedDelta: Double = 0
             var intervalCount = 0
+            var highWaterUsed = samples[0].used
 
             for pair in zip(samples, samples.dropFirst()) {
                 let previous = pair.0
                 let current = pair.1
                 let interval = current.date.timeIntervalSince(previous.date)
-                guard interval > 0 else { continue }
-                guard previous.limit == current.limit else { continue }
-                switch (previous.resetsAt, current.resetsAt) {
-                case let (previousReset?, currentReset?):
-                    guard previousReset == currentReset else { continue }
-                    guard !(previousReset > previous.date && previousReset <= current.date) else { continue }
-                case (nil, nil):
-                    break
-                default:
+                guard interval > 0 else {
+                    highWaterUsed = max(highWaterUsed, current.used)
                     continue
                 }
-                let delta = current.used - previous.used
-                guard delta >= 0 else { continue }
+                guard previous.limit == current.limit else {
+                    highWaterUsed = current.used
+                    continue
+                }
+                switch (previous.resetsAt, current.resetsAt) {
+                case let (previousReset?, currentReset?):
+                    guard previousReset == currentReset else {
+                        highWaterUsed = current.used
+                        continue
+                    }
+                    guard !(previousReset > previous.date && previousReset <= current.date) else {
+                        highWaterUsed = current.used
+                        continue
+                    }
+                case (nil, nil):
+                    if current.used < previous.used {
+                        highWaterUsed = current.used
+                        continue
+                    }
+                default:
+                    highWaterUsed = current.used
+                    continue
+                }
 
                 observedSeconds += interval
-                usedDelta += delta
+                usedDelta += max(current.used - highWaterUsed, 0)
                 intervalCount += 1
+                highWaterUsed = max(highWaterUsed, current.used)
             }
 
             guard
