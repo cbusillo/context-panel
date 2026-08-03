@@ -985,6 +985,7 @@ private let testWidgetLinks = ContextPanelWidgetLinks(
     #expect(widget.message == "Connect an account to show limits.")
     #expect(widget.fastModeVerdict == "Connect accounts to track limits")
     #expect(widget.fastModeDetail == "Open the app to connect OpenAI, Claude, or Google.")
+    #expect(widget.fastModeWidgetDetail == "Open the app to connect OpenAI, Claude, or Google.")
     #expect(widget.fastModeResetDetail == "limits appear after setup")
     #expect(widget.widgetProblemText == "Setup needed")
     #expect(widget.widgetProviderSummaryText(provider: .openAI) == "not connected")

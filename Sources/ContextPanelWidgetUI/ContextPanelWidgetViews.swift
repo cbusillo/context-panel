@@ -483,7 +483,7 @@ struct ContextPanelMediumWidget: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(CPWTheme.primaryText(variant: themeVariant))
                     .lineLimit(2)
-                Text(snapshot.fastModeDetail)
+                Text(snapshot.fastModeWidgetDetail)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
                     .lineLimit(2)
@@ -1928,6 +1928,12 @@ extension WidgetSnapshot {
             observedBurnRates: observedBurnRates,
             settings: fastModeForecastSettings
         ).detailCopy
+    }
+
+    var fastModeWidgetDetail: String {
+        if needsProviderConnection { return "Open the app to connect OpenAI, Claude, or Google." }
+        guard let forecast = fastModeForecast else { return fastModeDetail }
+        return "\(forecast.burnRateCopy) · \(forecast.runwayCopy)"
     }
 
     var fastModeResetDetail: String {
