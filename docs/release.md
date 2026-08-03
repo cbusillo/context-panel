@@ -771,7 +771,11 @@ anyone begins opening devices:
 ```sh
 scripts/context-panel-validation.py start-session \
   --version <marketing-version> \
-  --build-number <coordinated-build-number>
+  --build-number <coordinated-build-number> \
+  --expected-build-manifest <ExpectedBuildManifest-macos.json> \
+  --expected-build-manifest <ExpectedBuildManifest-ios.json> \
+  --expected-build-manifest <ExpectedBuildManifest-visionos.json> \
+  --expected-build-manifest <ExpectedBuildManifest-tvos.json>
 ```
 
 The default session requests every shipping surface. Pass repeated `--surface`
@@ -780,6 +784,10 @@ session is recovered unchanged; replacing it requires `--replace`, and a
 different active target is rejected by both lifecycle and status commands.
 Status continues to show collected out-of-scope evidence for diagnostics, but
 only requested surfaces can block the slice or produce operator actions.
+Pass each sealed `ExpectedBuildManifest-<platform>.json` needed to cover the
+requested surfaces. More manifests can be attached later by `status` or
+`sync-runtime-evidence`; an existing surface identity can never be replaced by
+a conflicting manifest.
 
 The schema-versioned coordinator state lives under the canonical App Group at
 `Context Panel/Validation/Coordinator`, separate from signed runtime session and
@@ -791,6 +799,41 @@ Compatibility-only Watch attestations recorded before a session exists remain
 in the older local store until the first matching session migrates them.
 Normal status reads enforce terminal retention and remove expired coordinator
 documents without touching runtime receipts or App Group relay queues.
+Runtime receipt summaries use an additive schema-v1 sidecar under
+`Coordinator/Runtime Evidence`, keyed by the coordinator session ID and pruned
+with the parent session. The lifecycle document remains schema v1 and is never
+silently rewritten to add receipt fields. The sidecar contains expected public
+build identity, receipt IDs, ordering metadata, closed outcomes, and diagnostic
+codes only; it does not persist raw exports or receipt documents.
+Operator queue state uses a second additive schema-v1 sidecar under
+`Coordinator/Operator Flow`, also keyed by the coordinator session ID and
+pruned with the parent. It stores only public action IDs/device classes, bounded
+wait timestamps, allowlisted notification decisions, and expiring deferral
+codes. See [Signed Validation Operator Flow](signed-validation-operator-flow.md)
+for the queue, privacy, and recovery contract.
+
+Signed host apps also contain the fixture-isolated shared widget gallery
+documented in [Signed Validation Galleries](signed-validation-galleries.md).
+Gallery renders are shared-view evidence only. They do not satisfy exact-build
+runtime receipts, OS-composited placement approval, or the current release
+runbook's physical-device requirements. Until the visual approval ledger and
+release carry-forward work are complete, gallery review is diagnostic and the
+existing signed validation safeguards remain authoritative.
+
+After opening the bounded runtime receipt window described in
+[Signed Validation Runtime Receipts](signed-validation-runtime-receipts.md),
+relay through the existing signed host and reconcile the sanitized export:
+
+```sh
+scripts/context-panel-validation.py sync-runtime-evidence \
+  --version <marketing-version> \
+  --build-number <coordinated-build-number>
+```
+
+This explicit command invokes the existing runtime-session `sync`, `status`,
+and exact-session `export` contracts. It does not contain a Python CloudKit
+client, mutate CloudKit schema, install a runtime, or add extension
+entitlements. Raw signed-host messages and subprocess errors are not persisted.
 
 Then collect coordinator status so waiting and access states are classified
 before anyone begins opening devices:
@@ -803,10 +846,14 @@ scripts/context-panel-validation.py status \
 
 The coordinator reads App Store Connect through GET-only requests, runs the
 canonical Mac Production receipt, and inspects physical-device reachability and
-installed app versions through CoreDevice list/info commands. It never installs,
+installed app versions through CoreDevice list/info commands. When expected
+build evidence is attached, status also reads the existing runtime-session
+`status` and exact-session `export` contracts without invoking relay `sync`.
+It never installs,
 launches app or device UI, wakes, reboots, captures, resets, submits, cancels, or
 changes App Store Connect state. Status may persist only local coordinator
-lifecycle changes such as deadline expiry. The canonical receipt may execute the
+lifecycle changes such as deadline expiry and privacy-safe runtime evidence
+summaries. The canonical receipt may execute the
 refresh agent's privacy-safe bookmark-access, provider-credential-presence, and
 webhook-credential-presence summaries. Locked, sleeping, unreachable,
 processing, and unavailable states are reported as waiting or unknown rather
@@ -834,18 +881,69 @@ scripts/context-panel-validation.py stop-session \
   --build-number <coordinated-build-number>
 ```
 
-This durable coordinator slice still treats the existing collectors as
-orientation, not release evidence. Its footer states that companion CloudKit
-reads, extension runtime receipts, and visual approval remain unproven until the
-later receipt-ingestion and approval slices land. Continue the signed smoke
-sequence below and do not infer widget, complication, or Top Shelf runtime from
-an installed app version.
+Runtime proof requires exact version/build, source manifest and contract,
+surface fingerprints, bundle and artifact identity, and a loaded executable UUID
+contained in the sealed archive evidence. A host-app receipt never proves its
+widget, Watch complication, or Top Shelf extension. Duplicate exports are
+de-duplicated by receipt ID, process ordering is retained, and newer build
+evidence supersedes rather than mixes with the target. Missing receipts remain
+waiting while the bounded runtime window is active; expired silence, stale
+extensions, malformed exports, and relay problems become unknown or diagnostic,
+not product failures. Companion CloudKit content and visual approval remain
+separate evidence classes for later slices.
 
 Coordinator status exits with `0` while waiting or after all evidence available
 to this slice is collected, `10` when a human action is ready, `20` for a real
 blocker, `30` when local or remote evidence cannot establish a state, and `1`
 for an internal coordinator error. Exit `30` is soft unknown evidence, not a
 failed build.
+`sync-runtime-evidence` follows the same non-failure waiting rule: it exits `0`
+for an active bounded receipt wait or proven runtime slice, `20` when newer
+evidence supersedes the target, and `30` for an unknown/diagnostic result.
+
+Status groups operator actions by device after evidence and lifecycle
+reconciliation. Apple/TestFlight/install/receipt propagation remains quiet.
+Locked or sleeping devices remain quiet for 15 minutes before one unlock/wake
+request; reachability loss remains quiet for 30 minutes before a bounded
+decision request. The queue never requests an extended awake period.
+Notification decisions are persisted and limited to `readyForHumanReview`,
+`restartRequired`, `manualUnlockRequired`, and `blockedDecisionRequired`; the
+coordinator contains no notification delivery integration.
+
+Defer an action shown by `status --json` without satisfying its evidence:
+
+```sh
+scripts/context-panel-validation.py defer-action \
+  --version <marketing-version> \
+  --build-number <coordinated-build-number> \
+  --action-id <action-id> \
+  --owner release-operator \
+  --reason operator-unavailable \
+  --residual-risk review-pending \
+  --duration-hours 4
+```
+
+The owner is a public-safe label, and reason/residual-risk values are
+allowlisted. Active deferrals suppress the current notification decision but
+remain visible in the queue, expire automatically, retain residual-risk history,
+and never change proof or completion. A fully deferred queue remains exit `10`
+so shell callers cannot treat unresolved evidence as green. Use
+`clear-deferral` with the same target and action ID to end one early.
+
+Render the current privacy-safe GitHub report without posting it:
+
+```sh
+scripts/context-panel-validation.py final-report \
+  --version <marketing-version> \
+  --build-number <coordinated-build-number>
+```
+
+Pass `--json` for the stable machine contract. The report includes the exact
+target, required and obtained evidence classes, runtime surface state, grouped
+queue, decisions, deferrals, blockers, residual risks, and the explicit
+carry-forward boundary. It excludes the coordinator session ID and all device,
+account, credential, path, raw receipt, raw provider, and App Store Connect
+identifiers.
 
 When the exact Watch build is confirmed, the coordinator requests the existing
 post-install restart without performing it. After the physical restart, record

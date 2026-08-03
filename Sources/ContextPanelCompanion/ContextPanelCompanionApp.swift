@@ -3,6 +3,7 @@ import ContextPanelCore
 import ContextPanelCloudKitSync
 import ContextPanelCompanionSupport
 import ContextPanelSettingsUI
+import ContextPanelValidationGalleryUI
 import ContextPanelWidgetUI
 import SwiftUI
 import UIKit
@@ -167,6 +168,7 @@ private struct CompanionRootView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.scenePhase) private var scenePhase
     @State private var model = CompanionSyncModel()
+    @State private var galleryRoute: ValidationGalleryRoute?
 
     private var previewThemeVariant: CPWThemeVariant {
         #if os(visionOS)
@@ -258,6 +260,13 @@ private struct CompanionRootView: View {
                         }
                     }
                 }
+                ToolbarItem(placement: .secondaryAction) {
+                    Button {
+                        galleryRoute = ValidationGalleryRoute()
+                    } label: {
+                        Label("Validation Gallery", systemImage: "rectangle.on.rectangle.badge.eye")
+                    }
+                }
             }
             .task {
                 model.registerCloudKitSubscription()
@@ -270,6 +279,14 @@ private struct CompanionRootView: View {
                 if newPhase == .active {
                     model.reload()
                 }
+            }
+            .onOpenURL { url in
+                if let route = ValidationGalleryRoute(url: url) {
+                    galleryRoute = route
+                }
+            }
+            .sheet(item: $galleryRoute) { route in
+                CompanionValidationGallerySheet(route: route)
             }
         }
         .environment(\.companionSurfacePalette, surfacePalette)
@@ -367,6 +384,25 @@ private struct CompanionRootView: View {
                 : nil,
             alignment: .topLeading
         )
+    }
+}
+
+private struct CompanionValidationGallerySheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let route: ValidationGalleryRoute
+
+    var body: some View {
+        NavigationStack {
+            ValidationGalleryView(route: route)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Done") {
+                            dismiss()
+                        }
+                    }
+                }
+        }
     }
 }
 

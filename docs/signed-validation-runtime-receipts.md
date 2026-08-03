@@ -187,6 +187,47 @@ bundle with:
 scripts/context-panel-runtime-session.py export --output runtime-receipts.json
 ```
 
+The durable coordinator consumes these contracts through a narrow adapter. Give
+the coordinator the sealed expected-build manifests produced by the signed
+archive flow, then run the explicit relay/reconciliation command:
+
+```sh
+scripts/context-panel-validation.py start-session \
+  --version <marketing-version> \
+  --build-number <coordinated-build-number> \
+  --expected-build-manifest <ExpectedBuildManifest-platform.json>
+
+scripts/context-panel-validation.py sync-runtime-evidence \
+  --version <marketing-version> \
+  --build-number <coordinated-build-number>
+```
+
+`sync-runtime-evidence` invokes the existing signed-host `sync`, validated
+`status`, and exact-session `export` sequence. Ordinary coordinator `status`
+uses only runtime-session `status` and `export`, so a read-only status check does
+not perform CloudKit relay work. The adapter has no CloudKit client and never
+reads raw receipt queues.
+
+For proof, every actual identity field must match the sealed archive evidence:
+version/build, source manifest and contract, surface fingerprints, bundle and
+artifact, and the UUID of the loaded executable slice. A loaded UUID may be one
+member of a multi-architecture archive's UUID set. Matching app receipts do not
+stand in for widget, complication, or Top Shelf receipts from their own process
+boundaries.
+
+The coordinator persists only an additive schema-v1 summary sidecar keyed by
+its session ID. It retains expected public build identity, receipt IDs and
+ordering fields, exact-match digests, closed outcomes, and diagnostic codes. It
+does not store raw receipt/export documents, signed-host messages, private
+paths, device identifiers, account data, credentials, provider responses, or
+App Store Connect IDs. The original coordinator lifecycle document remains
+schema v1, and the sidecar is removed with its parent session retention.
+Operator workflow state is separate again: grouped actions, bounded wait
+timestamps, notification decisions, and expiring deferrals live in the additive
+`Coordinator/Operator Flow` sidecar. They never change receipt proof, ordering,
+session identity, or silence/diagnostic classification. See
+[Signed Validation Operator Flow](signed-validation-operator-flow.md).
+
 Within one process, `processSequence` is authoritative even when offline upload
 changes server arrival order. Across processes/devices, the export uses the
 CloudKit server receipt time and retains the device-observed timestamp without

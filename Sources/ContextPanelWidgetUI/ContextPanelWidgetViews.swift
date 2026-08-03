@@ -20,10 +20,21 @@ private struct CPWThemeVariantKey: EnvironmentKey {
     static let defaultValue: CPWThemeVariant = .adaptive
 }
 
+private struct CPWPresentationDateKey: EnvironmentKey {
+    static let defaultValue = Date()
+}
+
 public extension EnvironmentValues {
     var cpwThemeVariant: CPWThemeVariant {
         get { self[CPWThemeVariantKey.self] }
         set { self[CPWThemeVariantKey.self] = newValue }
+    }
+}
+
+extension EnvironmentValues {
+    var cpwPresentationDate: Date {
+        get { self[CPWPresentationDateKey.self] }
+        set { self[CPWPresentationDateKey.self] = newValue }
     }
 }
 
@@ -87,6 +98,7 @@ public struct ContextPanelWidgetContentView: View {
 
     public var body: some View {
         content
+            .environment(\.cpwPresentationDate, presentationDate)
             .widgetURL(snapshot.widgetDeepLinkURL(links: links))
     }
 
@@ -179,6 +191,7 @@ struct CPWSetupPlaceholderWidget: View {
 
 struct ContextPanelSmallWidget: View {
     @Environment(\.cpwThemeVariant) private var themeVariant
+    @Environment(\.cpwPresentationDate) private var presentationDate
     let snapshot: WidgetSnapshot
     let displayPreferences: WidgetDisplayPreferences
 
@@ -190,7 +203,7 @@ struct ContextPanelSmallWidget: View {
         let supporting = selection.compactSupportingLanes(maximumCount: 2)
 
         VStack(alignment: .leading, spacing: 5) {
-            if let problem = snapshot.widgetProblemText {
+            if let problem = snapshot.widgetProblemText(presentationDate: presentationDate) {
                 CPWProblemLabel(problem, status: snapshot.widgetProblemStatus)
             }
             if let primary, supporting.isEmpty {
@@ -219,6 +232,7 @@ struct ContextPanelSmallWidget: View {
 
 private struct CPWSmallPrimaryLimitView: View {
     @Environment(\.cpwThemeVariant) private var themeVariant
+    @Environment(\.cpwPresentationDate) private var presentationDate
     let lane: WidgetMainLimitLane
     let snapshotState: WidgetSnapshotState
 
@@ -252,7 +266,7 @@ private struct CPWSmallPrimaryLimitView: View {
                 status: status,
                 height: 5
             )
-            if let resetText = summary?.widgetSmallResetConfidenceText {
+            if let resetText = summary?.widgetSmallResetConfidenceText(presentationDate: presentationDate) {
                 Text(resetText)
                     .font(.system(size: 8, weight: .medium))
                     .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
@@ -274,13 +288,17 @@ private struct CPWSmallPrimaryLimitView: View {
     }
 
     private var accessibilityValue: String {
-        summary?.widgetCapacityAccessibilityValue(snapshotState: snapshotState)
+        summary?.widgetCapacityAccessibilityValue(
+            snapshotState: snapshotState,
+            presentationDate: presentationDate
+        )
             ?? snapshotState.smallWidgetUnknownCapacityAccessibilityValue
     }
 }
 
 private struct CPWSmallSingleLimitView: View {
     @Environment(\.cpwThemeVariant) private var themeVariant
+    @Environment(\.cpwPresentationDate) private var presentationDate
     let lane: WidgetMainLimitLane
     let snapshotState: WidgetSnapshotState
 
@@ -307,7 +325,7 @@ private struct CPWSmallSingleLimitView: View {
                     .minimumScaleFactor(0.75)
                     .lineLimit(1)
             }
-            if let resetText = summary?.widgetSmallResetConfidenceText {
+            if let resetText = summary?.widgetSmallResetConfidenceText(presentationDate: presentationDate) {
                 Text(resetText)
                     .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
@@ -334,13 +352,17 @@ private struct CPWSmallSingleLimitView: View {
     }
 
     private var accessibilityValue: String {
-        summary?.widgetCapacityAccessibilityValue(snapshotState: snapshotState)
+        summary?.widgetCapacityAccessibilityValue(
+            snapshotState: snapshotState,
+            presentationDate: presentationDate
+        )
             ?? snapshotState.smallWidgetUnknownCapacityAccessibilityValue
     }
 }
 
 private struct CPWSmallRemainingLimitRow: View {
     @Environment(\.cpwThemeVariant) private var themeVariant
+    @Environment(\.cpwPresentationDate) private var presentationDate
     let lane: WidgetMainLimitLane
     let snapshotState: WidgetSnapshotState
 
@@ -375,7 +397,7 @@ private struct CPWSmallRemainingLimitRow: View {
                     status: status,
                     height: 4
                 )
-                Text(summary?.widgetSmallResetConfidenceText ?? "")
+                Text(summary?.widgetSmallResetConfidenceText(presentationDate: presentationDate) ?? "")
                     .font(.system(size: 8, weight: .medium))
                     .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
                     .lineLimit(1)
@@ -397,7 +419,10 @@ private struct CPWSmallRemainingLimitRow: View {
     }
 
     private var accessibilityValue: String {
-        summary?.widgetCapacityAccessibilityValue(snapshotState: snapshotState)
+        summary?.widgetCapacityAccessibilityValue(
+            snapshotState: snapshotState,
+            presentationDate: presentationDate
+        )
             ?? snapshotState.smallWidgetUnknownCapacityAccessibilityValue
     }
 }
@@ -449,7 +474,7 @@ struct ContextPanelMediumWidget: View {
             : nil
         HStack(spacing: 6) {
             VStack(alignment: .leading, spacing: 5) {
-                if let problem = snapshot.widgetProblemText {
+                if let problem = snapshot.widgetProblemText(presentationDate: presentationDate) {
                     CPWProblemLabel(problem, status: snapshot.widgetProblemStatus)
                 }
                 Spacer(minLength: 0)
@@ -462,7 +487,7 @@ struct ContextPanelMediumWidget: View {
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
                     .lineLimit(2)
-                Text(snapshot.fastModeResetDetail)
+                Text(snapshot.fastModeResetDetail(presentationDate: presentationDate))
                     .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(CPWTheme.tertiaryText(variant: themeVariant))
                     .lineLimit(1)
@@ -523,7 +548,7 @@ struct ContextPanelLargeWidget: View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 4) {
-                    if let problem = snapshot.widgetProblemText {
+                    if let problem = snapshot.widgetProblemText(presentationDate: presentationDate) {
                         CPWProblemLabel(problem, status: snapshot.widgetProblemStatus)
                     }
                     Text(snapshot.fastModeVerdict)
@@ -535,7 +560,7 @@ struct ContextPanelLargeWidget: View {
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
                         .lineLimit(1)
-                    Text(snapshot.fastModeResetDetail)
+                    Text(snapshot.fastModeResetDetail(presentationDate: presentationDate))
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(CPWTheme.tertiaryText(variant: themeVariant))
                         .lineLimit(1)
@@ -1127,6 +1152,7 @@ struct CPWProblemLabel: View {
 
 struct CPWGlanceNumber: View {
     @Environment(\.cpwThemeVariant) private var themeVariant
+    @Environment(\.cpwPresentationDate) private var presentationDate
     let snapshot: WidgetSnapshot
     let lane: WidgetMainLimitLane?
 
@@ -1188,7 +1214,10 @@ struct CPWGlanceNumber: View {
                 "Remaining capacity unknown. Setup needed"
             }
         }
-        var value = summary.widgetCapacityAccessibilityValue(snapshotState: snapshot.state)
+        var value = summary.widgetCapacityAccessibilityValue(
+            snapshotState: snapshot.state,
+            presentationDate: presentationDate
+        )
         if lane?.provider == .openAI, let forecast = snapshot.fastModeForecast {
             value += ". Burn pace \(forecast.burnPaceCopy)"
         }
@@ -1198,6 +1227,7 @@ struct CPWGlanceNumber: View {
 
 struct CPWMainLimitRow: View {
     @Environment(\.cpwThemeVariant) private var themeVariant
+    @Environment(\.cpwPresentationDate) private var presentationDate
     let summary: MainLimitSummary?
     let fallbackProvider: Provider
     let fallbackWindow: MainLimitWindow
@@ -1240,7 +1270,7 @@ struct CPWMainLimitRow: View {
             }
             HStack(spacing: 6) {
                 CPWUsagePressureBar(usedRatio: summary?.widgetUsageRatio, status: status)
-                Text(summary?.widgetResetConfidenceText ?? "")
+                Text(summary?.widgetResetConfidenceText(presentationDate: presentationDate) ?? "")
                     .font(.system(size: 9))
                     .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
                     .lineLimit(1)
@@ -1263,12 +1293,16 @@ struct CPWMainLimitRow: View {
         guard let summary else {
             return snapshotState == .stale ? "Usage unknown. Data stale" : "Usage unknown. Status unknown"
         }
-        return summary.widgetPressureAccessibilityValue(snapshotState: snapshotState)
+        return summary.widgetPressureAccessibilityValue(
+            snapshotState: snapshotState,
+            presentationDate: presentationDate
+        )
     }
 }
 
 struct CPWProviderSummaryGrid: View {
     @Environment(\.cpwThemeVariant) private var themeVariant
+    @Environment(\.cpwPresentationDate) private var presentationDate
     let snapshot: WidgetSnapshot
     var compact = false
 
@@ -1339,7 +1373,10 @@ struct CPWProviderSummaryGrid: View {
         guard isConnected else { return "Setup needed" }
         var parts: [String]
         if let metricSummary {
-            parts = [metricSummary.widgetPressureAccessibilityValue(snapshotState: snapshotState)]
+            parts = [metricSummary.widgetPressureAccessibilityValue(
+                snapshotState: snapshotState,
+                presentationDate: presentationDate
+            )]
             if providerStatus != metricSummary.status {
                 let label = snapshotState == .stale ? "Last known provider status" : "Provider status"
                 parts.append("\(label) \(providerStatus.widgetAccessibilityLabel)")
@@ -1807,20 +1844,28 @@ extension UsageLimit {
     }
 
     var widgetResetText: String? {
+        widgetResetText(presentationDate: Date())
+    }
+
+    func widgetResetText(presentationDate: Date) -> String? {
         if isAssumedAfterScheduledReset { return "assumed reset" }
         guard let resetsAt else {
             if status == .failure { return "refresh failed" }
             return provider == .anthropic ? nil : "unknown reset"
         }
-        if resetsAt < Date().addingTimeInterval(-60) {
+        if resetsAt < presentationDate.addingTimeInterval(-60) {
             return "reset passed"
         }
-        return resetsAt.widgetCompactResetText
+        return resetsAt.widgetCompactResetText(relativeTo: presentationDate)
     }
 
     var widgetResetConfidenceText: String? {
+        widgetResetConfidenceText(presentationDate: Date())
+    }
+
+    func widgetResetConfidenceText(presentationDate: Date) -> String? {
         if isAssumedAfterScheduledReset { return "assumed after reset" }
-        guard let resetText = widgetResetText, !resetText.isEmpty else { return nil }
+        guard let resetText = widgetResetText(presentationDate: presentationDate), !resetText.isEmpty else { return nil }
         if confidence.shouldShowWidgetResetQualifier {
             return "\(resetText) · \(confidence.widgetLabel)"
         }
@@ -1886,14 +1931,24 @@ extension WidgetSnapshot {
     }
 
     var fastModeResetDetail: String {
+        fastModeResetDetail(presentationDate: Date())
+    }
+
+    func fastModeResetDetail(presentationDate: Date) -> String {
         if needsProviderConnection { return "limits appear after setup" }
         guard let resetAt = fastModeForecast?.nextResetAt else { return "next reset unknown" }
-        return "reset \(resetAt.widgetDateTimeWithRelativeText)"
+        return "reset \(resetAt.widgetDateTimeWithRelativeText(relativeTo: presentationDate))"
     }
 
     var widgetProblemText: String? {
+        widgetProblemText(presentationDate: Date())
+    }
+
+    func widgetProblemText(presentationDate: Date) -> String? {
         if syncErrorMessage != nil { return "Mac update failed" }
-        if let providerAccessProblemText { return providerAccessProblemText }
+        if let providerAccessProblemText = providerAccessProblemText(presentationDate: presentationDate) {
+            return providerAccessProblemText
+        }
         switch state {
         case .failure:
             return "Reconnect account"
@@ -1928,14 +1983,14 @@ extension WidgetSnapshot {
         return status
     }
 
-    private var providerAccessProblemText: String? {
+    private func providerAccessProblemText(presentationDate: Date) -> String? {
         guard state != .failure,
               status != .failure,
               !requiresProviderReconnect,
               let alert = primaryProviderAccessAlert
         else { return nil }
         if let resetsAt = alert.accessState.resetsAt {
-            return "\(alert.title) · reset \(resetsAt.widgetDateTimeWithRelativeText)"
+            return "\(alert.title) · reset \(resetsAt.widgetDateTimeWithRelativeText(relativeTo: presentationDate))"
         }
         return alert.title
     }
@@ -2086,10 +2141,17 @@ extension MainLimitSummary {
     }
 
     var widgetPressureAccessibilityValue: String {
-        widgetPressureAccessibilityValue(snapshotState: nil)
+        widgetPressureAccessibilityValue(snapshotState: nil, presentationDate: Date())
     }
 
     func widgetPressureAccessibilityValue(snapshotState: WidgetSnapshotState?) -> String {
+        widgetPressureAccessibilityValue(snapshotState: snapshotState, presentationDate: Date())
+    }
+
+    func widgetPressureAccessibilityValue(
+        snapshotState: WidgetSnapshotState?,
+        presentationDate: Date
+    ) -> String {
         let statusLabel = snapshotState == .stale ? "Last known main limit status" : "Main limit status"
         var parts = [
             accessibilityQuantity(widgetUsageText),
@@ -2100,13 +2162,20 @@ extension MainLimitSummary {
         }
         if hasAssumedScheduledResetCapacity {
             parts.append(UsagePresentationAssumption.scheduledReset.accessibilityText)
-        } else if let reset = widgetResetConfidenceText {
+        } else if let reset = widgetResetConfidenceText(presentationDate: presentationDate) {
             parts.append("Reset \(reset)")
         }
         return parts.joined(separator: ". ")
     }
 
     func widgetCapacityAccessibilityValue(snapshotState: WidgetSnapshotState?) -> String {
+        widgetCapacityAccessibilityValue(snapshotState: snapshotState, presentationDate: Date())
+    }
+
+    func widgetCapacityAccessibilityValue(
+        snapshotState: WidgetSnapshotState?,
+        presentationDate: Date
+    ) -> String {
         let statusLabel = snapshotState == .stale || snapshotState == .failure
             ? "Last known main limit status"
             : "Main limit status"
@@ -2119,7 +2188,7 @@ extension MainLimitSummary {
         }
         if hasAssumedScheduledResetCapacity {
             parts.append(UsagePresentationAssumption.scheduledReset.accessibilityText)
-        } else if let reset = widgetResetConfidenceText {
+        } else if let reset = widgetResetConfidenceText(presentationDate: presentationDate) {
             parts.append("Reset \(reset)")
         }
         return parts.joined(separator: ". ")
@@ -2136,6 +2205,10 @@ extension MainLimitSummary {
     }
 
     var widgetSmallResetConfidenceText: String? {
+        widgetSmallResetConfidenceText(presentationDate: Date())
+    }
+
+    func widgetSmallResetConfidenceText(presentationDate: Date) -> String? {
         if hasAssumedScheduledResetCapacity { return "≈ reset" }
         guard let resetsAt else {
             if status == .failure {
@@ -2143,10 +2216,10 @@ extension MainLimitSummary {
             }
             return provider == .anthropic ? nil : "reset ?"
         }
-        if resetsAt < Date().addingTimeInterval(-60) {
+        if resetsAt < presentationDate.addingTimeInterval(-60) {
             return "passed"
         }
-        let relative = resetsAt.widgetRelativeText
+        let relative = resetsAt.widgetRelativeText(relativeTo: presentationDate)
         let compactRelative = relative.hasPrefix("in ") ? String(relative.dropFirst(3)) : relative
         if confidence.shouldShowWidgetResetQualifier {
             return "\(compactRelative) · \(confidence.widgetSmallLabel)"
@@ -2163,6 +2236,10 @@ extension MainLimitSummary {
     }
 
     var widgetResetText: String? {
+        widgetResetText(presentationDate: Date())
+    }
+
+    func widgetResetText(presentationDate: Date) -> String? {
         if hasAssumedScheduledResetCapacity { return "assumed reset" }
         guard let resetsAt else {
             if status == .failure {
@@ -2173,15 +2250,19 @@ extension MainLimitSummary {
             }
             return "unknown reset"
         }
-        if resetsAt < Date().addingTimeInterval(-60) {
+        if resetsAt < presentationDate.addingTimeInterval(-60) {
             return "reset passed"
         }
-        return resetsAt.widgetCompactResetText
+        return resetsAt.widgetCompactResetText(relativeTo: presentationDate)
     }
 
     var widgetResetConfidenceText: String? {
+        widgetResetConfidenceText(presentationDate: Date())
+    }
+
+    func widgetResetConfidenceText(presentationDate: Date) -> String? {
         if hasAssumedScheduledResetCapacity { return "assumed after reset" }
-        guard let resetText = widgetResetText, !resetText.isEmpty else {
+        guard let resetText = widgetResetText(presentationDate: presentationDate), !resetText.isEmpty else {
             return nil
         }
         if confidence.shouldShowWidgetResetQualifier {
@@ -2302,7 +2383,11 @@ extension Array where Element == String {
 
 extension Date {
     var widgetRelativeText: String {
-        let seconds = Int(timeIntervalSince(Date()))
+        widgetRelativeText(relativeTo: Date())
+    }
+
+    func widgetRelativeText(relativeTo presentationDate: Date) -> String {
+        let seconds = Int(timeIntervalSince(presentationDate))
         if abs(seconds) < 60 { return "now" }
         if seconds >= 0 {
             let minutes = Self.roundedUpMinutes(seconds: seconds)
@@ -2320,25 +2405,37 @@ extension Date {
     }
 
     var widgetCompactResetText: String {
-        let relative = widgetRelativeText
+        widgetCompactResetText(relativeTo: Date())
+    }
+
+    func widgetCompactResetText(relativeTo presentationDate: Date) -> String {
+        let relative = widgetRelativeText(relativeTo: presentationDate)
         let compactRelative = relative.hasPrefix("in ") ? String(relative.dropFirst(3)) : relative
-        if shouldShowWidgetDateTime {
+        if shouldShowWidgetDateTime(relativeTo: presentationDate) {
             return "\(compactRelative) · \(widgetDateTimeText)"
         }
         return compactRelative
     }
 
     var widgetDateTimeWithRelativeText: String {
-        let relative = widgetRelativeText
+        widgetDateTimeWithRelativeText(relativeTo: Date())
+    }
+
+    func widgetDateTimeWithRelativeText(relativeTo presentationDate: Date) -> String {
+        let relative = widgetRelativeText(relativeTo: presentationDate)
         let compactRelative = relative.hasPrefix("in ") ? String(relative.dropFirst(3)) : relative
-        if shouldShowWidgetDateTime {
+        if shouldShowWidgetDateTime(relativeTo: presentationDate) {
             return "\(widgetDateTimeText) (\(compactRelative))"
         }
         return compactRelative
     }
 
     var shouldShowWidgetDateTime: Bool {
-        abs(timeIntervalSince(Date())) >= 24 * 3_600
+        shouldShowWidgetDateTime(relativeTo: Date())
+    }
+
+    func shouldShowWidgetDateTime(relativeTo presentationDate: Date) -> Bool {
+        abs(timeIntervalSince(presentationDate)) >= 24 * 3_600
     }
 
     var widgetDateTimeText: String {
