@@ -375,16 +375,12 @@ public struct FastModeCapacityForecast: Codable, Equatable, Sendable {
     }
 
     public var standardBurnRatePercentPerHour: Double? {
-        guard let standardBurnRateUnitsPerHour else { return nil }
-        if unit == .percent { return standardBurnRateUnitsPerHour }
-        guard let totalUnits, totalUnits > 0 else { return nil }
+        guard let standardBurnRateUnitsPerHour, let totalUnits, totalUnits > 0 else { return nil }
         return (standardBurnRateUnitsPerHour / totalUnits) * 100
     }
 
     public var requiredBurnRatePercentPerHour: Double? {
-        guard let requiredBurnRateUnitsPerHour else { return nil }
-        if unit == .percent { return requiredBurnRateUnitsPerHour }
-        guard let totalUnits, totalUnits > 0 else { return nil }
+        guard let requiredBurnRateUnitsPerHour, let totalUnits, totalUnits > 0 else { return nil }
         return (requiredBurnRateUnitsPerHour / totalUnits) * 100
     }
 

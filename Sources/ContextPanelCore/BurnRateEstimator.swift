@@ -106,18 +106,12 @@ public enum MainLimitBurnRateEstimator {
             }
         }
 
-        if let currentWindowEstimate = currentWindowBurnEstimate(
-            summary: summary,
-            now: now,
-            minimumObservation: minimumObservation
-        ) {
-            if let historicalEstimate = bestEstimate {
-                bestEstimate = currentWindowEstimate.rate > historicalEstimate.rate
-                    ? currentWindowEstimate
-                    : historicalEstimate
-            } else {
-                bestEstimate = currentWindowEstimate
-            }
+        if bestEstimate == nil {
+            bestEstimate = currentWindowBurnEstimate(
+                summary: summary,
+                now: now,
+                minimumObservation: minimumObservation
+            )
         }
 
         guard let bestEstimate else { return nil }
@@ -189,7 +183,7 @@ public enum MainLimitBurnRateEstimator {
         minimumObservation: TimeInterval
     ) -> BucketBurnEstimate? {
         guard let windowDuration = summary.window.fixedDuration else { return nil }
-        let candidates = summary.limits.compactMap { limit -> BucketBurnEstimate? in
+        let candidates = summary.liveLimits.compactMap { limit -> BucketBurnEstimate? in
             guard
                 let used = limit.used,
                 used > 0,
@@ -213,7 +207,7 @@ public enum MainLimitBurnRateEstimator {
             return BucketBurnEstimate(
                 rate: Double(used) / (observedSeconds / 3_600),
                 observedSeconds: observedSeconds,
-                sampleCount: 1
+                sampleCount: 0
             )
         }
 
