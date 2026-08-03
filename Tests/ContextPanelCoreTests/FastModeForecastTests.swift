@@ -108,8 +108,8 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(forecast.recommendation == .saveFastMode)
     #expect(forecast.fastModeRunwayHours == 0)
     #expect(forecast.copy == "Use normal mode")
-    #expect(forecast.detailCopy == "6% left · 2%/h active")
-    #expect(forecast.burnRateCopy == "2%/h active")
+    #expect(forecast.detailCopy == "6% available · 2%/h planning")
+    #expect(forecast.burnRateCopy == "2%/h planning")
     #expect(forecast.runwayCopy == "normal lasts ~1m")
 }
 
@@ -131,7 +131,27 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(forecast.totalUnits == 200)
     #expect(forecast.recommendation == .safeThroughReset)
     #expect(forecast.copy == "Use fast mode")
-    #expect(forecast.detailCopy == "55% left · 1%/h active")
+    #expect(forecast.detailCopy == "55% available across 2 accounts · 1%/h planning")
+}
+
+@Test func capacityForecastNamesObservedAverageAndPoolSize() {
+    let forecast = FastModeCapacityForecast(
+        limitID: "openai:weekly",
+        accountName: "OpenAI Weekly pool",
+        providerLimits: [
+            openAILimit(accountName: "Personal", used: 90, limit: 100, resetsInHours: 24, windowLabel: "Weekly"),
+            openAILimit(accountName: "Work", used: 1, limit: 100, resetsInHours: 24, windowLabel: "Weekly")
+        ],
+        now: now,
+        standardBurnRate: BurnRate(mode: .standard, unitsPerHour: 2),
+        standardBurnRateObservedDurationHours: 24,
+        fastBurnRate: BurnRate(mode: .fast, unitsPerHour: 4),
+        reserveUnits: 6
+    )
+
+    #expect(forecast.capacityCopy == "55% available across 2 accounts")
+    #expect(forecast.burnRateCopy == "1%/h avg 1d")
+    #expect(forecast.detailCopy == "55% available across 2 accounts · 1%/h avg 1d")
 }
 
 @Test func capacityForecastDoesNotTreatOneLimitedAccountAsProviderLimited() {
@@ -151,8 +171,8 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(forecast.remainingUnits == 98)
     #expect(forecast.recommendation == .saveFastMode)
     #expect(forecast.copy == "Use normal mode")
-    #expect(forecast.detailCopy == "49% left · 1%/h active")
-    #expect(forecast.burnRateCopy == "1%/h active")
+    #expect(forecast.detailCopy == "49% available across 2 accounts · 1%/h planning")
+    #expect(forecast.burnRateCopy == "1%/h planning")
     #expect(forecast.runwayCopy == "normal lasts ~1d 22h")
 }
 
@@ -349,8 +369,8 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
 
     #expect(forecast.recommendation == .needsCalibration)
     #expect(forecast.copy == "Measuring burn")
-    #expect(forecast.burnRateCopy == "pace unknown")
-    #expect(forecast.burnPaceCopy == "pace unknown")
+    #expect(forecast.burnRateCopy == "measuring")
+    #expect(forecast.burnPaceCopy == "measuring")
 }
 
 @Test func capacityForecastMeasuresBurnWhenPaceCannotBeComputedAtResetBoundary() {
@@ -367,7 +387,7 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     )
 
     #expect(forecast.burnPaceRatio == nil)
-    #expect(forecast.burnPaceCopy == "pace unknown")
+    #expect(forecast.burnPaceCopy == "measuring")
 }
 
 @Test func capacityPoolIgnoresUnknownBucketsForNumericRunway() {
@@ -634,7 +654,7 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     )
     let portfolio = FastModeCapacityPortfolioForecast(forecasts: [weekly, fiveHour])
 
-    #expect(portfolio.detailCopy.contains("2%/h active"))
+    #expect(portfolio.detailCopy.contains("2%/h planning"))
     #expect(portfolio.detailCopy.contains("5h:"))
 }
 
