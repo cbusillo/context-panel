@@ -131,7 +131,7 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(forecast.totalUnits == 200)
     #expect(forecast.recommendation == .safeThroughReset)
     #expect(forecast.copy == "Use fast mode")
-    #expect(forecast.detailCopy == "55% left · 2%/h active")
+    #expect(forecast.detailCopy == "55% left · 1%/h active")
 }
 
 @Test func capacityForecastDoesNotTreatOneLimitedAccountAsProviderLimited() {
@@ -151,8 +151,8 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(forecast.remainingUnits == 98)
     #expect(forecast.recommendation == .saveFastMode)
     #expect(forecast.copy == "Use normal mode")
-    #expect(forecast.detailCopy == "49% left · 2%/h active")
-    #expect(forecast.burnRateCopy == "2%/h active")
+    #expect(forecast.detailCopy == "49% left · 1%/h active")
+    #expect(forecast.burnRateCopy == "1%/h active")
     #expect(forecast.runwayCopy == "normal lasts ~1d 22h")
 }
 
@@ -418,7 +418,7 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     #expect(estimate.sampleCount == 3)
 }
 
-@Test func observedBurnRateUsesCurrentWindowPaceWhenItExceedsRecentAverage() throws {
+@Test func observedBurnRatePrefersMeasuredHistoryOverCurrentWindowPace() throws {
     let reset = now.addingTimeInterval((7 * 24 - 2) * 3_600)
     let history = [
         storedOpenAIWeekly(savedAt: now.addingTimeInterval(-2 * 3_600), used: 1, reset: reset),
@@ -430,8 +430,22 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
     let estimates = MainLimitBurnRateEstimator.observedBurnRates(current: current, history: history, now: now)
     let estimate = try #require(estimates["openai:weekly"])
 
+    #expect(abs(estimate.unitsPerHour - 3) < 0.0001)
+    #expect(estimate.sampleCount == 3)
+}
+
+@Test func observedBurnRateUsesCurrentWindowPaceWithoutHistory() throws {
+    let reset = now.addingTimeInterval((7 * 24 - 2) * 3_600)
+    let history = [
+        storedOpenAIWeekly(savedAt: now, used: 7, reset: reset),
+    ]
+    let current = try #require(history.last?.snapshot)
+
+    let estimates = MainLimitBurnRateEstimator.observedBurnRates(current: current, history: history, now: now)
+    let estimate = try #require(estimates["openai:weekly"])
+
     #expect(abs(estimate.unitsPerHour - 3.5) < 0.0001)
-    #expect(estimate.sampleCount == 1)
+    #expect(estimate.sampleCount == 0)
 }
 
 @Test func observedBurnRateUsesAverageInsteadOfRoundedFastestTick() throws {
@@ -522,6 +536,28 @@ private let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
 
     #expect(abs(estimate.unitsPerHour - (7.0 / 3.0)) < 0.0001)
     #expect(estimate.sampleCount == 8)
+}
+
+@Test func observedBurnRateExcludesFailedAccountsFromCurrentWindowPace() throws {
+    let activeReset = now.addingTimeInterval(6 * 24 * 3_600)
+    let failedReset = now.addingTimeInterval(6 * 24 * 3_600)
+    let history = [
+        storedOpenAIWeeklyAccounts(
+            savedAt: now,
+            activeUsed: 2,
+            fullUsed: 100,
+            activeReset: activeReset,
+            fullReset: failedReset,
+            fullStatus: .failure
+        ),
+    ]
+    let current = try #require(history.last?.snapshot)
+
+    let estimates = MainLimitBurnRateEstimator.observedBurnRates(current: current, history: history, now: now)
+    let estimate = try #require(estimates["openai:weekly"])
+
+    #expect(abs(estimate.unitsPerHour - (1.0 / 12.0)) < 0.0001)
+    #expect(estimate.sampleCount == 0)
 }
 
 @Test func observedBurnRateIgnoresAccountsExhaustedByLongerWindow() throws {
@@ -812,7 +848,8 @@ private func storedOpenAIWeeklyAccounts(
     activeUsed: Int,
     fullUsed: Int,
     activeReset: Date,
-    fullReset: Date
+    fullReset: Date,
+    fullStatus: UsageStatus? = nil
 ) -> StoredUsageSnapshot {
     StoredUsageSnapshot(
         savedAt: savedAt,
@@ -843,7 +880,8 @@ private func storedOpenAIWeeklyAccounts(
                     limit: 100,
                     resetsAt: fullReset,
                     lastUpdatedAt: savedAt,
-                    confidence: .observed
+                    confidence: .observed,
+                    statusOverride: fullStatus
                 ),
             ]
         )
