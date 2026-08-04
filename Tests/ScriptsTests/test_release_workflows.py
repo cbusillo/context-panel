@@ -754,6 +754,19 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("TestFlight beta distribution: handled by the TestFlight Beta Distribution workflow", workflow)
         self.assertNotIn("TestFlight beta distribution: not requested by this workflow", workflow)
 
+    def test_app_store_upload_artifacts_retain_expected_build_manifests(self):
+        mac_workflow = self.read(".github/workflows/app-store-connect-upload.yml")
+        companion_workflow = self.read(".github/workflows/app-store-connect-companion-upload.yml")
+
+        self.assertIn(
+            ".build/app-store-connect/ExpectedBuildManifest-*.json",
+            mac_workflow,
+        )
+        self.assertIn(
+            ".build/app-store-connect-companion/ExpectedBuildManifest-*.json",
+            companion_workflow,
+        )
+
     def test_testflight_beta_distribution_workflow_uses_distribution_script(self):
         workflow = self.read(".github/workflows/testflight-beta-distribution.yml")
         script = self.read("scripts/distribute-testflight-beta.py")

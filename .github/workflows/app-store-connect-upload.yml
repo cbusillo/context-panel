@@ -177,5 +177,6 @@ jobs:
           name: app-store-connect-${{ inputs.version }}-${{ steps.build.outputs.build_number }}
           path: |
             .build/app-store-connect/UploadOptions.plist
+            .build/app-store-connect/ExpectedBuildManifest-*.json
             .build/app-store-connect/upload
           if-no-files-found: ignore
