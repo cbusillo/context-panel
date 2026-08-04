@@ -858,6 +858,7 @@ class RuntimeReceiptIngestionTests(unittest.TestCase):
             mock.patch.object(cli_module, "collect_mac_evidence", return_value=mac),
             mock.patch.object(cli_module, "collect_device_evidence", return_value=()),
             mock.patch.object(cli_module.RuntimeSessionAdapter, "collect", return_value=runtime_observation),
+            mock.patch.object(cli_module, "utc_now", return_value=NOW + timedelta(minutes=1)),
             contextlib.redirect_stdout(io.StringIO()) as output,
         ):
             exit_code = cli_module.run_status(args)
@@ -913,6 +914,7 @@ class RuntimeReceiptIngestionTests(unittest.TestCase):
             mock.patch.object(cli_module, "collect_mac_evidence", return_value=mac),
             mock.patch.object(cli_module, "collect_device_evidence", return_value=()),
             mock.patch.object(cli_module.RuntimeSessionAdapter, "collect", return_value=runtime_observation),
+            mock.patch.object(cli_module, "utc_now", return_value=NOW + timedelta(minutes=1)),
             contextlib.redirect_stdout(io.StringIO()) as output,
         ):
             exit_code = cli_module.run_status(args)

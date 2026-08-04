@@ -321,10 +321,25 @@ Prefer plain status language:
 - `setup needed`
 - `reconnect`
 
-Widget copy should stay short and answer-first. For fast-mode forecasts, use
-instrument-style copy such as `Fast mode limited`, `1.4%/h active`,
-`fast lasts ~2d`, and `reset Sat 4:12 PM (2d 21h)` instead of advisory
-sentences.
+Widget copy should stay short and answer-first. Pooled OpenAI forecasts lead
+with remaining capacity across the live account pool, a short outcome such as
+`May run low Thursday`, and the next reset. Pace copy must distinguish the
+recent observed rate from the rate that would last until reset. When recent
+history is insufficient, say `Measuring recent use` or `Not enough recent data
+yet`; never present a planning default as active or observed usage.
+
+When the 5-hour guardrail is exhausted, replace pace guidance with the direct
+status `5-hour limit reached`, identify the 5-hour window beside the capacity
+number, and say that capacity is available after reset. Do not pair a weekly
+capacity label with 5-hour outcome or reset copy.
+
+If observed 5-hour use is projected to run out before reset, use relative time
+such as `May run low in ~2h`. A weekday-only warning is reserved for the weekly
+pool because it is not precise enough for a window measured in hours.
+
+The app may explain the comparison in more detail. Medium and large widgets
+keep the same semantics at lower density, while compact surfaces may abbreviate
+weekday names. Spell out weekdays whenever the available width permits.
 
 Prompt-cache telemetry should stay lightweight in the widget: pair the most
 recent cache percentage with the token-weighted rolling average, using status
@@ -351,8 +366,9 @@ When space is tight, prefer:
 6. prompt-cache or forecast detail
 
 Large-widget density should be tested with realistic multi-account snapshots
-before committing to a visible row count. Six to eight rows is a target, not a
-promise when names, reset text, or provider states are long.
+before committing to a visible row count. The standard large widget preserves
+five lanes so reset-credit and cache controls remain legible; extra-large may
+show all six OpenAI, Anthropic, and Google 5-hour/weekly lanes when available.
 
 ## Source Of Truth
 

@@ -15,6 +15,7 @@
 		0592F3FB92DB8AE0A82C4C07 /* OAuthPKCE.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB0E4D0FF6DD744B87D215B9 /* OAuthPKCE.swift */; };
 		0697BF2466D945FCB3016D55 /* PortableSettingsControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3527625AD320E4A63AF9952D /* PortableSettingsControls.swift */; };
 		06DA906266959D16484C70BA /* ContextPanelApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 380420B70E6A75C9E356322E /* ContextPanelApp.swift */; };
+		0830F562C386366830A6370A /* KeepWorkingForecast.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66CCE8C32C453941C740CFB0 /* KeepWorkingForecast.swift */; };
 		09A9F844C809704798CF8EC2 /* ContextPanelWidgetIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 735462CA7931BEFE526B5B51 /* ContextPanelWidgetIdentity.swift */; };
 		09E997F23CD21AA0C5766C98 /* ProviderCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A625CCDC97920B24B000C170 /* ProviderCredentialStore.swift */; };
 		0BBD1DF433F345E62C6A26EF /* LimitProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */; };
@@ -98,6 +99,7 @@
 		504BF827465F73E39B4729A8 /* PromptCacheTelemetryMirrorService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3B93DAA06AE42D89A02C5EE /* PromptCacheTelemetryMirrorService.swift */; };
 		51AC31C7F9A105761C8CBD7E /* CompanionRefreshSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53708C425CC9029A9300FA79 /* CompanionRefreshSettings.swift */; };
 		532E1441DC01781C88F7243B /* ClaudeOAuthUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 895A979571D5E5C14830B41D /* ClaudeOAuthUsage.swift */; };
+		56BC4DBB050BAB3B1F4ADD13 /* KeepWorkingForecast.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66CCE8C32C453941C740CFB0 /* KeepWorkingForecast.swift */; };
 		576079E3E46B8EF5C2A9F61C /* PromptCacheTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96C85B770C80B786EAE068CF /* PromptCacheTelemetry.swift */; };
 		5873091E47623CBEB29253EF /* ContextPanelRefreshAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC712405A58ED12AA33BDC68 /* ContextPanelRefreshAgent.swift */; };
 		58B675DA547BC49D9A99A67F /* SnapshotRefreshService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45E8D3C3E45C1B6B3FACE828 /* SnapshotRefreshService.swift */; };
@@ -126,6 +128,7 @@
 		745F209B9C80F1CC162C9DE0 /* PromptCacheTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96C85B770C80B786EAE068CF /* PromptCacheTelemetry.swift */; };
 		762B3AD1D74922F681D202DF /* RefreshDiagnosticsState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DAF08B3CB69404A37DECA39 /* RefreshDiagnosticsState.swift */; };
 		764E6B79575AA8EC460441E3 /* CodexRateLimits.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FA8FE4CC9BE058D8F46FBA2 /* CodexRateLimits.swift */; };
+		77AC398E8D6CD2E953D3B3E1 /* KeepWorkingForecast.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66CCE8C32C453941C740CFB0 /* KeepWorkingForecast.swift */; };
 		7A8EFEA712279E8000D00B87 /* CompanionRefreshSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53708C425CC9029A9300FA79 /* CompanionRefreshSettings.swift */; };
 		7B416456182072C7AA839A9A /* TVAppRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0DC574A48A772716FE09735 /* TVAppRoute.swift */; };
 		7C2FC7CB5590C95244023520 /* ContextPanelDateFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9909074D7E80648BC2A01C51 /* ContextPanelDateFormatting.swift */; };
@@ -134,6 +137,7 @@
 		7D389D52287E9778C1742B44 /* ResetExpiryRefreshState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58B71A183966EEC56B955CD3 /* ResetExpiryRefreshState.swift */; };
 		7F3B4D8E43F64F798DEA1ED4 /* WatchSyncPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5B65339825AC1B0BB414797 /* WatchSyncPresentation.swift */; };
 		7FD021610CC3841DE13AD70E /* ContextPanelCompanionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E29EEFA73267A8346212E7A /* ContextPanelCompanionApp.swift */; };
+		80913A8105B8A92D137404D1 /* KeepWorkingForecast.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66CCE8C32C453941C740CFB0 /* KeepWorkingForecast.swift */; };
 		8121EE15127A2C78EED0D4B8 /* AccountConfigurationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 186D607FE2EEFDFFE2E70446 /* AccountConfigurationStore.swift */; };
 		81A1506D8F6020DB9204E7E8 /* CompanionRemoteMerge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C28E693A6A73B61184A5288 /* CompanionRemoteMerge.swift */; };
 		828DEBC58258F34231E2D514 /* TVCloudKitNotificationPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25038A5D95D954F0AB88FEA2 /* TVCloudKitNotificationPolicy.swift */; };
@@ -769,6 +773,7 @@
 		5C18341F829AEDD53F6289C5 /* WatchCompanionLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchCompanionLoader.swift; sourceTree = "<group>"; };
 		60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LimitProbe.swift; sourceTree = "<group>"; };
 		66A9D24D7A74AB11733E1FEF /* RefreshAgentRegistration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RefreshAgentRegistration.swift; sourceTree = "<group>"; };
+		66CCE8C32C453941C740CFB0 /* KeepWorkingForecast.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepWorkingForecast.swift; sourceTree = "<group>"; };
 		696876833ECD43AEF639C9B2 /* CompanionAppearanceSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionAppearanceSettings.swift; sourceTree = "<group>"; };
 		6DB3BCB79852FD08BC8D3AA1 /* ContextPanelWatchWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelWatchWidget.swift; sourceTree = "<group>"; };
 		6F1D444CA23470FFEE4A8455 /* libContextPanelValidationFixtures.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libContextPanelValidationFixtures.a; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -1029,6 +1034,7 @@
 				7BD985B0213AB5987D3B3170 /* FastModeForecast.swift */,
 				25E82B6087974E01B972918C /* GoogleAccountMigration.swift */,
 				8C29BEF2E36108729A8B4EC4 /* GoogleAntigravityQuota.swift */,
+				66CCE8C32C453941C740CFB0 /* KeepWorkingForecast.swift */,
 				60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */,
 				1161DC4C994F71A1E6CEE608 /* LimitWarning.swift */,
 				CE09AE825E3B368ED89CD521 /* LimitWarningWebhook.swift */,
@@ -2517,6 +2523,7 @@
 				8D1A72D53AC6BE2FB14449E4 /* FastModeForecast.swift in Sources */,
 				4ED761C343B83F3202C3618B /* GoogleAccountMigration.swift in Sources */,
 				C39E8B2F5A737793415839A8 /* GoogleAntigravityQuota.swift in Sources */,
+				80913A8105B8A92D137404D1 /* KeepWorkingForecast.swift in Sources */,
 				E531B1C3F49F941A7EA36603 /* LimitProbe.swift in Sources */,
 				3DC7CCECA7A97D625CC0BC9F /* LimitWarning.swift in Sources */,
 				43AEBC47E228C383860005E5 /* LimitWarningWebhook.swift in Sources */,
@@ -2650,6 +2657,7 @@
 				9C74713AEFFAC6D85E7ACF3F /* FastModeForecast.swift in Sources */,
 				4C21A68400F35036382C1798 /* GoogleAccountMigration.swift in Sources */,
 				5A0D8445C6C8B0CB88F4D643 /* GoogleAntigravityQuota.swift in Sources */,
+				77AC398E8D6CD2E953D3B3E1 /* KeepWorkingForecast.swift in Sources */,
 				0BBD1DF433F345E62C6A26EF /* LimitProbe.swift in Sources */,
 				43A84E96C9E0812C69B93E18 /* LimitWarning.swift in Sources */,
 				415899B432627D7269C97838 /* LimitWarningWebhook.swift in Sources */,
@@ -2731,6 +2739,7 @@
 				14606B9E9D56BD5A42B3E996 /* FastModeForecast.swift in Sources */,
 				4D18521AC1976FEE23EDA160 /* GoogleAccountMigration.swift in Sources */,
 				C5A3C61975B9A1E991984CF3 /* GoogleAntigravityQuota.swift in Sources */,
+				0830F562C386366830A6370A /* KeepWorkingForecast.swift in Sources */,
 				C3A20586448A247AAC46810E /* LimitProbe.swift in Sources */,
 				B7B7288471F886AA64A0C7D8 /* LimitWarning.swift in Sources */,
 				B678E00990494E22F2C547F8 /* LimitWarningWebhook.swift in Sources */,
@@ -2817,6 +2826,7 @@
 				E8ACC6912D2A5EA7BA0CC31E /* FastModeForecast.swift in Sources */,
 				33652489EF11877245519134 /* GoogleAccountMigration.swift in Sources */,
 				3336902836B9F18BD4229FDD /* GoogleAntigravityQuota.swift in Sources */,
+				56BC4DBB050BAB3B1F4ADD13 /* KeepWorkingForecast.swift in Sources */,
 				D75323A888BC8BC683D2F6AA /* LimitProbe.swift in Sources */,
 				EA29D3E7A86E79451D7D8216 /* LimitWarning.swift in Sources */,
 				7CAEB043EEE06F41D719F7A7 /* LimitWarningWebhook.swift in Sources */,

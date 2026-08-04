@@ -65,6 +65,12 @@ private struct TVRootView: View {
         )
     }
 
+    private var keepWorkingForecast: KeepWorkingForecast? {
+        guard model.snapshot.state == .ready else { return nil }
+        let forecast = model.snapshot.keepWorkingForecast(presentationDate: Date())
+        return forecast.remainingPercent == nil ? nil : forecast
+    }
+
     private var visibleNoticeMessage: String? {
         model.syncNoticeMessage
             ?? backgroundUpdateNoticeMessage
@@ -90,6 +96,10 @@ private struct TVRootView: View {
                             presentationModeRawValue: $presentationModeRawValue,
                             onRefresh: { model.reload() }
                         )
+
+                        if let keepWorkingForecast {
+                            TVKeepWorkingForecastCard(forecast: keepWorkingForecast)
+                        }
 
                         if presentation.isEmpty {
                             TVEmptyRunwayView(presentation: presentation)
@@ -162,6 +172,52 @@ private struct TVRootView: View {
         }
         navigationPath = [pendingProviderRawValue]
         self.pendingProviderRawValue = nil
+    }
+}
+
+private struct TVKeepWorkingForecastCard: View {
+    let forecast: KeepWorkingForecast
+
+    private var capacityText: String {
+        guard let remainingPercent = forecast.remainingPercent else { return "Capacity unknown" }
+        return "\(remainingPercent)% left"
+    }
+
+    private var accountText: String {
+        "OpenAI · \(forecast.windowCopy ?? "Limit") · \(forecast.accountCopy)"
+    }
+
+    private var outcomeText: String {
+        forecast.outcomeCopy(density: .full) ?? "Measuring recent use"
+    }
+
+    private var resetText: String {
+        forecast.resetCopy(density: .full) ?? "Reset time unavailable"
+    }
+
+    private var outcomeColor: Color {
+        forecast.isLimited || forecast.paceBand == .over ? .orange : .primary
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(accountText)
+                .font(.headline)
+                .foregroundStyle(.secondary)
+            HStack(alignment: .lastTextBaseline, spacing: 20) {
+                Text(capacityText)
+                    .font(.system(size: 42, weight: .semibold, design: .rounded))
+                Text(outcomeText)
+                    .font(.title3.weight(.medium))
+                    .foregroundStyle(outcomeColor)
+            }
+            Text(resetText)
+                .font(.body)
+                .foregroundStyle(.secondary)
+        }
+        .padding(28)
+        .background(Color.white.opacity(0.07))
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }
 

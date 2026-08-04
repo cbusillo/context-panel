@@ -26,6 +26,10 @@ private struct WatchRootView: View {
                     syncErrorMessage: model.lastSyncErrorMessage
                 )
 
+                if let forecast = model.keepWorkingForecast {
+                    WatchForecastSection(forecast: forecast)
+                }
+
                 if let alert = model.snapshot.primaryProviderAccessAlert {
                     WatchProviderAccessSection(alert: alert)
                 }
@@ -118,6 +122,12 @@ private final class WatchSyncModel {
         )
     }
 
+    var keepWorkingForecast: KeepWorkingForecast? {
+        guard snapshot.state == .ready else { return nil }
+        let forecast = snapshot.keepWorkingForecast(presentationDate: Date())
+        return forecast.remainingPercent == nil ? nil : forecast
+    }
+
     func reload(now: Date = Date()) {
         guard reloadTask == nil else {
             needsReloadAfterCurrentTask = true
@@ -199,6 +209,29 @@ private final class WatchSyncModel {
             outcome: exceededDeadlineWithoutSavedData ? .degraded : evidence.outcome,
             observedAt: presentationDate
         )
+    }
+}
+
+private struct WatchForecastSection: View {
+    let forecast: KeepWorkingForecast
+
+    var body: some View {
+        Section("OpenAI · \(forecast.windowCopy ?? "Limit") · \(forecast.accountCopy)") {
+            HStack {
+                Text(forecast.remainingPercent.map { "\($0)% left" } ?? "Capacity unknown")
+                    .font(.headline.monospacedDigit())
+                Spacer()
+                Text(forecast.isLimited ? "limited" : forecast.paceBand.copy)
+                    .foregroundStyle(forecast.isLimited || forecast.paceBand == .over ? .orange : .green)
+            }
+            if let outcome = forecast.outcomeCopy(density: .compact) {
+                Text(outcome)
+            }
+            if let reset = forecast.resetCopy(density: .compact) {
+                Text(reset)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 }
 

@@ -128,6 +128,13 @@ It owns staleness, setup-needed state, provider summaries, observed burn-rate
 estimates, and OpenAI fast-mode forecast selection before the SwiftUI widget
 views render anything.
 
+`KeepWorkingForecast` is the shared presentation contract for pooled OpenAI
+capacity. It combines the weekly pool with the 5-hour guardrail, exposes recent
+pace only when an observed burn rate exists, and supplies density-aware outcome
+and reset copy to the Mac app, WidgetKit, companion app, Watch, and TV. Surface
+views remain responsible for layout and for pairing this OpenAI-only forecast
+with an OpenAI primary lane.
+
 ## Connector Runtime
 
 `ContextPanelCore` owns the provider connector contract. A connector refreshes

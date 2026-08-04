@@ -193,6 +193,114 @@ private let renderCompanionWidgetLinks = ContextPanelWidgetLinks(
 }
 
 @MainActor
+@Test func observedPooledForecastRendersInMediumAndLargeWidgets() throws {
+    let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
+    func limit(
+        provider: Provider,
+        accountID: String,
+        window: String,
+        used: Int,
+        resetHours: Double
+    ) -> UsageLimit {
+        UsageLimit(
+            provider: provider,
+            accountID: accountID,
+            accountName: accountID,
+            label: "\(provider.displayName) \(window)",
+            windowLabel: window,
+            unit: .percent,
+            used: used,
+            limit: 100,
+            resetsAt: now.addingTimeInterval(resetHours * 3_600),
+            lastUpdatedAt: now,
+            confidence: .observed
+        )
+    }
+    let limits = [
+        limit(provider: .openAI, accountID: "OpenAI 1", window: "weekly", used: 42, resetHours: 96),
+        limit(provider: .openAI, accountID: "OpenAI 2", window: "weekly", used: 42, resetHours: 96),
+        limit(provider: .openAI, accountID: "OpenAI 3", window: "weekly", used: 42, resetHours: 96),
+        limit(provider: .openAI, accountID: "OpenAI 1", window: "5-hour", used: 18, resetHours: 2),
+        limit(provider: .openAI, accountID: "OpenAI 2", window: "5-hour", used: 18, resetHours: 2),
+        limit(provider: .openAI, accountID: "OpenAI 3", window: "5-hour", used: 18, resetHours: 2),
+        limit(provider: .anthropic, accountID: "Claude", window: "weekly", used: 11, resetHours: 120),
+        limit(provider: .anthropic, accountID: "Claude", window: "5-hour", used: 6, resetHours: 3),
+        limit(provider: .google, accountID: "Gemini", window: "weekly", used: 9, resetHours: 72),
+        limit(provider: .google, accountID: "Gemini", window: "5-hour", used: 1, resetHours: 5),
+    ]
+    let weekly = try #require(UsageSnapshot(generatedAt: now, limits: limits).mainLimitSummaries.first {
+        $0.provider == .openAI && $0.window == .weekly
+    })
+    let snapshot = WidgetSnapshot(
+        state: .ready,
+        generatedAt: now,
+        limits: limits,
+        observedBurnRates: [
+            weekly.id: ObservedBurnRate(
+                limitID: weekly.id,
+                unitsPerHour: 0.8,
+                observedDurationHours: 8,
+                sampleCount: 3
+            ),
+        ],
+        status: .healthy,
+        message: "Current"
+    )
+    let forecast = snapshot.keepWorkingForecast(presentationDate: now)
+    #expect(forecast.recentPercentPerHour != nil)
+    #expect(forecast.paceBand != .unknown)
+
+    let scenarios: [(String, WidgetFamily, CGFloat, CGFloat, Int)] = [
+        ("medium", .systemMedium, 344, 164, 2_500),
+        ("large", .systemLarge, 344, 344, 5_000),
+        ("extra-large", .systemExtraLarge, 720, 344, 8_000),
+    ]
+    for (name, family, width, height, minimumPixels) in scenarios {
+        let view = ContextPanelWidgetContentView(
+            family: family,
+            snapshot: snapshot,
+            displayPreferences: .defaultPreferences,
+            links: renderTestWidgetLinks,
+            presentationDate: now
+        )
+        .cpwThemeVariant(.light)
+        .frame(width: width, height: height)
+        .background(CPWTheme.surface(variant: .light))
+        let image = try #require(renderedImage(from: view, width: width, height: height))
+        try writeRenderArtifact(image, name: "pooled-forecast-\(name)-light.png")
+        #expect(nonBackgroundPixelCount(in: image) > minimumPixels)
+    }
+}
+
+@MainActor
+@Test func exhaustedFiveHourGuardrailRendersAsLimited() throws {
+    let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
+    let snapshot = resetCreditRenderSnapshot(
+        now: now,
+        weeklyUsed: 20,
+        resetInterval: 96 * 3_600,
+        fiveHourUsed: 100
+    )
+    let forecast = snapshot.keepWorkingForecast(presentationDate: now)
+    #expect(forecast.activeWindow == .fiveHour)
+    #expect(forecast.outcomeCopy(density: .compact) == "5-hour limit reached")
+
+    let view = ContextPanelWidgetContentView(
+        family: .systemMedium,
+        snapshot: snapshot,
+        displayPreferences: .defaultPreferences,
+        links: renderTestWidgetLinks,
+        presentationDate: now
+    )
+    .cpwThemeVariant(.light)
+    .frame(width: 344, height: 164)
+    .background(CPWTheme.surface(variant: .light))
+    let image = try #require(renderedImage(from: view, width: 344, height: 164))
+    try writeRenderArtifact(image, name: "pooled-forecast-five-hour-limited-light.png")
+    #expect(nonBackgroundPixelCount(in: image) > 2_500)
+}
+
+@MainActor
 @Test func actionableResetCreditRendersInMediumAndLargeWidgets() throws {
     let now = Date()
     let snapshot = resetCreditRenderSnapshot(
@@ -502,30 +610,48 @@ private func resetCreditRenderSnapshot(
     weeklyUsed: Int = 100,
     resetInterval: TimeInterval = 3 * 60 * 60,
     expiryInterval: TimeInterval = 2 * 86_400,
+    fiveHourUsed: Int? = nil,
     promptCacheObservations: [PromptCacheObservation] = [],
     promptCacheWidgetState: PromptCacheWidgetState = .unavailable
 ) -> WidgetSnapshot {
     let accountID = "openai-long-account-name"
     let configuredAccountID = "configured-openai"
+    var limits = [
+        UsageLimit(
+            provider: .openAI,
+            accountID: accountID,
+            configuredAccountID: configuredAccountID,
+            accountName: "OpenAI Long Account Name For Layout",
+            label: "Codex Weekly",
+            windowLabel: "weekly",
+            unit: .percent,
+            used: weeklyUsed,
+            limit: 100,
+            resetsAt: now.addingTimeInterval(resetInterval),
+            lastUpdatedAt: now,
+            confidence: .observed
+        ),
+    ]
+    if let fiveHourUsed {
+        limits.append(UsageLimit(
+            provider: .openAI,
+            accountID: accountID,
+            configuredAccountID: configuredAccountID,
+            accountName: "OpenAI Long Account Name For Layout",
+            label: "Codex 5-hour",
+            windowLabel: "5-hour",
+            unit: .percent,
+            used: fiveHourUsed,
+            limit: 100,
+            resetsAt: now.addingTimeInterval(2 * 3_600),
+            lastUpdatedAt: now,
+            confidence: .observed
+        ))
+    }
     return WidgetSnapshot(
         state: .ready,
         generatedAt: now,
-        limits: [
-            UsageLimit(
-                provider: .openAI,
-                accountID: accountID,
-                configuredAccountID: configuredAccountID,
-                accountName: "OpenAI Long Account Name For Layout",
-                label: "Codex Weekly",
-                windowLabel: "weekly",
-                unit: .percent,
-                used: weeklyUsed,
-                limit: 100,
-                resetsAt: now.addingTimeInterval(resetInterval),
-                lastUpdatedAt: now,
-                confidence: .observed
-            ),
-        ],
+        limits: limits,
         reports: [
             StoredProviderReport(
                 provider: .openAI,
