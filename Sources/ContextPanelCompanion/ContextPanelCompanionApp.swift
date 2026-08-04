@@ -318,6 +318,10 @@ private struct CompanionRootView: View {
                 .frame(height: layoutMode == .twoColumn ? CompanionLayoutPolicy.wideWidgetHeight : nil)
                 .frame(maxWidth: .infinity, minHeight: CompanionLayoutPolicy.wideWidgetHeight)
 
+            if let forecast = companionForecast {
+                CompanionKeepWorkingCard(forecast: forecast)
+            }
+
             CompanionProviderAccessAlertsView(alerts: model.snapshot.providerAccessAlerts)
             CompanionSyncStatusView(result: model.result)
         }
@@ -352,6 +356,12 @@ private struct CompanionRootView: View {
         }
     }
 
+    private var companionForecast: KeepWorkingForecast? {
+        guard model.snapshot.state == .ready else { return nil }
+        let forecast = model.snapshot.keepWorkingForecast(presentationDate: Date())
+        return forecast.remainingPercent == nil ? nil : forecast
+    }
+
     private func settingsColumn(layoutMode: CompanionLayoutMode) -> some View {
         VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
             CompanionWidgetMainLimitsSettingsView(
@@ -384,6 +394,44 @@ private struct CompanionRootView: View {
                 : nil,
             alignment: .topLeading
         )
+    }
+}
+
+private struct CompanionKeepWorkingCard: View {
+    @Environment(\.companionSurfacePalette) private var palette
+
+    let forecast: KeepWorkingForecast
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(forecast.promptCopy)
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(palette.primaryText)
+                Spacer()
+                Text(forecast.isLimited ? "Limited" : forecast.paceBand.copy.capitalized)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(
+                        forecast.isLimited || forecast.paceBand == .over ? .orange : palette.secondaryText
+                    )
+            }
+            Text("OpenAI · \(forecast.windowCopy ?? "Limit") · \(forecast.accountCopy) combined · \(forecast.remainingPercent ?? 0)% left")
+                .font(.subheadline)
+                .foregroundStyle(palette.secondaryText)
+            if let outcome = forecast.outcomeCopy(density: .full) {
+                Text(outcome)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(palette.primaryText)
+            }
+            if let reset = forecast.resetCopy(density: .full) {
+                Text(reset)
+                    .font(.caption)
+                    .foregroundStyle(palette.secondaryText)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(palette.cardBackground, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 

@@ -2447,15 +2447,23 @@ struct OverviewDashboard: View {
     }
 
     var body: some View {
+        let keepWorkingForecast = KeepWorkingForecast(
+            summaries: snapshot.mainLimitSummaries,
+            observedBurnRates: model.observedBurnRates,
+            settings: model.fastModeForecastSettings
+        )
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 18) {
-                HeaderCard(model: model, snapshot: snapshot)
+                HeaderCard(model: model, snapshot: snapshot, keepWorkingForecast: keepWorkingForecast)
+                if keepWorkingForecast.remainingPercent != nil && !keepWorkingForecast.isLimited {
+                    UsagePaceCard(keepWorkingForecast: keepWorkingForecast)
+                }
                 SetupStatusStrip(model: model)
                 ProviderAccessAlertsSection(alerts: model.providerAccessAlerts)
                 PromptCacheOverviewCard(summary: model.promptCacheSummary)
                 SectionHeader(
-                    title: "Main Limits",
-                    trailing: savedSummaries.isEmpty ? "No limits selected" : "\(savedSummaries.count) windows"
+                    title: "All Limits",
+                    trailing: keepWorkingForecast.rows.isEmpty ? "No limits selected" : "\(keepWorkingForecast.rows.count) windows"
                 )
                 if savedSummaries.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
@@ -2468,16 +2476,43 @@ struct OverviewDashboard: View {
                     }
                     .padding(.vertical, 8)
                 } else {
-                    VStack(spacing: 10) {
-                        ForEach(savedSummaries) { summary in
-                            MainLimitRow(
-                                summary: summary,
-                                status: providerStatusIncludingAccessAlerts(
-                                    provider: summary.provider,
-                                    baseStatuses: [summary.status],
-                                    alerts: model.providerAccessAlerts
+                    if keepWorkingForecast.rows.isEmpty {
+                        VStack(spacing: 10) {
+                            ForEach(savedSummaries) { summary in
+                                MainLimitRow(
+                                    summary: summary,
+                                    status: providerStatusIncludingAccessAlerts(
+                                        provider: summary.provider,
+                                        baseStatuses: [summary.status],
+                                        alerts: model.providerAccessAlerts
+                                    )
                                 )
-                            )
+                            }
+                        }
+                    } else {
+                        AllLimitsScanCard(
+                            rows: keepWorkingForecast.rows.filter { row in
+                                savedSummaries.contains { $0.id == row.id }
+                            },
+                            providerAccessAlerts: model.providerAccessAlerts
+                        )
+                    }
+                    let additionalSummaries = savedSummaries.filter {
+                        $0.window != .fiveHour && $0.window != .weekly
+                    }
+                    if !additionalSummaries.isEmpty {
+                        SectionHeader(title: "Other Limits")
+                        VStack(spacing: 10) {
+                            ForEach(additionalSummaries) { summary in
+                                MainLimitRow(
+                                    summary: summary,
+                                    status: providerStatusIncludingAccessAlerts(
+                                        provider: summary.provider,
+                                        baseStatuses: [summary.status],
+                                        alerts: model.providerAccessAlerts
+                                    )
+                                )
+                            }
                         }
                     }
                 }
@@ -2487,6 +2522,270 @@ struct OverviewDashboard: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .background(CPTheme.background)
+    }
+}
+
+struct UsagePaceCard: View {
+    let keepWorkingForecast: KeepWorkingForecast
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Usage pace")
+                    .font(.system(size: 15, weight: .semibold))
+                Spacer()
+                Text(keepWorkingForecast.paceBand.copy.capitalized)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(paceColor)
+            }
+
+            if let recent = keepWorkingForecast.recentPercentPerHour,
+               let required = keepWorkingForecast.requiredPercentPerHour {
+                HStack(alignment: .lastTextBaseline, spacing: 18) {
+                    PaceMetric(label: "Recent pace", value: rateText(recent), color: paceColor)
+                    Divider().frame(height: 30)
+                    PaceMetric(label: "To last until reset", value: rateText(required), color: CPTheme.primaryText)
+                    Spacer(minLength: 0)
+                }
+
+                PaceBandControl(
+                    paceBand: keepWorkingForecast.paceBand,
+                    paceRatio: recent / max(required, 0.000_001)
+                )
+            } else {
+                Text("Measuring recent use")
+                    .font(.system(size: 13))
+                    .foregroundStyle(CPTheme.secondaryText)
+            }
+
+            if let outcome = keepWorkingForecast.outcomeCopy(density: .full) {
+                Text(outcome)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(paceColor)
+            }
+        }
+        .padding(18)
+        .background(CPTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(CPTheme.stroke(cornerRadius: 12))
+    }
+
+    private var paceColor: Color {
+        switch keepWorkingForecast.paceBand {
+        case .over:
+            CPTheme.statusColor(.close)
+        case .under, .on, .idle:
+            CPTheme.statusColor(.healthy)
+        case .unknown:
+            CPTheme.secondaryText
+        }
+    }
+
+    private func rateText(_ rate: Double) -> String {
+        "\(KeepWorkingForecast.rateText(rate))/h"
+    }
+}
+
+private struct PaceMetric: View {
+    let label: String
+    let value: String
+    let color: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            CPLabel(label)
+            Text(value)
+                .font(.system(size: 20, weight: .semibold, design: .monospaced))
+                .foregroundStyle(color)
+        }
+    }
+}
+
+private struct PaceBandControl: View {
+    let paceBand: KeepWorkingPaceBand
+    let paceRatio: Double
+
+    private var markerPosition: CGFloat {
+        let normalized = min(max(paceRatio, 0), 2)
+        return normalized <= 1 ? CGFloat(normalized * 0.5) : CGFloat(0.5 + (normalized - 1) * 0.25)
+    }
+
+    var body: some View {
+        VStack(spacing: 5) {
+            HStack {
+                Text("Under pace")
+                Spacer()
+                Text("On pace")
+                Spacer()
+                Text("Over pace")
+            }
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(CPTheme.tertiaryText)
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(CPTheme.line)
+                    Capsule()
+                        .fill(CPTheme.statusColor(.healthy).opacity(0.75))
+                        .frame(width: proxy.size.width * 0.5)
+                    Capsule()
+                        .fill(CPTheme.statusColor(.close).opacity(0.75))
+                        .frame(width: proxy.size.width * 0.5)
+                        .offset(x: proxy.size.width * 0.5)
+                    Rectangle()
+                        .fill(CPTheme.primaryText.opacity(0.75))
+                        .frame(width: 1, height: 12)
+                        .offset(x: proxy.size.width * 0.5)
+                    Circle()
+                        .fill(markerColor)
+                        .frame(width: 10, height: 10)
+                        .offset(x: min(max(proxy.size.width * markerPosition - 5, 0), proxy.size.width - 10))
+                }
+            }
+            .frame(height: 8)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Usage pace")
+        .accessibilityValue(paceBand.copy)
+    }
+
+    private var markerColor: Color {
+        switch paceBand {
+        case .over:
+            CPTheme.statusColor(.close)
+        case .under, .on, .idle:
+            CPTheme.statusColor(.healthy)
+        case .unknown:
+            CPTheme.secondaryText
+        }
+    }
+}
+
+struct AllLimitsScanCard: View {
+    let rows: [KeepWorkingLimitRow]
+    let providerAccessAlerts: [ProviderAccessAlert]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Provider")
+                Spacer()
+                Text("5-hour")
+                    .frame(width: 190, alignment: .leading)
+                Text("Weekly")
+                    .frame(width: 190, alignment: .leading)
+                Text("Status")
+                    .frame(width: 82, alignment: .trailing)
+            }
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(CPTheme.tertiaryText)
+
+            ForEach(providers) { provider in
+                let fiveHour = rows.first { $0.provider == provider && $0.window == .fiveHour }
+                let weekly = rows.first { $0.provider == provider && $0.window == .weekly }
+                if fiveHour != nil || weekly != nil {
+                    AllLimitsScanRow(
+                        provider: provider,
+                        fiveHour: fiveHour,
+                        weekly: weekly,
+                        status: providerStatusIncludingAccessAlerts(
+                            provider: provider,
+                            baseStatuses: [fiveHour?.status, weekly?.status].compactMap { $0 },
+                            alerts: providerAccessAlerts
+                        )
+                    )
+                }
+            }
+        }
+        .padding(16)
+        .background(CPTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(CPTheme.stroke(cornerRadius: 12))
+    }
+
+    private var providers: [Provider] {
+        rows.reduce(into: []) { result, row in
+            if !result.contains(row.provider) {
+                result.append(row.provider)
+            }
+        }
+    }
+}
+
+private struct AllLimitsScanRow: View {
+    let provider: Provider
+    let fiveHour: KeepWorkingLimitRow?
+    let weekly: KeepWorkingLimitRow?
+    let status: UsageStatus
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ProviderBadge(provider: provider, compact: true)
+                .frame(width: 46, alignment: .leading)
+            LimitWindowScanCell(row: fiveHour, fallback: "5-hour")
+                .frame(width: 190, alignment: .leading)
+            LimitWindowScanCell(row: weekly, fallback: "Weekly")
+                .frame(width: 190, alignment: .leading)
+            Text(status.previewStatusText.capitalized)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(CPTheme.statusColor(status))
+                .frame(width: 82, alignment: .trailing)
+        }
+        .padding(.vertical, 7)
+        .overlay(alignment: .top) {
+            Divider().opacity(0.55)
+        }
+    }
+}
+
+private struct LimitWindowScanCell: View {
+    let row: KeepWorkingLimitRow?
+    let fallback: String
+
+    var body: some View {
+        if let row {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(resetCopy(row))
+                        .font(.system(size: 10))
+                        .foregroundStyle(CPTheme.secondaryText)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Text(row.remainingPercent.map { "\($0)%" } ?? "—")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                }
+                RemainingCapacityScanBar(remainingPercent: row.remainingPercent, status: row.status)
+            }
+        } else {
+            Text("No \(fallback.lowercased()) data")
+                .font(.system(size: 10))
+                .foregroundStyle(CPTheme.tertiaryText)
+        }
+    }
+
+    private func resetCopy(_ row: KeepWorkingLimitRow) -> String {
+        guard let resetsAt = row.resetsAt else { return "Reset unknown" }
+        return resetsAt.formatted(.dateTime.weekday(.wide).hour().minute())
+    }
+}
+
+private struct RemainingCapacityScanBar: View {
+    let remainingPercent: Int?
+    let status: UsageStatus
+
+    var body: some View {
+        GeometryReader { proxy in
+            Capsule()
+                .fill(CPTheme.line)
+                .overlay(alignment: .leading) {
+                    if let remainingPercent {
+                        Capsule()
+                            .fill(CPTheme.statusColor(status))
+                            .frame(width: proxy.size.width * CGFloat(remainingPercent) / 100)
+                    }
+                }
+        }
+        .frame(height: 4)
     }
 }
 
@@ -3313,6 +3612,7 @@ func providerStatusIncludingAccessAlerts(
 struct HeaderCard: View {
     @ObservedObject var model: ContextPanelAppModel
     let snapshot: UsageSnapshot
+    let keepWorkingForecast: KeepWorkingForecast
 
     private var answerSelection: MainLimitAnswerSelection {
         model.widgetPreferences.mainLimitAnswerSelection(from: snapshot.mainLimitSummaries)
@@ -3323,7 +3623,13 @@ struct HeaderCard: View {
     }
 
     private var primarySummary: MainLimitSummary? {
-        primaryLane?.summary
+        if let activeWindow = keepWorkingForecast.activeWindow,
+           let forecastSummary = snapshot.mainLimitSummaries.first(where: {
+               $0.provider == .openAI && $0.window == activeWindow
+           }) {
+            return forecastSummary
+        }
+        return primaryLane?.summary
     }
 
     private var closestSummary: MainLimitSummary? {
@@ -3340,7 +3646,7 @@ struct HeaderCard: View {
     }
 
     private var primaryStatus: UsageStatus {
-        guard let provider = primaryLane?.provider else {
+        guard let provider = primarySummary?.provider else {
             return displayStatus(source: .unknown)
         }
         return displayStatus(source: providerStatusIncludingAccessAlerts(
@@ -3361,26 +3667,40 @@ struct HeaderCard: View {
     var body: some View {
         HStack(alignment: .center, spacing: 22) {
             VStack(alignment: .leading, spacing: 10) {
-                Text(snapshot.headline)
-                    .font(.system(size: 28, weight: .semibold))
+                Text(keepWorkingForecast.remainingPercent == nil ? snapshot.headline : keepWorkingForecast.promptCopy)
+                    .font(.system(size: 21, weight: .semibold))
                     .foregroundStyle(CPTheme.primaryText)
-                    .lineLimit(2)
-                Text(snapshot.subheadline)
+                    .lineLimit(1)
+                Text(keepWorkingForecast.accountCount > 0
+                    ? "OpenAI · \(keepWorkingForecast.accountCopy) combined"
+                    : snapshot.subheadline)
                     .font(.system(size: 13))
                     .foregroundStyle(CPTheme.secondaryText)
-                VStack(alignment: .leading, spacing: 3) {
-                    CPLabel("Mode guidance")
-                    Text(model.fastModeForecast.copy)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(CPTheme.primaryText)
-                    Text("Fast mode spends about 2× capacity for about 1.5× throughput.")
+                if keepWorkingForecast.remainingPercent != nil,
+                   let outcome = keepWorkingForecast.outcomeCopy(density: .full) {
+                    Text(outcome)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(CPTheme.statusColor(
+                            keepWorkingForecast.isLimited
+                                ? .limited
+                                : keepWorkingForecast.paceBand == .over ? .close : .healthy
+                        ))
+                }
+                if let reset = keepWorkingForecast.resetCopy(density: .full) {
+                    Text(reset)
                         .font(.system(size: 12))
+                    .foregroundStyle(CPTheme.secondaryText)
+                }
+                if keepWorkingForecast.remainingPercent == nil {
+                    Text(model.fastModeForecast.copy)
+                        .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(CPTheme.secondaryText)
                 }
-                .accessibilityElement(children: .combine)
                 HStack(spacing: 8) {
-                    TagLabel("\(snapshot.mainLimitSummaries.count) main windows")
-                    TagLabel("Pooled capacity")
+                    if let recentUse = keepWorkingForecast.recentUsedCopy(density: .full) {
+                        TagLabel(recentUse)
+                    }
+                    TagLabel("\(snapshot.mainLimitSummaries.count) windows")
                     if let resetCreditSummary {
                         ResetCreditAvailabilityTag(summary: resetCreditSummary)
                     }
@@ -3394,13 +3714,13 @@ struct HeaderCard: View {
                 MetricDial(
                     metric: .remainingCapacity(remainingRatio: primarySummary?.remainingCapacityRatio),
                     status: primaryStatus,
-                    accessibilityName: primaryLane.map {
+                    accessibilityName: primarySummary.map {
                         "Main limit, \($0.provider.displayName), \($0.window.displayName), remaining capacity"
                     } ?? "Main limit remaining capacity",
                     sublabel: "left",
                     size: 116
                 )
-                Text(primaryLane.map { "\($0.provider.displayName) · \($0.window.displayName)" } ?? "No limits selected")
+                Text(primarySummary.map { "\($0.provider.displayName) · \($0.window.displayName)" } ?? "No limits selected")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(CPTheme.secondaryText)
                     .multilineTextAlignment(.center)

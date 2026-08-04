@@ -193,7 +193,7 @@ import Testing
     #expect(!mediumWidget.contains("let now = Date()"))
     #expect(!largeWidget.contains("let now = Date()"))
     #expect(mediumWidget.contains("maximumCount: 3"))
-    #expect(largeWidget.contains("maximumCount: 5"))
+    #expect(largeWidget.contains("layout == .extraLarge ? 6 : 5"))
     #expect(!mediumWidget.contains("maximumCount: resetCredit"))
     #expect(!largeWidget.contains("maximumCount: resetCredit"))
     #expect(widgetSource.contains("private struct CPWResetCreditHeaderToken"))

@@ -466,9 +466,11 @@ struct ContextPanelMediumWidget: View {
 
     var body: some View {
         let now = presentationDate
+        let keepWorkingForecast = snapshot.keepWorkingForecast(presentationDate: presentationDate)
         let primaryLane = displayPreferences.mainLimitAnswerSelection(
             from: snapshot.usageSnapshot.mainLimitSummaries
         ).primary
+        let hasPooledForecast = primaryLane?.provider == .openAI && keepWorkingForecast.remainingPercent != nil
         let resetCreditSummary = showsResetCreditSurfaces
             ? snapshot.resetCreditSurfaceSummary(now: now, maximumAge: resetCreditMaximumAge)
             : nil
@@ -478,16 +480,29 @@ struct ContextPanelMediumWidget: View {
                     CPWProblemLabel(problem, status: snapshot.widgetProblemStatus)
                 }
                 Spacer(minLength: 0)
-                CPWGlanceNumber(snapshot: snapshot, lane: primaryLane)
-                Text(snapshot.fastModeVerdict)
+                CPWGlanceNumber(
+                    snapshot: snapshot,
+                    lane: primaryLane,
+                    forecast: hasPooledForecast ? keepWorkingForecast : nil
+                )
+                Text(hasPooledForecast
+                    ? keepWorkingForecast.outcomeCopy(density: .compact) ?? "Measuring recent use"
+                    : snapshot.fastModeVerdict)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(CPWTheme.primaryText(variant: themeVariant))
                     .lineLimit(2)
-                Text(snapshot.fastModeWidgetDetail)
+                Text(hasPooledForecast
+                    ? keepWorkingForecast.isLimited
+                        ? "Available after reset"
+                        : keepWorkingForecast.paceCopy(density: .compact) ?? "Not enough recent data yet"
+                    : snapshot.fastModeWidgetDetail)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
                     .lineLimit(2)
-                Text(snapshot.fastModeResetDetail(presentationDate: presentationDate))
+                    .minimumScaleFactor(0.78)
+                Text(hasPooledForecast
+                    ? keepWorkingForecast.resetCopy(density: .compact) ?? "Reset time unavailable"
+                    : snapshot.fastModeResetDetail(presentationDate: presentationDate))
                     .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(CPWTheme.tertiaryText(variant: themeVariant))
                     .lineLimit(1)
@@ -539,9 +554,11 @@ struct ContextPanelLargeWidget: View {
 
     var body: some View {
         let now = presentationDate
+        let keepWorkingForecast = snapshot.keepWorkingForecast(presentationDate: presentationDate)
         let primaryLane = displayPreferences.mainLimitAnswerSelection(
             from: snapshot.usageSnapshot.mainLimitSummaries
         ).primary
+        let hasPooledForecast = primaryLane?.provider == .openAI && keepWorkingForecast.remainingPercent != nil
         let resetCreditSummary = showsResetCreditSurfaces
             ? snapshot.resetCreditSurfaceSummary(now: now, maximumAge: resetCreditMaximumAge)
             : nil
@@ -551,23 +568,36 @@ struct ContextPanelLargeWidget: View {
                     if let problem = snapshot.widgetProblemText(presentationDate: presentationDate) {
                         CPWProblemLabel(problem, status: snapshot.widgetProblemStatus)
                     }
-                    Text(snapshot.fastModeVerdict)
+                    Text(hasPooledForecast
+                        ? keepWorkingForecast.outcomeCopy(density: .full) ?? "Measuring recent use"
+                        : snapshot.fastModeVerdict)
                         .font(.system(size: 20, weight: .semibold))
                         .foregroundStyle(CPWTheme.primaryText(variant: themeVariant))
                         .lineLimit(2)
                         .minimumScaleFactor(0.75)
-                    Text(snapshot.fastModeDetail)
+                    Text(hasPooledForecast
+                        ? keepWorkingForecast.isLimited
+                            ? "Available after reset"
+                            : keepWorkingForecast.paceCopy(density: .full) ?? "Not enough recent data yet"
+                        : snapshot.fastModeDetail)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
                         .lineLimit(1)
-                    Text(snapshot.fastModeResetDetail(presentationDate: presentationDate))
+                        .minimumScaleFactor(0.75)
+                    Text(hasPooledForecast
+                        ? keepWorkingForecast.resetCopy(density: .full) ?? "Reset time unavailable"
+                        : snapshot.fastModeResetDetail(presentationDate: presentationDate))
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(CPWTheme.tertiaryText(variant: themeVariant))
                         .lineLimit(1)
                         .minimumScaleFactor(0.82)
                 }
                 Spacer()
-                CPWGlanceNumber(snapshot: snapshot, lane: primaryLane)
+                CPWGlanceNumber(
+                    snapshot: snapshot,
+                    lane: primaryLane,
+                    forecast: hasPooledForecast ? keepWorkingForecast : nil
+                )
             }
 
             CPWProviderSummaryGrid(snapshot: snapshot, compact: true)
@@ -576,7 +606,7 @@ struct ContextPanelLargeWidget: View {
             VStack(alignment: .leading, spacing: 6) {
                 let lanes = snapshot.visibleMainLimitLanes(
                     displayPreferences: displayPreferences,
-                    maximumCount: 5
+                    maximumCount: layout == .extraLarge ? 6 : 5
                 )
                 CPWSectionHeader(title: "Main Limits") {
                     CPWMainLimitHeaderAccessory(
@@ -1155,6 +1185,7 @@ struct CPWGlanceNumber: View {
     @Environment(\.cpwPresentationDate) private var presentationDate
     let snapshot: WidgetSnapshot
     let lane: WidgetMainLimitLane?
+    var forecast: KeepWorkingForecast? = nil
 
     private var summary: MainLimitSummary? {
         lane?.summary
@@ -1171,7 +1202,7 @@ struct CPWGlanceNumber: View {
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
                 .lineLimit(2)
-            if lane?.provider == .openAI {
+            if lane?.provider == .openAI && forecast?.activeWindow != .fiveHour {
                 CPWBurnPaceBar(
                     forecast: snapshot.fastModeForecast,
                     isStale: snapshot.state == .stale
@@ -1185,23 +1216,37 @@ struct CPWGlanceNumber: View {
     }
 
     private var headline: String {
+        if let remainingPercent = forecast?.remainingPercent {
+            return "\(remainingPercent)% left"
+        }
         if snapshot.needsProviderConnection { return "Not connected" }
         if let summary { return summary.widgetRemainingHeadline }
         return lane == nil ? "No data" : "Unknown"
     }
 
     private var subheadline: String {
+        if let forecast, let window = forecast.activeWindow {
+            return "OAI \(window.shortName) · \(forecast.accountCopy)"
+        }
         if snapshot.needsProviderConnection { return "No provider data yet" }
         guard let lane else { return snapshot.message }
         return "\(lane.provider.shortName) \(lane.window.displayName)"
     }
 
     private var accessibilityLabel: String {
+        if let forecast, let window = forecast.activeWindow {
+            return "OpenAI pooled \(window.displayName) limit"
+        }
         guard let lane else { return "Context Panel usage" }
         return "Main limit, \(lane.provider.displayName), \(lane.window.displayName)"
     }
 
     private var accessibilityValue: String {
+        if let forecast, let remainingPercent = forecast.remainingPercent {
+            let outcome = forecast.outcomeCopy(density: .full) ?? "Status unknown"
+            let reset = forecast.resetCopy(density: .full) ?? "Reset time unavailable"
+            return "\(remainingPercent) percent remaining across \(forecast.accountCopy). \(outcome). \(reset)"
+        }
         guard let summary else {
             return switch snapshot.state {
             case .ready:
