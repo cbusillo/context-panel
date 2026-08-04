@@ -1180,6 +1180,21 @@ struct CPWProblemLabel: View {
     }
 }
 
+enum CPWPooledGlanceLabel {
+    static func text(window: MainLimitWindow, accountCopy: String) -> String {
+        switch window {
+        case .fiveHour:
+            "OAI 5h · \(accountCopy)"
+        case .weekly:
+            "OAI · \(accountCopy)"
+        case .daily:
+            "OAI 1d · \(accountCopy)"
+        case .availability:
+            "OAI cap · \(accountCopy)"
+        }
+    }
+}
+
 struct CPWGlanceNumber: View {
     @Environment(\.cpwThemeVariant) private var themeVariant
     @Environment(\.cpwPresentationDate) private var presentationDate
@@ -1202,6 +1217,7 @@ struct CPWGlanceNumber: View {
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(CPWTheme.secondaryText(variant: themeVariant))
                 .lineLimit(2)
+                .minimumScaleFactor(0.8)
             if lane?.provider == .openAI && forecast?.activeWindow != .fiveHour {
                 CPWBurnPaceBar(
                     forecast: snapshot.fastModeForecast,
@@ -1226,7 +1242,7 @@ struct CPWGlanceNumber: View {
 
     private var subheadline: String {
         if let forecast, let window = forecast.activeWindow {
-            return "OAI \(window.shortName) · \(forecast.accountCopy)"
+            return CPWPooledGlanceLabel.text(window: window, accountCopy: forecast.accountCopy)
         }
         if snapshot.needsProviderConnection { return "No provider data yet" }
         guard let lane else { return snapshot.message }
@@ -1308,6 +1324,7 @@ struct CPWMainLimitRow: View {
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(CPWTheme.primaryText(variant: themeVariant))
                     .lineLimit(1)
+                    .minimumScaleFactor(0.75)
                 Spacer(minLength: 6)
                 Text(summary?.widgetUsageText ?? "No data yet")
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
