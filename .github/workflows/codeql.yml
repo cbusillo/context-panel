@@ -45,7 +45,7 @@ jobs:
             "$trusted_codeql_root/db" >> "$GITHUB_ENV"
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4
+        uses: github/codeql-action/init@v4.37.4
         with:
           languages: swift
           db-location: ${{ env.CONTEXT_PANEL_CODEQL_DB_LOCATION }}
@@ -101,7 +101,7 @@ jobs:
           swift build --target ContextPanelCore "${swift_args[@]}"
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v4
+        uses: github/codeql-action/analyze@v4.37.4
 
   cleanup-trusted-codeql:
     name: Clean Trusted CodeQL Temp
