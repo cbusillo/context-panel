@@ -272,6 +272,28 @@ private let renderCompanionWidgetLinks = ContextPanelWidgetLinks(
     }
 }
 
+@Test func pooledWidgetGlanceLabelsFitTheSignedWidgetColumn() {
+    let expectedLabels: [(MainLimitWindow, String)] = [
+        (.fiveHour, "OAI 5h · 3 accounts"),
+        (.weekly, "OAI · 3 accounts"),
+        (.daily, "OAI 1d · 3 accounts"),
+        (.availability, "OAI cap · 3 accounts"),
+    ]
+    let font = NSFont.systemFont(ofSize: 10, weight: .semibold)
+    let maximumHeight = ceil(font.ascender - font.descender + font.leading) * 2
+
+    for (window, expectedLabel) in expectedLabels {
+        let label = CPWPooledGlanceLabel.text(window: window, accountCopy: "3 accounts")
+        #expect(label == expectedLabel)
+        let bounds = (label as NSString).boundingRect(
+            with: NSSize(width: 94, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesFontLeading, .usesLineFragmentOrigin],
+            attributes: [.font: font]
+        )
+        #expect(ceil(bounds.height) <= maximumHeight)
+    }
+}
+
 @MainActor
 @Test func exhaustedFiveHourGuardrailRendersAsLimited() throws {
     let now = Date(timeIntervalSinceReferenceDate: 900_000_000)
@@ -285,19 +307,26 @@ private let renderCompanionWidgetLinks = ContextPanelWidgetLinks(
     #expect(forecast.activeWindow == .fiveHour)
     #expect(forecast.outcomeCopy(density: .compact) == "5-hour limit reached")
 
-    let view = ContextPanelWidgetContentView(
-        family: .systemMedium,
-        snapshot: snapshot,
-        displayPreferences: .defaultPreferences,
-        links: renderTestWidgetLinks,
-        presentationDate: now
-    )
-    .cpwThemeVariant(.light)
-    .frame(width: 344, height: 164)
-    .background(CPWTheme.surface(variant: .light))
-    let image = try #require(renderedImage(from: view, width: 344, height: 164))
-    try writeRenderArtifact(image, name: "pooled-forecast-five-hour-limited-light.png")
-    #expect(nonBackgroundPixelCount(in: image) > 2_500)
+    let scenarios: [(String, WidgetFamily, CGFloat, CGFloat, Int)] = [
+        ("medium", .systemMedium, 344, 164, 2_500),
+        ("large", .systemLarge, 344, 344, 5_000),
+        ("extra-large", .systemExtraLarge, 720, 344, 8_000),
+    ]
+    for (name, family, width, height, minimumPixels) in scenarios {
+        let view = ContextPanelWidgetContentView(
+            family: family,
+            snapshot: snapshot,
+            displayPreferences: .defaultPreferences,
+            links: renderTestWidgetLinks,
+            presentationDate: now
+        )
+        .cpwThemeVariant(.light)
+        .frame(width: width, height: height)
+        .background(CPWTheme.surface(variant: .light))
+        let image = try #require(renderedImage(from: view, width: width, height: height))
+        try writeRenderArtifact(image, name: "pooled-forecast-five-hour-limited-\(name)-light.png")
+        #expect(nonBackgroundPixelCount(in: image) > minimumPixels)
+    }
 }
 
 @MainActor
