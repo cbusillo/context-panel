@@ -825,6 +825,25 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("Prepare only: review submission was not created or submitted", script)
         self.assertIn("--prepare-only and --cancel-review-only are mutually exclusive", script)
 
+    def test_app_store_review_workflow_gates_live_build_mutations_on_runtime_evidence(self):
+        workflow = self.read(".github/workflows/submit-app-store-review.yml")
+        script = self.read("scripts/submit-app-store-review.py")
+        release_docs = self.read("docs/release.md")
+
+        self.assertIn("validation_report_base64:", workflow)
+        self.assertIn("Prepare Validation Report", workflow)
+        self.assertIn("args+=(--validation-report .build/validation-report.json)", workflow)
+        self.assertIn("report_required=\"false\"", workflow)
+        self.assertIn("INPUT_DRY_RUN", workflow)
+        self.assertIn("INPUT_CANCEL_REVIEW_ONLY", workflow)
+        self.assertIn("INPUT_PREPARE_ONLY", workflow)
+        self.assertIn("--validation-report", script)
+        self.assertIn("--validate-report-only", script)
+        self.assertIn("validation_report_required", script)
+        self.assertIn("exact-build runtime only", workflow)
+        self.assertIn("narrow exact-build runtime stop", release_docs)
+        self.assertIn("iPhone app/widget, iPad app/widget", release_docs)
+
     def test_app_store_review_workflow_supports_review_notes_override(self):
         workflow = self.read(".github/workflows/submit-app-store-review.yml")
         script = self.read("scripts/submit-app-store-review.py")

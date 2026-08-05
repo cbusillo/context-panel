@@ -67,6 +67,21 @@ DEFAULT_REVIEW_ITEM_OWNER_WAIT_TIMEOUT_SECONDS = 2 * 60
 DEFAULT_REVIEW_ITEM_OWNER_POLL_SECONDS = 5
 DEFAULT_REVIEW_LIMIT_OWNER_WAIT_TIMEOUT_SECONDS = 20
 TVOS_DEMO_NOTES_HEADING = "Physical Apple TV demo (reviewer-accessible, no login required):"
+REQUIRED_RUNTIME_SURFACES_BY_PLATFORM = {
+    "MAC_OS": frozenset({"macos.app", "macos.refresh-agent", "macos.widget"}),
+    "IOS": frozenset(
+        {
+            "ios.app",
+            "ios.widget",
+            "ipados.app",
+            "ipados.widget",
+            "watchos.app",
+            "watchos.complication",
+        }
+    ),
+    "VISION_OS": frozenset({"visionos.app", "visionos.widget"}),
+    "TV_OS": frozenset({"tvos.app", "tvos.top-shelf"}),
+}
 
 
 class AppStoreConnectError(RuntimeError):
@@ -1503,6 +1518,181 @@ def print_tvos_review_notes_dry_run_action(args: argparse.Namespace) -> None:
     print("Dry run: would clear copied prior-version TV_OS review notes")
 
 
+def validation_report_required(args: argparse.Namespace) -> bool:
+    if getattr(args, "validate_report_only", False):
+        return True
+    if getattr(args, "dry_run", False) or getattr(args, "cancel_review_only", False):
+        return False
+    return not getattr(args, "prepare_only", False) or bool(
+        getattr(args, "build_number", None)
+    )
+
+
+def validation_report_blockers(
+    payload: object,
+    *,
+    version: str,
+    build_number: str,
+    platform: str,
+) -> list[str]:
+    if not isinstance(payload, dict):
+        return ["the validation report root must be a JSON object"]
+
+    blockers: list[str] = []
+    if payload.get("schemaVersion") != 1:
+        blockers.append("schemaVersion must be 1")
+
+    target = payload.get("target")
+    if not isinstance(target, dict):
+        blockers.append("target is missing or malformed")
+    else:
+        if target.get("version") != version:
+            blockers.append(f"target version must be {version}")
+        if target.get("buildNumber") != build_number:
+            blockers.append(f"target build number must be {build_number}")
+
+    summary = payload.get("summary")
+    if not isinstance(summary, dict):
+        blockers.append("summary is missing or malformed")
+    else:
+        if summary.get("state") != "complete_for_slice":
+            blockers.append("summary state must be complete_for_slice")
+        if summary.get("exitCode") != 0:
+            blockers.append("summary exit code must be 0")
+
+    obtained = payload.get("obtainedEvidenceClasses")
+    runtime_receipts: dict[str, Any] = {}
+    if not isinstance(obtained, dict):
+        blockers.append("obtainedEvidenceClasses is missing or malformed")
+    else:
+        if obtained.get("appStoreConnect") != "available":
+            blockers.append("App Store Connect evidence must be available")
+        if obtained.get("canonicalMacProductionRuntime") != "proven":
+            blockers.append("the canonical Mac Production runtime must be proven")
+        raw_runtime_receipts = obtained.get("exactBuildRuntimeReceipts")
+        if not isinstance(raw_runtime_receipts, dict):
+            blockers.append("exact-build runtime receipt evidence is missing or malformed")
+        else:
+            runtime_receipts = raw_runtime_receipts
+            proven = runtime_receipts.get("proven")
+            required = runtime_receipts.get("required")
+            if runtime_receipts.get("state") != "proven":
+                blockers.append("exact-build runtime receipt state must be proven")
+            if not isinstance(required, int) or required <= 0:
+                blockers.append("at least one exact-build runtime surface must be required")
+            if proven != required:
+                blockers.append("every requested runtime surface must be proven")
+            if runtime_receipts.get("runtimeSessionResult") != "healthy":
+                blockers.append("the runtime receipt session result must be healthy")
+            diagnostics = runtime_receipts.get("diagnostics")
+            if not isinstance(diagnostics, list) or diagnostics:
+                blockers.append("runtime receipt diagnostics must be empty")
+
+        if platform == "IOS" and obtained.get("watchRestartAttestation") != "recorded":
+            blockers.append("the physical Watch restart attestation must be recorded")
+
+    session = payload.get("session")
+    requested_surfaces: set[str] = set()
+    if not isinstance(session, dict):
+        blockers.append("session is missing or malformed")
+    else:
+        raw_requested_surfaces = session.get("requestedSurfaces")
+        if not isinstance(raw_requested_surfaces, list) or not all(
+            isinstance(item, str) for item in raw_requested_surfaces
+        ):
+            blockers.append("session requested surfaces are missing or malformed")
+        else:
+            requested_surfaces = set(raw_requested_surfaces)
+            if len(requested_surfaces) != len(raw_requested_surfaces):
+                blockers.append("session requested surfaces contain duplicates")
+
+    runtime_surfaces = payload.get("runtimeSurfaces")
+    proven_surfaces: set[str] = set()
+    if not isinstance(runtime_surfaces, list):
+        blockers.append("runtimeSurfaces is missing or malformed")
+    else:
+        observed_surfaces: list[str] = []
+        for item in runtime_surfaces:
+            if not isinstance(item, dict) or not isinstance(item.get("surface"), str):
+                blockers.append("a runtime surface entry is malformed")
+                continue
+            surface = item["surface"]
+            observed_surfaces.append(surface)
+            if item.get("state") == "proven":
+                proven_surfaces.add(surface)
+            else:
+                blockers.append(f"runtime surface {surface} is not proven")
+        if len(set(observed_surfaces)) != len(observed_surfaces):
+            blockers.append("runtime surfaces contain duplicates")
+        if requested_surfaces and set(observed_surfaces) != requested_surfaces:
+            blockers.append("runtime surfaces do not match the requested session surfaces")
+        if runtime_receipts.get("required") != len(observed_surfaces):
+            blockers.append("runtime surface count does not match the receipt summary")
+
+    required_surfaces = REQUIRED_RUNTIME_SURFACES_BY_PLATFORM[platform]
+    missing_surfaces = sorted(required_surfaces - requested_surfaces)
+    if missing_surfaces:
+        blockers.append(
+            f"{platform} validation is missing required surfaces: {', '.join(missing_surfaces)}"
+        )
+    unproven_required_surfaces = sorted(required_surfaces - proven_surfaces)
+    if unproven_required_surfaces:
+        blockers.append(
+            f"{platform} required surfaces are not proven: "
+            + ", ".join(unproven_required_surfaces)
+        )
+
+    operator_flow = payload.get("operatorFlow")
+    if not isinstance(operator_flow, dict):
+        blockers.append("operatorFlow is missing or malformed")
+    else:
+        if operator_flow.get("state") != "complete":
+            blockers.append("operator flow state must be complete")
+        if operator_flow.get("readyActionCount") != 0:
+            blockers.append("operator flow must have no ready actions")
+        if operator_flow.get("deferredActionCount") != 0:
+            blockers.append("operator flow must have no deferred actions")
+        active_deferrals = operator_flow.get("activeDeferrals")
+        if not isinstance(active_deferrals, list) or active_deferrals:
+            blockers.append("operator flow must have no active deferrals")
+        runtime_diagnostics = operator_flow.get("runtimeDiagnostics")
+        if not isinstance(runtime_diagnostics, list) or runtime_diagnostics:
+            blockers.append("operator flow runtime diagnostics must be empty")
+
+    report_blockers = payload.get("blockers")
+    if not isinstance(report_blockers, list) or report_blockers:
+        blockers.append("the validation report must have no blockers")
+
+    return blockers
+
+
+def validate_validation_report(args: argparse.Namespace) -> None:
+    report_path = Path(args.validation_report)
+    try:
+        payload = json.loads(report_path.read_text())
+    except OSError as error:
+        raise AppStoreConnectError(
+            f"validation report is unavailable: {report_path}"
+        ) from error
+    except json.JSONDecodeError as error:
+        raise AppStoreConnectError("validation report is not valid JSON") from error
+
+    blockers = validation_report_blockers(
+        payload,
+        version=args.version,
+        build_number=args.build_number,
+        platform=args.platform,
+    )
+    if blockers:
+        details = "\n".join(f"- {blocker}" for blocker in blockers)
+        raise AppStoreConnectError(f"validation report rejected:\n{details}")
+    print(
+        f"Accepted exact-build validation report for {args.platform} "
+        f"{args.version} ({args.build_number})"
+    )
+    print("This gate proves required runtime evidence; visual approval and carry-forward remain separate.")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bundle-id", default=DEFAULT_BUNDLE_ID)
@@ -1554,10 +1744,30 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Validate metadata, build, blocked-version recovery, and target version path without making App Store Connect changes",
     )
+    parser.add_argument(
+        "--validation-report",
+        help="Machine-readable JSON from context-panel-validation.py final-report --json",
+    )
+    parser.add_argument(
+        "--validate-report-only",
+        action="store_true",
+        help="Validate exact-build evidence and exit without using App Store Connect credentials",
+    )
     return parser.parse_args()
 
 
 def validate_args(args: argparse.Namespace) -> None:
+    if getattr(args, "validate_report_only", False):
+        if args.dry_run or args.cancel_review_only or args.prepare_only:
+            raise AppStoreConnectError(
+                "--validate-report-only is mutually exclusive with --dry-run, "
+                "--cancel-review-only, and --prepare-only"
+            )
+        if not args.build_number:
+            raise AppStoreConnectError("--validate-report-only requires --build-number")
+        if not getattr(args, "validation_report", None):
+            raise AppStoreConnectError("--validate-report-only requires --validation-report")
+        return
     if args.prepare_only:
         if args.cancel_review_only:
             raise AppStoreConnectError("--prepare-only and --cancel-review-only are mutually exclusive")
@@ -1578,6 +1788,10 @@ def validate_args(args: argparse.Namespace) -> None:
             raise AppStoreConnectError("--tvos-demo-video-url must be a valid HTTPS URL")
     elif getattr(args, "tvos_demo_video_url", None):
         raise AppStoreConnectError("--tvos-demo-video-url is only valid with --platform TV_OS")
+    if validation_report_required(args) and not getattr(args, "validation_report", None):
+        raise AppStoreConnectError(
+            "--validation-report is required before attaching or submitting a build"
+        )
 
 
 def main() -> int:
@@ -1585,6 +1799,11 @@ def main() -> int:
     temporary_key_path: Path | None = None
     try:
         validate_args(args)
+        if validation_report_required(args):
+            validate_validation_report(args)
+        if args.validate_report_only:
+            print("Validation report preflight succeeded; no App Store Connect request was made")
+            return 0
         if not args.api_key_id or not args.api_issuer_id:
             raise AppStoreConnectError("APP_STORE_CONNECT_KEY_ID and APP_STORE_CONNECT_ISSUER_ID are required")
         key_path, temporary_key_path = expanded_key_path(args)

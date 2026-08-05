@@ -68,6 +68,12 @@ name: Submit App Store Review
         required: false
         default: false
         type: boolean
+      validation_report_base64:
+        description: >-
+          Base64 JSON from context-panel-validation.py final-report --json.
+          Required for live build attachment or submission.
+        required: false
+        type: string
   workflow_dispatch:
     inputs:
       version:
@@ -144,6 +150,12 @@ name: Submit App Store Review
         required: true
         default: false
         type: boolean
+      validation_report_base64:
+        description: >-
+          Base64 JSON from context-panel-validation.py final-report --json.
+          Required for live build attachment or submission.
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -173,6 +185,18 @@ jobs:
           .build/submit-review-venv/bin/python -m pip install --upgrade pip
           .build/submit-review-venv/bin/python -m pip install cryptography
 
+      - name: Prepare Validation Report
+        if: ${{ inputs.validation_report_base64 != '' }}
+        shell: bash
+        env:
+          INPUT_VALIDATION_REPORT_BASE64: ${{ inputs.validation_report_base64 }}
+        run: |
+          set -euo pipefail
+          mkdir -p .build
+          printf '%s' "${INPUT_VALIDATION_REPORT_BASE64}" \
+            | base64 -D > .build/validation-report.json
+          python3 -m json.tool .build/validation-report.json >/dev/null
+
       - name: Submit Review
         shell: bash
         env:
@@ -189,6 +213,7 @@ jobs:
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
           INPUT_CANCEL_REVIEW_ONLY: ${{ inputs.cancel_review_only }}
           INPUT_PREPARE_ONLY: ${{ inputs.prepare_only }}
+          INPUT_VALIDATION_REPORT_BASE64: ${{ inputs.validation_report_base64 }}
         run: |
           set -euo pipefail
           args=(
@@ -240,6 +265,21 @@ jobs:
           if [[ "${INPUT_PREPARE_ONLY}" == "true" ]]; then
             args+=(--prepare-only)
           fi
+          report_required="false"
+          if [[ "${INPUT_DRY_RUN}" != "true" && \
+            "${INPUT_CANCEL_REVIEW_ONLY}" != "true" ]]; then
+            if [[ "${INPUT_PREPARE_ONLY}" != "true" || \
+              -n "${INPUT_BUILD_NUMBER}" ]]; then
+              report_required="true"
+            fi
+          fi
+          if [[ "${report_required}" == "true" ]]; then
+            if [[ -z "${INPUT_VALIDATION_REPORT_BASE64}" ]]; then
+              echo "validation_report_base64 is required before attaching or submitting a build" >&2
+              exit 1
+            fi
+            args+=(--validation-report .build/validation-report.json)
+          fi
           submit=(
             .build/submit-review-venv/bin/python
             scripts/submit-app-store-review.py
@@ -257,5 +297,9 @@ jobs:
             echo "- Dry run: ${INPUT_DRY_RUN}"
             echo "- Cancel review only: ${INPUT_CANCEL_REVIEW_ONLY}"
             echo "- Prepare only: ${INPUT_PREPARE_ONLY}"
+            if [[ "${report_required}" == "true" ]]; then
+              echo "- Validation report SHA-256: $(shasum -a 256 .build/validation-report.json | awk '{print $1}')"
+              echo "- Evidence boundary: exact-build runtime only; visual approval and carry-forward remain separate"
+            fi
             echo "- Result: succeeded"
           } >>"${GITHUB_STEP_SUMMARY}"

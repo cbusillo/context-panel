@@ -1,5 +1,7 @@
 import importlib.util
 import io
+import json
+import tempfile
 import unittest
 import urllib.error
 from unittest.mock import patch
@@ -81,6 +83,217 @@ def build_payload(builds):
             }
         )
     return {"data": data, "included": included}
+
+
+def exact_build_validation_report(platform="MAC_OS"):
+    required_surfaces = sorted(
+        submit_app_store_review.REQUIRED_RUNTIME_SURFACES_BY_PLATFORM[platform]
+    )
+    return {
+        "schemaVersion": 1,
+        "target": {"version": "1.0.39", "buildNumber": "202608050001"},
+        "summary": {
+            "state": "complete_for_slice",
+            "stage": "exact-build runtime proven",
+            "headline": "fixture",
+            "exitCode": 0,
+        },
+        "session": {
+            "lifecycle": "active",
+            "revision": 2,
+            "requestedSurfaces": required_surfaces,
+        },
+        "requiredEvidenceClasses": [],
+        "obtainedEvidenceClasses": {
+            "appStoreConnect": "available",
+            "canonicalMacProductionRuntime": "proven",
+            "exactBuildRuntimeReceipts": {
+                "state": "proven",
+                "proven": len(required_surfaces),
+                "required": len(required_surfaces),
+                "runtimeSessionResult": "healthy",
+                "diagnostics": [],
+            },
+            "watchRestartAttestation": "recorded" if platform == "IOS" else "not-required",
+            "visualApproval": "not-evaluated-by-coordinator",
+        },
+        "runtimeSurfaces": [
+            {
+                "surface": surface,
+                "state": "proven",
+                "reason": "exact-build-runtime-receipt",
+            }
+            for surface in required_surfaces
+        ],
+        "operatorFlow": {
+            "schemaVersion": 1,
+            "state": "complete",
+            "readyActionCount": 0,
+            "deferredActionCount": 0,
+            "groups": [],
+            "notificationDecisions": [],
+            "deferrals": [],
+            "activeDeferrals": [],
+            "residualRisks": [],
+            "runtimeDiagnostics": [],
+        },
+        "blockers": [],
+        "residualRisks": ["review-pending"],
+        "limitations": ["Visual approval is not evaluated by this coordinator slice."],
+    }
+
+
+class ValidationReportGateTests(unittest.TestCase):
+    def test_accepts_exact_runtime_evidence_for_every_app_store_platform(self):
+        for platform in submit_app_store_review.REQUIRED_RUNTIME_SURFACES_BY_PLATFORM:
+            with self.subTest(platform=platform):
+                blockers = submit_app_store_review.validation_report_blockers(
+                    exact_build_validation_report(platform),
+                    version="1.0.39",
+                    build_number="202608050001",
+                    platform=platform,
+                )
+
+                self.assertEqual(blockers, [])
+
+    def test_rejects_target_mismatch_and_unproven_runtime_surface(self):
+        report = exact_build_validation_report("TV_OS")
+        report["runtimeSurfaces"][0]["state"] = "waiting"
+
+        blockers = submit_app_store_review.validation_report_blockers(
+            report,
+            version="1.0.40",
+            build_number="202608050002",
+            platform="TV_OS",
+        )
+
+        self.assertIn("target version must be 1.0.40", blockers)
+        self.assertIn("target build number must be 202608050002", blockers)
+        self.assertTrue(any("is not proven" in blocker for blocker in blockers))
+
+    def test_rejects_report_for_another_platform(self):
+        blockers = submit_app_store_review.validation_report_blockers(
+            exact_build_validation_report("MAC_OS"),
+            version="1.0.39",
+            build_number="202608050001",
+            platform="IOS",
+        )
+
+        self.assertTrue(any("IOS validation is missing required surfaces" in item for item in blockers))
+        self.assertIn("the physical Watch restart attestation must be recorded", blockers)
+
+    def test_rejects_active_deferrals_even_when_runtime_receipts_are_proven(self):
+        report = exact_build_validation_report("MAC_OS")
+        report["operatorFlow"]["state"] = "deferred"
+        report["operatorFlow"]["deferredActionCount"] = 1
+        report["operatorFlow"]["activeDeferrals"] = [{"actionId": "macos.review"}]
+
+        blockers = submit_app_store_review.validation_report_blockers(
+            report,
+            version="1.0.39",
+            build_number="202608050001",
+            platform="MAC_OS",
+        )
+
+        self.assertIn("operator flow state must be complete", blockers)
+        self.assertIn("operator flow must have no deferred actions", blockers)
+        self.assertIn("operator flow must have no active deferrals", blockers)
+
+    def test_live_build_mutations_require_a_report_but_safe_operations_do_not(self):
+        report_preflight = SimpleNamespace(
+            validate_report_only=True,
+            dry_run=False,
+            cancel_review_only=False,
+            prepare_only=False,
+            build_number="202608050001",
+        )
+        live_submit = SimpleNamespace(
+            validate_report_only=False,
+            dry_run=False,
+            cancel_review_only=False,
+            prepare_only=False,
+            build_number="202608050001",
+        )
+        live_prepare = SimpleNamespace(
+            validate_report_only=False,
+            dry_run=False,
+            cancel_review_only=False,
+            prepare_only=True,
+            build_number="202608050001",
+        )
+        safe_operations = (
+            SimpleNamespace(
+                validate_report_only=False,
+                dry_run=True,
+                cancel_review_only=False,
+                prepare_only=False,
+                build_number="202608050001",
+            ),
+            SimpleNamespace(
+                validate_report_only=False,
+                dry_run=False,
+                cancel_review_only=True,
+                prepare_only=False,
+                build_number=None,
+            ),
+            SimpleNamespace(
+                validate_report_only=False,
+                dry_run=False,
+                cancel_review_only=False,
+                prepare_only=True,
+                build_number=None,
+            ),
+        )
+
+        self.assertTrue(submit_app_store_review.validation_report_required(report_preflight))
+        self.assertTrue(submit_app_store_review.validation_report_required(live_submit))
+        self.assertTrue(submit_app_store_review.validation_report_required(live_prepare))
+        for operation in safe_operations:
+            self.assertFalse(submit_app_store_review.validation_report_required(operation))
+
+    def test_validate_validation_report_fails_before_app_store_connect_use(self):
+        report = exact_build_validation_report("MAC_OS")
+        report["operatorFlow"]["activeDeferrals"] = [{"actionId": "macos.review"}]
+        with tempfile.TemporaryDirectory() as directory:
+            report_path = Path(directory) / "report.json"
+            report_path.write_text(json.dumps(report))
+            args = SimpleNamespace(
+                validation_report=str(report_path),
+                version="1.0.39",
+                build_number="202608050001",
+                platform="MAC_OS",
+            )
+
+            with self.assertRaisesRegex(
+                submit_app_store_review.AppStoreConnectError,
+                "operator flow must have no active deferrals",
+            ):
+                submit_app_store_review.validate_validation_report(args)
+
+    def test_validate_report_only_exits_before_credentials_or_app_store_connect(self):
+        report = exact_build_validation_report("MAC_OS")
+        with tempfile.TemporaryDirectory() as directory:
+            report_path = Path(directory) / "report.json"
+            report_path.write_text(json.dumps(report))
+            args = SimpleNamespace(
+                validate_report_only=True,
+                validation_report=str(report_path),
+                version="1.0.39",
+                build_number="202608050001",
+                platform="MAC_OS",
+                dry_run=False,
+                cancel_review_only=False,
+                prepare_only=False,
+            )
+
+            with (
+                patch.object(submit_app_store_review, "parse_args", return_value=args),
+                redirect_stdout(io.StringIO()) as output,
+            ):
+                exit_code = submit_app_store_review.main()
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("no App Store Connect request was made", output.getvalue())
 
 
 class FakeASCClient:
@@ -399,6 +612,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             platform="TV_OS",
             review_notes="The app uses a Mac-published CloudKit snapshot.",
             tvos_demo_video_url=None,
+            dry_run=True,
         )
 
         submit_app_store_review.validate_args(args)
@@ -464,6 +678,7 @@ class RemoveActiveReviewVersionTests(unittest.TestCase):
             platform="TV_OS",
             review_notes="The app uses a Mac-published CloudKit snapshot.",
             tvos_demo_video_url="https://example.com/physical-apple-tv-demo.mp4",
+            dry_run=True,
         )
 
         submit_app_store_review.validate_args(args)
