@@ -37,6 +37,7 @@
       "signedValidationCoordinator": "scripts/context-panel-validation.py start-session --version <version> --build-number <build-number>",
       "signedValidationCoordinatorStatus": "scripts/context-panel-validation.py status --version <version> --build-number <build-number>",
       "signedValidationFinalReport": "scripts/context-panel-validation.py final-report --version <version> --build-number <build-number>",
+      "appStoreReviewValidationPreflight": "scripts/submit-app-store-review.py --platform <platform> --version <version> --build-number <build-number> --validation-report <final-report.json> --validate-report-only",
       "signedValidationRuntimeEvidence": "scripts/context-panel-validation.py sync-runtime-evidence --version <version> --build-number <build-number>",
       "signedValidationCoordinatorTests": "python3 -m unittest Tests/ScriptsTests/test_validation_coordinator.py Tests/ScriptsTests/test_runtime_receipt_ingestion.py Tests/ScriptsTests/test_validation_operator_flow.py Tests/ScriptsTests/test_release_workflows.py",
       "signedValidationOperatorFlowTests": "python3 -m unittest Tests/ScriptsTests/test_validation_operator_flow.py",

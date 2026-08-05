@@ -962,6 +962,58 @@ carry-forward boundary. It excludes the coordinator session ID and all device,
 account, credential, path, raw receipt, raw provider, and App Store Connect
 identifiers.
 
+Live App Store build attachment and review submission require this exact-build
+report. Generate it only after the coordinator reaches `complete_for_slice` with
+every required runtime surface proven, no active deferrals, no pending operator
+actions, and no runtime diagnostics:
+
+```sh
+scripts/context-panel-validation.py final-report \
+  --version <marketing-version> \
+  --build-number <coordinated-build-number> \
+  --json > .build/validation-report.json
+```
+
+The App Store submit helper accepts the file with `--validation-report`. The
+GitHub workflow accepts the same JSON as `validation_report_base64`; encode it
+without line wrapping before dispatch. The report is validated before App Store
+Connect credentials are used. Dry runs, cancel-only recovery, and prepare-only
+metadata staging without a build remain available without runtime evidence.
+Prepare-only runs that attach a build are gated.
+
+Validate the report without an App Store Connect request before dispatching the
+live workflow:
+
+```sh
+scripts/submit-app-store-review.py \
+  --platform <MAC_OS|IOS|VISION_OS|TV_OS> \
+  --version <marketing-version> \
+  --build-number <coordinated-build-number> \
+  --validation-report .build/validation-report.json \
+  --validate-report-only
+```
+
+The platform minimums are explicit:
+
+- `MAC_OS`: Mac app, widget, and refresh agent.
+- `IOS`: iPhone app/widget, iPad app/widget, Watch app, and complication.
+- `VISION_OS`: Vision Pro app and widget.
+- `TV_OS`: Apple TV app and Top Shelf extension.
+
+Every requested session surface must appear exactly once and be proven; the
+platform minimum must be included in that set. RC/release sessions that omit
+`--surface` therefore remain all-surface gates, while a scoped session can prove
+one platform minimum. All platform submissions also require the canonical Mac
+Production runtime because it is the companion data publisher. `IOS` review
+evidence additionally requires the documented physical Watch restart
+attestation. This release gate is stricter than the routine companion product
+check below, where one iPhone or iPad may be sufficient for a targeted smoke
+test.
+
+This is intentionally a narrow exact-build runtime stop. It does not claim that
+visual approval or carry-forward lineage is implemented; those remain explicit
+report limitations until the validation-gallery and approval-ledger work lands.
+
 When the exact Watch build is confirmed, the coordinator requests the existing
 post-install restart without performing it. After the physical restart, record
 the operator attestation so later status reads do not repeat the request:
@@ -1092,7 +1144,9 @@ diagnostics established by #456 before treating provider refresh as the cause.
 
 After the uploaded build is processed, run the `Submit App Store Review` workflow
 with the App Store marketing version, uploaded build number, and App Store
-release notes. The workflow calls `scripts/submit-app-store-review.py`, which
+release notes. For a live build attachment or submission, also provide the
+base64-encoded exact-build validation report described above. The workflow calls
+`scripts/submit-app-store-review.py`, which
 creates or reuses the App Store version for the selected platform, attaches the
 validated platform-matching build, copies localization and review-contact
 metadata from an existing version, updates `What's New`, and submits the review
@@ -1211,6 +1265,7 @@ scripts/submit-app-store-review.py \
   --platform MAC_OS \
   --version 1.0.12 \
   --build-number 202605290049 \
+  --validation-report .build/validation-report.json \
   --copy-from-version 1.0.2 \
   --whats-new "Improves multi-account provider identity handling."
 ```
