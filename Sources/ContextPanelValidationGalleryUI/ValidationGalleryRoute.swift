@@ -69,26 +69,58 @@ public enum ValidationGalleryAppearance: String, CaseIterable, Identifiable, Sen
     }
 }
 
+public enum ValidationGalleryPresentation: String, CaseIterable, Identifiable, Sendable {
+    case overview
+    case detail
+    case reconnect
+    case diagnostics
+    case settings
+    case widget
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .overview:
+            "Overview"
+        case .detail:
+            "Detail"
+        case .reconnect:
+            "Reconnect"
+        case .diagnostics:
+            "Diagnostics"
+        case .settings:
+            "Settings"
+        case .widget:
+            "Widget"
+        }
+    }
+}
+
 public struct ValidationGalleryRoute: Equatable, Hashable, Identifiable, Sendable {
     private static let allowedSchemes = Set(["contextpanel", "contextpanelcompanion"])
-    private static let allowedQueryNames = Set(["fixture", "family", "appearance"])
+    private static let allowedQueryNames = Set(["fixture", "family", "appearance", "presentation"])
 
     public let fixtureID: ValidationFixtureID
     public let family: ValidationGalleryFamily
     public let appearance: ValidationGalleryAppearance
+    public let presentation: ValidationGalleryPresentation
 
     public var id: String {
-        [fixtureID.rawValue, family.rawValue, appearance.rawValue].joined(separator: ":")
+        [fixtureID.rawValue, family.rawValue, appearance.rawValue, presentation.rawValue]
+            .joined(separator: ":")
     }
 
     public init(
         fixtureID: ValidationFixtureID = .healthy,
         family: ValidationGalleryFamily = .systemMedium,
-        appearance: ValidationGalleryAppearance = .adaptive
+        appearance: ValidationGalleryAppearance = .adaptive,
+        presentation: ValidationGalleryPresentation = .widget
     ) {
         self.fixtureID = fixtureID
         self.family = family
         self.appearance = appearance
+        self.presentation = presentation
     }
 
     public init?(url: URL) {
@@ -147,6 +179,19 @@ public struct ValidationGalleryRoute: Equatable, Hashable, Identifiable, Sendabl
             appearance = .adaptive
         }
 
-        self.init(fixtureID: fixtureID, family: family, appearance: appearance)
+        let presentation: ValidationGalleryPresentation
+        if let rawPresentation = values["presentation"] {
+            guard let parsed = ValidationGalleryPresentation(rawValue: rawPresentation) else { return nil }
+            presentation = parsed
+        } else {
+            presentation = .widget
+        }
+
+        self.init(
+            fixtureID: fixtureID,
+            family: family,
+            appearance: appearance,
+            presentation: presentation
+        )
     }
 }

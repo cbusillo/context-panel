@@ -1,8 +1,12 @@
+import AppKit
 import Foundation
+import SwiftUI
 import Testing
 
 @testable import ContextPanelApp
 @testable import ContextPanelCore
+@testable import ContextPanelValidationFixtures
+@testable import ContextPanelValidationGalleryUI
 
 @Test func appProviderStatusIncludesBlockedAccessBeyondHealthyCapacity() throws {
     let generatedAt = Date(timeIntervalSince1970: 1_800_000_000)
@@ -40,6 +44,126 @@ import Testing
     #expect(summary.detailRemainingAccessibilityValue(status: status).contains("limited"))
     #expect(summary.usedPressureAccessibilityValue(status: status).contains("limited"))
     #expect(summary.pooledCapacityAccessibilityValue(updatedText: "just now", status: status).contains("limited"))
+}
+
+@MainActor
+@Test func macValidationGalleryProductionPresentationsRender() throws {
+    let validationDirectory = FileManager.default.temporaryDirectory.appending(
+        path: "ContextPanelValidationGallery",
+        directoryHint: .isDirectory
+    )
+    try? FileManager.default.removeItem(at: validationDirectory)
+    let presentationDate = ValidationFixtureCatalog.referencePresentationDate
+    let adapter = ValidationGalleryFixtureAdapter()
+    let scenarios: [(
+        fixtureID: ValidationFixtureID,
+        presentation: ValidationGalleryPresentation,
+        appearance: ValidationGalleryAppearance,
+        dynamicTypeSize: DynamicTypeSize
+    )] = [
+        (.healthy, .overview, .light, .large),
+        (.denseAccounts, .detail, .dark, .accessibility1),
+        (.failed, .reconnect, .light, .large),
+        (.failed, .diagnostics, .dark, .large),
+    ]
+
+    for scenario in scenarios {
+        let fixture = ValidationFixtureCatalog.fixture(id: scenario.fixtureID)
+        let snapshot = adapter.snapshot(fixture: fixture, presentationDate: presentationDate)
+        let context = ValidationGalleryContext(
+            fixture: fixture,
+            snapshot: snapshot,
+            presentationDate: presentationDate,
+            presentation: scenario.presentation,
+            family: .systemLarge,
+            appearance: scenario.appearance,
+            displayPreferences: adapter.displayPreferences
+        )
+        let content = MacValidationGalleryPreview(context: context)
+            .frame(width: 1_024, height: 900)
+            .environment(\.dynamicTypeSize, scenario.dynamicTypeSize)
+        let hostingView = NSHostingView(rootView: content)
+        hostingView.appearance = NSAppearance(
+            named: scenario.appearance == .dark ? .darkAqua : .aqua
+        )
+        hostingView.frame = NSRect(x: 0, y: 0, width: 1_024, height: 900)
+        hostingView.layoutSubtreeIfNeeded()
+        let bitmap = try #require(hostingView.bitmapImageRepForCachingDisplay(in: hostingView.bounds))
+        hostingView.cacheDisplay(in: hostingView.bounds, to: bitmap)
+        let pngData = try #require(bitmap.representation(using: .png, properties: [:]))
+
+        #expect(pngData.count > 20_000)
+        if let outputDirectory = ProcessInfo.processInfo.environment[
+            "CONTEXT_PANEL_MAC_GALLERY_PREVIEW_DIRECTORY"
+        ] {
+            let outputURL = URL(fileURLWithPath: outputDirectory, isDirectory: true)
+                .appending(path: "\(scenario.presentation.rawValue)-\(scenario.fixtureID.rawValue).png")
+            try FileManager.default.createDirectory(
+                at: outputURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try pngData.write(to: outputURL, options: .atomic)
+        }
+    }
+
+    #expect(!FileManager.default.fileExists(atPath: validationDirectory.path))
+}
+
+@MainActor
+@Test func macValidationGalleryModelUsesInjectedPresentationDate() {
+    let presentationDate = ValidationFixtureCatalog.referencePresentationDate
+    let adapter = ValidationGalleryFixtureAdapter()
+    let fixture = ValidationFixtureCatalog.fixture(id: .healthy)
+    let snapshot = adapter.snapshot(fixture: fixture, presentationDate: presentationDate)
+    let context = ValidationGalleryContext(
+        fixture: fixture,
+        snapshot: snapshot,
+        presentationDate: presentationDate,
+        presentation: .overview,
+        family: .systemLarge,
+        appearance: .light,
+        displayPreferences: adapter.displayPreferences
+    )
+    let model = ContextPanelAppModel.validationFixture(context: context)
+
+    #expect(model.lastRefreshText == "1m ago")
+    #expect(model.providerAccessAlerts == snapshot.providerAccessAlerts)
+    #expect(model.currentSnapshot == snapshot.usageSnapshot.presented(at: presentationDate))
+}
+
+@MainActor
+@Test func macValidationGalleryShellRendersAtProductionWidth() throws {
+    let route = ValidationGalleryRoute(
+        fixtureID: .denseAccounts,
+        family: .systemLarge,
+        appearance: .dark,
+        presentation: .overview
+    )
+    let content = ValidationGalleryView(
+        route: route,
+        supportedPresentations: [.overview, .detail, .reconnect, .diagnostics, .widget],
+        applicationPreview: { context in
+            AnyView(MacValidationGalleryPreview(context: context))
+        }
+    )
+    .frame(width: 1_120, height: 900)
+    .environment(\.colorScheme, .dark)
+    let hostingView = NSHostingView(rootView: content)
+    hostingView.appearance = NSAppearance(named: .darkAqua)
+    hostingView.frame = NSRect(x: 0, y: 0, width: 1_120, height: 900)
+    hostingView.layoutSubtreeIfNeeded()
+    let bitmap = try #require(hostingView.bitmapImageRepForCachingDisplay(in: hostingView.bounds))
+    hostingView.cacheDisplay(in: hostingView.bounds, to: bitmap)
+    let pngData = try #require(bitmap.representation(using: .png, properties: [:]))
+
+    #expect(bitmap.pixelsWide == 1_120)
+    #expect(bitmap.pixelsHigh == 900)
+    #expect(pngData.count > 30_000)
+    if let outputPath = ProcessInfo.processInfo.environment[
+        "CONTEXT_PANEL_MAC_GALLERY_SHELL_PREVIEW_PATH"
+    ] {
+        try pngData.write(to: URL(fileURLWithPath: outputPath), options: .atomic)
+    }
 }
 
 @Test func appProviderStatusKeepsFallbackAndDegradedAsWarnings() {

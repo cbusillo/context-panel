@@ -6,6 +6,8 @@ import unittest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_SOURCE = REPO_ROOT / "Sources" / "ContextPanelValidationFixtures" / "ValidationFixtureCatalog.swift"
 GALLERY_SOURCE_ROOT = REPO_ROOT / "Sources" / "ContextPanelValidationGalleryUI"
+MAC_APP_SOURCE = REPO_ROOT / "Sources" / "ContextPanelApp" / "ContextPanelApp.swift"
+COMPANION_APP_SOURCE = REPO_ROOT / "Sources" / "ContextPanelCompanion" / "ContextPanelCompanionApp.swift"
 
 
 class ValidationGalleryTargetGraphTests(unittest.TestCase):
@@ -57,6 +59,23 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
             "WidgetCenter.shared",
         ):
             self.assertNotIn(forbidden, source)
+
+    def test_host_galleries_reuse_production_presentations_and_disable_actions(self):
+        gallery = "\n".join(path.read_text() for path in sorted(GALLERY_SOURCE_ROOT.glob("*.swift")))
+        mac_app = MAC_APP_SOURCE.read_text()
+        companion_app = COMPANION_APP_SOURCE.read_text()
+
+        self.assertEqual(gallery.count(".allowsHitTesting(false)"), 2)
+        self.assertIn("OverviewDashboard(", mac_app)
+        self.assertIn("MainLimitDetail(", mac_app)
+        self.assertIn("ReconnectDashboardLayout(", mac_app)
+        self.assertIn("MacValidationDiagnosticsPreview", mac_app)
+        self.assertIn("ContextPanelWidgetContentView(", companion_app)
+        self.assertIn("CompanionKeepWorkingCard(", companion_app)
+        self.assertIn("CompanionSyncStatusView(", companion_app)
+        self.assertIn("CompanionWidgetMainLimitsSettingsView(", companion_app)
+        self.assertIn("CompanionRefreshSettingsView(", companion_app)
+        self.assertIn("supportedPresentations: [.overview, .settings, .diagnostics, .widget]", companion_app)
 
     @staticmethod
     def yaml_target_block(project: str, target: str) -> str:

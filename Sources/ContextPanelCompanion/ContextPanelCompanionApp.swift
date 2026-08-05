@@ -262,7 +262,7 @@ private struct CompanionRootView: View {
                 }
                 ToolbarItem(placement: .secondaryAction) {
                     Button {
-                        galleryRoute = ValidationGalleryRoute()
+                        galleryRoute = ValidationGalleryRoute(presentation: .overview)
                     } label: {
                         Label("Validation Gallery", systemImage: "rectangle.on.rectangle.badge.eye")
                     }
@@ -442,7 +442,13 @@ private struct CompanionValidationGallerySheet: View {
 
     var body: some View {
         NavigationStack {
-            ValidationGalleryView(route: route)
+            ValidationGalleryView(
+                route: route,
+                supportedPresentations: [.overview, .settings, .diagnostics, .widget],
+                applicationPreview: { context in
+                    AnyView(CompanionValidationGalleryPreview(context: context))
+                }
+            )
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Done") {
@@ -451,6 +457,158 @@ private struct CompanionValidationGallerySheet: View {
                     }
                 }
         }
+        #if os(iOS)
+        .presentationDetents([.large])
+        #endif
+    }
+}
+
+private struct CompanionValidationGalleryPreview: View {
+    @Environment(\.colorScheme) private var hostColorScheme
+
+    let context: ValidationGalleryContext
+
+    private var previewColorScheme: ColorScheme {
+        switch context.appearance {
+        case .adaptive:
+            hostColorScheme
+        case .light:
+            .light
+        case .dark:
+            .dark
+        }
+    }
+
+    private var themeVariant: CPWThemeVariant {
+        #if os(visionOS)
+        previewColorScheme == .dark ? .dark : .light
+        #else
+        switch context.appearance {
+        case .adaptive:
+            .adaptive
+        case .light:
+            .light
+        case .dark:
+            .dark
+        }
+        #endif
+    }
+
+    private var surfacePalette: CompanionSurfacePalette {
+        #if os(visionOS)
+        .visionOS(appearance: previewColorScheme == .dark ? .dark : .light)
+        #else
+        .adaptive
+        #endif
+    }
+
+    private var appearanceSettings: CompanionAppearanceSettings {
+        CompanionAppearanceSettings(
+            visionOSAppAppearance: previewColorScheme == .dark ? .dark : .light
+        )
+    }
+
+    private var result: CompanionSyncLoadResult {
+        let document: CompanionSyncDocument? = switch context.snapshot.state {
+        case .setupNeeded:
+            nil
+        case .ready, .stale, .failure:
+            CompanionSyncDocument(
+                storedSnapshot: context.storedSnapshot,
+                publishedAt: context.presentationDate,
+                widgetDisplayPreferences: context.displayPreferences,
+                observedBurnRates: context.snapshot.observedBurnRates,
+                fastModeForecastSettings: context.snapshot.fastModeForecastSettings
+            )
+        }
+        return CompanionSyncLoadResult(
+            document: document,
+            status: context.snapshot.status,
+            errorMessage: context.snapshot.syncErrorMessage
+        )
+    }
+
+    private var forecast: KeepWorkingForecast? {
+        guard context.snapshot.state == .ready else { return nil }
+        let forecast = context.snapshot.keepWorkingForecast(
+            presentationDate: context.presentationDate
+        )
+        return forecast.remainingPercent == nil ? nil : forecast
+    }
+
+    var body: some View {
+        Group {
+            switch context.presentation {
+            case .overview:
+                ScrollView {
+                    VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
+                        ContextPanelWidgetContentView(
+                            family: .systemLarge,
+                            snapshot: context.snapshot,
+                            displayPreferences: context.displayPreferences,
+                            links: CompanionDeepLinks.previewLinks,
+                            showsResetCreditSurfaces: true,
+                            resetCreditMaximumAge: SnapshotFreshness.companionProviderMaximumAge,
+                            presentationDate: context.presentationDate
+                        )
+                        .cpwThemeVariant(themeVariant)
+                        .frame(maxWidth: .infinity, minHeight: CompanionLayoutPolicy.wideWidgetHeight)
+                        .background(
+                            CPWTheme.surface(variant: themeVariant),
+                            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        )
+
+                        if let forecast {
+                            CompanionKeepWorkingCard(forecast: forecast)
+                        }
+                        CompanionProviderAccessAlertsView(alerts: context.snapshot.providerAccessAlerts)
+                        CompanionSyncStatusView(result: result)
+                    }
+                    .padding(18)
+                }
+            case .diagnostics:
+                ScrollView {
+                    VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
+                        CompanionSyncStatusView(result: result)
+                        CompanionProviderAccessAlertsView(alerts: context.snapshot.providerAccessAlerts)
+                    }
+                    .padding(18)
+                }
+            case .settings:
+                ScrollView {
+                    VStack(alignment: .leading, spacing: CompanionLayoutPolicy.singleColumnSpacing) {
+                        CompanionWidgetMainLimitsSettingsView(
+                            preferences: context.displayPreferences,
+                            isLoaded: true,
+                            isEditable: false,
+                            errorMessage: nil,
+                            onVisibilityChange: { _, _ in },
+                            onMove: { _, _ in }
+                        )
+                        CompanionRefreshSettingsView(
+                            settings: .defaultSettings,
+                            errorMessage: nil,
+                            onIntervalChange: { _ in }
+                        )
+                        #if os(visionOS)
+                        CompanionAppearanceSettingsView(
+                            settings: appearanceSettings,
+                            errorMessage: nil,
+                            onAppAppearanceChange: { _ in },
+                            onWidgetAppearanceChange: { _ in }
+                        )
+                        #endif
+                    }
+                    .padding(18)
+                }
+            case .detail, .reconnect, .widget:
+                EmptyView()
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 460, alignment: .topLeading)
+        .background(surfacePalette.pageBackground)
+        .environment(\.companionSurfacePalette, surfacePalette)
+        .environment(\.colorScheme, previewColorScheme)
     }
 }
 

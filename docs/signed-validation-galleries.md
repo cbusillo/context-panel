@@ -55,11 +55,24 @@ python3 -m unittest \
   Tests/ScriptsTests/test_validation_gallery_target_graph.py
 ```
 
-## Shared Widget Gallery
+## Production Presentation Galleries
 
-The first gallery surface reuses `ContextPanelWidgetContentView` for the small,
-medium, and large widget families on macOS, iPhone, iPad, and Vision Pro. The
-catalog covers:
+The gallery reuses production presentation symbols rather than maintaining
+lookalike screens. The Mac host covers overview, account/limit detail,
+reconnect, diagnostics, and widget presentations. The iPhone, iPad, and Vision
+Pro host covers overview, settings, diagnostics, and widget presentations.
+Production actions are disabled while a gallery preview is visible, and the
+Mac fixture model uses inert refresh and runtime-receipt dependencies.
+
+The Mac reconnect preview reuses the production reconnect layout while omitting
+credential-backed account action rows. The diagnostics preview composes the
+same status, alert, cache, and detail primitives used by the app rather than
+initializing the live Settings model. Those boundaries keep fixture values from
+reaching credential, bookmark, notification, or App Group stores.
+
+The shared widget presentation reuses `ContextPanelWidgetContentView` for the
+small, medium, and large widget families on macOS, iPhone, iPad, and Vision Pro.
+The catalog covers:
 
 - healthy multi-provider capacity
 - reset pressure
@@ -83,17 +96,18 @@ change across launches or at a minute boundary while they are being reviewed.
 
 The Mac app exposes the gallery from Settings diagnostics. The iPhone, iPad, and
 Vision Pro companion app exposes it from the navigation toolbar. Signed deep
-links may select an allowlisted fixture, family, and appearance:
+links may select an allowlisted fixture, family, appearance, and presentation:
 
 ```text
-contextpanel://validation-gallery?fixture=stale&family=systemLarge&appearance=dark
-contextpanelcompanion://validation-gallery?fixture=healthy&family=systemMedium
+contextpanel://validation-gallery?fixture=stale&appearance=dark&presentation=diagnostics
+contextpanelcompanion://validation-gallery?fixture=healthy&presentation=settings
 ```
 
-Allowed query names are `fixture`, `family`, and `appearance`. Unknown,
-duplicate, empty, file-based, credential-bearing, fragmented, or nested routes
-are rejected. No route accepts a path, artifact, account identifier, or raw
-payload.
+Allowed query names are `fixture`, `family`, `appearance`, and `presentation`.
+Unknown, duplicate, empty, file-based, credential-bearing, fragmented, or
+nested routes are rejected. No route accepts a path, artifact, account
+identifier, or raw payload. Hosts expose only the presentations that exist on
+that platform.
 
 While the gallery is visible, the host may temporarily suppress idle sleep so a
 bounded review is not interrupted. The previous host setting is restored when
@@ -105,14 +119,15 @@ operator to keep a device awake while machine evidence is pending.
 Run the focused contract and render matrix:
 
 ```sh
-swift test --filter 'ContextPanelCoreTests.validation'
+swift test --filter 'ValidationGallery|validationGallery|validationFixture'
 python3 -m unittest \
   Tests/ScriptsTests/test_validation_gallery_target_graph.py
 ```
 
 The bounded render matrix covers every fixture in the medium family plus small,
-large, dark, and fit-fallback representatives. Companion archive validation
-builds the same gallery sources for iOS and visionOS.
+large, dark, fit-fallback, accessibility-size, Mac production-presentation, and
+no-fixture-write representatives. Companion archive validation builds the same
+gallery sources for iOS and visionOS.
 
 Gallery output is not yet a release-gate approval record. The visual approval
 ledger and risk-triggered carry-forward policy remain separate coordinator and

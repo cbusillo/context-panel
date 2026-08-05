@@ -562,14 +562,14 @@ struct SettingsPane: View {
 
                 VStack(alignment: .leading, spacing: 7) {
                     Button {
-                        galleryRoute = ValidationGalleryRoute()
+                        galleryRoute = ValidationGalleryRoute(presentation: .overview)
                     } label: {
                         Label("Open Validation Gallery", systemImage: "rectangle.on.rectangle.badge.eye")
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
 
-                    Text("Review fixed sample states through the production widget presentation. The gallery is read-only and never uses live account data.")
+                    Text("Review fixed sample states through the production app and widget presentations. The gallery is read-only and never uses live account data.")
                         .font(.system(size: 11))
                         .foregroundStyle(CPTheme.tertiaryText)
                         .fixedSize(horizontal: false, vertical: true)
@@ -833,7 +833,13 @@ private struct SettingsValidationGallerySheet: View {
 
     var body: some View {
         NavigationStack {
-            ValidationGalleryView(route: route)
+            ValidationGalleryView(
+                route: route,
+                supportedPresentations: [.overview, .detail, .reconnect, .diagnostics, .widget],
+                applicationPreview: { context in
+                    AnyView(MacValidationGalleryPreview(context: context))
+                }
+            )
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Done") {
@@ -842,7 +848,113 @@ private struct SettingsValidationGallerySheet: View {
                     }
                 }
         }
-        .frame(minWidth: 900, minHeight: 620)
+        .frame(minWidth: 1_120, minHeight: 720)
+    }
+}
+
+@MainActor
+struct MacValidationGalleryPreview: View {
+    @Environment(\.colorScheme) private var hostColorScheme
+    @StateObject private var model: ContextPanelAppModel
+
+    let context: ValidationGalleryContext
+
+    init(context: ValidationGalleryContext) {
+        self.context = context
+        _model = StateObject(wrappedValue: ContextPanelAppModel.validationFixture(context: context))
+    }
+
+    private var previewColorScheme: ColorScheme {
+        switch context.appearance {
+        case .adaptive:
+            hostColorScheme
+        case .light:
+            .light
+        case .dark:
+            .dark
+        }
+    }
+
+    var body: some View {
+        Group {
+            switch context.presentation {
+            case .overview:
+                OverviewDashboard(
+                    model: model,
+                    snapshot: context.snapshot.usageSnapshot,
+                    presentationDate: context.presentationDate
+                )
+            case .detail:
+                if let summary = context.snapshot.usageSnapshot.mainLimitSummaries.first {
+                    MainLimitDetail(
+                        model: model,
+                        summary: summary,
+                        generatedAt: context.snapshot.generatedAt,
+                        presentationDate: context.presentationDate
+                    )
+                } else {
+                    ContentUnavailableView(
+                        "No sample limit",
+                        systemImage: "gauge.with.dots.needle.0percent",
+                        description: Text("Choose a sample state with a limit to review the detail presentation.")
+                    )
+                }
+            case .reconnect:
+                ReconnectDashboardLayout(
+                    appModel: model,
+                    accountsTitle: "Next Step",
+                    onRefresh: {}
+                ) {
+                    Text(model.emptyAttentionActionText)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(CPTheme.secondaryText)
+                }
+            case .diagnostics:
+                MacValidationDiagnosticsPreview(context: context)
+            case .settings, .widget:
+                EmptyView()
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 460, alignment: .topLeading)
+        .environment(\.colorScheme, previewColorScheme)
+    }
+}
+
+struct MacValidationDiagnosticsPreview: View {
+    let context: ValidationGalleryContext
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                SectionHeader(title: "Diagnostics", trailing: "Sample state")
+                DetailCard(title: "Snapshot") {
+                    DetailRow(label: "Status", value: context.snapshot.status.previewStatusText)
+                    DetailRow(
+                        label: "Updated",
+                        value: context.snapshot.generatedAt.formatted(date: .abbreviated, time: .shortened)
+                    )
+                    DetailRow(label: "Fixture", value: context.fixture.title)
+                    DetailRow(label: "Proof", value: "Shared view only")
+                }
+                ProviderAccessAlertsSection(alerts: context.snapshot.providerAccessAlerts)
+                PromptCacheOverviewCard(
+                    summary: PromptCacheSummary(
+                        observations: context.snapshot.promptCacheObservations,
+                        now: context.presentationDate
+                    )
+                )
+                if let syncErrorMessage = context.snapshot.syncErrorMessage {
+                    DetailCard(title: "Refresh") {
+                        Text(syncErrorMessage)
+                            .font(.system(size: 12))
+                            .foregroundStyle(CPTheme.statusColor(.failure))
+                    }
+                }
+            }
+            .padding(22)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .background(CPTheme.background)
     }
 }
 
@@ -2438,6 +2550,17 @@ struct MainContent: View {
 struct OverviewDashboard: View {
     @ObservedObject var model: ContextPanelAppModel
     let snapshot: UsageSnapshot
+    let presentationDate: Date
+
+    init(
+        model: ContextPanelAppModel,
+        snapshot: UsageSnapshot,
+        presentationDate: Date = Date()
+    ) {
+        self.model = model
+        self.snapshot = snapshot
+        self.presentationDate = presentationDate
+    }
 
     private var savedSummaries: [MainLimitSummary] {
         model.widgetPreferences.visibleMainLimitSummaries(
@@ -2450,7 +2573,8 @@ struct OverviewDashboard: View {
         let keepWorkingForecast = KeepWorkingForecast(
             summaries: snapshot.mainLimitSummaries,
             observedBurnRates: model.observedBurnRates,
-            settings: model.fastModeForecastSettings
+            settings: model.fastModeForecastSettings,
+            now: presentationDate
         )
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 18) {
@@ -2804,74 +2928,37 @@ struct ReconnectDashboard: View {
     }
 
     var body: some View {
-        ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 18) {
-                HStack(alignment: .center, spacing: 18) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 34, weight: .semibold))
-                        .foregroundStyle(CPTheme.statusColor(.failure))
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text(appModel.attentionNavigationTitle)
-                            .font(.system(size: 28, weight: .semibold))
-                            .foregroundStyle(CPTheme.primaryText)
-                        Text(appModel.reconnectSummaryText)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(CPTheme.secondaryText)
-                            .lineLimit(2)
-                    }
-                    Spacer(minLength: 12)
-                    Button {
-                        Task { await appModel.refreshLocalConnectors() }
-                    } label: {
-                        Label(appModel.isRefreshing ? "Refreshing" : "Refresh now", systemImage: "arrow.clockwise")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(appModel.isRefreshing)
-                }
-                .padding(22)
-                .background(CPTheme.surface)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(CPTheme.stroke(cornerRadius: 12))
-
-                if !appModel.providerReportsNeedingAttention.isEmpty {
-                    DetailCard(title: "Refresh Status") {
-                        VStack(alignment: .leading, spacing: 10) {
-                            ForEach(appModel.diagnosticProviderReports) { report in
-                                DiagnosticReportRow(report: report)
+        ReconnectDashboardLayout(
+            appModel: appModel,
+            accountsTitle: accountsNeedingAction.isEmpty ? "Next Step" : "Accounts",
+            onRefresh: {
+                Task { await appModel.refreshLocalConnectors() }
+            }
+        ) {
+            if accountsNeedingAction.isEmpty {
+                Text(appModel.emptyAttentionActionText)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(CPTheme.secondaryText)
+            } else {
+                ForEach(accountsNeedingAction) { account in
+                    ReconnectAccountRow(
+                        account: account,
+                        settingsModel: settingsModel,
+                        attentionReport: appModel.providerReportNeedingAttention(for: account),
+                        refreshSummary: settingsModel.refreshSummary(
+                            for: account,
+                            storedSnapshot: appModel.storedSnapshot
+                        ),
+                        onRefresh: {
+                            Task {
+                                await appModel.refreshLocalConnectors()
+                                settingsModel.load()
                             }
                         }
-                    }
-                }
-
-                DetailCard(title: accountsNeedingAction.isEmpty ? "Next Step" : "Accounts") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        if accountsNeedingAction.isEmpty {
-                            Text(appModel.emptyAttentionActionText)
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(CPTheme.secondaryText)
-                        } else {
-                            ForEach(accountsNeedingAction) { account in
-                                ReconnectAccountRow(
-                                    account: account,
-                                    settingsModel: settingsModel,
-                                    attentionReport: appModel.providerReportNeedingAttention(for: account),
-                                    refreshSummary: settingsModel.refreshSummary(for: account, storedSnapshot: appModel.storedSnapshot),
-                                    onRefresh: {
-                                        Task {
-                                            await appModel.refreshLocalConnectors()
-                                            settingsModel.load()
-                                        }
-                                    }
-                                )
-                            }
-                        }
-                    }
+                    )
                 }
             }
-            .padding(24)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .background(CPTheme.background)
         .sheet(isPresented: $settingsModel.isClaudeOAuthCodeSheetPresented) {
             ClaudeOAuthCodeSheet(model: settingsModel) {
                 Task {
@@ -2893,6 +2980,67 @@ struct ReconnectDashboard: View {
             await appModel.refreshLocalConnectors()
             settingsModel.load()
         }
+    }
+}
+
+private struct ReconnectDashboardLayout<AccountsContent: View>: View {
+    @ObservedObject var appModel: ContextPanelAppModel
+
+    let accountsTitle: String
+    let onRefresh: () -> Void
+    @ViewBuilder let accountsContent: AccountsContent
+
+    var body: some View {
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .center, spacing: 18) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 34, weight: .semibold))
+                        .foregroundStyle(CPTheme.statusColor(.failure))
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text(appModel.attentionNavigationTitle)
+                            .font(.system(size: 28, weight: .semibold))
+                            .foregroundStyle(CPTheme.primaryText)
+                        Text(appModel.reconnectSummaryText)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(CPTheme.secondaryText)
+                            .lineLimit(2)
+                    }
+                    Spacer(minLength: 12)
+                    Button(action: onRefresh) {
+                        Label(
+                            appModel.isRefreshing ? "Refreshing" : "Refresh now",
+                            systemImage: "arrow.clockwise"
+                        )
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(appModel.isRefreshing)
+                }
+                .padding(22)
+                .background(CPTheme.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(CPTheme.stroke(cornerRadius: 12))
+
+                if !appModel.providerReportsNeedingAttention.isEmpty {
+                    DetailCard(title: "Refresh Status") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(appModel.diagnosticProviderReports) { report in
+                                DiagnosticReportRow(report: report)
+                            }
+                        }
+                    }
+                }
+
+                DetailCard(title: accountsTitle) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        accountsContent
+                    }
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .background(CPTheme.background)
     }
 }
 
@@ -4251,6 +4399,19 @@ struct MainLimitDetail: View {
     @ObservedObject var model: ContextPanelAppModel
     let summary: MainLimitSummary
     let generatedAt: Date
+    let presentationDate: Date
+
+    init(
+        model: ContextPanelAppModel,
+        summary: MainLimitSummary,
+        generatedAt: Date,
+        presentationDate: Date = Date()
+    ) {
+        self.model = model
+        self.summary = summary
+        self.generatedAt = generatedAt
+        self.presentationDate = presentationDate
+    }
 
     private var providerAccessAlerts: [ProviderAccessAlert] {
         model.providerAccessAlerts.filter { $0.provider == summary.provider }
@@ -4310,7 +4471,7 @@ struct MainLimitDetail: View {
 
                 DetailCard(title: "Accounts") {
                     ForEach(summary.previewLimits) { limit in
-                        MainLimitAccountRow(limit: limit)
+                        MainLimitAccountRow(limit: limit, presentationDate: presentationDate)
                     }
                 }
 
@@ -4351,7 +4512,7 @@ struct MainLimitDetail: View {
                 limitID: summary.id,
                 accountName: limit.accountName,
                 providerLimits: summary.liveLimits,
-                now: Date(),
+                now: presentationDate,
                 standardBurnRate: standardBurnRate.map {
                     BurnRate(mode: .standard, unitsPerHour: $0)
                 },
@@ -4368,6 +4529,12 @@ struct MainLimitDetail: View {
 
 struct MainLimitAccountRow: View {
     let limit: UsageLimit
+    let presentationDate: Date
+
+    init(limit: UsageLimit, presentationDate: Date = Date()) {
+        self.limit = limit
+        self.presentationDate = presentationDate
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -4388,7 +4555,7 @@ struct MainLimitAccountRow: View {
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundStyle(CPTheme.primaryText)
                     .assumedResetHelp(limit.isAssumedAfterScheduledReset)
-                Text(limit.previewResetConfidenceText)
+                Text(limit.previewResetConfidenceText(relativeTo: presentationDate))
                     .font(.system(size: 10))
                     .foregroundStyle(CPTheme.tertiaryText)
             }
@@ -4572,7 +4739,7 @@ final class ContextPanelAppModel: ObservableObject {
     private let refreshDiagnosticsStore = RefreshDiagnosticsStateStore(
         stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.appGroupID)
     )
-    private let limitWarningNotificationService = AppLimitWarningNotificationService.appDefault()
+    private lazy var limitWarningNotificationService = AppLimitWarningNotificationService.appDefault()
     private let refreshAttentionPolicyCache = SnapshotStoreStalenessPolicyCache(
         initialPolicy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.appMaximumAge),
         loadPolicy: {
@@ -4580,14 +4747,19 @@ final class ContextPanelAppModel: ObservableObject {
         }
     )
     private let runtimeReceiptRecorder: RuntimeReceiptRecorder
-    private let runtimeReceiptRelay: RuntimeReceiptRelayCoordinator
+    private let runtimeReceiptRelay: RuntimeReceiptRelayCoordinator?
+    private let fixedPresentationDate: Date?
+
+    private var presentationDate: Date {
+        fixedPresentationDate ?? Date()
+    }
 
     private var observedSnapshot: UsageSnapshot {
-        storedSnapshot?.snapshot ?? UsageSnapshot(generatedAt: Date(), limits: [])
+        storedSnapshot?.snapshot ?? UsageSnapshot(generatedAt: presentationDate, limits: [])
     }
 
     var currentSnapshot: UsageSnapshot {
-        observedSnapshot.presented(at: Date())
+        observedSnapshot.presented(at: presentationDate)
     }
 
     var fastModeForecast: FastModeCapacityPortfolioForecast {
@@ -4598,14 +4770,17 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     var promptCacheSummary: PromptCacheSummary {
-        PromptCacheSummary(observations: storedSnapshot?.promptCacheObservations ?? [], now: Date())
+        PromptCacheSummary(
+            observations: storedSnapshot?.promptCacheObservations ?? [],
+            now: presentationDate
+        )
     }
 
     var providerAccessAlerts: [ProviderAccessAlert] {
         guard let storedSnapshot else { return [] }
         return storedSnapshot.providerAccessAlerts(
             stalenessPolicy: refreshAttentionPolicyCache.policy,
-            now: Date()
+            now: presentationDate
         )
     }
 
@@ -4718,7 +4893,10 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     var refreshAttentionSummary: RefreshAttentionSummary? {
-        refreshAttentionPolicyCache.policy.refreshAttentionSummary(for: storedSnapshot, now: Date())
+        refreshAttentionPolicyCache.policy.refreshAttentionSummary(
+            for: storedSnapshot,
+            now: presentationDate
+        )
     }
 
     var providerReportsNeedingAttention: [StoredProviderReport] {
@@ -4776,15 +4954,56 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     init(
+        refreshService: SnapshotRefreshService? = nil,
         runtimeReceiptRecorder: RuntimeReceiptRecorder = .appDefault(surface: .macOSApp),
-        runtimeReceiptRelay: RuntimeReceiptRelayCoordinator? = nil
+        runtimeReceiptRelay: RuntimeReceiptRelayCoordinator? = nil,
+        enablesRuntimeReceiptRelay: Bool = true,
+        fixedPresentationDate: Date? = nil
     ) {
-        refreshService = .appDefault(companionRemoteStore: CompanionCloudKitSyncStoreFactory.make())
-        refreshRunner = SnapshotRefreshRunner(service: refreshService)
-        self.runtimeReceiptRecorder = runtimeReceiptRecorder
-        self.runtimeReceiptRelay = runtimeReceiptRelay ?? .appDefaultPublisher(
-            remoteStore: RuntimeReceiptCloudKitStoreFactory.make()
+        let resolvedRefreshService = refreshService ?? .appDefault(
+            companionRemoteStore: CompanionCloudKitSyncStoreFactory.make()
         )
+        self.refreshService = resolvedRefreshService
+        refreshRunner = SnapshotRefreshRunner(service: resolvedRefreshService)
+        self.runtimeReceiptRecorder = runtimeReceiptRecorder
+        self.fixedPresentationDate = fixedPresentationDate
+        self.runtimeReceiptRelay = enablesRuntimeReceiptRelay
+            ? runtimeReceiptRelay ?? .appDefaultPublisher(
+                remoteStore: RuntimeReceiptCloudKitStoreFactory.make()
+            )
+            : nil
+    }
+
+    static func validationFixture(context: ValidationGalleryContext) -> ContextPanelAppModel {
+        let validationDirectory = FileManager.default.temporaryDirectory.appending(
+            path: "ContextPanelValidationGallery",
+            directoryHint: .isDirectory
+        )
+        let refreshService = SnapshotRefreshService(
+            accountStore: AccountConfigurationStore(
+                configurationURL: validationDirectory.appending(path: "accounts.json")
+            ),
+            stores: SnapshotRefreshStores(
+                primary: JSONSnapshotStore(rootDirectory: validationDirectory)
+            ),
+            promptCacheTelemetryMirror: { _, _ in },
+            promptCacheTelemetryReader: { _ in [] }
+        )
+        let model = ContextPanelAppModel(
+            refreshService: refreshService,
+            runtimeReceiptRecorder: .disabled(),
+            enablesRuntimeReceiptRelay: false,
+            fixedPresentationDate: context.presentationDate
+        )
+        model.storedSnapshot = context.storedSnapshot
+        model.storeStatus = context.snapshot.status
+        model.historyCount = 3
+        model.widgetPreferences = context.displayPreferences
+        model.fastModeForecastSettings = context.snapshot.fastModeForecastSettings
+        model.observedBurnRates = context.snapshot.observedBurnRates
+        model.errorMessage = context.snapshot.syncErrorMessage
+        model.lastRefreshAt = context.snapshot.generatedAt
+        return model
     }
 
     func loadSnapshot(reloadWidgetTimelines: Bool = true) {
@@ -4852,7 +5071,8 @@ final class ContextPanelAppModel: ObservableObject {
             stateBranch: stateBranch,
             outcome: outcome
         )
-        Task { [runtimeReceiptRelay] in
+        guard let runtimeReceiptRelay else { return }
+        Task {
             _ = await runtimeReceiptRelay.synchronize()
         }
     }
@@ -4985,7 +5205,7 @@ final class ContextPanelAppModel: ObservableObject {
     }
 
     func relativeTime(_ date: Date) -> String {
-        let seconds = max(Int(Date().timeIntervalSince(date)), 0)
+        let seconds = max(Int(presentationDate.timeIntervalSince(date)), 0)
         if seconds < 60 { return "just now" }
         let minutes = seconds / 60
         if minutes < 60 { return "\(minutes)m ago" }
@@ -6188,21 +6408,29 @@ extension UsageLimit {
     }
 
     var resetText: String {
-        if status == .failure { return "refresh failed" }
-        if isAssumedAfterScheduledReset { return "assumed reset" }
-        guard let resetsAt else { return "reset not reported" }
-        if resetsAt < Date().addingTimeInterval(-60) { return "reset passed" }
-        if resetsAt.shouldShowWidgetDateTime {
-            return "resets \(resetsAt.widgetRelativeText) · \(resetsAt.widgetDateTimeText)"
-        }
-        return "resets \(resetsAt.widgetRelativeText)"
+        resetText(relativeTo: Date())
     }
 
     var previewResetConfidenceText: String {
+        previewResetConfidenceText(relativeTo: Date())
+    }
+
+    func previewResetConfidenceText(relativeTo presentationDate: Date) -> String {
         if isAssumedAfterScheduledReset {
             return UsagePresentationAssumption.scheduledReset.displayText.lowercased()
         }
-        return "\(resetText) · \(confidence.previewText)"
+        return "\(resetText(relativeTo: presentationDate)) · \(confidence.previewText)"
+    }
+
+    func resetText(relativeTo presentationDate: Date) -> String {
+        if status == .failure { return "refresh failed" }
+        if isAssumedAfterScheduledReset { return "assumed reset" }
+        guard let resetsAt else { return "reset not reported" }
+        if resetsAt < presentationDate.addingTimeInterval(-60) { return "reset passed" }
+        if resetsAt.shouldShowWidgetDateTime(relativeTo: presentationDate) {
+            return "resets \(resetsAt.widgetRelativeText(relativeTo: presentationDate)) · \(resetsAt.widgetDateTimeText)"
+        }
+        return "resets \(resetsAt.widgetRelativeText(relativeTo: presentationDate))"
     }
 
     private var assumptionPrefix: String {
@@ -6333,7 +6561,11 @@ extension Array where Element == String {
 
 extension Date {
     var widgetRelativeText: String {
-        let seconds = Int(timeIntervalSince(Date()))
+        widgetRelativeText(relativeTo: Date())
+    }
+
+    func widgetRelativeText(relativeTo presentationDate: Date) -> String {
+        let seconds = Int(timeIntervalSince(presentationDate))
         if abs(seconds) < 60 { return "now" }
         if seconds >= 0 {
             let minutes = Self.roundedUpMinutes(seconds: seconds)
@@ -6351,7 +6583,11 @@ extension Date {
     }
 
     var shouldShowWidgetDateTime: Bool {
-        abs(timeIntervalSince(Date())) >= 24 * 3_600
+        shouldShowWidgetDateTime(relativeTo: Date())
+    }
+
+    func shouldShowWidgetDateTime(relativeTo presentationDate: Date) -> Bool {
+        abs(timeIntervalSince(presentationDate)) >= 24 * 3_600
     }
 
     var widgetDateTimeWithRelativeText: String {
