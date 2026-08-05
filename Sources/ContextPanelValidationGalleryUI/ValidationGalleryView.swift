@@ -9,24 +9,86 @@ import AppKit
 import UIKit
 #endif
 
+public struct ValidationGalleryContext: Identifiable, Sendable {
+    public let fixture: ValidationFixture
+    public let snapshot: WidgetSnapshot
+    public let presentationDate: Date
+    public let presentation: ValidationGalleryPresentation
+    public let family: ValidationGalleryFamily
+    public let appearance: ValidationGalleryAppearance
+    public let displayPreferences: WidgetDisplayPreferences
+
+    public init(
+        fixture: ValidationFixture,
+        snapshot: WidgetSnapshot,
+        presentationDate: Date,
+        presentation: ValidationGalleryPresentation,
+        family: ValidationGalleryFamily,
+        appearance: ValidationGalleryAppearance,
+        displayPreferences: WidgetDisplayPreferences
+    ) {
+        self.fixture = fixture
+        self.snapshot = snapshot
+        self.presentationDate = presentationDate
+        self.presentation = presentation
+        self.family = family
+        self.appearance = appearance
+        self.displayPreferences = displayPreferences
+    }
+
+    public var id: String {
+        [
+            fixture.id.rawValue,
+            presentation.rawValue,
+            family.rawValue,
+            appearance.rawValue,
+        ].joined(separator: ":")
+    }
+
+    public var storedSnapshot: StoredUsageSnapshot {
+        StoredUsageSnapshot(
+            savedAt: snapshot.generatedAt,
+            snapshot: snapshot.usageSnapshot,
+            reports: snapshot.reports,
+            promptCacheObservations: snapshot.promptCacheObservations
+        )
+    }
+}
+
 public struct ValidationGalleryView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     private let presentationDate: Date
     private let adapter = ValidationGalleryFixtureAdapter()
+    private let supportedPresentations: [ValidationGalleryPresentation]
+    private let applicationPreview: ((ValidationGalleryContext) -> AnyView)?
 
     @State private var fixtureID: ValidationFixtureID
     @State private var family: ValidationGalleryFamily
     @State private var appearance: ValidationGalleryAppearance
+    @State private var presentation: ValidationGalleryPresentation
 
     public init(
         route: ValidationGalleryRoute = ValidationGalleryRoute(),
-        presentationDate: Date = ValidationFixtureCatalog.referencePresentationDate
+        presentationDate: Date = ValidationFixtureCatalog.referencePresentationDate,
+        supportedPresentations: [ValidationGalleryPresentation] = [.widget],
+        applicationPreview: ((ValidationGalleryContext) -> AnyView)? = nil
     ) {
         self.presentationDate = presentationDate
+        let allowedPresentations = supportedPresentations.filter { presentation in
+            presentation == .widget || applicationPreview != nil
+        }
+        let normalizedPresentations = allowedPresentations.isEmpty ? [.widget] : allowedPresentations
+        self.supportedPresentations = normalizedPresentations
+        self.applicationPreview = applicationPreview
         _fixtureID = State(initialValue: route.fixtureID)
         _family = State(initialValue: route.family)
         _appearance = State(initialValue: route.appearance)
+        _presentation = State(
+            initialValue: normalizedPresentations.contains(route.presentation)
+                ? route.presentation
+                : normalizedPresentations[0]
+        )
     }
 
     private var fixture: ValidationFixture {
@@ -35,6 +97,18 @@ public struct ValidationGalleryView: View {
 
     private var snapshot: WidgetSnapshot {
         adapter.snapshot(fixture: fixture, presentationDate: presentationDate)
+    }
+
+    private var context: ValidationGalleryContext {
+        ValidationGalleryContext(
+            fixture: fixture,
+            snapshot: snapshot,
+            presentationDate: presentationDate,
+            presentation: presentation,
+            family: family,
+            appearance: appearance,
+            displayPreferences: adapter.displayPreferences
+        )
     }
 
     public var body: some View {
@@ -77,7 +151,7 @@ public struct ValidationGalleryView: View {
         ScrollView {
             LazyVStack(spacing: 6) {
                 ForEach(ValidationFixtureCatalog.all) { fixture in
-                    fixtureButton(fixture, compact: false)
+                    fixtureButton(fixture)
                 }
             }
             .padding(12)
@@ -98,28 +172,27 @@ public struct ValidationGalleryView: View {
             }
             .labelsHidden()
             .pickerStyle(.menu)
+            .accessibilityIdentifier("gallery-fixture-picker")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(pageBackground)
     }
 
-    private func fixtureButton(_ fixture: ValidationFixture, compact: Bool) -> some View {
+    private func fixtureButton(_ fixture: ValidationFixture) -> some View {
         Button {
             fixtureID = fixture.id
         } label: {
             HStack(spacing: 9) {
-                VStack(alignment: .leading, spacing: compact ? 0 : 3) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text(fixture.title)
-                        .font(compact ? .subheadline.weight(.semibold) : .headline)
+                        .font(.headline)
                         .foregroundStyle(.primary)
                         .lineLimit(1)
-                    if !compact {
-                        Text(fixture.purpose)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    }
+                    Text(fixture.purpose)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
                 }
                 if fixture.id == fixtureID {
                     Image(systemName: "checkmark.circle.fill")
@@ -127,9 +200,9 @@ public struct ValidationGalleryView: View {
                         .accessibilityHidden(true)
                 }
             }
-            .frame(maxWidth: compact ? nil : .infinity, alignment: .leading)
-            .padding(.horizontal, compact ? 11 : 12)
-            .padding(.vertical, compact ? 7 : 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
             .contentShape(Rectangle())
             .background(
                 fixture.id == fixtureID ? Color.accentColor.opacity(0.14) : Color.clear,
@@ -146,17 +219,10 @@ public struct ValidationGalleryView: View {
             VStack(alignment: .leading, spacing: 22) {
                 detailHeader
                 controls
-                ValidationGalleryWidgetTile(
-                    fixture: fixture,
-                    snapshot: snapshot,
-                    family: family,
-                    appearance: appearance,
-                    presentationDate: presentationDate,
-                    displayPreferences: adapter.displayPreferences
-                )
+                galleryPreview
                 proofBoundary
             }
-            .frame(maxWidth: 760, alignment: .leading)
+            .frame(maxWidth: 840, alignment: .leading)
             .padding(24)
             .frame(maxWidth: .infinity, alignment: .top)
         }
@@ -178,17 +244,36 @@ public struct ValidationGalleryView: View {
 
     private var controls: some View {
         VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Widget size")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Picker("Widget size", selection: $family) {
-                    ForEach(ValidationGalleryFamily.allCases) { family in
-                        Text(family.displayName).tag(family)
+            if supportedPresentations.count > 1 {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Presentation")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Picker("Presentation", selection: $presentation) {
+                        ForEach(supportedPresentations) { presentation in
+                            Text(presentation.displayName).tag(presentation)
+                        }
                     }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("gallery-presentation-picker")
                 }
-                .labelsHidden()
-                .pickerStyle(.segmented)
+            }
+
+            if presentation == .widget {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Widget size")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Picker("Widget size", selection: $family) {
+                        ForEach(ValidationGalleryFamily.allCases) { family in
+                            Text(family.displayName).tag(family)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("gallery-family-picker")
+                }
             }
 
             VStack(alignment: .leading, spacing: 6) {
@@ -202,9 +287,42 @@ public struct ValidationGalleryView: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.segmented)
+                .accessibilityIdentifier("gallery-appearance-picker")
             }
         }
         .frame(maxWidth: 520)
+    }
+
+    @ViewBuilder
+    private var galleryPreview: some View {
+        if presentation == .widget {
+            ValidationGalleryWidgetTile(
+                fixture: fixture,
+                snapshot: snapshot,
+                family: family,
+                appearance: appearance,
+                presentationDate: presentationDate,
+                displayPreferences: adapter.displayPreferences
+            )
+        } else if let applicationPreview {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("\(presentation.displayName) presentation")
+                        .font(.headline)
+                    Spacer()
+                    Text("SAMPLE DATA")
+                        .font(.caption2.weight(.bold))
+                        .tracking(0.7)
+                        .foregroundStyle(.orange)
+                }
+                applicationPreview(context)
+                    .id(context.id)
+                    .allowsHitTesting(false)
+            }
+            .padding(18)
+            .background(.background, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .shadow(color: .black.opacity(0.07), radius: 14, y: 6)
+        }
     }
 
     private var proofBoundary: some View {
@@ -212,10 +330,11 @@ public struct ValidationGalleryView: View {
             Image(systemName: "rectangle.on.rectangle.badge.eye")
                 .font(.title3)
                 .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
                 Text("Shared-view proof only")
                     .font(.headline)
-                Text("This gallery reuses the production widget presentation with synthetic values. It does not prove WidgetKit margins, backgrounds, placement, or the signed extension execution path.")
+                Text(proofBoundaryCopy)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -223,6 +342,13 @@ public struct ValidationGalleryView: View {
         }
         .padding(16)
         .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private var proofBoundaryCopy: String {
+        if presentation == .widget {
+            return "This gallery reuses the production widget presentation with synthetic values. It does not prove WidgetKit margins, backgrounds, placement, or the signed extension execution path."
+        }
+        return "This gallery reuses the production app presentation with synthetic values. It proves shared layout and copy only, not signed runtime identity, CloudKit or App Group access, platform compositing, or hardware lifecycle behavior."
     }
 }
 
@@ -332,6 +458,7 @@ private struct ValidationGalleryWidgetTile: View {
                         .strokeBorder(Color.primary.opacity(0.12))
                 }
                 .padding(2)
+                .allowsHitTesting(false)
             }
             .scrollIndicators(.hidden)
         }

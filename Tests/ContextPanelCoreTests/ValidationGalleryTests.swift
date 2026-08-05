@@ -37,12 +37,23 @@ import WidgetKit
 
 @Test func validationGalleryRouteAcceptsOnlyAllowlistedValues() throws {
     let direct = try #require(URL(
-        string: "contextpanel://validation-gallery?fixture=stale&family=systemLarge&appearance=dark"
+        string: "contextpanel://validation-gallery?fixture=stale&family=systemLarge&appearance=dark&presentation=diagnostics"
     ))
     let directRoute = try #require(ValidationGalleryRoute(url: direct))
     #expect(directRoute.fixtureID == .stale)
     #expect(directRoute.family == .systemLarge)
     #expect(directRoute.appearance == .dark)
+    #expect(directRoute.presentation == .diagnostics)
+
+    let settingsPresentation = try #require(URL(
+        string: "contextpanelcompanion://validation-gallery?presentation=settings"
+    ))
+    #expect(ValidationGalleryRoute(url: settingsPresentation)?.presentation == .settings)
+
+    let reconnectPresentation = try #require(URL(
+        string: "contextpanel://validation-gallery?presentation=reconnect"
+    ))
+    #expect(ValidationGalleryRoute(url: reconnectPresentation)?.presentation == .reconnect)
 
     let settings = try #require(URL(
         string: "contextpanelcompanion://settings/validation-gallery?fixture=healthy"
@@ -53,6 +64,7 @@ import WidgetKit
         "file:///tmp/validation-gallery",
         "contextpanel://validation-gallery/extra",
         "contextpanel://validation-gallery?fixture=unknown",
+        "contextpanel://validation-gallery?presentation=unknown",
         "contextpanel://validation-gallery?payload=private",
         "contextpanel://validation-gallery?fixture=healthy&fixture=stale",
         "contextpanel://validation-gallery#private",
@@ -78,6 +90,7 @@ import WidgetKit
     #expect(resetDate == presentationDate.addingTimeInterval(38 * 60))
     #expect(resetDate.widgetRelativeText(relativeTo: presentationDate) == "in 38m")
     #expect(fiveHour.widgetResetConfidenceText(presentationDate: presentationDate) == "38m")
+    #expect(!snapshot.observedBurnRates.isEmpty)
 }
 
 @MainActor
@@ -156,6 +169,44 @@ import WidgetKit
     if let outputPath = ProcessInfo.processInfo.environment["CONTEXT_PANEL_VALIDATION_GALLERY_COMPACT_PREVIEW_PATH"] {
         try rendered.pngData.write(to: URL(fileURLWithPath: outputPath), options: .atomic)
     }
+}
+
+@MainActor
+@Test func validationGalleryApplicationSurfaceRendersAtAccessibilitySizeInDarkMode() throws {
+    let route = ValidationGalleryRoute(
+        fixtureID: .denseAccounts,
+        family: .systemLarge,
+        appearance: .dark,
+        presentation: .overview
+    )
+    let content = ValidationGalleryView(
+        route: route,
+        supportedPresentations: [.overview, .detail, .reconnect, .diagnostics, .settings, .widget],
+        applicationPreview: { context in
+            AnyView(
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Production overview")
+                        .font(.title2)
+                    Text(context.fixture.purpose)
+                    Text("\(context.snapshot.limits.count) sample limits")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(24)
+            )
+        }
+    )
+    .frame(width: 1_024, height: 1_024)
+    .environment(\.colorScheme, .dark)
+    .environment(\.dynamicTypeSize, .accessibility1)
+    let hostingView = NSHostingView(rootView: content)
+    hostingView.appearance = NSAppearance(named: .darkAqua)
+    hostingView.frame = NSRect(x: 0, y: 0, width: 1_024, height: 1_024)
+    hostingView.layoutSubtreeIfNeeded()
+    let bitmap = try #require(hostingView.bitmapImageRepForCachingDisplay(in: hostingView.bounds))
+    hostingView.cacheDisplay(in: hostingView.bounds, to: bitmap)
+    let pngData = try #require(bitmap.representation(using: .png, properties: [:]))
+
+    #expect(pngData.count > 20_000)
 }
 
 @MainActor

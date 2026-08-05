@@ -622,6 +622,12 @@ public final class RuntimeReceiptRecorder: @unchecked Sendable {
         self.processContext = processContext
     }
 
+    public static func disabled(
+        processContext: RuntimeReceiptProcessContext = RuntimeReceiptProcessContext()
+    ) -> RuntimeReceiptRecorder {
+        RuntimeReceiptRecorder(processContext: processContext)
+    }
+
     public static func appDefault(
         surface: RuntimeSurface,
         bundle: Bundle = .main,

@@ -47,6 +47,8 @@ public struct ValidationGalleryFixtureAdapter: Sendable {
             fixture.promptCache,
             presentationDate: presentationDate
         )
+        let usageSnapshot = UsageSnapshot(generatedAt: generatedAt, limits: limits)
+        let observedBurnRates = observedBurnRates(for: usageSnapshot)
 
         return WidgetSnapshot(
             state: snapshotState(fixture.snapshotState),
@@ -55,6 +57,8 @@ public struct ValidationGalleryFixtureAdapter: Sendable {
             reports: reports,
             promptCacheObservations: promptCacheObservations,
             promptCacheWidgetState: fixture.promptCache == nil ? .unavailable : .available,
+            observedBurnRates: observedBurnRates,
+            fastModeForecastSettings: .defaultSettings,
             status: status(fixture.status),
             message: fixture.message,
             syncErrorMessage: fixture.syncErrorMessage
@@ -63,6 +67,29 @@ public struct ValidationGalleryFixtureAdapter: Sendable {
 
     public var displayPreferences: WidgetDisplayPreferences {
         .defaultPreferences
+    }
+
+    private func observedBurnRates(for snapshot: UsageSnapshot) -> [String: ObservedBurnRate] {
+        Dictionary(uniqueKeysWithValues: snapshot.mainLimitSummaries.compactMap { summary in
+            guard summary.provider == .openAI else { return nil }
+            let unitsPerHour: Double = switch summary.window {
+            case .fiveHour:
+                3.2
+            case .weekly:
+                0.72
+            case .daily, .availability:
+                0.4
+            }
+            return (
+                summary.id,
+                ObservedBurnRate(
+                    limitID: summary.id,
+                    unitsPerHour: unitsPerHour,
+                    observedDurationHours: 12,
+                    sampleCount: 4
+                )
+            )
+        })
     }
 
     private func reports(
