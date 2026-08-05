@@ -415,6 +415,31 @@ class RuntimeReceiptEvidence:
     state_branch: str
     outcome: str
 
+    def has_same_receipt_payload(self, other: RuntimeReceiptEvidence) -> bool:
+        return (
+            self.receipt_id,
+            self.runtime_session_id,
+            self.surface,
+            self.observed_at,
+            self.process_instance_id,
+            self.process_sequence,
+            self.loaded_executable_uuids,
+            self.identity_digest,
+            self.state_branch,
+            self.outcome,
+        ) == (
+            other.receipt_id,
+            other.runtime_session_id,
+            other.surface,
+            other.observed_at,
+            other.process_instance_id,
+            other.process_sequence,
+            other.loaded_executable_uuids,
+            other.identity_digest,
+            other.state_branch,
+            other.outcome,
+        )
+
     def to_dict(self) -> dict[str, object]:
         return {
             "receiptID": self.receipt_id,
@@ -486,6 +511,25 @@ class RuntimeReceiptEvidence:
         ):
             raise RuntimeEvidenceError("runtime receipt evidence is invalid")
         return evidence
+
+
+def merged_duplicate_receipt(
+    existing: RuntimeReceiptEvidence,
+    candidate: RuntimeReceiptEvidence,
+) -> RuntimeReceiptEvidence | None:
+    if not existing.has_same_receipt_payload(candidate):
+        return None
+    if existing.source == candidate.source:
+        if existing.source != "cloudkit":
+            return existing
+        existing_received_at = parse_iso8601(existing.server_received_at)
+        candidate_received_at = parse_iso8601(candidate.server_received_at)
+        if candidate_received_at is not None and (
+            existing_received_at is None or candidate_received_at > existing_received_at
+        ):
+            return candidate
+        return existing
+    return existing if existing.source == "cloudkit" else candidate
 
 
 @dataclass(frozen=True)
@@ -1278,6 +1322,7 @@ def reconcile_runtime_observation(
         assert isinstance(raw_receipts, list)
         seen_in_export: dict[str, RuntimeReceiptEvidence] = {}
         conflicting_ids: set[str] = set()
+        conflicting_surfaces: set[str] = set()
         for entry in raw_receipts:
             parsed, diagnostic = validated_runtime_receipt(
                 entry,
@@ -1299,11 +1344,17 @@ def reconcile_runtime_observation(
             if parsed is None:
                 continue
             assert parsed is not None
-            latest_surface_diagnostics[parsed.surface] = None
+            if parsed.surface not in conflicting_surfaces:
+                latest_surface_diagnostics[parsed.surface] = None
             existing = seen_in_export.get(parsed.receipt_id)
-            if existing is not None and existing != parsed:
-                conflicting_ids.add(parsed.receipt_id)
-                latest_surface_diagnostics[parsed.surface] = "conflicting-duplicate-receipt"
+            if existing is not None:
+                merged = merged_duplicate_receipt(existing, parsed)
+                if merged is None:
+                    conflicting_ids.add(parsed.receipt_id)
+                    conflicting_surfaces.add(parsed.surface)
+                    latest_surface_diagnostics[parsed.surface] = "conflicting-duplicate-receipt"
+                elif parsed.receipt_id not in conflicting_ids:
+                    seen_in_export[parsed.receipt_id] = merged
             elif parsed.receipt_id not in conflicting_ids:
                 seen_in_export[parsed.receipt_id] = parsed
         exact_receipts = [
@@ -1315,9 +1366,13 @@ def reconcile_runtime_observation(
     receipts_by_id = {receipt.receipt_id: receipt for receipt in state.receipts}
     for receipt in exact_receipts:
         existing = receipts_by_id.get(receipt.receipt_id)
-        if existing is not None and existing != receipt:
-            receipts_by_id.pop(receipt.receipt_id, None)
-            latest_surface_diagnostics[receipt.surface] = "conflicting-duplicate-receipt"
+        if existing is not None:
+            merged = merged_duplicate_receipt(existing, receipt)
+            if merged is None:
+                receipts_by_id.pop(receipt.receipt_id, None)
+                latest_surface_diagnostics[receipt.surface] = "conflicting-duplicate-receipt"
+            else:
+                receipts_by_id[receipt.receipt_id] = merged
         else:
             receipts_by_id[receipt.receipt_id] = receipt
     ordered_receipts = tuple(ordered_receipt_evidence(tuple(receipts_by_id.values())))

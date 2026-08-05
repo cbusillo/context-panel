@@ -568,6 +568,121 @@ class RuntimeReceiptIngestionTests(unittest.TestCase):
             [1, 2],
         )
 
+    def test_relayed_duplicate_promotes_cloudkit_transport_without_conflict(self):
+        surfaces = ("macos.widget",)
+        temporary, _, _, _, state = self.fixture(surfaces)
+        self.addCleanup(temporary.cleanup)
+        status = runtime_status(surfaces)
+        local = runtime_receipt("macos.widget", status, source="local")
+        cloudkit = runtime_receipt("macos.widget", status, source="cloudkit")
+
+        local_state, _ = runtime_module.reconcile_runtime_observation(
+            state,
+            observation(status, runtime_export(status, [local])),
+        )
+        next_state, _ = runtime_module.reconcile_runtime_observation(
+            local_state,
+            observation(status, runtime_export(status, [cloudkit])),
+        )
+
+        self.assertEqual(len(next_state.receipts), 1)
+        self.assertEqual(next_state.receipts[0].source, "cloudkit")
+        self.assertIsNotNone(next_state.receipts[0].server_received_at)
+        report = build_runtime_evidence_report(next_state, NOW + timedelta(minutes=2))
+        self.assertEqual(report["provenSurfaceCount"], 1)
+        self.assertEqual(report["surfaces"][0]["state"], "proven")
+
+    def test_same_export_relayed_duplicate_prefers_cloudkit_transport(self):
+        surfaces = ("macos.widget",)
+        temporary, _, _, _, state = self.fixture(surfaces)
+        self.addCleanup(temporary.cleanup)
+        status = runtime_status(surfaces)
+        local = runtime_receipt("macos.widget", status, source="local")
+        cloudkit = runtime_receipt("macos.widget", status, source="cloudkit")
+
+        next_state, _ = runtime_module.reconcile_runtime_observation(
+            state,
+            observation(status, runtime_export(status, [local, cloudkit])),
+        )
+
+        self.assertEqual(len(next_state.receipts), 1)
+        self.assertEqual(next_state.receipts[0].source, "cloudkit")
+        self.assertIsNotNone(next_state.receipts[0].server_received_at)
+
+    def test_cross_observation_duplicate_conflict_evicts_stored_proof(self):
+        surfaces = ("macos.widget",)
+        temporary, _, _, _, state = self.fixture(surfaces)
+        self.addCleanup(temporary.cleanup)
+        status = runtime_status(surfaces)
+        first = runtime_receipt("macos.widget", status)
+        proven_state, _ = runtime_module.reconcile_runtime_observation(
+            state,
+            observation(status, runtime_export(status, [first])),
+        )
+        conflicting = json.loads(json.dumps(first))
+        conflicting["receipt"]["stateBranch"] = "failure"
+        conflicting["receipt"]["outcome"] = "failure"
+
+        next_state, _ = runtime_module.reconcile_runtime_observation(
+            proven_state,
+            observation(status, runtime_export(status, [conflicting])),
+        )
+
+        self.assertEqual(next_state.receipts, ())
+        report = build_runtime_evidence_report(next_state, NOW + timedelta(minutes=2))
+        self.assertEqual(report["provenSurfaceCount"], 0)
+        self.assertEqual(
+            report["surfaces"][0]["reason"],
+            "conflicting-duplicate-receipt",
+        )
+
+    def test_duplicate_receipt_id_with_changed_payload_remains_diagnostic(self):
+        surfaces = ("macos.widget",)
+        temporary, _, _, _, state = self.fixture(surfaces)
+        self.addCleanup(temporary.cleanup)
+        status = runtime_status(surfaces)
+        first = runtime_receipt("macos.widget", status)
+        conflicting = json.loads(json.dumps(first))
+        conflicting["receipt"]["stateBranch"] = "failure"
+        conflicting["receipt"]["outcome"] = "failure"
+
+        next_state, _ = runtime_module.reconcile_runtime_observation(
+            state,
+            observation(status, runtime_export(status, [first, conflicting])),
+        )
+
+        report = build_runtime_evidence_report(next_state, NOW + timedelta(minutes=2))
+        self.assertEqual(report["provenSurfaceCount"], 0)
+        self.assertEqual(report["surfaces"][0]["state"], "diagnostic")
+        self.assertEqual(
+            report["surfaces"][0]["reason"],
+            "conflicting-duplicate-receipt",
+        )
+
+    def test_later_valid_receipt_does_not_hide_same_export_conflict(self):
+        surfaces = ("macos.widget",)
+        temporary, _, _, _, state = self.fixture(surfaces)
+        self.addCleanup(temporary.cleanup)
+        status = runtime_status(surfaces)
+        first = runtime_receipt("macos.widget", status)
+        conflicting = json.loads(json.dumps(first))
+        conflicting["receipt"]["stateBranch"] = "failure"
+        conflicting["receipt"]["outcome"] = "failure"
+        later = runtime_receipt("macos.widget", status, process_sequence=2)
+
+        next_state, _ = runtime_module.reconcile_runtime_observation(
+            state,
+            observation(status, runtime_export(status, [first, conflicting, later])),
+        )
+
+        self.assertEqual(len(next_state.receipts), 1)
+        report = build_runtime_evidence_report(next_state, NOW + timedelta(minutes=2))
+        self.assertEqual(report["provenSurfaceCount"], 0)
+        self.assertEqual(
+            report["surfaces"][0]["reason"],
+            "conflicting-duplicate-receipt",
+        )
+
     def test_active_runtime_window_is_waiting_then_expired_silence_is_unknown(self):
         surfaces = ("macos.app",)
         temporary, _, _, _, state = self.fixture(surfaces)
