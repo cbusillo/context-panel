@@ -39,7 +39,7 @@
       "release": ["shared-view", "actual-runtime"]
     },
     "changeRequirements": {
-      "render": ["shared-view", "actual-runtime", "os-composited-placement"],
+      "render": ["shared-view"],
       "runtime": ["actual-runtime"],
       "unknown": ["shared-view", "actual-runtime", "os-composited-placement"],
       "placement": ["actual-runtime", "os-composited-placement"]
@@ -257,26 +257,33 @@
     "placement-macos-widget": {
       "include": [
         "Config/ContextPanelWidget-Info.plist",
-        "Sources/ContextPanelApp/ContextPanelApp.swift"
+        "Sources/ContextPanelApp/ContextPanelApp.swift",
+        "Sources/ContextPanelCore/ContextPanelWidgetIdentity.swift",
+        "Sources/ContextPanelWidget/ContextPanelWidget.swift"
       ]
     },
     "placement-companion-widget": {
       "include": [
         "Config/ContextPanelCompanionWidget-Info.plist",
-        "Sources/ContextPanelCompanion/ContextPanelCompanionApp.swift"
+        "Sources/ContextPanelCompanion/ContextPanelCompanionApp.swift",
+        "Sources/ContextPanelCompanionWidget/ContextPanelCompanionWidget.swift",
+        "Sources/ContextPanelCore/ContextPanelWidgetIdentity.swift"
       ]
     },
     "placement-watch-widget": {
       "include": [
         "Config/ContextPanelWatchWidget-Info.plist",
-        "Sources/ContextPanelWatch/ContextPanelWatchApp.swift"
+        "Sources/ContextPanelCore/ContextPanelWidgetIdentity.swift",
+        "Sources/ContextPanelWatch/ContextPanelWatchApp.swift",
+        "Sources/ContextPanelWatchWidget/ContextPanelWatchWidget.swift"
       ]
     },
     "placement-tv-top-shelf": {
       "include": [
         "Config/ContextPanelTVTopShelf-Info.plist",
         "Sources/ContextPanelTV/ContextPanelTVApp.swift",
-        "Sources/ContextPanelTV/TVSystemSurfaces.swift"
+        "Sources/ContextPanelTV/TVSystemSurfaces.swift",
+        "Sources/ContextPanelTVTopShelf/ContextPanelTVTopShelfProvider.swift"
       ]
     }
   },

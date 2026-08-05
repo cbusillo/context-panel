@@ -199,6 +199,20 @@ acceptable.
   `scripts/cleanup-context-panel-device-profiles.sh --device <id>` for manual
   hygiene; the visionOS dogfood fixture calls it by default. Use
   `--no-profile-cleanup` only when investigating profile state itself.
+- Before opening a signed validation coordinator session, compare the previous
+  and current full source manifests with
+  `scripts/context-panel-surface-manifest.py compare --train <beta|rc|release>`.
+  For beta work, do not open a runtime session when
+  `requiresRuntimeSession=false`; automated shared-view evidence is the gate for
+  render-only changes. When runtime proof is required, pass only the surfaces in
+  `requiredSurfaces.actual-runtime` through repeated `--surface` arguments.
+  `requiredEvidence`/`requiredSurfaces` are authoritative; `freshEvidence` is
+  explanatory delta metadata and is not a complete gate. Simulator builds and
+  galleries can satisfy shared-view evidence only; they never satisfy
+  `actual-runtime`, which must come from the exact signed artifact.
+  `requiresPlacementReview=true` remains a separate physical/OS-composited
+  review requirement. RC and release train floors still require exact-build
+  runtime proof for every capable shipping surface.
 
 Minimum runtime evidence before saying a signed dogfood build is ready:
 

@@ -310,7 +310,7 @@ def validate_evidence_policy(evidence_policy: Any) -> dict[str, Any]:
     train_minimums = validate_mapping("trainMinimumEvidence", TRAIN_NAMES)
     change_requirements = validate_mapping("changeRequirements", CHANGE_KINDS)
     required_change_evidence = {
-        "render": {"shared-view", "actual-runtime", "os-composited-placement"},
+        "render": {"shared-view"},
         "runtime": {"actual-runtime"},
         "placement": {"actual-runtime", "os-composited-placement"},
         "unknown": set(EVIDENCE_CLASSES),
@@ -1178,9 +1178,18 @@ def compare_manifests(
                 fresh.update(change_requirements["runtime"])
             if placement_changed:
                 fresh.update(change_requirements["placement"])
-            if not exact_build_same and "actual-runtime" in capabilities:
+            if (
+                not exact_build_same
+                and "actual-runtime" in capabilities
+                and "actual-runtime" in train_minimums[train]
+            ):
                 fresh.add("actual-runtime")
         fresh_evidence = ordered_intersection(fresh, capabilities, class_order)
+        required_evidence = ordered_intersection(
+            (*minimum, *fresh_evidence),
+            capabilities,
+            class_order,
+        )
 
         carry_forward: dict[str, dict[str, Any]] = {}
         for evidence_class in ordered_intersection(class_order, capabilities, class_order):
@@ -1193,8 +1202,7 @@ def compare_manifests(
                     eligible = not runtime_changed and exact_build_same and not contract_changed
                 elif evidence_class == "os-composited-placement":
                     eligible = (
-                        not render_changed
-                        and not placement_changed
+                        not placement_changed
                         and not contract_changed
                     )
                     if eligible:
@@ -1221,11 +1229,20 @@ def compare_manifests(
                 },
                 "minimumEvidence": minimum,
                 "freshEvidence": fresh_evidence,
+                "requiredEvidence": required_evidence,
                 "carryForward": carry_forward,
             }
         )
 
     removed_surfaces = sorted(set(previous_surfaces) - set(current_surfaces))
+    required_surfaces = {
+        evidence_class: [
+            surface["surfaceId"]
+            for surface in results
+            if evidence_class in surface["requiredEvidence"]
+        ]
+        for evidence_class in class_order
+    }
     return {
         "schemaVersion": 1,
         "train": train,
@@ -1234,6 +1251,9 @@ def compare_manifests(
         "contractChanged": contract_changed,
         "exactBuildSame": exact_build_same,
         "removedSurfaces": removed_surfaces,
+        "requiredSurfaces": required_surfaces,
+        "requiresRuntimeSession": bool(required_surfaces["actual-runtime"]),
+        "requiresPlacementReview": bool(required_surfaces["os-composited-placement"]),
         "surfaces": results,
         "releaseRequiresApprovedRCTarget": bool(
             evidence_policy.get("releaseRequiresApprovedRCTarget")

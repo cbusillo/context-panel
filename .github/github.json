@@ -44,6 +44,7 @@
       "runtimeReceiptSession": "scripts/context-panel-runtime-session.py status",
       "runtimeReceiptTests": "swift test --filter 'ContextPanelCoreTests.runtime|ContextPanelCoreTests.snapshotRefreshEvidence' && uv run python -m unittest Tests.ScriptsTests.test_runtime_receipts Tests.ScriptsTests.test_runtime_session",
       "surfaceFingerprintContract": "scripts/context-panel-surface-manifest.py validate",
+      "surfaceEvidenceComparison": "scripts/context-panel-surface-manifest.py compare --previous <previous-source-manifest.json> --current <current-source-manifest.json> --train <beta|rc|release>",
       "surfaceFingerprintTests": "python3 -m unittest Tests/ScriptsTests/test_surface_manifest.py"
     },
     "docsRequiredWhen": [

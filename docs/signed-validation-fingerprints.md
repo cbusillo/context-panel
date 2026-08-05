@@ -98,10 +98,21 @@ Train floors never lower change-driven requirements:
 
 Escalation rules:
 
-- render change: all supported evidence classes are fresh
+- render-only change: shared-view evidence is fresh; deterministic render,
+  accessibility, and simulator lanes may satisfy it without a device session
 - runtime-only change: actual-runtime evidence is fresh
 - placement change: actual-runtime and OS-composited placement are fresh
 - unknown or unmapped change: all supported evidence classes are fresh
+
+Exact-build runtime proof remains mandatory for RC and release trains. Beta
+trains request runtime receipts only for surfaces whose runtime or placement
+fingerprints changed. Comparison output includes `requiredEvidence` per surface,
+class-indexed `requiredSurfaces`, `requiresRuntimeSession`, and
+`requiresPlacementReview`; automation must use those fields instead of opening
+an all-surface device session by default. `requiredEvidence` and
+`requiredSurfaces` are the authoritative scope. `freshEvidence` explains the
+delta and must not be used alone to decide whether prior approved evidence still
+has to be present.
 
 Compare two manifests with:
 
@@ -119,9 +130,10 @@ Carry-forward is derived, never written back into prior evidence:
 - shared-view evidence is eligible only when the render fingerprint is equal
 - actual-runtime evidence is eligible only when the runtime fingerprint and
   exact version, build, commit, configuration, Xcode build, and tree state match
-- placement evidence additionally requires equal render and placement
-  fingerprints, the matching current runtime receipt, and compatible host OS
-  evidence
+- placement evidence requires an equal placement fingerprint, the matching
+  current runtime receipt, and compatible host OS evidence. A render-only change
+  is re-proven through shared-view evidence and does not invalidate unchanged
+  host/placement approval.
 
 Host OS major/minor changes invalidate placement by default. Patch/build changes
 are evaluated by the compositor-sensitive surface policy and active regression
