@@ -152,6 +152,36 @@ import Testing
     #expect(ageOnlyPresentation.diagnosticDetail == nil)
 }
 
+@Test func watchSyncPresentationUsesInjectedTimeForGeneratedAge() throws {
+    let now = Date(timeIntervalSince1970: 1_785_672_000)
+    let generatedAt = now.addingTimeInterval(-125)
+    let storedSnapshot = StoredUsageSnapshot(
+        savedAt: generatedAt,
+        snapshot: UsageSnapshot(generatedAt: generatedAt, limits: [])
+    )
+    let result = CompanionSyncLoadResult(
+        document: CompanionSyncDocument(storedSnapshot: storedSnapshot, publishedAt: now),
+        status: .healthy
+    )
+
+    let presentation = WatchSyncPresentation(
+        result: result,
+        snapshot: watchSyncSnapshot(state: .ready, status: .healthy),
+        syncErrorMessage: nil,
+        now: now
+    )
+    let laterPresentation = WatchSyncPresentation(
+        result: result,
+        snapshot: watchSyncSnapshot(state: .ready, status: .healthy),
+        syncErrorMessage: nil,
+        now: now.addingTimeInterval(60 * 60)
+    )
+
+    #expect(presentation.generatedText == "2m ago")
+    #expect(laterPresentation.generatedText == "1h ago")
+    #expect(presentation.generatedAccessibilityText != laterPresentation.generatedAccessibilityText)
+}
+
 private func watchSyncSnapshot(state: WidgetSnapshotState, status: UsageStatus) -> WidgetSnapshot {
     WidgetSnapshot(
         state: state,

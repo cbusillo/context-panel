@@ -235,7 +235,13 @@ class SurfaceManifestTests(unittest.TestCase):
             )
             mutated = self.surfaces(self.manifest(root))
         baseline = self.surfaces(self.baseline)
-        for surface_id in ("macos.app", "ios.app", "ipados.app", "visionos.app"):
+        for surface_id in (
+            "macos.app",
+            "ios.app",
+            "ipados.app",
+            "visionos.app",
+            "watchos.app",
+        ):
             self.assertNotEqual(
                 baseline[surface_id]["fingerprints"]["render"],
                 mutated[surface_id]["fingerprints"]["render"],
@@ -249,7 +255,6 @@ class SurfaceManifestTests(unittest.TestCase):
             "ios.widget",
             "ipados.widget",
             "visionos.widget",
-            "watchos.app",
             "watchos.complication",
             "tvos.app",
             "tvos.top-shelf",

@@ -93,6 +93,35 @@ import WidgetKit
     #expect(!snapshot.observedBurnRates.isEmpty)
 }
 
+@Test func watchValidationFixturesCoverAppAndComplicationBoundaries() throws {
+    let adapter = WatchValidationFixtureAdapter()
+    let presentationDate = ValidationFixtureCatalog.referencePresentationDate
+
+    for state in WatchValidationAppState.allCases {
+        let context = adapter.appContext(state: state, presentationDate: presentationDate)
+        #expect(context.presentationDate == presentationDate)
+        #expect(context.snapshot.generatedAt <= presentationDate)
+        #expect(context.snapshot.limits.allSatisfy { $0.accountID.hasPrefix("sample-") })
+        #expect(context.snapshot.reports.allSatisfy { $0.accountID.hasPrefix("sample-") })
+    }
+
+    let providerAccess = adapter.complicationContext(
+        state: .providerAccess,
+        presentationDate: presentationDate
+    )
+    let alert = try #require(providerAccess.snapshot.primaryProviderAccessAlert)
+    #expect(alert.accountID.hasPrefix("sample-"))
+    #expect(alert.accessState.kind == .blockedUntilReset)
+    #expect(alert.accessState.resetsAt == presentationDate.addingTimeInterval(3 * 3_600))
+
+    let unknown = adapter.complicationContext(
+        state: .unknown,
+        presentationDate: presentationDate
+    )
+    #expect(unknown.snapshot.state == .setupNeeded)
+    #expect(unknown.result.document == nil)
+}
+
 @MainActor
 @Test func validationGalleryRenderMatrixIsBoundedAndNonempty() throws {
     let presentationDate = ValidationFixtureCatalog.referencePresentationDate
