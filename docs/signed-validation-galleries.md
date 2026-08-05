@@ -114,6 +114,26 @@ bounded review is not interrupted. The previous host setting is restored when
 the gallery disappears or the scene becomes inactive. This never asks an
 operator to keep a device awake while machine evidence is pending.
 
+## Watch Gallery
+
+The signed Watch app exposes `Validation Gallery` directly from its production
+usage list. App-state previews reuse the same status, forecast, provider-access,
+empty-state, and limit-row presentation used by the live Watch screen. Circular,
+rectangular, inline, and corner previews compile the same complication family
+dispatcher source as the shipping WidgetKit extension. The gallery uses
+reference-size canvases; WidgetKit supplies exact face dimensions and the corner
+gauge/label only to a placed complication.
+
+The gallery route never instantiates the live loader, cache, CloudKit stores,
+runtime-receipt relay, or timeline reload path. In the shared Watch widget
+source, an extension-only compilation boundary keeps the live timeline provider,
+runtime-receipt recorder, widget registration, and WidgetBundle entry point out
+of the Watch app target. The normal Watch root retains its live sync behavior
+outside the gallery. A persistent `Sample data` boundary stays above every
+gallery screen. Gallery output remains shared-view proof; the installed-build
+Watch restart and real placed-complication glance remain required whenever
+complication host behavior changed.
+
 ## Validation
 
 Run the focused contract and render matrix:

@@ -120,7 +120,8 @@
       "include": ["Sources/ContextPanelValidationFixtures/**/*.swift"]
     },
     "validation-gallery-ui": {
-      "include": ["Sources/ContextPanelValidationGalleryUI/**/*.swift"]
+      "include": ["Sources/ContextPanelValidationGalleryUI/**/*.swift"],
+      "exclude": ["Sources/ContextPanelValidationGalleryUI/WatchValidationFixtureAdapter.swift"]
     },
     "settings-ui": {
       "include": ["Sources/ContextPanelSettingsUI/**/*.swift"]
@@ -144,7 +145,15 @@
       "include": ["Sources/ContextPanelCompanionWidget/**/*.swift"]
     },
     "watch-app": {
-      "include": ["Sources/ContextPanelWatch/**/*.swift"]
+      "include": ["Sources/ContextPanelWatch/**/*.swift"],
+      "exclude": ["Sources/ContextPanelWatch/WatchValidationGallery.swift"]
+    },
+    "watch-validation-gallery": {
+      "include": [
+        "Sources/ContextPanelValidationGalleryUI/ValidationGalleryFixtureAdapter.swift",
+        "Sources/ContextPanelValidationGalleryUI/WatchValidationFixtureAdapter.swift",
+        "Sources/ContextPanelWatch/WatchValidationGallery.swift"
+      ]
     },
     "watch-support-app": {
       "include": ["Sources/ContextPanelWatchSupport/**/*.swift"]
@@ -556,8 +565,17 @@
       "embeds": ["watchos.complication"],
       "evidenceCapabilities": ["shared-view", "actual-runtime"],
       "inputs": {
-        "shared": ["core", "watch-app", "watch-support-app"],
-        "render": ["shared-assets"],
+        "shared": [
+          "core",
+          "watch-app",
+          "watch-support-app"
+        ],
+        "render": [
+          "shared-assets",
+          "validation-fixtures",
+          "watch-validation-gallery",
+          "watch-widget"
+        ],
         "runtime": ["cloudkit-sync", "cloudkit-contract", "config-watch-app"],
         "placement": []
       }

@@ -8,6 +8,9 @@ FIXTURE_SOURCE = REPO_ROOT / "Sources" / "ContextPanelValidationFixtures" / "Val
 GALLERY_SOURCE_ROOT = REPO_ROOT / "Sources" / "ContextPanelValidationGalleryUI"
 MAC_APP_SOURCE = REPO_ROOT / "Sources" / "ContextPanelApp" / "ContextPanelApp.swift"
 COMPANION_APP_SOURCE = REPO_ROOT / "Sources" / "ContextPanelCompanion" / "ContextPanelCompanionApp.swift"
+WATCH_APP_SOURCE = REPO_ROOT / "Sources" / "ContextPanelWatch" / "ContextPanelWatchApp.swift"
+WATCH_GALLERY_SOURCE = REPO_ROOT / "Sources" / "ContextPanelWatch" / "WatchValidationGallery.swift"
+WATCH_WIDGET_SOURCE = REPO_ROOT / "Sources" / "ContextPanelWatchWidget" / "ContextPanelWatchWidget.swift"
 
 
 class ValidationGalleryTargetGraphTests(unittest.TestCase):
@@ -31,14 +34,22 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         project = (REPO_ROOT / "project.yml").read_text()
 
         self.assertIn('.target(name: "ContextPanelValidationFixtures")', package)
-        for target in ("ContextPanelValidationFixtures", "ContextPanelValidationFixturesCompanion"):
+        for target in (
+            "ContextPanelValidationFixtures",
+            "ContextPanelValidationFixturesCompanion",
+            "ContextPanelValidationFixturesWatch",
+        ):
             block = self.yaml_target_block(project, target)
             self.assertNotIn("dependencies:", block)
 
     def test_gallery_targets_are_host_app_only(self):
         project = (REPO_ROOT / "project.yml").read_text()
 
-        for target in ("ContextPanelWidgetExtension", "ContextPanelCompanionWidgetExtension"):
+        for target in (
+            "ContextPanelWidgetExtension",
+            "ContextPanelCompanionWidgetExtension",
+            "ContextPanelWatchWidgetExtension",
+        ):
             block = self.yaml_target_block(project, target)
             self.assertNotIn("ContextPanelValidation", block)
 
@@ -76,6 +87,66 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         self.assertIn("CompanionWidgetMainLimitsSettingsView(", companion_app)
         self.assertIn("CompanionRefreshSettingsView(", companion_app)
         self.assertIn("supportedPresentations: [.overview, .settings, .diagnostics, .widget]", companion_app)
+
+    def test_watch_gallery_reuses_shipping_views_without_live_loaders(self):
+        project = (REPO_ROOT / "project.yml").read_text()
+        watch_app = WATCH_APP_SOURCE.read_text()
+        watch_gallery = WATCH_GALLERY_SOURCE.read_text()
+        watch_widget = WATCH_WIDGET_SOURCE.read_text()
+        watch_target = self.yaml_target_block(project, "ContextPanelWatch")
+        watch_widget_target = self.yaml_target_block(project, "ContextPanelWatchWidgetExtension")
+
+        self.assertIn("ContextPanelValidationFixturesWatch", watch_target)
+        self.assertIn("ValidationGalleryFixtureAdapter.swift", watch_target)
+        self.assertIn("WatchValidationFixtureAdapter.swift", watch_target)
+        self.assertIn("ContextPanelWatchWidget.swift", watch_target)
+        self.assertNotIn("CONTEXT_PANEL_WATCH_WIDGET_EXTENSION", watch_target)
+        self.assertIn("WatchUsageContent(", watch_app)
+        self.assertIn("ContextPanelWatchWidgetView(", watch_gallery)
+        self.assertIn("family: family.widgetFamily", watch_gallery)
+        self.assertIn("presentationDate: context.presentationDate", watch_gallery)
+        self.assertIn("now: presentationDate", watch_app)
+        self.assertIn("WatchValidationSampleContainer", watch_gallery)
+        self.assertIn("ForEach(ContextPanelWatchComplicationFamily.allCases)", watch_gallery)
+        self.assertIn("#if CONTEXT_PANEL_WATCH_WIDGET_EXTENSION", watch_widget)
+        self.assertIn("CONTEXT_PANEL_WATCH_WIDGET_EXTENSION", watch_widget_target)
+        self.assertIn(
+            ".supportedFamilies(ContextPanelWatchWidgetView.supportedFamilies)",
+            watch_widget,
+        )
+
+        guarded_regions = re.findall(
+            r"#if CONTEXT_PANEL_WATCH_WIDGET_EXTENSION\n(.*?)#endif",
+            watch_widget,
+            flags=re.DOTALL,
+        )
+        guarded_source = "\n".join(guarded_regions)
+        unguarded_source = re.sub(
+            r"#if CONTEXT_PANEL_WATCH_WIDGET_EXTENSION\n.*?#endif",
+            "",
+            watch_widget,
+            flags=re.DOTALL,
+        )
+        for protected_symbol in (
+            "ContextPanelWatchWidgetProvider",
+            "WatchWidgetLoadQueue",
+            "CompanionCloudKitSyncStoreFactory",
+            "RuntimeReceiptRecorder",
+            "@main",
+            "ContextPanelWatchWidgetBundle",
+        ):
+            self.assertIn(protected_symbol, guarded_source)
+            self.assertNotIn(protected_symbol, unguarded_source)
+
+        for forbidden in (
+            "WatchSyncModel(",
+            "WatchCompanionLoader(",
+            "WatchCompanionCache(",
+            "CompanionCloudKitSyncStoreFactory",
+            "RuntimeReceiptRecorder",
+            "WidgetCenter.shared",
+        ):
+            self.assertNotIn(forbidden, watch_gallery)
 
     @staticmethod
     def yaml_target_block(project: str, target: str) -> str:

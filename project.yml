@@ -53,6 +53,8 @@ targets:
     deploymentTarget: "14.0"
     sources:
       - path: Sources/ContextPanelValidationGalleryUI
+        excludes:
+          - WatchValidationFixtureAdapter.swift
     dependencies:
       - target: ContextPanelCore
       - target: ContextPanelValidationFixtures
@@ -137,6 +139,8 @@ targets:
       visionOS: "26.0"
     sources:
       - path: Sources/ContextPanelValidationGalleryUI
+        excludes:
+          - WatchValidationFixtureAdapter.swift
     dependencies:
       - target: ContextPanelCoreCompanion
       - target: ContextPanelValidationFixturesCompanion
@@ -244,6 +248,19 @@ targets:
       base:
         PRODUCT_NAME: ContextPanelCloudKitSyncWatch
         PRODUCT_MODULE_NAME: ContextPanelCloudKitSync
+        WATCHOS_DEPLOYMENT_TARGET: "10.0"
+        SKIP_INSTALL: true
+
+  ContextPanelValidationFixturesWatch:
+    type: library.static
+    platform: watchOS
+    deploymentTarget: "10.0"
+    sources:
+      - path: Sources/ContextPanelValidationFixtures
+    settings:
+      base:
+        PRODUCT_NAME: ContextPanelValidationFixturesWatch
+        PRODUCT_MODULE_NAME: ContextPanelValidationFixtures
         WATCHOS_DEPLOYMENT_TARGET: "10.0"
         SKIP_INSTALL: true
 
@@ -523,10 +540,14 @@ targets:
     sources:
       - path: Sources/ContextPanelWatch
       - path: Sources/ContextPanelWatchSupport
+      - path: Sources/ContextPanelValidationGalleryUI/ValidationGalleryFixtureAdapter.swift
+      - path: Sources/ContextPanelValidationGalleryUI/WatchValidationFixtureAdapter.swift
+      - path: Sources/ContextPanelWatchWidget/ContextPanelWatchWidget.swift
       - path: Resources/Assets.xcassets
     dependencies:
       - target: ContextPanelCoreWatch
       - target: ContextPanelCloudKitSyncWatch
+      - target: ContextPanelValidationFixturesWatch
       - target: ContextPanelWatchWidgetExtension
         embed: true
     postBuildScripts:
@@ -592,6 +613,8 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         WATCHOS_DEPLOYMENT_TARGET: "10.0"
         SKIP_INSTALL: true
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: >-
+          $(inherited) CONTEXT_PANEL_WATCH_WIDGET_EXTENSION
         CODE_SIGN_ENTITLEMENTS: Config/ContextPanelWatchWidget.entitlements
       configs:
         Release:

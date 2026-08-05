@@ -19,12 +19,17 @@ public struct WatchSyncPresentation: Equatable, Sendable {
     public let generatedAccessibilityText: String?
     public let shouldShowDetail: Bool
 
-    public init(result: CompanionSyncLoadResult, snapshot: WidgetSnapshot, syncErrorMessage: String?) {
+    public init(
+        result: CompanionSyncLoadResult,
+        snapshot: WidgetSnapshot,
+        syncErrorMessage: String?,
+        now: Date = Date()
+    ) {
         switch result.status {
         case .healthy, .close, .limited:
             if let generatedAt = result.document?.snapshot.generatedAt {
-                generatedText = SnapshotFreshness.compactAgeText(since: generatedAt)
-                generatedAccessibilityText = generatedAt.formatted(.relative(presentation: .numeric))
+                generatedText = SnapshotFreshness.compactAgeText(since: generatedAt, now: now)
+                generatedAccessibilityText = Self.relativeAccessibilityText(since: generatedAt, now: now)
             } else {
                 generatedText = nil
                 generatedAccessibilityText = nil
@@ -73,6 +78,12 @@ public struct WatchSyncPresentation: Equatable, Sendable {
     }
 
     private static let maximumDiagnosticCharacterCount = 120
+
+    private static func relativeAccessibilityText(since date: Date, now: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter.localizedString(for: date, relativeTo: now)
+    }
 
     private static func safeDiagnosticDetail(_ value: String?) -> String? {
         guard let value else { return nil }

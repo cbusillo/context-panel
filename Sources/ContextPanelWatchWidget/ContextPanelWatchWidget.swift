@@ -3,11 +3,32 @@ import ContextPanelCore
 import SwiftUI
 import WidgetKit
 
+enum ContextPanelWatchComplicationFamily: String, CaseIterable, Identifiable {
+    case circular
+    case rectangular
+    case inline
+    case corner
+
+    var id: String { rawValue }
+
+    var widgetFamily: WidgetFamily {
+        switch self {
+        case .circular: .accessoryCircular
+        case .rectangular: .accessoryRectangular
+        case .inline: .accessoryInline
+        case .corner: .accessoryCorner
+        }
+    }
+
+}
+
 struct ContextPanelWatchWidgetEntry: TimelineEntry {
     let date: Date
     let snapshot: WidgetSnapshot
     let displayPreferences: WidgetDisplayPreferences
 }
+
+#if CONTEXT_PANEL_WATCH_WIDGET_EXTENSION
 
 private struct ContextPanelWatchWidgetSelection {
     let entry: ContextPanelWatchWidgetEntry
@@ -227,11 +248,34 @@ private final class WatchWidgetCompletion<Value>: @unchecked Sendable {
         completion(value)
     }
 }
+#endif
 
 struct ContextPanelWatchWidgetView: View {
-    @Environment(\.widgetFamily) private var family
+    static let supportedFamilies = ContextPanelWatchComplicationFamily.allCases.map(\.widgetFamily)
+
+    @Environment(\.widgetFamily) private var environmentFamily
 
     let entry: ContextPanelWatchWidgetEntry
+    private let explicitFamily: WidgetFamily?
+    private let explicitPresentationDate: Date?
+
+    init(
+        entry: ContextPanelWatchWidgetEntry,
+        family: WidgetFamily? = nil,
+        presentationDate: Date? = nil
+    ) {
+        self.entry = entry
+        explicitFamily = family
+        explicitPresentationDate = presentationDate
+    }
+
+    private var family: WidgetFamily {
+        explicitFamily ?? environmentFamily
+    }
+
+    private var presentationDate: Date {
+        explicitPresentationDate ?? entry.date
+    }
 
     private var compactContent: WatchComplicationContent {
         mainLaneContent(maximumCount: 1)
@@ -260,33 +304,53 @@ struct ContextPanelWatchWidgetView: View {
         switch family {
         case .accessoryCircular:
             if let alert = compactContent.providerAccessFallback {
-                WatchCircularProviderAccessComplication(alert: alert)
+                WatchCircularProviderAccessComplication(alert: alert, presentationDate: presentationDate)
             } else {
-                WatchCircularComplication(limit: compactContent.limits.first, snapshot: entry.snapshot)
+                WatchCircularComplication(
+                    limit: compactContent.limits.first,
+                    snapshot: entry.snapshot,
+                    presentationDate: presentationDate
+                )
             }
         case .accessoryRectangular:
             if let alert = rectangularContent.providerAccessFallback {
-                WatchRectangularProviderAccessComplication(alert: alert)
+                WatchRectangularProviderAccessComplication(alert: alert, presentationDate: presentationDate)
             } else {
-                WatchRectangularComplication(limits: rectangularContent.limits, snapshot: entry.snapshot)
+                WatchRectangularComplication(
+                    limits: rectangularContent.limits,
+                    snapshot: entry.snapshot,
+                    presentationDate: presentationDate
+                )
             }
         case .accessoryInline:
             if let alert = inlineContent.providerAccessFallback {
-                WatchInlineProviderAccessComplication(alert: alert)
+                WatchInlineProviderAccessComplication(alert: alert, presentationDate: presentationDate)
             } else {
-                WatchInlineComplication(limits: inlineContent.limits, snapshot: entry.snapshot)
+                WatchInlineComplication(
+                    limits: inlineContent.limits,
+                    snapshot: entry.snapshot,
+                    presentationDate: presentationDate
+                )
             }
         case .accessoryCorner:
             if let alert = compactContent.providerAccessFallback {
-                WatchCornerProviderAccessComplication(alert: alert)
+                WatchCornerProviderAccessComplication(alert: alert, presentationDate: presentationDate)
             } else {
-                WatchCornerComplication(limit: compactContent.limits.first, snapshot: entry.snapshot)
+                WatchCornerComplication(
+                    limit: compactContent.limits.first,
+                    snapshot: entry.snapshot,
+                    presentationDate: presentationDate
+                )
             }
         default:
             if let alert = rectangularContent.providerAccessFallback {
-                WatchRectangularProviderAccessComplication(alert: alert)
+                WatchRectangularProviderAccessComplication(alert: alert, presentationDate: presentationDate)
             } else {
-                WatchRectangularComplication(limits: rectangularContent.limits, snapshot: entry.snapshot)
+                WatchRectangularComplication(
+                    limits: rectangularContent.limits,
+                    snapshot: entry.snapshot,
+                    presentationDate: presentationDate
+                )
             }
         }
     }
@@ -294,6 +358,7 @@ struct ContextPanelWatchWidgetView: View {
 
 private struct WatchCircularProviderAccessComplication: View {
     let alert: ProviderAccessAlert
+    let presentationDate: Date
 
     var body: some View {
         ZStack {
@@ -304,12 +369,13 @@ private struct WatchCircularProviderAccessComplication: View {
                 .foregroundStyle(watchStatusColor(alert.status))
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(watchProviderAccessAccessibilityText(alert))
+        .accessibilityLabel(watchProviderAccessAccessibilityText(alert, now: presentationDate))
     }
 }
 
 private struct WatchRectangularProviderAccessComplication: View {
     let alert: ProviderAccessAlert
+    let presentationDate: Date
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -317,27 +383,29 @@ private struct WatchRectangularProviderAccessComplication: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(watchStatusColor(alert.status))
                 .lineLimit(1)
-            Text(watchProviderAccessDetail(alert))
+            Text(watchProviderAccessDetail(alert, now: presentationDate))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(watchProviderAccessAccessibilityText(alert))
+        .accessibilityLabel(watchProviderAccessAccessibilityText(alert, now: presentationDate))
     }
 }
 
 private struct WatchInlineProviderAccessComplication: View {
     let alert: ProviderAccessAlert
+    let presentationDate: Date
 
     var body: some View {
-        Text(watchProviderAccessInlineText(alert))
-            .accessibilityLabel(watchProviderAccessAccessibilityText(alert))
+        Text(watchProviderAccessInlineText(alert, now: presentationDate))
+            .accessibilityLabel(watchProviderAccessAccessibilityText(alert, now: presentationDate))
     }
 }
 
 private struct WatchCornerProviderAccessComplication: View {
     let alert: ProviderAccessAlert
+    let presentationDate: Date
 
     var body: some View {
         Text(watchProviderAccessCornerText(alert))
@@ -347,13 +415,14 @@ private struct WatchCornerProviderAccessComplication: View {
                     .foregroundStyle(watchStatusColor(alert.status))
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(watchProviderAccessAccessibilityText(alert))
+            .accessibilityLabel(watchProviderAccessAccessibilityText(alert, now: presentationDate))
     }
 }
 
 struct WatchCircularComplication: View {
     let limit: WatchLimitDisplay?
     let snapshot: WidgetSnapshot
+    let presentationDate: Date
 
     @ViewBuilder
     var body: some View {
@@ -378,7 +447,7 @@ struct WatchCircularComplication: View {
             .gaugeStyle(.accessoryCircularCapacity)
             .tint(tint)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(limit.accessibilitySentence(direction: .remaining))
+            .accessibilityLabel(limit.accessibilitySentence(direction: .remaining, now: presentationDate))
         } else {
             ZStack {
                 Circle()
@@ -388,7 +457,7 @@ struct WatchCircularComplication: View {
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(
-                limit?.accessibilitySentence(direction: .remaining)
+                limit?.accessibilitySentence(direction: .remaining, now: presentationDate)
                     ?? watchEmptyText(for: snapshot, compact: false)
             )
         }
@@ -407,12 +476,13 @@ struct WatchCircularComplication: View {
 struct WatchRectangularComplication: View {
     let limits: [WatchLimitDisplay]
     let snapshot: WidgetSnapshot
+    let presentationDate: Date
 
     var body: some View {
         if !limits.isEmpty {
             VStack(alignment: .leading, spacing: 1) {
                 ForEach(limits) { limit in
-                    WatchRectangularLimitLine(limit: limit)
+                    WatchRectangularLimitLine(limit: limit, presentationDate: presentationDate)
                 }
             }
         } else {
@@ -429,6 +499,7 @@ struct WatchRectangularComplication: View {
 
 private struct WatchRectangularLimitLine: View {
     let limit: WatchLimitDisplay
+    let presentationDate: Date
 
     var body: some View {
         HStack(spacing: 4) {
@@ -446,7 +517,7 @@ private struct WatchRectangularLimitLine: View {
         .lineLimit(1)
         .minimumScaleFactor(0.75)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(limit.accessibilitySentence(direction: .remaining))
+        .accessibilityLabel(limit.accessibilitySentence(direction: .remaining, now: presentationDate))
     }
 }
 
@@ -474,6 +545,7 @@ private struct WatchMiniCapacityBar: View {
 struct WatchInlineComplication: View {
     let limits: [WatchLimitDisplay]
     let snapshot: WidgetSnapshot
+    let presentationDate: Date
 
     private var primary: WatchLimitDisplay? {
         limits.first
@@ -485,13 +557,15 @@ struct WatchInlineComplication: View {
                 if limits.count > 1 {
                     Text(twoLimitText(primary: primary, secondary: limits[1]))
                         .accessibilityLabel(
-                            primary.accessibilitySentence(direction: .remaining)
+                            primary.accessibilitySentence(direction: .remaining, now: presentationDate)
                                 + ". "
-                                + limits[1].accessibilitySentence(direction: .remaining)
+                                + limits[1].accessibilitySentence(direction: .remaining, now: presentationDate)
                         )
                 }
                 Text("\(primary.title) \(primary.subtitle) · \(primary.remainingInlineText)")
-                    .accessibilityLabel(primary.accessibilitySentence(direction: .remaining))
+                    .accessibilityLabel(
+                        primary.accessibilitySentence(direction: .remaining, now: presentationDate)
+                    )
             }
         } else {
             Text(watchEmptyText(for: snapshot, compact: false))
@@ -513,6 +587,7 @@ struct WatchInlineComplication: View {
 struct WatchCornerComplication: View {
     let limit: WatchLimitDisplay?
     let snapshot: WidgetSnapshot
+    let presentationDate: Date
 
     @ViewBuilder
     var body: some View {
@@ -529,7 +604,7 @@ struct WatchCornerComplication: View {
                     .tint(watchStatusColor(limit.status))
                 }
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel(limit.accessibilitySentence(direction: .remaining))
+                .accessibilityLabel(limit.accessibilitySentence(direction: .remaining, now: presentationDate))
         } else {
             Text("—")
                 .widgetCurvesContent()
@@ -538,7 +613,7 @@ struct WatchCornerComplication: View {
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(
-                    limit?.accessibilitySentence(direction: .remaining)
+                    limit?.accessibilitySentence(direction: .remaining, now: presentationDate)
                         ?? watchEmptyText(for: snapshot, compact: false)
                 )
                 .foregroundStyle(limit.map { watchStatusColor($0.status) } ?? watchStatusColor(snapshot.status))
@@ -547,6 +622,7 @@ struct WatchCornerComplication: View {
 
 }
 
+#if CONTEXT_PANEL_WATCH_WIDGET_EXTENSION
 struct ContextPanelWatchWidget: Widget {
     let kind = ContextPanelWatchWidgetIdentity.kind
 
@@ -565,7 +641,7 @@ struct ContextPanelWatchWidget: Widget {
         }
         .configurationDisplayName("Context Panel")
         .description("Shows remaining capacity for the AI usage limits you chose.")
-        .supportedFamilies([.accessoryCircular, .accessoryRectangular, .accessoryInline, .accessoryCorner])
+        .supportedFamilies(ContextPanelWatchWidgetView.supportedFamilies)
     }
 }
 
@@ -575,6 +651,7 @@ struct ContextPanelWatchWidgetBundle: WidgetBundle {
         ContextPanelWatchWidget()
     }
 }
+#endif
 
 private func watchStatusColor(_ status: UsageStatus) -> Color {
     switch status {
@@ -604,15 +681,15 @@ private func watchProviderAccessSymbol(_ alert: ProviderAccessAlert) -> String {
     }
 }
 
-private func watchProviderAccessDetail(_ alert: ProviderAccessAlert) -> String {
-    if let resetText = alert.resetDisplayText() {
+private func watchProviderAccessDetail(_ alert: ProviderAccessAlert, now: Date) -> String {
+    if let resetText = alert.resetDisplayText(now: now) {
         return "Reset \(resetText)"
     }
     return alert.detail
 }
 
-private func watchProviderAccessInlineText(_ alert: ProviderAccessAlert) -> String {
-    if let resetText = alert.resetDisplayText() {
+private func watchProviderAccessInlineText(_ alert: ProviderAccessAlert, now: Date) -> String {
+    if let resetText = alert.resetDisplayText(now: now) {
         return "\(alert.title) until \(resetText)"
     }
     return alert.title
@@ -631,9 +708,9 @@ private func watchProviderAccessCornerText(_ alert: ProviderAccessAlert) -> Stri
     }
 }
 
-private func watchProviderAccessAccessibilityText(_ alert: ProviderAccessAlert) -> String {
+private func watchProviderAccessAccessibilityText(_ alert: ProviderAccessAlert, now: Date) -> String {
     var components = [alert.title, alert.accountName, alert.detail]
-    if let resetText = alert.resetAccessibilityText() {
+    if let resetText = alert.resetAccessibilityText(now: now) {
         components.append("Plan access resets at \(resetText)")
     }
     return components.joined(separator: ". ")

@@ -20,30 +20,19 @@ private struct WatchRootView: View {
     var body: some View {
         NavigationStack {
             List {
-                WatchStatusSection(
+                WatchUsageContent(
                     result: model.displayResult,
                     snapshot: model.snapshot,
-                    syncErrorMessage: model.lastSyncErrorMessage
+                    displayPreferences: model.displayPreferences,
+                    syncErrorMessage: model.lastSyncErrorMessage,
+                    presentationDate: Date()
                 )
 
-                if let forecast = model.keepWorkingForecast {
-                    WatchForecastSection(forecast: forecast)
-                }
-
-                if let alert = model.snapshot.primaryProviderAccessAlert {
-                    WatchProviderAccessSection(alert: alert)
-                }
-
-                if model.displayLimits.isEmpty {
-                    WatchEmptySection(
-                        result: model.displayResult,
-                        hasSourceLimits: !model.snapshot.limits.isEmpty
-                    )
-                } else {
-                    Section {
-                        ForEach(model.displayLimits) { limit in
-                            WatchLimitRow(limit: limit)
-                        }
+                Section {
+                    NavigationLink {
+                        WatchValidationGalleryView()
+                    } label: {
+                        Label("Validation Gallery", systemImage: "testtube.2")
                     }
                 }
             }
@@ -64,6 +53,58 @@ private struct WatchRootView: View {
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active {
                     model.reload()
+                }
+            }
+        }
+    }
+}
+
+struct WatchUsageContent: View {
+    let result: CompanionSyncLoadResult
+    let snapshot: WidgetSnapshot
+    let displayPreferences: WidgetDisplayPreferences
+    let syncErrorMessage: String?
+    let presentationDate: Date
+
+    private var displayLimits: [WatchLimitDisplay] {
+        WatchLimitDisplay.mainLaneRows(
+            from: snapshot,
+            preferences: displayPreferences,
+            maximumCount: 8
+        )
+    }
+
+    private var keepWorkingForecast: KeepWorkingForecast? {
+        guard snapshot.state == .ready else { return nil }
+        let forecast = snapshot.keepWorkingForecast(presentationDate: presentationDate)
+        return forecast.remainingPercent == nil ? nil : forecast
+    }
+
+    var body: some View {
+        WatchStatusSection(
+            result: result,
+            snapshot: snapshot,
+            syncErrorMessage: syncErrorMessage,
+            presentationDate: presentationDate
+        )
+
+        if let keepWorkingForecast {
+            WatchForecastSection(forecast: keepWorkingForecast)
+        }
+
+        if let alert = snapshot.primaryProviderAccessAlert {
+            WatchProviderAccessSection(alert: alert, presentationDate: presentationDate)
+        }
+
+        if displayLimits.isEmpty {
+            WatchEmptySection(
+                result: result,
+                hasSourceLimits: !snapshot.limits.isEmpty
+            )
+        } else {
+            Section {
+                ForEach(displayLimits) { limit in
+                    WatchLimitRow(limit: limit, presentationDate: presentationDate)
                 }
             }
         }
@@ -112,20 +153,6 @@ private final class WatchSyncModel {
             loadDocument: { now in await remoteStore.load(now: now) },
             loadPresentation: { await presentationStore.load() }
         )
-    }
-
-    var displayLimits: [WatchLimitDisplay] {
-        WatchLimitDisplay.mainLaneRows(
-            from: snapshot,
-            preferences: displayPreferences,
-            maximumCount: 8
-        )
-    }
-
-    var keepWorkingForecast: KeepWorkingForecast? {
-        guard snapshot.state == .ready else { return nil }
-        let forecast = snapshot.keepWorkingForecast(presentationDate: Date())
-        return forecast.remainingPercent == nil ? nil : forecast
     }
 
     func reload(now: Date = Date()) {
@@ -239,12 +266,14 @@ private struct WatchStatusSection: View {
     let result: CompanionSyncLoadResult
     let snapshot: WidgetSnapshot
     let syncErrorMessage: String?
+    let presentationDate: Date
 
     private var presentation: WatchSyncPresentation {
         WatchSyncPresentation(
             result: result,
             snapshot: snapshot,
-            syncErrorMessage: syncErrorMessage
+            syncErrorMessage: syncErrorMessage,
+            now: presentationDate
         )
     }
 
@@ -292,6 +321,7 @@ private struct WatchStatusSection: View {
 
 private struct WatchProviderAccessSection: View {
     let alert: ProviderAccessAlert
+    let presentationDate: Date
 
     var body: some View {
         Section {
@@ -302,7 +332,7 @@ private struct WatchProviderAccessSection: View {
                 Text(alert.detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                if let resetText = alert.resetDisplayText() {
+                if let resetText = alert.resetDisplayText(now: presentationDate) {
                     Text("Plan access resets \(resetText)")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
@@ -344,7 +374,7 @@ private struct WatchProviderAccessSection: View {
 
     private var accessibilityLabel: String {
         var components = [alert.title, alert.accountName, alert.detail]
-        if let resetText = alert.resetAccessibilityText() {
+        if let resetText = alert.resetAccessibilityText(now: presentationDate) {
             components.append("Plan access resets at \(resetText)")
         }
         return components.joined(separator: ". ")
@@ -402,6 +432,7 @@ private struct WatchEmptySection: View {
 
 private struct WatchLimitRow: View {
     let limit: WatchLimitDisplay
+    let presentationDate: Date
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -415,7 +446,7 @@ private struct WatchLimitRow: View {
         }
         .padding(.vertical, 1)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(limit.accessibilitySentence(direction: .used))
+        .accessibilityLabel(limit.accessibilitySentence(direction: .used, now: presentationDate))
     }
 
     private var header: some View {
@@ -490,7 +521,7 @@ private struct WatchLimitRow: View {
     }
 
     private var resetText: String? {
-        limit.resetText.map { "reset \($0)" }
+        limit.resetText(now: presentationDate).map { "reset \($0)" }
     }
 
     @ViewBuilder

@@ -334,6 +334,7 @@ import Testing
     #expect(appDependencies == [
         "ContextPanelCoreWatch",
         "ContextPanelCloudKitSyncWatch",
+        "ContextPanelValidationFixturesWatch",
         "ContextPanelWatchWidgetExtension",
     ])
     #expect(!appDependencies.contains("ContextPanelCompanionSupport"))
