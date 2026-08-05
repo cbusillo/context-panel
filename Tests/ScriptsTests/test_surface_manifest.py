@@ -490,12 +490,16 @@ class SurfaceManifestTests(unittest.TestCase):
         }["macos.widget"]
         self.assertEqual(
             render_surface["freshEvidence"],
-            ["shared-view", "actual-runtime", "os-composited-placement"],
+            ["shared-view"],
         )
         self.assertFalse(render_surface["carryForward"]["shared-view"]["eligible"])
-        self.assertFalse(render_surface["carryForward"]["actual-runtime"]["eligible"])
-        self.assertFalse(
+        self.assertTrue(render_surface["carryForward"]["actual-runtime"]["eligible"])
+        self.assertTrue(
             render_surface["carryForward"]["os-composited-placement"]["eligible"]
+        )
+        self.assertEqual(
+            render_surface["carryForward"]["os-composited-placement"]["conditions"],
+            ["matching-host-os", "matching-current-runtime-receipt"],
         )
 
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -510,6 +514,167 @@ class SurfaceManifestTests(unittest.TestCase):
         self.assertEqual(runtime_surface["freshEvidence"], ["actual-runtime"])
         self.assertTrue(runtime_surface["carryForward"]["shared-view"]["eligible"])
         self.assertFalse(runtime_surface["carryForward"]["actual-runtime"]["eligible"])
+
+    def test_beta_render_change_uses_shared_view_without_device_session(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = self.fixture(temporary_directory)
+            self.append(root / "Sources/ContextPanelWidgetUI/ContextPanelWidgetViews.swift")
+            comparison = compare_manifests(self.baseline, self.manifest(root), "beta")
+
+        widget = {surface["surfaceId"]: surface for surface in comparison["surfaces"]}[
+            "macos.widget"
+        ]
+        self.assertEqual(widget["requiredEvidence"], ["shared-view"])
+        self.assertEqual(widget["freshEvidence"], ["shared-view"])
+        self.assertFalse(comparison["requiresRuntimeSession"])
+        self.assertFalse(comparison["requiresPlacementReview"])
+        self.assertEqual(comparison["requiredSurfaces"]["actual-runtime"], [])
+        self.assertEqual(comparison["requiredSurfaces"]["os-composited-placement"], [])
+
+    def test_beta_runtime_change_scopes_runtime_session_to_affected_surfaces(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = self.fixture(temporary_directory)
+            self.append(
+                root / "Sources/ContextPanelRefreshAgent/ContextPanelRefreshAgent.swift"
+            )
+            comparison = compare_manifests(self.baseline, self.manifest(root), "beta")
+
+        self.assertTrue(comparison["requiresRuntimeSession"])
+        self.assertEqual(
+            comparison["requiredSurfaces"]["actual-runtime"],
+            ["macos.refresh-agent"],
+        )
+        self.assertFalse(comparison["requiresPlacementReview"])
+
+    def test_new_beta_build_does_not_require_all_device_runtime_proof(self):
+        next_build = self.manifest(REPO_ROOT, version="1.0.54", build="2026073002")
+        comparison = compare_manifests(self.baseline, next_build, "beta")
+        expected_shared = sorted(
+            surface_id
+            for surface_id, surface in self.surfaces(next_build).items()
+            if "shared-view" in surface["evidenceCapabilities"]
+        )
+
+        self.assertFalse(comparison["requiresRuntimeSession"])
+        self.assertEqual(comparison["requiredSurfaces"]["actual-runtime"], [])
+        self.assertEqual(comparison["requiredSurfaces"]["shared-view"], expected_shared)
+        for surface in comparison["surfaces"]:
+            self.assertNotIn("actual-runtime", surface["freshEvidence"])
+            if surface["surfaceId"] in expected_shared:
+                self.assertIn("shared-view", surface["requiredEvidence"])
+                self.assertTrue(
+                    surface["carryForward"]["shared-view"]["eligible"]
+                )
+
+    def test_beta_placement_only_change_requires_runtime_and_placement(self):
+        mutated = json.loads(json.dumps(self.baseline))
+        surface = self.surfaces(mutated)["macos.widget"]
+        surface["fingerprints"]["placement"] = "f" * 64
+        comparison = compare_manifests(self.baseline, mutated, "beta")
+        result = {item["surfaceId"]: item for item in comparison["surfaces"]}[
+            "macos.widget"
+        ]
+
+        self.assertEqual(
+            result["freshEvidence"],
+            ["actual-runtime", "os-composited-placement"],
+        )
+        self.assertEqual(
+            result["requiredEvidence"],
+            ["shared-view", "actual-runtime", "os-composited-placement"],
+        )
+        self.assertEqual(
+            comparison["requiredSurfaces"]["actual-runtime"],
+            ["macos.widget"],
+        )
+        self.assertEqual(
+            comparison["requiredSurfaces"]["os-composited-placement"],
+            ["macos.widget"],
+        )
+        self.assertTrue(comparison["requiresRuntimeSession"])
+        self.assertTrue(comparison["requiresPlacementReview"])
+
+    def test_extension_entry_points_are_placement_sensitive(self):
+        cases = (
+            (
+                "Sources/ContextPanelWidget/ContextPanelWidget.swift",
+                ("macos.widget",),
+            ),
+            (
+                "Sources/ContextPanelCompanionWidget/ContextPanelCompanionWidget.swift",
+                ("ios.widget", "ipados.widget", "visionos.widget"),
+            ),
+            (
+                "Sources/ContextPanelWatchWidget/ContextPanelWatchWidget.swift",
+                ("watchos.complication",),
+            ),
+            (
+                "Sources/ContextPanelTVTopShelf/ContextPanelTVTopShelfProvider.swift",
+                ("tvos.top-shelf",),
+            ),
+            (
+                "Sources/ContextPanelCore/ContextPanelWidgetIdentity.swift",
+                (
+                    "macos.widget",
+                    "ios.widget",
+                    "ipados.widget",
+                    "visionos.widget",
+                    "watchos.complication",
+                ),
+            ),
+        )
+
+        for relative_path, surface_ids in cases:
+            with self.subTest(relative_path=relative_path):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    root = self.fixture(temporary_directory)
+                    self.append(root / relative_path)
+                    mutated = self.manifest(root)
+                baseline_surfaces = self.surfaces(self.baseline)
+                mutated_surfaces = self.surfaces(mutated)
+                comparison = compare_manifests(self.baseline, mutated, "beta")
+                compared = {
+                    surface["surfaceId"]: surface for surface in comparison["surfaces"]
+                }
+
+                for surface_id in surface_ids:
+                    self.assertNotEqual(
+                        baseline_surfaces[surface_id]["fingerprints"]["placement"],
+                        mutated_surfaces[surface_id]["fingerprints"]["placement"],
+                    )
+                    self.assertIn(
+                        "os-composited-placement",
+                        compared[surface_id]["requiredEvidence"],
+                    )
+                    self.assertFalse(
+                        compared[surface_id]["carryForward"][
+                            "os-composited-placement"
+                        ]["eligible"]
+                    )
+
+    def test_rc_exact_build_requires_runtime_for_every_capable_surface(self):
+        next_build = self.manifest(REPO_ROOT, version="1.0.54", build="2026073002")
+        comparison = compare_manifests(self.baseline, next_build, "rc")
+        expected = sorted(
+            surface_id
+            for surface_id, surface in self.surfaces(next_build).items()
+            if "actual-runtime" in surface["evidenceCapabilities"]
+        )
+
+        self.assertTrue(comparison["requiresRuntimeSession"])
+        self.assertEqual(comparison["requiredSurfaces"]["actual-runtime"], expected)
+
+    def test_release_exact_build_requires_runtime_for_every_capable_surface(self):
+        next_build = self.manifest(REPO_ROOT, version="1.0.54", build="2026073002")
+        comparison = compare_manifests(self.baseline, next_build, "release")
+        expected = sorted(
+            surface_id
+            for surface_id, surface in self.surfaces(next_build).items()
+            if "actual-runtime" in surface["evidenceCapabilities"]
+        )
+
+        self.assertTrue(comparison["requiresRuntimeSession"])
+        self.assertEqual(comparison["requiredSurfaces"]["actual-runtime"], expected)
 
     def test_expected_build_seal_requires_complete_exact_artifact_evidence(self):
         template = evidence_template(self.baseline)

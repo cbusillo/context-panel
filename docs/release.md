@@ -765,23 +765,40 @@ build.
 Before treating a companion TestFlight build as release evidence, validate this
 sequence from signed runtimes.
 
-Create or recover the durable coordinator session for the exact train before
-anyone begins opening devices:
+First compare the prior approved full source manifest with the candidate source
+manifest for the intended train:
+
+```sh
+scripts/context-panel-surface-manifest.py compare \
+  --previous <previous-source-manifest.json> \
+  --current <candidate-source-manifest.json> \
+  --train <beta|rc|release> \
+  --output <comparison.json>
+```
+
+For a beta with `requiresRuntimeSession=false`, do not open devices or create a
+runtime session; automated shared-view evidence is sufficient for that slice.
+When the comparison requires runtime proof, create or recover the durable
+coordinator session for the exact train before anyone begins opening devices,
+passing each entry from `requiredSurfaces.actual-runtime` as a repeated
+`--surface` argument:
 
 ```sh
 scripts/context-panel-validation.py start-session \
   --version <marketing-version> \
   --build-number <coordinated-build-number> \
+  --surface <required-actual-runtime-surface> \
   --expected-build-manifest <ExpectedBuildManifest-macos.json> \
   --expected-build-manifest <ExpectedBuildManifest-ios.json> \
   --expected-build-manifest <ExpectedBuildManifest-visionos.json> \
   --expected-build-manifest <ExpectedBuildManifest-tvos.json>
 ```
 
-The default session requests every shipping surface. Pass repeated `--surface`
-arguments only for an explicitly scoped validation slice. A matching existing
-session is recovered unchanged; replacing it requires `--replace`, and a
-different active target is rejected by both lifecycle and status commands.
+Omitting `--surface` still requests every shipping surface and is appropriate
+for RC/release floors. Beta automation must use the comparison output instead of
+defaulting to an all-surface session. A matching existing session is recovered
+unchanged; replacing it requires `--replace`, and a different active target is
+rejected by both lifecycle and status commands.
 Status continues to show collected out-of-scope evidence for diagnostics, but
 only requested surfaces can block the slice or produce operator actions.
 Pass each sealed `ExpectedBuildManifest-<platform>.json` needed to cover the
@@ -814,11 +831,11 @@ for the queue, privacy, and recovery contract.
 
 Signed host apps also contain the fixture-isolated shared widget gallery
 documented in [Signed Validation Galleries](signed-validation-galleries.md).
-Gallery renders are shared-view evidence only. They do not satisfy exact-build
-runtime receipts, OS-composited placement approval, or the current release
-runbook's physical-device requirements. Until the visual approval ledger and
-release carry-forward work are complete, gallery review is diagnostic and the
-existing signed validation safeguards remain authoritative.
+Gallery and deterministic render outputs are shared-view evidence. They can
+satisfy render-only beta requirements, but they do not satisfy exact-build
+runtime receipts or OS-composited placement approval. Until the visual approval
+ledger and release carry-forward work are complete, RC/release safeguards remain
+authoritative.
 
 After opening the bounded runtime receipt window described in
 [Signed Validation Runtime Receipts](signed-validation-runtime-receipts.md),

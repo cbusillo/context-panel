@@ -16,6 +16,11 @@ prove:
 - placement margins, backgrounds, focus behavior, or other OS-owned behavior
 - that a runtime receipt matches the requested release candidate
 
+When a beta manifest comparison requires only `shared-view`, deterministic
+gallery/render evidence can complete that slice without opening a device
+session. It never substitutes for `actual-runtime` or
+`os-composited-placement` when either appears in `requiredEvidence`.
+
 Runtime receipts and OS-composited placement approvals remain separate evidence
 classes. The gallery labels that boundary in both its persistent header and each
 render tile.
