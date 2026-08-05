@@ -187,6 +187,12 @@ bundle with:
 scripts/context-panel-runtime-session.py export --output runtime-receipts.json
 ```
 
+The coordinator de-duplicates on the signed receipt payload, not on relay
+envelope metadata. When the same receipt moves from the local queue to CloudKit,
+the CloudKit source and server-received timestamp replace the local transport
+metadata without invalidating proof. The same receipt ID paired with different
+intrinsic runtime evidence remains a fail-closed conflict.
+
 The durable coordinator consumes these contracts through a narrow adapter. Give
 the coordinator the sealed expected-build manifests produced by the signed
 archive flow, then run the explicit relay/reconciliation command:
