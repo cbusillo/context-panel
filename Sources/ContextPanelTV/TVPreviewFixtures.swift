@@ -11,6 +11,10 @@ enum TVPreviewFixtures {
         ProcessInfo.processInfo.environment["CONTEXT_PANEL_TV_INITIAL_PROVIDER"]
     }
 
+    static var opensValidationGallery: Bool {
+        ProcessInfo.processInfo.environment["CONTEXT_PANEL_TV_OPEN_VALIDATION_GALLERY"] == "1"
+    }
+
     static func requestedResult(now: Date) -> CompanionSyncLoadResult? {
         guard let fixture = ProcessInfo.processInfo.environment["CONTEXT_PANEL_TV_FIXTURE"] else {
             return nil
@@ -60,9 +64,9 @@ enum TVPreviewFixtures {
         let limits = [
             UsageLimit(
                 provider: .openAI,
-                accountID: "openai-personal",
-                configuredAccountID: "openai-personal",
-                accountName: "personal@example.com",
+                accountID: "sample-openai-personal",
+                configuredAccountID: "sample-openai-personal",
+                accountName: "Sample OpenAI Personal",
                 label: "OpenAI weekly",
                 windowLabel: "Weekly",
                 unit: .percent,
@@ -73,9 +77,9 @@ enum TVPreviewFixtures {
             ),
             UsageLimit(
                 provider: .openAI,
-                accountID: "openai-work",
-                configuredAccountID: "openai-work",
-                accountName: "work@example.com",
+                accountID: "sample-openai-work",
+                configuredAccountID: "sample-openai-work",
+                accountName: "Sample OpenAI Work",
                 label: "OpenAI weekly",
                 windowLabel: "Weekly",
                 unit: .percent,
@@ -86,9 +90,9 @@ enum TVPreviewFixtures {
             ),
             UsageLimit(
                 provider: .openAI,
-                accountID: "openai-personal",
-                configuredAccountID: "openai-personal",
-                accountName: "personal@example.com",
+                accountID: "sample-openai-personal",
+                configuredAccountID: "sample-openai-personal",
+                accountName: "Sample OpenAI Personal",
                 label: "OpenAI 5-hour",
                 windowLabel: "5-hour",
                 unit: .percent,
@@ -99,9 +103,9 @@ enum TVPreviewFixtures {
             ),
             UsageLimit(
                 provider: .anthropic,
-                accountID: "claude-main",
-                configuredAccountID: "claude-main",
-                accountName: "Claude Main",
+                accountID: "sample-claude-main",
+                configuredAccountID: "sample-claude-main",
+                accountName: "Sample Claude Main",
                 label: "Claude 5-hour",
                 windowLabel: "5-hour",
                 unit: .percent,
@@ -112,9 +116,9 @@ enum TVPreviewFixtures {
             ),
             UsageLimit(
                 provider: .anthropic,
-                accountID: "claude-main",
-                configuredAccountID: "claude-main",
-                accountName: "Claude Main",
+                accountID: "sample-claude-main",
+                configuredAccountID: "sample-claude-main",
+                accountName: "Sample Claude Main",
                 label: "Claude weekly",
                 windowLabel: "Weekly",
                 unit: .percent,
@@ -125,9 +129,9 @@ enum TVPreviewFixtures {
             ),
             UsageLimit(
                 provider: .google,
-                accountID: "google-antigravity",
-                configuredAccountID: "google-antigravity",
-                accountName: "Antigravity",
+                accountID: "sample-google-antigravity",
+                configuredAccountID: "sample-google-antigravity",
+                accountName: "Sample Antigravity",
                 label: "Gemini daily",
                 windowLabel: "Daily",
                 unit: .percent,
@@ -158,9 +162,9 @@ enum TVPreviewFixtures {
             reports.append(
                 StoredProviderReport(
                     provider: .openAI,
-                    accountID: "openai-team",
-                    configuredAccountID: "openai-team",
-                    accountName: "Team",
+                    accountID: "sample-openai-team",
+                    configuredAccountID: "sample-openai-team",
+                    accountName: "Sample OpenAI Team",
                     generatedAt: generatedAt,
                     status: .failure,
                     errorMessage: "Reconnect required"

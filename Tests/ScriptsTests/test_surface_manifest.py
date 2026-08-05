@@ -241,6 +241,7 @@ class SurfaceManifestTests(unittest.TestCase):
             "ipados.app",
             "visionos.app",
             "watchos.app",
+            "tvos.app",
         ):
             self.assertNotEqual(
                 baseline[surface_id]["fingerprints"]["render"],
@@ -256,8 +257,47 @@ class SurfaceManifestTests(unittest.TestCase):
             "ipados.widget",
             "visionos.widget",
             "watchos.complication",
-            "tvos.app",
             "tvos.top-shelf",
+        ):
+            self.assertEqual(
+                baseline[surface_id]["fingerprints"],
+                mutated[surface_id]["fingerprints"],
+            )
+
+    def test_top_shelf_renderer_change_moves_tv_app_and_top_shelf_render_fingerprints(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = self.fixture(temporary_directory)
+            self.append(
+                root
+                / "Sources/ContextPanelTVTopShelf/ContextPanelTVTopShelfProvider.swift"
+            )
+            mutated = self.surfaces(self.manifest(root))
+        baseline = self.surfaces(self.baseline)
+        self.assertNotEqual(
+            baseline["tvos.app"]["fingerprints"]["render"],
+            mutated["tvos.app"]["fingerprints"]["render"],
+        )
+        self.assertEqual(
+            baseline["tvos.app"]["fingerprints"]["runtime"],
+            mutated["tvos.app"]["fingerprints"]["runtime"],
+        )
+        for fingerprint in ("render", "runtime"):
+            self.assertNotEqual(
+                baseline["tvos.top-shelf"]["fingerprints"][fingerprint],
+                mutated["tvos.top-shelf"]["fingerprints"][fingerprint],
+            )
+
+        for surface_id in (
+            "macos.app",
+            "macos.widget",
+            "ios.app",
+            "ios.widget",
+            "ipados.app",
+            "ipados.widget",
+            "visionos.app",
+            "visionos.widget",
+            "watchos.app",
+            "watchos.complication",
         ):
             self.assertEqual(
                 baseline[surface_id]["fingerprints"],

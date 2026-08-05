@@ -58,6 +58,7 @@
 		2B307D35600C2C87226FB7B2 /* libContextPanelCloudKitSyncCompanion.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 4EF1C31059DCFA7FFC3969EC /* libContextPanelCloudKitSyncCompanion.a */; };
 		2B70701A21DA7CEC264F9BE9 /* RuntimeReceiptStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90A18CA34B97DF772F4DD489 /* RuntimeReceiptStore.swift */; };
 		2D53BD76E94E68A54CF36F92 /* SnapshotFreshness.swift in Sources */ = {isa = PBXBuildFile; fileRef = D03C19BEA1C610711A048EB7 /* SnapshotFreshness.swift */; };
+		2E8257B9262A44CCC25DF098 /* ValidationGalleryFixtureAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46D38079CECADB90CDDD213C /* ValidationGalleryFixtureAdapter.swift */; };
 		2EBF1D50D1530377171B2FBF /* libContextPanelTVSupport.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 44FF54AE4BAF0EF490CAD694 /* libContextPanelTVSupport.a */; };
 		2F5127B0D05052FD883EABC7 /* RuntimeReceiptCloudKitSyncStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A72867B173DBDFD1F46C8709 /* RuntimeReceiptCloudKitSyncStore.swift */; };
 		3110B4EC8EFDD00AEC978791 /* libContextPanelWidgetUI.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 4CDAD640E6A641A427B87752 /* libContextPanelWidgetUI.a */; };
@@ -73,6 +74,7 @@
 		37A4E1CCC9D22CDA3580CB61 /* ProviderConnector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 350ED5589FB23C42ED32704A /* ProviderConnector.swift */; };
 		39EC83B5010B6EECAB3BC4D8 /* ContextPanelTVApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A5856DAEEED4696F7849C66 /* ContextPanelTVApp.swift */; };
 		3A2F5A5A87BF4CA4F2DB84F0 /* ResetCreditGuidance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 889A754ED35365DB1AAB2089 /* ResetCreditGuidance.swift */; };
+		3D1F47769B930D1DC8FDE1E3 /* TVValidationGallery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 887FA14AA5227273F60924EA /* TVValidationGallery.swift */; };
 		3D2C7B99452A5EF3021D7E79 /* CompanionSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8211A4CCCDD1AA6113F22D1 /* CompanionSnapshot.swift */; };
 		3DC7CCECA7A97D625CC0BC9F /* LimitWarning.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1161DC4C994F71A1E6CEE608 /* LimitWarning.swift */; };
 		3F6B622C4372BA075F2E5CA9 /* ClaudeAccountMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BBC1080557704B2EF023A7B /* ClaudeAccountMigration.swift */; };
@@ -183,6 +185,7 @@
 		A1DB7CDCDD4A29AF1B157B83 /* UsageLimit.swift in Sources */ = {isa = PBXBuildFile; fileRef = D459054C90410A784EBD308B /* UsageLimit.swift */; };
 		A1E12E6C1FA3E1356F93519B /* PromptCacheTelemetryMirrorService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3B93DAA06AE42D89A02C5EE /* PromptCacheTelemetryMirrorService.swift */; };
 		A37AE7119FE5509A23104FBF /* ValidationGalleryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBE7945E233F47F5F9CC4828 /* ValidationGalleryView.swift */; };
+		A3AB0D5CE7EA13843523C00A /* TVValidationFixtureAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87616530D5E40E48C4DFF27F /* TVValidationFixtureAdapter.swift */; };
 		A466B05348C2BFF29F95911B /* RuntimeReceipt.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAE37DEC3E2AA1F35C74FCA7 /* RuntimeReceipt.swift */; };
 		A4B76105A6FA2C709A418147 /* WatchAsyncDeadline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14572C20D47B490CFD13D719 /* WatchAsyncDeadline.swift */; };
 		A78C35127BB0471865FD6A8B /* WidgetDisplayPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBDCF9F49A90CA3576BF2792 /* WidgetDisplayPreferences.swift */; };
@@ -201,6 +204,7 @@
 		B1CDE4B115C6B084E7DB8310 /* ResetCreditGuidance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 889A754ED35365DB1AAB2089 /* ResetCreditGuidance.swift */; };
 		B1E1A99A16A40F7BE52E17E2 /* ProviderConnector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 350ED5589FB23C42ED32704A /* ProviderConnector.swift */; };
 		B28469BEF69F2E9B56205A7F /* ContextPanelDateFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9909074D7E80648BC2A01C51 /* ContextPanelDateFormatting.swift */; };
+		B2B705342CCBD83E5E2CEB09 /* libContextPanelValidationFixturesTV.a in Frameworks */ = {isa = PBXBuildFile; fileRef = F4ADEA4E6FA132BEE434281A /* libContextPanelValidationFixturesTV.a */; };
 		B2D8ECEDBF2665949BA785F3 /* RuntimeReceiptCloudKitSyncStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A72867B173DBDFD1F46C8709 /* RuntimeReceiptCloudKitSyncStore.swift */; };
 		B32B9A08B17CEA125482D04F /* WatchLimitDisplay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47D628E750682BA2235D68F3 /* WatchLimitDisplay.swift */; };
 		B59F4707B276A4C93680E7F6 /* SnapshotFreshness.swift in Sources */ = {isa = PBXBuildFile; fileRef = D03C19BEA1C610711A048EB7 /* SnapshotFreshness.swift */; };
@@ -232,10 +236,12 @@
 		CF2652EE9B1FEC94AC1AB387 /* MetricProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B5621100867602BDE8B426A /* MetricProgress.swift */; };
 		D15F2194BB1A43604A1E2D52 /* PromptCacheTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96C85B770C80B786EAE068CF /* PromptCacheTelemetry.swift */; };
 		D1AE42202229297FD0665FDC /* ClaudeAccountMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BBC1080557704B2EF023A7B /* ClaudeAccountMigration.swift */; };
+		D4CA9B566E43BCE75D4E3953 /* ValidationFixtureCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 109BB14C1C264615B4D84D69 /* ValidationFixtureCatalog.swift */; };
 		D4F01BFAED925D24A37BEB89 /* SnapshotStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32D8515D047F5A8117DB762C /* SnapshotStore.swift */; };
 		D576C47E63484116DD45FC7D /* CapacityPool.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8862B929FE544FCB2C3D06B /* CapacityPool.swift */; };
 		D6488317105C434A6894A732 /* TVAsyncDeadline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AE89FE10368B8714C3F0798 /* TVAsyncDeadline.swift */; };
 		D75323A888BC8BC683D2F6AA /* LimitProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F09D3CAB56AE663B9F7ECA /* LimitProbe.swift */; };
+		D7ECD21BFF5021B8BC7E2595 /* ContextPanelTVTopShelfProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89CAE692DB1BCF76AB802C6F /* ContextPanelTVTopShelfProvider.swift */; };
 		D84B263CCE762609E7CB8F06 /* AccountConfigurationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 186D607FE2EEFDFFE2E70446 /* AccountConfigurationStore.swift */; };
 		D8E9C0AC4AE18B84C90690E9 /* MainLimitSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FC2DAEDD38483FC3A5D4880 /* MainLimitSummary.swift */; };
 		D978AE26F44BB5C58672C7AF /* libContextPanelCoreTV.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 352F396977388C817E5A692E /* libContextPanelCoreTV.a */; };
@@ -513,6 +519,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = EE4B8035BB7A9BD03B668BB8;
 			remoteInfo = ContextPanelCore;
+		};
+		9BBBCD277A07DA145CC01D1A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 194387DBD3D0F10E17F284F9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5B94B2E30BCF752EFACD71CF;
+			remoteInfo = ContextPanelValidationFixturesTV;
 		};
 		9C78E40974AF58F0D3B9326C /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -797,6 +810,8 @@
 		7A5856DAEEED4696F7849C66 /* ContextPanelTVApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelTVApp.swift; sourceTree = "<group>"; };
 		7BD985B0213AB5987D3B3170 /* FastModeForecast.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FastModeForecast.swift; sourceTree = "<group>"; };
 		80B9294200F8893B4BACD8EB /* WatchValidationGallery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchValidationGallery.swift; sourceTree = "<group>"; };
+		87616530D5E40E48C4DFF27F /* TVValidationFixtureAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVValidationFixtureAdapter.swift; sourceTree = "<group>"; };
+		887FA14AA5227273F60924EA /* TVValidationGallery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVValidationGallery.swift; sourceTree = "<group>"; };
 		889A754ED35365DB1AAB2089 /* ResetCreditGuidance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResetCreditGuidance.swift; sourceTree = "<group>"; };
 		895A979571D5E5C14830B41D /* ClaudeOAuthUsage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeOAuthUsage.swift; sourceTree = "<group>"; };
 		89CAE692DB1BCF76AB802C6F /* ContextPanelTVTopShelfProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextPanelTVTopShelfProvider.swift; sourceTree = "<group>"; };
@@ -840,6 +855,7 @@
 		F09182E1FD96DAEEC38F3909 /* libContextPanelCore.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libContextPanelCore.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		F188796FF19C3A0564D5EEAB /* CompanionCloudKitSyncStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionCloudKitSyncStore.swift; sourceTree = "<group>"; };
 		F3B93DAA06AE42D89A02C5EE /* PromptCacheTelemetryMirrorService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptCacheTelemetryMirrorService.swift; sourceTree = "<group>"; };
+		F4ADEA4E6FA132BEE434281A /* libContextPanelValidationFixturesTV.a */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = archive.ar; path = libContextPanelValidationFixturesTV.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		F7E0CE227A384064BE08DD1D /* libContextPanelCloudKitSync.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libContextPanelCloudKitSync.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		F8211A4CCCDD1AA6113F22D1 /* CompanionSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionSnapshot.swift; sourceTree = "<group>"; };
 		FAE37DEC3E2AA1F35C74FCA7 /* RuntimeReceipt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeReceipt.swift; sourceTree = "<group>"; };
@@ -879,6 +895,7 @@
 				D978AE26F44BB5C58672C7AF /* libContextPanelCoreTV.a in Frameworks */,
 				4F90AB206119E2201E8F0C70 /* libContextPanelCloudKitSyncTV.a in Frameworks */,
 				2A218D15299263DD43C91111 /* libContextPanelTVSupport.a in Frameworks */,
+				B2B705342CCBD83E5E2CEB09 /* libContextPanelValidationFixturesTV.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -958,6 +975,7 @@
 		24252FA9F5BEDAE85BE87A90 /* ContextPanelValidationGalleryUI */ = {
 			isa = PBXGroup;
 			children = (
+				87616530D5E40E48C4DFF27F /* TVValidationFixtureAdapter.swift */,
 				58F4F67A24BB48C9AA7E386B /* ValidationGalleryActivity.swift */,
 				46D38079CECADB90CDDD213C /* ValidationGalleryFixtureAdapter.swift */,
 				06577CE52DA530F472A891F8 /* ValidationGalleryRoute.swift */,
@@ -1003,6 +1021,7 @@
 				44FF54AE4BAF0EF490CAD694 /* libContextPanelTVSupport.a */,
 				6F1D444CA23470FFEE4A8455 /* libContextPanelValidationFixtures.a */,
 				3F049DC36AB470FDC9A5C8B8 /* libContextPanelValidationFixturesCompanion.a */,
+				F4ADEA4E6FA132BEE434281A /* libContextPanelValidationFixturesTV.a */,
 				D80BA4E7E9168854400D410D /* libContextPanelValidationFixturesWatch.a */,
 				3BD1D2D323E49D0BB93C1999 /* libContextPanelValidationGalleryUI.a */,
 				016A7CDBAC8209A9D8336BD4 /* libContextPanelValidationGalleryUICompanion.a */,
@@ -1028,6 +1047,7 @@
 				7A5856DAEEED4696F7849C66 /* ContextPanelTVApp.swift */,
 				069C02BFF25BF7CD01E47C31 /* TVPreviewFixtures.swift */,
 				D8C0573DE5DB1DBE4E963FB2 /* TVSystemSurfaces.swift */,
+				887FA14AA5227273F60924EA /* TVValidationGallery.swift */,
 			);
 			name = ContextPanelTV;
 			path = Sources/ContextPanelTV;
@@ -1468,6 +1488,24 @@
 			productReference = 400B0794690F91F5C3029A21 /* libContextPanelCloudKitSyncTV.a */;
 			productType = "com.apple.product-type.library.static";
 		};
+		5B94B2E30BCF752EFACD71CF /* ContextPanelValidationFixturesTV */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 96116994236D6FBE173372EA /* Build configuration list for PBXNativeTarget "ContextPanelValidationFixturesTV" */;
+			buildPhases = (
+				381454BF08D719AB79C20B61 /* Sources */,
+				97642ED24C0379FF55D02228 /* Copy Swift Objective-C Interface Header */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ContextPanelValidationFixturesTV;
+			packageProductDependencies = (
+			);
+			productName = ContextPanelValidationFixturesTV;
+			productReference = F4ADEA4E6FA132BEE434281A /* libContextPanelValidationFixturesTV.a */;
+			productType = "com.apple.product-type.library.static";
+		};
 		6806463975484B2D6192D905 /* ContextPanelCoreWatch */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 4659C8C6AF553565F180B4AA /* Build configuration list for PBXNativeTarget "ContextPanelCoreWatch" */;
@@ -1666,6 +1704,7 @@
 				29FE4CDA12D1E3A9D6EAC4FA /* PBXTargetDependency */,
 				CF4173AF43050A8C101A3F5D /* PBXTargetDependency */,
 				C44B8AD0896DC3FCD46FE22D /* PBXTargetDependency */,
+				C385FE521426B6312EC05B7A /* PBXTargetDependency */,
 				73969E5736893E19794F42DB /* PBXTargetDependency */,
 			);
 			name = ContextPanelTV;
@@ -1876,6 +1915,10 @@
 						DevelopmentTeam = MM5YXC7T6E;
 						ProvisioningStyle = Automatic;
 					};
+					5B94B2E30BCF752EFACD71CF = {
+						DevelopmentTeam = MM5YXC7T6E;
+						ProvisioningStyle = Automatic;
+					};
 					6806463975484B2D6192D905 = {
 						DevelopmentTeam = MM5YXC7T6E;
 						ProvisioningStyle = Automatic;
@@ -1980,6 +2023,7 @@
 				AA9FBEBD900640BF49B0B8BA /* ContextPanelTVTopShelfExtension */,
 				F8CCB7D519361FD047F8035F /* ContextPanelValidationFixtures */,
 				47BF33667705159281D283F3 /* ContextPanelValidationFixturesCompanion */,
+				5B94B2E30BCF752EFACD71CF /* ContextPanelValidationFixturesTV */,
 				75EBF972DE2E124B71C02BB6 /* ContextPanelValidationFixturesWatch */,
 				76962DB0FCCF45D10B361192 /* ContextPanelValidationGalleryUI */,
 				F65C91295B5EB42C641BEEF1 /* ContextPanelValidationGalleryUICompanion */,
@@ -2331,6 +2375,22 @@
 			shellPath = /bin/sh;
 			shellScript = "\"$SRCROOT/scripts/stamp-context-panel-build.sh\" \\\n  \"$TARGET_BUILD_DIR/$FULL_PRODUCT_NAME\"\n";
 		};
+		97642ED24C0379FF55D02228 /* Copy Swift Objective-C Interface Header */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(DERIVED_SOURCES_DIR)/$(SWIFT_OBJC_INTERFACE_HEADER_NAME)",
+			);
+			name = "Copy Swift Objective-C Interface Header";
+			outputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/include/$(PRODUCT_MODULE_NAME)/$(SWIFT_OBJC_INTERFACE_HEADER_NAME)",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "ditto \"${SCRIPT_INPUT_FILE_0}\" \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+		};
 		98C81B8247CAEC5053AF9788 /* Copy Swift Objective-C Interface Header */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
@@ -2538,8 +2598,12 @@
 			buildActionMask = 2147483647;
 			files = (
 				39EC83B5010B6EECAB3BC4D8 /* ContextPanelTVApp.swift in Sources */,
+				D7ECD21BFF5021B8BC7E2595 /* ContextPanelTVTopShelfProvider.swift in Sources */,
 				ADDFDAC4772C75CAB7B5C8CD /* TVPreviewFixtures.swift in Sources */,
 				68A9CA020103CBBA585813A4 /* TVSystemSurfaces.swift in Sources */,
+				A3AB0D5CE7EA13843523C00A /* TVValidationFixtureAdapter.swift in Sources */,
+				3D1F47769B930D1DC8FDE1E3 /* TVValidationGallery.swift in Sources */,
+				2E8257B9262A44CCC25DF098 /* ValidationGalleryFixtureAdapter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2607,6 +2671,14 @@
 				652E3352E67082CBC13D4064 /* UsageLimit.swift in Sources */,
 				DCB0158E13E48709027C8AB8 /* WidgetDisplayPreferences.swift in Sources */,
 				057A71BA0CD90371C675C014 /* WidgetSnapshot.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		381454BF08D719AB79C20B61 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D4CA9B566E43BCE75D4E3953 /* ValidationFixtureCatalog.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -3127,6 +3199,11 @@
 			target = 2C827A90E9B1D569F5781EE2 /* ContextPanelCoreCompanion */;
 			targetProxy = B8FB00A2EF5B9FF3A0C8ACEB /* PBXContainerItemProxy */;
 		};
+		C385FE521426B6312EC05B7A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5B94B2E30BCF752EFACD71CF /* ContextPanelValidationFixturesTV */;
+			targetProxy = 9BBBCD277A07DA145CC01D1A /* PBXContainerItemProxy */;
+		};
 		C44B8AD0896DC3FCD46FE22D /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 18FFE1CC3AFF82A64DE43484 /* ContextPanelTVSupport */;
@@ -3310,6 +3387,23 @@
 				PRODUCT_NAME = ContextPanelCloudKitSync;
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
+		1E71A409F14DD8D5F84FD0D4 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.shinycomputers.ContextPanelValidationFixturesTV;
+				PRODUCT_MODULE_NAME = ContextPanelValidationFixtures;
+				PRODUCT_NAME = ContextPanelValidationFixturesTV;
+				SDKROOT = appletvos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 3;
+				TVOS_DEPLOYMENT_TARGET = 17.0;
 			};
 			name = Debug;
 		};
@@ -3699,6 +3793,7 @@
 				PROVISIONING_PROFILE_SPECIFIER = "$(CONTEXT_PANEL_APP_STORE_TV_TOP_SHELF_PROFILE_SPECIFIER)";
 				SDKROOT = appletvos;
 				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) CONTEXT_PANEL_TV_TOP_SHELF_EXTENSION";
 				TARGETED_DEVICE_FAMILY = 3;
 				TVOS_DEPLOYMENT_TARGET = 17.0;
 			};
@@ -3944,6 +4039,23 @@
 				PRODUCT_NAME = ContextPanelSettingsUI;
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
+			};
+			name = Release;
+		};
+		A36F49C6E25F9DBE3234E22F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.shinycomputers.ContextPanelValidationFixturesTV;
+				PRODUCT_MODULE_NAME = ContextPanelValidationFixtures;
+				PRODUCT_NAME = ContextPanelValidationFixturesTV;
+				SDKROOT = appletvos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 3;
+				TVOS_DEPLOYMENT_TARGET = 17.0;
 			};
 			name = Release;
 		};
@@ -4459,6 +4571,7 @@
 				PRODUCT_NAME = ContextPanelTVTopShelfExtension;
 				SDKROOT = appletvos;
 				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) CONTEXT_PANEL_TV_TOP_SHELF_EXTENSION";
 				TARGETED_DEVICE_FAMILY = 3;
 				TVOS_DEPLOYMENT_TARGET = 17.0;
 			};
@@ -4715,6 +4828,15 @@
 			buildConfigurations = (
 				D1B90356989D59C64FCD01C3 /* Debug */,
 				529A975598F07E0BDDCBFC8A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		96116994236D6FBE173372EA /* Build configuration list for PBXNativeTarget "ContextPanelValidationFixturesTV" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1E71A409F14DD8D5F84FD0D4 /* Debug */,
+				A36F49C6E25F9DBE3234E22F /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

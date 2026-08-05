@@ -134,14 +134,38 @@ gallery screen. Gallery output remains shared-view proof; the installed-build
 Watch restart and real placed-complication glance remain required whenever
 complication host behavior changed.
 
+## Apple TV Gallery
+
+The signed Apple TV app exposes `Validation Gallery` at the bottom of the
+production runway, after the provider cards. The entry stays discoverable
+without changing the primary provider focus order. The bounded
+`contextpaneltv://validation-gallery` route opens the same signed destination
+for simulator and operator review. Runway and provider-detail
+previews instantiate the same `TVRunwayContent` and `TVProviderDetailView`
+presentation used by the live app, with a fixed presentation date and a local
+`@State` presentation-mode picker.
+
+Top Shelf previews call the shipping renderer's in-memory image path with the
+same `TVTopShelfDocument` model used by the extension. The app compilation path
+does not include the extension-only provider, App Group document/image cache,
+runtime-receipt recorder, `setImageURL` calls, or
+`topShelfContentDidChange()` publication. A persistent `Sample data · Read
+only` banner remains above every preview.
+
+The Top Shelf image is shared-renderer proof, not TVServices composition proof.
+Real Top Shelf placement, host scaling, focus/parallax, expiration behavior,
+deep links, and installed-build typography still require the Apple TV glance
+when those host behaviors changed.
+
 ## Validation
 
 Run the focused contract and render matrix:
 
 ```sh
-swift test --filter 'ValidationGallery|validationGallery|validationFixture'
+swift test --filter 'ValidationGallery|ValidationFixtures|validationGallery|validationFixture'
 python3 -m unittest \
   Tests/ScriptsTests/test_validation_gallery_target_graph.py
+scripts/validate-companion-builds.sh --configuration Release --archive tvos
 ```
 
 The bounded render matrix covers every fixture in the medium family plus small,

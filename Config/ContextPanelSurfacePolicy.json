@@ -121,7 +121,10 @@
     },
     "validation-gallery-ui": {
       "include": ["Sources/ContextPanelValidationGalleryUI/**/*.swift"],
-      "exclude": ["Sources/ContextPanelValidationGalleryUI/WatchValidationFixtureAdapter.swift"]
+      "exclude": [
+        "Sources/ContextPanelValidationGalleryUI/WatchValidationFixtureAdapter.swift",
+        "Sources/ContextPanelValidationGalleryUI/TVValidationFixtureAdapter.swift"
+      ]
     },
     "settings-ui": {
       "include": ["Sources/ContextPanelSettingsUI/**/*.swift"]
@@ -168,7 +171,15 @@
       "include": ["Sources/ContextPanelWatchWidget/**/*.swift"]
     },
     "tv-app": {
-      "include": ["Sources/ContextPanelTV/**/*.swift"]
+      "include": ["Sources/ContextPanelTV/**/*.swift"],
+      "exclude": ["Sources/ContextPanelTV/TVValidationGallery.swift"]
+    },
+    "tv-validation-gallery": {
+      "include": [
+        "Sources/ContextPanelValidationGalleryUI/ValidationGalleryFixtureAdapter.swift",
+        "Sources/ContextPanelValidationGalleryUI/TVValidationFixtureAdapter.swift",
+        "Sources/ContextPanelTV/TVValidationGallery.swift"
+      ]
     },
     "tv-support": {
       "include": ["Sources/ContextPanelTVSupport/**/*.swift"]
@@ -624,7 +635,12 @@
       "evidenceCapabilities": ["shared-view", "actual-runtime"],
       "inputs": {
         "shared": ["core", "tv-app", "tv-support"],
-        "render": ["tv-assets"],
+        "render": [
+          "tv-assets",
+          "validation-fixtures",
+          "tv-validation-gallery",
+          "tv-top-shelf"
+        ],
         "runtime": ["cloudkit-sync", "cloudkit-contract", "config-tv-app"],
         "placement": []
       }

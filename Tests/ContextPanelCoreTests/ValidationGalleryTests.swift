@@ -5,6 +5,7 @@ import Testing
 import WidgetKit
 
 @testable import ContextPanelCore
+@testable import ContextPanelTVSupport
 @testable import ContextPanelValidationFixtures
 @testable import ContextPanelValidationGalleryUI
 @testable import ContextPanelWidgetUI
@@ -120,6 +121,59 @@ import WidgetKit
     )
     #expect(unknown.snapshot.state == .setupNeeded)
     #expect(unknown.result.document == nil)
+}
+
+@Test func tvValidationFixturesAreDeterministicAndSynthetic() throws {
+    let adapter = TVValidationFixtureAdapter()
+    let presentationDate = ValidationFixtureCatalog.referencePresentationDate
+
+    for state in TVValidationState.allCases {
+        let context = adapter.context(state: state, presentationDate: presentationDate)
+        let repeatedContext = adapter.context(state: state, presentationDate: presentationDate)
+        #expect(context.presentationDate == presentationDate)
+        #expect(context.snapshot.generatedAt <= presentationDate)
+        #expect(context.snapshot == repeatedContext.snapshot)
+        #expect(context.receivedAt == repeatedContext.receivedAt)
+        #expect(context.displayPreferences == repeatedContext.displayPreferences)
+        #expect(context.snapshot.limits.allSatisfy { limit in
+            limit.accountID.hasPrefix("sample-")
+                && limit.accountName.hasPrefix("Sample ")
+                && !limit.accountName.contains("@")
+        })
+        #expect(context.snapshot.reports.allSatisfy { report in
+            report.accountID.hasPrefix("sample-")
+                && report.accountName.hasPrefix("Sample ")
+                && !report.accountName.contains("@")
+        })
+
+        let first = TVRunwayPresentation(
+            snapshot: context.snapshot,
+            preferences: context.displayPreferences,
+            mode: .fullDetail,
+            isRefreshing: state == .loading,
+            now: presentationDate
+        )
+        let second = TVRunwayPresentation(
+            snapshot: repeatedContext.snapshot,
+            preferences: repeatedContext.displayPreferences,
+            mode: .fullDetail,
+            isRefreshing: state == .loading,
+            now: repeatedContext.presentationDate
+        )
+        #expect(first == second)
+    }
+
+    let setup = adapter.context(state: .setupNeeded, presentationDate: presentationDate)
+    #expect(setup.result.document == nil)
+
+    let partial = adapter.context(state: .partialFailure, presentationDate: presentationDate)
+    #expect(partial.snapshot.limits.isEmpty == false)
+    #expect(partial.snapshot.reports.contains { $0.status == .failure })
+
+    let providerAccess = adapter.context(state: .providerAccess, presentationDate: presentationDate)
+    let alert = try #require(providerAccess.snapshot.primaryProviderAccessAlert)
+    #expect(alert.accessState.kind == .blockedUntilReset)
+    #expect(alert.accessState.resetsAt == presentationDate.addingTimeInterval(3 * 3_600))
 }
 
 @MainActor

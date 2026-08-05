@@ -3,6 +3,8 @@ import ContextPanelCore
 import ContextPanelTVSupport
 import SwiftUI
 
+private let tvValidationGalleryNavigationValue = "validation-gallery"
+
 @main
 struct ContextPanelTVApp: App {
     @UIApplicationDelegateAdaptor(ContextPanelTVAppDelegate.self) private var appDelegate
@@ -29,7 +31,9 @@ private struct TVRootView: View {
             initialValue: TVSyncModel(runtimeReceiptRelayProvider: runtimeReceiptRelayProvider)
         )
         #if DEBUG
-        if let providerRawValue = TVPreviewFixtures.requestedProviderRawValue {
+        if TVPreviewFixtures.opensValidationGallery {
+            _navigationPath = State(initialValue: [tvValidationGalleryNavigationValue])
+        } else if let providerRawValue = TVPreviewFixtures.requestedProviderRawValue {
             _navigationPath = State(initialValue: [providerRawValue])
         }
         #endif
@@ -84,42 +88,18 @@ private struct TVRootView: View {
 
     var body: some View {
         NavigationStack(path: $navigationPath) {
-            ZStack(alignment: .bottom) {
-                TVTheme.background.ignoresSafeArea()
-
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 40) {
-                        TVHeaderView(
-                            presentation: presentation,
-                            receivedAt: model.lastReceivedAt,
-                            isRefreshing: model.isLoading,
-                            presentationModeRawValue: $presentationModeRawValue,
-                            onRefresh: { model.reload() }
-                        )
-
-                        if let keepWorkingForecast {
-                            TVKeepWorkingForecastCard(forecast: keepWorkingForecast)
-                        }
-
-                        if presentation.isEmpty {
-                            TVEmptyRunwayView(presentation: presentation)
-                        } else {
-                            TVProviderOverviewGrid(
-                                sections: presentation.sections,
-                                mode: presentationMode
-                            )
-                        }
-                    }
-                    .padding(.horizontal, 72)
-                    .padding(.vertical, 48)
-                }
-
-                if let visibleNoticeMessage {
-                    TVSyncAlert(message: visibleNoticeMessage)
-                        .padding(.horizontal, 72)
-                        .padding(.bottom, 28)
-                }
-            }
+            TVRunwayContent(
+                presentation: presentation,
+                receivedAt: model.lastReceivedAt,
+                keepWorkingForecast: keepWorkingForecast,
+                isRefreshing: model.isLoading,
+                presentationModeRawValue: $presentationModeRawValue,
+                noticeMessage: visibleNoticeMessage,
+                presentationDate: nil,
+                showsValidationGalleryEntry: true,
+                detailActionMode: .navigation,
+                onRefresh: { model.reload() }
+            )
             .onChange(of: scenePhase, initial: true) { _, phase in
                 if phase == .active {
                     model.reload()
@@ -138,12 +118,16 @@ private struct TVRootView: View {
                 model.adoptCachedSnapshot()
             }
             .navigationDestination(for: String.self) { providerRawValue in
-                if let section = presentation.sections.first(where: { $0.provider.rawValue == providerRawValue }) {
+                if providerRawValue == tvValidationGalleryNavigationValue {
+                    TVValidationGalleryView()
+                } else if let section = presentation.sections.first(where: { $0.provider.rawValue == providerRawValue }) {
                     TVProviderDetailView(
                         section: section,
                         mode: presentationMode,
                         snapshotState: presentation.state,
-                        generatedAt: presentation.generatedAt
+                        generatedAt: presentation.generatedAt,
+                        presentationDate: nil,
+                        detailActionMode: .navigation
                     )
                 }
             }
@@ -159,6 +143,9 @@ private struct TVRootView: View {
                 case let .provider(provider):
                     pendingProviderRawValue = provider.rawValue
                     resolvePendingProviderRoute()
+                case .validationGallery:
+                    pendingProviderRawValue = nil
+                    navigationPath = [tvValidationGalleryNavigationValue]
                 }
             }
         }
@@ -172,6 +159,111 @@ private struct TVRootView: View {
         }
         navigationPath = [pendingProviderRawValue]
         self.pendingProviderRawValue = nil
+    }
+}
+
+enum TVDetailActionMode: Equatable {
+    case navigation
+    case readOnly
+}
+
+struct TVRunwayContent: View {
+    let presentation: TVRunwayPresentation
+    let receivedAt: Date?
+    let keepWorkingForecast: KeepWorkingForecast?
+    let isRefreshing: Bool
+    @Binding var presentationModeRawValue: String
+    let noticeMessage: String?
+    let presentationDate: Date?
+    let showsValidationGalleryEntry: Bool
+    let detailActionMode: TVDetailActionMode
+    let onRefresh: () -> Void
+
+    private var presentationMode: TVPresentationMode {
+        TVPresentationMode(rawValue: presentationModeRawValue) ?? .fullDetail
+    }
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            TVTheme.background.ignoresSafeArea()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 40) {
+                    TVHeaderView(
+                        presentation: presentation,
+                        receivedAt: receivedAt,
+                        isRefreshing: isRefreshing,
+                        presentationModeRawValue: $presentationModeRawValue,
+                        presentationDate: presentationDate,
+                        onRefresh: onRefresh
+                    )
+
+                    if let keepWorkingForecast {
+                        TVKeepWorkingForecastCard(forecast: keepWorkingForecast)
+                    }
+
+                    if presentation.isEmpty {
+                        TVEmptyRunwayView(presentation: presentation)
+                    } else {
+                        TVProviderOverviewGrid(
+                            sections: presentation.sections,
+                            mode: presentationMode,
+                            detailActionMode: detailActionMode
+                        )
+                    }
+
+                    if showsValidationGalleryEntry {
+                        NavigationLink(value: tvValidationGalleryNavigationValue) {
+                            TVValidationGalleryEntryLabel()
+                        }
+                        .buttonStyle(TVFocusButtonStyle())
+                        .focusEffectDisabled()
+                        .accessibilityHint("Review read-only sample states and Top Shelf previews")
+                    }
+                }
+                .padding(.horizontal, 72)
+                .padding(.top, 48)
+                .padding(.bottom, noticeMessage == nil ? 48 : 160)
+            }
+
+            if let noticeMessage {
+                TVSyncAlert(message: noticeMessage)
+                    .padding(.horizontal, 72)
+                    .padding(.bottom, 28)
+            }
+        }
+    }
+}
+
+private struct TVValidationGalleryEntryLabel: View {
+    @Environment(\.isFocused) private var isFocused
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        HStack(spacing: 18) {
+            Label("Validation Gallery", systemImage: "testtube.2")
+                .font(.title3.weight(.semibold))
+            Spacer()
+            Text("Sample data")
+                .font(.headline)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 28)
+        .padding(.vertical, 20)
+        .background(
+            Color.white.opacity(isFocused ? 0.1 : 0.045),
+            in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(
+                    isFocused ? Color.white.opacity(0.9) : Color.white.opacity(0.08),
+                    lineWidth: isFocused ? 3 : 1
+                )
+        }
+        .scaleEffect(isFocused && !reduceMotion ? 1.012 : 1)
+        .shadow(color: .black.opacity(isFocused ? 0.34 : 0.08), radius: isFocused ? 18 : 6, y: 8)
+        .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.8), value: isFocused)
     }
 }
 
@@ -581,6 +673,7 @@ private struct TVHeaderView: View {
     let receivedAt: Date?
     let isRefreshing: Bool
     @Binding var presentationModeRawValue: String
+    let presentationDate: Date?
     let onRefresh: () -> Void
 
     private var presentationMode: TVPresentationMode {
@@ -608,6 +701,7 @@ private struct TVHeaderView: View {
 
             VStack(alignment: .trailing, spacing: 18) {
                 TimelineView(.periodic(from: .now, by: 60)) { context in
+                    let now = presentationDate ?? context.date
                     VStack(alignment: .trailing, spacing: 8) {
                         HStack(spacing: 10) {
                             Circle()
@@ -625,11 +719,11 @@ private struct TVHeaderView: View {
                                 .lineLimit(1)
                         } else {
                             HStack(spacing: 8) {
-                                Text("Usage \(Self.compactAge(since: presentation.generatedAt, now: context.date))")
+                                Text("Usage \(Self.compactAge(since: presentation.generatedAt, now: now))")
                                 if let receivedAt {
                                     Text("·")
                                         .foregroundStyle(.tertiary)
-                                    Text("Synced \(Self.compactAge(since: receivedAt, now: context.date))")
+                                    Text("Synced \(Self.compactAge(since: receivedAt, now: now))")
                                 }
                             }
                             .font(.headline.monospacedDigit())
@@ -681,6 +775,7 @@ private struct TVHeaderView: View {
 private struct TVProviderOverviewGrid: View {
     let sections: [TVProviderRunwaySection]
     let mode: TVPresentationMode
+    let detailActionMode: TVDetailActionMode
 
     var body: some View {
         GeometryReader { geometry in
@@ -691,18 +786,40 @@ private struct TVProviderOverviewGrid: View {
 
             HStack(alignment: .top, spacing: spacing) {
                 ForEach(sections) { section in
-                    NavigationLink(value: section.provider.rawValue) {
-                        TVProviderOverviewCard(section: section, mode: mode)
-                            .frame(width: cardWidth)
-                    }
-                    .buttonStyle(TVFocusButtonStyle())
-                    .focusEffectDisabled()
+                    detailControl(for: section, cardWidth: cardWidth)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .center)
             .padding(.vertical, 28)
         }
         .frame(height: 520)
+    }
+
+    @ViewBuilder
+    private func detailControl(for section: TVProviderRunwaySection, cardWidth: CGFloat) -> some View {
+        switch detailActionMode {
+        case .navigation:
+            NavigationLink(value: section.provider.rawValue) {
+                overviewCard(for: section, cardWidth: cardWidth)
+            }
+            .buttonStyle(TVFocusButtonStyle())
+            .focusEffectDisabled()
+        case .readOnly:
+            Button(action: {}) {
+                overviewCard(for: section, cardWidth: cardWidth)
+            }
+            .buttonStyle(TVFocusButtonStyle())
+            .focusEffectDisabled()
+        }
+    }
+
+    private func overviewCard(for section: TVProviderRunwaySection, cardWidth: CGFloat) -> some View {
+        TVProviderOverviewCard(
+            section: section,
+            mode: mode,
+            detailActionMode: detailActionMode
+        )
+        .frame(width: cardWidth)
     }
 }
 
@@ -712,6 +829,7 @@ private struct TVProviderOverviewCard: View {
 
     let section: TVProviderRunwaySection
     let mode: TVPresentationMode
+    let detailActionMode: TVDetailActionMode
 
     private var lane: TVRunwayLane {
         section.primaryLane ?? section.lanes[0]
@@ -812,7 +930,11 @@ private struct TVProviderOverviewCard: View {
         .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.78), value: isFocused)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
-        .accessibilityHint("Open \(section.provider.displayName) details")
+        .accessibilityHint(
+            detailActionMode == .navigation
+                ? "Open \(section.provider.displayName) details"
+                : "Read-only sample"
+        )
     }
 
     private var accessibilityLabel: String {
@@ -849,11 +971,13 @@ private struct TVProviderOverviewCard: View {
     }
 }
 
-private struct TVProviderDetailView: View {
+struct TVProviderDetailView: View {
     let section: TVProviderRunwaySection
     let mode: TVPresentationMode
     let snapshotState: WidgetSnapshotState
     let generatedAt: Date
+    let presentationDate: Date?
+    let detailActionMode: TVDetailActionMode
 
     private var primaryMetrics: [TVRunwayMetric] {
         guard mode != .countsOnly,
@@ -882,7 +1006,11 @@ private struct TVProviderDetailView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                TVFreshnessNotice(state: snapshotState, generatedAt: generatedAt)
+                TVFreshnessNotice(
+                    state: snapshotState,
+                    generatedAt: generatedAt,
+                    presentationDate: presentationDate
+                )
 
                 if let primaryLane = section.detailPrimaryLane {
                     VStack(alignment: .leading, spacing: 16) {
@@ -890,18 +1018,7 @@ private struct TVProviderDetailView: View {
                             .font(.title2.weight(.bold))
                             .accessibilityAddTraits(.isHeader)
 
-                        NavigationLink {
-                            TVRunwayDetailView(
-                                lane: primaryLane,
-                                mode: mode,
-                                snapshotState: snapshotState,
-                                generatedAt: generatedAt
-                            )
-                        } label: {
-                            TVProviderPrimaryCard(lane: primaryLane, mode: mode)
-                        }
-                        .buttonStyle(TVFocusButtonStyle())
-                        .focusEffectDisabled()
+                        primaryLaneControl(primaryLane)
                     }
                 }
 
@@ -943,18 +1060,7 @@ private struct TVProviderDetailView: View {
                             .accessibilityAddTraits(.isHeader)
 
                         ForEach(section.detailSecondaryLanes) { lane in
-                            NavigationLink {
-                                TVRunwayDetailView(
-                                    lane: lane,
-                                    mode: mode,
-                                    snapshotState: snapshotState,
-                                    generatedAt: generatedAt
-                                )
-                            } label: {
-                                TVProviderLaneRow(lane: lane, mode: mode)
-                            }
-                            .buttonStyle(TVFocusButtonStyle())
-                            .focusEffectDisabled()
+                            secondaryLaneControl(lane)
                         }
                     }
                 }
@@ -969,6 +1075,72 @@ private struct TVProviderDetailView: View {
         let heading = section.accountNames.count == 1 ? "Account" : "Accounts"
         return ([heading] + section.accountNames).joined(separator: ", ")
     }
+
+    @ViewBuilder
+    private func primaryLaneControl(_ lane: TVRunwayLane) -> some View {
+        switch detailActionMode {
+        case .navigation:
+            NavigationLink {
+                detailView(for: lane)
+            } label: {
+                TVProviderPrimaryCard(
+                    lane: lane,
+                    mode: mode,
+                    detailActionMode: detailActionMode
+                )
+            }
+            .buttonStyle(TVFocusButtonStyle())
+            .focusEffectDisabled()
+        case .readOnly:
+            Button(action: {}) {
+                TVProviderPrimaryCard(
+                    lane: lane,
+                    mode: mode,
+                    detailActionMode: detailActionMode
+                )
+            }
+            .buttonStyle(TVFocusButtonStyle())
+            .focusEffectDisabled()
+        }
+    }
+
+    @ViewBuilder
+    private func secondaryLaneControl(_ lane: TVRunwayLane) -> some View {
+        switch detailActionMode {
+        case .navigation:
+            NavigationLink {
+                detailView(for: lane)
+            } label: {
+                TVProviderLaneRow(
+                    lane: lane,
+                    mode: mode,
+                    detailActionMode: detailActionMode
+                )
+            }
+            .buttonStyle(TVFocusButtonStyle())
+            .focusEffectDisabled()
+        case .readOnly:
+            Button(action: {}) {
+                TVProviderLaneRow(
+                    lane: lane,
+                    mode: mode,
+                    detailActionMode: detailActionMode
+                )
+            }
+            .buttonStyle(TVFocusButtonStyle())
+            .focusEffectDisabled()
+        }
+    }
+
+    private func detailView(for lane: TVRunwayLane) -> some View {
+        TVRunwayDetailView(
+            lane: lane,
+            mode: mode,
+            snapshotState: snapshotState,
+            generatedAt: generatedAt,
+            presentationDate: presentationDate
+        )
+    }
 }
 
 private struct TVProviderPrimaryCard: View {
@@ -977,6 +1149,7 @@ private struct TVProviderPrimaryCard: View {
 
     let lane: TVRunwayLane
     let mode: TVPresentationMode
+    let detailActionMode: TVDetailActionMode
 
     var body: some View {
         HStack(alignment: .center, spacing: 48) {
@@ -1043,7 +1216,11 @@ private struct TVProviderPrimaryCard: View {
         .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.78), value: isFocused)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
-        .accessibilityHint("Open \(lane.title) details")
+        .accessibilityHint(
+            detailActionMode == .navigation
+                ? "Open \(lane.title) details"
+                : "Read-only sample"
+        )
     }
 
     private var metadataText: String? {
@@ -1080,6 +1257,7 @@ private struct TVProviderLaneRow: View {
 
     let lane: TVRunwayLane
     let mode: TVPresentationMode
+    let detailActionMode: TVDetailActionMode
 
     var body: some View {
         HStack(spacing: 32) {
@@ -1136,7 +1314,11 @@ private struct TVProviderLaneRow: View {
         .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.8), value: isFocused)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
-        .accessibilityHint("Open \(lane.title) details")
+        .accessibilityHint(
+            detailActionMode == .navigation
+                ? "Open \(lane.title) details"
+                : "Read-only sample"
+        )
     }
 
     private var metadataText: String? {
@@ -1197,6 +1379,7 @@ private struct TVRunwayDetailView: View {
     let mode: TVPresentationMode
     let snapshotState: WidgetSnapshotState
     let generatedAt: Date
+    let presentationDate: Date?
 
     var body: some View {
         ScrollView {
@@ -1204,7 +1387,8 @@ private struct TVRunwayDetailView: View {
                 TVRunwaySummaryView(
                     lane: lane,
                     snapshotState: snapshotState,
-                    generatedAt: generatedAt
+                    generatedAt: generatedAt,
+                    presentationDate: presentationDate
                 )
                 .focusable()
                 .focusEffectDisabled()
@@ -1236,6 +1420,7 @@ private struct TVRunwaySummaryView: View {
     let lane: TVRunwayLane
     let snapshotState: WidgetSnapshotState
     let generatedAt: Date
+    let presentationDate: Date?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 30) {
@@ -1254,7 +1439,11 @@ private struct TVRunwaySummaryView: View {
                     .foregroundStyle(TVTheme.statusColor(lane.status))
             }
 
-            TVFreshnessNotice(state: snapshotState, generatedAt: generatedAt)
+            TVFreshnessNotice(
+                state: snapshotState,
+                generatedAt: generatedAt,
+                presentationDate: presentationDate
+            )
 
             if lane.kind == .accountStatus {
                 Label(
@@ -1307,7 +1496,7 @@ private struct TVRunwaySummaryView: View {
     private var accessibilityValue: String {
         var components = [lane.statusText]
         if snapshotState == .stale || snapshotState == .failure {
-            let age = Self.spokenAge(since: generatedAt, now: Date())
+            let age = Self.spokenAge(since: generatedAt, now: presentationDate ?? Date())
             components.append(
                 snapshotState == .failure
                     ? "Provider issue, data from \(age) ago"
@@ -1470,23 +1659,25 @@ private struct TVSyncAlert: View {
 private struct TVFreshnessNotice: View {
     let state: WidgetSnapshotState
     let generatedAt: Date
+    let presentationDate: Date?
 
     @ViewBuilder
     var body: some View {
         if state == .stale || state == .failure {
             TimelineView(.periodic(from: .now, by: 60)) { context in
+                let now = presentationDate ?? context.date
                 Label(
                     state == .failure
-                        ? "Provider issue · data \(Self.compactAge(since: generatedAt, now: context.date)) old"
-                        : "Saved data · \(Self.compactAge(since: generatedAt, now: context.date)) old",
+                        ? "Provider issue · data \(Self.compactAge(since: generatedAt, now: now)) old"
+                        : "Saved data · \(Self.compactAge(since: generatedAt, now: now)) old",
                     systemImage: "clock.badge.exclamationmark"
                 )
                 .font(.headline)
                 .foregroundStyle(state == .failure ? .orange : .yellow)
                 .accessibilityLabel(
                     state == .failure
-                        ? "Provider issue. Data from \(Self.spokenAge(since: generatedAt, now: context.date)) ago"
-                        : "Saved data from \(Self.spokenAge(since: generatedAt, now: context.date)) ago"
+                        ? "Provider issue. Data from \(Self.spokenAge(since: generatedAt, now: now)) ago"
+                        : "Saved data from \(Self.spokenAge(since: generatedAt, now: now)) ago"
                 )
             }
         }
