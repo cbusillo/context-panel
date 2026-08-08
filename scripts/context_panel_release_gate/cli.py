@@ -8,7 +8,7 @@ import sys
 
 from context_panel_validation.runtime_evidence import (
     RUNTIME_SURFACES,
-    load_expected_surface_identities,
+    expected_surface_identities_from_payloads,
 )
 
 from .core import (
@@ -87,8 +87,12 @@ def run(argv: list[str] | None = None) -> int:
     required = comparison.get("requiredSurfaces")
     if not isinstance(required, dict):
         raise ReleaseEvidenceError("surface comparison requirements are invalid")
-    identities = load_expected_surface_identities(
-        arguments.expected_build_manifests,
+    expected_build_manifests = tuple(
+        load_json_object(path, "expected signed build manifest")
+        for path in arguments.expected_build_manifests
+    )
+    identities = expected_surface_identities_from_payloads(
+        list(expected_build_manifests),
         target,
         tuple(RUNTIME_SURFACES),
     )
@@ -128,7 +132,7 @@ def run(argv: list[str] | None = None) -> int:
             payload,
             comparison=comparison,
             validation_report=report,
-            identities=identities,
+            expected_build_manifests=expected_build_manifests,
             previous_ledger=previous_ledger,
             selected_rc_ledger=selected_rc_ledger,
             host_os_evidence=host_os_evidence,

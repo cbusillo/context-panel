@@ -11,6 +11,7 @@ from context_panel_validation.models import Target
 from context_panel_validation.runtime_evidence import (
     ExpectedSurfaceIdentity,
     RuntimeEvidenceError,
+    expected_surface_identities_from_payloads,
 )
 from context_panel_validation.session import RUNTIME_SURFACES, iso8601, parse_iso8601
 
@@ -79,7 +80,7 @@ PRIVACY_MARKER = "context-panel-release-evidence-public-v1"
 GENERATION_KEYS = {
     "comparison",
     "validationReport",
-    "expectedBuildIdentities",
+    "expectedBuildManifests",
     "previousLedger",
     "selectedRCLedger",
     "hostOSEvidence",
@@ -119,7 +120,7 @@ def build_release_evidence_lineage(
     *,
     comparison: dict[str, Any],
     validation_report: dict[str, Any],
-    identities: tuple[ExpectedSurfaceIdentity, ...],
+    expected_build_manifests: tuple[dict[str, Any], ...],
     previous_ledger: dict[str, Any] | None = None,
     selected_rc_ledger: dict[str, Any] | None = None,
     host_os_evidence: dict[str, Any] | None = None,
@@ -132,7 +133,7 @@ def build_release_evidence_lineage(
         "generation": {
             "comparison": comparison,
             "validationReport": validation_report,
-            "expectedBuildIdentities": [identity.to_dict() for identity in identities],
+            "expectedBuildManifests": list(expected_build_manifests),
             "previousLedger": previous_ledger,
             "selectedRCLedger": selected_rc_ledger,
             "hostOSEvidence": host_os_evidence,
@@ -981,19 +982,24 @@ def _generation_identities(
     payload: object,
     *,
     label: str,
+    target: Target,
 ) -> tuple[ExpectedSurfaceIdentity, ...]:
     if (
         not isinstance(payload, dict)
         or set(payload) != GENERATION_KEYS
         or not isinstance(payload.get("comparison"), dict)
         or not isinstance(payload.get("validationReport"), dict)
-        or not isinstance(payload.get("expectedBuildIdentities"), list)
+        or not isinstance(payload.get("expectedBuildManifests"), list)
     ):
         raise ReleaseEvidenceError(f"{label} generation context is invalid")
     try:
-        return tuple(
-            ExpectedSurfaceIdentity.from_dict(item)
-            for item in payload["expectedBuildIdentities"]
+        manifests = payload["expectedBuildManifests"]
+        if any(not isinstance(item, dict) for item in manifests):
+            raise RuntimeEvidenceError("expected signed build manifest is invalid")
+        return expected_surface_identities_from_payloads(
+            manifests,
+            target,
+            tuple(RUNTIME_SURFACES),
         )
     except (KeyError, TypeError, ValueError, RuntimeEvidenceError) as error:
         raise ReleaseEvidenceError(
@@ -1021,13 +1027,18 @@ def _verified_lineage_ledger(
     ):
         raise ReleaseEvidenceError(f"{label} lineage is invalid")
     ledger = payload["ledger"]
+    ledger_target = _target(ledger.get("target"), f"{label} lineage")
     ledger_id = ledger.get("ledgerID")
     if not _is_sha256(ledger_id):
         raise ReleaseEvidenceError(f"{label} lineage ledger is invalid")
     if ledger_id in lineage_seen:
         raise ReleaseEvidenceError(f"{label} lineage repeats a ledger")
     generation = payload.get("generation")
-    identities = _generation_identities(generation, label=label)
+    identities = _generation_identities(
+        generation,
+        label=label,
+        target=ledger_target,
+    )
     generated_at = parse_iso8601(ledger.get("generatedAt"))
     if generated_at is None:
         raise ReleaseEvidenceError(f"{label} lineage ledger is invalid")
@@ -1160,6 +1171,7 @@ def _shadow_state(
             generation_identities = _generation_identities(
                 generation,
                 label="shadow comparison",
+                target=run_target,
             )
             if generation["shadowEvidence"] is not None:
                 raise ReleaseEvidenceError(
@@ -1198,6 +1210,8 @@ def _shadow_state(
         )
         if run["runbookState"] != run["ledgerState"]:
             blockers.add("runbook-ledger-state-mismatch")
+        if run["runbookState"] != "approved" or run["ledgerState"] != "approved":
+            blockers.add("shadow-run-not-approved")
         for disagreement in run["disagreements"]:
             if (
                 not isinstance(disagreement, dict)

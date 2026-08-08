@@ -785,7 +785,7 @@ shadow mode:
 
 ```sh
 scripts/context-panel-release-gate.py shadow \
-  --train <beta|rc|release> \
+  --train <beta|rc> \
   --comparison <comparison.json> \
   --validation-report <final-report.json> \
   --expected-build-manifest <ExpectedBuildManifest-platform.json> \
@@ -817,7 +817,8 @@ train, exact version/build target, source manifest, expected-build identity-set
 and ledger digests, embeds the privacy-safe ledger when the ledger outcome is
 approved, and includes the complete privacy-safe generation context needed to
 reconstruct that embedded ledger. The generation context includes the full
-comparison, exact coordinator report, expected-build identities, and any prior
+comparison, exact coordinator report, complete content-sealed expected-build
+manifests, and any prior
 lineage, selected-RC lineage, or host-OS inputs used by generation. Approved
 shadow-run ledgers must be leaf evaluations: nested shadow evidence is rejected,
 and the run list cannot exceed the configured required train count.
@@ -881,15 +882,21 @@ scripts/validate-release-evidence-report.py \
   --surface-policy Config/ContextPanelSurfacePolicy.json \
   --version <version> \
   --build-number <build-number> \
-  --train <beta|rc|release>
+  --train <beta|rc>
 ```
+
+Release shadow validation uses the same command with `--train release` and the
+mandatory `--selected-rc-ledger <approved-rc-lineage.json>` argument. Release
+enforcement additionally requires `--enforce` and
+`--shadow-evidence <shadow-evidence.json>`.
 
 Add `--enforce` when validating an enforcement ledger. Repeat
 `--expected-build-manifest` until every shipping surface is covered, including
 surfaces that are unchanged and do not require fresh evidence. Supply the same
-optional replayable lineage bundles and evidence artifacts used to generate the ledger with
-`--previous-ledger`, `--selected-rc-ledger`, `--host-os-evidence`, and
-`--shadow-evidence`. Final validation reconstructs the complete ledger at its
+optional replayable prior lineage and evidence artifacts used to generate the
+ledger with `--previous-ledger`, `--host-os-evidence`, and `--shadow-evidence`.
+The selected-RC lineage is mandatory for release validation. Final validation
+reconstructs the complete ledger at its
 original `generatedAt`; relabeling evidence sources or omitting the selected RC
 therefore fails even when all public digests are recomputed.
 

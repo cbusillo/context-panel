@@ -828,14 +828,31 @@ def load_expected_surface_identities(
     target: Target,
     requested_surfaces: tuple[str, ...],
 ) -> tuple[ExpectedSurfaceIdentity, ...]:
-    identities: dict[str, ExpectedSurfaceIdentity] = {}
-    manifest_identity: tuple[str, str] | None = None
-    requested = set(requested_surfaces)
+    payloads: list[dict[str, object]] = []
     for path in paths:
         try:
             payload = json.loads(path.expanduser().read_text())
         except (OSError, json.JSONDecodeError) as error:
             raise RuntimeEvidenceError("expected signed build manifest is unavailable or invalid") from error
+        if not isinstance(payload, dict):
+            raise RuntimeEvidenceError("expected signed build manifest is invalid")
+        payloads.append(payload)
+    return expected_surface_identities_from_payloads(
+        payloads,
+        target,
+        requested_surfaces,
+    )
+
+
+def expected_surface_identities_from_payloads(
+    payloads: list[dict[str, object]] | tuple[dict[str, object], ...],
+    target: Target,
+    requested_surfaces: tuple[str, ...],
+) -> tuple[ExpectedSurfaceIdentity, ...]:
+    identities: dict[str, ExpectedSurfaceIdentity] = {}
+    manifest_identity: tuple[str, str] | None = None
+    requested = set(requested_surfaces)
+    for payload in payloads:
         if not isinstance(payload, dict) or set(payload) != EXPECTED_MANIFEST_KEYS:
             raise RuntimeEvidenceError("expected signed build manifest is invalid")
         digest_domain = payload.get("digestDomain")
@@ -941,7 +958,7 @@ def load_expected_surface_identities(
             if existing is not None and existing != identity:
                 raise RuntimeEvidenceError("expected signed build surface identity conflicts")
             identities[identity.surface] = identity
-    if paths and not identities:
+    if payloads and not identities:
         raise RuntimeEvidenceError("expected signed build manifests do not cover requested surfaces")
     return tuple(identities[surface] for surface in sorted(identities))
 

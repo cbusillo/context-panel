@@ -16,6 +16,7 @@ from context_panel_release_gate import (
     release_evidence_report_blockers,
 )
 from context_panel_validation import ExpectedSurfaceIdentity, RUNTIME_SURFACES
+from context_panel_validation.runtime_evidence import canonical_json, hash_parts
 
 
 NOW = datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)
@@ -35,6 +36,67 @@ def ledger_id(payload):
         separators=(",", ":"),
     ).encode()
     return hashlib.sha256(encoded).hexdigest()
+
+
+def expected_manifest(surface: str, *, manifest_id: str = MANIFEST):
+    unsigned = {
+        "schemaVersion": 1,
+        "kind": "context-panel-expected-signed-build",
+        "algorithm": "sha256",
+        "digestDomain": "context-panel-surface/v1",
+        "sourceManifestId": manifest_id,
+        "contractFingerprint": CONTRACT,
+        "layout": {},
+        "archive": {},
+        "source": {
+            "marketingVersion": "1.0.54",
+            "buildNumber": "202608080418",
+        },
+        "artifacts": [
+            {
+                "artifactId": surface,
+                "bundleIdentifier": f"com.example.{surface}",
+                "marketingVersion": "1.0.54",
+                "buildNumber": "202608080418",
+                "sourceCommit": "a" * 40,
+                "configuration": "Release",
+                "xcodeBuild": "17A1",
+                "treeState": "clean",
+                "codeSignatureValid": True,
+                "executableSha256": sha(f"{surface}:executable"),
+                "executableUUIDs": ["AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"],
+                "entitlementsSha256": sha(f"{surface}:entitlements"),
+                "profileSha256": sha(f"{surface}:profile"),
+            }
+        ],
+        "surfaces": [
+            {
+                "id": surface,
+                "artifactId": surface,
+                "bundleIdentifier": f"com.example.{surface}",
+                "fingerprints": {
+                    "render": sha(f"{surface}:render"),
+                    "runtime": sha(f"{surface}:runtime"),
+                    "placement": sha(f"{surface}:placement"),
+                    "combined": sha(f"{surface}:combined"),
+                },
+            }
+        ],
+    }
+    return {
+        **unsigned,
+        "expectedBuildId": hash_parts(
+            "context-panel-surface/v1/expected-build",
+            [canonical_json(unsigned)],
+        ),
+    }
+
+
+def all_expected_manifests(*, manifest_id: str = MANIFEST):
+    return tuple(
+        expected_manifest(surface, manifest_id=manifest_id)
+        for surface in RUNTIME_SURFACES
+    )
 
 
 def identity(
@@ -64,7 +126,9 @@ def identity(
         placement_fingerprint=sha(f"{surface}:placement"),
         combined_fingerprint=sha(f"{surface}:combined"),
         executable_uuids=("AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",),
-        expected_build_id=sha(f"{surface}:build"),
+        expected_build_id=str(
+            expected_manifest(surface, manifest_id=manifest_id)["expectedBuildId"]
+        ),
     )
 
 
@@ -245,7 +309,10 @@ def report(
                 "surface": surface,
                 "device": "Apple Watch",
                 "manifestID": manifest_id,
-                "expectedBuildID": sha(f"{surface}:build"),
+                "expectedBuildID": identity(
+                    surface,
+                    manifest_id=manifest_id,
+                ).expected_build_id,
                 "contractFingerprint": CONTRACT,
                 "identityDigest": identity(surface, manifest_id=manifest_id).identity_digest(),
                 "state": "approved",
@@ -286,7 +353,10 @@ def report(
                 "state": "proven" if runtime else "unknown",
                 "reason": "exact-build-runtime-receipt" if runtime else "not-collected",
                 "manifestID": manifest_id,
-                "expectedBuildID": sha(f"{surface}:build"),
+                "expectedBuildID": identity(
+                    surface,
+                    manifest_id=manifest_id,
+                ).expected_build_id,
                 "identityDigest": identity(surface, manifest_id=manifest_id).identity_digest(),
                 "runtimeFingerprint": sha(f"{surface}:runtime"),
                 "observedAt": "2026-08-08T11:54:00Z" if runtime else None,
@@ -460,7 +530,7 @@ def shadow_evidence(
             generation = {
                 "comparison": comparison_payload,
                 "validationReport": validation_report,
-                "expectedBuildIdentities": [item.to_dict() for item in identities],
+                "expectedBuildManifests": list(all_expected_manifests()),
                 "previousLedger": None,
                 "selectedRCLedger": None,
                 "hostOSEvidence": None,
@@ -529,6 +599,7 @@ def previous_lineage(
         manifest_id=PREVIOUS_MANIFEST,
     )
     identities = all_identities(manifest_id=PREVIOUS_MANIFEST)
+    expected_manifests = all_expected_manifests(manifest_id=PREVIOUS_MANIFEST)
     shadow_payload = shadow_evidence(
         surface=surface,
         evidence_class=evidence_class,
@@ -549,7 +620,7 @@ def previous_lineage(
         payload,
         comparison=comparison_payload,
         validation_report=validation_report,
-        identities=identities,
+        expected_build_manifests=expected_manifests,
         shadow_evidence=shadow_payload,
     )
 
@@ -558,6 +629,7 @@ def selected_rc_ledger(surface: str):
     comparison_payload = comparison(surface, "actual-runtime", train="rc")
     validation_report = report(surface, runtime=True)
     identities = all_identities()
+    expected_manifests = all_expected_manifests()
     shadow_payload = shadow_evidence()
     payload = evaluate_release_evidence(
         train="rc",
@@ -574,7 +646,7 @@ def selected_rc_ledger(surface: str):
         payload,
         comparison=comparison_payload,
         validation_report=validation_report,
-        identities=identities,
+        expected_build_manifests=expected_manifests,
         shadow_evidence=shadow_payload,
     )
 
@@ -889,6 +961,22 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         )
         self.assertEqual(payload["shadow"]["state"], "pending")
         self.assertIn("runbook-ledger-state-mismatch", payload["shadow"]["blockers"])
+
+    def test_blocked_shadow_runs_never_qualify(self):
+        surface = "watchos.app"
+        payload = self.evaluate(
+            surface,
+            "actual-runtime",
+            mode="enforce",
+            validation_report=report(surface, runtime=True),
+            shadow_evidence=shadow_evidence(
+                runbook_state="blocked",
+                ledger_state="blocked",
+            ),
+        )
+        self.assertEqual(payload["shadow"]["state"], "pending")
+        self.assertEqual(payload["shadow"]["qualifiedTrainCount"], 0)
+        self.assertIn("shadow-run-not-approved", payload["shadow"]["blockers"])
         self.assertEqual(payload["state"], "blocked")
 
     def test_unresolved_and_runbook_correct_disagreements_block_qualification(self):
@@ -1358,6 +1446,28 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                     "actual-runtime",
                     identity(surface),
                 ),
+            )
+
+    def test_lineage_revalidates_complete_expected_build_manifests(self):
+        surface = "watchos.app"
+        selected = selected_rc_ledger(surface)
+        selected["generation"]["expectedBuildManifests"][0]["artifacts"][0][
+            "executableSha256"
+        ] = "f" * 64
+        with self.assertRaisesRegex(
+            ReleaseEvidenceError,
+            "expected-build identities are invalid",
+        ):
+            self.evaluate(
+                surface,
+                "actual-runtime",
+                train="release",
+                comparison_payload=comparison(
+                    surface,
+                    "actual-runtime",
+                    train="release",
+                ),
+                selected_rc_ledger=selected,
             )
 
     def test_shadow_generation_context_must_be_leaf_and_bounded(self):
