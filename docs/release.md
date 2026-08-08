@@ -776,6 +776,71 @@ scripts/context-panel-surface-manifest.py compare \
   --output <comparison.json>
 ```
 
+### Release Evidence Carry-Forward Gate
+
+Use the full source-manifest comparison without filtering or rewriting its
+`requiredSurfaces`. After the coordinator final report and sealed expected-build
+manifests are available, produce the privacy-safe release evidence ledger in
+shadow mode:
+
+```sh
+scripts/context-panel-release-gate.py shadow \
+  --train <beta|rc|release> \
+  --comparison <comparison.json> \
+  --validation-report <final-report.json> \
+  --expected-build-manifest <ExpectedBuildManifest-platform.json> \
+  --previous-ledger <previous-approved-release-evidence.json> \
+  --host-os-evidence <host-os-evidence.json> \
+  --shadow-evidence <shadow-evidence.json> \
+  --output <release-evidence.json>
+```
+
+Supply every expected-build manifest needed to cover the comparison. Omit the
+previous ledger when no earlier approval exists. Placement carry-forward always
+requires matching placement fingerprint, a current exact-build runtime receipt,
+and compatible current host OS evidence. Major or minor host OS changes fail
+closed. Patch changes also invalidate compositor-sensitive surfaces listed in
+`Config/ContextPanelReleaseEvidencePolicy.json`. Evidence expires after the
+policy's bounded retention and cannot silently outlive the source ledger it was
+carried from. The host OS evidence object must bind its `target` and
+`currentManifestID` to the candidate and bind each surface's bounded `hostOS`
+value to a `runtimeReceiptID` present in the current coordinator report. Future,
+expired, unrelated-build, or unrelated-receipt observations fail closed.
+
+Shadow evidence must describe distinct signed trains. Each run records its
+train, exact version/build target, manifest and ledger digests, observation time,
+the old-runbook and ledger outcomes, and any bounded disagreement records.
+Duplicate train identities, stale observations, unknown disagreement
+classifications, unresolved records, and arbitrary extra fields fail closed.
+The accepted disagreement classifications are `ledger-correct`,
+`runbook-correct`, and `equivalent`, each with a non-empty resolution.
+
+Release trains additionally require `--selected-rc-ledger` for the exact same
+version, build, and manifest. A changed selected build must return to RC
+validation. `enforce` mode also requires the configured number of shadow trains
+and resolved classifications for every old-runbook disagreement:
+
+```sh
+scripts/context-panel-release-gate.py enforce \
+  --train release \
+  --comparison <comparison.json> \
+  --validation-report <final-report.json> \
+  --expected-build-manifest <ExpectedBuildManifest-platform.json> \
+  --selected-rc-ledger <approved-rc-release-evidence.json> \
+  --host-os-evidence <host-os-evidence.json> \
+  --shadow-evidence <shadow-evidence.json> \
+  --output <release-evidence.json>
+```
+
+The App Store submission workflow accepts the ledger separately from the
+coordinator report. Keep `release_evidence_mode=shadow` while the current
+physical runbook remains authoritative. Switching to `enforce` requires an
+approved ledger with passed shadow evidence; missing, expired, host-incompatible,
+or mixed-build evidence blocks submission. The ledger also contains the
+canonical digest of the exact coordinator report used to create it; submission
+recomputes that digest and rejects a different or replayed report even when the
+marketing version and build number match.
+
 For a beta with `requiresRuntimeSession=false`, do not open devices or create a
 runtime-receipt session; automated shared-view evidence is sufficient for that
 slice. The coordinator can still hold the shared-view approval ledger with an

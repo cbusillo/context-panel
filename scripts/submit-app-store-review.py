@@ -20,6 +20,8 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, utils
 from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
 
+from context_panel_release_gate import canonical_payload_digest, release_evidence_report_blockers
+
 
 API_BASE = "https://api.appstoreconnect.apple.com/v1"
 DEFAULT_BUNDLE_ID = "com.shinycomputers.contextpanel"
@@ -1693,6 +1695,40 @@ def validate_validation_report(args: argparse.Namespace) -> None:
     print("This gate proves required runtime evidence; visual approval and carry-forward remain separate.")
 
 
+def validate_release_evidence_report(args: argparse.Namespace) -> None:
+    report_path = Path(getattr(args, "release_evidence_report"))
+    try:
+        payload = json.loads(report_path.read_text())
+    except OSError as error:
+        raise AppStoreConnectError(
+            f"release evidence report is unavailable: {report_path}"
+        ) from error
+    except json.JSONDecodeError as error:
+        raise AppStoreConnectError("release evidence report is not valid JSON") from error
+    validation_report_path = Path(getattr(args, "validation_report"))
+    try:
+        validation_payload = json.loads(validation_report_path.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise AppStoreConnectError(
+            "exact validation report is unavailable for release evidence binding"
+        ) from error
+    blockers = release_evidence_report_blockers(
+        payload,
+        version=args.version,
+        build_number=args.build_number,
+        train=getattr(args, "validation_train"),
+        enforce=getattr(args, "release_evidence_mode", "shadow") == "enforce",
+        validation_report_digest=canonical_payload_digest(validation_payload),
+    )
+    if blockers:
+        details = "\n".join(f"- {blocker}" for blocker in blockers)
+        raise AppStoreConnectError(f"release evidence report rejected:\n{details}")
+    print(
+        f"Accepted {getattr(args, 'release_evidence_mode', 'shadow')} release evidence report for "
+        f"{getattr(args, 'validation_train')} {args.version} ({args.build_number})"
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bundle-id", default=DEFAULT_BUNDLE_ID)
@@ -1749,6 +1785,20 @@ def parse_args() -> argparse.Namespace:
         help="Machine-readable JSON from context-panel-validation.py final-report --json",
     )
     parser.add_argument(
+        "--validation-train",
+        choices=("beta", "rc", "release"),
+        help="Release-evidence policy tier for --release-evidence-report",
+    )
+    parser.add_argument(
+        "--release-evidence-report",
+        help="Machine-readable JSON from context-panel-release-gate.py",
+    )
+    parser.add_argument(
+        "--release-evidence-mode",
+        choices=("shadow", "enforce"),
+        default="shadow",
+    )
+    parser.add_argument(
         "--validate-report-only",
         action="store_true",
         help="Validate exact-build evidence and exit without using App Store Connect credentials",
@@ -1767,6 +1817,14 @@ def validate_args(args: argparse.Namespace) -> None:
             raise AppStoreConnectError("--validate-report-only requires --build-number")
         if not getattr(args, "validation_report", None):
             raise AppStoreConnectError("--validate-report-only requires --validation-report")
+        if (
+            getattr(args, "release_evidence_mode", "shadow") == "enforce"
+            and not getattr(args, "release_evidence_report", None)
+        ):
+            raise AppStoreConnectError(
+                "--validate-report-only with enforced release evidence requires "
+                "--release-evidence-report"
+            )
         return
     if args.prepare_only:
         if args.cancel_review_only:
@@ -1792,6 +1850,18 @@ def validate_args(args: argparse.Namespace) -> None:
         raise AppStoreConnectError(
             "--validation-report is required before attaching or submitting a build"
         )
+    release_evidence_report = getattr(args, "release_evidence_report", None)
+    validation_train = getattr(args, "validation_train", None)
+    release_evidence_mode = getattr(args, "release_evidence_mode", "shadow")
+    if release_evidence_report and not validation_train:
+        raise AppStoreConnectError(
+            "--release-evidence-report requires --validation-train"
+        )
+    if release_evidence_mode == "enforce" and validation_report_required(args):
+        if not release_evidence_report:
+            raise AppStoreConnectError(
+                "--release-evidence-report is required when release evidence is enforced"
+            )
 
 
 def main() -> int:
@@ -1801,6 +1871,8 @@ def main() -> int:
         validate_args(args)
         if validation_report_required(args):
             validate_validation_report(args)
+        if getattr(args, "release_evidence_report", None):
+            validate_release_evidence_report(args)
         if args.validate_report_only:
             print("Validation report preflight succeeded; no App Store Connect request was made")
             return 0

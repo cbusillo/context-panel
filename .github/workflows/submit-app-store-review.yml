@@ -74,6 +74,20 @@ name: Submit App Store Review
           Required for live build attachment or submission.
         required: false
         type: string
+      validation_train:
+        description: Evidence policy tier for the release evidence report.
+        required: false
+        default: release
+        type: string
+      release_evidence_mode:
+        description: Run release evidence in shadow or enforce mode.
+        required: false
+        default: shadow
+        type: string
+      release_evidence_report_base64:
+        description: Base64 JSON from context-panel-release-gate.py.
+        required: false
+        type: string
   workflow_dispatch:
     inputs:
       version:
@@ -156,6 +170,27 @@ name: Submit App Store Review
           Required for live build attachment or submission.
         required: false
         type: string
+      validation_train:
+        description: Evidence policy tier for the release evidence report.
+        required: true
+        default: release
+        type: choice
+        options:
+          - beta
+          - rc
+          - release
+      release_evidence_mode:
+        description: Run release evidence in shadow or enforce mode.
+        required: true
+        default: shadow
+        type: choice
+        options:
+          - shadow
+          - enforce
+      release_evidence_report_base64:
+        description: Base64 JSON from context-panel-release-gate.py.
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -197,6 +232,19 @@ jobs:
             | base64 -D > .build/validation-report.json
           python3 -m json.tool .build/validation-report.json >/dev/null
 
+      - name: Prepare Release Evidence Report
+        if: ${{ inputs.release_evidence_report_base64 != '' }}
+        shell: bash
+        env:
+          INPUT_RELEASE_EVIDENCE_REPORT_BASE64: >-
+            ${{ inputs.release_evidence_report_base64 }}
+        run: |
+          set -euo pipefail
+          mkdir -p .build
+          printf '%s' "${INPUT_RELEASE_EVIDENCE_REPORT_BASE64}" \
+            | base64 -D > .build/release-evidence-report.json
+          python3 -m json.tool .build/release-evidence-report.json >/dev/null
+
       - name: Submit Review
         shell: bash
         env:
@@ -214,6 +262,10 @@ jobs:
           INPUT_CANCEL_REVIEW_ONLY: ${{ inputs.cancel_review_only }}
           INPUT_PREPARE_ONLY: ${{ inputs.prepare_only }}
           INPUT_VALIDATION_REPORT_BASE64: ${{ inputs.validation_report_base64 }}
+          INPUT_VALIDATION_TRAIN: ${{ inputs.validation_train }}
+          INPUT_RELEASE_EVIDENCE_MODE: ${{ inputs.release_evidence_mode }}
+          INPUT_RELEASE_EVIDENCE_REPORT_BASE64: >-
+            ${{ inputs.release_evidence_report_base64 }}
         run: |
           set -euo pipefail
           args=(
@@ -280,6 +332,17 @@ jobs:
             fi
             args+=(--validation-report .build/validation-report.json)
           fi
+          if [[ -n "${INPUT_RELEASE_EVIDENCE_REPORT_BASE64}" ]]; then
+            args+=(
+              --validation-train "${INPUT_VALIDATION_TRAIN}"
+              --release-evidence-mode "${INPUT_RELEASE_EVIDENCE_MODE}"
+              --release-evidence-report .build/release-evidence-report.json
+            )
+          elif [[ "${INPUT_RELEASE_EVIDENCE_MODE}" == "enforce" && \
+            "${report_required}" == "true" ]]; then
+            echo "release_evidence_report_base64 is required when release evidence is enforced" >&2
+            exit 1
+          fi
           submit=(
             .build/submit-review-venv/bin/python
             scripts/submit-app-store-review.py
@@ -299,7 +362,12 @@ jobs:
             echo "- Prepare only: ${INPUT_PREPARE_ONLY}"
             if [[ "${report_required}" == "true" ]]; then
               echo "- Validation report SHA-256: $(shasum -a 256 .build/validation-report.json | awk '{print $1}')"
-              echo "- Evidence boundary: exact-build runtime only; visual approval and carry-forward remain separate"
+              echo "- Release evidence mode: ${INPUT_RELEASE_EVIDENCE_MODE}"
+              if [[ -n "${INPUT_RELEASE_EVIDENCE_REPORT_BASE64}" ]]; then
+                echo "- Release evidence report SHA-256: $(shasum -a 256 .build/release-evidence-report.json | awk '{print $1}')"
+              else
+                echo "- Release evidence report: not supplied (shadow runbook remains authoritative)"
+              fi
             fi
             echo "- Result: succeeded"
           } >>"${GITHUB_STEP_SUMMARY}"

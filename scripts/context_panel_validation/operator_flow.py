@@ -1280,6 +1280,11 @@ def build_final_report_payload(report: ValidationReport) -> dict[str, Any]:
                 "surface": surface["surface"],
                 "state": surface["state"],
                 "reason": surface["reason"],
+                "manifestID": surface.get("manifestID"),
+                "expectedBuildID": surface.get("expectedBuildID"),
+                "identityDigest": surface.get("identityDigest"),
+                "runtimeFingerprint": surface.get("runtimeFingerprint"),
+                "receiptIDs": list(surface.get("receiptIDs") or []),
             }
             for surface in runtime["surfaces"]
         ],
@@ -1298,6 +1303,14 @@ def build_final_report_payload(report: ValidationReport) -> dict[str, Any]:
                     "device": item["device"],
                     "state": item["state"],
                     "reason": item["reason"],
+                    "manifestID": item.get("manifestID"),
+                    "expectedBuildID": item.get("expectedBuildID"),
+                    "contractFingerprint": item.get("contractFingerprint"),
+                    "identityDigest": item.get("identityDigest"),
+                    "hostOS": item.get("hostOS"),
+                    "renderFingerprint": item.get("renderFingerprint"),
+                    "placementFingerprint": item.get("placementFingerprint"),
+                    "decision": item.get("decision"),
                 }
                 for item in visual_approvals.get("requirements") or []
             ],

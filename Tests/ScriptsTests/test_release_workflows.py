@@ -840,7 +840,12 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("--validation-report", script)
         self.assertIn("--validate-report-only", script)
         self.assertIn("validation_report_required", script)
-        self.assertIn("exact-build runtime only", workflow)
+        self.assertIn("release_evidence_report_base64:", workflow)
+        self.assertIn("release_evidence_mode:", workflow)
+        self.assertIn("Prepare Release Evidence Report", workflow)
+        self.assertIn("--release-evidence-report", script)
+        self.assertIn("--release-evidence-mode", script)
+        self.assertIn("shadow runbook remains authoritative", workflow)
         self.assertIn("narrow exact-build runtime stop", release_docs)
         self.assertIn("iPhone app/widget, iPad app/widget", release_docs)
 

@@ -1628,6 +1628,7 @@ def build_runtime_evidence_report(
             state_name, reason = "diagnostic", diagnostic
         elif receipts:
             latest = receipts[-1]
+            expected = expected_by_surface.get(surface)
             surfaces.append(
                 {
                     "surface": surface,
@@ -1637,6 +1638,11 @@ def build_runtime_evidence_report(
                     "lastObservedAt": latest.observed_at,
                     "latestStateBranch": latest.state_branch,
                     "latestOutcome": latest.outcome,
+                    "manifestID": expected.manifest_id if expected is not None else None,
+                    "expectedBuildID": expected.expected_build_id if expected is not None else None,
+                    "identityDigest": expected.identity_digest() if expected is not None else None,
+                    "runtimeFingerprint": expected.runtime_fingerprint if expected is not None else None,
+                    "receiptIDs": [item.receipt_id for item in receipts],
                 }
             )
             continue
@@ -1670,6 +1676,11 @@ def build_runtime_evidence_report(
                 "lastObservedAt": None,
                 "latestStateBranch": None,
                 "latestOutcome": None,
+                "manifestID": expected_by_surface[surface].manifest_id if surface in expected_by_surface else None,
+                "expectedBuildID": expected_by_surface[surface].expected_build_id if surface in expected_by_surface else None,
+                "identityDigest": expected_by_surface[surface].identity_digest() if surface in expected_by_surface else None,
+                "runtimeFingerprint": expected_by_surface[surface].runtime_fingerprint if surface in expected_by_surface else None,
+                "receiptIDs": [],
             }
         )
     proven_count = sum(item["state"] == "proven" for item in surfaces)

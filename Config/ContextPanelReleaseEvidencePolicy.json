@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "maximumEvidenceAgeDays": 90,
+  "requiredShadowTrainCount": 2,
+  "hostOSCompatibility": {
+    "invalidateMajorMinorChanges": true,
+    "patchSensitiveSurfaces": [
+      "tvos.top-shelf",
+      "visionos.widget",
+      "watchos.complication"
+    ]
+  }
+}
