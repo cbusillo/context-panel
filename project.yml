@@ -55,6 +55,7 @@ targets:
       - path: Sources/ContextPanelValidationGalleryUI
         excludes:
           - WatchValidationFixtureAdapter.swift
+          - TVValidationFixtureAdapter.swift
     dependencies:
       - target: ContextPanelCore
       - target: ContextPanelValidationFixtures
@@ -141,6 +142,7 @@ targets:
       - path: Sources/ContextPanelValidationGalleryUI
         excludes:
           - WatchValidationFixtureAdapter.swift
+          - TVValidationFixtureAdapter.swift
     dependencies:
       - target: ContextPanelCoreCompanion
       - target: ContextPanelValidationFixturesCompanion
@@ -274,6 +276,19 @@ targets:
       base:
         PRODUCT_NAME: ContextPanelCoreTV
         PRODUCT_MODULE_NAME: ContextPanelCore
+        TVOS_DEPLOYMENT_TARGET: "17.0"
+        SKIP_INSTALL: true
+
+  ContextPanelValidationFixturesTV:
+    type: library.static
+    platform: tvOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Sources/ContextPanelValidationFixtures
+    settings:
+      base:
+        PRODUCT_NAME: ContextPanelValidationFixturesTV
+        PRODUCT_MODULE_NAME: ContextPanelValidationFixtures
         TVOS_DEPLOYMENT_TARGET: "17.0"
         SKIP_INSTALL: true
 
@@ -630,11 +645,15 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - path: Sources/ContextPanelTV
+      - path: Sources/ContextPanelValidationGalleryUI/ValidationGalleryFixtureAdapter.swift
+      - path: Sources/ContextPanelValidationGalleryUI/TVValidationFixtureAdapter.swift
+      - path: Sources/ContextPanelTVTopShelf/ContextPanelTVTopShelfProvider.swift
       - path: Resources/TVAssets.xcassets
     dependencies:
       - target: ContextPanelCoreTV
       - target: ContextPanelCloudKitSyncTV
       - target: ContextPanelTVSupport
+      - target: ContextPanelValidationFixturesTV
       - target: ContextPanelTVTopShelfExtension
         embed: true
     postBuildScripts:
@@ -694,6 +713,8 @@ targets:
         TVOS_DEPLOYMENT_TARGET: "17.0"
         SKIP_INSTALL: true
         APPLICATION_EXTENSION_API_ONLY: true
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: >-
+          $(inherited) CONTEXT_PANEL_TV_TOP_SHELF_EXTENSION
         CODE_SIGN_ENTITLEMENTS: Config/ContextPanelTVTopShelf.entitlements
       configs:
         Release:

@@ -69,6 +69,31 @@ public struct ValidationGalleryFixtureAdapter: Sendable {
         .defaultPreferences
     }
 
+    public func providerAccessSnapshot(presentationDate: Date) -> WidgetSnapshot {
+        let generatedAt = presentationDate.addingTimeInterval(-45)
+        let report = StoredProviderReport(
+            provider: .anthropic,
+            accountID: "sample-claude-access",
+            configuredAccountID: "sample-claude-access",
+            accountName: "Sample Claude Access",
+            generatedAt: generatedAt,
+            status: .limited,
+            accessState: ProviderAccessState(
+                kind: .blockedUntilReset,
+                resetsAt: presentationDate.addingTimeInterval(3 * 3_600)
+            ),
+            errorMessage: nil
+        )
+        return WidgetSnapshot(
+            state: .ready,
+            generatedAt: generatedAt,
+            limits: [],
+            reports: [report],
+            status: .limited,
+            message: "Sample plan access is unavailable until reset."
+        )
+    }
+
     private func observedBurnRates(for snapshot: UsageSnapshot) -> [String: ObservedBurnRate] {
         Dictionary(uniqueKeysWithValues: snapshot.mainLimitSummaries.compactMap { summary in
             guard summary.provider == .openAI else { return nil }

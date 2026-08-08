@@ -11,6 +11,12 @@ COMPANION_APP_SOURCE = REPO_ROOT / "Sources" / "ContextPanelCompanion" / "Contex
 WATCH_APP_SOURCE = REPO_ROOT / "Sources" / "ContextPanelWatch" / "ContextPanelWatchApp.swift"
 WATCH_GALLERY_SOURCE = REPO_ROOT / "Sources" / "ContextPanelWatch" / "WatchValidationGallery.swift"
 WATCH_WIDGET_SOURCE = REPO_ROOT / "Sources" / "ContextPanelWatchWidget" / "ContextPanelWatchWidget.swift"
+TV_APP_SOURCE = REPO_ROOT / "Sources" / "ContextPanelTV" / "ContextPanelTVApp.swift"
+TV_GALLERY_SOURCE = REPO_ROOT / "Sources" / "ContextPanelTV" / "TVValidationGallery.swift"
+TV_PREVIEW_SOURCE = REPO_ROOT / "Sources" / "ContextPanelTV" / "TVPreviewFixtures.swift"
+TV_TOP_SHELF_SOURCE = (
+    REPO_ROOT / "Sources" / "ContextPanelTVTopShelf" / "ContextPanelTVTopShelfProvider.swift"
+)
 
 
 class ValidationGalleryTargetGraphTests(unittest.TestCase):
@@ -38,6 +44,7 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
             "ContextPanelValidationFixtures",
             "ContextPanelValidationFixturesCompanion",
             "ContextPanelValidationFixturesWatch",
+            "ContextPanelValidationFixturesTV",
         ):
             block = self.yaml_target_block(project, target)
             self.assertNotIn("dependencies:", block)
@@ -49,6 +56,7 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
             "ContextPanelWidgetExtension",
             "ContextPanelCompanionWidgetExtension",
             "ContextPanelWatchWidgetExtension",
+            "ContextPanelTVTopShelfExtension",
         ):
             block = self.yaml_target_block(project, target)
             self.assertNotIn("ContextPanelValidation", block)
@@ -147,6 +155,84 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
             "WidgetCenter.shared",
         ):
             self.assertNotIn(forbidden, watch_gallery)
+
+    def test_tv_gallery_reuses_shipping_views_without_publication_paths(self):
+        project = (REPO_ROOT / "project.yml").read_text()
+        tv_app = TV_APP_SOURCE.read_text()
+        tv_gallery = TV_GALLERY_SOURCE.read_text()
+        tv_preview = TV_PREVIEW_SOURCE.read_text()
+        top_shelf = TV_TOP_SHELF_SOURCE.read_text()
+        tv_target = self.yaml_target_block(project, "ContextPanelTV")
+        top_shelf_target = self.yaml_target_block(project, "ContextPanelTVTopShelfExtension")
+
+        self.assertIn("ContextPanelValidationFixturesTV", tv_target)
+        self.assertIn("ValidationGalleryFixtureAdapter.swift", tv_target)
+        self.assertIn("TVValidationFixtureAdapter.swift", tv_target)
+        self.assertIn("ContextPanelTVTopShelfProvider.swift", tv_target)
+        self.assertNotIn("CONTEXT_PANEL_TV_TOP_SHELF_EXTENSION", tv_target)
+        self.assertIn("CONTEXT_PANEL_TV_TOP_SHELF_EXTENSION", top_shelf_target)
+        self.assertNotIn("ContextPanelValidation", top_shelf_target)
+
+        self.assertIn("TVRunwayContent(", tv_app)
+        self.assertIn("TVRunwayContent(", tv_gallery)
+        self.assertIn("TVProviderDetailView(", tv_gallery)
+        self.assertIn("TVTopShelfRenderer()", tv_gallery)
+        self.assertIn(".imageData(", tv_gallery)
+        self.assertIn("presentationDate: context.presentationDate", tv_gallery)
+        self.assertIn("SAMPLE DATA", tv_gallery)
+        self.assertIn("READ ONLY", tv_gallery)
+        self.assertIn("detailActionMode: .readOnly", tv_gallery)
+        self.assertIn(".accessibilityElement(children: .contain)", tv_gallery)
+        self.assertNotIn(".disabled(true)", tv_gallery)
+        self.assertNotIn("@AppStorage", tv_gallery)
+
+        for forbidden in (
+            "TVSyncModel(",
+            "CompanionCloudKitSyncStoreFactory",
+            "CompanionSyncStore(",
+            "TVSyncReceiptStore(",
+            "TVSystemSurfaceCoordinator",
+            "TVTopShelfDocumentStore",
+            "TVTopShelfSharedLocations",
+            "RuntimeReceiptRecorder",
+            "RuntimeReceiptRelayCoordinator",
+            "topShelfContentDidChange",
+            "TVLocalCacheLocations",
+        ):
+            self.assertNotIn(forbidden, tv_gallery)
+
+        guard_pattern = re.compile(
+            r"#if CONTEXT_PANEL_TV_TOP_SHELF_EXTENSION\n"
+            r"(.*?)(?:#else\n(.*?))?#endif",
+            flags=re.DOTALL,
+        )
+        guarded_regions = [
+            match.group(1)
+            for match in guard_pattern.finditer(top_shelf)
+        ]
+        guarded_source = "\n".join(guarded_regions)
+        unguarded_source = guard_pattern.sub(
+            lambda match: match.group(2) or "",
+            top_shelf,
+        )
+        for protected_symbol in (
+            "ContextPanelTVTopShelfProvider",
+            "TVTopShelfDocumentStore",
+            "TVTopShelfSharedLocations",
+            "RuntimeReceiptRecorder",
+            "setImageURL",
+            "write(to:",
+        ):
+            self.assertIn(protected_symbol, guarded_source)
+            self.assertNotIn(protected_symbol, unguarded_source)
+        for shared_symbol in ("imageData", "render(", "semanticTitle"):
+            self.assertIn(shared_symbol, unguarded_source)
+
+        self.assertNotRegex(
+            tv_preview,
+            r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
+        )
+        self.assertIn("Sample OpenAI Personal", tv_preview)
 
     @staticmethod
     def yaml_target_block(project: str, target: str) -> str:

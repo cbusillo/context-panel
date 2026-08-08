@@ -4,6 +4,7 @@ import Foundation
 @preconcurrency import TVServices
 import UIKit
 
+#if CONTEXT_PANEL_TV_TOP_SHELF_EXTENSION
 final class ContextPanelTVTopShelfProvider: TVTopShelfContentProvider {
     override func loadTopShelfContent() async -> (any TVTopShelfContent)? {
         let now = Date()
@@ -74,8 +75,10 @@ final class ContextPanelTVTopShelfProvider: TVTopShelfContentProvider {
         )
     }
 }
+#endif
 
-private struct TVTopShelfRenderer {
+struct TVTopShelfRenderer {
+#if CONTEXT_PANEL_TV_TOP_SHELF_EXTENSION
     private static let renderVersion = 3
     private let imageDirectory: URL
     private let fileManager: FileManager
@@ -126,7 +129,19 @@ private struct TVTopShelfRenderer {
         )
         return TVTopShelfInsetContent(items: [item])
     }
+#endif
 
+#if !CONTEXT_PANEL_TV_TOP_SHELF_EXTENSION
+    init() {}
+#endif
+
+    func imageData(document: TVTopShelfDocument, now: Date, scale: CGFloat) throws -> Data {
+        let cards = document.renderedCards
+        guard !cards.isEmpty else { throw CocoaError(.fileReadCorruptFile) }
+        return try render(cards: cards, document: document, now: now, scale: scale)
+    }
+
+#if CONTEXT_PANEL_TV_TOP_SHELF_EXTENSION
     private func prepareImageDirectory() throws {
         try fileManager.createDirectory(at: imageDirectory, withIntermediateDirectories: true)
     }
@@ -258,6 +273,7 @@ private struct TVTopShelfRenderer {
             try? fileManager.removeItem(at: url.url)
         }
     }
+#endif
 
     private func render(
         cards: [TVTopShelfCard],
@@ -485,7 +501,7 @@ private struct TVTopShelfRenderer {
         )
     }
 
-    private func semanticTitle(
+    func semanticTitle(
         document: TVTopShelfDocument,
         cards: [TVTopShelfCard],
         now: Date

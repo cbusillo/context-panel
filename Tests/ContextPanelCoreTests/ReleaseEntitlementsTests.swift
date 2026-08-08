@@ -403,6 +403,10 @@ import Testing
     let supportDependencies = try #require(project.dependencies(named: "ContextPanelTVSupport"))
     #expect(supportDependencies == ["ContextPanelCoreTV"])
 
+    let validationTarget = try #require(project.target(named: "ContextPanelValidationFixturesTV"))
+    #expect(validationTarget["platform"] as? String == "tvOS")
+    #expect(project.dependencies(named: "ContextPanelValidationFixturesTV") == [])
+
     let appTarget = try #require(project.target(named: "ContextPanelTV"))
     #expect(appTarget["platform"] as? String == "tvOS")
     #expect(appTarget["deploymentTarget"] as? String == "17.0")
@@ -429,6 +433,7 @@ import Testing
         "ContextPanelCoreTV",
         "ContextPanelCloudKitSyncTV",
         "ContextPanelTVSupport",
+        "ContextPanelValidationFixturesTV",
         "ContextPanelTVTopShelfExtension",
     ])
     #expect(!appDependencies.contains("ContextPanelWidgetUICompanion"))
@@ -490,6 +495,10 @@ import Testing
     #expect(topShelfSettings["TARGETED_DEVICE_FAMILY"] as? String == "3")
     #expect(topShelfSettings["SKIP_INSTALL"] as? String == "true")
     #expect(topShelfSettings["APPLICATION_EXTENSION_API_ONLY"] as? String == "true")
+    #expect(
+        (topShelfSettings["SWIFT_ACTIVE_COMPILATION_CONDITIONS"] as? String)?
+            .contains("CONTEXT_PANEL_TV_TOP_SHELF_EXTENSION") == true
+    )
     let topShelfDependencies = try #require(project.dependencies(named: "ContextPanelTVTopShelfExtension"))
     #expect(topShelfDependencies == ["ContextPanelCoreTV", "ContextPanelTVSupport"])
     #expect(!topShelfDependencies.contains("ContextPanelCloudKitSyncTV"))

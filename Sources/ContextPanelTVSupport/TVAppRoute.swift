@@ -4,6 +4,7 @@ import Foundation
 public enum TVAppRoute: Equatable, Sendable {
     case runway
     case provider(Provider)
+    case validationGallery
 
     public init?(url: URL) {
         guard url.scheme == "contextpaneltv" else { return nil }
@@ -13,6 +14,9 @@ public enum TVAppRoute: Equatable, Sendable {
         case "provider":
             guard let provider = Provider(rawValue: url.lastPathComponent) else { return nil }
             self = .provider(provider)
+        case "validation-gallery":
+            guard url.path.isEmpty else { return nil }
+            self = .validationGallery
         default:
             return nil
         }
@@ -24,6 +28,8 @@ public enum TVAppRoute: Equatable, Sendable {
             URL(string: "contextpaneltv://runway")!
         case let .provider(provider):
             URL(string: "contextpaneltv://provider/\(provider.rawValue)")!
+        case .validationGallery:
+            URL(string: "contextpaneltv://validation-gallery")!
         }
     }
 }

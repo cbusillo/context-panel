@@ -2,12 +2,14 @@ import ContextPanelCore
 import ContextPanelValidationFixtures
 import Foundation
 
-public enum WatchValidationAppState: String, CaseIterable, Identifiable, Sendable {
+public enum TVValidationState: String, CaseIterable, Identifiable, Sendable {
     case healthy
-    case setupNeeded
+    case resetVisible
     case stale
     case loading
+    case setupNeeded
     case failure
+    case partialFailure
     case providerAccess
     case denseAccounts
     case fitFallback
@@ -17,10 +19,12 @@ public enum WatchValidationAppState: String, CaseIterable, Identifiable, Sendabl
     public var displayName: String {
         switch self {
         case .healthy: "Healthy"
-        case .setupNeeded: "Setup needed"
+        case .resetVisible: "Reset visible"
         case .stale: "Saved stale"
         case .loading: "Refreshing"
+        case .setupNeeded: "Setup needed"
         case .failure: "Refresh failed"
+        case .partialFailure: "Partial provider failure"
         case .providerAccess: "Provider access"
         case .denseAccounts: "Dense accounts"
         case .fitFallback: "Fit fallback"
@@ -28,53 +32,40 @@ public enum WatchValidationAppState: String, CaseIterable, Identifiable, Sendabl
     }
 }
 
-public enum WatchValidationComplicationState: String, CaseIterable, Identifiable, Sendable {
-    case available
-    case close
-    case unknown
-    case providerAccess
-
-    public var id: String { rawValue }
-
-    public var displayName: String {
-        switch self {
-        case .available: "Available"
-        case .close: "Close to limit"
-        case .unknown: "Unknown"
-        case .providerAccess: "Provider access"
-        }
-    }
-}
-
-public struct WatchValidationFixtureContext: Sendable {
+public struct TVValidationFixtureContext: Sendable {
     public let snapshot: WidgetSnapshot
     public let result: CompanionSyncLoadResult
     public let displayPreferences: WidgetDisplayPreferences
     public let presentationDate: Date
+    public let receivedAt: Date?
 
     public init(
         snapshot: WidgetSnapshot,
         result: CompanionSyncLoadResult,
         displayPreferences: WidgetDisplayPreferences,
-        presentationDate: Date
+        presentationDate: Date,
+        receivedAt: Date?
     ) {
         self.snapshot = snapshot
         self.result = result
         self.displayPreferences = displayPreferences
         self.presentationDate = presentationDate
+        self.receivedAt = receivedAt
     }
 }
 
-public struct WatchValidationFixtureAdapter: Sendable {
+public struct TVValidationFixtureAdapter: Sendable {
     private let adapter = ValidationGalleryFixtureAdapter()
 
     public init() {}
 
-    public func appContext(
-        state: WatchValidationAppState,
+    public func context(
+        state: TVValidationState,
         presentationDate: Date = ValidationFixtureCatalog.referencePresentationDate
-    ) -> WatchValidationFixtureContext {
+    ) -> TVValidationFixtureContext {
         let snapshot = switch state {
+        case .partialFailure:
+            partialFailureSnapshot(presentationDate: presentationDate)
         case .providerAccess:
             adapter.providerAccessSnapshot(presentationDate: presentationDate)
         default:
@@ -83,49 +74,24 @@ public struct WatchValidationFixtureAdapter: Sendable {
                 presentationDate: presentationDate
             )
         }
-        return context(snapshot: snapshot, presentationDate: presentationDate)
-    }
-
-    public func complicationContext(
-        state: WatchValidationComplicationState,
-        presentationDate: Date = ValidationFixtureCatalog.referencePresentationDate
-    ) -> WatchValidationFixtureContext {
-        let snapshot = switch state {
-        case .available:
-            adapter.snapshot(fixtureID: .healthy, presentationDate: presentationDate)
-        case .close:
-            adapter.snapshot(fixtureID: .resetVisible, presentationDate: presentationDate)
-        case .unknown:
-            adapter.snapshot(fixtureID: .missing, presentationDate: presentationDate)
-        case .providerAccess:
-            adapter.providerAccessSnapshot(presentationDate: presentationDate)
-        }
-        return context(snapshot: snapshot, presentationDate: presentationDate)
-    }
-
-    private func context(
-        snapshot: WidgetSnapshot,
-        presentationDate: Date
-    ) -> WatchValidationFixtureContext {
-        let storedSnapshot = StoredUsageSnapshot(
-            savedAt: snapshot.generatedAt,
-            snapshot: snapshot.usageSnapshot,
-            reports: snapshot.reports,
-            promptCacheObservations: snapshot.promptCacheObservations
-        )
         let document: CompanionSyncDocument? = switch snapshot.state {
         case .setupNeeded:
             nil
         case .ready, .stale, .failure:
             CompanionSyncDocument(
-                storedSnapshot: storedSnapshot,
+                storedSnapshot: StoredUsageSnapshot(
+                    savedAt: snapshot.generatedAt,
+                    snapshot: snapshot.usageSnapshot,
+                    reports: snapshot.reports,
+                    promptCacheObservations: snapshot.promptCacheObservations
+                ),
                 publishedAt: presentationDate,
                 widgetDisplayPreferences: adapter.displayPreferences,
                 observedBurnRates: snapshot.observedBurnRates,
                 fastModeForecastSettings: snapshot.fastModeForecastSettings
             )
         }
-        return WatchValidationFixtureContext(
+        return TVValidationFixtureContext(
             snapshot: snapshot,
             result: CompanionSyncLoadResult(
                 document: document,
@@ -133,21 +99,50 @@ public struct WatchValidationFixtureAdapter: Sendable {
                 errorMessage: snapshot.syncErrorMessage
             ),
             displayPreferences: adapter.displayPreferences,
-            presentationDate: presentationDate
+            presentationDate: presentationDate,
+            receivedAt: document == nil ? nil : presentationDate.addingTimeInterval(-30)
         )
     }
 
-    private func fixtureID(for state: WatchValidationAppState) -> ValidationFixtureID {
+    private func fixtureID(for state: TVValidationState) -> ValidationFixtureID {
         switch state {
         case .healthy: .healthy
-        case .setupNeeded: .missing
+        case .resetVisible: .resetVisible
         case .stale: .stale
         case .loading: .loading
+        case .setupNeeded: .missing
         case .failure: .failed
+        case .partialFailure: .healthy
         case .providerAccess: .healthy
         case .denseAccounts: .denseAccounts
         case .fitFallback: .fitFallback
         }
+    }
+
+    private func partialFailureSnapshot(presentationDate: Date) -> WidgetSnapshot {
+        let base = adapter.snapshot(fixtureID: .healthy, presentationDate: presentationDate)
+        let report = StoredProviderReport(
+            provider: .google,
+            accountID: "sample-google-partial",
+            configuredAccountID: "sample-google-partial",
+            accountName: "Sample Google Partial",
+            generatedAt: base.generatedAt,
+            status: .failure,
+            errorMessage: "Sample provider refresh failed."
+        )
+        return WidgetSnapshot(
+            state: .ready,
+            generatedAt: base.generatedAt,
+            limits: base.limits,
+            reports: base.reports + [report],
+            promptCacheObservations: base.promptCacheObservations,
+            promptCacheWidgetState: base.promptCacheWidgetState,
+            observedBurnRates: base.observedBurnRates,
+            fastModeForecastSettings: base.fastModeForecastSettings,
+            status: .failure,
+            message: "Sample usage is available with one provider refresh failure.",
+            syncErrorMessage: "Sample provider refresh failed."
+        )
     }
 
 }
