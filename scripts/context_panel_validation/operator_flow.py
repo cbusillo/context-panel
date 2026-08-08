@@ -395,7 +395,6 @@ def validate_operator_flow_state(state: OperatorFlowState) -> None:
         or not isinstance(state.revision, int)
         or isinstance(state.revision, bool)
         or state.revision < 1
-        or not state.requested_surfaces
         or state.requested_surfaces != tuple(sorted(set(state.requested_surfaces)))
         or state.last_action_ids != tuple(sorted(set(state.last_action_ids)))
         or len(state.deferrals) > MAXIMUM_DEFERRAL_COUNT
@@ -932,6 +931,44 @@ def build_operator_candidates(
                     "Escalate only the reported session, export, or relay diagnostic.",
                 ),
             )
+    visual_approvals = report.visual_approvals or {}
+    for batch in visual_approvals.get("reviewBatches") or []:
+        if not isinstance(batch, dict):
+            raise OperatorFlowError("visual review batch is invalid")
+        action_id = _validate_action_id(batch.get("actionID"))
+        device = _validate_device(batch.get("device"))
+        estimate_minutes = batch.get("estimateMinutes")
+        instruction = batch.get("instruction")
+        requirement_ids = batch.get("requirementIDs")
+        requires_runtime = batch.get("requiresRuntime")
+        if (
+            not isinstance(estimate_minutes, int)
+            or isinstance(estimate_minutes, bool)
+            or not 1 <= estimate_minutes <= 60
+            or not isinstance(instruction, str)
+            or not instruction
+            or not isinstance(requirement_ids, list)
+            or not requirement_ids
+            or any(not isinstance(item, str) for item in requirement_ids)
+            or not isinstance(requires_runtime, bool)
+        ):
+            raise OperatorFlowError("visual review batch is invalid")
+        if requires_runtime and (
+            runtime_evidence is None or runtime_evidence.get("state") != "proven"
+        ):
+            continue
+        candidates[action_id] = OperatorActionCandidate(
+            action_id=action_id,
+            device=device,
+            estimate_minutes=estimate_minutes,
+            instruction=instruction,
+            notification_kind="readyForHumanReview",
+            recovery_steps=(
+                "Open the signed validation gallery or real placed surface named by status.",
+                "Preserve the exact installed build and existing placements.",
+                "Record approve or reject for every listed requirement ID.",
+            ),
+        )
     if report.state == "blocked" and not any(
         candidate.notification_kind == "blockedDecisionRequired"
         for candidate in candidates.values()
@@ -1156,6 +1193,15 @@ def build_final_report_payload(report: ValidationReport) -> dict[str, Any]:
         "residualRisks": [],
         "runtimeDiagnostics": [],
     }
+    visual_approvals = report.visual_approvals or {
+        "state": "not-evaluated-by-coordinator",
+        "requirementCount": 0,
+        "approvedCount": 0,
+        "rejectedCount": 0,
+        "readyReviewCount": 0,
+        "machineWaitingCount": 0,
+        "requirements": [],
+    }
     watch_required = any(
         str(surface).startswith("watchos.")
         for surface in session.get("requestedSurfaces", [])
@@ -1179,7 +1225,7 @@ def build_final_report_payload(report: ValidationReport) -> dict[str, Any]:
             if report.watch_restart_recorded_at
             else "missing" if watch_required else "not-required"
         ),
-        "visualApproval": "not-evaluated-by-coordinator",
+        "visualApproval": visual_approvals["state"],
     }
     blockers = []
     if report.state == "blocked":
@@ -1237,6 +1283,25 @@ def build_final_report_payload(report: ValidationReport) -> dict[str, Any]:
             }
             for surface in runtime["surfaces"]
         ],
+        "visualApprovals": {
+            "state": visual_approvals["state"],
+            "requirementCount": visual_approvals["requirementCount"],
+            "approvedCount": visual_approvals["approvedCount"],
+            "rejectedCount": visual_approvals["rejectedCount"],
+            "readyReviewCount": visual_approvals["readyReviewCount"],
+            "machineWaitingCount": visual_approvals["machineWaitingCount"],
+            "requirements": [
+                {
+                    "id": item["id"],
+                    "evidenceClass": item["evidenceClass"],
+                    "surface": item["surface"],
+                    "device": item["device"],
+                    "state": item["state"],
+                    "reason": item["reason"],
+                }
+                for item in visual_approvals.get("requirements") or []
+            ],
+        },
         "operatorFlow": operator_flow,
         "carryForwardLineage": {
             "state": "not-evaluated",
@@ -1248,7 +1313,8 @@ def build_final_report_payload(report: ValidationReport) -> dict[str, Any]:
         "limitations": list(report.limitations),
         "privacy": (
             "Contains no device identifiers, account data, credentials, private paths, "
-            "raw provider responses, raw receipt documents, or App Store Connect object IDs."
+            "raw provider responses, raw receipt documents, private artifact contents, "
+            "or App Store Connect object IDs."
         ),
     }
 
@@ -1311,6 +1377,21 @@ def render_final_report(report: ValidationReport) -> str:
         )
     else:
         lines.append("No runtime surface evidence is attached.")
+    visual = payload["visualApprovals"]
+    lines.extend(["", "## Visual Reviews", ""])
+    if visual["requirements"]:
+        lines.append(
+            f"`{visual['approvedCount']}/{visual['requirementCount']}` approved · "
+            f"`{visual['rejectedCount']}` rejected · "
+            f"`{visual['machineWaitingCount']}` waiting on machine evidence"
+        )
+        lines.append("")
+        lines.extend(
+            f"- `{item['id']}` · `{item['surface']}` · `{item['state']}` — {item['reason']}"
+            for item in visual["requirements"]
+        )
+    else:
+        lines.append("No visual review requirements are attached.")
     lines.extend(["", "## Blockers And Residual Risk", ""])
     if payload["blockers"]:
         lines.extend(f"- Blocker: `{item}`" for item in payload["blockers"])

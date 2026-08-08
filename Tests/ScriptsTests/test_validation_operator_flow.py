@@ -830,6 +830,82 @@ class OperatorFlowTests(unittest.TestCase):
         with self.assertRaises(context_panel_validation.OperatorFlowError):
             context_panel_validation.OperatorFlowStore(self.store).load(session)
 
+    def test_ready_visual_review_batch_uses_reserved_notification_kind(self):
+        surfaces = ("watchos.complication",)
+        session = self.session(surfaces)
+        report = replace(
+            self.report(
+                surfaces,
+                devices=(device("Apple Watch", "watchOS"),),
+                restart="2026-08-02T03:00:00Z",
+            ),
+            visual_approvals={
+                "state": "pending",
+                "reviewBatches": [
+                    {
+                        "actionID": "review.apple-watch",
+                        "device": "Apple Watch",
+                        "requirementIDs": ["watch.complication.placement.corner"],
+                        "requiresRuntime": True,
+                        "instruction": "Review one placement glance on Apple Watch.",
+                        "estimateMinutes": 2,
+                    }
+                ],
+            },
+        )
+        runtime = runtime_report(
+            (("watchos.complication", "proven", "exact-build-runtime-receipt"),)
+        )
+
+        _, flow = context_panel_validation.OperatorFlowStore(self.store).reconcile(
+            session,
+            report,
+            runtime,
+            NOW,
+        )
+
+        action = flow["groups"][0]["actions"][0]
+        self.assertEqual(action["id"], "review.apple-watch")
+        self.assertEqual(action["notificationKind"], "readyForHumanReview")
+        self.assertEqual(flow["readyActionCount"], 1)
+
+    def test_placement_review_batch_is_suppressed_until_runtime_is_proven(self):
+        surfaces = ("watchos.complication",)
+        session = self.session(surfaces)
+        report = replace(
+            self.report(
+                surfaces,
+                devices=(device("Apple Watch", "watchOS"),),
+                restart="2026-08-02T03:00:00Z",
+            ),
+            visual_approvals={
+                "state": "waiting",
+                "reviewBatches": [
+                    {
+                        "actionID": "review.apple-watch",
+                        "device": "Apple Watch",
+                        "requirementIDs": ["watch.complication.placement.corner"],
+                        "requiresRuntime": True,
+                        "instruction": "Review one placement glance on Apple Watch.",
+                        "estimateMinutes": 2,
+                    }
+                ],
+            },
+        )
+        runtime = runtime_report(
+            (("watchos.complication", "waiting", "receipt-propagation"),)
+        )
+
+        _, flow = context_panel_validation.OperatorFlowStore(self.store).reconcile(
+            session,
+            report,
+            runtime,
+            NOW,
+        )
+
+        self.assertFalse(flow["groups"])
+        self.assertEqual(flow["readyActionCount"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
