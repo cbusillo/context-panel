@@ -855,6 +855,15 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("release_evidence_selected_rc_ledger_base64:", workflow)
         self.assertIn("release_evidence_shadow_evidence_base64:", workflow)
         self.assertIn("release_evidence_mode must be shadow or enforce", workflow)
+        self.assertIn(
+            "live build attachment or submission requires validation_train release",
+            workflow,
+        )
+        self.assertIn(
+            "live build attachment or submission requires --validation-train release",
+            script,
+        )
+        self.assertIn("submission validation reconstructs every approved embedded ledger", release_docs.lower())
         self.assertIn("narrow exact-build runtime stop", release_docs)
         self.assertIn("iPhone app/widget, iPad app/widget", release_docs)
 

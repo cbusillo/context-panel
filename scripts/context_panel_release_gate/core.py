@@ -8,7 +8,10 @@ import re
 from typing import Any
 
 from context_panel_validation.models import Target
-from context_panel_validation.runtime_evidence import ExpectedSurfaceIdentity
+from context_panel_validation.runtime_evidence import (
+    ExpectedSurfaceIdentity,
+    RuntimeEvidenceError,
+)
 from context_panel_validation.session import RUNTIME_SURFACES, iso8601, parse_iso8601
 
 
@@ -942,8 +945,8 @@ def _shadow_state(
     *,
     now: datetime,
     maximum_age_days: int,
-    policy_digest: str,
-    surface_policy_digest: str,
+    policy: dict[str, Any],
+    surface_policy: dict[str, Any],
 ) -> dict[str, Any]:
     if payload is None:
         return {
@@ -980,6 +983,7 @@ def _shadow_state(
                 "ledgerState",
                 "disagreements",
                 "ledger",
+                "generation",
             }
             or run.get("train") not in TRAINS
             or not _is_sha256(run.get("manifestID"))
@@ -1029,12 +1033,63 @@ def _shadow_state(
                 or embedded_ledger.get("ledgerID") != run["ledgerID"]
                 or embedded_ledger.get("expectedBuildIdentityDigest")
                 != run["expectedBuildIdentityDigest"]
-                or embedded_ledger.get("policyDigest") != policy_digest
-                or embedded_ledger.get("surfacePolicyDigest") != surface_policy_digest
+                or embedded_ledger.get("policyDigest") != _hash_payload(policy)
+                or embedded_ledger.get("surfacePolicyDigest")
+                != _hash_payload(surface_policy)
             ):
                 raise ReleaseEvidenceError("shadow comparison ledger binding is invalid")
+            generation = run.get("generation")
+            if (
+                not isinstance(generation, dict)
+                or set(generation)
+                != {
+                    "comparison",
+                    "validationReport",
+                    "expectedBuildIdentities",
+                    "previousLedger",
+                    "selectedRCLedger",
+                    "hostOSEvidence",
+                    "shadowEvidence",
+                }
+                or not isinstance(generation.get("comparison"), dict)
+                or not isinstance(generation.get("validationReport"), dict)
+                or not isinstance(generation.get("expectedBuildIdentities"), list)
+            ):
+                raise ReleaseEvidenceError("shadow comparison generation context is invalid")
+            try:
+                generation_identities = tuple(
+                    ExpectedSurfaceIdentity.from_dict(item)
+                    for item in generation["expectedBuildIdentities"]
+                )
+            except (KeyError, TypeError, ValueError, RuntimeEvidenceError) as error:
+                raise ReleaseEvidenceError(
+                    "shadow comparison expected-build identities are invalid"
+                ) from error
+            embedded_generated_at = parse_iso8601(embedded_ledger.get("generatedAt"))
+            if embedded_generated_at is None:
+                raise ReleaseEvidenceError("shadow comparison ledger is invalid")
+            reconstructed_ledger = evaluate_release_evidence(
+                train=run["train"],
+                mode="shadow",
+                comparison=generation["comparison"],
+                validation_report=generation["validationReport"],
+                identities=generation_identities,
+                policy=policy,
+                surface_policy=surface_policy,
+                previous_ledger=generation["previousLedger"],
+                selected_rc_ledger=generation["selectedRCLedger"],
+                host_os_evidence=generation["hostOSEvidence"],
+                shadow_evidence=generation["shadowEvidence"],
+                now=embedded_generated_at,
+            )
+            if reconstructed_ledger != embedded_ledger:
+                raise ReleaseEvidenceError(
+                    "shadow comparison ledger does not match its generation context"
+                )
         elif embedded_ledger is not None:
             raise ReleaseEvidenceError("blocked shadow comparison must not claim an approved ledger")
+        elif run.get("generation") is not None:
+            raise ReleaseEvidenceError("blocked shadow comparison must not claim generation context")
         run_identities[run_identity] = (
             run["manifestID"],
             run["expectedBuildIdentityDigest"],
@@ -1283,8 +1338,8 @@ def evaluate_release_evidence(
         policy["requiredShadowTrainCount"],
         now=now,
         maximum_age_days=policy["maximumEvidenceAgeDays"],
-        policy_digest=policy_digest,
-        surface_policy_digest=surface_policy_digest,
+        policy=policy,
+        surface_policy=surface_policy,
     )
     if mode == "enforce" and shadow["state"] != "passed":
         blockers.append("shadow-comparison:pending")

@@ -37,9 +37,17 @@ def ledger_id(payload):
 
 
 def identity(surface: str) -> ExpectedSurfaceIdentity:
+    platform = {
+        "macos": "macOS",
+        "ios": "iOS",
+        "ipados": "iPadOS",
+        "visionos": "visionOS",
+        "watchos": "watchOS",
+        "tvos": "tvOS",
+    }[surface.split(".", 1)[0]]
     return ExpectedSurfaceIdentity(
         surface=surface,
-        platform="watchOS",
+        platform=platform,
         artifact_id=surface,
         bundle_identifier=f"com.example.{surface}",
         marketing_version="1.0.54",
@@ -390,44 +398,78 @@ def shadow_evidence(
 ):
     runs = []
     for index in range(2):
-        run_index = 0 if duplicate else index
-        target = {
-            "version": f"1.0.{52 + run_index}",
-            "buildNumber": f"2026080{6 + run_index}0001",
-        }
-        manifest_id = sha(f"shadow-manifest-{run_index}")
-        expected_build_identity_digest = sha(f"shadow-build-{run_index}")
+        train = "beta" if duplicate or index == 0 else "rc"
         embedded_ledger = None
+        generation = None
         if ledger_state == "approved":
-            embedded_ledger = ledger(
+            validation_report = report(
+                surface,
+                runtime=evidence_class != "shared-view",
+                visual_class=(
+                    evidence_class
+                    if evidence_class != "actual-runtime"
+                    else None
+                ),
+                host_os=(
+                    "watchOS 27.0"
+                    if evidence_class == "os-composited-placement"
+                    else None
+                ),
+            )
+            comparison_payload = comparison(
                 surface,
                 evidence_class,
-                identity(surface),
+                train=train,
             )
-            embedded_ledger.update(
-                {
-                    "target": target,
-                    "currentManifestID": manifest_id,
-                    "expectedBuildIdentityDigest": expected_build_identity_digest,
-                }
+            identities = all_identities()
+            embedded_ledger = evaluate_release_evidence(
+                train=train,
+                mode="shadow",
+                comparison=comparison_payload,
+                validation_report=validation_report,
+                identities=identities,
+                policy=policy(),
+                surface_policy=surface_policy(surface, evidence_class),
+                now=NOW,
             )
-            embedded_ledger["ledgerID"] = ledger_id(embedded_ledger)
+            generation = {
+                "comparison": comparison_payload,
+                "validationReport": validation_report,
+                "expectedBuildIdentities": [item.to_dict() for item in identities],
+                "previousLedger": None,
+                "selectedRCLedger": None,
+                "hostOSEvidence": None,
+                "shadowEvidence": None,
+            }
         runs.append(
             {
-                "train": "beta",
-                "target": target,
-                "manifestID": manifest_id,
-                "expectedBuildIdentityDigest": expected_build_identity_digest,
+                "train": train,
+                "target": (
+                    embedded_ledger["target"]
+                    if embedded_ledger is not None
+                    else {"version": "1.0.54", "buildNumber": "202608080418"}
+                ),
+                "manifestID": (
+                    embedded_ledger["currentManifestID"]
+                    if embedded_ledger is not None
+                    else MANIFEST
+                ),
+                "expectedBuildIdentityDigest": (
+                    embedded_ledger["expectedBuildIdentityDigest"]
+                    if embedded_ledger is not None
+                    else expected_identity_set_digest(*all_identities())
+                ),
                 "ledgerID": (
                     embedded_ledger["ledgerID"]
                     if embedded_ledger is not None
                     else sha(f"blocked-shadow-ledger-{index}")
                 ),
-                "observedAt": f"2026-08-0{6 + run_index}T12:00:00Z",
+                "observedAt": "2026-08-08T12:00:00Z",
                 "runbookState": runbook_state,
                 "ledgerState": ledger_state,
                 "disagreements": list(disagreements or []),
                 "ledger": embedded_ledger,
+                "generation": generation,
             }
         )
     return {
@@ -1186,9 +1228,32 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
     def test_same_signed_target_with_conflicting_artifact_digest_is_duplicate(self):
         surface = "watchos.app"
         evidence = shadow_evidence()
+        evidence["runs"][1]["train"] = evidence["runs"][0]["train"]
         evidence["runs"][1]["target"] = dict(evidence["runs"][0]["target"])
         evidence["runs"][1]["expectedBuildIdentityDigest"] = "f" * 64
         with self.assertRaisesRegex(ReleaseEvidenceError, "duplicates a signed train"):
+            self.evaluate(
+                surface,
+                "actual-runtime",
+                mode="enforce",
+                validation_report=report(surface, runtime=True),
+                shadow_evidence=evidence,
+            )
+
+    def test_shadow_comparison_reconstructs_each_embedded_ledger(self):
+        surface = "watchos.app"
+        evidence = shadow_evidence()
+        embedded_ledger = evidence["runs"][0]["ledger"]
+        embedded_ledger["surfaces"][0]["evidence"]["actual-runtime"][
+            "source"
+        ] = "selected-rc"
+        embedded_ledger["ledgerID"] = ledger_id(embedded_ledger)
+        evidence["runs"][0]["ledgerID"] = embedded_ledger["ledgerID"]
+
+        with self.assertRaisesRegex(
+            ReleaseEvidenceError,
+            "does not match its generation context",
+        ):
             self.evaluate(
                 surface,
                 "actual-runtime",

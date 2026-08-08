@@ -158,7 +158,7 @@ class ValidationReportGateTests(unittest.TestCase):
             "platform": "MAC_OS",
             "tvos_demo_video_url": None,
             "validation_report": "final-report.json",
-            "validation_train": "rc",
+            "validation_train": "release",
             "release_evidence_mode": "shadow",
             "release_evidence_report": "release-evidence.json",
             "release_evidence_comparison": "comparison.json",
@@ -166,7 +166,7 @@ class ValidationReportGateTests(unittest.TestCase):
             "release_evidence_policy": "Config/ContextPanelReleaseEvidencePolicy.json",
             "release_evidence_surface_policy": "Config/ContextPanelSurfacePolicy.json",
             "release_evidence_previous_ledger": None,
-            "release_evidence_selected_rc_ledger": None,
+            "release_evidence_selected_rc_ledger": "selected-rc.json",
             "release_evidence_host_os_evidence": None,
             "release_evidence_shadow_evidence": None,
         }
@@ -359,6 +359,16 @@ class ValidationReportGateTests(unittest.TestCase):
 
     def test_live_shadow_argument_contract_is_accepted(self):
         submit_app_store_review.validate_args(self.live_args())
+
+    def test_live_submission_requires_release_evidence_train(self):
+        for train in (None, "beta", "rc"):
+            with self.subTest(train=train):
+                args = self.live_args(validation_train=train)
+                with self.assertRaisesRegex(
+                    submit_app_store_review.AppStoreConnectError,
+                    "requires --validation-train release",
+                ):
+                    submit_app_store_review.validate_args(args)
 
     def test_invalid_release_evidence_mode_casing_fails_in_parser(self):
         with patch.object(

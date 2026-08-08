@@ -811,9 +811,14 @@ expired, unrelated-build, or unrelated-receipt observations fail closed.
 Shadow evidence must describe distinct signed trains. Each run records its
 train, exact version/build target, source manifest, expected-build identity-set
 and ledger digests, embeds the privacy-safe ledger when the ledger outcome is
-approved, records observation time and the old-runbook/ledger outcomes, and
-includes any bounded disagreement records. A ledger ID cannot be reused across
-targets.
+approved, and includes the complete privacy-safe generation context needed to
+reconstruct that embedded ledger. The generation context includes the full
+comparison, exact coordinator report, expected-build identities, and any prior
+ledger, selected-RC, host-OS, or nested shadow inputs used by generation.
+Submission validation reconstructs every approved embedded ledger before the
+run can count. It also records observation time and the old-runbook/ledger
+outcomes and includes any bounded disagreement records. A ledger ID cannot be
+reused across targets.
 Duplicate train identities, stale observations, unknown disagreement
 classifications, unresolved records, and arbitrary extra fields fail closed.
 The accepted disagreement classifications are `ledger-correct`,
@@ -841,7 +846,8 @@ scripts/context-panel-release-gate.py enforce \
 
 The App Store submission workflow accepts the ledger separately from the
 coordinator report. Every live build attachment or submission requires the
-release-evidence report in both `shadow` and `enforce` mode, plus the full
+`release` evidence tier and release-evidence report in both `shadow` and
+`enforce` mode, plus the exact selected-RC ledger, the full
 comparison and a JSON array containing every sealed expected-build manifest
 needed by its required scope. Keep `release_evidence_mode=shadow` while the
 current physical runbook remains authoritative. Switching to `enforce` requires

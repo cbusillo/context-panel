@@ -1961,6 +1961,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise AppStoreConnectError(
             "--validation-report is required before attaching or submitting a build"
         )
+    if validation_report_required(args) and validation_train != "release":
+        raise AppStoreConnectError(
+            "live build attachment or submission requires --validation-train release"
+        )
     release_evidence_report = getattr(args, "release_evidence_report", None)
     if release_evidence_report and not validation_train:
         raise AppStoreConnectError(

@@ -75,7 +75,9 @@ name: Submit App Store Review
         required: false
         type: string
       validation_train:
-        description: Evidence policy tier for the release evidence report.
+        description: >-
+          Evidence policy tier. Live build attachment or submission requires
+          release; lower tiers are only valid for non-live validation.
         required: false
         default: release
         type: string
@@ -195,13 +197,11 @@ name: Submit App Store Review
         required: false
         type: string
       validation_train:
-        description: Evidence policy tier for the release evidence report.
+        description: Evidence policy tier for live App Store submission.
         required: true
         default: release
         type: choice
         options:
-          - beta
-          - rc
           - release
       release_evidence_mode:
         description: Run release evidence in shadow or enforce mode.
@@ -402,6 +402,17 @@ jobs:
               exit 1
               ;;
           esac
+          release_evidence_required=false
+          if [[ "${INPUT_DRY_RUN}" != "true" && \
+            "${INPUT_CANCEL_REVIEW_ONLY}" != "true" && \
+            -n "${INPUT_BUILD_NUMBER}" ]]; then
+            release_evidence_required=true
+          fi
+          if [[ "${release_evidence_required}" == "true" && \
+            "${INPUT_VALIDATION_TRAIN}" != "release" ]]; then
+            echo "live build attachment or submission requires validation_train release" >&2
+            exit 1
+          fi
           if [[ "${INPUT_CANCEL_REVIEW_ONLY}" != "true" ]]; then
             if [[ -z "${INPUT_BUILD_NUMBER}" && \
               "${INPUT_PREPARE_ONLY}" != "true" ]]; then
