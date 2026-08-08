@@ -74,6 +74,46 @@ name: Submit App Store Review
           Required for live build attachment or submission.
         required: false
         type: string
+      validation_train:
+        description: >-
+          Evidence policy tier. Live build attachment or submission requires
+          release; lower tiers are only valid for non-live validation.
+        required: false
+        default: release
+        type: string
+      release_evidence_mode:
+        description: Run release evidence in shadow or enforce mode.
+        required: false
+        default: shadow
+        type: string
+      release_evidence_report_base64:
+        description: Base64 JSON from context-panel-release-gate.py.
+        required: false
+        type: string
+      release_evidence_comparison_base64:
+        description: Base64 full source-manifest comparison used by the release gate.
+        required: false
+        type: string
+      release_evidence_expected_build_manifests_base64:
+        description: Base64 JSON array of sealed ExpectedBuildManifest objects.
+        required: false
+        type: string
+      release_evidence_previous_ledger_base64:
+        description: Base64 replayable lineage bundle for prior approved evidence.
+        required: false
+        type: string
+      release_evidence_selected_rc_ledger_base64:
+        description: Base64 replayable lineage bundle for the exact approved RC.
+        required: false
+        type: string
+      release_evidence_host_os_evidence_base64:
+        description: Base64 bounded host-OS evidence used by placement carry-forward.
+        required: false
+        type: string
+      release_evidence_shadow_evidence_base64:
+        description: Base64 signed shadow-train comparison evidence.
+        required: false
+        type: string
   workflow_dispatch:
     inputs:
       version:
@@ -156,6 +196,49 @@ name: Submit App Store Review
           Required for live build attachment or submission.
         required: false
         type: string
+      validation_train:
+        description: Evidence policy tier for live App Store submission.
+        required: true
+        default: release
+        type: choice
+        options:
+          - release
+      release_evidence_mode:
+        description: Run release evidence in shadow or enforce mode.
+        required: true
+        default: shadow
+        type: choice
+        options:
+          - shadow
+          - enforce
+      release_evidence_report_base64:
+        description: Base64 JSON from context-panel-release-gate.py.
+        required: false
+        type: string
+      release_evidence_comparison_base64:
+        description: Base64 full source-manifest comparison used by the release gate.
+        required: false
+        type: string
+      release_evidence_expected_build_manifests_base64:
+        description: Base64 JSON array of sealed ExpectedBuildManifest objects.
+        required: false
+        type: string
+      release_evidence_previous_ledger_base64:
+        description: Base64 replayable lineage bundle for prior approved evidence.
+        required: false
+        type: string
+      release_evidence_selected_rc_ledger_base64:
+        description: Base64 replayable lineage bundle for the exact approved RC.
+        required: false
+        type: string
+      release_evidence_host_os_evidence_base64:
+        description: Base64 bounded host-OS evidence used by placement carry-forward.
+        required: false
+        type: string
+      release_evidence_shadow_evidence_base64:
+        description: Base64 signed shadow-train comparison evidence.
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -197,6 +280,75 @@ jobs:
             | base64 -D > .build/validation-report.json
           python3 -m json.tool .build/validation-report.json >/dev/null
 
+      - name: Prepare Release Evidence Report
+        if: ${{ inputs.release_evidence_report_base64 != '' }}
+        shell: bash
+        env:
+          INPUT_RELEASE_EVIDENCE_REPORT_BASE64: >-
+            ${{ inputs.release_evidence_report_base64 }}
+          INPUT_RELEASE_EVIDENCE_COMPARISON_BASE64: >-
+            ${{ inputs.release_evidence_comparison_base64 }}
+          INPUT_RELEASE_EVIDENCE_EXPECTED_BUILD_MANIFESTS_BASE64: >-
+            ${{ inputs.release_evidence_expected_build_manifests_base64 }}
+          INPUT_RELEASE_EVIDENCE_PREVIOUS_LEDGER_BASE64: >-
+            ${{ inputs.release_evidence_previous_ledger_base64 }}
+          INPUT_RELEASE_EVIDENCE_SELECTED_RC_LEDGER_BASE64: >-
+            ${{ inputs.release_evidence_selected_rc_ledger_base64 }}
+          INPUT_RELEASE_EVIDENCE_HOST_OS_EVIDENCE_BASE64: >-
+            ${{ inputs.release_evidence_host_os_evidence_base64 }}
+          INPUT_RELEASE_EVIDENCE_SHADOW_EVIDENCE_BASE64: >-
+            ${{ inputs.release_evidence_shadow_evidence_base64 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${INPUT_RELEASE_EVIDENCE_COMPARISON_BASE64}" || \
+            -z "${INPUT_RELEASE_EVIDENCE_EXPECTED_BUILD_MANIFESTS_BASE64}" ]]; then
+            echo "release evidence requires comparison and expected-build manifest inputs" >&2
+            exit 1
+          fi
+          mkdir -p .build
+          printf '%s' "${INPUT_RELEASE_EVIDENCE_REPORT_BASE64}" \
+            | base64 -D > .build/release-evidence-report.json
+          python3 -m json.tool .build/release-evidence-report.json >/dev/null
+          printf '%s' "${INPUT_RELEASE_EVIDENCE_COMPARISON_BASE64}" \
+            | base64 -D > .build/release-evidence-comparison.json
+          python3 -m json.tool .build/release-evidence-comparison.json >/dev/null
+          printf '%s' "${INPUT_RELEASE_EVIDENCE_EXPECTED_BUILD_MANIFESTS_BASE64}" \
+            | base64 -D > .build/release-evidence-expected-build-manifests.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          bundle = json.loads(
+              Path(".build/release-evidence-expected-build-manifests.json").read_text()
+          )
+          if not isinstance(bundle, list) or not bundle:
+              raise SystemExit("expected-build manifest bundle must be a non-empty JSON array")
+          destination = Path(".build/release-evidence-expected-build-manifests")
+          destination.mkdir(parents=True, exist_ok=True)
+          for index, manifest in enumerate(bundle):
+              if not isinstance(manifest, dict):
+                  raise SystemExit("expected-build manifest bundle contains a non-object")
+              (destination / f"{index:03d}.json").write_text(
+                  json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+              )
+          PY
+          decode_optional_json() {
+            local value="$1"
+            local destination="$2"
+            if [[ -n "${value}" ]]; then
+              printf '%s' "${value}" | base64 -D > "${destination}"
+              python3 -m json.tool "${destination}" >/dev/null
+            fi
+          }
+          decode_optional_json "${INPUT_RELEASE_EVIDENCE_PREVIOUS_LEDGER_BASE64}" \
+            .build/release-evidence-previous-ledger.json
+          decode_optional_json "${INPUT_RELEASE_EVIDENCE_SELECTED_RC_LEDGER_BASE64}" \
+            .build/release-evidence-selected-rc-ledger.json
+          decode_optional_json "${INPUT_RELEASE_EVIDENCE_HOST_OS_EVIDENCE_BASE64}" \
+            .build/release-evidence-host-os.json
+          decode_optional_json "${INPUT_RELEASE_EVIDENCE_SHADOW_EVIDENCE_BASE64}" \
+            .build/release-evidence-shadow.json
+
       - name: Submit Review
         shell: bash
         env:
@@ -214,12 +366,53 @@ jobs:
           INPUT_CANCEL_REVIEW_ONLY: ${{ inputs.cancel_review_only }}
           INPUT_PREPARE_ONLY: ${{ inputs.prepare_only }}
           INPUT_VALIDATION_REPORT_BASE64: ${{ inputs.validation_report_base64 }}
+          INPUT_VALIDATION_TRAIN: ${{ inputs.validation_train }}
+          INPUT_RELEASE_EVIDENCE_MODE: ${{ inputs.release_evidence_mode }}
+          INPUT_RELEASE_EVIDENCE_REPORT_BASE64: >-
+            ${{ inputs.release_evidence_report_base64 }}
+          INPUT_RELEASE_EVIDENCE_COMPARISON_BASE64: >-
+            ${{ inputs.release_evidence_comparison_base64 }}
+          INPUT_RELEASE_EVIDENCE_EXPECTED_BUILD_MANIFESTS_BASE64: >-
+            ${{ inputs.release_evidence_expected_build_manifests_base64 }}
+          INPUT_RELEASE_EVIDENCE_PREVIOUS_LEDGER_BASE64: >-
+            ${{ inputs.release_evidence_previous_ledger_base64 }}
+          INPUT_RELEASE_EVIDENCE_SELECTED_RC_LEDGER_BASE64: >-
+            ${{ inputs.release_evidence_selected_rc_ledger_base64 }}
+          INPUT_RELEASE_EVIDENCE_HOST_OS_EVIDENCE_BASE64: >-
+            ${{ inputs.release_evidence_host_os_evidence_base64 }}
+          INPUT_RELEASE_EVIDENCE_SHADOW_EVIDENCE_BASE64: >-
+            ${{ inputs.release_evidence_shadow_evidence_base64 }}
         run: |
           set -euo pipefail
           args=(
             --platform "${INPUT_PLATFORM}"
             --version "${INPUT_VERSION}"
           )
+          case "${INPUT_RELEASE_EVIDENCE_MODE}" in
+            shadow|enforce) ;;
+            *)
+              echo "release_evidence_mode must be shadow or enforce" >&2
+              exit 1
+              ;;
+          esac
+          case "${INPUT_VALIDATION_TRAIN}" in
+            beta|rc|release) ;;
+            *)
+              echo "validation_train must be beta, rc, or release" >&2
+              exit 1
+              ;;
+          esac
+          release_evidence_required=false
+          if [[ "${INPUT_DRY_RUN}" != "true" && \
+            "${INPUT_CANCEL_REVIEW_ONLY}" != "true" && \
+            -n "${INPUT_BUILD_NUMBER}" ]]; then
+            release_evidence_required=true
+          fi
+          if [[ "${release_evidence_required}" == "true" && \
+            "${INPUT_VALIDATION_TRAIN}" != "release" ]]; then
+            echo "live build attachment or submission requires validation_train release" >&2
+            exit 1
+          fi
           if [[ "${INPUT_CANCEL_REVIEW_ONLY}" != "true" ]]; then
             if [[ -z "${INPUT_BUILD_NUMBER}" && \
               "${INPUT_PREPARE_ONLY}" != "true" ]]; then
@@ -273,12 +466,49 @@ jobs:
               report_required="true"
             fi
           fi
-          if [[ "${report_required}" == "true" ]]; then
+          validation_report_required="${report_required}"
+          if [[ -n "${INPUT_RELEASE_EVIDENCE_REPORT_BASE64}" ]]; then
+            validation_report_required="true"
+          fi
+          if [[ "${validation_report_required}" == "true" ]]; then
             if [[ -z "${INPUT_VALIDATION_REPORT_BASE64}" ]]; then
-              echo "validation_report_base64 is required before attaching or submitting a build" >&2
+              echo "validation_report_base64 is required for live mutation or supplied release evidence" >&2
               exit 1
             fi
             args+=(--validation-report .build/validation-report.json)
+          fi
+          if [[ -n "${INPUT_RELEASE_EVIDENCE_REPORT_BASE64}" ]]; then
+            args+=(
+              --validation-train "${INPUT_VALIDATION_TRAIN}"
+              --release-evidence-mode "${INPUT_RELEASE_EVIDENCE_MODE}"
+              --release-evidence-report .build/release-evidence-report.json
+              --release-evidence-comparison .build/release-evidence-comparison.json
+              --release-evidence-policy Config/ContextPanelReleaseEvidencePolicy.json
+              --release-evidence-surface-policy Config/ContextPanelSurfacePolicy.json
+            )
+            while IFS= read -r manifest; do
+              args+=(--release-evidence-expected-build-manifest "${manifest}")
+            done < <(find .build/release-evidence-expected-build-manifests \
+              -type f -name '*.json' -print | sort)
+            if [[ -f .build/release-evidence-previous-ledger.json ]]; then
+              args+=(--release-evidence-previous-ledger \
+                .build/release-evidence-previous-ledger.json)
+            fi
+            if [[ -f .build/release-evidence-selected-rc-ledger.json ]]; then
+              args+=(--release-evidence-selected-rc-ledger \
+                .build/release-evidence-selected-rc-ledger.json)
+            fi
+            if [[ -f .build/release-evidence-host-os.json ]]; then
+              args+=(--release-evidence-host-os-evidence \
+                .build/release-evidence-host-os.json)
+            fi
+            if [[ -f .build/release-evidence-shadow.json ]]; then
+              args+=(--release-evidence-shadow-evidence \
+                .build/release-evidence-shadow.json)
+            fi
+          elif [[ "${report_required}" == "true" ]]; then
+            echo "release_evidence_report_base64 is required for live shadow or enforce validation" >&2
+            exit 1
           fi
           submit=(
             .build/submit-review-venv/bin/python
@@ -299,7 +529,12 @@ jobs:
             echo "- Prepare only: ${INPUT_PREPARE_ONLY}"
             if [[ "${report_required}" == "true" ]]; then
               echo "- Validation report SHA-256: $(shasum -a 256 .build/validation-report.json | awk '{print $1}')"
-              echo "- Evidence boundary: exact-build runtime only; visual approval and carry-forward remain separate"
+              echo "- Release evidence mode: ${INPUT_RELEASE_EVIDENCE_MODE}"
+              if [[ -n "${INPUT_RELEASE_EVIDENCE_REPORT_BASE64}" ]]; then
+                echo "- Release evidence report SHA-256: $(shasum -a 256 .build/release-evidence-report.json | awk '{print $1}')"
+              else
+                echo "- Release evidence report: not required for this non-live operation"
+              fi
             fi
             echo "- Result: succeeded"
           } >>"${GITHUB_STEP_SUMMARY}"

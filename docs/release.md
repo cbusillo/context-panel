@@ -776,6 +776,130 @@ scripts/context-panel-surface-manifest.py compare \
   --output <comparison.json>
 ```
 
+### Release Evidence Carry-Forward Gate
+
+Use the full source-manifest comparison without filtering or rewriting its
+`requiredSurfaces`. After the coordinator final report and sealed expected-build
+manifests are available, produce the privacy-safe release evidence ledger in
+shadow mode:
+
+```sh
+scripts/context-panel-release-gate.py shadow \
+  --train <beta|rc> \
+  --comparison <comparison.json> \
+  --validation-report <final-report.json> \
+  --expected-build-manifest <ExpectedBuildManifest-platform.json> \
+  --previous-ledger <previous-approved-lineage.json> \
+  --host-os-evidence <host-os-evidence.json> \
+  --shadow-evidence <shadow-evidence.json> \
+  --output <release-evidence.json> \
+  --lineage-output <release-evidence-lineage.json>
+```
+
+Supply the complete sealed expected-build manifest set for every shipping
+surface; a comparison or manifest set that omits a shipping surface fails closed. Omit the
+previous lineage bundle when no earlier approval exists. The ledger output is
+the privacy-safe report; the separate lineage output contains the authoritative
+generation inputs needed to replay that ledger before it can be reused.
+Placement carry-forward always
+requires matching placement fingerprint, a current exact-build runtime receipt,
+and compatible current host OS evidence. Major or minor host OS changes fail
+closed. Patch changes also invalidate compositor-sensitive surfaces listed in
+`Config/ContextPanelReleaseEvidencePolicy.json`. Evidence expires after the
+policy's bounded retention and cannot silently outlive the source ledger it was
+carried from. The host OS evidence object must bind its `target` and
+`currentManifestID` to the candidate and bind each surface's bounded `hostOS`
+value to a `runtimeReceiptID` present in the current coordinator report. Future,
+expired, unrelated-build, or unrelated-receipt observations fail closed.
+
+Shadow evidence must describe distinct signed trains. Each run records its
+train, exact version/build target, source manifest, expected-build identity-set
+and ledger digests, embeds the privacy-safe ledger when the ledger outcome is
+approved, and includes the complete privacy-safe generation context needed to
+reconstruct that embedded ledger. The generation context includes the full
+comparison, exact coordinator report, complete content-sealed expected-build
+manifests, and any prior
+lineage, selected-RC lineage, or host-OS inputs used by generation. Approved
+shadow-run ledgers must be leaf evaluations: nested shadow evidence is rejected,
+and the run list cannot exceed the configured required train count.
+Submission validation reconstructs every approved embedded ledger before the
+run can count. It also records observation time and the old-runbook/ledger
+outcomes and includes any bounded disagreement records. A ledger ID cannot be
+reused across targets.
+Duplicate train identities, stale observations, unknown disagreement
+classifications, unresolved records, and arbitrary extra fields fail closed.
+The accepted disagreement classifications are `ledger-correct`,
+`runbook-correct`, `equivalent`, and `unresolved`. Resolution values are bounded
+lowercase codes rather than prose or paths. State mismatches, `runbook-correct`,
+and `unresolved` records do not qualify a train for enforcement; a corrected
+ledger must be proven by a later signed train whose outcomes agree.
+
+Release trains additionally require `--selected-rc-ledger` with the replayable
+lineage bundle for the exact same version, build, and manifest. Raw or
+self-authored ledger JSON is not accepted. Prior and selected-RC lineage is
+replayed transitively with a fixed depth limit before any evidence can be
+carried. A changed selected build must return to RC
+validation. `enforce` mode also requires the configured number of shadow trains
+and resolved classifications for every old-runbook disagreement:
+
+```sh
+scripts/context-panel-release-gate.py enforce \
+  --train release \
+  --comparison <comparison.json> \
+  --validation-report <final-report.json> \
+  --expected-build-manifest <ExpectedBuildManifest-platform.json> \
+  --selected-rc-ledger <approved-rc-lineage.json> \
+  --host-os-evidence <host-os-evidence.json> \
+  --shadow-evidence <shadow-evidence.json> \
+  --output <release-evidence.json> \
+  --lineage-output <release-evidence-lineage.json>
+```
+
+The App Store submission workflow accepts the ledger separately from the
+coordinator report. Every live build attachment or submission requires the
+`release` evidence tier and release-evidence report in both `shadow` and
+`enforce` mode, plus the exact selected-RC lineage bundle, the full
+comparison and a JSON array containing every sealed expected-build manifest
+needed by its required scope. Keep `release_evidence_mode=shadow` while the
+current physical runbook remains authoritative. Switching to `enforce` requires
+an approved ledger with passed shadow evidence; missing, expired,
+host-incompatible, policy-mismatched, scope-mismatched, or mixed-build evidence
+blocks submission. Dry runs, cancel-only operations, and prepare-only operations
+without a build remain exempt. The ledger binds the canonical configured policy,
+full comparison, expected-build identity set, and exact coordinator report;
+submission independently recomputes every binding.
+
+Validate a ledger outside the submission workflow with the same authoritative
+inputs:
+
+```sh
+scripts/validate-release-evidence-report.py \
+  --report <release-evidence.json> \
+  --validation-report <final-report.json> \
+  --comparison <comparison.json> \
+  --expected-build-manifest <ExpectedBuildManifest-platform.json> \
+  --policy Config/ContextPanelReleaseEvidencePolicy.json \
+  --surface-policy Config/ContextPanelSurfacePolicy.json \
+  --version <version> \
+  --build-number <build-number> \
+  --train <beta|rc>
+```
+
+Release shadow validation uses the same command with `--train release` and the
+mandatory `--selected-rc-ledger <approved-rc-lineage.json>` argument. Release
+enforcement additionally requires `--enforce` and
+`--shadow-evidence <shadow-evidence.json>`.
+
+Add `--enforce` when validating an enforcement ledger. Repeat
+`--expected-build-manifest` until every shipping surface is covered, including
+surfaces that are unchanged and do not require fresh evidence. Supply the same
+optional replayable prior lineage and evidence artifacts used to generate the
+ledger with `--previous-ledger`, `--host-os-evidence`, and `--shadow-evidence`.
+The selected-RC lineage is mandatory for release validation. Final validation
+reconstructs the complete ledger at its
+original `generatedAt`; relabeling evidence sources or omitting the selected RC
+therefore fails even when all public digests are recomputed.
+
 For a beta with `requiresRuntimeSession=false`, do not open devices or create a
 runtime-receipt session; automated shared-view evidence is sufficient for that
 slice. The coordinator can still hold the shared-view approval ledger with an

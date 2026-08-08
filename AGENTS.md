@@ -213,6 +213,20 @@ acceptable.
   `requiresPlacementReview=true` remains a separate physical/OS-composited
   review requirement. RC and release train floors still require exact-build
   runtime proof for every capable shipping surface.
+- After the coordinator final report is available, evaluate the full comparison
+  with `scripts/context-panel-release-gate.py shadow`. Do not filter or rewrite
+  `requiredSurfaces`. Carry-forward must bind to the previous approved ledger,
+  the complete expected-build manifest set for every shipping surface, bounded retention, current runtime
+  receipts, and compatible host OS evidence. Release evidence additionally
+  binds the full comparison, configured policy, expected-build identity set,
+  and exact coordinator report, and requires the exact selected approved RC.
+  Final validation must also receive the same previous ledger, selected RC,
+  host-OS evidence, and shadow evidence used during generation so it can
+  reconstruct the ledger. Live submission requires those authoritative inputs
+  even in shadow mode. Keep
+  shadow mode and the current
+  physical runbook authoritative until two signed shadow trains have resolved
+  every disagreement; only then may the submission workflow use `enforce`.
 
 Minimum runtime evidence before saying a signed dogfood build is ready:
 
