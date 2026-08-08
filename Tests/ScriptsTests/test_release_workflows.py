@@ -867,6 +867,93 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("narrow exact-build runtime stop", release_docs)
         self.assertIn("iPhone app/widget, iPad app/widget", release_docs)
 
+    def test_app_store_review_workflow_forwards_validation_for_supplied_evidence(self):
+        workflow = self.read(".github/workflows/submit-app-store-review.yml")
+        submit_step = re.search(
+            r"      - name: Submit Review\n.*?        run: \|\n(?P<body>.*?)(?=\n      - name:|\Z)",
+            workflow,
+            re.S,
+        )
+        self.assertIsNotNone(submit_step)
+        assert submit_step is not None
+        script = textwrap.dedent(submit_step.group("body"))
+
+        matrix = (
+            ("dry-run", True, False, False, "202608080418", ""),
+            ("prepare-only", False, False, True, "", ""),
+            ("cancel-only", False, True, False, "", "1.0.53"),
+            ("live", False, False, False, "202608080418", ""),
+        )
+        for label, dry_run, cancel_only, prepare_only, build_number, removal in matrix:
+            with self.subTest(mode=label), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                python_path = root / ".build/submit-review-venv/bin/python"
+                python_path.parent.mkdir(parents=True)
+                python_path.write_text(
+                    "#!/bin/bash\nprintf '%s\\n' \"$@\" > \"$CAPTURE_ARGS\"\n"
+                )
+                python_path.chmod(0o755)
+                for relative_path in (
+                    ".build/validation-report.json",
+                    ".build/release-evidence-report.json",
+                    ".build/release-evidence-comparison.json",
+                    ".build/release-evidence-selected-rc-ledger.json",
+                    ".build/release-evidence-shadow.json",
+                ):
+                    path = root / relative_path
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text("{}\n")
+                manifest = (
+                    root
+                    / ".build/release-evidence-expected-build-manifests/000.json"
+                )
+                manifest.parent.mkdir(parents=True)
+                manifest.write_text("{}\n")
+                capture_path = root / "args.txt"
+                summary_path = root / "summary.md"
+                environment = os.environ.copy()
+                environment.update(
+                    {
+                        "CAPTURE_ARGS": str(capture_path),
+                        "GITHUB_SHA": "d966d826257a0ee23a09c55bd6b073360edf36aa",
+                        "GITHUB_STEP_SUMMARY": str(summary_path),
+                        "INPUT_VERSION": "1.0.54",
+                        "INPUT_PLATFORM": "MAC_OS",
+                        "INPUT_BUILD_NUMBER": build_number,
+                        "INPUT_WHATS_NEW": "Release evidence preflight",
+                        "INPUT_REVIEW_NOTES": "",
+                        "INPUT_TVOS_DEMO_VIDEO_URL": "",
+                        "INPUT_COPY_FROM_VERSION": "",
+                        "INPUT_COPY_FROM_PLATFORM": "",
+                        "INPUT_REMOVE_ACTIVE_REVIEW_VERSION": removal,
+                        "INPUT_DRY_RUN": str(dry_run).lower(),
+                        "INPUT_CANCEL_REVIEW_ONLY": str(cancel_only).lower(),
+                        "INPUT_PREPARE_ONLY": str(prepare_only).lower(),
+                        "INPUT_VALIDATION_REPORT_BASE64": "present",
+                        "INPUT_VALIDATION_TRAIN": "release",
+                        "INPUT_RELEASE_EVIDENCE_MODE": "shadow",
+                        "INPUT_RELEASE_EVIDENCE_REPORT_BASE64": "present",
+                        "INPUT_RELEASE_EVIDENCE_COMPARISON_BASE64": "present",
+                        "INPUT_RELEASE_EVIDENCE_EXPECTED_BUILD_MANIFESTS_BASE64": "present",
+                        "INPUT_RELEASE_EVIDENCE_PREVIOUS_LEDGER_BASE64": "",
+                        "INPUT_RELEASE_EVIDENCE_SELECTED_RC_LEDGER_BASE64": "present",
+                        "INPUT_RELEASE_EVIDENCE_HOST_OS_EVIDENCE_BASE64": "",
+                        "INPUT_RELEASE_EVIDENCE_SHADOW_EVIDENCE_BASE64": "present",
+                    }
+                )
+                result = subprocess.run(
+                    ["/bin/bash", "-c", script],
+                    cwd=root,
+                    env=environment,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                arguments = capture_path.read_text().splitlines()
+                self.assertIn("--validation-report", arguments)
+                self.assertIn("--release-evidence-report", arguments)
+
     def test_release_evidence_entrypoints_execute_directly(self):
         for relative_path in (
             "scripts/context-panel-release-gate.py",

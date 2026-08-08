@@ -466,9 +466,13 @@ jobs:
               report_required="true"
             fi
           fi
-          if [[ "${report_required}" == "true" ]]; then
+          validation_report_required="${report_required}"
+          if [[ -n "${INPUT_RELEASE_EVIDENCE_REPORT_BASE64}" ]]; then
+            validation_report_required="true"
+          fi
+          if [[ "${validation_report_required}" == "true" ]]; then
             if [[ -z "${INPUT_VALIDATION_REPORT_BASE64}" ]]; then
-              echo "validation_report_base64 is required before attaching or submitting a build" >&2
+              echo "validation_report_base64 is required for live mutation or supplied release evidence" >&2
               exit 1
             fi
             args+=(--validation-report .build/validation-report.json)
