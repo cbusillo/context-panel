@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -53,6 +54,14 @@ from .session import (
     apply_session_state_to_report,
 )
 from .system import SubprocessRunner, collect_device_evidence, collect_mac_evidence
+from .visual_approvals import (
+    VISUAL_DECISIONS,
+    VisualApprovalError,
+    VisualApprovalStore,
+    apply_visual_approvals_to_report,
+    build_visual_approval_report,
+    load_visual_review_plan,
+)
 
 
 VERSION_PATTERN = re.compile(r"^[0-9]+(?:\.[0-9]+)*$")
@@ -119,6 +128,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     start_session.add_argument("--duration-hours", type=int, default=DEFAULT_DURATION_HOURS)
     start_session.add_argument("--retention-days", type=int, default=DEFAULT_RETENTION_DAYS)
+    start_session.add_argument(
+        "--surface-comparison",
+        type=Path,
+        help="Surface-manifest comparison defining fresh visual and runtime requirements",
+    )
+    start_session.add_argument(
+        "--visual-review-requirements",
+        type=Path,
+        help="Explicit fixture and placement review contexts for the comparison",
+    )
     start_session.add_argument("--replace", action="store_true")
     pause_session = subparsers.add_parser(
         "pause-session",
@@ -162,6 +181,27 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     add_target_arguments(clear_deferral)
     clear_deferral.add_argument("--action-id", required=True)
+    record_visual_review = subparsers.add_parser(
+        "record-visual-review",
+        help="Record an approve or reject decision for one ready visual requirement",
+    )
+    add_target_arguments(record_visual_review)
+    record_visual_review.add_argument("--requirement-id", required=True)
+    record_visual_review.add_argument("--decision", required=True, choices=VISUAL_DECISIONS)
+    record_visual_review.add_argument(
+        "--host-os",
+        help="Observed host OS; required only for OS-composited placement review",
+    )
+    record_visual_review.add_argument(
+        "--artifact",
+        type=Path,
+        help="Optional private artifact to hash; its path and contents are never persisted",
+    )
+    export_visual_reviews = subparsers.add_parser(
+        "export-visual-reviews",
+        help="Export bounded public visual requirement and decision metadata",
+    )
+    add_target_arguments(export_visual_reviews)
     args = parser.parse_args(argv)
     if not VERSION_PATTERN.fullmatch(args.version):
         parser.error("--version must contain numeric dot-separated components")
@@ -179,10 +219,14 @@ def collect_validation_report(args: argparse.Namespace):
     runtime_state = None
     runtime_superseded = False
     if session is not None:
-        identities = load_expected_surface_identities(
-            getattr(args, "expected_build_manifests", None) or [],
-            target,
-            session.requested_surfaces,
+        identities = (
+            load_expected_surface_identities(
+                getattr(args, "expected_build_manifests", None) or [],
+                target,
+                session.requested_surfaces,
+            )
+            if session.requested_surfaces
+            else ()
         )
         runtime_state = runtime_store.attach_expected(
             session,
@@ -223,6 +267,13 @@ def collect_validation_report(args: argparse.Namespace):
             report,
             build_runtime_evidence_report(runtime_state, generated_at),
         )
+    if session is not None:
+        visual_state = VisualApprovalStore(store).load(session)
+        if visual_state is not None:
+            report = apply_visual_approvals_to_report(
+                report,
+                build_visual_approval_report(visual_state, runtime_state),
+            )
     report = apply_session_state_to_report(report, session)
     if session is not None:
         _, operator_flow = OperatorFlowStore(store).reconcile(
@@ -284,12 +335,37 @@ def run_start_session(args: argparse.Namespace) -> int:
             f"session retention must be between 1 and {MAXIMUM_RETENTION_DAYS} days"
         )
     target = Target(args.version, args.build_number)
-    requested_surfaces = tuple(args.surfaces or RUNTIME_SURFACES)
-    identities = load_expected_surface_identities(
-        getattr(args, "expected_build_manifests", None) or [],
-        target,
-        tuple(sorted(set(requested_surfaces))),
-    )
+    comparison_path = getattr(args, "surface_comparison", None)
+    requirements_path = getattr(args, "visual_review_requirements", None)
+    if (comparison_path is None) != (requirements_path is None):
+        raise VisualApprovalError(
+            "surface comparison and visual review requirements must be supplied together"
+        )
+    visual_requirements = None
+    current_manifest_id = None
+    all_identities = ()
+    if comparison_path is not None and requirements_path is not None:
+        all_identities = load_expected_surface_identities(
+            getattr(args, "expected_build_manifests", None) or [],
+            target,
+            RUNTIME_SURFACES,
+        )
+        requested_surfaces, visual_requirements, current_manifest_id = load_visual_review_plan(
+            comparison_path,
+            requirements_path,
+            all_identities,
+        )
+        if args.surfaces is not None and tuple(sorted(set(args.surfaces))) != requested_surfaces:
+            raise VisualApprovalError(
+                "explicit runtime surfaces do not match the surface comparison"
+            )
+    else:
+        requested_surfaces = tuple(sorted(set(args.surfaces or RUNTIME_SURFACES)))
+        all_identities = load_expected_surface_identities(
+            getattr(args, "expected_build_manifests", None) or [],
+            target,
+            requested_surfaces,
+        )
     store = SessionStateStore()
     state, created = store.start_session(
         target,
@@ -299,7 +375,18 @@ def run_start_session(args: argparse.Namespace) -> int:
         timedelta(days=args.retention_days),
         replace_existing=args.replace,
     )
-    RuntimeEvidenceStore(store).attach_expected(state, identities, utc_now())
+    runtime_identities = tuple(
+        identity for identity in all_identities if identity.surface in requested_surfaces
+    )
+    if runtime_identities:
+        RuntimeEvidenceStore(store).attach_expected(state, runtime_identities, utc_now())
+    if visual_requirements is not None and current_manifest_id is not None:
+        VisualApprovalStore(store).configure(
+            state,
+            current_manifest_id,
+            visual_requirements,
+            utc_now(),
+        )
     emit_session_state(
         state,
         args.json,
@@ -453,6 +540,82 @@ def run_clear_deferral(args: argparse.Namespace) -> int:
     return 0
 
 
+def _private_artifact_digest(path: Path | None) -> str | None:
+    if path is None:
+        return None
+    try:
+        digest = hashlib.sha256()
+        with path.expanduser().open("rb") as stream:
+            while chunk := stream.read(1024 * 1024):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError as error:
+        raise VisualApprovalError("private visual review artifact is unavailable") from error
+
+
+def run_record_visual_review(args: argparse.Namespace) -> int:
+    target = Target(args.version, args.build_number)
+    now = utc_now()
+    store = SessionStateStore()
+    session = store.load(target, now=now)
+    if session is None:
+        raise VisualApprovalError("signed validation session does not exist")
+    runtime_state = RuntimeEvidenceStore(store).load(session)
+    state, decision = VisualApprovalStore(store).record(
+        session,
+        args.requirement_id,
+        args.decision,
+        now,
+        runtime_state,
+        artifact_digest=_private_artifact_digest(args.artifact),
+        host_os=args.host_os,
+    )
+    payload = {
+        "schemaVersion": 1,
+        "target": {
+            "version": target.version,
+            "buildNumber": target.build_number,
+        },
+        "planID": state.plan_id,
+        "decision": decision.to_dict(),
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(
+            f"Recorded {decision.decision} for visual requirement "
+            f"{decision.requirement_id} at {decision.observed_at}."
+        )
+    return 0
+
+
+def run_export_visual_reviews(args: argparse.Namespace) -> int:
+    target = Target(args.version, args.build_number)
+    now = utc_now()
+    store = SessionStateStore()
+    session = store.load(target, now=now)
+    if session is None:
+        raise VisualApprovalError("signed validation session does not exist")
+    state = VisualApprovalStore(store).load(session)
+    if state is None:
+        raise VisualApprovalError("visual review requirements are not configured")
+    payload = state.public_dict(RuntimeEvidenceStore(store).load(session))
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(
+            f"Visual review {payload['state']}: {payload['approvedCount']} of "
+            f"{payload['requirementCount']} requirements approved."
+        )
+    if payload["state"] == "rejected":
+        return EXIT_BLOCKED
+    if payload["state"] in {"waiting", "unknown"}:
+        return EXIT_UNKNOWN
+    if payload["state"] == "pending":
+        return 10
+    return 0
+
+
 def run_record_watch_restart(args: argparse.Namespace) -> int:
     target = Target(args.version, args.build_number)
     devices = collect_device_evidence(SubprocessRunner(), target)
@@ -519,6 +682,10 @@ def main(argv: list[str] | None = None) -> int:
             return run_defer_action(args)
         if args.command == "clear-deferral":
             return run_clear_deferral(args)
+        if args.command == "record-visual-review":
+            return run_record_visual_review(args)
+        if args.command == "export-visual-reviews":
+            return run_export_visual_reviews(args)
         raise RuntimeError(f"unsupported command: {args.command}")
     except KeyboardInterrupt:
         print("Interrupted.", file=sys.stderr)

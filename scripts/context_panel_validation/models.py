@@ -118,6 +118,7 @@ class ValidationReport:
     session: dict[str, Any] | None = None
     runtime_evidence: dict[str, Any] | None = None
     operator_flow: dict[str, Any] | None = None
+    visual_approvals: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         needs_human_action = bool(self.actions) or bool(
@@ -192,6 +193,8 @@ class ValidationReport:
             payload["evidence"]["runtimeReceipts"] = self.runtime_evidence
         if self.operator_flow is not None:
             payload["operatorFlow"] = self.operator_flow
+        if self.visual_approvals is not None:
+            payload["evidence"]["visualApprovals"] = self.visual_approvals
         return payload
 
 

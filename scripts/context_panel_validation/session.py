@@ -336,7 +336,6 @@ def validate_session_state(state: CoordinatorSessionState) -> None:
         or not isinstance(state.revision, int)
         or isinstance(state.revision, bool)
         or state.revision < 1
-        or not state.requested_surfaces
         or any(not isinstance(surface, str) for surface in state.requested_surfaces)
         or state.requested_surfaces != tuple(sorted(set(state.requested_surfaces)))
         or any(surface not in RUNTIME_SURFACES for surface in state.requested_surfaces)
@@ -625,6 +624,10 @@ class SessionStateStore:
     def operator_flow_directory(self) -> Path:
         return self.root / "Operator Flow"
 
+    @property
+    def visual_approval_directory(self) -> Path:
+        return self.root / "Visual Approvals"
+
     def path(self, target: Target) -> Path:
         validate_target(target)
         return self.sessions_directory / f"{target.version}-{target.build_number}.json"
@@ -646,6 +649,13 @@ class SessionStateStore:
         except (AttributeError, TypeError, ValueError) as error:
             raise CoordinatorSessionStateError("coordinator session identifier is invalid") from error
         return self.operator_flow_directory / f"{normalized_id}.json"
+
+    def visual_approval_path(self, session_id: str) -> Path:
+        try:
+            normalized_id = str(uuid.UUID(session_id)).lower()
+        except (AttributeError, TypeError, ValueError) as error:
+            raise CoordinatorSessionStateError("coordinator session identifier is invalid") from error
+        return self.visual_approval_directory / f"{normalized_id}.json"
 
     @contextmanager
     def lock(self) -> Iterator[None]:
@@ -671,6 +681,11 @@ class SessionStateStore:
             or (
                 self.operator_flow_directory.exists()
                 and not self.operator_flow_directory.is_dir()
+            )
+            or self.visual_approval_directory.is_symlink()
+            or (
+                self.visual_approval_directory.exists()
+                and not self.visual_approval_directory.is_dir()
             )
         ):
             raise CoordinatorSessionStateError("coordinator session root is invalid")
@@ -892,6 +907,7 @@ class SessionStateStore:
                     path.unlink(missing_ok=True)
                     self.runtime_evidence_path(refreshed.id).unlink(missing_ok=True)
                     self.operator_flow_path(refreshed.id).unlink(missing_ok=True)
+                    self.visual_approval_path(refreshed.id).unlink(missing_ok=True)
 
     def _load_path(
         self,
