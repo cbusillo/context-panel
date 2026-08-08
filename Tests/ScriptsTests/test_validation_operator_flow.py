@@ -210,6 +210,7 @@ class OperatorFlowTests(unittest.TestCase):
             requested_surfaces=surfaces,
         )
         runtime = runtime_report((("macos.app", "waiting", "receipt-propagation"),))
+        runtime["runtimeSession"] = {"result": "healthy"}
 
         _, flow = context_panel_validation.OperatorFlowStore(self.store).reconcile(
             session,
@@ -221,6 +222,7 @@ class OperatorFlowTests(unittest.TestCase):
         self.assertEqual(flow["state"], "waiting")
         self.assertFalse(flow["groups"])
         self.assertFalse(flow["notificationDecisions"])
+        self.assertFalse(flow["runtimeDiagnostics"])
 
     def test_missing_required_physical_device_never_looks_complete(self):
         surfaces = ("ios.app",)

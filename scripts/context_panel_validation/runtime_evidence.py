@@ -1322,15 +1322,29 @@ def reconcile_runtime_observation(
     observation: RuntimeSessionObservation,
 ) -> tuple[RuntimeEvidenceState, bool]:
     diagnostics = set(observation.diagnostics)
+    status = observation.status_payload
+    runtime_session_id = (
+        normalized_uuid(status.get("id"))
+        if status is not None and status.get("valid") is True
+        else None
+    )
+    previous_runtime_session_id = (
+        state.last_observation.runtime_session_id
+        if state.last_observation is not None
+        else None
+    )
     latest_surface_diagnostics: dict[str, str | None] = (
         dict(state.last_observation.surface_diagnostics)
         if state.last_observation is not None
+        and (
+            runtime_session_id is None
+            or runtime_session_id == previous_runtime_session_id
+        )
         else {}
     )
     superseded_surfaces: set[str] = set()
     exact_receipts: list[RuntimeReceiptEvidence] = []
     superseded = False
-    status = observation.status_payload
     export = observation.export_payload
     expected_by_surface = {identity.surface: identity for identity in state.expected_surfaces}
 
@@ -1397,7 +1411,6 @@ def reconcile_runtime_observation(
         raise RuntimeEvidenceError("runtime evidence receipt limit was exceeded")
 
     sync = observation.sync_payload or {}
-    runtime_session_id = status.get("id") if status and status.get("valid") is True else None
     runtime_session_active = status.get("active") if runtime_session_id is not None else None
     runtime_session_created_at = status.get("createdAt") if runtime_session_id is not None else None
     runtime_session_expires_at = status.get("expiresAt") if runtime_session_id is not None else None
@@ -1424,9 +1437,7 @@ def reconcile_runtime_observation(
     summary = RuntimeObservationSummary(
         attempted_at=iso8601(observation.attempted_at),
         result=result,
-        runtime_session_id=(
-            normalized_uuid(runtime_session_id) if runtime_session_id is not None else None
-        ),
+        runtime_session_id=runtime_session_id,
         runtime_session_active=runtime_session_active,
         runtime_session_created_at=runtime_session_created_at,
         runtime_session_expires_at=runtime_session_expires_at,
