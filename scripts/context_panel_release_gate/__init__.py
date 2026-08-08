@@ -1,5 +1,6 @@
 from .core import (
     ReleaseEvidenceError,
+    build_release_evidence_lineage,
     canonical_payload_digest,
     evaluate_release_evidence,
     load_json_object,
@@ -8,6 +9,7 @@ from .core import (
 
 __all__ = [
     "ReleaseEvidenceError",
+    "build_release_evidence_lineage",
     "canonical_payload_digest",
     "evaluate_release_evidence",
     "load_json_object",

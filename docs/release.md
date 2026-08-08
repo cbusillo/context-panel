@@ -789,15 +789,19 @@ scripts/context-panel-release-gate.py shadow \
   --comparison <comparison.json> \
   --validation-report <final-report.json> \
   --expected-build-manifest <ExpectedBuildManifest-platform.json> \
-  --previous-ledger <previous-approved-release-evidence.json> \
+  --previous-ledger <previous-approved-lineage.json> \
   --host-os-evidence <host-os-evidence.json> \
   --shadow-evidence <shadow-evidence.json> \
-  --output <release-evidence.json>
+  --output <release-evidence.json> \
+  --lineage-output <release-evidence-lineage.json>
 ```
 
 Supply the complete sealed expected-build manifest set for every shipping
 surface; a comparison or manifest set that omits a shipping surface fails closed. Omit the
-previous ledger when no earlier approval exists. Placement carry-forward always
+previous lineage bundle when no earlier approval exists. The ledger output is
+the privacy-safe report; the separate lineage output contains the authoritative
+generation inputs needed to replay that ledger before it can be reused.
+Placement carry-forward always
 requires matching placement fingerprint, a current exact-build runtime receipt,
 and compatible current host OS evidence. Major or minor host OS changes fail
 closed. Patch changes also invalidate compositor-sensitive surfaces listed in
@@ -814,7 +818,9 @@ and ledger digests, embeds the privacy-safe ledger when the ledger outcome is
 approved, and includes the complete privacy-safe generation context needed to
 reconstruct that embedded ledger. The generation context includes the full
 comparison, exact coordinator report, expected-build identities, and any prior
-ledger, selected-RC, host-OS, or nested shadow inputs used by generation.
+lineage, selected-RC lineage, or host-OS inputs used by generation. Approved
+shadow-run ledgers must be leaf evaluations: nested shadow evidence is rejected,
+and the run list cannot exceed the configured required train count.
 Submission validation reconstructs every approved embedded ledger before the
 run can count. It also records observation time and the old-runbook/ledger
 outcomes and includes any bounded disagreement records. A ledger ID cannot be
@@ -827,8 +833,11 @@ lowercase codes rather than prose or paths. State mismatches, `runbook-correct`,
 and `unresolved` records do not qualify a train for enforcement; a corrected
 ledger must be proven by a later signed train whose outcomes agree.
 
-Release trains additionally require `--selected-rc-ledger` for the exact same
-version, build, and manifest. A changed selected build must return to RC
+Release trains additionally require `--selected-rc-ledger` with the replayable
+lineage bundle for the exact same version, build, and manifest. Raw or
+self-authored ledger JSON is not accepted. Prior and selected-RC lineage is
+replayed transitively with a fixed depth limit before any evidence can be
+carried. A changed selected build must return to RC
 validation. `enforce` mode also requires the configured number of shadow trains
 and resolved classifications for every old-runbook disagreement:
 
@@ -838,16 +847,17 @@ scripts/context-panel-release-gate.py enforce \
   --comparison <comparison.json> \
   --validation-report <final-report.json> \
   --expected-build-manifest <ExpectedBuildManifest-platform.json> \
-  --selected-rc-ledger <approved-rc-release-evidence.json> \
+  --selected-rc-ledger <approved-rc-lineage.json> \
   --host-os-evidence <host-os-evidence.json> \
   --shadow-evidence <shadow-evidence.json> \
-  --output <release-evidence.json>
+  --output <release-evidence.json> \
+  --lineage-output <release-evidence-lineage.json>
 ```
 
 The App Store submission workflow accepts the ledger separately from the
 coordinator report. Every live build attachment or submission requires the
 `release` evidence tier and release-evidence report in both `shadow` and
-`enforce` mode, plus the exact selected-RC ledger, the full
+`enforce` mode, plus the exact selected-RC lineage bundle, the full
 comparison and a JSON array containing every sealed expected-build manifest
 needed by its required scope. Keep `release_evidence_mode=shadow` while the
 current physical runbook remains authoritative. Switching to `enforce` requires
@@ -877,7 +887,7 @@ scripts/validate-release-evidence-report.py \
 Add `--enforce` when validating an enforcement ledger. Repeat
 `--expected-build-manifest` until every shipping surface is covered, including
 surfaces that are unchanged and do not require fresh evidence. Supply the same
-optional lineage artifacts used to generate the ledger with
+optional replayable lineage bundles and evidence artifacts used to generate the ledger with
 `--previous-ledger`, `--selected-rc-ledger`, `--host-os-evidence`, and
 `--shadow-evidence`. Final validation reconstructs the complete ledger at its
 original `generatedAt`; relabeling evidence sources or omitting the selected RC

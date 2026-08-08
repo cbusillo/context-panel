@@ -888,7 +888,10 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
     def test_release_evidence_metadata_commands_include_required_contract(self):
         metadata = json.loads(self.read(".github/github.json"))
         validate = metadata["qualityGate"]["validate"]
-        report_tokens = shlex.split(validate["releaseEvidenceReportValidation"])
+        report_tokens = shlex.split(validate["releaseEvidenceBetaRCReportValidation"])
+        release_shadow_tokens = shlex.split(
+            validate["releaseEvidenceReleaseShadowReportValidation"]
+        )
         enforced_tokens = shlex.split(
             validate["releaseEvidenceEnforcedReportValidation"]
         )
@@ -906,7 +909,11 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             self.assertIn(required_option, report_tokens)
             self.assertIn(required_option, enforced_tokens)
         self.assertNotIn("--enforce", report_tokens)
+        self.assertNotIn("--enforce", release_shadow_tokens)
         self.assertIn("--enforce", enforced_tokens)
+        self.assertNotIn("releaseEvidenceReportValidation", validate)
+        self.assertIn("<beta|rc>", report_tokens)
+        self.assertNotIn("<beta|rc|release>", report_tokens)
         self.assertIn(
             "--selected-rc-ledger",
             shlex.split(validate["releaseEvidenceReleaseEnforcementGate"]),
@@ -919,10 +926,20 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             "--selected-rc-ledger",
             shlex.split(validate["releaseEvidenceReleaseReportValidation"]),
         )
+        self.assertIn("--selected-rc-ledger", release_shadow_tokens)
         self.assertIn(
             "--shadow-evidence",
             shlex.split(validate["releaseEvidenceEnforcedReportValidation"]),
         )
+        for command_name in (
+            "releaseEvidenceBetaShadowGate",
+            "releaseEvidenceRCShadowGate",
+            "releaseEvidenceReleaseShadowGate",
+            "releaseEvidenceBetaEnforcementGate",
+            "releaseEvidenceRCEnforcementGate",
+            "releaseEvidenceReleaseEnforcementGate",
+        ):
+            self.assertIn("--lineage-output", shlex.split(validate[command_name]))
 
     def test_app_store_review_workflow_supports_review_notes_override(self):
         workflow = self.read(".github/workflows/submit-app-store-review.yml")

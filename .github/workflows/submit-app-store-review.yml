@@ -99,11 +99,11 @@ name: Submit App Store Review
         required: false
         type: string
       release_evidence_previous_ledger_base64:
-        description: Base64 prior approved release-evidence ledger when carry-forward is used.
+        description: Base64 replayable lineage bundle for prior approved evidence.
         required: false
         type: string
       release_evidence_selected_rc_ledger_base64:
-        description: Base64 exact approved RC ledger for release validation.
+        description: Base64 replayable lineage bundle for the exact approved RC.
         required: false
         type: string
       release_evidence_host_os_evidence_base64:
@@ -224,11 +224,11 @@ name: Submit App Store Review
         required: false
         type: string
       release_evidence_previous_ledger_base64:
-        description: Base64 prior approved release-evidence ledger when carry-forward is used.
+        description: Base64 replayable lineage bundle for prior approved evidence.
         required: false
         type: string
       release_evidence_selected_rc_ledger_base64:
-        description: Base64 exact approved RC ledger for release validation.
+        description: Base64 replayable lineage bundle for the exact approved RC.
         required: false
         type: string
       release_evidence_host_os_evidence_base64:

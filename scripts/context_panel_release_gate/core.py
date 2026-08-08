@@ -17,8 +17,10 @@ from context_panel_validation.session import RUNTIME_SURFACES, iso8601, parse_is
 
 RELEASE_EVIDENCE_SCHEMA_VERSION = 1
 RELEASE_EVIDENCE_KIND = "context-panel-release-evidence"
+RELEASE_EVIDENCE_LINEAGE_KIND = "context-panel-release-evidence-lineage"
 HOST_OS_EVIDENCE_KIND = "context-panel-host-os-evidence"
 SHADOW_EVIDENCE_KIND = "context-panel-shadow-comparison"
+MAX_LINEAGE_DEPTH = 8
 TRAINS = {"beta", "rc", "release"}
 MODES = {"shadow", "enforce"}
 EVIDENCE_CLASSES = (
@@ -74,6 +76,15 @@ PUBLIC_TOKEN_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 VERSION_PATTERN = re.compile(r"^[0-9]+(?:\.[0-9]+){1,3}$")
 BUILD_NUMBER_PATTERN = re.compile(r"^[0-9]+$")
 PRIVACY_MARKER = "context-panel-release-evidence-public-v1"
+GENERATION_KEYS = {
+    "comparison",
+    "validationReport",
+    "expectedBuildIdentities",
+    "previousLedger",
+    "selectedRCLedger",
+    "hostOSEvidence",
+    "shadowEvidence",
+}
 
 
 class ReleaseEvidenceError(ValueError):
@@ -101,6 +112,33 @@ def _hash_payload(payload: object) -> str:
 
 def canonical_payload_digest(payload: object) -> str:
     return _hash_payload(payload)
+
+
+def build_release_evidence_lineage(
+    ledger: dict[str, Any],
+    *,
+    comparison: dict[str, Any],
+    validation_report: dict[str, Any],
+    identities: tuple[ExpectedSurfaceIdentity, ...],
+    previous_ledger: dict[str, Any] | None = None,
+    selected_rc_ledger: dict[str, Any] | None = None,
+    host_os_evidence: dict[str, Any] | None = None,
+    shadow_evidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "schemaVersion": 1,
+        "kind": RELEASE_EVIDENCE_LINEAGE_KIND,
+        "ledger": ledger,
+        "generation": {
+            "comparison": comparison,
+            "validationReport": validation_report,
+            "expectedBuildIdentities": [identity.to_dict() for identity in identities],
+            "previousLedger": previous_ledger,
+            "selectedRCLedger": selected_rc_ledger,
+            "hostOSEvidence": host_os_evidence,
+            "shadowEvidence": shadow_evidence,
+        },
+    }
 
 
 def _expected_identity_digest(identities: tuple[ExpectedSurfaceIdentity, ...]) -> str:
@@ -939,6 +977,83 @@ def _carried_evidence(
     return carried
 
 
+def _generation_identities(
+    payload: object,
+    *,
+    label: str,
+) -> tuple[ExpectedSurfaceIdentity, ...]:
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != GENERATION_KEYS
+        or not isinstance(payload.get("comparison"), dict)
+        or not isinstance(payload.get("validationReport"), dict)
+        or not isinstance(payload.get("expectedBuildIdentities"), list)
+    ):
+        raise ReleaseEvidenceError(f"{label} generation context is invalid")
+    try:
+        return tuple(
+            ExpectedSurfaceIdentity.from_dict(item)
+            for item in payload["expectedBuildIdentities"]
+        )
+    except (KeyError, TypeError, ValueError, RuntimeEvidenceError) as error:
+        raise ReleaseEvidenceError(
+            f"{label} expected-build identities are invalid"
+        ) from error
+
+
+def _verified_lineage_ledger(
+    payload: object,
+    *,
+    label: str,
+    policy: dict[str, Any],
+    surface_policy: dict[str, Any],
+    lineage_depth: int,
+    lineage_seen: frozenset[str],
+) -> dict[str, Any]:
+    if lineage_depth >= MAX_LINEAGE_DEPTH:
+        raise ReleaseEvidenceError(f"{label} exceeds the lineage depth limit")
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {"schemaVersion", "kind", "ledger", "generation"}
+        or payload.get("schemaVersion") != 1
+        or payload.get("kind") != RELEASE_EVIDENCE_LINEAGE_KIND
+        or not isinstance(payload.get("ledger"), dict)
+    ):
+        raise ReleaseEvidenceError(f"{label} lineage is invalid")
+    ledger = payload["ledger"]
+    ledger_id = ledger.get("ledgerID")
+    if not _is_sha256(ledger_id):
+        raise ReleaseEvidenceError(f"{label} lineage ledger is invalid")
+    if ledger_id in lineage_seen:
+        raise ReleaseEvidenceError(f"{label} lineage repeats a ledger")
+    generation = payload.get("generation")
+    identities = _generation_identities(generation, label=label)
+    generated_at = parse_iso8601(ledger.get("generatedAt"))
+    if generated_at is None:
+        raise ReleaseEvidenceError(f"{label} lineage ledger is invalid")
+    reconstructed = evaluate_release_evidence(
+        train=ledger.get("train"),
+        mode=ledger.get("mode"),
+        comparison=generation["comparison"],
+        validation_report=generation["validationReport"],
+        identities=identities,
+        policy=policy,
+        surface_policy=surface_policy,
+        previous_ledger=generation["previousLedger"],
+        selected_rc_ledger=generation["selectedRCLedger"],
+        host_os_evidence=generation["hostOSEvidence"],
+        shadow_evidence=generation["shadowEvidence"],
+        now=generated_at,
+        _lineage_depth=lineage_depth + 1,
+        _lineage_seen=lineage_seen | {ledger_id},
+    )
+    if reconstructed != ledger:
+        raise ReleaseEvidenceError(
+            f"{label} ledger does not match its generation context"
+        )
+    return ledger
+
+
 def _shadow_state(
     payload: dict[str, Any] | None,
     required_count: int,
@@ -947,6 +1062,8 @@ def _shadow_state(
     maximum_age_days: int,
     policy: dict[str, Any],
     surface_policy: dict[str, Any],
+    lineage_depth: int,
+    lineage_seen: frozenset[str],
 ) -> dict[str, Any]:
     if payload is None:
         return {
@@ -962,6 +1079,7 @@ def _shadow_state(
         or payload.get("schemaVersion") != 1
         or payload.get("kind") != SHADOW_EVIDENCE_KIND
         or not isinstance(payload.get("runs"), list)
+        or len(payload["runs"]) > required_count
     ):
         raise ReleaseEvidenceError("shadow comparison evidence is invalid")
     disagreements: list[dict[str, Any]] = []
@@ -1039,32 +1157,14 @@ def _shadow_state(
             ):
                 raise ReleaseEvidenceError("shadow comparison ledger binding is invalid")
             generation = run.get("generation")
-            if (
-                not isinstance(generation, dict)
-                or set(generation)
-                != {
-                    "comparison",
-                    "validationReport",
-                    "expectedBuildIdentities",
-                    "previousLedger",
-                    "selectedRCLedger",
-                    "hostOSEvidence",
-                    "shadowEvidence",
-                }
-                or not isinstance(generation.get("comparison"), dict)
-                or not isinstance(generation.get("validationReport"), dict)
-                or not isinstance(generation.get("expectedBuildIdentities"), list)
-            ):
-                raise ReleaseEvidenceError("shadow comparison generation context is invalid")
-            try:
-                generation_identities = tuple(
-                    ExpectedSurfaceIdentity.from_dict(item)
-                    for item in generation["expectedBuildIdentities"]
-                )
-            except (KeyError, TypeError, ValueError, RuntimeEvidenceError) as error:
+            generation_identities = _generation_identities(
+                generation,
+                label="shadow comparison",
+            )
+            if generation["shadowEvidence"] is not None:
                 raise ReleaseEvidenceError(
-                    "shadow comparison expected-build identities are invalid"
-                ) from error
+                    "shadow comparison generation must be a leaf evaluation"
+                )
             embedded_generated_at = parse_iso8601(embedded_ledger.get("generatedAt"))
             if embedded_generated_at is None:
                 raise ReleaseEvidenceError("shadow comparison ledger is invalid")
@@ -1081,6 +1181,8 @@ def _shadow_state(
                 host_os_evidence=generation["hostOSEvidence"],
                 shadow_evidence=generation["shadowEvidence"],
                 now=embedded_generated_at,
+                _lineage_depth=lineage_depth + 1,
+                _lineage_seen=lineage_seen | {run["ledgerID"]},
             )
             if reconstructed_ledger != embedded_ledger:
                 raise ReleaseEvidenceError(
@@ -1146,9 +1248,14 @@ def evaluate_release_evidence(
     host_os_evidence: dict[str, Any] | None = None,
     shadow_evidence: dict[str, Any] | None = None,
     now: datetime | None = None,
+    _lineage_depth: int = 0,
+    _lineage_seen: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     if train not in TRAINS or mode not in MODES:
         raise ReleaseEvidenceError("release evidence train or mode is invalid")
+    if _lineage_depth > MAX_LINEAGE_DEPTH:
+        raise ReleaseEvidenceError("release evidence exceeds the lineage depth limit")
+    lineage_seen = _lineage_seen or frozenset()
     policy = _validate_policy(policy)
     surface_comparison = _validate_comparison(comparison, train, surface_policy)
     _validate_surface_policy(
@@ -1191,48 +1298,69 @@ def evaluate_release_evidence(
     previous_surfaces: dict[str, dict[str, Any]] = {}
     previous_expires_at: datetime | None = None
     if previous_ledger is not None:
-        if previous_ledger.get("policyDigest") != policy_digest:
+        verified_previous_ledger = _verified_lineage_ledger(
+            previous_ledger,
+            label="previous release evidence",
+            policy=policy,
+            surface_policy=surface_policy,
+            lineage_depth=_lineage_depth,
+            lineage_seen=lineage_seen,
+        )
+        if verified_previous_ledger.get("policyDigest") != policy_digest:
             raise ReleaseEvidenceError("previous release evidence policy does not match")
-        if previous_ledger.get("surfacePolicyDigest") != surface_policy_digest:
+        if verified_previous_ledger.get("surfacePolicyDigest") != surface_policy_digest:
             raise ReleaseEvidenceError("previous surface evidence policy does not match")
         previous_surfaces = _validate_ledger(
-            previous_ledger,
+            verified_previous_ledger,
             expected_manifest_id=str(comparison["previousManifestId"]),
             now=now,
             label="previous release evidence",
             maximum_age_days=policy["maximumEvidenceAgeDays"],
             required_shadow_train_count=policy["requiredShadowTrainCount"],
         )
-        previous_expires_at = parse_iso8601(previous_ledger.get("expiresAt"))
+        previous_expires_at = parse_iso8601(verified_previous_ledger.get("expiresAt"))
     selected_rc_surfaces: dict[str, dict[str, Any]] = {}
     selected_rc_expires_at: datetime | None = None
     if selected_rc_ledger is not None:
-        if selected_rc_ledger.get("policyDigest") != policy_digest:
+        verified_selected_rc_ledger = _verified_lineage_ledger(
+            selected_rc_ledger,
+            label="selected RC evidence",
+            policy=policy,
+            surface_policy=surface_policy,
+            lineage_depth=_lineage_depth,
+            lineage_seen=lineage_seen,
+        )
+        if verified_selected_rc_ledger.get("policyDigest") != policy_digest:
             raise ReleaseEvidenceError("selected RC evidence policy does not match")
-        if selected_rc_ledger.get("surfacePolicyDigest") != surface_policy_digest:
+        if verified_selected_rc_ledger.get("surfacePolicyDigest") != surface_policy_digest:
             raise ReleaseEvidenceError("selected RC surface policy does not match")
-        selected_rc_target = _target(selected_rc_ledger.get("target"), "selected RC evidence")
+        selected_rc_target = _target(
+            verified_selected_rc_ledger.get("target"),
+            "selected RC evidence",
+        )
         if selected_rc_target != target:
             raise ReleaseEvidenceError("selected RC target does not match the release target")
         selected_rc_surfaces = _validate_ledger(
-            selected_rc_ledger,
+            verified_selected_rc_ledger,
             expected_manifest_id=current_manifest_id,
             now=now,
             label="selected RC evidence",
             maximum_age_days=policy["maximumEvidenceAgeDays"],
             required_shadow_train_count=policy["requiredShadowTrainCount"],
         )
-        selected_rc_expires_at = parse_iso8601(selected_rc_ledger.get("expiresAt"))
+        selected_rc_expires_at = parse_iso8601(
+            verified_selected_rc_ledger.get("expiresAt")
+        )
         if (
-            selected_rc_ledger.get("train") != "rc"
-            or selected_rc_ledger.get("mode") != "enforce"
-            or selected_rc_ledger.get("contractFingerprint")
+            verified_selected_rc_ledger.get("train") != "rc"
+            or verified_selected_rc_ledger.get("mode") != "enforce"
+            or verified_selected_rc_ledger.get("contractFingerprint")
             != next(iter(contract_fingerprints))
-            or selected_rc_ledger.get("expectedBuildIdentityDigest")
+            or verified_selected_rc_ledger.get("expectedBuildIdentityDigest")
             != expected_identity_digest
-            or selected_rc_ledger.get("requiredEvidence") != required_surfaces
-            or not isinstance(selected_rc_ledger.get("shadow"), dict)
-            or selected_rc_ledger["shadow"].get("state") != "passed"
+            or verified_selected_rc_ledger.get("requiredEvidence") != required_surfaces
+            or not isinstance(verified_selected_rc_ledger.get("shadow"), dict)
+            or verified_selected_rc_ledger["shadow"].get("state") != "passed"
         ):
             raise ReleaseEvidenceError("selected RC evidence is not an enforced approved RC")
     if train == "release" and not selected_rc_surfaces:
@@ -1340,6 +1468,8 @@ def evaluate_release_evidence(
         maximum_age_days=policy["maximumEvidenceAgeDays"],
         policy=policy,
         surface_policy=surface_policy,
+        lineage_depth=_lineage_depth,
+        lineage_seen=lineage_seen,
     )
     if mode == "enforce" and shadow["state"] != "passed":
         blockers.append("shadow-comparison:pending")

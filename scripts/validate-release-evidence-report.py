@@ -47,8 +47,16 @@ def main() -> None:
     )
     parser.add_argument("--policy", type=Path, default=DEFAULT_POLICY)
     parser.add_argument("--surface-policy", type=Path, default=DEFAULT_SURFACE_POLICY)
-    parser.add_argument("--previous-ledger", type=Path)
-    parser.add_argument("--selected-rc-ledger", type=Path)
+    parser.add_argument(
+        "--previous-ledger",
+        type=Path,
+        help="Replayable lineage bundle for the prior approved ledger.",
+    )
+    parser.add_argument(
+        "--selected-rc-ledger",
+        type=Path,
+        help="Replayable lineage bundle for the exact approved RC ledger.",
+    )
     parser.add_argument("--host-os-evidence", type=Path)
     parser.add_argument("--shadow-evidence", type=Path)
     arguments = parser.parse_args()
