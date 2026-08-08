@@ -845,9 +845,59 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("Prepare Release Evidence Report", workflow)
         self.assertIn("--release-evidence-report", script)
         self.assertIn("--release-evidence-mode", script)
-        self.assertIn("shadow runbook remains authoritative", workflow)
+        self.assertIn(
+            "release_evidence_report_base64 is required for live shadow or enforce validation",
+            workflow,
+        )
+        self.assertIn("release_evidence_comparison_base64:", workflow)
+        self.assertIn("release_evidence_expected_build_manifests_base64:", workflow)
+        self.assertIn("release_evidence_mode must be shadow or enforce", workflow)
         self.assertIn("narrow exact-build runtime stop", release_docs)
         self.assertIn("iPhone app/widget, iPad app/widget", release_docs)
+
+    def test_release_evidence_entrypoints_execute_directly(self):
+        for relative_path in (
+            "scripts/context-panel-release-gate.py",
+            "scripts/validate-release-evidence-report.py",
+        ):
+            with self.subTest(script=relative_path):
+                path = REPO_ROOT / relative_path
+                self.assertTrue(path.stat().st_mode & 0o100)
+                result = subprocess.run(
+                    [str(path), "--help"],
+                    cwd=REPO_ROOT,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("usage:", result.stdout)
+
+    def test_release_evidence_metadata_commands_include_required_contract(self):
+        metadata = json.loads(self.read(".github/github.json"))
+        validate = metadata["qualityGate"]["validate"]
+        report_tokens = shlex.split(validate["releaseEvidenceReportValidation"])
+        enforced_tokens = shlex.split(
+            validate["releaseEvidenceEnforcedReportValidation"]
+        )
+        for required_option in (
+            "--report",
+            "--validation-report",
+            "--comparison",
+            "--expected-build-manifest",
+            "--policy",
+            "--version",
+            "--build-number",
+            "--train",
+        ):
+            self.assertIn(required_option, report_tokens)
+            self.assertIn(required_option, enforced_tokens)
+        self.assertNotIn("--enforce", report_tokens)
+        self.assertIn("--enforce", enforced_tokens)
+        self.assertIn(
+            "--selected-rc-ledger",
+            shlex.split(validate["releaseEvidenceReleaseEnforcementGate"]),
+        )
 
     def test_app_store_review_workflow_supports_review_notes_override(self):
         workflow = self.read(".github/workflows/submit-app-store-review.yml")

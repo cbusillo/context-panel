@@ -88,6 +88,14 @@ name: Submit App Store Review
         description: Base64 JSON from context-panel-release-gate.py.
         required: false
         type: string
+      release_evidence_comparison_base64:
+        description: Base64 full source-manifest comparison used by the release gate.
+        required: false
+        type: string
+      release_evidence_expected_build_manifests_base64:
+        description: Base64 JSON array of sealed ExpectedBuildManifest objects.
+        required: false
+        type: string
   workflow_dispatch:
     inputs:
       version:
@@ -191,6 +199,14 @@ name: Submit App Store Review
         description: Base64 JSON from context-panel-release-gate.py.
         required: false
         type: string
+      release_evidence_comparison_base64:
+        description: Base64 full source-manifest comparison used by the release gate.
+        required: false
+        type: string
+      release_evidence_expected_build_manifests_base64:
+        description: Base64 JSON array of sealed ExpectedBuildManifest objects.
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -238,12 +254,44 @@ jobs:
         env:
           INPUT_RELEASE_EVIDENCE_REPORT_BASE64: >-
             ${{ inputs.release_evidence_report_base64 }}
+          INPUT_RELEASE_EVIDENCE_COMPARISON_BASE64: >-
+            ${{ inputs.release_evidence_comparison_base64 }}
+          INPUT_RELEASE_EVIDENCE_EXPECTED_BUILD_MANIFESTS_BASE64: >-
+            ${{ inputs.release_evidence_expected_build_manifests_base64 }}
         run: |
           set -euo pipefail
+          if [[ -z "${INPUT_RELEASE_EVIDENCE_COMPARISON_BASE64}" || \
+            -z "${INPUT_RELEASE_EVIDENCE_EXPECTED_BUILD_MANIFESTS_BASE64}" ]]; then
+            echo "release evidence requires comparison and expected-build manifest inputs" >&2
+            exit 1
+          fi
           mkdir -p .build
           printf '%s' "${INPUT_RELEASE_EVIDENCE_REPORT_BASE64}" \
             | base64 -D > .build/release-evidence-report.json
           python3 -m json.tool .build/release-evidence-report.json >/dev/null
+          printf '%s' "${INPUT_RELEASE_EVIDENCE_COMPARISON_BASE64}" \
+            | base64 -D > .build/release-evidence-comparison.json
+          python3 -m json.tool .build/release-evidence-comparison.json >/dev/null
+          printf '%s' "${INPUT_RELEASE_EVIDENCE_EXPECTED_BUILD_MANIFESTS_BASE64}" \
+            | base64 -D > .build/release-evidence-expected-build-manifests.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          bundle = json.loads(
+              Path(".build/release-evidence-expected-build-manifests.json").read_text()
+          )
+          if not isinstance(bundle, list) or not bundle:
+              raise SystemExit("expected-build manifest bundle must be a non-empty JSON array")
+          destination = Path(".build/release-evidence-expected-build-manifests")
+          destination.mkdir(parents=True, exist_ok=True)
+          for index, manifest in enumerate(bundle):
+              if not isinstance(manifest, dict):
+                  raise SystemExit("expected-build manifest bundle contains a non-object")
+              (destination / f"{index:03d}.json").write_text(
+                  json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+              )
+          PY
 
       - name: Submit Review
         shell: bash
@@ -266,12 +314,30 @@ jobs:
           INPUT_RELEASE_EVIDENCE_MODE: ${{ inputs.release_evidence_mode }}
           INPUT_RELEASE_EVIDENCE_REPORT_BASE64: >-
             ${{ inputs.release_evidence_report_base64 }}
+          INPUT_RELEASE_EVIDENCE_COMPARISON_BASE64: >-
+            ${{ inputs.release_evidence_comparison_base64 }}
+          INPUT_RELEASE_EVIDENCE_EXPECTED_BUILD_MANIFESTS_BASE64: >-
+            ${{ inputs.release_evidence_expected_build_manifests_base64 }}
         run: |
           set -euo pipefail
           args=(
             --platform "${INPUT_PLATFORM}"
             --version "${INPUT_VERSION}"
           )
+          case "${INPUT_RELEASE_EVIDENCE_MODE}" in
+            shadow|enforce) ;;
+            *)
+              echo "release_evidence_mode must be shadow or enforce" >&2
+              exit 1
+              ;;
+          esac
+          case "${INPUT_VALIDATION_TRAIN}" in
+            beta|rc|release) ;;
+            *)
+              echo "validation_train must be beta, rc, or release" >&2
+              exit 1
+              ;;
+          esac
           if [[ "${INPUT_CANCEL_REVIEW_ONLY}" != "true" ]]; then
             if [[ -z "${INPUT_BUILD_NUMBER}" && \
               "${INPUT_PREPARE_ONLY}" != "true" ]]; then
@@ -337,10 +403,15 @@ jobs:
               --validation-train "${INPUT_VALIDATION_TRAIN}"
               --release-evidence-mode "${INPUT_RELEASE_EVIDENCE_MODE}"
               --release-evidence-report .build/release-evidence-report.json
+              --release-evidence-comparison .build/release-evidence-comparison.json
+              --release-evidence-policy Config/ContextPanelReleaseEvidencePolicy.json
             )
-          elif [[ "${INPUT_RELEASE_EVIDENCE_MODE}" == "enforce" && \
-            "${report_required}" == "true" ]]; then
-            echo "release_evidence_report_base64 is required when release evidence is enforced" >&2
+            while IFS= read -r manifest; do
+              args+=(--release-evidence-expected-build-manifest "${manifest}")
+            done < <(find .build/release-evidence-expected-build-manifests \
+              -type f -name '*.json' -print | sort)
+          elif [[ "${report_required}" == "true" ]]; then
+            echo "release_evidence_report_base64 is required for live shadow or enforce validation" >&2
             exit 1
           fi
           submit=(
@@ -366,7 +437,7 @@ jobs:
               if [[ -n "${INPUT_RELEASE_EVIDENCE_REPORT_BASE64}" ]]; then
                 echo "- Release evidence report SHA-256: $(shasum -a 256 .build/release-evidence-report.json | awk '{print $1}')"
               else
-                echo "- Release evidence report: not supplied (shadow runbook remains authoritative)"
+                echo "- Release evidence report: not required for this non-live operation"
               fi
             fi
             echo "- Result: succeeded"

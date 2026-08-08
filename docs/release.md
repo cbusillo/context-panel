@@ -808,12 +808,16 @@ value to a `runtimeReceiptID` present in the current coordinator report. Future,
 expired, unrelated-build, or unrelated-receipt observations fail closed.
 
 Shadow evidence must describe distinct signed trains. Each run records its
-train, exact version/build target, manifest and ledger digests, observation time,
-the old-runbook and ledger outcomes, and any bounded disagreement records.
+train, exact version/build target, source manifest, expected-build identity-set
+and ledger digests, observation time, the old-runbook and ledger outcomes, and
+any bounded disagreement records.
 Duplicate train identities, stale observations, unknown disagreement
 classifications, unresolved records, and arbitrary extra fields fail closed.
 The accepted disagreement classifications are `ledger-correct`,
-`runbook-correct`, and `equivalent`, each with a non-empty resolution.
+`runbook-correct`, `equivalent`, and `unresolved`. Resolution values are bounded
+lowercase codes rather than prose or paths. State mismatches, `runbook-correct`,
+and `unresolved` records do not qualify a train for enforcement; a corrected
+ledger must be proven by a later signed train whose outcomes agree.
 
 Release trains additionally require `--selected-rc-ledger` for the exact same
 version, build, and manifest. A changed selected build must return to RC
@@ -833,13 +837,36 @@ scripts/context-panel-release-gate.py enforce \
 ```
 
 The App Store submission workflow accepts the ledger separately from the
-coordinator report. Keep `release_evidence_mode=shadow` while the current
-physical runbook remains authoritative. Switching to `enforce` requires an
-approved ledger with passed shadow evidence; missing, expired, host-incompatible,
-or mixed-build evidence blocks submission. The ledger also contains the
-canonical digest of the exact coordinator report used to create it; submission
-recomputes that digest and rejects a different or replayed report even when the
-marketing version and build number match.
+coordinator report. Every live build attachment or submission requires the
+release-evidence report in both `shadow` and `enforce` mode, plus the full
+comparison and a JSON array containing every sealed expected-build manifest
+needed by its required scope. Keep `release_evidence_mode=shadow` while the
+current physical runbook remains authoritative. Switching to `enforce` requires
+an approved ledger with passed shadow evidence; missing, expired,
+host-incompatible, policy-mismatched, scope-mismatched, or mixed-build evidence
+blocks submission. Dry runs, cancel-only operations, and prepare-only operations
+without a build remain exempt. The ledger binds the canonical configured policy,
+full comparison, expected-build identity set, and exact coordinator report;
+submission independently recomputes every binding.
+
+Validate a ledger outside the submission workflow with the same authoritative
+inputs:
+
+```sh
+scripts/validate-release-evidence-report.py \
+  --report <release-evidence.json> \
+  --validation-report <final-report.json> \
+  --comparison <comparison.json> \
+  --expected-build-manifest <ExpectedBuildManifest-platform.json> \
+  --policy Config/ContextPanelReleaseEvidencePolicy.json \
+  --version <version> \
+  --build-number <build-number> \
+  --train <beta|rc|release>
+```
+
+Add `--enforce` when validating an enforcement ledger. Repeat
+`--expected-build-manifest` until the authoritative required scope is fully
+covered.
 
 For a beta with `requiresRuntimeSession=false`, do not open devices or create a
 runtime-receipt session; automated shared-view evidence is sufficient for that

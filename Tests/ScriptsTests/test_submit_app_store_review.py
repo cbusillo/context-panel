@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 import urllib.error
+import sys
 from unittest.mock import patch
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import Any
 
 
 MODULE_PATH = Path(__file__).resolve().parents[2] / "scripts" / "submit-app-store-review.py"
+sys.path.insert(0, str(MODULE_PATH.parent))
 SPEC = importlib.util.spec_from_file_location("submit_app_store_review", MODULE_PATH)
 if SPEC is None or SPEC.loader is None:
     raise RuntimeError(f"Unable to load {MODULE_PATH}")
@@ -144,6 +146,28 @@ def exact_build_validation_report(platform="MAC_OS"):
 
 
 class ValidationReportGateTests(unittest.TestCase):
+    def live_args(self, **overrides):
+        values = {
+            "validate_report_only": False,
+            "dry_run": False,
+            "cancel_review_only": False,
+            "prepare_only": False,
+            "remove_active_review_version": None,
+            "build_number": "202608050001",
+            "whats_new": "Validation update",
+            "platform": "MAC_OS",
+            "tvos_demo_video_url": None,
+            "validation_report": "final-report.json",
+            "validation_train": "rc",
+            "release_evidence_mode": "shadow",
+            "release_evidence_report": "release-evidence.json",
+            "release_evidence_comparison": "comparison.json",
+            "release_evidence_expected_build_manifests": ["expected.json"],
+            "release_evidence_policy": "Config/ContextPanelReleaseEvidencePolicy.json",
+        }
+        values.update(overrides)
+        return SimpleNamespace(**values)
+
     def test_accepts_exact_runtime_evidence_for_every_app_store_platform(self):
         for platform in submit_app_store_review.REQUIRED_RUNTIME_SURFACES_BY_PLATFORM:
             with self.subTest(platform=platform):
@@ -294,6 +318,79 @@ class ValidationReportGateTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertIn("no App Store Connect request was made", output.getvalue())
+
+    def test_live_shadow_and_enforce_require_release_evidence_report(self):
+        for mode in ("shadow", "enforce"):
+            with self.subTest(mode=mode):
+                args = self.live_args(
+                    release_evidence_mode=mode,
+                    release_evidence_report=None,
+                )
+                with self.assertRaisesRegex(
+                    submit_app_store_review.AppStoreConnectError,
+                    "required for live shadow or enforce",
+                ):
+                    submit_app_store_review.validate_args(args)
+
+    def test_release_evidence_report_requires_exact_validation_report(self):
+        args = self.live_args(dry_run=True, validation_report=None)
+        with self.assertRaisesRegex(
+            submit_app_store_review.AppStoreConnectError,
+            "requires --validation-report",
+        ):
+            submit_app_store_review.validate_args(args)
+
+    def test_release_evidence_report_requires_authoritative_binding_inputs(self):
+        args = self.live_args(
+            dry_run=True,
+            release_evidence_comparison=None,
+            release_evidence_expected_build_manifests=None,
+        )
+        with self.assertRaisesRegex(
+            submit_app_store_review.AppStoreConnectError,
+            "requires --release-evidence-comparison",
+        ):
+            submit_app_store_review.validate_args(args)
+
+    def test_live_shadow_argument_contract_is_accepted(self):
+        submit_app_store_review.validate_args(self.live_args())
+
+    def test_invalid_release_evidence_mode_casing_fails_in_parser(self):
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "submit-app-store-review.py",
+                "--version",
+                "1.0.54",
+                "--release-evidence-mode",
+                "SHADOW",
+            ],
+        ):
+            with self.assertRaises(SystemExit):
+                submit_app_store_review.parse_args()
+
+    def test_invalid_release_evidence_mode_fails_before_cancel_only_return(self):
+        args = self.live_args(
+            release_evidence_mode="SHADOW",
+            cancel_review_only=True,
+            remove_active_review_version="1.0.53",
+            build_number=None,
+            whats_new=None,
+        )
+        with self.assertRaisesRegex(
+            submit_app_store_review.AppStoreConnectError,
+            "must be shadow or enforce",
+        ):
+            submit_app_store_review.validate_args(args)
+
+    def test_release_evidence_validation_without_validation_report_fails_cleanly(self):
+        args = self.live_args(validation_report=None)
+        with self.assertRaisesRegex(
+            submit_app_store_review.AppStoreConnectError,
+            "release evidence requires its report, exact validation report",
+        ):
+            submit_app_store_review.validate_release_evidence_report(args)
 
 
 class FakeASCClient:
