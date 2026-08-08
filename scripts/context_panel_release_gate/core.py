@@ -9,7 +9,7 @@ from typing import Any
 
 from context_panel_validation.models import Target
 from context_panel_validation.runtime_evidence import ExpectedSurfaceIdentity
-from context_panel_validation.session import iso8601, parse_iso8601
+from context_panel_validation.session import RUNTIME_SURFACES, iso8601, parse_iso8601
 
 
 RELEASE_EVIDENCE_SCHEMA_VERSION = 1
@@ -33,6 +33,9 @@ LEDGER_KEYS = {
     "previousManifestID",
     "currentManifestID",
     "contractFingerprint",
+    "comparisonDigest",
+    "policyDigest",
+    "expectedBuildIdentityDigest",
     "validationReportDigest",
     "generatedAt",
     "expiresAt",
@@ -52,12 +55,21 @@ EVIDENCE_KEYS = {
     "hostOS",
     "runtimeReceiptIDs",
 }
-SHADOW_CLASSIFICATIONS = {"ledger-correct", "runbook-correct", "equivalent"}
+SHADOW_CLASSIFICATIONS = {
+    "ledger-correct",
+    "runbook-correct",
+    "equivalent",
+    "unresolved",
+}
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 HOST_OS_PATTERN = re.compile(
-    r"^(?P<platform>[A-Za-z][A-Za-z0-9 ]*) "
-    r"(?P<major>\d+)\.(?P<minor>\d+)(?:\.(?P<patch>\d+))?(?: .*)?$"
+    r"^(?P<platform>macOS|iOS|iPadOS|tvOS|visionOS|watchOS) "
+    r"(?P<major>\d+)\.(?P<minor>\d+)(?:\.(?P<patch>\d+))?$"
 )
+PUBLIC_TOKEN_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+VERSION_PATTERN = re.compile(r"^[0-9]+(?:\.[0-9]+){1,3}$")
+BUILD_NUMBER_PATTERN = re.compile(r"^[0-9]+$")
+PRIVACY_MARKER = "context-panel-release-evidence-public-v1"
 
 
 class ReleaseEvidenceError(ValueError):
@@ -87,6 +99,24 @@ def canonical_payload_digest(payload: object) -> str:
     return _hash_payload(payload)
 
 
+def _expected_identity_digest(identities: tuple[ExpectedSurfaceIdentity, ...]) -> str:
+    return _hash_payload(
+        [
+            {
+                "surface": identity.surface,
+                "manifestID": identity.manifest_id,
+                "contractFingerprint": identity.contract_fingerprint,
+                "expectedBuildID": identity.expected_build_id,
+                "identityDigest": identity.identity_digest(),
+                "renderFingerprint": identity.render_fingerprint,
+                "runtimeFingerprint": identity.runtime_fingerprint,
+                "placementFingerprint": identity.placement_fingerprint,
+            }
+            for identity in sorted(identities, key=lambda item: item.surface)
+        ]
+    )
+
+
 def _ledger_id(payload: dict[str, Any]) -> str:
     return _hash_payload({key: value for key, value in payload.items() if key != "ledgerID"})
 
@@ -96,7 +126,12 @@ def _target(payload: object, label: str) -> Target:
         raise ReleaseEvidenceError(f"{label} target is invalid")
     version = payload.get("version")
     build_number = payload.get("buildNumber")
-    if not isinstance(version, str) or not version or not isinstance(build_number, str) or not build_number:
+    if (
+        not isinstance(version, str)
+        or VERSION_PATTERN.fullmatch(version) is None
+        or not isinstance(build_number, str)
+        or BUILD_NUMBER_PATTERN.fullmatch(build_number) is None
+    ):
         raise ReleaseEvidenceError(f"{label} target is invalid")
     return Target(version, build_number)
 
@@ -171,12 +206,19 @@ def _validate_comparison(comparison: dict[str, Any], train: str) -> dict[str, di
         ):
             raise ReleaseEvidenceError("surface comparison evidence is invalid")
         for evidence_class, carry_rule in carry_forward.items():
+            expected_conditions = (
+                ["matching-host-os", "matching-current-runtime-receipt"]
+                if evidence_class == "os-composited-placement"
+                and carry_rule.get("eligible") is True
+                else []
+            )
             if (
                 not isinstance(carry_rule, dict)
                 or not isinstance(carry_rule.get("eligible"), bool)
                 or not isinstance(carry_rule.get("conditions"), list)
                 or any(not isinstance(value, str) for value in carry_rule["conditions"])
                 or len(carry_rule["conditions"]) != len(set(carry_rule["conditions"]))
+                or carry_rule["conditions"] != expected_conditions
             ):
                 raise ReleaseEvidenceError(
                     f"surface comparison carry-forward rule is invalid for {surface}:{evidence_class}"
@@ -272,9 +314,22 @@ def _validate_evidence_record(
         raise ReleaseEvidenceError(f"{label} contains invalid evidence")
     host_os = evidence.get("hostOS")
     if evidence_class == "os-composited-placement":
-        if not isinstance(host_os, str) or HOST_OS_PATTERN.fullmatch(host_os) is None:
+        if (
+            not isinstance(host_os, str)
+            or HOST_OS_PATTERN.fullmatch(host_os) is None
+            or not evidence["decisionIDs"]
+            or not evidence["runtimeReceiptIDs"]
+        ):
             raise ReleaseEvidenceError(f"{label} contains invalid evidence")
     elif host_os is not None:
+        raise ReleaseEvidenceError(f"{label} contains invalid evidence")
+    if evidence_class == "actual-runtime" and (
+        evidence["decisionIDs"] or not evidence["runtimeReceiptIDs"]
+    ):
+        raise ReleaseEvidenceError(f"{label} contains invalid evidence")
+    if evidence_class == "shared-view" and (
+        not evidence["decisionIDs"] or evidence["runtimeReceiptIDs"]
+    ):
         raise ReleaseEvidenceError(f"{label} contains invalid evidence")
     return {
         "state": evidence["state"],
@@ -411,6 +466,7 @@ def _validate_ledger(
     now: datetime,
     label: str,
     maximum_age_days: int,
+    required_shadow_train_count: int,
     allowed_states: frozenset[str] = frozenset({"approved"}),
 ) -> dict[str, dict[str, Any]]:
     if (
@@ -423,6 +479,9 @@ def _validate_ledger(
         or not _is_sha256(ledger.get("previousManifestID"))
         or not _is_sha256(ledger.get("currentManifestID"))
         or not _is_sha256(ledger.get("contractFingerprint"))
+        or not _is_sha256(ledger.get("comparisonDigest"))
+        or not _is_sha256(ledger.get("policyDigest"))
+        or not _is_sha256(ledger.get("expectedBuildIdentityDigest"))
         or not _is_sha256(ledger.get("validationReportDigest"))
         or not _is_sha256(ledger.get("ledgerID"))
         or ledger.get("ledgerID") != _ledger_id(ledger)
@@ -450,7 +509,7 @@ def _validate_ledger(
         or not isinstance(ledger.get("blockers"), list)
         or ledger["blockers"]
         or not isinstance(ledger.get("shadow"), dict)
-        or not isinstance(ledger.get("privacy"), str)
+        or ledger.get("privacy") != PRIVACY_MARKER
     ):
         raise ReleaseEvidenceError(f"{label} surfaces are invalid")
     if any(not isinstance(value, str) for value in ledger["blockers"]):
@@ -458,15 +517,32 @@ def _validate_ledger(
     shadow = ledger["shadow"]
     if (
         set(shadow)
-        != {"state", "requiredTrainCount", "observedTrainCount", "disagreements"}
+        != {
+            "state",
+            "requiredTrainCount",
+            "observedTrainCount",
+            "qualifiedTrainCount",
+            "disagreements",
+            "blockers",
+        }
         or shadow.get("state") not in {"pending", "passed"}
         or not isinstance(shadow.get("requiredTrainCount"), int)
         or isinstance(shadow.get("requiredTrainCount"), bool)
         or shadow["requiredTrainCount"] < 2
+        or shadow["requiredTrainCount"] != required_shadow_train_count
         or not isinstance(shadow.get("observedTrainCount"), int)
         or isinstance(shadow.get("observedTrainCount"), bool)
         or shadow["observedTrainCount"] < 0
+        or not isinstance(shadow.get("qualifiedTrainCount"), int)
+        or isinstance(shadow.get("qualifiedTrainCount"), bool)
+        or shadow["qualifiedTrainCount"] < 0
+        or shadow["qualifiedTrainCount"] > shadow["observedTrainCount"]
         or not isinstance(shadow.get("disagreements"), list)
+        or not isinstance(shadow.get("blockers"), list)
+        or any(
+            not isinstance(value, str) or PUBLIC_TOKEN_PATTERN.fullmatch(value) is None
+            for value in shadow.get("blockers", [])
+        )
     ):
         raise ReleaseEvidenceError(f"{label} shadow evidence is invalid")
     for disagreement in shadow["disagreements"]:
@@ -474,14 +550,27 @@ def _validate_ledger(
             not isinstance(disagreement, dict)
             or set(disagreement)
             != {"surface", "evidenceClass", "classification", "resolution"}
-            or not isinstance(disagreement.get("surface"), str)
+            or disagreement.get("surface") not in RUNTIME_SURFACES
             or disagreement.get("evidenceClass") not in EVIDENCE_CLASSES
             or disagreement.get("classification") not in SHADOW_CLASSIFICATIONS
             or not isinstance(disagreement.get("resolution"), str)
-            or not disagreement["resolution"].strip()
-            or len(disagreement["resolution"]) > 500
+            or PUBLIC_TOKEN_PATTERN.fullmatch(disagreement["resolution"]) is None
         ):
             raise ReleaseEvidenceError(f"{label} shadow evidence is invalid")
+    expected_shadow_state = (
+        "passed"
+        if shadow["qualifiedTrainCount"] >= shadow["requiredTrainCount"]
+        and not shadow["blockers"]
+        else "pending"
+    )
+    if shadow["state"] != expected_shadow_state:
+        raise ReleaseEvidenceError(f"{label} shadow evidence is invalid")
+    if (
+        ledger.get("state") == "approved" and shadow["state"] != "passed"
+    ) or (
+        ledger.get("state") == "shadow-approved" and shadow["state"] == "passed"
+    ):
+        raise ReleaseEvidenceError(f"{label} shadow evidence is invalid")
     for evidence_class, values in required.items():
         if (
             not isinstance(values, list)
@@ -535,7 +624,7 @@ def _host_os_evidence(
     current_runtime: dict[str, dict[str, Any]],
     now: datetime,
     maximum_age_days: int,
-) -> dict[str, str]:
+) -> dict[str, dict[str, str]]:
     if payload is None:
         return {}
     observed_at = parse_iso8601(payload.get("observedAt"))
@@ -553,7 +642,7 @@ def _host_os_evidence(
     ):
         raise ReleaseEvidenceError("host OS evidence is invalid")
     surfaces = payload["surfaces"]
-    result: dict[str, str] = {}
+    result: dict[str, dict[str, str]] = {}
     for surface, item in surfaces.items():
         runtime = current_runtime.get(surface)
         if (
@@ -567,7 +656,10 @@ def _host_os_evidence(
             or item["runtimeReceiptID"] not in set(runtime.get("receiptIDs") or [])
         ):
             raise ReleaseEvidenceError("host OS evidence is invalid")
-        result[surface] = item["hostOS"]
+        result[surface] = {
+            "hostOS": item["hostOS"],
+            "runtimeReceiptID": item["runtimeReceiptID"],
+        }
     return result
 
 
@@ -591,7 +683,13 @@ def _host_os_compatible(
         current_match["minor"],
     ):
         return False
-    return surface not in patch_sensitive or previous_match["patch"] == current_match["patch"]
+    if surface not in patch_sensitive:
+        return True
+    return (
+        previous_match["patch"] is not None
+        and current_match["patch"] is not None
+        and previous_match["patch"] == current_match["patch"]
+    )
 
 
 def _carried_evidence(
@@ -601,7 +699,7 @@ def _carried_evidence(
     evidence_class: str,
     fingerprint: str,
     current_runtime: dict[str, dict[str, Any]],
-    current_host_os: dict[str, str],
+    current_host_os: dict[str, dict[str, str]],
     patch_sensitive: set[str],
     source: str,
     require_current_runtime: bool,
@@ -620,9 +718,17 @@ def _carried_evidence(
     expected_state = "proven" if evidence_class == "actual-runtime" else "approved"
     if evidence.get("state") != expected_state:
         return None
+    if evidence_class == "actual-runtime":
+        if (
+            expected_identity_digest is None
+            or prior_surface.get("identityDigest") != expected_identity_digest
+            or (require_current_runtime and surface not in current_runtime)
+        ):
+            return None
     if evidence_class == "os-composited-placement":
         previous_host_os = evidence.get("hostOS")
-        observed_host_os = current_host_os.get(surface)
+        observed_host = current_host_os.get(surface)
+        observed_host_os = observed_host.get("hostOS") if observed_host is not None else None
         if (
             (require_current_runtime and surface not in current_runtime)
             or not isinstance(previous_host_os, str)
@@ -642,7 +748,8 @@ def _carried_evidence(
     )
     carried["source"] = source
     if evidence_class == "os-composited-placement":
-        carried["hostOS"] = current_host_os[surface]
+        carried["hostOS"] = current_host_os[surface]["hostOS"]
+        carried["runtimeReceiptIDs"] = [current_host_os[surface]["runtimeReceiptID"]]
     return carried
 
 
@@ -658,7 +765,9 @@ def _shadow_state(
             "state": "pending",
             "requiredTrainCount": required_count,
             "observedTrainCount": 0,
+            "qualifiedTrainCount": 0,
             "disagreements": [],
+            "blockers": ["insufficient-shadow-trains"],
         }
     if (
         set(payload) != {"schemaVersion", "kind", "runs"}
@@ -668,6 +777,7 @@ def _shadow_state(
     ):
         raise ReleaseEvidenceError("shadow comparison evidence is invalid")
     disagreements: list[dict[str, Any]] = []
+    blockers: set[str] = set()
     run_identities: set[tuple[str, str, str, str]] = set()
     for run in payload["runs"]:
         if (
@@ -677,6 +787,7 @@ def _shadow_state(
                 "train",
                 "target",
                 "manifestID",
+                "expectedBuildIdentityDigest",
                 "ledgerID",
                 "observedAt",
                 "runbookState",
@@ -685,6 +796,7 @@ def _shadow_state(
             }
             or run.get("train") not in TRAINS
             or not _is_sha256(run.get("manifestID"))
+            or not _is_sha256(run.get("expectedBuildIdentityDigest"))
             or not _is_sha256(run.get("ledgerID"))
             or run.get("runbookState") not in {"approved", "blocked"}
             or run.get("ledgerState") not in {"approved", "blocked"}
@@ -700,25 +812,26 @@ def _shadow_state(
         ):
             raise ReleaseEvidenceError("shadow comparison evidence is invalid")
         run_identity = (
+            run["train"],
             run_target.version,
             run_target.build_number,
-            run["manifestID"],
-            run["ledgerID"],
+            run["expectedBuildIdentityDigest"],
         )
         if run_identity in run_identities:
             raise ReleaseEvidenceError("shadow comparison duplicates a signed train")
         run_identities.add(run_identity)
+        if run["runbookState"] != run["ledgerState"]:
+            blockers.add("runbook-ledger-state-mismatch")
         for disagreement in run["disagreements"]:
             if (
                 not isinstance(disagreement, dict)
                 or set(disagreement)
                 != {"surface", "evidenceClass", "classification", "resolution"}
-                or not isinstance(disagreement.get("surface"), str)
+                or disagreement.get("surface") not in RUNTIME_SURFACES
                 or disagreement.get("evidenceClass") not in EVIDENCE_CLASSES
                 or disagreement.get("classification") not in SHADOW_CLASSIFICATIONS
                 or not isinstance(disagreement.get("resolution"), str)
-                or not disagreement["resolution"].strip()
-                or len(disagreement["resolution"]) > 500
+                or PUBLIC_TOKEN_PATTERN.fullmatch(disagreement["resolution"]) is None
             ):
                 raise ReleaseEvidenceError("shadow disagreement is invalid")
             disagreements.append(
@@ -729,12 +842,19 @@ def _shadow_state(
                     "resolution": disagreement["resolution"].strip(),
                 }
             )
+            if disagreement["classification"] in {"unresolved", "runbook-correct"}:
+                blockers.add("shadow-disagreement-not-ledger-safe")
     run_count = len(run_identities)
+    qualified_count = run_count if not blockers else 0
+    if run_count < required_count:
+        blockers.add("insufficient-shadow-trains")
     return {
-        "state": "passed" if run_count >= required_count else "pending",
+        "state": "passed" if not blockers else "pending",
         "requiredTrainCount": required_count,
         "observedTrainCount": run_count,
+        "qualifiedTrainCount": qualified_count,
         "disagreements": disagreements,
+        "blockers": sorted(blockers),
     }
 
 
@@ -756,36 +876,54 @@ def evaluate_release_evidence(
         raise ReleaseEvidenceError("release evidence train or mode is invalid")
     policy = _validate_policy(policy)
     surface_comparison = _validate_comparison(comparison, train)
+    policy_digest = _hash_payload(policy)
+    comparison_digest = _hash_payload(comparison)
     current_manifest_id = str(comparison["currentManifestId"])
     target = _validate_report(validation_report, current_manifest_id)
     validation_report_digest = _hash_payload(validation_report)
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    identity_by_surface = {item.surface: item for item in identities}
-    if not identity_by_surface or any(item.manifest_id != current_manifest_id for item in identities):
-        raise ReleaseEvidenceError("expected signed-build identity does not match the comparison")
     required_surfaces = comparison["requiredSurfaces"]
     required_scope = {
         surface
         for evidence_class in EVIDENCE_CLASSES
         for surface in required_surfaces[evidence_class]
     }
-    if any(surface not in identity_by_surface for surface in required_scope):
+    if not required_scope:
+        raise ReleaseEvidenceError("release evidence requires a non-empty authoritative scope")
+    identity_by_surface = {item.surface: item for item in identities}
+    if not identity_by_surface or any(
+        item.manifest_id != current_manifest_id
+        or item.marketing_version != target.version
+        or item.build_number != target.build_number
+        for item in identities
+    ):
+        raise ReleaseEvidenceError("expected signed-build identity does not match the comparison")
+    if set(identity_by_surface) != required_scope:
         raise ReleaseEvidenceError("expected signed-build manifests do not cover the comparison")
+    contract_fingerprints = {item.contract_fingerprint for item in identities}
+    if len(contract_fingerprints) != 1:
+        raise ReleaseEvidenceError("expected signed-build identities do not share one contract")
+    expected_identity_digest = _expected_identity_digest(identities)
 
     previous_surfaces: dict[str, dict[str, Any]] = {}
     previous_expires_at: datetime | None = None
     if previous_ledger is not None:
+        if previous_ledger.get("policyDigest") != policy_digest:
+            raise ReleaseEvidenceError("previous release evidence policy does not match")
         previous_surfaces = _validate_ledger(
             previous_ledger,
             expected_manifest_id=str(comparison["previousManifestId"]),
             now=now,
             label="previous release evidence",
             maximum_age_days=policy["maximumEvidenceAgeDays"],
+            required_shadow_train_count=policy["requiredShadowTrainCount"],
         )
         previous_expires_at = parse_iso8601(previous_ledger.get("expiresAt"))
     selected_rc_surfaces: dict[str, dict[str, Any]] = {}
     selected_rc_expires_at: datetime | None = None
     if selected_rc_ledger is not None:
+        if selected_rc_ledger.get("policyDigest") != policy_digest:
+            raise ReleaseEvidenceError("selected RC evidence policy does not match")
         selected_rc_target = _target(selected_rc_ledger.get("target"), "selected RC evidence")
         if selected_rc_target != target:
             raise ReleaseEvidenceError("selected RC target does not match the release target")
@@ -795,11 +933,17 @@ def evaluate_release_evidence(
             now=now,
             label="selected RC evidence",
             maximum_age_days=policy["maximumEvidenceAgeDays"],
+            required_shadow_train_count=policy["requiredShadowTrainCount"],
         )
         selected_rc_expires_at = parse_iso8601(selected_rc_ledger.get("expiresAt"))
         if (
             selected_rc_ledger.get("train") != "rc"
             or selected_rc_ledger.get("mode") != "enforce"
+            or selected_rc_ledger.get("contractFingerprint")
+            != next(iter(contract_fingerprints))
+            or selected_rc_ledger.get("expectedBuildIdentityDigest")
+            != expected_identity_digest
+            or selected_rc_ledger.get("requiredEvidence") != required_surfaces
             or not isinstance(selected_rc_ledger.get("shadow"), dict)
             or selected_rc_ledger["shadow"].get("state") != "passed"
         ):
@@ -853,6 +997,7 @@ def evaluate_release_evidence(
             carry_rule = comparison_surface.get("carryForward", {}).get(evidence_class)
             if (
                 evidence is None
+                and not selected_rc_surfaces
                 and isinstance(carry_rule, dict)
                 and carry_rule.get("eligible") is True
             ):
@@ -866,6 +1011,11 @@ def evaluate_release_evidence(
                     patch_sensitive=patch_sensitive,
                     source="carry-forward",
                     require_current_runtime=True,
+                    expected_identity_digest=(
+                        identity.identity_digest()
+                        if evidence_class == "actual-runtime"
+                        else None
+                    ),
                 )
             if evidence is None:
                 blockers.append(f"{surface}:{evidence_class}:missing")
@@ -875,7 +1025,11 @@ def evaluate_release_evidence(
                     "fingerprint": fingerprint,
                     "observedAt": None,
                     "decisionIDs": [],
-                    "hostOS": current_host_os.get(surface),
+                    "hostOS": (
+                        current_host_os[surface]["hostOS"]
+                        if surface in current_host_os
+                        else None
+                    ),
                     "runtimeReceiptIDs": [],
                 }
             evidence_output[evidence_class] = evidence
@@ -921,6 +1075,9 @@ def evaluate_release_evidence(
         "previousManifestID": comparison["previousManifestId"],
         "currentManifestID": current_manifest_id,
         "contractFingerprint": identities[0].contract_fingerprint,
+        "comparisonDigest": comparison_digest,
+        "policyDigest": policy_digest,
+        "expectedBuildIdentityDigest": expected_identity_digest,
         "validationReportDigest": validation_report_digest,
         "generatedAt": iso8601(now),
         "expiresAt": iso8601(expires_at),
@@ -928,11 +1085,7 @@ def evaluate_release_evidence(
         "surfaces": output_surfaces,
         "shadow": shadow,
         "blockers": sorted(blockers),
-        "privacy": (
-            "Contains public surface/build fingerprints, bounded host OS versions, "
-            "decision and receipt digests, and no device identifiers, account data, "
-            "credentials, private paths, raw artifacts, or App Store Connect object IDs."
-        ),
+        "privacy": PRIVACY_MARKER,
     }
     payload["ledgerID"] = _ledger_id(payload)
     return payload
@@ -945,7 +1098,10 @@ def release_evidence_report_blockers(
     build_number: str,
     train: str,
     enforce: bool,
-    validation_report_digest: str | None = None,
+    validation_report: dict[str, Any] | None = None,
+    comparison: dict[str, Any] | None = None,
+    identities: tuple[ExpectedSurfaceIdentity, ...] = (),
+    policy: dict[str, Any] | None = None,
     now: datetime | None = None,
 ) -> list[str]:
     if not isinstance(payload, dict):
@@ -957,13 +1113,114 @@ def release_evidence_report_blockers(
         if enforce
         else frozenset({"approved", "shadow-approved"})
     )
+    validated_policy: dict[str, Any] | None = None
+    authoritative_required: dict[str, list[str]] | None = None
+    authoritative_scope: set[str] = set()
+    try:
+        if policy is None:
+            raise ReleaseEvidenceError("configured release evidence policy is required")
+        validated_policy = _validate_policy(policy)
+    except ReleaseEvidenceError as error:
+        blockers.append(str(error))
+    try:
+        if comparison is None:
+            raise ReleaseEvidenceError("authoritative surface comparison is required")
+        _validate_comparison(comparison, train)
+        authoritative_required = comparison["requiredSurfaces"]
+        authoritative_scope = {
+            surface
+            for evidence_class in EVIDENCE_CLASSES
+            for surface in authoritative_required[evidence_class]
+        }
+        if payload.get("requiredEvidence") != authoritative_required:
+            blockers.append("release evidence required scope does not match the comparison")
+        if payload.get("comparisonDigest") != _hash_payload(comparison):
+            blockers.append("release evidence comparison binding is invalid")
+        if payload.get("currentManifestID") != comparison.get("currentManifestId"):
+            blockers.append("release evidence manifest does not match the comparison")
+    except (KeyError, ReleaseEvidenceError) as error:
+        blockers.append(str(error))
+    identity_by_surface = {identity.surface: identity for identity in identities}
+    if set(identity_by_surface) != authoritative_scope:
+        blockers.append("expected signed-build manifests do not cover the authoritative scope")
+    elif identities:
+        expected_target = Target(version, build_number)
+        manifest_ids = {identity.manifest_id for identity in identities}
+        contract_fingerprints = {identity.contract_fingerprint for identity in identities}
+        if (
+            any(
+                identity.marketing_version != expected_target.version
+                or identity.build_number != expected_target.build_number
+                for identity in identities
+            )
+            or len(manifest_ids) != 1
+            or len(contract_fingerprints) != 1
+            or payload.get("currentManifestID") not in manifest_ids
+            or payload.get("contractFingerprint") not in contract_fingerprints
+            or payload.get("expectedBuildIdentityDigest")
+            != _expected_identity_digest(identities)
+        ):
+            blockers.append("release evidence expected-build binding is invalid")
+        surfaces = payload.get("surfaces")
+        surface_payloads = {
+            item.get("surface"): item
+            for item in surfaces
+            if isinstance(item, dict) and isinstance(item.get("surface"), str)
+        } if isinstance(surfaces, list) else {}
+        for surface, identity in identity_by_surface.items():
+            item = surface_payloads.get(surface)
+            if not isinstance(item, dict) or item.get("identityDigest") != identity.identity_digest():
+                blockers.append(f"{surface}:expected-build-identity:mismatch")
+                continue
+            evidence_payload = item.get("evidence")
+            if not isinstance(evidence_payload, dict):
+                blockers.append(f"{surface}:evidence:missing")
+                continue
+            for evidence_class in EVIDENCE_CLASSES:
+                if (
+                    authoritative_required is None
+                    or surface not in authoritative_required[evidence_class]
+                ):
+                    continue
+                evidence = evidence_payload.get(evidence_class)
+                if (
+                    not isinstance(evidence, dict)
+                    or evidence.get("fingerprint")
+                    != _identity_fingerprint(identity, evidence_class)
+                ):
+                    blockers.append(f"{surface}:{evidence_class}:fingerprint-mismatch")
+    if validated_policy is not None:
+        if payload.get("policyDigest") != _hash_payload(validated_policy):
+            blockers.append("release evidence policy binding is invalid")
+        maximum_age_days = validated_policy["maximumEvidenceAgeDays"]
+    else:
+        maximum_age_days = 1
+    if validation_report is None:
+        blockers.append("exact validation report is required for release evidence binding")
+    else:
+        try:
+            report_target = _validate_report(
+                validation_report,
+                str(payload.get("currentManifestID") or ""),
+            )
+            if report_target != Target(version, build_number):
+                blockers.append("release evidence validation report targets another build")
+            if payload.get("validationReportDigest") != _hash_payload(validation_report):
+                blockers.append("release evidence does not match the exact validation report")
+        except ReleaseEvidenceError as error:
+            blockers.append(str(error))
     try:
         _validate_ledger(
             payload,
             expected_manifest_id=None,
             now=observed_now,
             label="release evidence report",
-            maximum_age_days=90,
+            maximum_age_days=maximum_age_days,
+            required_shadow_train_count=(
+                validated_policy["requiredShadowTrainCount"]
+                if validated_policy is not None
+                else 2
+            ),
             allowed_states=allowed_states,
         )
     except ReleaseEvidenceError as error:
@@ -984,12 +1241,9 @@ def release_evidence_report_blockers(
         or payload.get("ledgerID") != _ledger_id(payload)
     ):
         blockers.append("release evidence ledger identity is invalid")
-    if validation_report_digest is not None:
-        if not _is_sha256(validation_report_digest):
-            blockers.append("validation report digest is invalid")
-        elif payload.get("validationReportDigest") != validation_report_digest:
-            blockers.append("release evidence does not match the exact validation report")
     if enforce:
+        if not authoritative_scope:
+            blockers.append("enforced release evidence requires a non-empty authoritative scope")
         if payload.get("mode") != "enforce":
             blockers.append("release evidence mode must be enforce")
         if payload.get("state") != "approved":
