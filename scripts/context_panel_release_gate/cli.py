@@ -6,7 +6,10 @@ import json
 from pathlib import Path
 import sys
 
-from context_panel_validation.runtime_evidence import load_expected_surface_identities
+from context_panel_validation.runtime_evidence import (
+    RUNTIME_SURFACES,
+    load_expected_surface_identities,
+)
 
 from .core import ReleaseEvidenceError, evaluate_release_evidence, load_json_object
 
@@ -57,21 +60,10 @@ def run(argv: list[str] | None = None) -> int:
     required = comparison.get("requiredSurfaces")
     if not isinstance(required, dict):
         raise ReleaseEvidenceError("surface comparison requirements are invalid")
-    required_scope = tuple(
-        sorted(
-            {
-                surface
-                for surfaces in required.values()
-                if isinstance(surfaces, list)
-                for surface in surfaces
-                if isinstance(surface, str)
-            }
-        )
-    )
     identities = load_expected_surface_identities(
         arguments.expected_build_manifests,
         target,
-        required_scope,
+        tuple(RUNTIME_SURFACES),
     )
     now = None
     if arguments.now:

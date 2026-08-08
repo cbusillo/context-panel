@@ -1284,6 +1284,7 @@ def build_final_report_payload(report: ValidationReport) -> dict[str, Any]:
                 "expectedBuildID": surface.get("expectedBuildID"),
                 "identityDigest": surface.get("identityDigest"),
                 "runtimeFingerprint": surface.get("runtimeFingerprint"),
+                "observedAt": surface.get("lastObservedAt"),
                 "receiptIDs": list(surface.get("receiptIDs") or []),
             }
             for surface in runtime["surfaces"]

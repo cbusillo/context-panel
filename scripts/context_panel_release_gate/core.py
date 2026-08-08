@@ -324,7 +324,9 @@ def _validate_evidence_record(
     elif host_os is not None:
         raise ReleaseEvidenceError(f"{label} contains invalid evidence")
     if evidence_class == "actual-runtime" and (
-        evidence["decisionIDs"] or not evidence["runtimeReceiptIDs"]
+        evidence["decisionIDs"]
+        or not evidence["runtimeReceiptIDs"]
+        or parse_iso8601(observed_at) is None
     ):
         raise ReleaseEvidenceError(f"{label} contains invalid evidence")
     if evidence_class == "shared-view" and (
@@ -342,10 +344,32 @@ def _validate_evidence_record(
     }
 
 
-def _current_runtime(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def _current_runtime(
+    report: dict[str, Any],
+    identities: dict[str, ExpectedSurfaceIdentity],
+    *,
+    now: datetime,
+    maximum_age_days: int,
+) -> dict[str, dict[str, Any]]:
     surfaces: dict[str, dict[str, Any]] = {}
     for item in report.get("runtimeSurfaces") or []:
-        if isinstance(item, dict) and item.get("state") == "proven" and isinstance(item.get("surface"), str):
+        if not isinstance(item, dict) or not isinstance(item.get("surface"), str):
+            continue
+        identity = identities.get(item["surface"])
+        observed_at = parse_iso8601(item.get("observedAt"))
+        if (
+            identity is not None
+            and item.get("state") == "proven"
+            and item.get("manifestID") == identity.manifest_id
+            and item.get("expectedBuildID") == identity.expected_build_id
+            and item.get("identityDigest") == identity.identity_digest()
+            and item.get("runtimeFingerprint") == identity.runtime_fingerprint
+            and isinstance(item.get("receiptIDs"), list)
+            and item["receiptIDs"]
+            and all(_is_sha256(receipt_id) for receipt_id in item["receiptIDs"])
+            and observed_at is not None
+            and now - timedelta(days=maximum_age_days) <= observed_at <= now
+        ):
             surfaces[item["surface"]] = item
     return surfaces
 
@@ -386,7 +410,7 @@ def _fresh_evidence(
             "state": "proven",
             "source": "fresh",
             "fingerprint": fingerprint,
-            "observedAt": None,
+            "observedAt": runtime["observedAt"],
             "decisionIDs": [],
             "hostOS": None,
             "runtimeReceiptIDs": sorted(runtime["receiptIDs"]),
@@ -446,6 +470,8 @@ def _fresh_evidence(
         ):
             return None
         host_os = str(next(iter(host_os_values)))
+        if HOST_OS_PATTERN.fullmatch(host_os) is None:
+            return None
     else:
         host_os = None
     return {
@@ -778,7 +804,7 @@ def _shadow_state(
         raise ReleaseEvidenceError("shadow comparison evidence is invalid")
     disagreements: list[dict[str, Any]] = []
     blockers: set[str] = set()
-    run_identities: set[tuple[str, str, str, str]] = set()
+    run_identities: dict[tuple[str, str, str], tuple[str, str]] = {}
     for run in payload["runs"]:
         if (
             not isinstance(run, dict)
@@ -815,11 +841,13 @@ def _shadow_state(
             run["train"],
             run_target.version,
             run_target.build_number,
-            run["expectedBuildIdentityDigest"],
         )
         if run_identity in run_identities:
             raise ReleaseEvidenceError("shadow comparison duplicates a signed train")
-        run_identities.add(run_identity)
+        run_identities[run_identity] = (
+            run["manifestID"],
+            run["expectedBuildIdentityDigest"],
+        )
         if run["runbookState"] != run["ledgerState"]:
             blockers.add("runbook-ledger-state-mismatch")
         for disagreement in run["disagreements"]:
@@ -890,6 +918,8 @@ def evaluate_release_evidence(
     }
     if not required_scope:
         raise ReleaseEvidenceError("release evidence requires a non-empty authoritative scope")
+    if set(surface_comparison) != set(RUNTIME_SURFACES):
+        raise ReleaseEvidenceError("surface comparison does not cover every shipping surface")
     identity_by_surface = {item.surface: item for item in identities}
     if not identity_by_surface or any(
         item.manifest_id != current_manifest_id
@@ -898,8 +928,8 @@ def evaluate_release_evidence(
         for item in identities
     ):
         raise ReleaseEvidenceError("expected signed-build identity does not match the comparison")
-    if set(identity_by_surface) != required_scope:
-        raise ReleaseEvidenceError("expected signed-build manifests do not cover the comparison")
+    if set(identity_by_surface) != set(RUNTIME_SURFACES):
+        raise ReleaseEvidenceError("expected signed-build manifests do not cover every shipping surface")
     contract_fingerprints = {item.contract_fingerprint for item in identities}
     if len(contract_fingerprints) != 1:
         raise ReleaseEvidenceError("expected signed-build identities do not share one contract")
@@ -951,7 +981,12 @@ def evaluate_release_evidence(
     if train == "release" and not selected_rc_surfaces:
         raise ReleaseEvidenceError("release evidence requires the selected exact approved RC")
 
-    runtime_surfaces = _current_runtime(validation_report)
+    runtime_surfaces = _current_runtime(
+        validation_report,
+        identity_by_surface,
+        now=now,
+        maximum_age_days=policy["maximumEvidenceAgeDays"],
+    )
     visual = _current_visual(validation_report)
     current_host_os = _host_os_evidence(
         host_os_evidence,
@@ -1116,6 +1151,7 @@ def release_evidence_report_blockers(
     validated_policy: dict[str, Any] | None = None
     authoritative_required: dict[str, list[str]] | None = None
     authoritative_scope: set[str] = set()
+    comparison_surface_scope: set[str] = set()
     try:
         if policy is None:
             raise ReleaseEvidenceError("configured release evidence policy is required")
@@ -1125,7 +1161,10 @@ def release_evidence_report_blockers(
     try:
         if comparison is None:
             raise ReleaseEvidenceError("authoritative surface comparison is required")
-        _validate_comparison(comparison, train)
+        validated_comparison_surfaces = _validate_comparison(comparison, train)
+        comparison_surface_scope = set(validated_comparison_surfaces)
+        if comparison_surface_scope != set(RUNTIME_SURFACES):
+            blockers.append("surface comparison does not cover every shipping surface")
         authoritative_required = comparison["requiredSurfaces"]
         authoritative_scope = {
             surface
@@ -1141,8 +1180,14 @@ def release_evidence_report_blockers(
     except (KeyError, ReleaseEvidenceError) as error:
         blockers.append(str(error))
     identity_by_surface = {identity.surface: identity for identity in identities}
-    if set(identity_by_surface) != authoritative_scope:
-        blockers.append("expected signed-build manifests do not cover the authoritative scope")
+    surfaces = payload.get("surfaces")
+    surface_payloads = {
+        item.get("surface"): item
+        for item in surfaces
+        if isinstance(item, dict) and isinstance(item.get("surface"), str)
+    } if isinstance(surfaces, list) else {}
+    if set(identity_by_surface) != set(RUNTIME_SURFACES):
+        blockers.append("expected signed-build manifests do not cover every shipping surface")
     elif identities:
         expected_target = Target(version, build_number)
         manifest_ids = {identity.manifest_id for identity in identities}
@@ -1161,13 +1206,8 @@ def release_evidence_report_blockers(
             != _expected_identity_digest(identities)
         ):
             blockers.append("release evidence expected-build binding is invalid")
-        surfaces = payload.get("surfaces")
-        surface_payloads = {
-            item.get("surface"): item
-            for item in surfaces
-            if isinstance(item, dict) and isinstance(item.get("surface"), str)
-        } if isinstance(surfaces, list) else {}
-        for surface, identity in identity_by_surface.items():
+        for surface in sorted(authoritative_scope):
+            identity = identity_by_surface[surface]
             item = surface_payloads.get(surface)
             if not isinstance(item, dict) or item.get("identityDigest") != identity.identity_digest():
                 blockers.append(f"{surface}:expected-build-identity:mismatch")
@@ -1209,6 +1249,57 @@ def release_evidence_report_blockers(
                 blockers.append("release evidence does not match the exact validation report")
         except ReleaseEvidenceError as error:
             blockers.append(str(error))
+        if validated_policy is not None and set(identity_by_surface) == set(RUNTIME_SURFACES):
+            current_runtime = _current_runtime(
+                validation_report,
+                identity_by_surface,
+                now=observed_now,
+                maximum_age_days=maximum_age_days,
+            )
+            current_visual = _current_visual(validation_report)
+            for surface in sorted(authoritative_scope):
+                identity = identity_by_surface[surface]
+                item = surface_payloads.get(surface)
+                evidence_payload = item.get("evidence") if isinstance(item, dict) else None
+                if not isinstance(evidence_payload, dict):
+                    continue
+                for evidence_class in EVIDENCE_CLASSES:
+                    if (
+                        authoritative_required is None
+                        or surface not in authoritative_required[evidence_class]
+                    ):
+                        continue
+                    evidence = evidence_payload.get(evidence_class)
+                    if not isinstance(evidence, dict):
+                        continue
+                    source = evidence.get("source")
+                    if source == "fresh":
+                        expected_fresh = _fresh_evidence(
+                            surface,
+                            evidence_class,
+                            identity,
+                            current_runtime,
+                            current_visual,
+                            observed_now,
+                            maximum_age_days,
+                        )
+                        if expected_fresh is None or evidence != expected_fresh:
+                            blockers.append(
+                                f"{surface}:{evidence_class}:validation-report-lineage-mismatch"
+                            )
+                    elif evidence_class == "actual-runtime" and source == "carry-forward":
+                        blockers.append(
+                            f"{surface}:actual-runtime:carry-forward-without-fresh-receipt"
+                        )
+                    elif evidence_class == "os-composited-placement" and source == "carry-forward":
+                        runtime = current_runtime.get(surface)
+                        current_receipts = set(runtime.get("receiptIDs") or []) if runtime else set()
+                        if not set(evidence.get("runtimeReceiptIDs") or []).issubset(current_receipts):
+                            blockers.append(
+                                f"{surface}:os-composited-placement:current-receipt-mismatch"
+                            )
+                    elif source == "selected-rc" and train != "release":
+                        blockers.append(f"{surface}:{evidence_class}:selected-rc-invalid-train")
     try:
         _validate_ledger(
             payload,

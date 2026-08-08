@@ -25,7 +25,12 @@ from context_panel_release_gate import (
     load_json_object,
     release_evidence_report_blockers,
 )
-from context_panel_validation import RuntimeEvidenceError, Target, load_expected_surface_identities
+from context_panel_validation import (
+    RUNTIME_SURFACES,
+    RuntimeEvidenceError,
+    Target,
+    load_expected_surface_identities,
+)
 
 
 API_BASE = "https://api.appstoreconnect.apple.com/v1"
@@ -1740,21 +1745,10 @@ def validate_release_evidence_report(args: argparse.Namespace) -> None:
         required = comparison.get("requiredSurfaces")
         if not isinstance(required, dict):
             raise ReleaseEvidenceError("surface comparison requirements are invalid")
-        required_scope = tuple(
-            sorted(
-                {
-                    surface
-                    for surfaces in required.values()
-                    if isinstance(surfaces, list)
-                    for surface in surfaces
-                    if isinstance(surface, str)
-                }
-            )
-        )
         identities = load_expected_surface_identities(
             [Path(value) for value in manifest_values],
             Target(args.version, args.build_number),
-            required_scope,
+            tuple(RUNTIME_SURFACES),
         )
     except (ReleaseEvidenceError, RuntimeEvidenceError) as error:
         raise AppStoreConnectError(f"release evidence binding is invalid: {error}") from error

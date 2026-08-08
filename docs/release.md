@@ -795,7 +795,8 @@ scripts/context-panel-release-gate.py shadow \
   --output <release-evidence.json>
 ```
 
-Supply every expected-build manifest needed to cover the comparison. Omit the
+Supply the complete sealed expected-build manifest set for every shipping
+surface; a comparison or manifest set that omits a shipping surface fails closed. Omit the
 previous ledger when no earlier approval exists. Placement carry-forward always
 requires matching placement fingerprint, a current exact-build runtime receipt,
 and compatible current host OS evidence. Major or minor host OS changes fail
@@ -865,8 +866,8 @@ scripts/validate-release-evidence-report.py \
 ```
 
 Add `--enforce` when validating an enforcement ledger. Repeat
-`--expected-build-manifest` until the authoritative required scope is fully
-covered.
+`--expected-build-manifest` until every shipping surface is covered, including
+surfaces that are unchanged and do not require fresh evidence.
 
 For a beta with `requiresRuntimeSession=false`, do not open devices or create a
 runtime-receipt session; automated shared-view evidence is sufficient for that

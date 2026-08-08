@@ -216,7 +216,7 @@ acceptable.
 - After the coordinator final report is available, evaluate the full comparison
   with `scripts/context-panel-release-gate.py shadow`. Do not filter or rewrite
   `requiredSurfaces`. Carry-forward must bind to the previous approved ledger,
-  current expected-build fingerprints, bounded retention, current runtime
+  the complete expected-build manifest set for every shipping surface, bounded retention, current runtime
   receipts, and compatible host OS evidence. Release evidence additionally
   binds the full comparison, configured policy, expected-build identity set,
   and exact coordinator report, and requires the exact selected approved RC.
