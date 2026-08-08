@@ -845,12 +845,15 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("Prepare Release Evidence Report", workflow)
         self.assertIn("--release-evidence-report", script)
         self.assertIn("--release-evidence-mode", script)
+        self.assertIn("--release-evidence-surface-policy", script)
         self.assertIn(
             "release_evidence_report_base64 is required for live shadow or enforce validation",
             workflow,
         )
         self.assertIn("release_evidence_comparison_base64:", workflow)
         self.assertIn("release_evidence_expected_build_manifests_base64:", workflow)
+        self.assertIn("release_evidence_selected_rc_ledger_base64:", workflow)
+        self.assertIn("release_evidence_shadow_evidence_base64:", workflow)
         self.assertIn("release_evidence_mode must be shadow or enforce", workflow)
         self.assertIn("narrow exact-build runtime stop", release_docs)
         self.assertIn("iPhone app/widget, iPad app/widget", release_docs)
@@ -886,6 +889,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             "--comparison",
             "--expected-build-manifest",
             "--policy",
+            "--surface-policy",
             "--version",
             "--build-number",
             "--train",
@@ -897,6 +901,18 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn(
             "--selected-rc-ledger",
             shlex.split(validate["releaseEvidenceReleaseEnforcementGate"]),
+        )
+        self.assertIn(
+            "--selected-rc-ledger",
+            shlex.split(validate["releaseEvidenceReleaseShadowGate"]),
+        )
+        self.assertIn(
+            "--selected-rc-ledger",
+            shlex.split(validate["releaseEvidenceReleaseReportValidation"]),
+        )
+        self.assertIn(
+            "--shadow-evidence",
+            shlex.split(validate["releaseEvidenceEnforcedReportValidation"]),
         )
 
     def test_app_store_review_workflow_supports_review_notes_override(self):

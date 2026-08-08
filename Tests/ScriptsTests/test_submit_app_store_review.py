@@ -164,6 +164,11 @@ class ValidationReportGateTests(unittest.TestCase):
             "release_evidence_comparison": "comparison.json",
             "release_evidence_expected_build_manifests": ["expected.json"],
             "release_evidence_policy": "Config/ContextPanelReleaseEvidencePolicy.json",
+            "release_evidence_surface_policy": "Config/ContextPanelSurfacePolicy.json",
+            "release_evidence_previous_ledger": None,
+            "release_evidence_selected_rc_ledger": None,
+            "release_evidence_host_os_evidence": None,
+            "release_evidence_shadow_evidence": None,
         }
         values.update(overrides)
         return SimpleNamespace(**values)

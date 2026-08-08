@@ -20,6 +20,11 @@ from context_panel_validation import (
 
 
 DEFAULT_POLICY = Path("Config/ContextPanelReleaseEvidencePolicy.json")
+DEFAULT_SURFACE_POLICY = Path("Config/ContextPanelSurfacePolicy.json")
+
+
+def optional_payload(path: Path | None, label: str):
+    return load_json_object(path, label) if path is not None else None
 
 
 def main() -> None:
@@ -41,6 +46,11 @@ def main() -> None:
         required=True,
     )
     parser.add_argument("--policy", type=Path, default=DEFAULT_POLICY)
+    parser.add_argument("--surface-policy", type=Path, default=DEFAULT_SURFACE_POLICY)
+    parser.add_argument("--previous-ledger", type=Path)
+    parser.add_argument("--selected-rc-ledger", type=Path)
+    parser.add_argument("--host-os-evidence", type=Path)
+    parser.add_argument("--shadow-evidence", type=Path)
     arguments = parser.parse_args()
     try:
         payload = json.loads(arguments.report.read_text())
@@ -50,6 +60,10 @@ def main() -> None:
         validation_payload = load_json_object(arguments.validation_report, "validation report")
         comparison = load_json_object(arguments.comparison, "surface comparison")
         policy = load_json_object(arguments.policy, "release evidence policy")
+        surface_policy = load_json_object(
+            arguments.surface_policy,
+            "surface evidence policy",
+        )
         required = comparison.get("requiredSurfaces")
         if not isinstance(required, dict):
             raise ReleaseEvidenceError("surface comparison requirements are invalid")
@@ -70,6 +84,14 @@ def main() -> None:
         comparison=comparison,
         identities=identities,
         policy=policy,
+        surface_policy=surface_policy,
+        previous_ledger=optional_payload(arguments.previous_ledger, "previous ledger"),
+        selected_rc_ledger=optional_payload(
+            arguments.selected_rc_ledger,
+            "selected RC ledger",
+        ),
+        host_os_evidence=optional_payload(arguments.host_os_evidence, "host OS evidence"),
+        shadow_evidence=optional_payload(arguments.shadow_evidence, "shadow evidence"),
     )
     if blockers:
         details = "\n".join(f"- {blocker}" for blocker in blockers)

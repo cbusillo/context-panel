@@ -38,6 +38,7 @@ DEFAULT_BUNDLE_ID = "com.shinycomputers.contextpanel"
 DEFAULT_COPYRIGHT = "2026 Shiny Computers Leasing LLC"
 DEFAULT_RELEASE_TYPE = "AFTER_APPROVAL"
 DEFAULT_RELEASE_EVIDENCE_POLICY = "Config/ContextPanelReleaseEvidencePolicy.json"
+DEFAULT_SURFACE_EVIDENCE_POLICY = "Config/ContextPanelSurfacePolicy.json"
 LOCKED_VERSION_STATES = {
     "WAITING_FOR_REVIEW",
     "IN_REVIEW",
@@ -1712,12 +1713,14 @@ def validate_release_evidence_report(args: argparse.Namespace) -> None:
     comparison_value = getattr(args, "release_evidence_comparison", None)
     manifest_values = getattr(args, "release_evidence_expected_build_manifests", None)
     policy_value = getattr(args, "release_evidence_policy", None)
+    surface_policy_value = getattr(args, "release_evidence_surface_policy", None)
     if (
         not release_report_value
         or not validation_report_value
         or not comparison_value
         or not manifest_values
         or not policy_value
+        or not surface_policy_value
     ):
         raise AppStoreConnectError(
             "release evidence requires its report, exact validation report, comparison, "
@@ -1742,6 +1745,10 @@ def validate_release_evidence_report(args: argparse.Namespace) -> None:
     try:
         comparison = load_json_object(Path(comparison_value), "surface comparison")
         policy = load_json_object(Path(policy_value), "release evidence policy")
+        surface_policy = load_json_object(
+            Path(surface_policy_value),
+            "surface evidence policy",
+        )
         required = comparison.get("requiredSurfaces")
         if not isinstance(required, dict):
             raise ReleaseEvidenceError("surface comparison requirements are invalid")
@@ -1749,6 +1756,38 @@ def validate_release_evidence_report(args: argparse.Namespace) -> None:
             [Path(value) for value in manifest_values],
             Target(args.version, args.build_number),
             tuple(RUNTIME_SURFACES),
+        )
+        previous_ledger = (
+            load_json_object(
+                Path(args.release_evidence_previous_ledger),
+                "previous release evidence ledger",
+            )
+            if getattr(args, "release_evidence_previous_ledger", None)
+            else None
+        )
+        selected_rc_ledger = (
+            load_json_object(
+                Path(args.release_evidence_selected_rc_ledger),
+                "selected RC release evidence ledger",
+            )
+            if getattr(args, "release_evidence_selected_rc_ledger", None)
+            else None
+        )
+        host_os_evidence = (
+            load_json_object(
+                Path(args.release_evidence_host_os_evidence),
+                "host OS evidence",
+            )
+            if getattr(args, "release_evidence_host_os_evidence", None)
+            else None
+        )
+        shadow_evidence = (
+            load_json_object(
+                Path(args.release_evidence_shadow_evidence),
+                "shadow evidence",
+            )
+            if getattr(args, "release_evidence_shadow_evidence", None)
+            else None
         )
     except (ReleaseEvidenceError, RuntimeEvidenceError) as error:
         raise AppStoreConnectError(f"release evidence binding is invalid: {error}") from error
@@ -1762,6 +1801,11 @@ def validate_release_evidence_report(args: argparse.Namespace) -> None:
         comparison=comparison,
         identities=identities,
         policy=policy,
+        surface_policy=surface_policy,
+        previous_ledger=previous_ledger,
+        selected_rc_ledger=selected_rc_ledger,
+        host_os_evidence=host_os_evidence,
+        shadow_evidence=shadow_evidence,
     )
     if blockers:
         details = "\n".join(f"- {blocker}" for blocker in blockers)
@@ -1852,6 +1896,14 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_RELEASE_EVIDENCE_POLICY,
     )
     parser.add_argument(
+        "--release-evidence-surface-policy",
+        default=DEFAULT_SURFACE_EVIDENCE_POLICY,
+    )
+    parser.add_argument("--release-evidence-previous-ledger")
+    parser.add_argument("--release-evidence-selected-rc-ledger")
+    parser.add_argument("--release-evidence-host-os-evidence")
+    parser.add_argument("--release-evidence-shadow-evidence")
+    parser.add_argument(
         "--validate-report-only",
         action="store_true",
         help="Validate exact-build evidence and exit without using App Store Connect credentials",
@@ -1925,6 +1977,22 @@ def validate_args(args: argparse.Namespace) -> None:
         raise AppStoreConnectError(
             "--release-evidence-report requires --release-evidence-comparison and "
             "--release-evidence-expected-build-manifest"
+        )
+    if (
+        release_evidence_report
+        and validation_train == "release"
+        and not getattr(args, "release_evidence_selected_rc_ledger", None)
+    ):
+        raise AppStoreConnectError(
+            "release-train evidence requires --release-evidence-selected-rc-ledger"
+        )
+    if (
+        release_evidence_report
+        and release_evidence_mode == "enforce"
+        and not getattr(args, "release_evidence_shadow_evidence", None)
+    ):
+        raise AppStoreConnectError(
+            "enforced release evidence requires --release-evidence-shadow-evidence"
         )
     if validation_report_required(args):
         if not release_evidence_report:

@@ -15,6 +15,7 @@ from .core import ReleaseEvidenceError, evaluate_release_evidence, load_json_obj
 
 
 DEFAULT_POLICY = Path("Config/ContextPanelReleaseEvidencePolicy.json")
+DEFAULT_SURFACE_POLICY = Path("Config/ContextPanelSurfacePolicy.json")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -33,6 +34,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         required=True,
     )
     parser.add_argument("--policy", type=Path, default=DEFAULT_POLICY)
+    parser.add_argument("--surface-policy", type=Path, default=DEFAULT_SURFACE_POLICY)
     parser.add_argument("--previous-ledger", type=Path)
     parser.add_argument("--selected-rc-ledger", type=Path)
     parser.add_argument("--host-os-evidence", type=Path)
@@ -51,6 +53,7 @@ def run(argv: list[str] | None = None) -> int:
     comparison = load_json_object(arguments.comparison, "surface comparison")
     report = load_json_object(arguments.validation_report, "validation report")
     policy = load_json_object(arguments.policy, "release evidence policy")
+    surface_policy = load_json_object(arguments.surface_policy, "surface evidence policy")
     target_payload = report.get("target")
     if not isinstance(target_payload, dict):
         raise ReleaseEvidenceError("validation report target is invalid")
@@ -76,6 +79,7 @@ def run(argv: list[str] | None = None) -> int:
         validation_report=report,
         identities=identities,
         policy=policy,
+        surface_policy=surface_policy,
         previous_ledger=_optional_payload(arguments.previous_ledger, "previous ledger"),
         selected_rc_ledger=_optional_payload(arguments.selected_rc_ledger, "selected RC ledger"),
         host_os_evidence=_optional_payload(arguments.host_os_evidence, "host OS evidence"),

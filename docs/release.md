@@ -810,8 +810,10 @@ expired, unrelated-build, or unrelated-receipt observations fail closed.
 
 Shadow evidence must describe distinct signed trains. Each run records its
 train, exact version/build target, source manifest, expected-build identity-set
-and ledger digests, observation time, the old-runbook and ledger outcomes, and
-any bounded disagreement records.
+and ledger digests, embeds the privacy-safe ledger when the ledger outcome is
+approved, records observation time and the old-runbook/ledger outcomes, and
+includes any bounded disagreement records. A ledger ID cannot be reused across
+targets.
 Duplicate train identities, stale observations, unknown disagreement
 classifications, unresolved records, and arbitrary extra fields fail closed.
 The accepted disagreement classifications are `ledger-correct`,
@@ -860,6 +862,7 @@ scripts/validate-release-evidence-report.py \
   --comparison <comparison.json> \
   --expected-build-manifest <ExpectedBuildManifest-platform.json> \
   --policy Config/ContextPanelReleaseEvidencePolicy.json \
+  --surface-policy Config/ContextPanelSurfacePolicy.json \
   --version <version> \
   --build-number <build-number> \
   --train <beta|rc|release>
@@ -867,7 +870,12 @@ scripts/validate-release-evidence-report.py \
 
 Add `--enforce` when validating an enforcement ledger. Repeat
 `--expected-build-manifest` until every shipping surface is covered, including
-surfaces that are unchanged and do not require fresh evidence.
+surfaces that are unchanged and do not require fresh evidence. Supply the same
+optional lineage artifacts used to generate the ledger with
+`--previous-ledger`, `--selected-rc-ledger`, `--host-os-evidence`, and
+`--shadow-evidence`. Final validation reconstructs the complete ledger at its
+original `generatedAt`; relabeling evidence sources or omitting the selected RC
+therefore fails even when all public digests are recomputed.
 
 For a beta with `requiresRuntimeSession=false`, do not open devices or create a
 runtime-receipt session; automated shared-view evidence is sufficient for that

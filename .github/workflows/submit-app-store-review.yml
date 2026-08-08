@@ -96,6 +96,22 @@ name: Submit App Store Review
         description: Base64 JSON array of sealed ExpectedBuildManifest objects.
         required: false
         type: string
+      release_evidence_previous_ledger_base64:
+        description: Base64 prior approved release-evidence ledger when carry-forward is used.
+        required: false
+        type: string
+      release_evidence_selected_rc_ledger_base64:
+        description: Base64 exact approved RC ledger for release validation.
+        required: false
+        type: string
+      release_evidence_host_os_evidence_base64:
+        description: Base64 bounded host-OS evidence used by placement carry-forward.
+        required: false
+        type: string
+      release_evidence_shadow_evidence_base64:
+        description: Base64 signed shadow-train comparison evidence.
+        required: false
+        type: string
   workflow_dispatch:
     inputs:
       version:
@@ -207,6 +223,22 @@ name: Submit App Store Review
         description: Base64 JSON array of sealed ExpectedBuildManifest objects.
         required: false
         type: string
+      release_evidence_previous_ledger_base64:
+        description: Base64 prior approved release-evidence ledger when carry-forward is used.
+        required: false
+        type: string
+      release_evidence_selected_rc_ledger_base64:
+        description: Base64 exact approved RC ledger for release validation.
+        required: false
+        type: string
+      release_evidence_host_os_evidence_base64:
+        description: Base64 bounded host-OS evidence used by placement carry-forward.
+        required: false
+        type: string
+      release_evidence_shadow_evidence_base64:
+        description: Base64 signed shadow-train comparison evidence.
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -258,6 +290,14 @@ jobs:
             ${{ inputs.release_evidence_comparison_base64 }}
           INPUT_RELEASE_EVIDENCE_EXPECTED_BUILD_MANIFESTS_BASE64: >-
             ${{ inputs.release_evidence_expected_build_manifests_base64 }}
+          INPUT_RELEASE_EVIDENCE_PREVIOUS_LEDGER_BASE64: >-
+            ${{ inputs.release_evidence_previous_ledger_base64 }}
+          INPUT_RELEASE_EVIDENCE_SELECTED_RC_LEDGER_BASE64: >-
+            ${{ inputs.release_evidence_selected_rc_ledger_base64 }}
+          INPUT_RELEASE_EVIDENCE_HOST_OS_EVIDENCE_BASE64: >-
+            ${{ inputs.release_evidence_host_os_evidence_base64 }}
+          INPUT_RELEASE_EVIDENCE_SHADOW_EVIDENCE_BASE64: >-
+            ${{ inputs.release_evidence_shadow_evidence_base64 }}
         run: |
           set -euo pipefail
           if [[ -z "${INPUT_RELEASE_EVIDENCE_COMPARISON_BASE64}" || \
@@ -292,6 +332,22 @@ jobs:
                   json.dumps(manifest, indent=2, sort_keys=True) + "\n"
               )
           PY
+          decode_optional_json() {
+            local value="$1"
+            local destination="$2"
+            if [[ -n "${value}" ]]; then
+              printf '%s' "${value}" | base64 -D > "${destination}"
+              python3 -m json.tool "${destination}" >/dev/null
+            fi
+          }
+          decode_optional_json "${INPUT_RELEASE_EVIDENCE_PREVIOUS_LEDGER_BASE64}" \
+            .build/release-evidence-previous-ledger.json
+          decode_optional_json "${INPUT_RELEASE_EVIDENCE_SELECTED_RC_LEDGER_BASE64}" \
+            .build/release-evidence-selected-rc-ledger.json
+          decode_optional_json "${INPUT_RELEASE_EVIDENCE_HOST_OS_EVIDENCE_BASE64}" \
+            .build/release-evidence-host-os.json
+          decode_optional_json "${INPUT_RELEASE_EVIDENCE_SHADOW_EVIDENCE_BASE64}" \
+            .build/release-evidence-shadow.json
 
       - name: Submit Review
         shell: bash
@@ -318,6 +374,14 @@ jobs:
             ${{ inputs.release_evidence_comparison_base64 }}
           INPUT_RELEASE_EVIDENCE_EXPECTED_BUILD_MANIFESTS_BASE64: >-
             ${{ inputs.release_evidence_expected_build_manifests_base64 }}
+          INPUT_RELEASE_EVIDENCE_PREVIOUS_LEDGER_BASE64: >-
+            ${{ inputs.release_evidence_previous_ledger_base64 }}
+          INPUT_RELEASE_EVIDENCE_SELECTED_RC_LEDGER_BASE64: >-
+            ${{ inputs.release_evidence_selected_rc_ledger_base64 }}
+          INPUT_RELEASE_EVIDENCE_HOST_OS_EVIDENCE_BASE64: >-
+            ${{ inputs.release_evidence_host_os_evidence_base64 }}
+          INPUT_RELEASE_EVIDENCE_SHADOW_EVIDENCE_BASE64: >-
+            ${{ inputs.release_evidence_shadow_evidence_base64 }}
         run: |
           set -euo pipefail
           args=(
@@ -405,11 +469,28 @@ jobs:
               --release-evidence-report .build/release-evidence-report.json
               --release-evidence-comparison .build/release-evidence-comparison.json
               --release-evidence-policy Config/ContextPanelReleaseEvidencePolicy.json
+              --release-evidence-surface-policy Config/ContextPanelSurfacePolicy.json
             )
             while IFS= read -r manifest; do
               args+=(--release-evidence-expected-build-manifest "${manifest}")
             done < <(find .build/release-evidence-expected-build-manifests \
               -type f -name '*.json' -print | sort)
+            if [[ -f .build/release-evidence-previous-ledger.json ]]; then
+              args+=(--release-evidence-previous-ledger \
+                .build/release-evidence-previous-ledger.json)
+            fi
+            if [[ -f .build/release-evidence-selected-rc-ledger.json ]]; then
+              args+=(--release-evidence-selected-rc-ledger \
+                .build/release-evidence-selected-rc-ledger.json)
+            fi
+            if [[ -f .build/release-evidence-host-os.json ]]; then
+              args+=(--release-evidence-host-os-evidence \
+                .build/release-evidence-host-os.json)
+            fi
+            if [[ -f .build/release-evidence-shadow.json ]]; then
+              args+=(--release-evidence-shadow-evidence \
+                .build/release-evidence-shadow.json)
+            fi
           elif [[ "${report_required}" == "true" ]]; then
             echo "release_evidence_report_base64 is required for live shadow or enforce validation" >&2
             exit 1

@@ -220,7 +220,10 @@ acceptable.
   receipts, and compatible host OS evidence. Release evidence additionally
   binds the full comparison, configured policy, expected-build identity set,
   and exact coordinator report, and requires the exact selected approved RC.
-  Live submission requires those authoritative inputs even in shadow mode. Keep
+  Final validation must also receive the same previous ledger, selected RC,
+  host-OS evidence, and shadow evidence used during generation so it can
+  reconstruct the ledger. Live submission requires those authoritative inputs
+  even in shadow mode. Keep
   shadow mode and the current
   physical runbook authoritative until two signed shadow trains have resolved
   every disagreement; only then may the submission workflow use `enforce`.

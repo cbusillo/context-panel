@@ -34,6 +34,7 @@ LEDGER_KEYS = {
     "currentManifestID",
     "contractFingerprint",
     "comparisonDigest",
+    "surfacePolicyDigest",
     "policyDigest",
     "expectedBuildIdentityDigest",
     "validationReportDigest",
@@ -170,7 +171,135 @@ def _validate_policy(policy: dict[str, Any]) -> dict[str, Any]:
     return policy
 
 
-def _validate_comparison(comparison: dict[str, Any], train: str) -> dict[str, dict[str, Any]]:
+def _validate_surface_policy(
+    surface_policy: dict[str, Any],
+    *,
+    train: str,
+    comparison_surfaces: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    evidence_policy = surface_policy.get("evidencePolicy")
+    surfaces = surface_policy.get("surfaces")
+    if (
+        surface_policy.get("schemaVersion") != 1
+        or not isinstance(evidence_policy, dict)
+        or not isinstance(surfaces, list)
+        or evidence_policy.get("classes") != list(EVIDENCE_CLASSES)
+    ):
+        raise ReleaseEvidenceError("surface evidence policy is invalid")
+    train_minimums = evidence_policy.get("trainMinimumEvidence")
+    change_requirements = evidence_policy.get("changeRequirements")
+    if (
+        not isinstance(train_minimums, dict)
+        or set(train_minimums) != TRAINS
+        or not isinstance(change_requirements, dict)
+        or set(change_requirements) != {"render", "runtime", "unknown", "placement"}
+        or any(
+            not isinstance(values, list)
+            or any(value not in EVIDENCE_CLASSES for value in values)
+            for values in (*train_minimums.values(), *change_requirements.values())
+        )
+        or evidence_policy.get("releaseRequiresApprovedRCTarget") is not True
+    ):
+        raise ReleaseEvidenceError("surface evidence policy is invalid")
+    capabilities_by_surface: dict[str, set[str]] = {}
+    for item in surfaces:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            raise ReleaseEvidenceError("surface evidence policy is invalid")
+        capabilities = item.get("evidenceCapabilities")
+        if (
+            item["id"] in capabilities_by_surface
+            or item["id"] not in RUNTIME_SURFACES
+            or not isinstance(capabilities, list)
+            or any(value not in EVIDENCE_CLASSES for value in capabilities)
+        ):
+            raise ReleaseEvidenceError("surface evidence policy is invalid")
+        capabilities_by_surface[item["id"]] = set(capabilities)
+    if set(capabilities_by_surface) != set(RUNTIME_SURFACES):
+        raise ReleaseEvidenceError("surface evidence policy is invalid")
+    for surface, comparison_surface in comparison_surfaces.items():
+        capabilities = capabilities_by_surface[surface]
+        changes = comparison_surface.get("changes")
+        reason_codes = comparison_surface.get("reasonCodes")
+        if (
+            not isinstance(changes, dict)
+            or set(changes) != {"render", "runtime", "placement", "contract", "exactBuild"}
+            or any(not isinstance(value, bool) for value in changes.values())
+            or not isinstance(reason_codes, list)
+            or any(not isinstance(value, str) for value in reason_codes)
+        ):
+            raise ReleaseEvidenceError("surface comparison change evidence is invalid")
+        minimum = [
+            value
+            for value in EVIDENCE_CLASSES
+            if value in capabilities and value in train_minimums[train]
+        ]
+        fresh: set[str] = set()
+        if "new-surface" in reason_codes or changes["contract"]:
+            fresh.update(change_requirements["unknown"])
+        else:
+            for change_kind in ("render", "runtime", "placement"):
+                if changes[change_kind]:
+                    fresh.update(change_requirements[change_kind])
+            if (
+                changes["exactBuild"]
+                and "actual-runtime" in capabilities
+                and "actual-runtime" in train_minimums[train]
+            ):
+                fresh.add("actual-runtime")
+        fresh_evidence = [
+            value for value in EVIDENCE_CLASSES if value in capabilities and value in fresh
+        ]
+        required_evidence = [
+            value
+            for value in EVIDENCE_CLASSES
+            if value in capabilities and value in {*minimum, *fresh_evidence}
+        ]
+        expected_carry: dict[str, dict[str, Any]] = {}
+        for evidence_class in EVIDENCE_CLASSES:
+            if evidence_class not in capabilities:
+                continue
+            eligible = False
+            conditions: list[str] = []
+            if "new-surface" not in reason_codes:
+                if evidence_class == "shared-view":
+                    eligible = not changes["render"] and not changes["contract"]
+                elif evidence_class == "actual-runtime":
+                    eligible = (
+                        not changes["runtime"]
+                        and not changes["exactBuild"]
+                        and not changes["contract"]
+                    )
+                else:
+                    eligible = not changes["placement"] and not changes["contract"]
+                    if eligible:
+                        conditions = [
+                            "matching-host-os",
+                            "matching-current-runtime-receipt",
+                        ]
+            if evidence_class in fresh_evidence:
+                eligible = False
+                conditions = []
+            expected_carry[evidence_class] = {
+                "eligible": eligible,
+                "conditions": conditions,
+            }
+        if (
+            comparison_surface.get("minimumEvidence") != minimum
+            or comparison_surface.get("freshEvidence") != fresh_evidence
+            or comparison_surface.get("requiredEvidence") != required_evidence
+            or comparison_surface.get("carryForward") != expected_carry
+        ):
+            raise ReleaseEvidenceError(
+                f"surface comparison violates evidence policy for {surface}"
+            )
+    return surface_policy
+
+
+def _validate_comparison(
+    comparison: dict[str, Any],
+    train: str,
+    surface_policy: dict[str, Any] | None = None,
+) -> dict[str, dict[str, Any]]:
     if comparison.get("schemaVersion") != 1 or comparison.get("train") != train:
         raise ReleaseEvidenceError("surface comparison does not match the requested train")
     if not _is_sha256(comparison.get("previousManifestId")) or not _is_sha256(
@@ -178,7 +307,16 @@ def _validate_comparison(comparison: dict[str, Any], train: str) -> dict[str, di
     ):
         raise ReleaseEvidenceError("surface comparison manifest identity is invalid")
     release_requires_rc = comparison.get("releaseRequiresApprovedRCTarget")
-    if not isinstance(release_requires_rc, bool) or (train == "release" and not release_requires_rc):
+    if (
+        not isinstance(release_requires_rc, bool)
+        or (train == "release" and not release_requires_rc)
+        or not isinstance(comparison.get("contractChanged"), bool)
+        or not isinstance(comparison.get("exactBuildSame"), bool)
+        or not isinstance(comparison.get("requiresRuntimeSession"), bool)
+        or not isinstance(comparison.get("requiresPlacementReview"), bool)
+        or not isinstance(comparison.get("removedSurfaces"), list)
+        or any(not isinstance(value, str) for value in comparison["removedSurfaces"])
+    ):
         raise ReleaseEvidenceError("surface comparison release RC requirement is invalid")
     surfaces = comparison.get("surfaces")
     required = comparison.get("requiredSurfaces")
@@ -199,12 +337,19 @@ def _validate_comparison(comparison: dict[str, Any], train: str) -> dict[str, di
         required_evidence = item.get("requiredEvidence")
         if (
             not isinstance(carry_forward, dict)
-            or set(carry_forward) != set(EVIDENCE_CLASSES)
+            or not set(carry_forward).issubset(EVIDENCE_CLASSES)
             or not isinstance(required_evidence, list)
             or any(value not in EVIDENCE_CLASSES for value in required_evidence)
             or len(required_evidence) != len(set(required_evidence))
         ):
             raise ReleaseEvidenceError("surface comparison evidence is invalid")
+        changes = item.get("changes")
+        if (
+            not isinstance(changes, dict)
+            or changes.get("contract") != comparison["contractChanged"]
+            or changes.get("exactBuild") == comparison["exactBuildSame"]
+        ):
+            raise ReleaseEvidenceError("surface comparison changes are inconsistent")
         for evidence_class, carry_rule in carry_forward.items():
             expected_conditions = (
                 ["matching-host-os", "matching-current-runtime-receipt"]
@@ -239,6 +384,18 @@ def _validate_comparison(comparison: dict[str, Any], train: str) -> dict[str, di
         }
         if set(values) != expected:
             raise ReleaseEvidenceError("surface comparison requirements do not match its surfaces")
+    if (
+        comparison["requiresRuntimeSession"] != bool(required["actual-runtime"])
+        or comparison["requiresPlacementReview"]
+        != bool(required["os-composited-placement"])
+    ):
+        raise ReleaseEvidenceError("surface comparison requirement flags are inconsistent")
+    if surface_policy is not None:
+        _validate_surface_policy(
+            surface_policy,
+            train=train,
+            comparison_surfaces=surface_map,
+        )
     return surface_map
 
 
@@ -785,6 +942,8 @@ def _shadow_state(
     *,
     now: datetime,
     maximum_age_days: int,
+    policy_digest: str,
+    surface_policy_digest: str,
 ) -> dict[str, Any]:
     if payload is None:
         return {
@@ -805,6 +964,7 @@ def _shadow_state(
     disagreements: list[dict[str, Any]] = []
     blockers: set[str] = set()
     run_identities: dict[tuple[str, str, str], tuple[str, str]] = {}
+    ledger_ids: set[str] = set()
     for run in payload["runs"]:
         if (
             not isinstance(run, dict)
@@ -819,6 +979,7 @@ def _shadow_state(
                 "runbookState",
                 "ledgerState",
                 "disagreements",
+                "ledger",
             }
             or run.get("train") not in TRAINS
             or not _is_sha256(run.get("manifestID"))
@@ -844,6 +1005,36 @@ def _shadow_state(
         )
         if run_identity in run_identities:
             raise ReleaseEvidenceError("shadow comparison duplicates a signed train")
+        if run["ledgerID"] in ledger_ids:
+            raise ReleaseEvidenceError("shadow comparison reuses a release evidence ledger")
+        ledger_ids.add(run["ledgerID"])
+        embedded_ledger = run.get("ledger")
+        if run["ledgerState"] == "approved":
+            if not isinstance(embedded_ledger, dict):
+                raise ReleaseEvidenceError("shadow comparison ledger is invalid")
+            _validate_ledger(
+                embedded_ledger,
+                expected_manifest_id=run["manifestID"],
+                now=now,
+                label="shadow comparison ledger",
+                maximum_age_days=maximum_age_days,
+                required_shadow_train_count=required_count,
+                allowed_states=frozenset({"approved", "shadow-approved"}),
+            )
+            if (
+                _target(embedded_ledger.get("target"), "shadow comparison ledger")
+                != run_target
+                or embedded_ledger.get("train") != run["train"]
+                or embedded_ledger.get("mode") != "shadow"
+                or embedded_ledger.get("ledgerID") != run["ledgerID"]
+                or embedded_ledger.get("expectedBuildIdentityDigest")
+                != run["expectedBuildIdentityDigest"]
+                or embedded_ledger.get("policyDigest") != policy_digest
+                or embedded_ledger.get("surfacePolicyDigest") != surface_policy_digest
+            ):
+                raise ReleaseEvidenceError("shadow comparison ledger binding is invalid")
+        elif embedded_ledger is not None:
+            raise ReleaseEvidenceError("blocked shadow comparison must not claim an approved ledger")
         run_identities[run_identity] = (
             run["manifestID"],
             run["expectedBuildIdentityDigest"],
@@ -894,6 +1085,7 @@ def evaluate_release_evidence(
     validation_report: dict[str, Any],
     identities: tuple[ExpectedSurfaceIdentity, ...],
     policy: dict[str, Any],
+    surface_policy: dict[str, Any],
     previous_ledger: dict[str, Any] | None = None,
     selected_rc_ledger: dict[str, Any] | None = None,
     host_os_evidence: dict[str, Any] | None = None,
@@ -903,8 +1095,14 @@ def evaluate_release_evidence(
     if train not in TRAINS or mode not in MODES:
         raise ReleaseEvidenceError("release evidence train or mode is invalid")
     policy = _validate_policy(policy)
-    surface_comparison = _validate_comparison(comparison, train)
+    surface_comparison = _validate_comparison(comparison, train, surface_policy)
+    _validate_surface_policy(
+        surface_policy,
+        train=train,
+        comparison_surfaces=surface_comparison,
+    )
     policy_digest = _hash_payload(policy)
+    surface_policy_digest = _hash_payload(surface_policy)
     comparison_digest = _hash_payload(comparison)
     current_manifest_id = str(comparison["currentManifestId"])
     target = _validate_report(validation_report, current_manifest_id)
@@ -940,6 +1138,8 @@ def evaluate_release_evidence(
     if previous_ledger is not None:
         if previous_ledger.get("policyDigest") != policy_digest:
             raise ReleaseEvidenceError("previous release evidence policy does not match")
+        if previous_ledger.get("surfacePolicyDigest") != surface_policy_digest:
+            raise ReleaseEvidenceError("previous surface evidence policy does not match")
         previous_surfaces = _validate_ledger(
             previous_ledger,
             expected_manifest_id=str(comparison["previousManifestId"]),
@@ -954,6 +1154,8 @@ def evaluate_release_evidence(
     if selected_rc_ledger is not None:
         if selected_rc_ledger.get("policyDigest") != policy_digest:
             raise ReleaseEvidenceError("selected RC evidence policy does not match")
+        if selected_rc_ledger.get("surfacePolicyDigest") != surface_policy_digest:
+            raise ReleaseEvidenceError("selected RC surface policy does not match")
         selected_rc_target = _target(selected_rc_ledger.get("target"), "selected RC evidence")
         if selected_rc_target != target:
             raise ReleaseEvidenceError("selected RC target does not match the release target")
@@ -1081,6 +1283,8 @@ def evaluate_release_evidence(
         policy["requiredShadowTrainCount"],
         now=now,
         maximum_age_days=policy["maximumEvidenceAgeDays"],
+        policy_digest=policy_digest,
+        surface_policy_digest=surface_policy_digest,
     )
     if mode == "enforce" and shadow["state"] != "passed":
         blockers.append("shadow-comparison:pending")
@@ -1111,6 +1315,7 @@ def evaluate_release_evidence(
         "currentManifestID": current_manifest_id,
         "contractFingerprint": identities[0].contract_fingerprint,
         "comparisonDigest": comparison_digest,
+        "surfacePolicyDigest": surface_policy_digest,
         "policyDigest": policy_digest,
         "expectedBuildIdentityDigest": expected_identity_digest,
         "validationReportDigest": validation_report_digest,
@@ -1137,6 +1342,11 @@ def release_evidence_report_blockers(
     comparison: dict[str, Any] | None = None,
     identities: tuple[ExpectedSurfaceIdentity, ...] = (),
     policy: dict[str, Any] | None = None,
+    surface_policy: dict[str, Any] | None = None,
+    previous_ledger: dict[str, Any] | None = None,
+    selected_rc_ledger: dict[str, Any] | None = None,
+    host_os_evidence: dict[str, Any] | None = None,
+    shadow_evidence: dict[str, Any] | None = None,
     now: datetime | None = None,
 ) -> list[str]:
     if not isinstance(payload, dict):
@@ -1152,6 +1362,7 @@ def release_evidence_report_blockers(
     authoritative_required: dict[str, list[str]] | None = None
     authoritative_scope: set[str] = set()
     comparison_surface_scope: set[str] = set()
+    validated_comparison_surfaces: dict[str, dict[str, Any]] = {}
     try:
         if policy is None:
             raise ReleaseEvidenceError("configured release evidence policy is required")
@@ -1161,7 +1372,13 @@ def release_evidence_report_blockers(
     try:
         if comparison is None:
             raise ReleaseEvidenceError("authoritative surface comparison is required")
-        validated_comparison_surfaces = _validate_comparison(comparison, train)
+        if surface_policy is None:
+            raise ReleaseEvidenceError("configured surface evidence policy is required")
+        validated_comparison_surfaces = _validate_comparison(
+            comparison,
+            train,
+            surface_policy,
+        )
         comparison_surface_scope = set(validated_comparison_surfaces)
         if comparison_surface_scope != set(RUNTIME_SURFACES):
             blockers.append("surface comparison does not cover every shipping surface")
@@ -1235,6 +1452,23 @@ def release_evidence_report_blockers(
         maximum_age_days = validated_policy["maximumEvidenceAgeDays"]
     else:
         maximum_age_days = 1
+    if surface_policy is None:
+        blockers.append("configured surface evidence policy is required")
+    else:
+        try:
+            _validate_surface_policy(
+                surface_policy,
+                train=train,
+                comparison_surfaces=(
+                    validated_comparison_surfaces
+                    if comparison is not None
+                    else {}
+                ),
+            )
+            if payload.get("surfacePolicyDigest") != _hash_payload(surface_policy):
+                blockers.append("release evidence surface policy binding is invalid")
+        except ReleaseEvidenceError as error:
+            blockers.append(str(error))
     if validation_report is None:
         blockers.append("exact validation report is required for release evidence binding")
     else:
@@ -1346,4 +1580,36 @@ def release_evidence_report_blockers(
             blockers.append("shadow comparison evidence must be passed")
     elif payload.get("mode") != "shadow":
         blockers.append("shadow validation requires a shadow-mode report")
+    generated_at = parse_iso8601(payload.get("generatedAt"))
+    if (
+        generated_at is not None
+        and validation_report is not None
+        and comparison is not None
+        and policy is not None
+        and surface_policy is not None
+        and set(identity_by_surface) == set(RUNTIME_SURFACES)
+        and payload.get("mode") in MODES
+        and payload.get("train") in TRAINS
+    ):
+        try:
+            reconstructed = evaluate_release_evidence(
+                train=str(payload["train"]),
+                mode=str(payload["mode"]),
+                comparison=comparison,
+                validation_report=validation_report,
+                identities=identities,
+                policy=policy,
+                surface_policy=surface_policy,
+                previous_ledger=previous_ledger,
+                selected_rc_ledger=selected_rc_ledger,
+                host_os_evidence=host_os_evidence,
+                shadow_evidence=shadow_evidence,
+                now=generated_at,
+            )
+            if reconstructed != payload:
+                blockers.append(
+                    "release evidence does not match reconstructed authoritative evaluation"
+                )
+        except ReleaseEvidenceError as error:
+            blockers.append(f"release evidence reconstruction failed: {error}")
     return list(dict.fromkeys(blockers))

@@ -90,6 +90,43 @@ def policy(*, patch_sensitive=()):
     }
 
 
+def surface_policy(surface: str, evidence_class: str):
+    return {
+        "schemaVersion": 1,
+        "evidencePolicy": {
+            "classes": [
+                "shared-view",
+                "actual-runtime",
+                "os-composited-placement",
+            ],
+            "trainMinimumEvidence": {
+                train: [evidence_class]
+                for train in ("beta", "rc", "release")
+            },
+            "changeRequirements": {
+                "render": ["shared-view"],
+                "runtime": ["actual-runtime"],
+                "unknown": [
+                    "shared-view",
+                    "actual-runtime",
+                    "os-composited-placement",
+                ],
+                "placement": ["actual-runtime", "os-composited-placement"],
+            },
+            "releaseRequiresApprovedRCTarget": True,
+        },
+        "surfaces": [
+            {
+                "id": surface_id,
+                "evidenceCapabilities": (
+                    [evidence_class] if surface_id == surface else []
+                ),
+            }
+            for surface_id in RUNTIME_SURFACES
+        ],
+    }
+
+
 def comparison(surface: str, evidence_class: str, *, eligible=False, train="beta"):
     required = {
         "shared-view": [],
@@ -103,7 +140,7 @@ def comparison(surface: str, evidence_class: str, *, eligible=False, train="beta
         "previousManifestId": PREVIOUS_MANIFEST,
         "currentManifestId": MANIFEST,
         "contractChanged": False,
-        "exactBuildSame": evidence_class != "actual-runtime",
+        "exactBuildSame": not (evidence_class == "actual-runtime" and not eligible),
         "removedSurfaces": [],
         "requiredSurfaces": required,
         "requiresRuntimeSession": bool(required["actual-runtime"]),
@@ -114,37 +151,52 @@ def comparison(surface: str, evidence_class: str, *, eligible=False, train="beta
                 "artifactId": surface_id,
                 "reasonCodes": ["unchanged"],
                 "changes": {
-                    "render": False,
-                    "runtime": False,
-                    "placement": False,
+                    "render": (
+                        surface_id == surface
+                        and evidence_class == "shared-view"
+                        and not eligible
+                    ),
+                    "runtime": (
+                        surface_id == surface
+                        and evidence_class == "actual-runtime"
+                        and not eligible
+                    ),
+                    "placement": (
+                        surface_id == surface
+                        and evidence_class == "os-composited-placement"
+                        and not eligible
+                    ),
                     "contract": False,
-                    "exactBuild": False,
+                    "exactBuild": (
+                        evidence_class == "actual-runtime"
+                        and not eligible
+                    ),
                 },
                 "minimumEvidence": [evidence_class] if surface_id == surface else [],
-                "freshEvidence": [],
+                "freshEvidence": (
+                    [evidence_class]
+                    if surface_id == surface and not eligible
+                    else []
+                ),
                 "requiredEvidence": [evidence_class] if surface_id == surface else [],
-                "carryForward": {
-                    name: {
-                        "eligible": (
-                            eligible
-                            if surface_id == surface and name == evidence_class
-                            else False
-                        ),
-                        "conditions": (
-                            ["matching-host-os", "matching-current-runtime-receipt"]
-                            if surface_id == surface
-                            and name == "os-composited-placement"
-                            and name == evidence_class
-                            and eligible
-                            else []
-                        ),
+                "carryForward": (
+                    {
+                        evidence_class: {
+                            "eligible": eligible,
+                            "conditions": (
+                                [
+                                    "matching-host-os",
+                                    "matching-current-runtime-receipt",
+                                ]
+                                if evidence_class == "os-composited-placement"
+                                and eligible
+                                else []
+                            ),
+                        }
                     }
-                    for name in (
-                        "shared-view",
-                        "actual-runtime",
-                        "os-composited-placement",
-                    )
-                },
+                    if surface_id == surface
+                    else {}
+                ),
             }
             for surface_id in RUNTIME_SURFACES
         ],
@@ -225,6 +277,7 @@ def ledger(
     *,
     host_os=None,
     policy_payload=None,
+    surface_policy_payload=None,
 ):
     state = "proven" if evidence_class == "actual-runtime" else "approved"
     payload = {
@@ -238,6 +291,13 @@ def ledger(
         "currentManifestID": PREVIOUS_MANIFEST,
         "contractFingerprint": CONTRACT,
         "comparisonDigest": sha("previous-comparison"),
+        "surfacePolicyDigest": hashlib.sha256(
+            json.dumps(
+                surface_policy_payload or surface_policy(surface, evidence_class),
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest(),
         "policyDigest": hashlib.sha256(
             json.dumps(
                 policy_payload or policy(),
@@ -325,24 +385,49 @@ def shadow_evidence(
     runbook_state="approved",
     ledger_state="approved",
     disagreements=None,
+    surface="watchos.app",
+    evidence_class="actual-runtime",
 ):
     runs = []
     for index in range(2):
         run_index = 0 if duplicate else index
+        target = {
+            "version": f"1.0.{52 + run_index}",
+            "buildNumber": f"2026080{6 + run_index}0001",
+        }
+        manifest_id = sha(f"shadow-manifest-{run_index}")
+        expected_build_identity_digest = sha(f"shadow-build-{run_index}")
+        embedded_ledger = None
+        if ledger_state == "approved":
+            embedded_ledger = ledger(
+                surface,
+                evidence_class,
+                identity(surface),
+            )
+            embedded_ledger.update(
+                {
+                    "target": target,
+                    "currentManifestID": manifest_id,
+                    "expectedBuildIdentityDigest": expected_build_identity_digest,
+                }
+            )
+            embedded_ledger["ledgerID"] = ledger_id(embedded_ledger)
         runs.append(
             {
                 "train": "beta",
-                "target": {
-                    "version": f"1.0.{52 + run_index}",
-                    "buildNumber": f"2026080{6 + run_index}0001",
-                },
-                "manifestID": sha(f"shadow-manifest-{run_index}"),
-                "expectedBuildIdentityDigest": sha(f"shadow-build-{run_index}"),
-                "ledgerID": sha(f"shadow-ledger-{index}"),
+                "target": target,
+                "manifestID": manifest_id,
+                "expectedBuildIdentityDigest": expected_build_identity_digest,
+                "ledgerID": (
+                    embedded_ledger["ledgerID"]
+                    if embedded_ledger is not None
+                    else sha(f"blocked-shadow-ledger-{index}")
+                ),
                 "observedAt": f"2026-08-0{6 + run_index}T12:00:00Z",
                 "runbookState": runbook_state,
                 "ledgerState": ledger_state,
                 "disagreements": list(disagreements or []),
+                "ledger": embedded_ledger,
             }
         )
     return {
@@ -398,6 +483,10 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             validation_report=kwargs.pop("validation_report", report(surface)),
             identities=all_identities(),
             policy=kwargs.pop("policy_payload", policy()),
+            surface_policy=kwargs.pop(
+                "surface_policy_payload",
+                surface_policy(surface, evidence_class),
+            ),
             now=NOW,
             **kwargs,
         )
@@ -423,6 +512,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             comparison=comparison_payload or comparison(surface, evidence_class),
             identities=all_identities(),
             policy=policy_payload or policy(),
+            surface_policy=surface_policy(surface, evidence_class),
             now=NOW,
         )
 
@@ -747,6 +837,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             validation_report=report(surface, runtime=True),
             identities=all_identities(),
             policy=tightened_policy,
+            surface_policy=surface_policy(surface, "actual-runtime"),
             now=NOW + timedelta(days=8),
         )
         self.assertEqual(payload["state"], "blocked")
@@ -873,6 +964,27 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 validation_report=report(surface, runtime=True),
             )
 
+    def test_comparison_cannot_lower_canonical_evidence_floor(self):
+        surface = "watchos.app"
+        comparison_payload = comparison(surface, "actual-runtime")
+        target_surface = next(
+            item
+            for item in comparison_payload["surfaces"]
+            if item["surfaceId"] == surface
+        )
+        target_surface["minimumEvidence"] = []
+        target_surface["freshEvidence"] = []
+        target_surface["requiredEvidence"] = []
+        comparison_payload["requiredSurfaces"]["actual-runtime"] = []
+        comparison_payload["requiresRuntimeSession"] = False
+        with self.assertRaisesRegex(ReleaseEvidenceError, "violates evidence policy"):
+            self.evaluate(
+                surface,
+                "actual-runtime",
+                comparison_payload=comparison_payload,
+                validation_report=report(surface, runtime=True),
+            )
+
     def test_enforced_empty_authoritative_scope_is_rejected(self):
         surface = "watchos.app"
         validation_report = report(surface, runtime=True)
@@ -921,6 +1033,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             comparison=empty_comparison,
             identities=all_identities(),
             policy=policy(),
+            surface_policy=surface_policy(surface, "actual-runtime"),
             now=NOW,
         )
         self.assertIn(
@@ -952,6 +1065,8 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 comparison=comparison_payload,
                 identities=all_identities(),
                 policy=policy(),
+                surface_policy=surface_policy(surface, "actual-runtime"),
+                shadow_evidence=shadow_evidence(),
                 now=NOW,
             ),
             [],
@@ -983,11 +1098,89 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             comparison=comparison_payload,
             identities=all_identities(),
             policy=policy(),
+            surface_policy=surface_policy(surface, "actual-runtime"),
             now=NOW,
         )
         self.assertIn(
             "watchos.app:actual-runtime:validation-report-lineage-mismatch",
             blockers,
+        )
+
+    def test_report_validator_rejects_source_relabel_without_lineage(self):
+        surface = "watchos.app"
+        validation_report = report(surface, visual_class="shared-view")
+        comparison_payload = comparison(surface, "shared-view")
+        shadow_payload = shadow_evidence(
+            surface=surface,
+            evidence_class="shared-view",
+        )
+        payload = self.evaluate(
+            surface,
+            "shared-view",
+            mode="enforce",
+            validation_report=validation_report,
+            comparison_payload=comparison_payload,
+            shadow_evidence=shadow_payload,
+        )
+        payload["surfaces"][0]["evidence"]["shared-view"]["source"] = "carry-forward"
+        payload["ledgerID"] = ledger_id(payload)
+        blockers = release_evidence_report_blockers(
+            payload,
+            version="1.0.54",
+            build_number="202608080418",
+            train="beta",
+            enforce=True,
+            validation_report=validation_report,
+            comparison=comparison_payload,
+            identities=all_identities(),
+            policy=policy(),
+            surface_policy=surface_policy(surface, "shared-view"),
+            shadow_evidence=shadow_payload,
+            now=NOW,
+        )
+        self.assertIn(
+            "release evidence does not match reconstructed authoritative evaluation",
+            blockers,
+        )
+
+    def test_release_report_validation_requires_exact_selected_rc(self):
+        surface = "watchos.app"
+        validation_report = report(surface, runtime=True)
+        comparison_payload = comparison(surface, "actual-runtime", train="release")
+        selected_rc = selected_rc_ledger(surface)
+        shadow_payload = shadow_evidence()
+        payload = self.evaluate(
+            surface,
+            "actual-runtime",
+            train="release",
+            mode="enforce",
+            validation_report=validation_report,
+            comparison_payload=comparison_payload,
+            selected_rc_ledger=selected_rc,
+            shadow_evidence=shadow_payload,
+        )
+        common = {
+            "version": "1.0.54",
+            "build_number": "202608080418",
+            "train": "release",
+            "enforce": True,
+            "validation_report": validation_report,
+            "comparison": comparison_payload,
+            "identities": all_identities(),
+            "policy": policy(),
+            "surface_policy": surface_policy(surface, "actual-runtime"),
+            "shadow_evidence": shadow_payload,
+            "now": NOW,
+        }
+        blockers = release_evidence_report_blockers(payload, **common)
+        self.assertTrue(any("selected exact approved RC" in item for item in blockers))
+        self.assertEqual(
+            release_evidence_report_blockers(
+                payload,
+                selected_rc_ledger=selected_rc,
+                **common,
+            ),
+            [],
         )
 
     def test_same_signed_target_with_conflicting_artifact_digest_is_duplicate(self):
@@ -996,6 +1189,19 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         evidence["runs"][1]["target"] = dict(evidence["runs"][0]["target"])
         evidence["runs"][1]["expectedBuildIdentityDigest"] = "f" * 64
         with self.assertRaisesRegex(ReleaseEvidenceError, "duplicates a signed train"):
+            self.evaluate(
+                surface,
+                "actual-runtime",
+                mode="enforce",
+                validation_report=report(surface, runtime=True),
+                shadow_evidence=evidence,
+            )
+
+    def test_shadow_comparison_cannot_reuse_one_ledger_for_two_targets(self):
+        surface = "watchos.app"
+        evidence = shadow_evidence()
+        evidence["runs"][1]["ledgerID"] = evidence["runs"][0]["ledgerID"]
+        with self.assertRaisesRegex(ReleaseEvidenceError, "reuses a release evidence ledger"):
             self.evaluate(
                 surface,
                 "actual-runtime",
@@ -1024,6 +1230,8 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 ),
             )
         invalid_shadow = shadow_evidence(
+            surface=surface,
+            evidence_class="actual-runtime",
             disagreements=[
                 {
                     "surface": surface,
@@ -1063,6 +1271,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             comparison=comparison_payload,
             identities=all_identities(),
             policy=policy(),
+            surface_policy=surface_policy(surface, "actual-runtime"),
             now=NOW,
         )
         self.assertIn("release evidence policy binding is invalid", blockers)
