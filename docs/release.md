@@ -777,25 +777,28 @@ scripts/context-panel-surface-manifest.py compare \
 ```
 
 For a beta with `requiresRuntimeSession=false`, do not open devices or create a
-runtime session; automated shared-view evidence is sufficient for that slice.
-When the comparison requires runtime proof, create or recover the durable
-coordinator session for the exact train before anyone begins opening devices,
-passing each entry from `requiredSurfaces.actual-runtime` as a repeated
-`--surface` argument:
+runtime-receipt session; automated shared-view evidence is sufficient for that
+slice. The coordinator can still hold the shared-view approval ledger with an
+empty runtime surface scope. Create or recover the durable coordinator session
+for the exact train before anyone begins visual review:
 
 ```sh
 scripts/context-panel-validation.py start-session \
   --version <marketing-version> \
   --build-number <coordinated-build-number> \
-  --surface <required-actual-runtime-surface> \
+  --surface-comparison <comparison.json> \
+  --visual-review-requirements <visual-review-requirements.json> \
   --expected-build-manifest <ExpectedBuildManifest-macos.json> \
   --expected-build-manifest <ExpectedBuildManifest-ios.json> \
   --expected-build-manifest <ExpectedBuildManifest-visionos.json> \
   --expected-build-manifest <ExpectedBuildManifest-tvos.json>
 ```
 
-Omitting `--surface` still requests every shipping surface and is appropriate
-for RC/release floors. Beta automation must use the comparison output instead of
+When comparison and visual requirements are supplied, the coordinator derives
+the runtime scope from `requiredSurfaces.actual-runtime`; an explicit repeated
+`--surface` list must match that set exactly. Without those files, omitting
+`--surface` still requests every shipping surface and remains the legacy
+RC/release floor. Beta automation must use the comparison output instead of
 defaulting to an all-surface session. A matching existing session is recovered
 unchanged; replacing it requires `--replace`, and a different active target is
 rejected by both lifecycle and status commands.
@@ -828,14 +831,19 @@ pruned with the parent. It stores only public action IDs/device classes, bounded
 wait timestamps, allowlisted notification decisions, and expiring deferral
 codes. See [Signed Validation Operator Flow](signed-validation-operator-flow.md)
 for the queue, privacy, and recovery contract.
+Visual review state uses a third additive schema-v1 sidecar under
+`Coordinator/Visual Approvals`. It binds explicit shared-view and placement
+contexts to the sealed exact-build identity, records append-only approve/reject
+decisions and supersession order, stores only optional private artifact digests,
+and is pruned with the parent session.
 
 Signed host apps also contain the fixture-isolated shared widget gallery
 documented in [Signed Validation Galleries](signed-validation-galleries.md).
 Gallery and deterministic render outputs are shared-view evidence. They can
-satisfy render-only beta requirements, but they do not satisfy exact-build
-runtime receipts or OS-composited placement approval. Until the visual approval
-ledger and release carry-forward work are complete, RC/release safeguards remain
-authoritative.
+satisfy render-only beta requirements only after an explicit matching approval
+is recorded. They do not satisfy exact-build runtime receipts or
+OS-composited placement approval. Release carry-forward remains separate work,
+so RC/release safeguards remain authoritative.
 
 After opening the bounded runtime receipt window described in
 [Signed Validation Runtime Receipts](signed-validation-runtime-receipts.md),
@@ -957,10 +965,10 @@ scripts/context-panel-validation.py final-report \
 
 Pass `--json` for the stable machine contract. The report includes the exact
 target, required and obtained evidence classes, runtime surface state, grouped
-queue, decisions, deferrals, blockers, residual risks, and the explicit
+queue, visual requirements and decisions, deferrals, blockers, residual risks, and the explicit
 carry-forward boundary. It excludes the coordinator session ID and all device,
-account, credential, path, raw receipt, raw provider, and App Store Connect
-identifiers.
+account, credential, path, raw receipt, private artifact content, raw provider,
+and App Store Connect identifiers.
 
 Live App Store build attachment and review submission require this exact-build
 report. Generate it only after the coordinator reaches `complete_for_slice` with
@@ -1010,9 +1018,10 @@ attestation. This release gate is stricter than the routine companion product
 check below, where one iPhone or iPad may be sufficient for a targeted smoke
 test.
 
-This is intentionally a narrow exact-build runtime stop. It does not claim that
-visual approval or carry-forward lineage is implemented; those remain explicit
-report limitations until the validation-gallery and approval-ledger work lands.
+This remains a narrow exact-build runtime stop within the complete release
+policy. Fresh visual approval state is now reported by the coordinator,
+but approval carry-forward, host-OS invalidation across trains, and exact-RC reuse
+remain `not-evaluated` until #523 integrates them into release gates.
 
 When the exact Watch build is confirmed, the coordinator requests the existing
 post-install restart without performing it. After the physical restart, record

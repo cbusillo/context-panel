@@ -18,6 +18,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from context_panel_validation import (
+    ASCEvidence,
+    MacEvidence,
     ExpectedSurfaceIdentity,
     RuntimeEvidenceState,
     RuntimeReceiptEvidence,
@@ -26,8 +28,11 @@ from context_panel_validation import (
     VisualApprovalError,
     VisualApprovalState,
     VisualApprovalStore,
+    build_final_report_payload,
+    build_report,
     build_visual_approval_report,
     load_visual_review_plan,
+    render_final_report,
 )
 from context_panel_validation import cli as cli_module
 from context_panel_validation.runtime_evidence import RuntimeObservationSummary
@@ -432,6 +437,64 @@ class VisualApprovalTests(unittest.TestCase):
             "approved-runtime-evidence-is-no-longer-current",
         )
         self.assertNotEqual(report["state"], "approved")
+
+    def test_final_report_uses_approval_state_without_carry_forward(self) -> None:
+        report = build_report(
+            TARGET,
+            ASCEvidence("available", "fixture", ()),
+            MacEvidence(
+                None,
+                None,
+                "unknown",
+                "unknown",
+                "not_running",
+                "unknown",
+                "unknown",
+                "unknown",
+            ),
+            (),
+            None,
+            NOW,
+            requested_surfaces=(),
+        )
+        report = replace(
+            report,
+            session={
+                "lifecycle": "active",
+                "revision": 1,
+                "createdAt": "2026-08-08T02:00:00Z",
+                "updatedAt": "2026-08-08T02:00:00Z",
+                "requestedSurfaces": [],
+            },
+            visual_approvals={
+                "state": "approved",
+                "requirementCount": 1,
+                "approvedCount": 1,
+                "rejectedCount": 0,
+                "readyReviewCount": 0,
+                "machineWaitingCount": 0,
+                "reviewBatches": [],
+                "requirements": [
+                    {
+                        "id": "watch.app.shared.dark",
+                        "evidenceClass": "shared-view",
+                        "surface": "watchos.app",
+                        "device": "Apple Watch",
+                        "state": "approved",
+                        "reason": "review-approved",
+                    }
+                ],
+            },
+        )
+
+        payload = build_final_report_payload(report)
+
+        self.assertEqual(payload["obtainedEvidenceClasses"]["visualApproval"], "approved")
+        self.assertNotIn("review-pending", payload["residualRisks"])
+        self.assertEqual(payload["carryForwardLineage"]["state"], "not-evaluated")
+        rendered = render_final_report(report)
+        self.assertIn("## Visual Reviews", rendered)
+        self.assertIn("`1/1` approved", rendered)
 
     def test_cli_records_and_exports_bounded_public_metadata(self) -> None:
         self.configured_state()

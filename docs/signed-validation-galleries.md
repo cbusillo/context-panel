@@ -173,6 +173,8 @@ large, dark, fit-fallback, accessibility-size, Mac production-presentation, and
 no-fixture-write representatives. Companion archive validation builds the same
 gallery sources for iOS and visionOS.
 
-Gallery output is not yet a release-gate approval record. The visual approval
-ledger and risk-triggered carry-forward policy remain separate coordinator and
-release-integration work.
+Gallery output becomes a coordinator approval record only when an explicit
+shared-view requirement binds the fixture/gallery contract digest, presentation
+context, exact render fingerprint, and human decision. The ledger never upgrades
+gallery output into OS-composited placement proof. Risk-triggered carry-forward
+remains separate release-integration work.
