@@ -507,7 +507,12 @@ fi
 canonical_root="$(validated_root "$requested_root")"
 root_parent="${canonical_root%/*}"
 root_container="${root_parent%/*}"
-quarantine_base="$root_container/.context-panel-companion-quarantine"
+if [[ "${root_parent##*/}" == ".build" ]]; then
+	quarantine_container="$root_parent"
+else
+	quarantine_container="$root_container"
+fi
+quarantine_base="$quarantine_container/.context-panel-companion-quarantine"
 quarantine_root="$(prepare_quarantine_root "$quarantine_base")"
 quarantine_id="${quarantine_root##*/}"
 trap '' HUP INT TERM

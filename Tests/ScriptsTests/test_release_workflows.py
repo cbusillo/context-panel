@@ -2140,6 +2140,38 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 (checkout_root / ".context-panel-companion-quarantine").exists()
             )
 
+    def test_companion_cache_keeps_checkout_quarantine_inside_ignored_build_root(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            checkout_root = Path(temp_dir) / "checkout"
+            cache_root = (
+                checkout_root
+                / ".build/companion-build-validation"
+            )
+            app_path = cache_root / "Build/Products/Context Panel.app"
+            app_path.mkdir(parents=True)
+
+            result = self.run_companion_cache_helper("quarantine", cache_root)
+
+            self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertIn("quarantine=OK moved=1", result.stdout)
+            self.assertFalse(
+                (checkout_root / ".context-panel-companion-quarantine").exists()
+            )
+            quarantine_base = (
+                checkout_root
+                / ".build/.context-panel-companion-quarantine"
+            )
+            self.assertEqual(
+                len(
+                    list(
+                        quarantine_base.glob(
+                            "*/Build/Products/Context Panel.app.quarantined"
+                        )
+                    )
+                ),
+                1,
+            )
+
     def test_companion_cache_rejects_unrelated_root_level_and_symlink_roots(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
