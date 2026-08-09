@@ -66,9 +66,21 @@ root_validation_error() {
 	return 2
 }
 
+expected_physical_path() {
+	local alias path="$1" physical_alias
+	for alias in /var /tmp; do
+		if [[ -L "$alias" && ("$path" == "$alias" || "$path" == "$alias"/*) ]]; then
+			physical_alias="$(cd "$alias" && /bin/pwd -P)" || return 1
+			printf '%s%s\n' "$physical_alias" "${path#"$alias"}"
+			return 0
+		fi
+	done
+	printf '%s\n' "$path"
+}
+
 validated_root() {
 	local input="$1"
-	local component parent parent_name physical_parent physical_probe physical_root probe root_name suffix
+	local component expected_probe parent parent_name physical_container physical_parent physical_probe physical_root probe root_name suffix
 
 	if [[ -z "$input" || "$input" != /* || "$input" == "/" ]]; then
 		root_validation_error "path must be a non-root absolute path"
@@ -103,7 +115,7 @@ validated_root() {
 	probe="$parent"
 	suffix=""
 	while [[ ! -d "$probe" ]]; do
-		if [[ -e "$probe" || -L "$probe" || "$probe" == "/" ]]; then
+		if [[ -z "$probe" || -e "$probe" || -L "$probe" || "$probe" == "/" ]]; then
 			root_validation_error "root ancestry must contain only directories"
 			return $?
 		fi
@@ -119,7 +131,20 @@ validated_root() {
 		root_validation_error "root ancestry cannot be resolved"
 		return $?
 	}
+	expected_probe="$(expected_physical_path "$probe")" || {
+		root_validation_error "root ancestry cannot be normalized"
+		return $?
+	}
+	if [[ "$physical_probe" != "$expected_probe" ]]; then
+		root_validation_error "root ancestry must not traverse symbolic links"
+		return $?
+	fi
 	physical_parent="$physical_probe$suffix"
+	physical_container="${physical_parent%/*}"
+	if [[ -z "$physical_container" || "$physical_container" == "/" ]]; then
+		root_validation_error "root must not be contained directly beneath the filesystem root"
+		return $?
+	fi
 	if [[ -d "$input" ]]; then
 		physical_root="$(cd "$input" && /bin/pwd -P)" || {
 			root_validation_error "root cannot be resolved"
@@ -134,7 +159,7 @@ validated_root() {
 }
 
 default_roots() {
-	local path root roots=()
+	local path retry_parent root roots=()
 	roots+=("$repo_root/.build/companion-build-validation")
 	if [[ -n "$companion_derived_data_root" ]]; then
 		roots+=("$companion_derived_data_root")
@@ -156,6 +181,14 @@ default_roots() {
 			[[ -e "$path" || -L "$path" ]] || continue
 			printf '%s\n' "$path"
 		done
+	done
+
+	for retry_parent in "${RUNNER_TEMP:-}" "${TMPDIR:-/tmp}" /tmp; do
+		[[ -n "$retry_parent" ]] || continue
+		for path in "$retry_parent"/context-panel-companion-retry.*/derived-data/companion-build-validation; do
+			[[ -e "$path" || -L "$path" ]] || continue
+			printf '%s\n' "$path"
+		done
 	done | /usr/bin/awk 'NF && !seen[$0]++'
 }
 
@@ -165,7 +198,7 @@ collect_bundles() {
 	local prune_mode="${3:-0}"
 	[[ -d "$root" ]] || return 0
 	if [[ "$prune_mode" == "1" ]]; then
-		/usr/bin/find -P "$root" \
+		if ! /usr/bin/find -P "$root" \
 			\( \
 			-name 'Context Panel.app' -o \
 			-name 'ContextPanelWidgetExtension.appex' -o \
@@ -175,9 +208,12 @@ collect_bundles() {
 			-name 'ContextPanelTVTopShelfExtension.appex' \
 			\) \
 			\( -type d -o -type l \) \
-			-print0 -prune >>"$output"
+			-print0 -prune >>"$output" 2>/dev/null; then
+			printf 'companion-cache inventory=FAILED\n' >&2
+			return 2
+		fi
 	else
-		/usr/bin/find -P "$root" \
+		if ! /usr/bin/find -P "$root" \
 			\( \
 			-name 'Context Panel.app' -o \
 			-name 'ContextPanelWidgetExtension.appex' -o \
@@ -186,7 +222,10 @@ collect_bundles() {
 			-name 'ContextPanelWatchWidgetExtension.appex' -o \
 			-name 'ContextPanelTVTopShelfExtension.appex' \
 			\) \
-			\( -type d -o -type l \) -print0 >>"$output"
+			\( -type d -o -type l \) -print0 >>"$output" 2>/dev/null; then
+			printf 'companion-cache inventory=FAILED\n' >&2
+			return 2
+		fi
 	fi
 }
 
@@ -203,25 +242,70 @@ bundle_classification() {
 
 bundle_contains_signature_material() {
 	local bundle="$1"
-	local marker
+	local marker_file
 	[[ -L "$bundle" ]] && return 1
-	marker="$(
-		/usr/bin/find -P "$bundle" \
-			\( -name embedded.mobileprovision -o -path '*/_CodeSignature/CodeResources' \) \
-			-type f -print 2>/dev/null | /usr/bin/head -n 1 || true
-	)"
-	[[ -n "$marker" ]]
+	marker_file="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/context-panel-signature-scan.XXXXXX")" || return 2
+	if ! /usr/bin/find -P "$bundle" \
+		\( -name embedded.mobileprovision -o -path '*/_CodeSignature/CodeResources' \) \
+		-type f -print >"$marker_file" 2>/dev/null; then
+		/bin/rm -f "$marker_file"
+		return 2
+	fi
+	if [[ -s "$marker_file" ]]; then
+		/bin/rm -f "$marker_file"
+		return 0
+	fi
+	/bin/rm -f "$marker_file"
+	return 1
 }
 
-neutralize_quarantined_bundles() {
-	local bundle quarantine_root="$1"
-	while IFS= read -r -d '' bundle; do
-		/bin/mv "$bundle" "$bundle.quarantined"
-	done < <(
-		/usr/bin/find -P "$quarantine_root" -depth \
-			\( -name '*.app' -o -name '*.appex' \) \
-			\( -type d -o -type l \) -print0
-	)
+neutralize_bundle_tree() {
+	local bundle="$1"
+	local bundle_inventory candidate
+	bundle_inventory="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/context-panel-bundle-neutralize.XXXXXX")" || return 1
+	if ! /usr/bin/find -P "$bundle" -depth \
+		\( -name '*.app' -o -name '*.appex' \) \
+		\( -type d -o -type l \) -print0 >"$bundle_inventory"; then
+		/bin/rm -f "$bundle_inventory"
+		return 1
+	fi
+	exec 3<"$bundle_inventory"
+	while IFS= read -r -d '' candidate <&3; do
+		if [[ -e "$candidate.quarantined" || -L "$candidate.quarantined" ]]; then
+			exec 3<&-
+			/bin/rm -f "$bundle_inventory"
+			return 1
+		fi
+	done
+	exec 3<&-
+	exec 3<"$bundle_inventory"
+	while IFS= read -r -d '' candidate <&3; do
+		/bin/mv "$candidate" "$candidate.quarantined"
+	done
+	exec 3<&-
+	/bin/rm -f "$bundle_inventory"
+}
+
+prepare_quarantine_root() {
+	local quarantine_base="$1"
+	local physical_base physical_quarantine quarantine_root
+	if [[ -L "$quarantine_base" || (-e "$quarantine_base" && ! -d "$quarantine_base") ]]; then
+		printf 'companion-cache quarantine=REFUSED unsafe-quarantine-base\n' >&2
+		return 3
+	fi
+	/bin/mkdir -p "$quarantine_base"
+	physical_base="$(cd "$quarantine_base" && /bin/pwd -P)" || return 3
+	if [[ "$physical_base" != "$quarantine_base" ]]; then
+		printf 'companion-cache quarantine=REFUSED escaped-quarantine-base\n' >&2
+		return 3
+	fi
+	quarantine_root="$(/usr/bin/mktemp -d "$quarantine_base/validation.XXXXXX")" || return 3
+	physical_quarantine="$(cd "$quarantine_root" && /bin/pwd -P)" || return 3
+	if [[ "$physical_quarantine" != "$quarantine_base"/validation.* ]]; then
+		printf 'companion-cache quarantine=REFUSED escaped-quarantine-root\n' >&2
+		return 3
+	fi
+	printf '%s\n' "$physical_quarantine"
 }
 
 scan_inventory() {
@@ -299,12 +383,22 @@ if [[ "$command_name" == "preflight" ]]; then
 	exit 0
 fi
 
+inspection_error_count=0
 protected_count=0
 while IFS= read -r -d '' bundle; do
 	if bundle_contains_signature_material "$bundle"; then
 		protected_count=$((protected_count + 1))
+	else
+		inspection_status=$?
+		if ((inspection_status != 1)); then
+			inspection_error_count=$((inspection_error_count + 1))
+		fi
 	fi
 done <"$move_inventory"
+if ((inspection_error_count > 0)); then
+	printf 'companion-cache quarantine=REFUSED signature-inspection-errors=%d\n' "$inspection_error_count" >&2
+	exit 3
+fi
 if ((protected_count > 0)); then
 	printf 'companion-cache quarantine=REFUSED protected-signed-bundles=%d\n' "$protected_count" >&2
 	exit 3
@@ -319,24 +413,28 @@ fi
 canonical_root="$(validated_root "$requested_root")"
 root_parent="${canonical_root%/*}"
 root_container="${root_parent%/*}"
-quarantine_id="$(/bin/date -u +%Y%m%dT%H%M%SZ)-$$"
-quarantine_root="$root_container/.context-panel-companion-quarantine/$quarantine_id"
-/bin/mkdir -p "$quarantine_root"
+quarantine_base="$root_container/.context-panel-companion-quarantine"
+quarantine_root="$(prepare_quarantine_root "$quarantine_base")"
+quarantine_id="${quarantine_root##*/}"
+trap '' HUP INT TERM
 
 moved_count=0
 while IFS= read -r -d '' bundle; do
 	relative_path="${bundle#"$canonical_root"/}"
-	if [[ "$relative_path" == "$bundle" || "$relative_path" == /* || "$relative_path" == ../* || "$relative_path" == */../* ]]; then
+	if [[ "$relative_path" == "$bundle" || "$relative_path" == /* || "$relative_path" == ../* || "$relative_path" == */../* || "$relative_path" == */.. ]]; then
 		printf 'companion-cache quarantine=REFUSED candidate escaped validated root\n' >&2
 		exit 3
 	fi
-	destination="$quarantine_root/$relative_path"
+	if ! neutralize_bundle_tree "$bundle"; then
+		printf 'companion-cache quarantine=FAILED bundle-neutralization\n' >&2
+		exit 3
+	fi
+	neutralized_bundle="$bundle.quarantined"
+	destination="$quarantine_root/$relative_path.quarantined"
 	/bin/mkdir -p "${destination%/*}"
-	/bin/mv "$bundle" "$destination"
+	/bin/mv "$neutralized_bundle" "$destination"
 	moved_count=$((moved_count + 1))
 done <"$move_inventory"
-
-neutralize_quarantined_bundles "$quarantine_root"
 
 printf 'companion-cache quarantine=OK moved=%d quarantine=.context-panel-companion-quarantine/%s\n' \
 	"$moved_count" "$quarantine_id"

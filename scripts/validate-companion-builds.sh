@@ -122,7 +122,8 @@ require_command() {
 finalize_companion_validation() {
 	local original_status=$?
 	local cleanup_status=0 root root_status
-	trap - EXIT HUP INT TERM
+	trap - EXIT
+	trap '' HUP INT TERM
 
 	for root in "${cleanup_roots[@]}"; do
 		set +e

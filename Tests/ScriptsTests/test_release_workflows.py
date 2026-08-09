@@ -2151,6 +2151,9 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             root_level_result = self.run_companion_cache_helper(
                 "quarantine", Path("/companion-build-validation")
             )
+            root_build_result = self.run_companion_cache_helper(
+                "quarantine", Path("/.build/companion-build-validation")
+            )
 
             real_root = temp_path / "real/derived-data/companion-build-validation"
             real_root.mkdir(parents=True)
@@ -2162,12 +2165,32 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 "quarantine", symlink_root
             )
 
+            outside_root = temp_path / "outside/child"
+            escaped_root = (
+                outside_root
+                / "derived-data/companion-build-validation"
+            )
+            escaped_root.mkdir(parents=True)
+            ancestor_parent = temp_path / "safe"
+            ancestor_parent.mkdir()
+            ancestor_link = ancestor_parent / "link"
+            ancestor_link.symlink_to(temp_path / "outside", target_is_directory=True)
+            ancestor_result = self.run_companion_cache_helper(
+                "quarantine",
+                ancestor_link
+                / "child/derived-data/companion-build-validation",
+            )
+
             self.assertNotEqual(unrelated_result.returncode, 0)
             self.assertIn("root rejected", unrelated_result.stdout)
             self.assertNotEqual(root_level_result.returncode, 0)
             self.assertIn("root rejected", root_level_result.stdout)
+            self.assertNotEqual(root_build_result.returncode, 0)
+            self.assertIn("root rejected", root_build_result.stdout)
             self.assertNotEqual(symlink_result.returncode, 0)
             self.assertIn("symbolic link", symlink_result.stdout)
+            self.assertNotEqual(ancestor_result.returncode, 0)
+            self.assertIn("must not traverse symbolic links", ancestor_result.stdout)
 
     def test_companion_cache_preflight_passes_clean_and_fails_on_residue(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2208,6 +2231,82 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             self.assertEqual(result.returncode, 3, result.stdout)
             self.assertIn("protected-signed-bundles=1", result.stdout)
             self.assertTrue(signed_app.is_dir())
+
+    def test_companion_cache_refuses_inventory_inspection_errors(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_root = (
+                Path(temp_dir)
+                / "checkout/derived-data/companion-build-validation"
+            )
+            app_path = cache_root / "Build/Products/Context Panel.app"
+            unreadable_path = app_path / "Unreadable"
+            unreadable_path.mkdir(parents=True)
+            unreadable_path.chmod(0)
+            try:
+                result = self.run_companion_cache_helper("quarantine", cache_root)
+            finally:
+                unreadable_path.chmod(0o700)
+
+            self.assertEqual(result.returncode, 2, result.stdout)
+            self.assertIn("inventory=FAILED", result.stdout)
+            self.assertNotIn(str(unreadable_path), result.stdout)
+            self.assertTrue(app_path.is_dir())
+
+    def test_companion_cache_rejects_symlinked_quarantine_destination(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            checkout_root = temp_path / "checkout"
+            cache_root = (
+                checkout_root
+                / "derived-data/companion-build-validation"
+            )
+            app_path = cache_root / "Build/Products/Context Panel.app"
+            app_path.mkdir(parents=True)
+            external_quarantine = temp_path / "external quarantine"
+            external_quarantine.mkdir()
+            quarantine_base = checkout_root / ".context-panel-companion-quarantine"
+            quarantine_base.symlink_to(
+                external_quarantine,
+                target_is_directory=True,
+            )
+
+            result = self.run_companion_cache_helper("quarantine", cache_root)
+
+            self.assertEqual(result.returncode, 3, result.stdout)
+            self.assertIn("unsafe-quarantine-base", result.stdout)
+            self.assertTrue(app_path.is_dir())
+            self.assertEqual(list(external_quarantine.iterdir()), [])
+
+    def test_companion_cache_preflight_discovers_stale_retry_roots(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            runner_temp = temp_path / "runner temp"
+            temporary_directory = temp_path / "temporary"
+            runner_temp.mkdir()
+            temporary_directory.mkdir()
+            retry_root = (
+                runner_temp
+                / "context-panel-companion-retry.fixture"
+                / "derived-data/companion-build-validation"
+            )
+            residue = retry_root / "Build/Products/ContextPanelRefreshAgent.app"
+            residue.mkdir(parents=True)
+            environment = os.environ.copy()
+            environment["RUNNER_TEMP"] = str(runner_temp)
+            environment["TMPDIR"] = str(temporary_directory)
+            environment["CONTEXT_PANEL_ARTIFACT_CACHE_ROOT"] = str(
+                temp_path / "absent artifact cache"
+            )
+
+            result = self.run_companion_cache_helper(
+                "preflight",
+                environment=environment,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("preflight=FAIL", result.stdout)
+            self.assertRegex(result.stdout, r"refresh-agents=[1-9][0-9]*")
+            self.assertTrue(residue.is_dir())
 
     def test_companion_validation_quarantines_after_failure(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2486,7 +2585,9 @@ exit 0
         self.assertIn("-print0 -prune", cache_helper)
         self.assertIn("protected-signed-bundles", cache_helper)
         self.assertIn(".context-panel-companion-quarantine", cache_helper)
-        self.assertIn("neutralize_quarantined_bundles", cache_helper)
+        self.assertIn("neutralize_bundle_tree", cache_helper)
+        self.assertIn("trap '' HUP INT TERM", cache_helper)
+        self.assertIn("trap '' HUP INT TERM", script)
         self.assertNotIn("rm -rf", cache_helper)
         self.assertIn(
             "scripts/context-panel-companion-cache.sh preflight",
