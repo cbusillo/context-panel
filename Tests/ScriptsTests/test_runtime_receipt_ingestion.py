@@ -869,6 +869,62 @@ class RuntimeReceiptIngestionTests(unittest.TestCase):
         )
         self.assertEqual(retained_report["surfaces"][0]["state"], "diagnostic")
 
+    def test_new_runtime_session_clears_prior_session_surface_diagnostics(self):
+        surfaces = ("macos.app",)
+        temporary, _, _, _, state = self.fixture(surfaces)
+        self.addCleanup(temporary.cleanup)
+        first_status = runtime_status(surfaces)
+        mismatched = runtime_receipt("macos.app", first_status)
+        mismatched["receipt"]["buildIdentity"]["executableUUIDs"] = [
+            "CCCCCCCC-DDDD-EEEE-FFFF-000000000000"
+        ]
+        diagnostic_state, _ = runtime_module.reconcile_runtime_observation(
+            state,
+            observation(first_status, runtime_export(first_status, [mismatched])),
+        )
+        retained_state, _ = runtime_module.reconcile_runtime_observation(
+            diagnostic_state,
+            observation(
+                first_status,
+                runtime_export(first_status, []),
+                attempted_at=NOW + timedelta(minutes=2),
+            ),
+        )
+        second_status = runtime_status(
+            surfaces,
+            session_id="00000000-0000-0000-0000-000000000002",
+        )
+        recovered_state, _ = runtime_module.reconcile_runtime_observation(
+            retained_state,
+            observation(
+                second_status,
+                runtime_export(second_status, []),
+                sync_payload={
+                    "healthy": True,
+                    "sessionAction": "published",
+                    "uploadedReceiptCount": 0,
+                    "downloadedReceiptCount": 0,
+                    "deletedRemoteReceiptCount": 0,
+                },
+                attempted_at=NOW + timedelta(minutes=3),
+            ),
+        )
+        report = build_runtime_evidence_report(
+            recovered_state,
+            NOW + timedelta(minutes=3),
+        )
+
+        self.assertEqual(
+            retained_state.last_observation.surface_diagnostics,
+            (("macos.app", "identity-mismatch:executable-uuids"),),
+        )
+        self.assertEqual(recovered_state.last_observation.result, "healthy")
+        self.assertEqual(recovered_state.last_observation.diagnostics, ())
+        self.assertEqual(recovered_state.last_observation.surface_diagnostics, ())
+        self.assertEqual(report["state"], "waiting")
+        self.assertEqual(report["runtimeSession"]["result"], "healthy")
+        self.assertEqual(report["surfaces"][0]["reason"], "receipt-propagation")
+
     def test_runtime_sidecar_is_additive_to_schema_v1_and_pruned_with_retention(self):
         surfaces = ("macos.app",)
         temporary, store, runtime_store, session, _ = self.fixture(surfaces)
