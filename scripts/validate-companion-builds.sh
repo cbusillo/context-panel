@@ -8,6 +8,10 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && /bin/pwd -P)"
 artifact_cache_root="${CONTEXT_PANEL_ARTIFACT_CACHE_ROOT:-}"
 derived_data_root=""
 platforms=()
+companion_cache_helper="$repo_root/scripts/context-panel-companion-cache.sh"
+cleanup_roots=()
+active_xcodebuild_pid=""
+active_xcodebuild_process_group=""
 
 artifact_cache_root_is_available() {
 	local cache_parent cache_namespace
@@ -113,6 +117,46 @@ require_command() {
 		echo "required command not found: $1" >&2
 		exit 1
 	fi
+}
+
+finalize_companion_validation() {
+	local original_status=$?
+	local cleanup_status=0 root root_status
+	trap - EXIT HUP INT TERM
+
+	for root in "${cleanup_roots[@]}"; do
+		set +e
+		"$companion_cache_helper" quarantine --root "$root"
+		root_status=$?
+		set -e
+		if ((root_status != 0 && cleanup_status == 0)); then
+			cleanup_status="$root_status"
+		fi
+	done
+
+	if ((original_status != 0)); then
+		if ((cleanup_status != 0)); then
+			echo "companion cache cleanup also failed with status $cleanup_status; preserving validation status $original_status" >&2
+		fi
+		exit "$original_status"
+	fi
+	if ((cleanup_status != 0)); then
+		exit "$cleanup_status"
+	fi
+	exit 0
+}
+
+handle_validation_signal() {
+	local signal_status="$1"
+	if [[ -n "$active_xcodebuild_pid" && -n "$active_xcodebuild_process_group" ]]; then
+		terminate_xcodebuild_job "$active_xcodebuild_pid" "$active_xcodebuild_process_group" || true
+	fi
+	exit "$signal_status"
+}
+
+clear_active_xcodebuild_job() {
+	active_xcodebuild_pid=""
+	active_xcodebuild_process_group=""
 }
 
 xcodebuild_system_path() {
@@ -254,6 +298,8 @@ run_xcodebuild() {
 	) &
 	job_pid=$!
 	process_group="$job_pid"
+	active_xcodebuild_pid="$job_pid"
+	active_xcodebuild_process_group="$process_group"
 	if ((monitor_was_enabled == 0)); then
 		set +m
 	fi
@@ -263,18 +309,22 @@ run_xcodebuild() {
 	while /bin/kill -0 "$job_pid" 2>/dev/null; do
 		if /usr/bin/tail -n 500 "$log_file" | /usr/bin/grep -Fq "$marker"; then
 			if wait_for_xcodebuild_exit "$job_pid"; then
+				clear_active_xcodebuild_job
 				/bin/rm -f "$log_file"
 				return 0
 			fi
 			if ! terminate_xcodebuild_job "$job_pid" "$process_group"; then
+				clear_active_xcodebuild_job
 				/bin/rm -f "$log_file"
 				return 1
 			fi
+			clear_active_xcodebuild_job
 			/bin/rm -f "$log_file"
 			return 0
 		fi
 		if /usr/bin/tail -n 500 "$log_file" | /usr/bin/grep -Eq '\*\* (BUILD|ARCHIVE) FAILED \*\*'; then
 			terminate_xcodebuild_job "$job_pid" "$process_group" || true
+			clear_active_xcodebuild_job
 			/bin/rm -f "$log_file"
 			return 1
 		fi
@@ -285,12 +335,14 @@ run_xcodebuild() {
 		elif ((SECONDS - last_output_at >= 5 * 60)); then
 			echo "xcodebuild produced no output for 5 minutes" >&2
 			terminate_xcodebuild_job "$job_pid" "$process_group" || true
+			clear_active_xcodebuild_job
 			/bin/rm -f "$log_file"
 			return 124
 		fi
 		if ((SECONDS >= deadline)); then
 			echo "xcodebuild did not reach a terminal result within 30 minutes" >&2
 			terminate_xcodebuild_job "$job_pid" "$process_group" || true
+			clear_active_xcodebuild_job
 			/bin/rm -f "$log_file"
 			return 124
 		fi
@@ -299,6 +351,7 @@ run_xcodebuild() {
 
 	status=0
 	wait "$job_pid" || status=$?
+	clear_active_xcodebuild_job
 	if /usr/bin/tail -n 500 "$log_file" | /usr/bin/grep -Fq "$marker"; then
 		/bin/rm -f "$log_file"
 		return 0
@@ -445,6 +498,14 @@ validate_platform() {
 
 require_command xcodegen
 require_command xcodebuild
+require_command "$companion_cache_helper"
+
+"$companion_cache_helper" validate-root --root "$derived_data_root"
+cleanup_roots+=("$derived_data_root")
+trap finalize_companion_validation EXIT
+trap 'handle_validation_signal 129' HUP
+trap 'handle_validation_signal 130' INT
+trap 'handle_validation_signal 143' TERM
 
 xcodegen generate --spec project.yml
 echo "companion validation DerivedData root: $derived_data_root"
@@ -461,7 +522,11 @@ for platform in "${platforms[@]}"; do
 		exit "$status"
 	fi
 
-	retry_root="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/context-panel-companion-retry.XXXXXX")"
+	retry_parent="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/context-panel-companion-retry.XXXXXX")"
+	retry_root="$retry_parent/derived-data/companion-build-validation"
+	/bin/mkdir -p "${retry_root%/*}"
+	"$companion_cache_helper" validate-root --root "$retry_root"
+	cleanup_roots+=("$retry_root")
 	retry_derived_data_path="$retry_root/$platform"
 	echo "Retrying $platform validation once with isolated DerivedData: $retry_derived_data_path" >&2
 	/bin/sleep 2

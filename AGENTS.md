@@ -72,8 +72,15 @@ the read-only Production receipt and require both the app and refresh agent to
 report `Production` CloudKit:
 
 ```sh
+scripts/context-panel-companion-cache.sh preflight
 scripts/context-panel-runtime-baseline.sh check --require-production-runtime
 ```
+
+Require the companion cache preflight to report `preflight=OK` before opening a
+signed validation coordinator session or judging physical-device behavior. If it
+fails, inspect the exact `companion-build-validation` root and use only the
+repo-owned explicit-root quarantine command; do not broadly delete DerivedData
+or the artifact cache.
 
 For routine physical watchOS complication testing, first confirm that the new
 build has reached the Watch, then restart the Watch before judging complication
