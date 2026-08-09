@@ -570,7 +570,7 @@ class MacEvidenceCollectorTests(unittest.TestCase):
 
 
 class CoreDeviceTests(unittest.TestCase):
-    def test_device_inventory_queries_only_reachable_physical_devices(self):
+    def test_device_inventory_queries_booted_physical_devices(self):
         list_payload = {
             "result": {
                 "devices": [
@@ -592,6 +592,7 @@ class CoreDeviceTests(unittest.TestCase):
             list_payload=list_payload,
             app_payloads={
                 "iphone-1": installed_app(),
+                "ipad-1": installed_app(),
                 "watch-1": installed_app(
                     bundle_id="com.shinycomputers.contextpanel.watch"
                 ),
@@ -604,11 +605,18 @@ class CoreDeviceTests(unittest.TestCase):
 
         by_label = {item.label: item for item in evidence}
         self.assertEqual(by_label["iPhone"].install_state, "current")
-        self.assertEqual(by_label["iPad"].condition, "not_reachable")
+        self.assertEqual(by_label["iPad"].install_state, "current")
         self.assertEqual(by_label["Apple Watch"].install_state, "current")
         self.assertEqual(by_label["Vision Pro"].condition, "not_found")
         commands = [" ".join(command) for command in runner.commands]
-        self.assertFalse(any("ipad-1" in command and " info apps " in command for command in commands))
+        self.assertTrue(any("ipad-1" in command and " info apps " in command for command in commands))
+        self.assertTrue(
+            all(
+                "--timeout 20" in command
+                for command in commands
+                if " info apps " in command
+            )
+        )
         forbidden = (
             " install ",
             " uninstall ",
@@ -623,6 +631,31 @@ class CoreDeviceTests(unittest.TestCase):
             " openURL ",
         )
         self.assertFalse(any(token in f" {command} " for command in commands for token in forbidden))
+
+    def test_disconnected_booted_device_is_unreachable_only_after_query_failure(self):
+        runner = FakeRunner(
+            list_payload={
+                "result": {
+                    "devices": [
+                        physical_device(
+                            "watch-1",
+                            "watchOS",
+                            "appleWatch",
+                            connected=False,
+                        )
+                    ]
+                }
+            }
+        )
+
+        devices = context_panel_validation.collect_device_evidence(
+            runner, Target("1.0.53", "202607301200")
+        )
+
+        watch = next(item for item in devices if item.label == "Apple Watch")
+        self.assertEqual(watch.condition, "not_reachable")
+        commands = [" ".join(command) for command in runner.commands]
+        self.assertTrue(any("watch-1" in command and " info apps " in command for command in commands))
 
     def test_unpaired_platforms_do_not_hide_ready_watch_restart(self):
         runner = FakeRunner(
@@ -761,6 +794,32 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(recorded.state, "complete_for_slice")
         self.assertEqual(recorded.exit_code, 0)
         self.assertFalse(recorded.actions)
+
+    def test_proven_runtime_completes_when_device_becomes_unreachable(self):
+        report = self.report(
+            valid_asc(),
+            proven_mac(),
+            [device("Apple Watch", "watchOS", "unknown", "not_reachable")],
+            watch_restart_recorded_at="2026-07-30T17:00:00Z",
+        )
+
+        completed = context_panel_validation.apply_runtime_evidence_to_report(
+            report,
+            {
+                "schemaVersion": 1,
+                "state": "proven",
+                "provenSurfaceCount": 2,
+                "requestedSurfaceCount": 2,
+                "lastReconciledAt": "2026-07-30T17:00:00Z",
+                "runtimeSession": None,
+                "diagnostics": [],
+                "surfaces": [],
+            },
+        )
+
+        self.assertEqual(completed.state, "complete_for_slice")
+        self.assertEqual(completed.stage, "exact-build runtime proven")
+        self.assertEqual(completed.exit_code, 0)
 
     def test_requested_surface_scope_excludes_out_of_scope_blockers_and_actions(self):
         asc = ASCEvidence(

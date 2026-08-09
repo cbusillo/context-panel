@@ -199,6 +199,7 @@ DEVICE_SPECS = {
     "Apple Watch": ("watchOS", "appleWatch", WATCH_BUNDLE_ID),
     "Apple TV": ("tvOS", "appleTV", APP_BUNDLE_ID),
 }
+DEVICE_APP_QUERY_TIMEOUT_SECONDS = 20
 
 
 def descriptor_label(platform: str, device_type: str) -> str | None:
@@ -262,10 +263,8 @@ def collect_device_evidence(runner: Runner, target: Target) -> tuple[DeviceEvide
         for index, descriptor in enumerate(matches, start=1):
             display_label = label if len(matches) == 1 else f"{label} {index}"
             identifier = str(descriptor.get("identifier") or "")
-            connection = descriptor.get("connectionProperties", {})
             device_properties = descriptor.get("deviceProperties", {})
             booted = device_properties.get("bootState") == "booted"
-            connected = connection.get("tunnelState") == "connected"
             if not booted:
                 evidence.append(
                     DeviceEvidence(
@@ -276,19 +275,6 @@ def collect_device_evidence(runner: Runner, target: Target) -> tuple[DeviceEvide
                         "unknown",
                         "asleep",
                         "will check when awake",
-                    )
-                )
-                continue
-            if not connected:
-                evidence.append(
-                    DeviceEvidence(
-                        display_label,
-                        platform,
-                        None,
-                        None,
-                        "unknown",
-                        "not_reachable",
-                        "will check when reachable",
                     )
                 )
                 continue
@@ -306,9 +292,9 @@ def collect_device_evidence(runner: Runner, target: Target) -> tuple[DeviceEvide
                     bundle_id,
                     "--include-default-apps",
                     "--timeout",
-                    "5",
+                    str(DEVICE_APP_QUERY_TIMEOUT_SECONDS),
                 ],
-                timeout=8,
+                timeout=DEVICE_APP_QUERY_TIMEOUT_SECONDS + 5,
             )
             if app_result.returncode != 0 or app_payload is None:
                 condition = (
