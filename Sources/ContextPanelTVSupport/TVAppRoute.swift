@@ -15,7 +15,13 @@ public enum TVAppRoute: Equatable, Sendable {
             guard let provider = Provider(rawValue: url.lastPathComponent) else { return nil }
             self = .provider(provider)
         case "validation-gallery":
-            guard url.path.isEmpty else { return nil }
+            guard url.path.isEmpty,
+                  url.user == nil,
+                  url.password == nil,
+                  url.port == nil,
+                  url.query == nil,
+                  url.fragment == nil
+            else { return nil }
             self = .validationGallery
         default:
             return nil
