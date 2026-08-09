@@ -260,13 +260,6 @@ private struct CompanionRootView: View {
                         }
                     }
                 }
-                ToolbarItem(placement: .secondaryAction) {
-                    Button {
-                        galleryRoute = ValidationGalleryRoute(presentation: .overview)
-                    } label: {
-                        Label("Validation Gallery", systemImage: "rectangle.on.rectangle.badge.eye")
-                    }
-                }
             }
             .task {
                 model.registerCloudKitSubscription()

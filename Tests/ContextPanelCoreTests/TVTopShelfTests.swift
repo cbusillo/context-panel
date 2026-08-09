@@ -553,7 +553,17 @@ import Testing
     #expect(TVAppRoute(url: TVAppRoute.runway.url) == .runway)
     #expect(TVAppRoute(url: TVAppRoute.validationGallery.url) == .validationGallery)
     #expect(TVAppRoute(url: URL(string: "contextpaneltv://provider/not-a-provider")!) == nil)
-    #expect(TVAppRoute(url: URL(string: "contextpaneltv://validation-gallery/extra")!) == nil)
+    for invalidGalleryURL in [
+        "contextpaneltv://validation-gallery/extra",
+        "contextpaneltv://validation-gallery?payload=private",
+        "contextpaneltv://validation-gallery?",
+        "contextpaneltv://validation-gallery#private",
+        "contextpaneltv://operator@validation-gallery",
+        "contextpaneltv://operator:private@validation-gallery",
+        "contextpaneltv://validation-gallery:443",
+    ] {
+        #expect(TVAppRoute(url: URL(string: invalidGalleryURL)!) == nil)
+    }
     #expect(TVAppRoute(url: URL(string: "https://example.com")!) == nil)
 }
 

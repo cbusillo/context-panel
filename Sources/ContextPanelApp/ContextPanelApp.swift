@@ -558,22 +558,6 @@ struct SettingsPane: View {
                         .textSelection(.enabled)
                 }
 
-                Divider()
-
-                VStack(alignment: .leading, spacing: 7) {
-                    Button {
-                        galleryRoute = ValidationGalleryRoute(presentation: .overview)
-                    } label: {
-                        Label("Open Validation Gallery", systemImage: "rectangle.on.rectangle.badge.eye")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-
-                    Text("Review fixed sample states through the production app and widget presentations. The gallery is read-only and never uses live account data.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(CPTheme.tertiaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
             }
 
             Section("Background Refresh") {

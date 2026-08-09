@@ -96,6 +96,28 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         self.assertIn("CompanionRefreshSettingsView(", companion_app)
         self.assertIn("supportedPresentations: [.overview, .settings, .diagnostics, .widget]", companion_app)
 
+    def test_gallery_activation_is_operator_only(self):
+        mac_app = MAC_APP_SOURCE.read_text()
+        companion_app = COMPANION_APP_SOURCE.read_text()
+        watch_app = WATCH_APP_SOURCE.read_text()
+        tv_app = TV_APP_SOURCE.read_text()
+
+        self.assertNotIn('Label("Open Validation Gallery"', mac_app)
+        self.assertNotIn('Label("Validation Gallery"', companion_app)
+        self.assertNotIn('Label("Validation Gallery"', watch_app)
+        self.assertNotIn('Label("Validation Gallery"', tv_app)
+        self.assertNotIn("showsValidationGalleryEntry", tv_app)
+        self.assertNotIn("TVValidationGalleryEntryLabel", tv_app)
+
+        self.assertIn("ValidationGalleryRoute(url: url)", mac_app)
+        self.assertIn("ValidationGalleryRoute(url: url)", companion_app)
+        self.assertIn("case .validationGallery:", tv_app)
+        self.assertIn("--context-panel-validation-gallery", watch_app)
+        self.assertIn(
+            ".navigationDestination(isPresented: $isValidationGalleryPresented)",
+            watch_app,
+        )
+
     def test_watch_gallery_reuses_shipping_views_without_live_loaders(self):
         project = (REPO_ROOT / "project.yml").read_text()
         watch_app = WATCH_APP_SOURCE.read_text()
