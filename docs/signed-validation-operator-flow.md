@@ -28,6 +28,14 @@ extended awake period is required. Reachability failures remain passive for 30
 minutes before the queue asks for a decision. These timers are persisted by
 public device class only; no device identifier or name is stored.
 
+CoreDevice tunnel state is advisory. For a booted physical device, the
+coordinator attempts the bounded read-only installed-app query even when the
+listed developer tunnel is disconnected, because local-network queries can
+still succeed. A failed query remains a reachability wait. After every requested
+surface has an exact-build runtime receipt and required restart evidence is
+recorded, a later device reachability loss does not keep the completed slice
+open.
+
 The current Watch rule remains authoritative. Once the exact Watch build is
 observable, the queue requests one restart with placements intact. The existing
 `record-watch-restart` command records only that operator attestation. A Watch

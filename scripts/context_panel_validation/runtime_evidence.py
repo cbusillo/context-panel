@@ -1760,15 +1760,20 @@ def apply_runtime_evidence_to_report(
         state, stage, exit_code = "blocked", "superseded", EXIT_BLOCKED
         actions = ()
         closing = "blocked: newer runtime receipt evidence superseded the target"
-    elif report.state not in {"blocked", "unknown", "waiting"}:
+    elif report.state not in {"blocked", "unknown"}:
         if runtime_state == "waiting" and not actions:
-            state, stage, exit_code = "waiting", "waiting on runtime receipts", EXIT_OK
-            closing = "nothing needs you right now"
+            if report.state != "waiting":
+                state, stage, exit_code = "waiting", "waiting on runtime receipts", EXIT_OK
+                closing = "nothing needs you right now"
         elif runtime_state == "unknown":
             state, stage, exit_code = "unknown", "runtime evidence diagnostic", EXIT_UNKNOWN
             actions = ()
             closing = "not enough evidence: runtime receipt diagnostics required"
-        elif runtime_state == "proven" and not actions:
+        elif (
+            runtime_state == "proven"
+            and not actions
+            and (report.state != "waiting" or report.stage == "waiting on device")
+        ):
             state, stage, exit_code = (
                 "complete_for_slice",
                 "exact-build runtime proven",
