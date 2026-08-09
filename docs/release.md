@@ -963,6 +963,8 @@ and is pruned with the parent session.
 
 Signed host apps also contain the fixture-isolated shared widget gallery
 documented in [Signed Validation Galleries](signed-validation-galleries.md).
+Normal product UI does not expose gallery navigation; signed-validation
+operators use the allowlisted routes and Watch launch argument documented there.
 Gallery and deterministic render outputs are shared-view evidence. They can
 satisfy render-only beta requirements only after an explicit matching approval
 is recorded. They do not satisfy exact-build runtime receipts or

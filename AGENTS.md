@@ -227,6 +227,11 @@ acceptable.
   shadow mode and the current
   physical runbook authoritative until two signed shadow trains have resolved
   every disagreement; only then may the submission workflow use `enforce`.
+- Keep Validation Gallery access operator-only. Normal Mac, companion, Watch,
+  and Apple TV product UI must not expose gallery buttons, toolbar actions, list
+  rows, or runway items. Use the allowlisted signed routes and the bounded Watch
+  launch argument documented in `docs/signed-validation-galleries.md`; do not
+  add a runtime feature flag or persistent unlock.
 
 Minimum runtime evidence before saying a signed dogfood build is ready:
 

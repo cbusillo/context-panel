@@ -190,7 +190,6 @@ struct TVValidationGalleryView: View {
                 presentationModeRawValue: $presentationModeRawValue,
                 noticeMessage: context.result.errorMessage,
                 presentationDate: context.presentationDate,
-                showsValidationGalleryEntry: false,
                 detailActionMode: .readOnly,
                 onRefresh: {}
             )

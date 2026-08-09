@@ -92,11 +92,12 @@ The fixture catalog owns one fixed reference presentation time. Widget reset and
 relative date helpers consume that injected time so repeated captures do not
 change across launches or at a minute boundary while they are being reviewed.
 
-## Native Routes
+## Operator Routes
 
-The Mac app exposes the gallery from Settings diagnostics. The iPhone, iPad, and
-Vision Pro companion app exposes it from the navigation toolbar. Signed deep
-links may select an allowlisted fixture, family, appearance, and presentation:
+Normal product UI does not expose Validation Gallery buttons, toolbar actions,
+list rows, or runway items. Signed-validation operators open the Mac, iPhone,
+iPad, Vision Pro, and Apple TV galleries through allowlisted deep links. The
+routes may select a fixture, family, appearance, and presentation:
 
 ```text
 contextpanel://validation-gallery?fixture=stale&appearance=dark&presentation=diagnostics
@@ -106,8 +107,9 @@ contextpanelcompanion://validation-gallery?fixture=healthy&presentation=settings
 Allowed query names are `fixture`, `family`, `appearance`, and `presentation`.
 Unknown, duplicate, empty, file-based, credential-bearing, fragmented, or
 nested routes are rejected. No route accepts a path, artifact, account
-identifier, or raw payload. Hosts expose only the presentations that exist on
-that platform.
+identifier, or raw payload. These routes are operator tooling, not normal
+product navigation. Hosts expose only the presentations that exist on that
+platform.
 
 While the gallery is visible, the host may temporarily suppress idle sleep so a
 bounded review is not interrupted. The previous host setting is restored when
@@ -116,13 +118,22 @@ operator to keep a device awake while machine evidence is pending.
 
 ## Watch Gallery
 
-The signed Watch app exposes `Validation Gallery` directly from its production
-usage list. App-state previews reuse the same status, forecast, provider-access,
-empty-state, and limit-row presentation used by the live Watch screen. Circular,
-rectangular, inline, and corner previews compile the same complication family
-dispatcher source as the shipping WidgetKit extension. The gallery uses
-reference-size canvases; WidgetKit supplies exact face dimensions and the corner
-gauge/label only to a placed complication.
+The signed Watch app does not expose gallery navigation during normal use.
+Operators launch the installed app with the allowlisted
+`--context-panel-validation-gallery` argument through `devicectl`. App-state
+previews reuse the same status, forecast, provider-access, empty-state, and
+limit-row presentation used by the live Watch screen. Circular, rectangular,
+inline, and corner previews compile the same complication family dispatcher
+source as the shipping WidgetKit extension. The gallery uses reference-size
+canvases; WidgetKit supplies exact face dimensions and the corner gauge/label
+only to a placed complication.
+
+```sh
+xcrun devicectl device process launch \
+  --device <watch-device> \
+  com.shinycomputers.contextpanel.watch \
+  --context-panel-validation-gallery
+```
 
 The gallery route never instantiates the live loader, cache, CloudKit stores,
 runtime-receipt relay, or timeline reload path. In the shared Watch widget
@@ -136,14 +147,12 @@ complication host behavior changed.
 
 ## Apple TV Gallery
 
-The signed Apple TV app exposes `Validation Gallery` at the bottom of the
-production runway, after the provider cards. The entry stays discoverable
-without changing the primary provider focus order. The bounded
-`contextpaneltv://validation-gallery` route opens the same signed destination
-for simulator and operator review. Runway and provider-detail
-previews instantiate the same `TVRunwayContent` and `TVProviderDetailView`
-presentation used by the live app, with a fixed presentation date and a local
-`@State` presentation-mode picker.
+The signed Apple TV app does not expose gallery navigation in the production
+runway. The bounded `contextpaneltv://validation-gallery` operator route opens
+the signed destination for simulator and device review. Runway and
+provider-detail previews instantiate the same `TVRunwayContent` and
+`TVProviderDetailView` presentation used by the live app, with a fixed
+presentation date and a local `@State` presentation-mode picker.
 
 Top Shelf previews call the shipping renderer's in-memory image path with the
 same `TVTopShelfDocument` model used by the extension. The app compilation path

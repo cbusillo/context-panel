@@ -1,7 +1,10 @@
 import ContextPanelCloudKitSync
 import ContextPanelCore
+import Foundation
 import SwiftUI
 import WidgetKit
+
+private let watchValidationGalleryLaunchArgument = "--context-panel-validation-gallery"
 
 @main
 struct ContextPanelWatchApp: App {
@@ -16,6 +19,9 @@ struct ContextPanelWatchApp: App {
 private struct WatchRootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var model = WatchSyncModel()
+    @State private var isValidationGalleryPresented = ProcessInfo.processInfo.arguments.contains(
+        watchValidationGalleryLaunchArgument
+    )
 
     var body: some View {
         NavigationStack {
@@ -27,14 +33,9 @@ private struct WatchRootView: View {
                     syncErrorMessage: model.lastSyncErrorMessage,
                     presentationDate: Date()
                 )
-
-                Section {
-                    NavigationLink {
-                        WatchValidationGalleryView()
-                    } label: {
-                        Label("Validation Gallery", systemImage: "testtube.2")
-                    }
-                }
+            }
+            .navigationDestination(isPresented: $isValidationGalleryPresented) {
+                WatchValidationGalleryView()
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {

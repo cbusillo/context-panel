@@ -279,6 +279,11 @@ grids. A fixed `Sample data` boundary remains visible outside scrolling and on
 every render tile. The selected state, family, and appearance are secondary to
 the rendered production surface; controls should stay compact and native.
 
+Validation galleries are operator-only surfaces. Normal product navigation
+must not expose gallery buttons, toolbar actions, list rows, or runway items.
+Use allowlisted signed-validation routes and the bounded Watch launch argument
+instead of adding a product setting, feature flag, or persistent unlock.
+
 Gallery fixtures use synthetic account labels and a fixed presentation time.
 They must never resemble live account data, mutate production state, or imply
 that a shared SwiftUI render proves WidgetKit, complication, Top Shelf, or

@@ -96,7 +96,6 @@ private struct TVRootView: View {
                 presentationModeRawValue: $presentationModeRawValue,
                 noticeMessage: visibleNoticeMessage,
                 presentationDate: nil,
-                showsValidationGalleryEntry: true,
                 detailActionMode: .navigation,
                 onRefresh: { model.reload() }
             )
@@ -175,7 +174,6 @@ struct TVRunwayContent: View {
     @Binding var presentationModeRawValue: String
     let noticeMessage: String?
     let presentationDate: Date?
-    let showsValidationGalleryEntry: Bool
     let detailActionMode: TVDetailActionMode
     let onRefresh: () -> Void
 
@@ -212,14 +210,6 @@ struct TVRunwayContent: View {
                         )
                     }
 
-                    if showsValidationGalleryEntry {
-                        NavigationLink(value: tvValidationGalleryNavigationValue) {
-                            TVValidationGalleryEntryLabel()
-                        }
-                        .buttonStyle(TVFocusButtonStyle())
-                        .focusEffectDisabled()
-                        .accessibilityHint("Review read-only sample states and Top Shelf previews")
-                    }
                 }
                 .padding(.horizontal, 72)
                 .padding(.top, 48)
@@ -232,38 +222,6 @@ struct TVRunwayContent: View {
                     .padding(.bottom, 28)
             }
         }
-    }
-}
-
-private struct TVValidationGalleryEntryLabel: View {
-    @Environment(\.isFocused) private var isFocused
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        HStack(spacing: 18) {
-            Label("Validation Gallery", systemImage: "testtube.2")
-                .font(.title3.weight(.semibold))
-            Spacer()
-            Text("Sample data")
-                .font(.headline)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 28)
-        .padding(.vertical, 20)
-        .background(
-            Color.white.opacity(isFocused ? 0.1 : 0.045),
-            in: RoundedRectangle(cornerRadius: 20, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(
-                    isFocused ? Color.white.opacity(0.9) : Color.white.opacity(0.08),
-                    lineWidth: isFocused ? 3 : 1
-                )
-        }
-        .scaleEffect(isFocused && !reduceMotion ? 1.012 : 1)
-        .shadow(color: .black.opacity(isFocused ? 0.34 : 0.08), radius: isFocused ? 18 : 6, y: 8)
-        .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.8), value: isFocused)
     }
 }
 
