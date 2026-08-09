@@ -34,6 +34,8 @@
       "companionVisionOSArchive": "scripts/validate-companion-builds.sh --configuration Release --archive visionos",
       "companionWatchBuild": "scripts/validate-companion-builds.sh --configuration Release watchos",
       "companionTVArchive": "scripts/validate-companion-builds.sh --configuration Release --archive tvos",
+      "companionCachePreflight": "scripts/context-panel-companion-cache.sh preflight",
+      "companionCacheQuarantine": "scripts/context-panel-companion-cache.sh quarantine --root <absolute-.build-or-derived-data/companion-build-validation-root>",
       "signedValidationCoordinator": "scripts/context-panel-validation.py start-session --version <version> --build-number <build-number>",
       "signedValidationVisualSession": "scripts/context-panel-validation.py start-session --version <version> --build-number <build-number> --surface-comparison <comparison.json> --visual-review-requirements <visual-review-requirements.json> --expected-build-manifest <ExpectedBuildManifest-platform.json>",
       "signedValidationCoordinatorStatus": "scripts/context-panel-validation.py status --version <version> --build-number <build-number>",

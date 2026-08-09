@@ -10,6 +10,7 @@ import shlex
 import hashlib
 import shutil
 import textwrap
+import time
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -89,6 +90,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         invocation_root: Path | None = None,
         working_directory: Path | None = None,
         include_standard_path: bool = True,
+        fake_xcodebuild_body: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         scripts_path = checkout_root / "scripts"
         scripts_path.mkdir(parents=True, exist_ok=True)
@@ -97,7 +99,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
         fake_xcodebuild = bin_path / "xcodebuild"
         fake_xcodebuild.write_text(
-            "#!/bin/bash\nprintf '** BUILD SUCCEEDED **\\n'\n"
+            fake_xcodebuild_body
+            or "#!/bin/bash\nprintf '** BUILD SUCCEEDED **\\n'\n"
         )
         fake_xcodebuild.chmod(0o755)
         fake_xcodegen = bin_path / "xcodegen"
@@ -111,6 +114,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
         fixture_path = scripts_path / "validate-companion-builds.sh"
         fixture_path.write_text(fixture_script)
         fixture_path.chmod(0o755)
+        cache_helper = scripts_path / "context-panel-companion-cache.sh"
+        cache_helper.write_text(self.read("scripts/context-panel-companion-cache.sh"))
+        cache_helper.chmod(0o755)
 
         temp_path = checkout_root / ".runner-temp"
         temp_path.mkdir(exist_ok=True)
@@ -153,6 +159,115 @@ class ReleaseWorkflowTests(unittest.TestCase):
             stderr=subprocess.STDOUT,
             check=False,
             timeout=30,
+        )
+
+    def run_companion_cache_helper(
+        self,
+        command: str,
+        root: Path | None = None,
+        *,
+        environment: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        arguments = [
+            "/bin/bash",
+            str(REPO_ROOT / "scripts/context-panel-companion-cache.sh"),
+            command,
+        ]
+        if root is not None:
+            arguments.extend(["--root", str(root)])
+        return subprocess.run(
+            arguments,
+            cwd=REPO_ROOT,
+            env=environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+            timeout=30,
+        )
+
+    def run_companion_interrupt_fixture(
+        self,
+        checkout_root: Path,
+        artifact_cache_root: Path,
+    ) -> subprocess.CompletedProcess[str]:
+        scripts_path = checkout_root / "scripts"
+        scripts_path.mkdir(parents=True)
+        bin_path = checkout_root / ".test-bin"
+        bin_path.mkdir()
+        marker = checkout_root / "xcodebuild-started"
+
+        fake_xcodebuild = bin_path / "xcodebuild"
+        fake_xcodebuild.write_text(
+            """#!/bin/bash
+derived_data=""
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "-derivedDataPath" ]]; then
+    derived_data="$2"
+    shift 2
+  else
+    shift
+  fi
+done
+mkdir -p "$derived_data/Build/Products/Release-iphoneos/Context Panel.app"
+touch "$FAKE_XCODEBUILD_MARKER"
+trap 'exit 143' TERM
+sleep 30
+"""
+        )
+        fake_xcodebuild.chmod(0o755)
+        fake_xcodegen = bin_path / "xcodegen"
+        fake_xcodegen.write_text("#!/bin/bash\nexit 0\n")
+        fake_xcodegen.chmod(0o755)
+
+        validator = self.read("scripts/validate-companion-builds.sh").replace(
+            "/usr/bin/xcodebuild", f'"{fake_xcodebuild}"'
+        )
+        validator_path = scripts_path / "validate-companion-builds.sh"
+        validator_path.write_text(validator)
+        validator_path.chmod(0o755)
+        helper_path = scripts_path / "context-panel-companion-cache.sh"
+        helper_path.write_text(self.read("scripts/context-panel-companion-cache.sh"))
+        helper_path.chmod(0o755)
+
+        environment = os.environ.copy()
+        environment["CONTEXT_PANEL_ARTIFACT_CACHE_ROOT"] = str(artifact_cache_root)
+        environment["FAKE_XCODEBUILD_MARKER"] = str(marker)
+        environment["PATH"] = f"{bin_path}:{environment.get('PATH', '')}"
+        environment["RUNNER_TEMP"] = str(checkout_root / ".runner-temp")
+        environment["TMPDIR"] = str(checkout_root / ".runner-temp")
+        Path(environment["RUNNER_TEMP"]).mkdir()
+
+        process = subprocess.Popen(
+            ["/bin/bash", str(validator_path), "--configuration", "Release", "ios"],
+            cwd=checkout_root,
+            env=environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        try:
+            for _ in range(100):
+                if marker.exists():
+                    break
+                if process.poll() is not None:
+                    break
+                time.sleep(0.05)
+            self.assertTrue(marker.exists(), "fake xcodebuild did not start")
+            process.terminate()
+            stdout, _ = process.communicate(timeout=15)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+            if process.stdout is not None and not process.stdout.closed:
+                process.stdout.close()
+
+        return subprocess.CompletedProcess(
+            process.args,
+            process.returncode,
+            stdout=stdout,
+            stderr=None,
         )
 
     def run_codeql_cache_fixture(
@@ -219,14 +334,19 @@ class ReleaseWorkflowTests(unittest.TestCase):
             fake_xcodegen.write_text("#!/usr/bin/env bash\nexit 0\n")
             fake_xcodegen.chmod(0o755)
 
+            scripts_path = temp_path / "scripts"
+            scripts_path.mkdir()
             fixture_script = self.read("scripts/validate-companion-builds.sh")
             fixture_script = fixture_script.replace("5 * 60", "1")
             fixture_script = fixture_script.replace(
                 "/usr/bin/xcodebuild", f'"{fake_xcodebuild}"'
             )
-            fixture_path = temp_path / "validate-companion-builds.sh"
+            fixture_path = scripts_path / "validate-companion-builds.sh"
             fixture_path.write_text(fixture_script)
             fixture_path.chmod(0o755)
+            cache_helper = scripts_path / "context-panel-companion-cache.sh"
+            cache_helper.write_text(self.read("scripts/context-panel-companion-cache.sh"))
+            cache_helper.chmod(0o755)
 
             environment = os.environ.copy()
             environment["FAKE_XCODEBUILD_COUNTER"] = str(counter_path)
@@ -1889,13 +2009,25 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 fallback.stdout,
             )
 
-            environment_override = temp_path / "explicit DerivedData"
+            environment_override = (
+                temp_path
+                / "explicit environment"
+                / "derived-data"
+                / "companion-build-validation"
+            )
+            environment_override.parent.parent.mkdir()
             explicit = self.run_companion_cache_fixture(
                 first_checkout,
                 artifact_cache_root,
                 derived_data_override=environment_override,
             )
-            cli_override = temp_path / "CLI DerivedData"
+            cli_override = (
+                temp_path
+                / "explicit CLI"
+                / "derived-data"
+                / "companion-build-validation"
+            )
+            cli_override.parent.parent.mkdir()
             cli = self.run_companion_cache_fixture(
                 first_checkout,
                 artifact_cache_root,
@@ -1911,6 +2043,497 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             self.assertIn(
                 f"companion validation DerivedData root: {cli_override}", cli.stdout
             )
+
+    def test_companion_cache_quarantines_minimal_bundle_roots_without_following_symlinks(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            checkout_root = temp_path / "checkout"
+            checkout_root.mkdir()
+            cache_root = (
+                checkout_root
+                / "derived-data"
+                / "companion-build-validation"
+            )
+            product_root = cache_root / "ios/Build/Products/Release-iphoneos"
+            app_path = product_root / "Context Panel.app"
+            nested_watch_app = app_path / "Watch/Context Panel.app"
+            nested_watch_widget = (
+                nested_watch_app
+                / "PlugIns/ContextPanelWatchWidgetExtension.appex"
+            )
+            nested_watch_widget.mkdir(parents=True)
+            (nested_watch_widget / "fixture").write_text("watch")
+
+            external_widget = temp_path / "external widget"
+            external_widget.mkdir()
+            symlink_widget = (
+                product_root / "ContextPanelCompanionWidgetExtension.appex"
+            )
+            symlink_widget.symlink_to(external_widget, target_is_directory=True)
+
+            unrelated_bundle = product_root / "Unrelated.app"
+            unrelated_bundle.mkdir()
+            unrelated_file = cache_root / "compiler-cache/module.cache"
+            unrelated_file.parent.mkdir(parents=True)
+            unrelated_file.write_text("keep")
+            expected_manifest = cache_root / "ExpectedBuildManifest-ios.json"
+            expected_manifest.write_text("{}")
+            runtime_receipt = cache_root / "runtime-receipt.json"
+            runtime_receipt.write_text("{}")
+
+            result = self.run_companion_cache_helper("quarantine", cache_root)
+
+            self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertIn("bundles=4 apps=2 widgets=1", result.stdout)
+            self.assertIn("watch-widgets=1", result.stdout)
+            self.assertIn("symlinks=1", result.stdout)
+            self.assertIn("quarantine=OK moved=2", result.stdout)
+            self.assertFalse(app_path.exists())
+            self.assertFalse(symlink_widget.exists())
+            self.assertTrue(external_widget.is_dir())
+            self.assertTrue(unrelated_bundle.is_dir())
+            self.assertEqual(unrelated_file.read_text(), "keep")
+            self.assertEqual(expected_manifest.read_text(), "{}")
+            self.assertEqual(runtime_receipt.read_text(), "{}")
+
+            quarantine_base = checkout_root / ".context-panel-companion-quarantine"
+            quarantines = list(quarantine_base.iterdir())
+            self.assertEqual(len(quarantines), 1)
+            quarantined_app = (
+                quarantines[0]
+                / "ios/Build/Products/Release-iphoneos/Context Panel.app.quarantined"
+            )
+            quarantined_symlink = (
+                quarantines[0]
+                / "ios/Build/Products/Release-iphoneos/ContextPanelCompanionWidgetExtension.appex.quarantined"
+            )
+            self.assertTrue(quarantined_app.is_dir())
+            self.assertTrue(
+                (
+                    quarantined_app
+                    / "Watch/Context Panel.app.quarantined/PlugIns/ContextPanelWatchWidgetExtension.appex.quarantined/fixture"
+                ).is_file()
+            )
+            self.assertTrue(quarantined_symlink.is_symlink())
+            self.assertEqual(quarantined_symlink.resolve(), external_widget.resolve())
+            self.assertEqual(
+                list(quarantines[0].rglob("*.app"))
+                + list(quarantines[0].rglob("*.appex")),
+                [],
+            )
+
+    def test_companion_cache_quarantine_is_a_safe_noop(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            checkout_root = Path(temp_dir) / "checkout"
+            cache_root = (
+                checkout_root
+                / "derived-data"
+                / "companion-build-validation"
+            )
+            cache_root.mkdir(parents=True)
+
+            result = self.run_companion_cache_helper("quarantine", cache_root)
+
+            self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertIn("quarantine=OK moved=0", result.stdout)
+            self.assertFalse(
+                (checkout_root / ".context-panel-companion-quarantine").exists()
+            )
+
+    def test_companion_cache_keeps_checkout_quarantine_inside_ignored_build_root(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            checkout_root = Path(temp_dir) / "checkout"
+            cache_root = (
+                checkout_root
+                / ".build/companion-build-validation"
+            )
+            app_path = cache_root / "Build/Products/Context Panel.app"
+            app_path.mkdir(parents=True)
+
+            result = self.run_companion_cache_helper("quarantine", cache_root)
+
+            self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertIn("quarantine=OK moved=1", result.stdout)
+            self.assertFalse(
+                (checkout_root / ".context-panel-companion-quarantine").exists()
+            )
+            quarantine_base = (
+                checkout_root
+                / ".build/.context-panel-companion-quarantine"
+            )
+            self.assertEqual(
+                len(
+                    list(
+                        quarantine_base.glob(
+                            "*/Build/Products/Context Panel.app.quarantined"
+                        )
+                    )
+                ),
+                1,
+            )
+
+    def test_companion_cache_rejects_unrelated_root_level_and_symlink_roots(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            unrelated = temp_path / "unrelated"
+            unrelated.mkdir()
+            unrelated_result = self.run_companion_cache_helper(
+                "quarantine", unrelated
+            )
+            root_level_result = self.run_companion_cache_helper(
+                "quarantine", Path("/companion-build-validation")
+            )
+            root_build_result = self.run_companion_cache_helper(
+                "quarantine", Path("/.build/companion-build-validation")
+            )
+
+            real_root = temp_path / "real/derived-data/companion-build-validation"
+            real_root.mkdir(parents=True)
+            symlink_parent = temp_path / "symlink/derived-data"
+            symlink_parent.mkdir(parents=True)
+            symlink_root = symlink_parent / "companion-build-validation"
+            symlink_root.symlink_to(real_root, target_is_directory=True)
+            symlink_result = self.run_companion_cache_helper(
+                "quarantine", symlink_root
+            )
+
+            outside_root = temp_path / "outside/child"
+            escaped_root = (
+                outside_root
+                / "derived-data/companion-build-validation"
+            )
+            escaped_root.mkdir(parents=True)
+            ancestor_parent = temp_path / "safe"
+            ancestor_parent.mkdir()
+            ancestor_link = ancestor_parent / "link"
+            ancestor_link.symlink_to(temp_path / "outside", target_is_directory=True)
+            ancestor_result = self.run_companion_cache_helper(
+                "quarantine",
+                ancestor_link
+                / "child/derived-data/companion-build-validation",
+            )
+
+            self.assertNotEqual(unrelated_result.returncode, 0)
+            self.assertIn("root rejected", unrelated_result.stdout)
+            self.assertNotEqual(root_level_result.returncode, 0)
+            self.assertIn("root rejected", root_level_result.stdout)
+            self.assertNotEqual(root_build_result.returncode, 0)
+            self.assertIn("root rejected", root_build_result.stdout)
+            self.assertNotEqual(symlink_result.returncode, 0)
+            self.assertIn("symbolic link", symlink_result.stdout)
+            self.assertNotEqual(ancestor_result.returncode, 0)
+            self.assertIn("must not traverse symbolic links", ancestor_result.stdout)
+
+    def test_companion_cache_preflight_passes_clean_and_fails_on_residue(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_root = (
+                Path(temp_dir)
+                / "checkout/derived-data/companion-build-validation"
+            )
+            cache_root.mkdir(parents=True)
+
+            clean = self.run_companion_cache_helper("preflight", cache_root)
+            residue = cache_root / "Build/Products/ContextPanelRefreshAgent.app"
+            residue.mkdir(parents=True)
+            dirty = self.run_companion_cache_helper("preflight", cache_root)
+
+            self.assertEqual(clean.returncode, 0, clean.stdout)
+            self.assertIn("preflight=OK", clean.stdout)
+            self.assertNotEqual(dirty.returncode, 0)
+            self.assertIn("refresh-agents=1", dirty.stdout)
+            self.assertIn("preflight=FAIL", dirty.stdout)
+            self.assertTrue(residue.is_dir())
+
+    def test_companion_cache_refuses_signed_bundle_material(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_root = (
+                Path(temp_dir)
+                / "checkout/derived-data/companion-build-validation"
+            )
+            signed_app = cache_root / "Build/Products/Context Panel.app"
+            signature = (
+                signed_app
+                / "Watch/Context Panel.app/_CodeSignature/CodeResources"
+            )
+            signature.parent.mkdir(parents=True)
+            signature.write_text("signed")
+
+            result = self.run_companion_cache_helper("quarantine", cache_root)
+
+            self.assertEqual(result.returncode, 3, result.stdout)
+            self.assertIn("protected-signed-bundles=1", result.stdout)
+            self.assertTrue(signed_app.is_dir())
+
+    def test_companion_cache_refuses_inventory_inspection_errors(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_root = (
+                Path(temp_dir)
+                / "checkout/derived-data/companion-build-validation"
+            )
+            app_path = cache_root / "Build/Products/Context Panel.app"
+            unreadable_path = app_path / "Unreadable"
+            unreadable_path.mkdir(parents=True)
+            unreadable_path.chmod(0)
+            try:
+                result = self.run_companion_cache_helper("quarantine", cache_root)
+            finally:
+                unreadable_path.chmod(0o700)
+
+            self.assertEqual(result.returncode, 2, result.stdout)
+            self.assertIn("inventory=FAILED", result.stdout)
+            self.assertNotIn(str(unreadable_path), result.stdout)
+            self.assertTrue(app_path.is_dir())
+
+    def test_companion_cache_rejects_symlinked_quarantine_destination(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            checkout_root = temp_path / "checkout"
+            cache_root = (
+                checkout_root
+                / "derived-data/companion-build-validation"
+            )
+            app_path = cache_root / "Build/Products/Context Panel.app"
+            app_path.mkdir(parents=True)
+            external_quarantine = temp_path / "external quarantine"
+            external_quarantine.mkdir()
+            quarantine_base = checkout_root / ".context-panel-companion-quarantine"
+            quarantine_base.symlink_to(
+                external_quarantine,
+                target_is_directory=True,
+            )
+
+            result = self.run_companion_cache_helper("quarantine", cache_root)
+
+            self.assertEqual(result.returncode, 3, result.stdout)
+            self.assertIn("unsafe-quarantine-base", result.stdout)
+            self.assertTrue(app_path.is_dir())
+            self.assertEqual(list(external_quarantine.iterdir()), [])
+
+    def test_companion_cache_fails_when_nested_bundle_cannot_be_neutralized(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            checkout_root = temp_path / "checkout"
+            cache_root = (
+                checkout_root
+                / "derived-data/companion-build-validation"
+            )
+            app_path = cache_root / "Build/Products/Context Panel.app"
+            watch_parent = app_path / "Watch"
+            watch_widget = (
+                watch_parent
+                / "Context Panel.app/PlugIns/ContextPanelWatchWidgetExtension.appex"
+            )
+            watch_widget.mkdir(parents=True)
+            watch_parent.chmod(0o555)
+            try:
+                result = self.run_companion_cache_helper("quarantine", cache_root)
+            finally:
+                watch_parent.chmod(0o755)
+
+            self.assertEqual(result.returncode, 3, result.stdout)
+            self.assertIn("bundle-neutralization", result.stdout)
+            self.assertTrue(app_path.is_dir())
+            quarantine_base = checkout_root / ".context-panel-companion-quarantine"
+            self.assertEqual(
+                list(quarantine_base.rglob("*.app"))
+                + list(quarantine_base.rglob("*.appex")),
+                [],
+            )
+
+    def test_companion_cache_preflight_discovers_current_and_legacy_retry_roots(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            runner_temp = temp_path / "runner temp"
+            temporary_directory = temp_path / "temporary"
+            runner_temp.mkdir()
+            temporary_directory.mkdir()
+            retry_root = (
+                runner_temp
+                / "context-panel-companion-retry.fixture"
+                / "derived-data/companion-build-validation"
+            )
+            residue = retry_root / "Build/Products/ContextPanelRefreshAgent.app"
+            residue.mkdir(parents=True)
+            legacy_retry_root = (
+                runner_temp
+                / "context-panel-companion-retry.legacy"
+                / "tvos"
+            )
+            legacy_residue = (
+                legacy_retry_root
+                / "Build/Products/ContextPanelTVTopShelfExtension.appex"
+            )
+            legacy_residue.mkdir(parents=True)
+            environment = os.environ.copy()
+            environment["RUNNER_TEMP"] = str(runner_temp)
+            environment["TMPDIR"] = str(temporary_directory)
+            environment["CONTEXT_PANEL_ARTIFACT_CACHE_ROOT"] = str(
+                temp_path / "absent artifact cache"
+            )
+
+            result = self.run_companion_cache_helper(
+                "preflight",
+                environment=environment,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("preflight=FAIL", result.stdout)
+            self.assertRegex(result.stdout, r"refresh-agents=[1-9][0-9]*")
+            self.assertRegex(result.stdout, r"top-shelf=[1-9][0-9]*")
+            self.assertTrue(residue.is_dir())
+            self.assertTrue(legacy_residue.is_dir())
+
+    def test_companion_validation_quarantines_after_failure(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            artifact_cache_root = temp_path / "artifact cache"
+            artifact_cache_root.mkdir()
+            checkout_root = temp_path / "checkout"
+            fake_xcodebuild = """#!/bin/bash
+derived_data=""
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "-derivedDataPath" ]]; then
+    derived_data="$2"
+    shift 2
+  else
+    shift
+  fi
+done
+mkdir -p "$derived_data/Build/Products/Release-iphoneos/Context Panel.app"
+printf '** BUILD FAILED **\n'
+exit 7
+"""
+
+            result = self.run_companion_cache_fixture(
+                checkout_root,
+                artifact_cache_root,
+                fake_xcodebuild_body=fake_xcodebuild,
+            )
+            cache_root = (
+                artifact_cache_root
+                / "checkouts"
+                / self.expected_checkout_cache_key(checkout_root)
+                / "derived-data/companion-build-validation"
+            )
+
+            self.assertEqual(result.returncode, 7, result.stdout)
+            self.assertIn("quarantine=OK moved=1", result.stdout)
+            self.assertFalse(
+                (cache_root / "ios/Build/Products/Release-iphoneos/Context Panel.app").exists()
+            )
+            quarantine_base = (
+                cache_root.parent.parent / ".context-panel-companion-quarantine"
+            )
+            self.assertEqual(
+                len(
+                    list(
+                        quarantine_base.glob(
+                            "*/ios/Build/Products/Release-iphoneos/Context Panel.app.quarantined"
+                        )
+                    )
+                ),
+                1,
+            )
+
+    def test_companion_validation_preserves_failure_status_when_cleanup_refuses(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            artifact_cache_root = temp_path / "artifact cache"
+            artifact_cache_root.mkdir()
+            checkout_root = temp_path / "checkout"
+            fake_xcodebuild = """#!/bin/bash
+derived_data=""
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "-derivedDataPath" ]]; then
+    derived_data="$2"
+    shift 2
+  else
+    shift
+  fi
+done
+app="$derived_data/Build/Products/Release-iphoneos/Context Panel.app"
+mkdir -p "$app"
+printf 'signed' > "$app/embedded.mobileprovision"
+printf '** BUILD FAILED **\n'
+exit 7
+"""
+
+            result = self.run_companion_cache_fixture(
+                checkout_root,
+                artifact_cache_root,
+                fake_xcodebuild_body=fake_xcodebuild,
+            )
+            cache_root = (
+                artifact_cache_root
+                / "checkouts"
+                / self.expected_checkout_cache_key(checkout_root)
+                / "derived-data/companion-build-validation"
+            )
+
+            self.assertEqual(result.returncode, 7, result.stdout)
+            self.assertIn("protected-signed-bundles=1", result.stdout)
+            self.assertIn(
+                "preserving validation status 7",
+                result.stdout,
+            )
+            self.assertTrue(
+                (cache_root / "ios/Build/Products/Release-iphoneos/Context Panel.app").is_dir()
+            )
+
+    def test_companion_validation_quarantines_after_interruption(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            artifact_cache_root = temp_path / "artifact cache"
+            artifact_cache_root.mkdir()
+            checkout_root = temp_path / "checkout"
+            result = self.run_companion_interrupt_fixture(
+                checkout_root,
+                artifact_cache_root,
+            )
+            cache_root = (
+                artifact_cache_root
+                / "checkouts"
+                / self.expected_checkout_cache_key(checkout_root)
+                / "derived-data/companion-build-validation"
+            )
+
+            self.assertEqual(result.returncode, 143, result.stdout)
+            self.assertIn("quarantine=OK moved=1", result.stdout)
+            self.assertFalse(
+                (cache_root / "ios/Build/Products/Release-iphoneos/Context Panel.app").exists()
+            )
+
+    def test_companion_validation_reports_cleanup_failure_after_success(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            artifact_cache_root = temp_path / "artifact cache"
+            artifact_cache_root.mkdir()
+            checkout_root = temp_path / "checkout"
+            fake_xcodebuild = """#!/bin/bash
+derived_data=""
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "-derivedDataPath" ]]; then
+    derived_data="$2"
+    shift 2
+  else
+    shift
+  fi
+done
+app="$derived_data/Build/Products/Release-iphoneos/Context Panel.app"
+mkdir -p "$app"
+printf 'signed' > "$app/embedded.mobileprovision"
+printf '** BUILD SUCCEEDED **\n'
+exit 0
+"""
+
+            result = self.run_companion_cache_fixture(
+                checkout_root,
+                artifact_cache_root,
+                fake_xcodebuild_body=fake_xcodebuild,
+            )
+
+            self.assertEqual(result.returncode, 3, result.stdout)
+            self.assertIn("protected-signed-bundles=1", result.stdout)
 
     def test_codeql_namespaces_trusted_swiftpm_cache_by_checkout(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1961,6 +2584,9 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
     def test_companion_build_validation_supports_ios_visionos_watchos_and_tvos_without_signing(self):
         workflow = self.read(".github/workflows/ci.yml")
         script = self.read("scripts/validate-companion-builds.sh")
+        cache_helper = self.read("scripts/context-panel-companion-cache.sh")
+        release_docs = self.read("docs/release.md")
+        github_metadata = json.loads(self.read(".github/github.json"))
 
         self.assertIn(
             "- name: Validate signed coordinator scripts\n"
@@ -2018,6 +2644,39 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("PlugIns/ContextPanelTVTopShelfExtension.appex", script)
         self.assertIn("platforms=(ios visionos watchos tvos)", script)
         self.assertIn("generic/platform=iOS", script)
+        self.assertIn(
+            'companion_cache_helper="$repo_root/scripts/context-panel-companion-cache.sh"',
+            script,
+        )
+        self.assertIn("trap finalize_companion_validation EXIT", script)
+        self.assertIn("trap 'handle_validation_signal 129' HUP", script)
+        self.assertIn("trap 'handle_validation_signal 130' INT", script)
+        self.assertIn("trap 'handle_validation_signal 143' TERM", script)
+        self.assertIn('"$companion_cache_helper" quarantine --root "$root"', script)
+        self.assertIn("preserving validation status $original_status", script)
+        self.assertIn("context-panel-companion-retry.XXXXXX", script)
+        self.assertIn("derived-data/companion-build-validation", script)
+        self.assertIn("/usr/bin/find -P", cache_helper)
+        self.assertIn("-print0 -prune", cache_helper)
+        self.assertIn("protected-signed-bundles", cache_helper)
+        self.assertIn(".context-panel-companion-quarantine", cache_helper)
+        self.assertIn("neutralize_bundle_tree", cache_helper)
+        self.assertIn("trap '' HUP INT TERM", cache_helper)
+        self.assertIn("trap '' HUP INT TERM", script)
+        self.assertNotIn("rm -rf", cache_helper)
+        self.assertIn(
+            "scripts/context-panel-companion-cache.sh preflight",
+            release_docs,
+        )
+        validate_commands = github_metadata["qualityGate"]["validate"]
+        self.assertEqual(
+            validate_commands["companionCachePreflight"],
+            "scripts/context-panel-companion-cache.sh preflight",
+        )
+        self.assertIn(
+            "context-panel-companion-cache.sh quarantine --root",
+            validate_commands["companionCacheQuarantine"],
+        )
         self.assertIn("generic/platform=visionOS", script)
         self.assertIn("generic/platform=watchOS", script)
         self.assertIn("generic/platform=tvOS", script)

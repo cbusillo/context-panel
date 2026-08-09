@@ -674,7 +674,15 @@ descendants. Cleanup escalates from `SIGTERM` to `SIGKILL` on a bounded deadline
 so a wedged process cannot also wedge the validation wrapper. A pre-terminal
 Xcode service stall with no output for five minutes receives one retry with
 isolated temporary DerivedData; ordinary compiler, packaging, and archive
-validation failures are never retried.
+validation failures are never retried. On success, failure, timeout, or handled
+interruption, the validator moves only generated Context Panel app and extension
+bundle roots out of `companion-build-validation` into a timestamped same-volume
+quarantine. Nested Watch content moves with its parent app, symlinked products
+are moved without following their targets, and every quarantined `.app` and
+`.appex` suffix is neutralized so runtime discovery cannot treat the quarantine
+as another installed build. Signed bundle material causes cleanup to fail closed
+rather than moving release artifacts. The original validation failure remains
+the command's exit status if cleanup also fails.
 
 ### Local Apple Vision Pro Dogfood
 
@@ -1173,7 +1181,31 @@ registrations or bundles remain.
 
 1. Install and launch the canonical Mac app from `/Applications/Context
 Panel.app`.
-2. Run the read-only Production receipt:
+2. Before opening a signed validation coordinator session or touching a physical
+   companion device, run the read-only generated-bundle preflight on the trusted
+   release host:
+
+   ```sh
+   scripts/context-panel-companion-cache.sh preflight
+   ```
+
+   Require `companion-cache preflight=OK`. A failure reports bounded bundle
+   classifications and counts without printing device, account, or provider
+   data. The scan includes checkout-scoped cache roots plus current and legacy
+   temporary retry layouts left by interrupted validators. Investigate the exact
+   validated root before mutation. When the residue is confirmed to be unsigned
+   output from the generic companion validator, quarantine only that root:
+
+   ```sh
+   scripts/context-panel-companion-cache.sh quarantine \
+     --root <absolute-.build-or-derived-data/companion-build-validation-root>
+   ```
+
+   The quarantine command rejects unrelated, root-level, traversing, symlinked,
+   and signed-content roots. It does not delete DerivedData, compiler caches,
+   manifests, runtime receipts, release evidence, or unrelated bundles.
+
+3. Run the read-only Production receipt:
 
    ```sh
    scripts/context-panel-runtime-baseline.sh check --require-production-runtime
@@ -1184,19 +1216,19 @@ Panel.app`.
    modes build a local Development-CloudKit runtime and refuse to replace the
    signed Production publisher.
 
-3. Trigger a Mac refresh that publishes the sanitized companion snapshot to
+4. Trigger a Mac refresh that publishes the sanitized companion snapshot to
    CloudKit.
-4. Open the app Diagnostics view and confirm `Companion publish` is healthy or,
+5. Open the app Diagnostics view and confirm `Companion publish` is healthy or,
    if degraded, names the failing store without raw paths or account data.
-5. Install the companion build from TestFlight on the target device. For the
+6. Install the companion build from TestFlight on the target device. For the
    current validated companion lane, that means iPhone or iPad. For visionOS,
    release evidence requires Apple Vision Pro; #168 records the completed
    initial packaging requirements. A visionOS simulator can be used for a
    separate pre-release UI smoke check, but not as TestFlight/device validation.
-6. Before launching the companion app, add the companion widget and confirm its
+7. Before launching the companion app, add the companion widget and confirm its
    small/medium/large layouts render current lanes directly from Production
    CloudKit rather than setup-only, stale, or no-Mac state.
-7. Launch the companion app and confirm it renders the same current lanes,
+8. Launch the companion app and confirm it renders the same current lanes,
    mirrors the selected snapshot into the App Group, and preserves useful
    degraded states in both app and widget.
    For watchOS, add the complication before launching the Watch app and confirm
@@ -1204,12 +1236,12 @@ Panel.app`.
    and confirm its explicit timeline reload preserves the same answer. For an
    upgrade, follow the routine Watch restart runbook below before judging the
    complication.
-8. Reopen the Mac Diagnostics view and confirm companion load/readback state is
+9. Reopen the Mac Diagnostics view and confirm companion load/readback state is
    explainable: healthy, stale, unavailable, partial, or failed.
-9. Exercise degraded cases when practical: CloudKit disabled or unavailable,
-   missing CloudKit record, stale local mirror, missing Mac publish, delayed
-   notification, and app group mirror failure.
-10. For multi-Mac validation, use two Macs signed into the same iCloud account
+10. Exercise degraded cases when practical: CloudKit disabled or unavailable,
+    missing CloudKit record, stale local mirror, missing Mac publish, delayed
+    notification, and app group mirror failure.
+11. For multi-Mac validation, use two Macs signed into the same iCloud account
     with at least one OpenAI account available on only one Mac. Publish from the
     fully authenticated Mac, then refresh and publish from the partial Mac.
     Confirm iOS and watchOS retain healthy OpenAI lanes, include healthy lanes
@@ -1217,7 +1249,7 @@ Panel.app`.
     accumulate duplicate companion account IDs. Reverse the publish order and
     repeat so CloudKit conflict retry and account-level freshness both have
     coverage.
-11. During the rolling-upgrade test, leave one Mac on the previous release and
+12. During the rolling-upgrade test, leave one Mac on the previous release and
     update the other Mac plus iOS/watchOS companions. Confirm the new companion
     clients merge the legacy `current` record with the versioned usage record,
     and confirm repeated legacy publishes cannot erase lanes already preserved
