@@ -2277,7 +2277,38 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             self.assertTrue(app_path.is_dir())
             self.assertEqual(list(external_quarantine.iterdir()), [])
 
-    def test_companion_cache_preflight_discovers_stale_retry_roots(self):
+    def test_companion_cache_fails_when_nested_bundle_cannot_be_neutralized(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            checkout_root = temp_path / "checkout"
+            cache_root = (
+                checkout_root
+                / "derived-data/companion-build-validation"
+            )
+            app_path = cache_root / "Build/Products/Context Panel.app"
+            watch_parent = app_path / "Watch"
+            watch_widget = (
+                watch_parent
+                / "Context Panel.app/PlugIns/ContextPanelWatchWidgetExtension.appex"
+            )
+            watch_widget.mkdir(parents=True)
+            watch_parent.chmod(0o555)
+            try:
+                result = self.run_companion_cache_helper("quarantine", cache_root)
+            finally:
+                watch_parent.chmod(0o755)
+
+            self.assertEqual(result.returncode, 3, result.stdout)
+            self.assertIn("bundle-neutralization", result.stdout)
+            self.assertTrue(app_path.is_dir())
+            quarantine_base = checkout_root / ".context-panel-companion-quarantine"
+            self.assertEqual(
+                list(quarantine_base.rglob("*.app"))
+                + list(quarantine_base.rglob("*.appex")),
+                [],
+            )
+
+    def test_companion_cache_preflight_discovers_current_and_legacy_retry_roots(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             runner_temp = temp_path / "runner temp"
@@ -2291,6 +2322,16 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             )
             residue = retry_root / "Build/Products/ContextPanelRefreshAgent.app"
             residue.mkdir(parents=True)
+            legacy_retry_root = (
+                runner_temp
+                / "context-panel-companion-retry.legacy"
+                / "tvos"
+            )
+            legacy_residue = (
+                legacy_retry_root
+                / "Build/Products/ContextPanelTVTopShelfExtension.appex"
+            )
+            legacy_residue.mkdir(parents=True)
             environment = os.environ.copy()
             environment["RUNNER_TEMP"] = str(runner_temp)
             environment["TMPDIR"] = str(temporary_directory)
@@ -2306,7 +2347,9 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("preflight=FAIL", result.stdout)
             self.assertRegex(result.stdout, r"refresh-agents=[1-9][0-9]*")
+            self.assertRegex(result.stdout, r"top-shelf=[1-9][0-9]*")
             self.assertTrue(residue.is_dir())
+            self.assertTrue(legacy_residue.is_dir())
 
     def test_companion_validation_quarantines_after_failure(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -1191,9 +1191,10 @@ Panel.app`.
 
    Require `companion-cache preflight=OK`. A failure reports bounded bundle
    classifications and counts without printing device, account, or provider
-   data. Investigate the exact validated root before mutation. When the residue
-   is confirmed to be unsigned output from the generic companion validator,
-   quarantine only that root:
+   data. The scan includes checkout-scoped cache roots plus current and legacy
+   temporary retry layouts left by interrupted validators. Investigate the exact
+   validated root before mutation. When the residue is confirmed to be unsigned
+   output from the generic companion validator, quarantine only that root:
 
    ```sh
    scripts/context-panel-companion-cache.sh quarantine \

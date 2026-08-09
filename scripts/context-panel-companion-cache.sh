@@ -192,6 +192,67 @@ default_roots() {
 	done | /usr/bin/awk 'NF && !seen[$0]++'
 }
 
+default_legacy_retry_roots() {
+	local path platform retry_parent retry_root
+	for retry_parent in "${RUNNER_TEMP:-}" "${TMPDIR:-/tmp}" /tmp; do
+		[[ -n "$retry_parent" ]] || continue
+		for retry_root in "$retry_parent"/context-panel-companion-retry.*; do
+			[[ -d "$retry_root" && ! -L "$retry_root" ]] || continue
+			for platform in ios visionos watchos tvos; do
+				path="$retry_root/$platform"
+				[[ -e "$path" || -L "$path" ]] || continue
+				printf '%s\n' "$path"
+			done
+		done
+	done | /usr/bin/awk 'NF && !seen[$0]++'
+}
+
+validated_legacy_retry_root() {
+	local allowed_parent allowed_physical input="$1" parent physical_parent physical_root physical_temp platform retry_name temp_parent trusted=0
+	if [[ -z "$input" || "$input" != /* || "$input" == *$'\n'* || "$input" == */../* || "$input" == */./* ]]; then
+		root_validation_error "legacy retry path is not a safe absolute path"
+		return $?
+	fi
+	while [[ "$input" != "/" && "$input" == */ ]]; do
+		input="${input%/}"
+	done
+	platform="${input##*/}"
+	parent="${input%/*}"
+	retry_name="${parent##*/}"
+	temp_parent="${parent%/*}"
+	case "$platform" in
+	ios | visionos | watchos | tvos) ;;
+	*)
+		root_validation_error "legacy retry path has an unsupported platform"
+		return $?
+		;;
+	esac
+	if [[ "$retry_name" != context-panel-companion-retry.?* || ! -d "$input" || -L "$input" || -L "$parent" ]]; then
+		root_validation_error "legacy retry path has an unsafe layout"
+		return $?
+	fi
+	physical_temp="$(cd "$temp_parent" && /bin/pwd -P)" || return 2
+	for allowed_parent in "${RUNNER_TEMP:-}" "${TMPDIR:-/tmp}" /tmp; do
+		[[ -d "$allowed_parent" ]] || continue
+		allowed_physical="$(cd "$allowed_parent" && /bin/pwd -P)" || continue
+		if [[ "$physical_temp" == "$allowed_physical" ]]; then
+			trusted=1
+			break
+		fi
+	done
+	if ((trusted == 0)); then
+		root_validation_error "legacy retry path is outside trusted temporary roots"
+		return $?
+	fi
+	physical_parent="$(cd "$parent" && /bin/pwd -P)" || return 2
+	physical_root="$(cd "$input" && /bin/pwd -P)" || return 2
+	if [[ "$physical_parent" != "$physical_temp/$retry_name" || "$physical_root" != "$physical_parent/$platform" ]]; then
+		root_validation_error "legacy retry path escaped its temporary root"
+		return $?
+	fi
+	printf '%s\n' "$physical_root"
+}
+
 collect_bundles() {
 	local root="$1"
 	local output="$2"
@@ -280,7 +341,11 @@ neutralize_bundle_tree() {
 	exec 3<&-
 	exec 3<"$bundle_inventory"
 	while IFS= read -r -d '' candidate <&3; do
-		/bin/mv "$candidate" "$candidate.quarantined"
+		if ! /bin/mv "$candidate" "$candidate.quarantined"; then
+			exec 3<&-
+			/bin/rm -f "$bundle_inventory"
+			return 1
+		fi
 	done
 	exec 3<&-
 	/bin/rm -f "$bundle_inventory"
@@ -288,7 +353,7 @@ neutralize_bundle_tree() {
 
 prepare_quarantine_root() {
 	local quarantine_base="$1"
-	local physical_base physical_quarantine quarantine_root
+	local physical_base physical_quarantine quarantine_root stamp
 	if [[ -L "$quarantine_base" || (-e "$quarantine_base" && ! -d "$quarantine_base") ]]; then
 		printf 'companion-cache quarantine=REFUSED unsafe-quarantine-base\n' >&2
 		return 3
@@ -299,9 +364,10 @@ prepare_quarantine_root() {
 		printf 'companion-cache quarantine=REFUSED escaped-quarantine-base\n' >&2
 		return 3
 	fi
-	quarantine_root="$(/usr/bin/mktemp -d "$quarantine_base/validation.XXXXXX")" || return 3
+	stamp="$(/bin/date -u +%Y%m%dT%H%M%SZ)"
+	quarantine_root="$(/usr/bin/mktemp -d "$quarantine_base/$stamp.XXXXXX")" || return 3
 	physical_quarantine="$(cd "$quarantine_root" && /bin/pwd -P)" || return 3
-	if [[ "$physical_quarantine" != "$quarantine_base"/validation.* ]]; then
+	if [[ "$physical_quarantine" != "$quarantine_base"/"$stamp".* ]]; then
 		printf 'companion-cache quarantine=REFUSED escaped-quarantine-root\n' >&2
 		return 3
 	fi
@@ -348,7 +414,13 @@ print_inventory_summary() {
 
 inventory="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/context-panel-companion-cache.XXXXXX")"
 move_inventory="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/context-panel-companion-moves.XXXXXX")"
-trap '/bin/rm -f "$inventory" "$move_inventory"' EXIT
+cleanup_inventory_files() {
+	local status=$?
+	trap - EXIT
+	/bin/rm -f "$inventory" "$move_inventory" || true
+	exit "$status"
+}
+trap cleanup_inventory_files EXIT
 
 if [[ "$command_name" == "validate-root" ]]; then
 	validated_root "$requested_root" >/dev/null
@@ -356,25 +428,47 @@ if [[ "$command_name" == "validate-root" ]]; then
 	exit 0
 fi
 
+legacy_roots=()
 roots=()
+legacy_root_count=0
+root_count=0
 if [[ -n "$requested_root" ]]; then
 	roots+=("$requested_root")
+	root_count=1
 else
 	while IFS= read -r root; do
 		[[ -n "$root" ]] || continue
 		roots+=("$root")
+		root_count=$((root_count + 1))
 	done < <(default_roots)
+	while IFS= read -r root; do
+		[[ -n "$root" ]] || continue
+		legacy_roots+=("$root")
+		legacy_root_count=$((legacy_root_count + 1))
+	done < <(default_legacy_retry_roots)
 fi
 
-if [[ ${#roots[@]} -eq 0 ]]; then
+if ((root_count == 0 && legacy_root_count == 0)); then
 	printf 'companion-cache preflight=OK roots=0 bundles=0\n'
 	exit 0
 fi
 
-scan_inventory "$inventory" "$move_inventory" "${roots[@]}"
+if ((root_count > 0)); then
+	scan_inventory "$inventory" "$move_inventory" "${roots[@]}"
+else
+	: >"$inventory"
+	: >"$move_inventory"
+fi
+if ((legacy_root_count > 0)); then
+	for root in "${legacy_roots[@]}"; do
+		canonical_legacy_root="$(validated_legacy_retry_root "$root")"
+		collect_bundles "$canonical_legacy_root" "$inventory"
+	done
+fi
 
 if [[ "$command_name" == "preflight" ]]; then
-	print_inventory_summary "$inventory" "companion-cache preflight=SCAN roots=${#roots[@]}"
+	scan_root_count=$((root_count + legacy_root_count))
+	print_inventory_summary "$inventory" "companion-cache preflight=SCAN roots=$scan_root_count"
 	if ((summary_bundle_count > 0)); then
 		printf 'companion-cache preflight=FAIL generated validation bundles remain\n' >&2
 		exit 1
