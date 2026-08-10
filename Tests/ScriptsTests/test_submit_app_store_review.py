@@ -401,6 +401,24 @@ class ValidationReportGateTests(unittest.TestCase):
                 "enforce",
             )
 
+    def test_validate_report_only_without_mode_requires_enforced_evidence(self):
+        args = SimpleNamespace(
+            validate_report_only=True,
+            validation_report="final-report.json",
+            release_evidence_report=None,
+            version="1.0.54",
+            build_number="202608100001",
+            platform="MAC_OS",
+            dry_run=False,
+            cancel_review_only=False,
+            prepare_only=False,
+        )
+        with self.assertRaisesRegex(
+            submit_app_store_review.AppStoreConnectError,
+            "requires --release-evidence-report",
+        ):
+            submit_app_store_review.validate_args(args)
+
     def test_invalid_release_evidence_mode_fails_before_cancel_only_return(self):
         args = self.live_args(
             release_evidence_mode="SHADOW",

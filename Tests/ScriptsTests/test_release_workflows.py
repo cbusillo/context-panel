@@ -993,6 +993,20 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             ],
             "enforce",
         )
+        validation_preflight = github_config["qualityGate"]["validate"][
+            "appStoreReviewValidationPreflight"
+        ]
+        for argument in (
+            "--validation-train release",
+            "--release-evidence-report",
+            "--release-evidence-mode enforce",
+            "--release-evidence-comparison",
+            "--release-evidence-expected-build-manifest",
+            "--release-evidence-selected-rc-ledger",
+            "--release-evidence-shadow-evidence",
+        ):
+            self.assertIn(argument, validation_preflight)
+        self.assertIn("--release-evidence-mode enforce", release_docs)
         self.assertIn(
             "live build attachment or submission requires validation_train release",
             workflow,

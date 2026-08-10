@@ -1140,8 +1140,23 @@ scripts/submit-app-store-review.py \
   --version <marketing-version> \
   --build-number <coordinated-build-number> \
   --validation-report .build/validation-report.json \
+  --validation-train release \
+  --release-evidence-report .build/release-evidence.json \
+  --release-evidence-mode enforce \
+  --release-evidence-comparison .build/release-comparison.json \
+  --release-evidence-expected-build-manifest \
+    .build/ExpectedBuildManifest-platform.json \
+  --release-evidence-selected-rc-ledger \
+    .build/release-evidence-rc-lineage.json \
+  --release-evidence-shadow-evidence .build/shadow-evidence.json \
   --validate-report-only
 ```
+
+Repeat `--release-evidence-expected-build-manifest` for the complete shipping
+surface set. Also supply `--release-evidence-previous-ledger` or
+`--release-evidence-host-os-evidence` when those inputs were used to generate
+the ledger. The preflight reconstructs the enforced ledger and fails closed if
+any authoritative generation input is omitted or changed.
 
 The platform minimums are explicit:
 
