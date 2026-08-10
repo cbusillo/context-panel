@@ -313,6 +313,7 @@ class ValidationReportGateTests(unittest.TestCase):
                 dry_run=False,
                 cancel_review_only=False,
                 prepare_only=False,
+                release_evidence_mode="shadow",
             )
 
             with (
@@ -384,6 +385,39 @@ class ValidationReportGateTests(unittest.TestCase):
         ):
             with self.assertRaises(SystemExit):
                 submit_app_store_review.parse_args()
+
+    def test_release_evidence_mode_defaults_to_enforce(self):
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "submit-app-store-review.py",
+                "--version",
+                "1.0.54",
+            ],
+        ):
+            self.assertEqual(
+                submit_app_store_review.parse_args().release_evidence_mode,
+                "enforce",
+            )
+
+    def test_validate_report_only_without_mode_requires_enforced_evidence(self):
+        args = SimpleNamespace(
+            validate_report_only=True,
+            validation_report="final-report.json",
+            release_evidence_report=None,
+            version="1.0.54",
+            build_number="202608100001",
+            platform="MAC_OS",
+            dry_run=False,
+            cancel_review_only=False,
+            prepare_only=False,
+        )
+        with self.assertRaisesRegex(
+            submit_app_store_review.AppStoreConnectError,
+            "requires --release-evidence-report",
+        ):
+            submit_app_store_review.validate_args(args)
 
     def test_invalid_release_evidence_mode_fails_before_cancel_only_return(self):
         args = self.live_args(

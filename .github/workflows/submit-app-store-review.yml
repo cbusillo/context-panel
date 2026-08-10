@@ -82,9 +82,9 @@ name: Submit App Store Review
         default: release
         type: string
       release_evidence_mode:
-        description: Run release evidence in shadow or enforce mode.
+        description: Enforce release evidence by default; shadow remains available for diagnostics.
         required: false
-        default: shadow
+        default: enforce
         type: string
       release_evidence_report_base64:
         description: Base64 JSON from context-panel-release-gate.py.
@@ -204,9 +204,9 @@ name: Submit App Store Review
         options:
           - release
       release_evidence_mode:
-        description: Run release evidence in shadow or enforce mode.
+        description: Enforce release evidence by default; shadow remains available for diagnostics.
         required: true
-        default: shadow
+        default: enforce
         type: choice
         options:
           - shadow

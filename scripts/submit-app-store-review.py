@@ -1796,7 +1796,7 @@ def validate_release_evidence_report(args: argparse.Namespace) -> None:
         version=args.version,
         build_number=args.build_number,
         train=getattr(args, "validation_train"),
-        enforce=getattr(args, "release_evidence_mode", "shadow") == "enforce",
+        enforce=getattr(args, "release_evidence_mode", "enforce") == "enforce",
         validation_report=validation_payload,
         comparison=comparison,
         identities=identities,
@@ -1811,7 +1811,7 @@ def validate_release_evidence_report(args: argparse.Namespace) -> None:
         details = "\n".join(f"- {blocker}" for blocker in blockers)
         raise AppStoreConnectError(f"release evidence report rejected:\n{details}")
     print(
-        f"Accepted {getattr(args, 'release_evidence_mode', 'shadow')} release evidence report for "
+        f"Accepted {getattr(args, 'release_evidence_mode', 'enforce')} release evidence report for "
         f"{getattr(args, 'validation_train')} {args.version} ({args.build_number})"
     )
 
@@ -1883,7 +1883,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--release-evidence-mode",
         choices=("shadow", "enforce"),
-        default="shadow",
+        default="enforce",
     )
     parser.add_argument("--release-evidence-comparison")
     parser.add_argument(
@@ -1912,7 +1912,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def validate_args(args: argparse.Namespace) -> None:
-    release_evidence_mode = getattr(args, "release_evidence_mode", "shadow")
+    release_evidence_mode = getattr(args, "release_evidence_mode", "enforce")
     validation_train = getattr(args, "validation_train", None)
     if release_evidence_mode not in {"shadow", "enforce"}:
         raise AppStoreConnectError("--release-evidence-mode must be shadow or enforce")
@@ -1929,7 +1929,7 @@ def validate_args(args: argparse.Namespace) -> None:
         if not getattr(args, "validation_report", None):
             raise AppStoreConnectError("--validate-report-only requires --validation-report")
         if (
-            getattr(args, "release_evidence_mode", "shadow") == "enforce"
+            getattr(args, "release_evidence_mode", "enforce") == "enforce"
             and not getattr(args, "release_evidence_report", None)
         ):
             raise AppStoreConnectError(

@@ -868,9 +868,11 @@ coordinator report. Every live build attachment or submission requires the
 `release` evidence tier and release-evidence report in both `shadow` and
 `enforce` mode, plus the exact selected-RC lineage bundle, the full
 comparison and a JSON array containing every sealed expected-build manifest
-needed by its required scope. Keep `release_evidence_mode=shadow` while the
-current physical runbook remains authoritative. Switching to `enforce` requires
-an approved ledger with passed shadow evidence; missing, expired,
+needed by its required scope. The submission workflow defaults to
+`release_evidence_mode=enforce` after the two signed shadow trains and exact-RC
+reuse gate completed on August 10, 2026. Use `shadow` only for explicit
+diagnostic comparison; it is no longer the live-submission default. Enforce mode
+requires an approved ledger with passed shadow evidence; missing, expired,
 host-incompatible, policy-mismatched, scope-mismatched, or mixed-build evidence
 blocks submission. Dry runs, cancel-only operations, and prepare-only operations
 without a build remain exempt. The ledger binds the canonical configured policy,
@@ -1138,8 +1140,23 @@ scripts/submit-app-store-review.py \
   --version <marketing-version> \
   --build-number <coordinated-build-number> \
   --validation-report .build/validation-report.json \
+  --validation-train release \
+  --release-evidence-report .build/release-evidence.json \
+  --release-evidence-mode enforce \
+  --release-evidence-comparison .build/release-comparison.json \
+  --release-evidence-expected-build-manifest \
+    .build/ExpectedBuildManifest-platform.json \
+  --release-evidence-selected-rc-ledger \
+    .build/release-evidence-rc-lineage.json \
+  --release-evidence-shadow-evidence .build/shadow-evidence.json \
   --validate-report-only
 ```
+
+Repeat `--release-evidence-expected-build-manifest` for the complete shipping
+surface set. Also supply `--release-evidence-previous-ledger` or
+`--release-evidence-host-os-evidence` when those inputs were used to generate
+the ledger. The preflight reconstructs the enforced ledger and fails closed if
+any authoritative generation input is omitted or changed.
 
 The platform minimums are explicit:
 
