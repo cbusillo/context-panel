@@ -313,6 +313,7 @@ class ValidationReportGateTests(unittest.TestCase):
                 dry_run=False,
                 cancel_review_only=False,
                 prepare_only=False,
+                release_evidence_mode="shadow",
             )
 
             with (
@@ -384,6 +385,21 @@ class ValidationReportGateTests(unittest.TestCase):
         ):
             with self.assertRaises(SystemExit):
                 submit_app_store_review.parse_args()
+
+    def test_release_evidence_mode_defaults_to_enforce(self):
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "submit-app-store-review.py",
+                "--version",
+                "1.0.54",
+            ],
+        ):
+            self.assertEqual(
+                submit_app_store_review.parse_args().release_evidence_mode,
+                "enforce",
+            )
 
     def test_invalid_release_evidence_mode_fails_before_cancel_only_return(self):
         args = self.live_args(

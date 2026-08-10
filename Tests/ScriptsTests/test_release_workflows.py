@@ -975,6 +975,24 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("release_evidence_selected_rc_ledger_base64:", workflow)
         self.assertIn("release_evidence_shadow_evidence_base64:", workflow)
         self.assertIn("release_evidence_mode must be shadow or enforce", workflow)
+        self.assertEqual(
+            len(
+                re.findall(
+                    r"release_evidence_mode:\n"
+                    r"(?:\s+.*\n){0,4}?"
+                    r"\s+default: enforce\n",
+                    workflow,
+                )
+            ),
+            2,
+        )
+        github_config = json.loads(self.read(".github/github.json"))
+        self.assertEqual(
+            github_config["qualityGate"]["validate"][
+                "appStoreReviewReleaseEvidenceDefault"
+            ],
+            "enforce",
+        )
         self.assertIn(
             "live build attachment or submission requires validation_train release",
             workflow,
