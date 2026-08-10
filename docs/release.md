@@ -1,6 +1,6 @@
 # macOS And Companion Release Path
 
-Last verified: 2026-07-26.
+Last verified: 2026-08-10.
 
 Context Panel's normal beta release path is the GitHub Actions `Ship` workflow.
 It coordinates selected release channels from one commit and one marketing
@@ -934,12 +934,18 @@ RC/release floor. Beta automation must use the comparison output instead of
 defaulting to an all-surface session. A matching existing session is recovered
 unchanged; replacing it requires `--replace`, and a different active target is
 rejected by both lifecycle and status commands.
+Visual review requirements cover only each surface's `freshEvidence` visual
+classes. Omit carry-forward-eligible shared-view or placement checks from the
+current coordinator plan; the release gate must resolve those classes from the
+validated prior lineage instead of creating redundant human actions. If that
+lineage is unavailable or expired, an operator may deliberately include a
+carry-forward-eligible requirement to collect fresh fallback evidence.
 Status continues to show collected out-of-scope evidence for diagnostics, but
 only requested surfaces can block the slice or produce operator actions.
-Pass each sealed `ExpectedBuildManifest-<platform>.json` needed to cover the
-requested surfaces. More manifests can be attached later by `status` or
-`sync-runtime-evidence`; an existing surface identity can never be replaced by
-a conflicting manifest.
+Pass each sealed `ExpectedBuildManifest-<platform>.json` needed to cover every
+runtime or visual surface required by the comparison. More manifests can be
+attached later by `status` or `sync-runtime-evidence`; an existing surface
+identity can never be replaced by a conflicting manifest.
 
 The schema-versioned coordinator state lives under the canonical App Group at
 `Context Panel/Validation/Coordinator`, separate from signed runtime session and

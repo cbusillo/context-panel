@@ -121,7 +121,20 @@ class VisualApprovalTests(unittest.TestCase):
             },
             "requiresRuntimeSession": True,
             "requiresPlacementReview": True,
-            "surfaces": [],
+            "surfaces": [
+                {
+                    "surfaceId": "watchos.app",
+                    "freshEvidence": ["shared-view"],
+                },
+                {
+                    "surfaceId": "watchos.complication",
+                    "freshEvidence": [
+                        "shared-view",
+                        "actual-runtime",
+                        "os-composited-placement",
+                    ],
+                },
+            ],
             "releaseRequiresApprovedRCTarget": True,
         }
         requirements = {
@@ -214,6 +227,168 @@ class VisualApprovalTests(unittest.TestCase):
             self.placement_identity.placement_fingerprint,
         )
 
+    def test_plan_uses_fresh_evidence_scope_and_leaves_carry_forward_to_release_gate(self) -> None:
+        comparison_path, requirements_path = self.write_plan_files()
+        comparison = json.loads(comparison_path.read_text())
+        comparison["surfaces"][0]["freshEvidence"] = []
+        comparison["surfaces"][1]["freshEvidence"] = [
+            "shared-view",
+            "actual-runtime",
+            "os-composited-placement",
+        ]
+        comparison_path.write_text(json.dumps(comparison))
+        requirement_payload = json.loads(requirements_path.read_text())
+        requirement_payload["requirements"] = [
+            item
+            for item in requirement_payload["requirements"]
+            if item["surface"] != "watchos.app"
+        ]
+        requirements_path.write_text(json.dumps(requirement_payload))
+
+        runtime_surfaces, requirements, current_manifest_id = load_visual_review_plan(
+            comparison_path,
+            requirements_path,
+            (self.shared_identity, self.placement_identity),
+        )
+
+        self.assertEqual(runtime_surfaces, ("watchos.complication",))
+        self.assertEqual(current_manifest_id, MANIFEST_ID)
+        self.assertEqual(
+            [item.id for item in requirements],
+            [
+                "watch.complication.placement.corner",
+                "watch.complication.shared.corner",
+            ],
+        )
+        self.assertEqual(
+            [item.evidence_class for item in requirements],
+            ["os-composited-placement", "shared-view"],
+        )
+
+        session, _ = self.store.start_session(
+            TARGET,
+            runtime_surfaces,
+            NOW,
+            timedelta(hours=2),
+            timedelta(days=1),
+        )
+        report = build_visual_approval_report(
+            VisualApprovalStore(self.store).configure(
+                session,
+                current_manifest_id,
+                requirements,
+                NOW,
+            ),
+            runtime_state(session.id, self.placement_identity),
+        )
+        self.assertEqual(report["state"], "pending")
+        self.assertEqual(report["requirementCount"], 2)
+        self.assertEqual(report["readyReviewCount"], 2)
+
+    def test_nonrequired_comparison_surface_does_not_require_an_attached_identity(self) -> None:
+        comparison_path, requirements_path = self.write_plan_files()
+        comparison = json.loads(comparison_path.read_text())
+        comparison["surfaces"].append(
+            {
+                "surfaceId": "macos.app",
+                "freshEvidence": [],
+            }
+        )
+        comparison_path.write_text(json.dumps(comparison))
+
+        runtime_surfaces, requirements, _ = load_visual_review_plan(
+            comparison_path,
+            requirements_path,
+            (self.shared_identity, self.placement_identity),
+        )
+
+        self.assertEqual(runtime_surfaces, ("watchos.complication",))
+        self.assertEqual(len(requirements), 3)
+
+    def test_missing_required_comparison_surface_is_rejected(self) -> None:
+        comparison_path, requirements_path = self.write_plan_files()
+        comparison = json.loads(comparison_path.read_text())
+        comparison["surfaces"] = [
+            item
+            for item in comparison["surfaces"]
+            if item["surfaceId"] != "watchos.app"
+        ]
+        comparison_path.write_text(json.dumps(comparison))
+
+        with self.assertRaisesRegex(VisualApprovalError, "surface comparison is incomplete"):
+            load_visual_review_plan(
+                comparison_path,
+                requirements_path,
+                (self.shared_identity, self.placement_identity),
+            )
+
+    def test_optional_fresh_fallback_can_cover_carry_forward_eligible_surface(self) -> None:
+        comparison_path, requirements_path = self.write_plan_files()
+        comparison = json.loads(comparison_path.read_text())
+        comparison["surfaces"][0]["freshEvidence"] = []
+        comparison_path.write_text(json.dumps(comparison))
+
+        _, requirements, _ = load_visual_review_plan(
+            comparison_path,
+            requirements_path,
+            (self.shared_identity, self.placement_identity),
+        )
+
+        self.assertEqual(len(requirements), 3)
+
+    def test_unknown_fresh_evidence_class_is_rejected(self) -> None:
+        comparison_path, requirements_path = self.write_plan_files()
+        comparison = json.loads(comparison_path.read_text())
+        comparison["surfaces"][0]["freshEvidence"] = ["credential-dump"]
+        comparison_path.write_text(json.dumps(comparison))
+
+        with self.assertRaisesRegex(
+            VisualApprovalError,
+            "visual review surface requirements are invalid",
+        ):
+            load_visual_review_plan(
+                comparison_path,
+                requirements_path,
+                (self.shared_identity, self.placement_identity),
+            )
+
+    def test_all_carry_forward_visual_plan_reports_not_required(self) -> None:
+        comparison_path, requirements_path = self.write_plan_files()
+        comparison = json.loads(comparison_path.read_text())
+        comparison["surfaces"][0]["freshEvidence"] = []
+        comparison["surfaces"][1]["freshEvidence"] = ["actual-runtime"]
+        comparison_path.write_text(json.dumps(comparison))
+        requirements = json.loads(requirements_path.read_text())
+        requirements["requirements"] = []
+        requirements_path.write_text(json.dumps(requirements))
+
+        runtime_surfaces, normalized, current_manifest_id = load_visual_review_plan(
+            comparison_path,
+            requirements_path,
+            (self.shared_identity, self.placement_identity),
+        )
+        self.assertEqual(runtime_surfaces, ("watchos.complication",))
+        self.assertEqual(normalized, ())
+
+        session, _ = self.store.start_session(
+            TARGET,
+            runtime_surfaces,
+            NOW,
+            timedelta(hours=2),
+            timedelta(days=1),
+        )
+        state = VisualApprovalStore(self.store).configure(
+            session,
+            current_manifest_id,
+            normalized,
+            NOW,
+        )
+        report = build_visual_approval_report(state, None)
+
+        self.assertEqual(report["state"], "not-required")
+        self.assertEqual(report["requirementCount"], 0)
+        self.assertFalse(report["reviewBatches"])
+
     def test_plan_rejects_requirement_outside_comparison_scope(self) -> None:
         comparison_path, requirements_path = self.write_plan_files()
         payload = json.loads(requirements_path.read_text())
@@ -237,6 +412,12 @@ class VisualApprovalTests(unittest.TestCase):
         }
         comparison["requiresRuntimeSession"] = False
         comparison["requiresPlacementReview"] = False
+        comparison["surfaces"] = [
+            {
+                "surfaceId": "watchos.app",
+                "freshEvidence": ["shared-view"],
+            }
+        ]
         comparison_path.write_text(json.dumps(comparison))
         requirements = json.loads(requirements_path.read_text())
         requirements["requirements"] = [requirements["requirements"][0]]
