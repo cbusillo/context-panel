@@ -438,7 +438,6 @@ def validate_visual_approval_state(state: VisualApprovalState) -> None:
         or not isinstance(state.revision, int)
         or isinstance(state.revision, bool)
         or state.revision < 1
-        or not state.requirements
         or len(state.requirements) > MAXIMUM_REQUIREMENT_COUNT
         or requirement_ids != tuple(sorted(set(requirement_ids)))
         or any(item.manifest_id != state.current_manifest_id for item in state.requirements)
@@ -527,17 +526,66 @@ def load_visual_review_plan(
     if not identity_by_surface or any(item.manifest_id != current_manifest_id for item in identities):
         raise VisualApprovalError("visual review build identity does not match the surface comparison")
     allowed_surfaces = set(identity_by_surface)
-    required_by_class = {
-        evidence_class: _normalized_string_list(required_surfaces[evidence_class], allowed_surfaces)
+    full_required_by_class = {
+        evidence_class: _normalized_string_list(
+            required_surfaces[evidence_class],
+            allowed_surfaces,
+        )
         for evidence_class in REQUIRED_SURFACE_CLASSES
     }
-    if bool(required_by_class["actual-runtime"]) != comparison.get("requiresRuntimeSession"):
+    comparison_surfaces = comparison.get("surfaces")
+    if not isinstance(comparison_surfaces, list):
+        raise VisualApprovalError("surface comparison is invalid")
+    comparison_surface_ids: set[str] = set()
+    fresh_by_class = {evidence_class: [] for evidence_class in VISUAL_REVIEW_CLASSES}
+    for surface in comparison_surfaces:
+        if not isinstance(surface, dict):
+            raise VisualApprovalError("surface comparison is invalid")
+        surface_id = surface.get("surfaceId")
+        fresh_evidence = surface.get("freshEvidence")
+        if (
+            not isinstance(surface_id, str)
+            or surface_id not in SURFACE_NAMES
+            or surface_id in comparison_surface_ids
+        ):
+            raise VisualApprovalError("surface comparison is invalid")
+        normalized_fresh = _normalized_string_list(
+            fresh_evidence,
+            REQUIRED_SURFACE_CLASSES,
+        )
+        comparison_surface_ids.add(surface_id)
+        for evidence_class in normalized_fresh:
+            if surface_id not in full_required_by_class[evidence_class]:
+                raise VisualApprovalError("surface comparison fresh evidence is inconsistent")
+            if evidence_class in VISUAL_REVIEW_CLASSES:
+                fresh_by_class[evidence_class].append(surface_id)
+    required_comparison_surfaces = {
+        surface
+        for surfaces in full_required_by_class.values()
+        for surface in surfaces
+    }
+    if not required_comparison_surfaces.issubset(comparison_surface_ids):
+        raise VisualApprovalError("surface comparison is incomplete")
+    required_by_class = {
+        "actual-runtime": full_required_by_class["actual-runtime"],
+        "shared-view": _normalized_string_list(
+            fresh_by_class["shared-view"],
+            allowed_surfaces,
+        ),
+        "os-composited-placement": _normalized_string_list(
+            fresh_by_class["os-composited-placement"],
+            allowed_surfaces,
+        ),
+    }
+    if bool(full_required_by_class["actual-runtime"]) != comparison.get("requiresRuntimeSession"):
         raise VisualApprovalError("surface comparison runtime requirement is inconsistent")
-    if bool(required_by_class["os-composited-placement"]) != comparison.get("requiresPlacementReview"):
+    if bool(full_required_by_class["os-composited-placement"]) != comparison.get(
+        "requiresPlacementReview"
+    ):
         raise VisualApprovalError("surface comparison placement requirement is inconsistent")
     if any(
-        surface not in required_by_class["actual-runtime"]
-        for surface in required_by_class["os-composited-placement"]
+        surface not in full_required_by_class["actual-runtime"]
+        for surface in full_required_by_class["os-composited-placement"]
     ):
         raise VisualApprovalError("placement review requires matching actual-runtime evidence")
 
@@ -550,7 +598,6 @@ def load_visual_review_plan(
         or payload.get("kind") != "context-panel-visual-review-requirements"
         or payload.get("currentManifestID") != current_manifest_id
         or not isinstance(raw_requirements, list)
-        or not raw_requirements
         or len(raw_requirements) > MAXIMUM_REQUIREMENT_COUNT
     ):
         raise VisualApprovalError("visual review requirements are invalid")
@@ -571,7 +618,10 @@ def load_visual_review_plan(
             raise VisualApprovalError("visual review requirement is invalid")
         evidence_class = raw.get("evidenceClass")
         surface = raw.get("surface")
-        if evidence_class not in VISUAL_REVIEW_CLASSES or surface not in required_by_class[evidence_class]:
+        if (
+            evidence_class not in VISUAL_REVIEW_CLASSES
+            or surface not in full_required_by_class[evidence_class]
+        ):
             raise VisualApprovalError("visual review requirement is outside the required comparison scope")
         identity = identity_by_surface[str(surface)]
         prefix = identity.surface.split(".", 1)[0]
@@ -606,8 +656,8 @@ def load_visual_review_plan(
         raise VisualApprovalError("visual review requirement identifier is duplicated")
     for evidence_class in VISUAL_REVIEW_CLASSES:
         covered = {item.surface for item in normalized if item.evidence_class == evidence_class}
-        if covered != set(required_by_class[evidence_class]):
-            raise VisualApprovalError("visual review requirements do not cover the comparison scope")
+        if not set(required_by_class[evidence_class]).issubset(covered):
+            raise VisualApprovalError("visual review requirements do not cover fresh evidence")
     return required_by_class["actual-runtime"], tuple(normalized), str(current_manifest_id)
 
 
@@ -986,7 +1036,9 @@ def build_visual_approval_report(
             }
         )
     states = {str(item["state"]) for item in requirements}
-    if "rejected" in states:
+    if not requirements:
+        overall_state = "not-required"
+    elif "rejected" in states:
         overall_state = "rejected"
     elif states == {"approved"}:
         overall_state = "approved"
