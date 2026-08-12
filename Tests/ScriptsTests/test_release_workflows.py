@@ -18,6 +18,92 @@ FIXTURE_SIGNING_CERTIFICATE = b"context-panel-fixture-signing-certificate"
 FIXTURE_SIGNING_FINGERPRINT = hashlib.sha1(FIXTURE_SIGNING_CERTIFICATE).hexdigest().upper()
 
 
+def indented_block(document: str, header: str, indent: int) -> str:
+    lines = document.splitlines()
+    target = f"{' ' * indent}{header}:"
+    matches = [index for index, line in enumerate(lines) if line == target]
+    if len(matches) != 1:
+        raise AssertionError(f"expected one {target!r} block, found {len(matches)}")
+
+    start = matches[0]
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        line = lines[index]
+        if line.strip() and len(line) - len(line.lstrip()) <= indent:
+            end = index
+            break
+    return "\n".join(lines[start:end])
+
+
+def workflow_job(workflow: str, job_name: str) -> str:
+    return indented_block(workflow, job_name, 2)
+
+
+def workflow_step_run(workflow: str, job_name: str, step_name: str) -> str:
+    job = workflow_job(workflow, job_name)
+    lines = job.splitlines()
+    target = f"      - name: {step_name}"
+    matches = [index for index, line in enumerate(lines) if line == target]
+    if len(matches) != 1:
+        raise AssertionError(f"expected one {target!r} step, found {len(matches)}")
+
+    start = matches[0]
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        line = lines[index]
+        if line.startswith("      - "):
+            end = index
+            break
+    lines = lines[start:end]
+    target = "        run: |"
+    matches = [index for index, line in enumerate(lines) if line == target]
+    if len(matches) != 1:
+        raise AssertionError(f"expected one run block, found {len(matches)}")
+    return textwrap.dedent("\n".join(lines[matches[0] + 1 :]))
+
+
+def workflow_job_needs(job: str) -> tuple[str, ...]:
+    lines = job.splitlines()
+    matches = [index for index, line in enumerate(lines) if line.startswith("    needs:")]
+    if len(matches) != 1:
+        raise AssertionError(f"expected one needs declaration, found {len(matches)}")
+
+    declaration = lines[matches[0]].removeprefix("    needs:").strip()
+    if declaration:
+        return (declaration,)
+
+    needs: list[str] = []
+    for line in lines[matches[0] + 1 :]:
+        if line.startswith("      - "):
+            needs.append(line.removeprefix("      - ").strip())
+            continue
+        if line.strip():
+            break
+    if not needs:
+        raise AssertionError("needs list is empty")
+    return tuple(needs)
+
+
+def workflow_choice_options(workflow: str, input_name: str) -> tuple[str, ...]:
+    input_block = indented_block(workflow, input_name, 6)
+    lines = input_block.splitlines()
+    try:
+        options_index = lines.index("        options:")
+    except ValueError as error:
+        raise AssertionError(f"{input_name} has no options block") from error
+
+    options: list[str] = []
+    for line in lines[options_index + 1 :]:
+        if line.startswith("          - "):
+            options.append(line.removeprefix("          - ").strip())
+            continue
+        if line.strip():
+            break
+    if not options:
+        raise AssertionError(f"{input_name} options block is empty")
+    return tuple(options)
+
+
 class ReleaseWorkflowTests(unittest.TestCase):
     def read(self, relative_path: str) -> str:
         return (REPO_ROOT / relative_path).read_text()
@@ -786,58 +872,109 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
     def test_ship_forwards_resolved_build_number_to_github_release(self):
         workflow = self.read(".github/workflows/ship.yml")
 
-        self.assertIn("build_number: ${{ needs.validate.outputs.build_number }}", workflow)
+        self.assertIn(
+            "build_number: ${{ needs.validate.outputs.build_number }}",
+            workflow_job(workflow, "github-release"),
+        )
 
-    def test_ship_preflights_app_store_versions_before_release_channels(self):
+    def test_ship_release_channels_depend_on_validation(self):
         workflow = self.read(".github/workflows/ship.yml")
 
-        validate_index = workflow.index("Validate Inputs")
-        guard_index = workflow.index("scripts/app-store-version-guard.py")
-        github_release_index = workflow.index("github-release:")
-        app_store_upload_index = workflow.index("app-store-upload:")
-        mac_upload_condition_index = workflow.index('if [[ "${app_store_channel}" == "upload" ]]; then')
-        companion_upload_condition_index = workflow.index('if [[ "${companion_app_store_channel}" == "upload" ]]; then')
-        build_number_index = workflow.index('build_number="${{ inputs.build_number }}"')
+        expected_needs = {
+            "github-release": ("validate",),
+            "app-store-upload": ("validate",),
+            "companion-app-store-upload": ("validate",),
+            "testflight-beta": (
+                "validate",
+                "app-store-upload",
+                "companion-app-store-upload",
+            ),
+        }
+        for job_name, needs in expected_needs.items():
+            with self.subTest(job=job_name):
+                self.assertEqual(workflow_job_needs(workflow_job(workflow, job_name)), needs)
 
-        self.assertGreater(guard_index, validate_index)
-        self.assertLess(guard_index, github_release_index)
-        self.assertLess(guard_index, app_store_upload_index)
-        self.assertLess(mac_upload_condition_index, build_number_index)
-        self.assertLess(companion_upload_condition_index, build_number_index)
-        mac_upload_block = workflow[mac_upload_condition_index:companion_upload_condition_index]
-        companion_upload_block = workflow[companion_upload_condition_index:build_number_index]
+    def test_ship_validation_step_owns_app_store_preflight(self):
+        workflow = self.read(".github/workflows/ship.yml")
+        validate_job = workflow_job(workflow, "validate")
+        validate_run = workflow_step_run(workflow, "validate", "Validate Inputs")
 
-        self.assertIn("preflight_app_store_version MAC_OS", workflow)
-        self.assertIn("preflight_app_store_version MAC_OS", mac_upload_block)
-        self.assertIn("preflight_app_store_version IOS", workflow)
-        self.assertIn("preflight_app_store_version VISION_OS", workflow)
-        self.assertIn("preflight_app_store_version TV_OS", workflow)
-        self.assertIn("preflight_app_store_version IOS", companion_upload_block)
-        self.assertIn("preflight_app_store_version VISION_OS", companion_upload_block)
-        self.assertIn("preflight_app_store_version TV_OS", companion_upload_block)
-        self.assertIn("APP_STORE_CONNECT_API_KEY_P8_BASE64", workflow)
-        self.assertIn("App Store Connect API credentials are required for Ship App Store version preflight", workflow)
+        self.assertEqual(validate_run.count("scripts/app-store-version-guard.py"), 1)
+        self.assertEqual(workflow.count("scripts/app-store-version-guard.py"), 1)
+        for credential in (
+            "APP_STORE_CONNECT_KEY_ID",
+            "APP_STORE_CONNECT_ISSUER_ID",
+            "APP_STORE_CONNECT_API_KEY_P8_BASE64",
+        ):
+            with self.subTest(credential=credential):
+                self.assertIn(credential, validate_job)
+        self.assertIn(
+            "App Store Connect API credentials are required for Ship App Store version preflight",
+            validate_run,
+        )
+        for validation_message in (
+            "testflight_beta_source=macos requires app_store_channel=upload",
+            "testflight_beta_source=companion requires companion_app_store_channel=upload",
+            "companion_app_store_channel=upload with testflight_beta=true requires testflight_beta_source=companion",
+        ):
+            with self.subTest(validation_message=validation_message):
+                self.assertIn(validation_message, validate_run)
+
+    def test_ship_preflight_platform_mapping_is_exhaustive(self):
+        workflow = self.read(".github/workflows/ship.yml")
+        validate_run = workflow_step_run(workflow, "validate", "Validate Inputs")
+        companion_case_match = re.search(
+            r'case\s+"\$\{\{\s*inputs\.companion_platform\s*\}\}"\s+in(?P<body>.*?)\besac\b',
+            validate_run,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(companion_case_match)
+        companion_case = companion_case_match.group("body")
+
+        self.assertRegex(
+            re.sub(r"\s+", " ", validate_run),
+            r'if \[\[ "\$\{app_store_channel\}" == "upload" \]\]; then '
+            r'preflight_app_store_version MAC_OS fi',
+        )
+        self.assertRegex(
+            re.sub(r"\s+", " ", validate_run),
+            r'if \[\[ "\$\{companion_app_store_channel\}" == "upload" \]\]; then '
+            r'case "\$\{\{ inputs\.companion_platform \}\}" in',
+        )
+        mappings = dict(
+            re.findall(
+                r"^\s*(ios|visionos|tvos)\)\s*$\n\s*preflight_app_store_version ([A-Z_]+)\s*$",
+                companion_case,
+                re.MULTILINE,
+            )
+        )
+        self.assertEqual(
+            mappings,
+            {"ios": "IOS", "visionos": "VISION_OS", "tvos": "TV_OS"},
+        )
+        self.assertEqual(set(mappings), set(workflow_choice_options(workflow, "companion_platform")))
+        self.assertRegex(
+            companion_case,
+            r"(?ms)^\s*\*\)\s*$.*unsupported companion_platform.*?^\s*exit 2\s*$",
+        )
 
     def test_ship_distributes_testflight_beta_without_app_review(self):
         workflow = self.read(".github/workflows/ship.yml")
+        testflight_job = workflow_job(workflow, "testflight-beta")
 
-        self.assertIn("testflight_beta:", workflow)
-        self.assertIn("uses: ./.github/workflows/testflight-beta-distribution.yml", workflow)
-        self.assertIn("companion_app_store_channel:", workflow)
-        self.assertIn("testflight_beta_source:", workflow)
-        self.assertIn("uses: ./.github/workflows/app-store-connect-companion-upload.yml", workflow)
-        self.assertIn("needs.companion-app-store-upload.outputs.app_store_platform", workflow)
-        self.assertIn("default: macos", workflow)
-        self.assertIn("testflight_beta_source=companion requires companion_app_store_channel=upload", workflow)
-        self.assertIn("testflight_beta_source=macos requires app_store_channel=upload", workflow)
-        self.assertIn(
-            "companion_app_store_channel=upload with testflight_beta=true requires testflight_beta_source=companion",
-            workflow,
-        )
-        self.assertIn(
-            "inputs.testflight_beta_source == 'companion' && needs.companion-app-store-upload.outputs.app_store_platform || 'MAC_OS'",
-            workflow,
-        )
+        self.assertIn("uses: ./.github/workflows/testflight-beta-distribution.yml", testflight_job)
+        for contract in (
+            "build_number:",
+            "needs.app-store-upload.outputs.build_number",
+            "needs.companion-app-store-upload.outputs.build_number",
+            "platform:",
+            "needs.companion-app-store-upload.outputs.app_store_platform",
+            "'MAC_OS'",
+            "beta_groups:",
+            "include_internal_beta_groups:",
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, testflight_job)
         self.assertIn("Ship does not submit App Store Review.", workflow)
         self.assertIn("run Submit App Store Review separately; use dry_run=true first", workflow)
         self.assertNotIn("submit_app_review", workflow)
