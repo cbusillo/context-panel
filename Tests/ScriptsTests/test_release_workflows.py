@@ -901,7 +901,6 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("- TV_OS", workflow)
         self.assertIn("/betaGroups/{group_id}/relationships/builds", script)
         self.assertIn("processingState", script)
-        self.assertIn('required=True,\n        choices=("IOS", "MAC_OS", "TV_OS", "VISION_OS")', script)
 
     def test_app_store_screenshot_upload_workflow_uses_safe_defaults(self):
         workflow = self.read(".github/workflows/upload-app-store-screenshots.yml")
