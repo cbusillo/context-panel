@@ -156,8 +156,8 @@ import Testing
     hostingView.cacheDisplay(in: hostingView.bounds, to: bitmap)
     let pngData = try #require(bitmap.representation(using: .png, properties: [:]))
 
-    #expect(bitmap.pixelsWide == 1_120)
-    #expect(bitmap.pixelsHigh == 900)
+    #expect(bitmap.size.width == 1_120)
+    #expect(bitmap.size.height == 900)
     #expect(pngData.count > 30_000)
     if let outputPath = ProcessInfo.processInfo.environment[
         "CONTEXT_PANEL_MAC_GALLERY_SHELL_PREVIEW_PATH"

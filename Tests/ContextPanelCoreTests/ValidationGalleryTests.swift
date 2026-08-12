@@ -227,8 +227,8 @@ import WidgetKit
     )
     let rendered = try renderGallery(route: route, width: 1_024, height: 768)
 
-    #expect(rendered.bitmap.pixelsWide == 1_024)
-    #expect(rendered.bitmap.pixelsHigh == 768)
+    #expect(rendered.bitmap.size.width == 1_024)
+    #expect(rendered.bitmap.size.height == 768)
     #expect(rendered.pngData.count > 20_000)
 
     if let outputPath = ProcessInfo.processInfo.environment["CONTEXT_PANEL_VALIDATION_GALLERY_PREVIEW_PATH"] {
@@ -245,8 +245,8 @@ import WidgetKit
     )
     let rendered = try renderGallery(route: route, width: 390, height: 844)
 
-    #expect(rendered.bitmap.pixelsWide == 390)
-    #expect(rendered.bitmap.pixelsHigh == 844)
+    #expect(rendered.bitmap.size.width == 390)
+    #expect(rendered.bitmap.size.height == 844)
     #expect(rendered.pngData.count > 15_000)
 
     if let outputPath = ProcessInfo.processInfo.environment["CONTEXT_PANEL_VALIDATION_GALLERY_COMPACT_PREVIEW_PATH"] {
