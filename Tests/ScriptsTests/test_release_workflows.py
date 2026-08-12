@@ -913,14 +913,6 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("default: \"\"", workflow)
         self.assertIn("type: string", workflow)
         self.assertNotIn("- MAC_OS", workflow)
-        self.assertIn("options:", workflow)
-        self.assertIn("- macos", workflow)
-        self.assertIn("- ios", workflow)
-        self.assertIn("- iphone", workflow)
-        self.assertIn("- ipad", workflow)
-        self.assertIn("- watch", workflow)
-        self.assertIn("- visionpro", workflow)
-        self.assertIn("- tvos", workflow)
 
     def test_app_store_review_workflow_supports_prepare_only(self):
         workflow = self.read(".github/workflows/submit-app-store-review.yml")

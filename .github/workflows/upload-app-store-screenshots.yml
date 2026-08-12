@@ -16,6 +16,7 @@ name: Upload App Store Screenshots
           - macos
           - ios
           - iphone
+          - iphone65
           - ipad
           - watch
           - visionpro
