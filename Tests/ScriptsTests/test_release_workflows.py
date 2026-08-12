@@ -1189,7 +1189,6 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         release_docs = self.read("docs/release.md")
 
         self.assertIn("- TV_OS", workflow)
-        self.assertIn('choices=("IOS", "MAC_OS", "TV_OS", "VISION_OS")', script)
         self.assertIn("tvos_demo_video_url:", workflow)
         self.assertIn("INPUT_TVOS_DEMO_VIDEO_URL", workflow)
         self.assertIn('args+=(--tvos-demo-video-url "${INPUT_TVOS_DEMO_VIDEO_URL}")', workflow)

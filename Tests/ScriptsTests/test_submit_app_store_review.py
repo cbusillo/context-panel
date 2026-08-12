@@ -6,7 +6,7 @@ import unittest
 import urllib.error
 import sys
 from unittest.mock import patch
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -595,6 +595,54 @@ class SubmittedReviewItemBlockedBySubmissionStateClient(SubmittedReviewItemClien
                 },
             )
         return super().request(method, path, params, body, allowed)
+
+
+class PlatformArgumentTests(unittest.TestCase):
+    def parse(self, *arguments: str):
+        with patch.object(
+            sys,
+            "argv",
+            ["submit-app-store-review.py", "--version", "1.0.54", *arguments],
+        ):
+            return submit_app_store_review.parse_args()
+
+    def assert_rejected(self, *arguments: str) -> str:
+        error_output = io.StringIO()
+        with redirect_stderr(error_output), self.assertRaises(SystemExit) as context:
+            self.parse(*arguments)
+        self.assertEqual(context.exception.code, 2)
+        return error_output.getvalue()
+
+    def test_platform_accepts_every_platform_with_runtime_requirements(self):
+        for platform in submit_app_store_review.REQUIRED_RUNTIME_SURFACES_BY_PLATFORM:
+            with self.subTest(platform=platform):
+                self.assertEqual(self.parse("--platform", platform).platform, platform)
+
+    def test_platform_defaults_to_mac_os(self):
+        self.assertEqual(self.parse().platform, "MAC_OS")
+
+    def test_platform_rejects_unsupported_miscased_and_empty_values(self):
+        for platform in ("WATCH_OS", "ios", ""):
+            with self.subTest(platform=platform):
+                self.assertIn(
+                    "argument --platform:",
+                    self.assert_rejected("--platform", platform),
+                )
+
+    def test_copy_from_platform_defaults_to_none_and_accepts_supported_platforms(self):
+        self.assertIsNone(self.parse().copy_from_platform)
+        for platform in submit_app_store_review.REQUIRED_RUNTIME_SURFACES_BY_PLATFORM:
+            with self.subTest(platform=platform):
+                self.assertEqual(
+                    self.parse("--copy-from-platform", platform).copy_from_platform,
+                    platform,
+                )
+
+    def test_copy_from_platform_rejects_unsupported_platforms(self):
+        self.assertIn(
+            "argument --copy-from-platform:",
+            self.assert_rejected("--copy-from-platform", "WATCH_OS"),
+        )
 
 
 class MetadataSourcePlatformTests(unittest.TestCase):
