@@ -3,11 +3,14 @@ import hashlib
 import sys
 import tempfile
 import unittest
+from collections import Counter
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 
 MODULE_PATH = Path(__file__).resolve().parents[2] / "scripts" / "upload-app-store-screenshots.py"
+SCREENSHOT_ROOT = MODULE_PATH.parents[1] / "Resources" / "AppStore" / "Screenshots"
 SPEC = importlib.util.spec_from_file_location("upload_app_store_screenshots", MODULE_PATH)
 if SPEC is None or SPEC.loader is None:
     raise RuntimeError(f"Unable to load {MODULE_PATH}")
@@ -354,70 +357,94 @@ class UploadAppStoreScreenshotsTests(unittest.TestCase):
         self.assertEqual(upload_app_store_screenshots.inferred_platform(["visionpro"], None), "VISION_OS")
         self.assertEqual(upload_app_store_screenshots.inferred_platform(["tvos"], None), "TV_OS")
 
-    def test_macos_approved_set_contains_all_five_approved_screenshots(self):
-        macos_assets = upload_app_store_screenshots.APPROVED_SETS["macos"]
+    def test_approved_sets_have_valid_platform_assets(self):
+        approved_sets = upload_app_store_screenshots.APPROVED_SETS
+        platform_for_set = upload_app_store_screenshots.PLATFORM_FOR_SET
+        display_types_by_platform = upload_app_store_screenshots.FULL_PLATFORM_DISPLAY_TYPES
+        expected_display_types = {
+            "macos": {"APP_DESKTOP"},
+            "iphone": {"APP_IPHONE_61"},
+            "iphone65": {"APP_IPHONE_65"},
+            "ipad": {"APP_IPAD_PRO_3GEN_129"},
+            "watch": {"APP_WATCH_ULTRA"},
+            "ios": display_types_by_platform["IOS"],
+            "visionpro": {"APP_APPLE_VISION_PRO"},
+            "tvos": {"APP_APPLE_TV"},
+        }
 
-        self.assertEqual(len(macos_assets), 5)
-        self.assertEqual({asset.display_type for asset in macos_assets}, {"APP_DESKTOP"})
-        self.assertEqual(
-            [asset.path.name for asset in macos_assets],
-            [
-                "context-panel-appstore-1-app.png",
-                "context-panel-appstore-2-widget.png",
-                "context-panel-appstore-3-app-dark-current.png",
-                "context-panel-appstore-4-widgets-live-redacted.png",
-                "context-panel-appstore-5-glance-detail-redacted.png",
-            ],
+        self.assertEqual(set(approved_sets), set(platform_for_set))
+        self.assertEqual(set(approved_sets), set(expected_display_types))
+        full_platforms = set()
+        for set_name, assets in approved_sets.items():
+            with self.subTest(set_name=set_name):
+                self.assertTrue(assets)
+                paths = [asset.path for asset in assets]
+                self.assertEqual(len(paths), len(set(paths)))
+                self.assertTrue(all((SCREENSHOT_ROOT / path).is_file() for path in paths))
+
+                platform = platform_for_set[set_name]
+                allowed_display_types = display_types_by_platform[platform]
+                actual_display_types = {asset.display_type for asset in assets}
+                self.assertLessEqual(actual_display_types, allowed_display_types)
+                self.assertEqual(actual_display_types, expected_display_types[set_name])
+                if actual_display_types == allowed_display_types:
+                    full_platforms.add(platform)
+
+                counts = Counter(asset.display_type for asset in assets)
+                self.assertTrue(
+                    all(
+                        0 < count <= upload_app_store_screenshots.MAX_SCREENSHOTS_PER_DISPLAY_TYPE
+                        for count in counts.values()
+                    )
+                )
+
+        self.assertEqual(full_platforms, set(display_types_by_platform))
+
+    def test_device_specific_approved_sets_do_not_reuse_screenshot_paths(self):
+        approved_sets = upload_app_store_screenshots.APPROVED_SETS
+        leaf_set_names = ("macos", "iphone", "iphone65", "ipad", "watch", "visionpro", "tvos")
+        paths = [asset.path for set_name in leaf_set_names for asset in approved_sets[set_name]]
+
+        self.assertEqual(len(paths), len(set(paths)))
+
+    def test_ios_approved_set_composes_the_device_specific_sets_in_upload_order(self):
+        approved_sets = upload_app_store_screenshots.APPROVED_SETS
+
+        expected = sum(
+            (approved_sets[set_name] for set_name in ("iphone", "iphone65", "ipad", "watch")),
+            (),
         )
 
-    def test_ipad_approved_set_contains_current_approved_screenshots(self):
-        ipad_assets = upload_app_store_screenshots.APPROVED_SETS["ipad"]
+        self.assertEqual(approved_sets["ios"], expected)
 
-        self.assertEqual(len(ipad_assets), 2)
-        self.assertEqual({asset.display_type for asset in ipad_assets}, {"APP_IPAD_PRO_3GEN_129"})
+    def test_selected_assets_preserves_configured_set_and_asset_order(self):
+        configured_sets = {
+            "first": (
+                upload_app_store_screenshots.ScreenshotAsset("DISPLAY_A", Path("first-a.png")),
+                upload_app_store_screenshots.ScreenshotAsset("DISPLAY_A", Path("first-b.png")),
+            ),
+            "second": (
+                upload_app_store_screenshots.ScreenshotAsset("DISPLAY_B", Path("second.png")),
+            ),
+        }
+
+        with mock.patch.object(upload_app_store_screenshots, "APPROVED_SETS", configured_sets):
+            assets = upload_app_store_screenshots.selected_assets(
+                ["second", "first"], Path("approved-root")
+            )
+
         self.assertEqual(
-            [asset.path.name for asset in ipad_assets],
+            assets,
             [
-                "ipad-12-9-app-light-synced.png",
-                "ipad-12-9-app-dark-synced.png",
-            ],
-        )
-
-    def test_tvos_approved_set_contains_current_approved_screenshots(self):
-        tvos_assets = upload_app_store_screenshots.APPROVED_SETS["tvos"]
-
-        self.assertEqual(len(tvos_assets), 3)
-        self.assertEqual({asset.display_type for asset in tvos_assets}, {"APP_APPLE_TV"})
-        self.assertEqual(
-            [asset.path.name for asset in tvos_assets],
-            [
-                "tvos-1-runway-full-detail.png",
-                "tvos-2-provider-hide-account-names.png",
-                "tvos-3-runway-percentages-only.png",
-            ],
-        )
-
-    def test_ios_approved_set_contains_only_current_approved_display_types(self):
-        ios_assets = upload_app_store_screenshots.APPROVED_SETS["ios"]
-
-        self.assertEqual(len(ios_assets), 12)
-        self.assertEqual(
-            {asset.display_type for asset in ios_assets},
-            {"APP_IPHONE_61", "APP_IPHONE_65", "APP_IPAD_PRO_3GEN_129", "APP_WATCH_ULTRA"},
-        )
-
-    def test_iphone65_approved_set_contains_current_approved_screenshots(self):
-        iphone65_assets = upload_app_store_screenshots.APPROVED_SETS["iphone65"]
-
-        self.assertEqual(len(iphone65_assets), 4)
-        self.assertEqual({asset.display_type for asset in iphone65_assets}, {"APP_IPHONE_65"})
-        self.assertEqual(
-            [asset.path.name for asset in iphone65_assets],
-            [
-                "iphone-6-5-app-light-synced.png",
-                "iphone-6-5-app-dark-synced.png",
-                "iphone-6-5-widget-light-home.png",
-                "iphone-6-5-widget-dark-home.png",
+                upload_app_store_screenshots.ScreenshotAsset(
+                    "DISPLAY_B", Path("approved-root/second.png")
+                ),
+                upload_app_store_screenshots.ScreenshotAsset(
+                    "DISPLAY_A", Path("approved-root/first-a.png")
+                ),
+                upload_app_store_screenshots.ScreenshotAsset(
+                    "DISPLAY_A", Path("approved-root/first-b.png")
+                ),
             ],
         )
 
