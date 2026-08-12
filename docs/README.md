@@ -13,3 +13,4 @@
 - [Signed Validation Operator Flow](signed-validation-operator-flow.md)
 - [Signed Validation Galleries](signed-validation-galleries.md)
 - [Repository Settings](repo-settings.md)
+- [Test Lanes](test-lanes.md)

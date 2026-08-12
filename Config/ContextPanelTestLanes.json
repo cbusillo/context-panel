@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "auditStart": {
+    "sourceCommit": "172cae46e192bf3c203d5a8ce62e7def99eb49e3",
+    "recordedAt": "2026-08-12"
+  },
+  "lanes": {
+    "fast-local-python": {
+      "runner": "python-unittest",
+      "ciPolicy": "safe",
+      "role": "test"
+    },
+    "routine-ci-python": {
+      "runner": "python-unittest",
+      "ciPolicy": "safe",
+      "role": "test"
+    },
+    "routine-ci-swift": {
+      "runner": "swiftpm",
+      "ciPolicy": "safe",
+      "role": "test"
+    },
+    "release-only": {
+      "runner": "manual",
+      "ciPolicy": "trusted-only",
+      "role": "test"
+    },
+    "visual-evidence": {
+      "runner": "manual",
+      "ciPolicy": "trusted-only",
+      "role": "test"
+    },
+    "actual-runtime": {
+      "runner": "manual",
+      "ciPolicy": "device-only",
+      "role": "test"
+    },
+    "support-only": {
+      "runner": "none",
+      "ciPolicy": "never",
+      "role": "support"
+    }
+  },
+  "manualLaneJustifications": {},
+  "filesByLane": {
+    "fast-local-python": [
+      "Tests/ScriptsTests/test_runtime_receipts.py",
+      "Tests/ScriptsTests/test_runtime_session.py",
+      "Tests/ScriptsTests/test_surface_manifest.py",
+      "Tests/ScriptsTests/test_test_lanes.py",
+      "Tests/ScriptsTests/test_validation_gallery_target_graph.py"
+    ],
+    "routine-ci-python": [
+      "Tests/ScriptsTests/test_app_store_version_guard.py",
+      "Tests/ScriptsTests/test_distribute_testflight_beta.py",
+      "Tests/ScriptsTests/test_release_evidence_gate.py",
+      "Tests/ScriptsTests/test_release_workflows.py",
+      "Tests/ScriptsTests/test_runtime_receipt_ingestion.py",
+      "Tests/ScriptsTests/test_submit_app_store_review.py",
+      "Tests/ScriptsTests/test_upload_app_store_screenshots.py",
+      "Tests/ScriptsTests/test_validation_coordinator.py",
+      "Tests/ScriptsTests/test_validation_operator_flow.py",
+      "Tests/ScriptsTests/test_visual_approvals.py"
+    ],
+    "routine-ci-swift": [
+      "Tests/ContextPanelCoreTests/AccountConfigurationStoreTests.swift",
+      "Tests/ContextPanelCoreTests/CodexRateLimitsTests.swift",
+      "Tests/ContextPanelCoreTests/CompanionAppearanceSettingsTests.swift",
+      "Tests/ContextPanelCoreTests/CompanionCloudKitSubscriptionTests.swift",
+      "Tests/ContextPanelCoreTests/CompanionLayoutPolicyTests.swift",
+      "Tests/ContextPanelCoreTests/CompanionRefreshSettingsTests.swift",
+      "Tests/ContextPanelCoreTests/CompanionRemoteMergeTests.swift",
+      "Tests/ContextPanelCoreTests/CompanionSnapshotTests.swift",
+      "Tests/ContextPanelCoreTests/ContextPanelAppPresentationTests.swift",
+      "Tests/ContextPanelCoreTests/FastModeForecastTests.swift",
+      "Tests/ContextPanelCoreTests/KeepWorkingForecastTests.swift",
+      "Tests/ContextPanelCoreTests/LimitProbeTests.swift",
+      "Tests/ContextPanelCoreTests/LimitWarningTests.swift",
+      "Tests/ContextPanelCoreTests/MainLimitAnswerSelectionTests.swift",
+      "Tests/ContextPanelCoreTests/MetricProgressTests.swift",
+      "Tests/ContextPanelCoreTests/PortableSettingsUITests.swift",
+      "Tests/ContextPanelCoreTests/PromptCacheTelemetryTests.swift",
+      "Tests/ContextPanelCoreTests/ProviderConnectorTests.swift",
+      "Tests/ContextPanelCoreTests/RefreshAgentRegistrationTests.swift",
+      "Tests/ContextPanelCoreTests/RefreshDiagnosticsStateTests.swift",
+      "Tests/ContextPanelCoreTests/ReleaseEntitlementsTests.swift",
+      "Tests/ContextPanelCoreTests/ResetCreditGuidanceTests.swift",
+      "Tests/ContextPanelCoreTests/RuntimeReceiptRemoteSyncTests.swift",
+      "Tests/ContextPanelCoreTests/RuntimeReceiptTests.swift",
+      "Tests/ContextPanelCoreTests/SecureFileBookmarkTests.swift",
+      "Tests/ContextPanelCoreTests/SnapshotFreshnessTests.swift",
+      "Tests/ContextPanelCoreTests/SnapshotStoreTests.swift",
+      "Tests/ContextPanelCoreTests/TVRunwayPresentationTests.swift",
+      "Tests/ContextPanelCoreTests/TVTopShelfTests.swift",
+      "Tests/ContextPanelCoreTests/UsageLimitTests.swift",
+      "Tests/ContextPanelCoreTests/UserFacingCopyTests.swift",
+      "Tests/ContextPanelCoreTests/ValidationGalleryTests.swift",
+      "Tests/ContextPanelCoreTests/WatchCompanionCacheTests.swift",
+      "Tests/ContextPanelCoreTests/WatchLimitDisplayTests.swift",
+      "Tests/ContextPanelCoreTests/WatchSyncPresentationTests.swift",
+      "Tests/ContextPanelCoreTests/WidgetRenderTests.swift",
+      "Tests/ContextPanelCoreTests/WidgetSnapshotTests.swift"
+    ],
+    "release-only": [],
+    "visual-evidence": [],
+    "actual-runtime": [],
+    "support-only": [
+      "Tests/ContextPanelCoreTests/GoogleAntigravityTestFixtures.swift",
+      "Tests/ScriptsTests/fixtures/runtime-preflight/app-entitlements-production.plist",
+      "Tests/ScriptsTests/fixtures/runtime-preflight/app-entitlements.plist",
+      "Tests/ScriptsTests/fixtures/runtime-preflight/profile-development-wildcard-grants.plist",
+      "Tests/ScriptsTests/fixtures/runtime-preflight/profile-environment-array-production-only.plist",
+      "Tests/ScriptsTests/fixtures/runtime-preflight/profile-environment-array.plist",
+      "Tests/ScriptsTests/fixtures/runtime-preflight/profile-good.plist",
+      "Tests/ScriptsTests/fixtures/runtime-preflight/profile-wildcard.plist",
+      "Tests/ScriptsTests/fixtures/runtime-preflight/runtime-testflight-entitlements.plist",
+      "Tests/ScriptsTests/fixtures/runtime-preflight/runtime-unknown-entitlements.plist"
+    ]
+  }
+}

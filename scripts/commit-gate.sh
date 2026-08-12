@@ -44,11 +44,12 @@ echo "commit gate SwiftPM scratch path: $swiftpm_scratch_path"
 PYTHONDONTWRITEBYTECODE=1 \
 	python3 scripts/context-panel-surface-manifest.py validate
 PYTHONDONTWRITEBYTECODE=1 \
-	python3 -m unittest \
-		Tests/ScriptsTests/test_surface_manifest.py \
-		Tests/ScriptsTests/test_runtime_receipts.py \
-		Tests/ScriptsTests/test_runtime_session.py \
-		Tests/ScriptsTests/test_validation_gallery_target_graph.py
+	python3 scripts/context-panel-test-lanes.py validate
+PYTHONDONTWRITEBYTECODE=1 \
+	python3 scripts/context-panel-test-lanes.py run \
+		--lane fast-local-python
 
 swift build "${swift_args[@]}"
-swift test "${swift_args[@]}"
+python3 scripts/context-panel-test-lanes.py time-command \
+	--lane routine-ci-swift \
+	-- swift test "${swift_args[@]}"

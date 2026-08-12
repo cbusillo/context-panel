@@ -2620,17 +2620,15 @@ exit 0
         release_docs = self.read("docs/release.md")
         github_metadata = json.loads(self.read(".github/github.json"))
 
-        self.assertIn(
-            "- name: Validate signed coordinator scripts\n"
-            "        timeout-minutes: 5\n"
-            "        run: >-\n"
-            "          python3 -m unittest\n"
-            "          Tests/ScriptsTests/test_validation_coordinator.py\n"
-            "          Tests/ScriptsTests/test_runtime_receipt_ingestion.py\n"
-            "          Tests/ScriptsTests/test_validation_operator_flow.py\n"
-            "          Tests/ScriptsTests/test_release_workflows.py",
-            workflow,
-        )
+        self.assertIn("scripts/commit-gate.sh", workflow)
+        self.assertIn("Run routine Python test lane", workflow)
+        self.assertIn("timeout-minutes: 5", workflow)
+        self.assertIn("--lane routine-ci-python", workflow)
+        self.assertIn("Upload test lane timings", workflow)
+        self.assertIn("test-lane-timings-${{ github.run_attempt }}", workflow)
+        self.assertIn(".build/test-lane-timings/fast-local-python.json", workflow)
+        self.assertIn(".build/test-lane-timings/routine-ci-python.json", workflow)
+        self.assertIn(".build/test-lane-timings/routine-ci-swift.json", workflow)
         self.assertIn("scripts/validate-companion-builds.sh", workflow)
         self.assertIn("--configuration Release --archive ios", workflow)
         self.assertIn("scripts/validate-companion-builds.sh --configuration Release watchos", workflow)
