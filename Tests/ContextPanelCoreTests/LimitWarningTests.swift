@@ -4,6 +4,7 @@ import Testing
 @testable import ContextPanelCore
 
 private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
+private let lockContentionSensitivityDelay = Duration.milliseconds(50)
 
 @Test func limitWarningSettingsStoreRoundTripsAndClampsThreshold() throws {
     let directory = try temporaryWarningDirectory()
@@ -980,46 +981,81 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
         warningLimit(provider: .anthropic, accountID: "claude", label: "Claude Weekly", used: 95, limit: 100),
     ])
     try snapshotStore.save(StoredUsageSnapshot(savedAt: warningNow, snapshot: recoveredSnapshot))
-    let gate = AsyncTestGate()
-    let lockHolder = Task {
-        try await deliveryLock.withLock {
-            await gate.markStarted()
-            await gate.waitForRelease()
+    let delivery = try await withHeldDeliveryLock(deliveryLock) {
+        let decision = SnapshotRefreshRunDecision.refreshed(SnapshotRefreshOutcome(
+            savedAt: lowSnapshot.generatedAt,
+            refreshResult: ConnectorRefreshResult(
+                generatedAt: lowSnapshot.generatedAt,
+                reports: [ProviderConnectorReport(
+                    provider: .anthropic,
+                    accountID: "claude",
+                    accountName: "Claude",
+                    generatedAt: lowSnapshot.generatedAt,
+                    limits: lowSnapshot.limits
+                )]
+            )
+        ))
+        let delivery = Task {
+            await service.deliverIfNeeded(decision: decision, now: lowSnapshot.generatedAt)
+        }
+        do {
+            // SnapshotRefreshLock has no contention observer, so this delay keeps the test sensitive to
+            // moving the persisted snapshot read outside the lock. It does not order the assertions.
+            try await Task.sleep(for: lockContentionSensitivityDelay)
+            try snapshotStore.save(StoredUsageSnapshot(savedAt: lowSnapshot.generatedAt, snapshot: lowSnapshot))
+            return delivery
+        } catch {
+            delivery.cancel()
+            _ = await delivery.value
+            throw error
         }
     }
-    guard await gate.waitUntilStarted() else {
-        lockHolder.cancel()
-        Issue.record("delivery lock holder did not start before the test deadline")
-        return
-    }
-    let decision = SnapshotRefreshRunDecision.refreshed(SnapshotRefreshOutcome(
-        savedAt: lowSnapshot.generatedAt,
-        refreshResult: ConnectorRefreshResult(
-            generatedAt: lowSnapshot.generatedAt,
-            reports: [ProviderConnectorReport(
-                provider: .anthropic,
-                accountID: "claude",
-                accountName: "Claude",
-                generatedAt: lowSnapshot.generatedAt,
-                limits: lowSnapshot.limits
-            )]
-        )
-    ))
-    let delivery = Task {
-        await service.deliverIfNeeded(decision: decision, now: lowSnapshot.generatedAt)
-    }
-    try await Task.sleep(for: .milliseconds(50))
-
-    try snapshotStore.save(StoredUsageSnapshot(savedAt: lowSnapshot.generatedAt, snapshot: lowSnapshot))
-    await gate.release()
-    _ = try await lockHolder.value
     let results = await delivery.value
 
     #expect(results.first?.succeeded == true)
     #expect(await poster.postCount == 1)
 }
 
-@Test func limitWarningWebhookDeliverySerializesConcurrentStateWriters() async throws {
+@Test func limitWarningWebhookDeliverySkipsWhileDeliveryLockIsHeld() async throws {
+    let directory = try temporaryWarningDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let settingsStore = LimitWarningWebhookSettingsStore(settingsURL: directory.appending(path: "webhook-settings.json"))
+    let warningSettingsStore = LimitWarningSettingsStore(settingsURL: directory.appending(path: "warning-settings.json"))
+    let stateStore = LimitWarningWebhookDeliveryStateStore(stateURL: directory.appending(path: "webhook-state.json"))
+    try settingsStore.save(LimitWarningWebhookSettings(isEnabled: true, preset: .genericJSON))
+    try warningSettingsStore.save(LimitWarningSettings(isEnabled: true, thresholdPercentRemaining: 10))
+    let deliveryLock = SnapshotRefreshLock(lockURL: directory.appending(path: "webhook-state.lock"))
+    let poster = FakeWebhookPoster(statusCodes: [204, 204])
+    let service = LimitWarningWebhookDeliveryService(
+        warningSettingsStore: warningSettingsStore,
+        settingsStore: settingsStore,
+        stateStore: stateStore,
+        secretStore: StaticWebhookSecretStore(url: URL(string: "https://example.com/hook")),
+        poster: poster,
+        appVersion: "1.0.test",
+        deliveryLock: deliveryLock,
+        lockWaitDuration: .zero,
+        lockRetryInterval: .milliseconds(5)
+    )
+    let snapshot = UsageSnapshot(generatedAt: warningNow, limits: [
+        warningLimit(provider: .openAI, accountID: "codex", label: "Codex 5-hour", used: 95, limit: 100),
+    ])
+    try await withHeldDeliveryLock(deliveryLock) {
+        let liveResults = await service.deliverIfNeeded(snapshot: snapshot, now: warningNow)
+        let testResult = await service.sendTest(now: warningNow.addingTimeInterval(1))
+        await #expect(throws: LimitWarningWebhookDeliveryService.ConfigurationError.self) {
+            try await service.updateConfiguration {}
+        }
+
+        #expect(liveResults.isEmpty)
+        #expect(testResult.attempted == false)
+        #expect(testResult.succeeded == false)
+        #expect(await poster.postCount == 0)
+        #expect(stateStore.load().records.isEmpty)
+    }
+}
+
+@Test func limitWarningWebhookLiveAndTestDeliveriesShareState() async throws {
     let directory = try temporaryWarningDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let settingsStore = LimitWarningWebhookSettingsStore(settingsURL: directory.appending(path: "webhook-settings.json"))
@@ -1035,7 +1071,7 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
         lastHTTPStatus: 204,
         lastError: nil
     )]))
-    let poster = GatedWebhookPoster()
+    let poster = FakeWebhookPoster(statusCodes: [204, 204])
     let service = LimitWarningWebhookDeliveryService(
         warningSettingsStore: warningSettingsStore,
         settingsStore: settingsStore,
@@ -1049,24 +1085,8 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
     let snapshot = UsageSnapshot(generatedAt: warningNow, limits: [
         warningLimit(provider: .openAI, accountID: "codex", label: "Codex 5-hour", used: 95, limit: 100),
     ])
-    let liveDelivery = Task {
-        await service.deliverIfNeeded(snapshot: snapshot, now: warningNow)
-    }
-    guard await poster.waitUntilFirstPostStarts() else {
-        liveDelivery.cancel()
-        await poster.releaseFirstPost()
-        Issue.record("live webhook POST did not start before the test deadline")
-        return
-    }
-    let testDelivery = Task {
-        await service.sendTest(now: warningNow.addingTimeInterval(1))
-    }
-    try await Task.sleep(for: .milliseconds(50))
-
-    #expect(await poster.postCount == 1)
-    await poster.releaseFirstPost()
-    let liveResults = await liveDelivery.value
-    let testResult = await testDelivery.value
+    let liveResults = await service.deliverIfNeeded(snapshot: snapshot, now: warningNow)
+    let testResult = await service.sendTest(now: warningNow.addingTimeInterval(1))
     let state = stateStore.load()
 
     #expect(liveResults.first?.succeeded == true)
@@ -1075,6 +1095,14 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
     #expect(!state.records.contains(where: { $0.laneID == "google:stale" }))
     #expect(state.latestRecord != nil)
     #expect(state.latestTestRecord != nil)
+}
+
+@Test func limitWarningWebhookTestGateTimesOutWhenTheExpectedSignalNeverArrives() async {
+    let gate = AsyncTestGate()
+
+    await #expect(throws: AsyncTestGateError.self) {
+        try await gate.waitUntilStarted(timeout: .milliseconds(10))
+    }
 }
 
 @Test func limitWarningWebhookDeliverySummaryRequiresWholeBatchSuccess() throws {
@@ -1121,7 +1149,14 @@ private let warningNow = Date(timeIntervalSinceReferenceDate: 900_100_000)
     let delivery = Task { await service.deliverIfNeeded(snapshot: UsageSnapshot(generatedAt: warningNow, limits: [
         warningLimit(provider: .openAI, accountID: "codex", label: "Codex 5-hour", used: 95, limit: 100),
     ]), now: warningNow) }
-    #expect(await poster.waitUntilFirstPostStarts())
+    do {
+        try await poster.waitUntilFirstPostStarts()
+    } catch {
+        await poster.releaseFirstPost()
+        delivery.cancel()
+        _ = await delivery.value
+        throw error
+    }
     let reset = Task { try await service.updateConfiguration {} }
     await poster.releaseFirstPost()
     _ = await delivery.value
@@ -1398,58 +1433,122 @@ private actor FakeWebhookPoster: LimitWarningWebhookPosting {
 }
 
 private actor GatedWebhookPoster: LimitWarningWebhookPosting {
-    private var firstPostStarted = false
-    private var firstPostReleased = false
+    private let firstPostGate = AsyncTestGate()
     private(set) var postCount = 0
 
     func post(payload: LimitWarningWebhookPayload, to url: URL, timeoutSeconds: Double) async throws -> Int {
         postCount += 1
-        if postCount == 1 {
-            firstPostStarted = true
-            while !firstPostReleased {
-                try? await Task.sleep(for: .milliseconds(5))
-            }
+        let currentPost = postCount
+
+        if currentPost == 1 {
+            await firstPostGate.markStarted()
+            try await firstPostGate.waitForRelease()
         }
         return 204
     }
 
-    func waitUntilFirstPostStarts() async -> Bool {
-        for _ in 0..<200 {
-            if firstPostStarted { return true }
-            try? await Task.sleep(for: .milliseconds(5))
-        }
-        return firstPostStarted
+    func waitUntilFirstPostStarts() async throws {
+        try await firstPostGate.waitUntilStarted()
     }
 
-    func releaseFirstPost() {
-        firstPostReleased = true
+    func releaseFirstPost() async {
+        await firstPostGate.release()
     }
 }
 
 private actor AsyncTestGate {
     private var started = false
     private var released = false
+    private var startWaiters: [UUID: CheckedContinuation<Void, Error>] = [:]
+    private var releaseWaiters: [UUID: CheckedContinuation<Void, Error>] = [:]
 
     func markStarted() {
         started = true
+        let waiters = startWaiters
+        startWaiters.removeAll()
+        waiters.values.forEach { $0.resume() }
     }
 
-    func waitUntilStarted() async -> Bool {
-        for _ in 0..<200 {
-            if started { return true }
-            try? await Task.sleep(for: .milliseconds(5))
+    func waitUntilStarted(timeout: Duration = .seconds(1)) async throws {
+        if started { return }
+        let waiterID = UUID()
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            guard !Task.isCancelled else {
+                continuation.resume(throwing: CancellationError())
+                return
+            }
+            startWaiters[waiterID] = continuation
+            Task.detached {
+                try? await Task.sleep(for: timeout)
+                await self.failStartWaiter(waiterID)
+            }
         }
-        return started
     }
 
-    func waitForRelease() async {
-        while !released {
-            try? await Task.sleep(for: .milliseconds(5))
+    func waitForRelease(timeout: Duration = .seconds(1)) async throws {
+        if released { return }
+        let waiterID = UUID()
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            guard !Task.isCancelled else {
+                continuation.resume(throwing: CancellationError())
+                return
+            }
+            releaseWaiters[waiterID] = continuation
+            Task.detached {
+                try? await Task.sleep(for: timeout)
+                await self.failReleaseWaiter(waiterID)
+            }
         }
     }
 
     func release() {
         released = true
+        let waiters = releaseWaiters
+        releaseWaiters.removeAll()
+        waiters.values.forEach { $0.resume() }
+    }
+
+    private func failStartWaiter(_ waiterID: UUID) {
+        startWaiters.removeValue(forKey: waiterID)?.resume(
+            throwing: AsyncTestGateError.timedOut("test gate did not start before the deadline")
+        )
+    }
+
+    private func failReleaseWaiter(_ waiterID: UUID) {
+        releaseWaiters.removeValue(forKey: waiterID)?.resume(
+            throwing: AsyncTestGateError.timedOut("test gate was not released before the deadline")
+        )
+    }
+
+}
+
+private enum AsyncTestGateError: Error {
+    case timedOut(String)
+}
+
+private func withHeldDeliveryLock<T>(
+    _ deliveryLock: SnapshotRefreshLock,
+    operation: () async throws -> T
+) async throws -> T {
+    let gate = AsyncTestGate()
+    let lockHolder = Task {
+        try await deliveryLock.withLock {
+            await gate.markStarted()
+            try await gate.waitForRelease()
+        }
+    }
+
+    do {
+        try await gate.waitUntilStarted()
+        let result = try await operation()
+        await gate.release()
+        _ = try await lockHolder.value
+        return result
+    } catch {
+        await gate.release()
+        lockHolder.cancel()
+        _ = try? await lockHolder.value
+        throw error
     }
 }
 
