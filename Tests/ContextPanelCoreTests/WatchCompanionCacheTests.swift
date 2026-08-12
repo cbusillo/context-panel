@@ -605,9 +605,7 @@ import Testing
         loadPresentation: { watchPresentationLoad() }
     )
     let loadTask = Task { await loader.load(now: newerDate) }
-    while await probe.count() == 0 {
-        await Task.yield()
-    }
+    try await probe.waitUntilLoadStarts()
     #expect(cache.save(
         document: newerDocument,
         displayPreferences: .defaultPreferences,
@@ -644,9 +642,7 @@ import Testing
         loadPresentation: { watchPresentationLoad() }
     )
     let loadTask = Task { await loader.load(now: concurrentDate) }
-    while await probe.count() == 0 {
-        await Task.yield()
-    }
+    try await probe.waitUntilLoadStarts()
     #expect(cache.save(
         document: concurrentDocument,
         displayPreferences: .defaultPreferences,
@@ -685,9 +681,7 @@ import Testing
         loadPresentation: { watchPresentationLoad() }
     )
     let loadTask = Task { await loader.load(now: newerDate) }
-    while await probe.count() == 0 {
-        await Task.yield()
-    }
+    try await probe.waitUntilLoadStarts()
     #expect(cache.save(
         document: newerDocument,
         displayPreferences: .defaultPreferences,
@@ -845,9 +839,7 @@ import Testing
         loadPresentation: { watchPresentationLoad() }
     )
     let first = Task { await loader.load(now: generatedAt) }
-    while await probe.count() == 0 {
-        await Task.yield()
-    }
+    try await probe.waitUntilLoadStarts()
     let second = Task { await loader.load(now: generatedAt) }
     for _ in 0 ..< 10 {
         await Task.yield()
@@ -978,9 +970,7 @@ import Testing
         loadPresentation: { watchPresentationLoad() }
     )
     let loadTask = Task { await loader.load(now: refreshedAt) }
-    while await probe.count() == 0 {
-        await Task.yield()
-    }
+    try await probe.waitUntilLoadStarts()
     try Data("not-json".utf8).write(to: cacheURL, options: .atomic)
     await probe.resume(returning: CompanionRemoteSyncLoadResult(
         result: CompanionSyncLoadResult(document: nil, status: .unknown),
@@ -1062,6 +1052,14 @@ import Testing
     #expect(value == nil)
     #expect(startedAt.duration(to: clock.now) < .seconds(10))
     await blocker.resume(returning: 42)
+}
+
+@Test func watchRemoteLoadProbeStartWaitTimesOutWhenLoadNeverBegins() async {
+    let probe = WatchRemoteLoadProbe()
+
+    await #expect(throws: WatchRemoteLoadProbeError.self) {
+        try await probe.waitUntilLoadStarts(timeout: .milliseconds(10))
+    }
 }
 
 private func watchCacheDocument(
@@ -1193,12 +1191,24 @@ private actor WatchDeadlineBlocker {
 }
 
 private actor WatchRemoteLoadProbe {
+    private struct StartWaiter {
+        let continuation: CheckedContinuation<Void, Error>
+        let timeoutTask: Task<Void, Never>
+    }
+
     private var continuation: CheckedContinuation<CompanionRemoteSyncLoadResult, Never>?
     private var bufferedResult: CompanionRemoteSyncLoadResult?
     private var callCount = 0
+    private var startWaiters: [UUID: StartWaiter] = [:]
 
     func load() async -> CompanionRemoteSyncLoadResult {
         callCount += 1
+        let waiters = startWaiters
+        startWaiters.removeAll()
+        waiters.values.forEach { waiter in
+            waiter.timeoutTask.cancel()
+            waiter.continuation.resume()
+        }
         if let bufferedResult {
             self.bufferedResult = nil
             return bufferedResult
@@ -1217,7 +1227,36 @@ private actor WatchRemoteLoadProbe {
         continuation.resume(returning: result)
     }
 
+    func waitUntilLoadStarts(timeout: Duration = .seconds(5)) async throws {
+        if callCount > 0 { return }
+        let waiterID = UUID()
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            guard !Task.isCancelled else {
+                continuation.resume(throwing: CancellationError())
+                return
+            }
+            let timeoutTask = Task.detached {
+                try? await Task.sleep(for: timeout)
+                await self.failStartWaiter(waiterID)
+            }
+            startWaiters[waiterID] = StartWaiter(
+                continuation: continuation,
+                timeoutTask: timeoutTask
+            )
+        }
+    }
+
     func count() -> Int {
         callCount
     }
+
+    private func failStartWaiter(_ waiterID: UUID) {
+        startWaiters.removeValue(forKey: waiterID)?.continuation.resume(
+            throwing: WatchRemoteLoadProbeError.timedOut("watch remote load did not start before the deadline")
+        )
+    }
+}
+
+private enum WatchRemoteLoadProbeError: Error {
+    case timedOut(String)
 }
