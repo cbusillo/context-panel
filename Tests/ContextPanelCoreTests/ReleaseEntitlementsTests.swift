@@ -2,33 +2,7 @@ import Foundation
 import Testing
 
 @Test func appStoreEntitlementsSupportSandboxedProviderRefreshes() throws {
-    let appEntitlements = try loadEntitlements("Config/ContextPanelAppStore.entitlements")
-    #expect(appEntitlements["com.apple.security.app-sandbox"] as? Bool == true)
-    #expect(appEntitlements["com.apple.security.network.client"] as? Bool == true)
-    #expect(appEntitlements["com.apple.security.network.server"] == nil)
-    #expect(appEntitlements["com.apple.security.files.user-selected.read-only"] as? Bool == true)
-    #expect(appEntitlements["com.apple.security.files.bookmarks.app-scope"] as? Bool == true)
-    #expect(appEntitlements["com.apple.security.files.bookmarks.document-scope"] == nil)
-    let appGroups = try #require(appEntitlements["com.apple.security.application-groups"] as? [String])
-    #expect(appGroups == ["MM5YXC7T6E.group.com.shinycomputers.contextpanel"])
-    let keychainGroups = try #require(appEntitlements["keychain-access-groups"] as? [String])
-    #expect(keychainGroups == ["MM5YXC7T6E.com.shinycomputers.contextpanel.provider-credentials"])
-    try expectICloudDocumentAndCloudKitEntitlements(appEntitlements)
-    expectProductionCloudKitEnvironment(appEntitlements)
-
-    let refreshAgentEntitlements = try loadEntitlements("Config/ContextPanelRefreshAgentAppStore.entitlements")
-    #expect(refreshAgentEntitlements["com.apple.security.app-sandbox"] as? Bool == true)
-    #expect(refreshAgentEntitlements["com.apple.security.network.client"] as? Bool == true)
-    #expect(refreshAgentEntitlements["com.apple.security.network.server"] == nil)
-    #expect(refreshAgentEntitlements["com.apple.security.files.user-selected.read-only"] as? Bool == true)
-    #expect(refreshAgentEntitlements["com.apple.security.files.bookmarks.app-scope"] as? Bool == true)
-    #expect(refreshAgentEntitlements["com.apple.security.files.bookmarks.document-scope"] == nil)
-    let refreshAgentAppGroups = try #require(refreshAgentEntitlements["com.apple.security.application-groups"] as? [String])
-    #expect(refreshAgentAppGroups == ["MM5YXC7T6E.group.com.shinycomputers.contextpanel"])
-    let refreshAgentKeychainGroups = try #require(refreshAgentEntitlements["keychain-access-groups"] as? [String])
-    #expect(refreshAgentKeychainGroups == ["MM5YXC7T6E.com.shinycomputers.contextpanel.provider-credentials"])
-    try expectICloudDocumentAndCloudKitEntitlements(refreshAgentEntitlements)
-    expectProductionCloudKitEnvironment(refreshAgentEntitlements)
+    try expectAppStoreProviderRefreshEntitlements("Config/ContextPanelAppStore.entitlements")
 }
 
 @Test func debugAppEntitlementsDoNotRequireOAuthCallbackServer() throws {
@@ -52,22 +26,9 @@ import Testing
 }
 
 @Test func appStoreEntitlementsSupportSandboxedRefreshAgent() throws {
-    for path in [
-        "Config/ContextPanelRefreshAgentAppStore.entitlements",
-    ] {
-        let entitlements = try loadEntitlements(path)
-        #expect(entitlements["com.apple.security.app-sandbox"] as? Bool == true)
-        #expect(entitlements["com.apple.security.network.client"] as? Bool == true)
-        #expect(entitlements["com.apple.security.files.user-selected.read-only"] as? Bool == true)
-        #expect(entitlements["com.apple.security.files.bookmarks.app-scope"] as? Bool == true)
-        #expect(entitlements["com.apple.security.files.bookmarks.document-scope"] == nil)
-        let appGroups = try #require(entitlements["com.apple.security.application-groups"] as? [String])
-        #expect(appGroups == ["MM5YXC7T6E.group.com.shinycomputers.contextpanel"])
-        let keychainGroups = try #require(entitlements["keychain-access-groups"] as? [String])
-        #expect(keychainGroups == ["MM5YXC7T6E.com.shinycomputers.contextpanel.provider-credentials"])
-        try expectICloudDocumentAndCloudKitEntitlements(entitlements)
-        expectProductionCloudKitEnvironment(entitlements)
-    }
+    try expectAppStoreProviderRefreshEntitlements(
+        "Config/ContextPanelRefreshAgentAppStore.entitlements"
+    )
 }
 
 @Test func debugEntitlementsShareProviderCredentialKeychainGroup() throws {
@@ -631,6 +592,22 @@ private func expectICloudDocumentEntitlements(_ entitlements: [String: Any]) thr
     let services = try #require(entitlements["com.apple.developer.icloud-services"] as? [String])
     #expect(services == ["CloudDocuments"])
     #expect(entitlements["com.apple.developer.ubiquity-kvstore-identifier"] == nil)
+}
+
+private func expectAppStoreProviderRefreshEntitlements(_ path: String) throws {
+    let entitlements = try loadEntitlements(path)
+    #expect(entitlements["com.apple.security.app-sandbox"] as? Bool == true)
+    #expect(entitlements["com.apple.security.network.client"] as? Bool == true)
+    #expect(entitlements["com.apple.security.network.server"] == nil)
+    #expect(entitlements["com.apple.security.files.user-selected.read-only"] as? Bool == true)
+    #expect(entitlements["com.apple.security.files.bookmarks.app-scope"] as? Bool == true)
+    #expect(entitlements["com.apple.security.files.bookmarks.document-scope"] == nil)
+    let appGroups = try #require(entitlements["com.apple.security.application-groups"] as? [String])
+    #expect(appGroups == ["MM5YXC7T6E.group.com.shinycomputers.contextpanel"])
+    let keychainGroups = try #require(entitlements["keychain-access-groups"] as? [String])
+    #expect(keychainGroups == ["MM5YXC7T6E.com.shinycomputers.contextpanel.provider-credentials"])
+    try expectICloudDocumentAndCloudKitEntitlements(entitlements)
+    expectProductionCloudKitEnvironment(entitlements)
 }
 
 private func expectICloudDocumentAndCloudKitEntitlements(_ entitlements: [String: Any]) throws {
