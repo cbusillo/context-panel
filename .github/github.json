@@ -12,6 +12,7 @@
     "signedValidationRuntimeReceipts": "docs/signed-validation-runtime-receipts.md",
     "signedValidationOperatorFlow": "docs/signed-validation-operator-flow.md",
     "signedValidationGalleries": "docs/signed-validation-galleries.md",
+    "testLanes": "docs/test-lanes.md",
     "localLimitProbe": "docs/local-limit-probe.md",
     "providerUsageAccess": "docs/provider-usage-access.md",
     "repoSettings": "docs/repo-settings.md"
@@ -21,7 +22,12 @@
       "default": "swift build"
     },
     "test": {
-      "default": "swift test"
+      "default": "swift test",
+      "lanesManifest": "Config/ContextPanelTestLanes.json",
+      "lanesValidate": "python3 scripts/context-panel-test-lanes.py validate",
+      "fastPython": "python3 scripts/context-panel-test-lanes.py run --lane fast-local-python",
+      "routinePython": "python3 scripts/context-panel-test-lanes.py run --lane routine-ci-python",
+      "routineSwift": "python3 scripts/context-panel-test-lanes.py time-command --lane routine-ci-swift -- swift test"
     },
     "inspection": {
       "ide": "IntelliJ IDEA",

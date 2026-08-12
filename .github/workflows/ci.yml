@@ -31,14 +31,11 @@ jobs:
       - name: Run commit gate
         run: scripts/commit-gate.sh
 
-      - name: Validate signed coordinator scripts
+      - name: Run routine Python test lane
         timeout-minutes: 5
         run: >-
-          python3 -m unittest
-          Tests/ScriptsTests/test_validation_coordinator.py
-          Tests/ScriptsTests/test_runtime_receipt_ingestion.py
-          Tests/ScriptsTests/test_validation_operator_flow.py
-          Tests/ScriptsTests/test_release_workflows.py
+          python3 scripts/context-panel-test-lanes.py run
+          --lane routine-ci-python
 
       - name: Install XcodeGen
         run: |
@@ -58,3 +55,14 @@ jobs:
       - name: Validate companion tvOS archive
         run: >-
           scripts/validate-companion-builds.sh --configuration Release --archive tvos
+
+      - name: Upload test lane timings
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-lane-timings-${{ github.run_attempt }}
+          path: |
+            .build/test-lane-timings/fast-local-python.json
+            .build/test-lane-timings/routine-ci-python.json
+            .build/test-lane-timings/routine-ci-swift.json
+          if-no-files-found: warn
