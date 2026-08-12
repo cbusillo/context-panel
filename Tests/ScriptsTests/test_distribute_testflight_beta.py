@@ -367,9 +367,51 @@ class TestFlightDistributionTests(unittest.TestCase):
                 "202606111944",
             ],
         ):
-            with mock.patch("sys.stderr", new_callable=io.StringIO):
-                with self.assertRaises(SystemExit):
+            with mock.patch("sys.stderr", new_callable=io.StringIO) as error_output:
+                with self.assertRaises(SystemExit) as context:
                     distribute_testflight_beta.parse_args()
+
+        self.assertEqual(context.exception.code, 2)
+        self.assertIn("the following arguments are required: --platform", error_output.getvalue())
+
+    def test_parse_args_accepts_each_supported_platform(self):
+        for platform in ("IOS", "MAC_OS", "TV_OS", "VISION_OS"):
+            with self.subTest(platform=platform):
+                with mock.patch(
+                    "sys.argv",
+                    [
+                        "distribute-testflight-beta.py",
+                        "--version",
+                        "1.0.22",
+                        "--build-number",
+                        "202606111944",
+                        "--platform",
+                        platform,
+                    ],
+                ):
+                    arguments = distribute_testflight_beta.parse_args()
+
+                self.assertEqual(arguments.platform, platform)
+
+    def test_parse_args_rejects_unsupported_platform(self):
+        with mock.patch(
+            "sys.argv",
+            [
+                "distribute-testflight-beta.py",
+                "--version",
+                "1.0.22",
+                "--build-number",
+                "202606111944",
+                "--platform",
+                "ANDROID",
+            ],
+        ):
+            with mock.patch("sys.stderr", new_callable=io.StringIO) as error_output:
+                with self.assertRaises(SystemExit) as context:
+                    distribute_testflight_beta.parse_args()
+
+        self.assertEqual(context.exception.code, 2)
+        self.assertIn("invalid choice: 'ANDROID'", error_output.getvalue())
 
     def test_request_retries_transient_http_failures(self):
         client = distribute_testflight_beta.ASCClient("token")
