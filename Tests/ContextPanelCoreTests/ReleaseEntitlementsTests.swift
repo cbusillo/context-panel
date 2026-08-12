@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 
@@ -184,49 +185,49 @@ import Testing
 }
 
 @Test func companionProjectTargetsUseSharedSyncAndWidgetModules() throws {
-    let project = try loadProjectYAML()
+    let project = try loadProjectSpec()
 
     let appTarget = try #require(project.target(named: "ContextPanelCompanion"))
-    #expect(appTarget["supportedDestinations"] as? String == "[iOS, visionOS]")
+    #expect(appTarget["supportedDestinations"]?.stringArray == ["iOS", "visionOS"])
 
     let appSettings = try #require(project.targetSettings(named: "ContextPanelCompanion"))
-    #expect(appSettings["PRODUCT_BUNDLE_IDENTIFIER"] as? String == "com.shinycomputers.contextpanel")
-    #expect(appSettings["CODE_SIGN_ENTITLEMENTS"] as? String == "Config/ContextPanelCompanion.entitlements")
-    #expect(appSettings["TARGETED_DEVICE_FAMILY"] as? String == "1,2,7")
-    #expect(appSettings["XROS_DEPLOYMENT_TARGET"] as? String == "26.0")
-    #expect(appSettings["APS_ENVIRONMENT"] as? String == "development")
+    #expect(appSettings["PRODUCT_BUNDLE_IDENTIFIER"]?.string == "com.shinycomputers.contextpanel")
+    #expect(appSettings["CODE_SIGN_ENTITLEMENTS"]?.string == "Config/ContextPanelCompanion.entitlements")
+    #expect(appSettings["TARGETED_DEVICE_FAMILY"]?.string == "1,2,7")
+    #expect(appSettings["XROS_DEPLOYMENT_TARGET"]?.string == "26.0")
+    #expect(appSettings["APS_ENVIRONMENT"]?.string == "development")
     let appReleaseSettings = try #require(project.releaseTargetSettings(named: "ContextPanelCompanion"))
-    #expect(appReleaseSettings["APS_ENVIRONMENT"] as? String == "production")
-    #expect(appReleaseSettings["CODE_SIGN_IDENTITY"] as? String == "Apple Distribution")
+    #expect(appReleaseSettings["APS_ENVIRONMENT"]?.string == "production")
+    #expect(appReleaseSettings["CODE_SIGN_IDENTITY"]?.string == "Apple Distribution")
     #expect(
-        appReleaseSettings["PROVISIONING_PROFILE_SPECIFIER"] as? String
+        appReleaseSettings["PROVISIONING_PROFILE_SPECIFIER"]?.string
             == "$(CONTEXT_PANEL_APP_STORE_COMPANION_PROFILE_SPECIFIER)"
     )
 
     let widgetTarget = try #require(project.target(named: "ContextPanelCompanionWidgetExtension"))
-    #expect(widgetTarget["supportedDestinations"] as? String == "[iOS, visionOS]")
+    #expect(widgetTarget["supportedDestinations"]?.stringArray == ["iOS", "visionOS"])
 
     let widgetSettings = try #require(project.targetSettings(named: "ContextPanelCompanionWidgetExtension"))
     #expect(
-        widgetSettings["PRODUCT_BUNDLE_IDENTIFIER"] as? String
+        widgetSettings["PRODUCT_BUNDLE_IDENTIFIER"]?.string
             == "com.shinycomputers.contextpanel.widget"
     )
     #expect(
-        widgetSettings["CODE_SIGN_ENTITLEMENTS"] as? String
+        widgetSettings["CODE_SIGN_ENTITLEMENTS"]?.string
             == "Config/ContextPanelCompanionWidget.entitlements"
     )
-    #expect(widgetSettings["TARGETED_DEVICE_FAMILY"] as? String == "1,2,7")
-    #expect(widgetSettings["XROS_DEPLOYMENT_TARGET"] as? String == "26.0")
+    #expect(widgetSettings["TARGETED_DEVICE_FAMILY"]?.string == "1,2,7")
+    #expect(widgetSettings["XROS_DEPLOYMENT_TARGET"]?.string == "26.0")
     let widgetReleaseSettings = try #require(
         project.releaseTargetSettings(named: "ContextPanelCompanionWidgetExtension")
     )
-    #expect(widgetReleaseSettings["CODE_SIGN_IDENTITY"] as? String == "Apple Distribution")
+    #expect(widgetReleaseSettings["CODE_SIGN_IDENTITY"]?.string == "Apple Distribution")
     #expect(
-        widgetReleaseSettings["CODE_SIGN_ENTITLEMENTS"] as? String
+        widgetReleaseSettings["CODE_SIGN_ENTITLEMENTS"]?.string
             == "Config/ContextPanelCompanionWidgetAppStore.entitlements"
     )
     #expect(
-        widgetReleaseSettings["PROVISIONING_PROFILE_SPECIFIER"] as? String
+        widgetReleaseSettings["PROVISIONING_PROFILE_SPECIFIER"]?.string
             == "$(CONTEXT_PANEL_APP_STORE_COMPANION_WIDGET_PROFILE_SPECIFIER)"
     )
 
@@ -253,41 +254,41 @@ import Testing
 }
 
 @Test func watchProjectTargetUsesDistinctReadOnlyCompanionSurface() throws {
-    let project = try loadProjectYAML()
+    let project = try loadProjectSpec()
 
     let coreTarget = try #require(project.target(named: "ContextPanelCoreWatch"))
-    #expect(coreTarget["platform"] as? String == "watchOS")
+    #expect(coreTarget["platform"]?.string == "watchOS")
     let coreSettings = try #require(project.targetSettings(named: "ContextPanelCoreWatch"))
-    #expect(coreSettings["PRODUCT_MODULE_NAME"] as? String == "ContextPanelCore")
-    #expect(coreSettings["WATCHOS_DEPLOYMENT_TARGET"] as? String == "10.0")
+    #expect(coreSettings["PRODUCT_MODULE_NAME"]?.string == "ContextPanelCore")
+    #expect(coreSettings["WATCHOS_DEPLOYMENT_TARGET"]?.string == "10.0")
 
     let cloudKitTarget = try #require(project.target(named: "ContextPanelCloudKitSyncWatch"))
-    #expect(cloudKitTarget["platform"] as? String == "watchOS")
+    #expect(cloudKitTarget["platform"]?.string == "watchOS")
     let cloudKitDependencies = try #require(project.dependencies(named: "ContextPanelCloudKitSyncWatch"))
     #expect(cloudKitDependencies == ["ContextPanelCoreWatch"])
 
     let appTarget = try #require(project.target(named: "ContextPanelWatch"))
-    #expect(appTarget["platform"] as? String == "watchOS")
-    #expect(appTarget["deploymentTarget"] as? String == "10.0")
+    #expect(appTarget["platform"]?.string == "watchOS")
+    #expect(appTarget["deploymentTarget"]?.string == "10.0")
 
     let appSettings = try #require(project.targetSettings(named: "ContextPanelWatch"))
-    #expect(appSettings["PRODUCT_BUNDLE_IDENTIFIER"] as? String == "com.shinycomputers.contextpanel.watch")
-    #expect(appSettings["CODE_SIGN_ENTITLEMENTS"] as? String == "Config/ContextPanelWatch.entitlements")
-    #expect(appSettings["INFOPLIST_FILE"] as? String == "Config/ContextPanelWatch-Info.plist")
-    #expect(appSettings["WATCHOS_DEPLOYMENT_TARGET"] as? String == "10.0")
-    #expect(appSettings["ASSETCATALOG_COMPILER_APPICON_NAME"] as? String == "AppIcon")
-    #expect(appSettings["SKIP_INSTALL"] as? String == "true")
+    #expect(appSettings["PRODUCT_BUNDLE_IDENTIFIER"]?.string == "com.shinycomputers.contextpanel.watch")
+    #expect(appSettings["CODE_SIGN_ENTITLEMENTS"]?.string == "Config/ContextPanelWatch.entitlements")
+    #expect(appSettings["INFOPLIST_FILE"]?.string == "Config/ContextPanelWatch-Info.plist")
+    #expect(appSettings["WATCHOS_DEPLOYMENT_TARGET"]?.string == "10.0")
+    #expect(appSettings["ASSETCATALOG_COMPILER_APPICON_NAME"]?.string == "AppIcon")
+    #expect(appSettings["SKIP_INSTALL"]?.bool == true)
     #expect(appSettings["TARGETED_DEVICE_FAMILY"] == nil)
     #expect(appSettings["APS_ENVIRONMENT"] == nil)
 
     let appReleaseSettings = try #require(project.releaseTargetSettings(named: "ContextPanelWatch"))
-    #expect(appReleaseSettings["CODE_SIGN_IDENTITY"] as? String == "Apple Distribution")
+    #expect(appReleaseSettings["CODE_SIGN_IDENTITY"]?.string == "Apple Distribution")
     #expect(
-        appReleaseSettings["CODE_SIGN_ENTITLEMENTS"] as? String
+        appReleaseSettings["CODE_SIGN_ENTITLEMENTS"]?.string
             == "Config/ContextPanelWatchAppStore.entitlements"
     )
     #expect(
-        appReleaseSettings["PROVISIONING_PROFILE_SPECIFIER"] as? String
+        appReleaseSettings["PROVISIONING_PROFILE_SPECIFIER"]?.string
             == "$(CONTEXT_PANEL_APP_STORE_WATCH_PROFILE_SPECIFIER)"
     )
 
@@ -302,29 +303,29 @@ import Testing
     #expect(!appDependencies.contains("ContextPanelCompanionWidgetExtension"))
 
     let watchWidgetTarget = try #require(project.target(named: "ContextPanelWatchWidgetExtension"))
-    #expect(watchWidgetTarget["platform"] as? String == "watchOS")
-    #expect(watchWidgetTarget["type"] as? String == "app-extension")
+    #expect(watchWidgetTarget["platform"]?.string == "watchOS")
+    #expect(watchWidgetTarget["type"]?.string == "app-extension")
     let watchWidgetSettings = try #require(project.targetSettings(named: "ContextPanelWatchWidgetExtension"))
     #expect(
-        watchWidgetSettings["PRODUCT_BUNDLE_IDENTIFIER"] as? String
+        watchWidgetSettings["PRODUCT_BUNDLE_IDENTIFIER"]?.string
             == "com.shinycomputers.contextpanel.watch.widget"
     )
     #expect(
-        watchWidgetSettings["CODE_SIGN_ENTITLEMENTS"] as? String
+        watchWidgetSettings["CODE_SIGN_ENTITLEMENTS"]?.string
             == "Config/ContextPanelWatchWidget.entitlements"
     )
-    #expect(watchWidgetSettings["WATCHOS_DEPLOYMENT_TARGET"] as? String == "10.0")
-    #expect(watchWidgetSettings["SKIP_INSTALL"] as? String == "true")
+    #expect(watchWidgetSettings["WATCHOS_DEPLOYMENT_TARGET"]?.string == "10.0")
+    #expect(watchWidgetSettings["SKIP_INSTALL"]?.bool == true)
     let watchWidgetReleaseSettings = try #require(
         project.releaseTargetSettings(named: "ContextPanelWatchWidgetExtension")
     )
-    #expect(watchWidgetReleaseSettings["CODE_SIGN_IDENTITY"] as? String == "Apple Distribution")
+    #expect(watchWidgetReleaseSettings["CODE_SIGN_IDENTITY"]?.string == "Apple Distribution")
     #expect(
-        watchWidgetReleaseSettings["CODE_SIGN_ENTITLEMENTS"] as? String
+        watchWidgetReleaseSettings["CODE_SIGN_ENTITLEMENTS"]?.string
             == "Config/ContextPanelWatchWidgetAppStore.entitlements"
     )
     #expect(
-        watchWidgetReleaseSettings["PROVISIONING_PROFILE_SPECIFIER"] as? String
+        watchWidgetReleaseSettings["PROVISIONING_PROFILE_SPECIFIER"]?.string
             == "$(CONTEXT_PANEL_APP_STORE_WATCH_WIDGET_PROFILE_SPECIFIER)"
     )
     let watchWidgetDependencies = try #require(project.dependencies(named: "ContextPanelWatchWidgetExtension"))
@@ -345,47 +346,47 @@ import Testing
 }
 
 @Test func tvProjectTargetUsesDistinctReadOnlyCompanionSurface() throws {
-    let project = try loadProjectYAML()
+    let project = try loadProjectSpec()
 
     let coreTarget = try #require(project.target(named: "ContextPanelCoreTV"))
-    #expect(coreTarget["platform"] as? String == "tvOS")
-    #expect(coreTarget["deploymentTarget"] as? String == "17.0")
+    #expect(coreTarget["platform"]?.string == "tvOS")
+    #expect(coreTarget["deploymentTarget"]?.string == "17.0")
     let coreSettings = try #require(project.targetSettings(named: "ContextPanelCoreTV"))
-    #expect(coreSettings["PRODUCT_MODULE_NAME"] as? String == "ContextPanelCore")
-    #expect(coreSettings["TVOS_DEPLOYMENT_TARGET"] as? String == "17.0")
+    #expect(coreSettings["PRODUCT_MODULE_NAME"]?.string == "ContextPanelCore")
+    #expect(coreSettings["TVOS_DEPLOYMENT_TARGET"]?.string == "17.0")
 
     let cloudKitTarget = try #require(project.target(named: "ContextPanelCloudKitSyncTV"))
-    #expect(cloudKitTarget["platform"] as? String == "tvOS")
+    #expect(cloudKitTarget["platform"]?.string == "tvOS")
     let cloudKitDependencies = try #require(project.dependencies(named: "ContextPanelCloudKitSyncTV"))
     #expect(cloudKitDependencies == ["ContextPanelCoreTV"])
 
     let supportTarget = try #require(project.target(named: "ContextPanelTVSupport"))
-    #expect(supportTarget["platform"] as? String == "tvOS")
+    #expect(supportTarget["platform"]?.string == "tvOS")
     let supportDependencies = try #require(project.dependencies(named: "ContextPanelTVSupport"))
     #expect(supportDependencies == ["ContextPanelCoreTV"])
 
     let validationTarget = try #require(project.target(named: "ContextPanelValidationFixturesTV"))
-    #expect(validationTarget["platform"] as? String == "tvOS")
+    #expect(validationTarget["platform"]?.string == "tvOS")
     #expect(project.dependencies(named: "ContextPanelValidationFixturesTV") == [])
 
     let appTarget = try #require(project.target(named: "ContextPanelTV"))
-    #expect(appTarget["platform"] as? String == "tvOS")
-    #expect(appTarget["deploymentTarget"] as? String == "17.0")
+    #expect(appTarget["platform"]?.string == "tvOS")
+    #expect(appTarget["deploymentTarget"]?.string == "17.0")
 
     let appSettings = try #require(project.targetSettings(named: "ContextPanelTV"))
-    #expect(appSettings["PRODUCT_BUNDLE_IDENTIFIER"] as? String == "com.shinycomputers.contextpanel")
-    #expect(appSettings["CODE_SIGN_ENTITLEMENTS"] as? String == "Config/ContextPanelTV.entitlements")
-    #expect(appSettings["INFOPLIST_FILE"] as? String == "Config/ContextPanelTV-Info.plist")
-    #expect(appSettings["TVOS_DEPLOYMENT_TARGET"] as? String == "17.0")
-    #expect(appSettings["TARGETED_DEVICE_FAMILY"] as? String == "3")
-    #expect(appSettings["ASSETCATALOG_COMPILER_APPICON_NAME"] as? String == "App Icon & Top Shelf Image")
-    #expect(appSettings["APS_ENVIRONMENT"] as? String == "development")
+    #expect(appSettings["PRODUCT_BUNDLE_IDENTIFIER"]?.string == "com.shinycomputers.contextpanel")
+    #expect(appSettings["CODE_SIGN_ENTITLEMENTS"]?.string == "Config/ContextPanelTV.entitlements")
+    #expect(appSettings["INFOPLIST_FILE"]?.string == "Config/ContextPanelTV-Info.plist")
+    #expect(appSettings["TVOS_DEPLOYMENT_TARGET"]?.string == "17.0")
+    #expect(appSettings["TARGETED_DEVICE_FAMILY"]?.string == "3")
+    #expect(appSettings["ASSETCATALOG_COMPILER_APPICON_NAME"]?.string == "App Icon & Top Shelf Image")
+    #expect(appSettings["APS_ENVIRONMENT"]?.string == "development")
 
     let appReleaseSettings = try #require(project.releaseTargetSettings(named: "ContextPanelTV"))
-    #expect(appReleaseSettings["APS_ENVIRONMENT"] as? String == "production")
-    #expect(appReleaseSettings["CODE_SIGN_IDENTITY"] as? String == "Apple Distribution")
+    #expect(appReleaseSettings["APS_ENVIRONMENT"]?.string == "production")
+    #expect(appReleaseSettings["CODE_SIGN_IDENTITY"]?.string == "Apple Distribution")
     #expect(
-        appReleaseSettings["PROVISIONING_PROFILE_SPECIFIER"] as? String
+        appReleaseSettings["PROVISIONING_PROFILE_SPECIFIER"]?.string
             == "$(CONTEXT_PANEL_APP_STORE_TV_PROFILE_SPECIFIER)"
     )
 
@@ -407,7 +408,7 @@ import Testing
             in: "ContextPanelTV"
         )
     )
-    #expect(topShelfDependencySettings["embed"] as? String == "true")
+    #expect(topShelfDependencySettings["embed"]?.bool == true)
 
     let plist = try loadInfoPlist("Config/ContextPanelTV-Info.plist")
     let urlTypes = try #require(plist["CFBundleURLTypes"] as? [[String: Any]])
@@ -436,29 +437,33 @@ import Testing
     #expect(appEntitlements["keychain-access-groups"] == nil)
 
     let topShelfTarget = try #require(project.target(named: "ContextPanelTVTopShelfExtension"))
-    #expect(topShelfTarget["type"] as? String == "app-extension")
-    #expect(topShelfTarget["platform"] as? String == "tvOS")
-    #expect(topShelfTarget["deploymentTarget"] as? String == "17.0")
+    #expect(topShelfTarget["type"]?.string == "app-extension")
+    #expect(topShelfTarget["platform"]?.string == "tvOS")
+    #expect(topShelfTarget["deploymentTarget"]?.string == "17.0")
     let topShelfSettings = try #require(project.targetSettings(named: "ContextPanelTVTopShelfExtension"))
     #expect(
-        topShelfSettings["PRODUCT_BUNDLE_IDENTIFIER"] as? String
+        topShelfSettings["PRODUCT_BUNDLE_IDENTIFIER"]?.string
             == "com.shinycomputers.contextpanel.topshelf"
     )
     #expect(
-        topShelfSettings["CODE_SIGN_ENTITLEMENTS"] as? String
+        topShelfSettings["CODE_SIGN_ENTITLEMENTS"]?.string
             == "Config/ContextPanelTVTopShelf.entitlements"
     )
     #expect(
-        topShelfSettings["INFOPLIST_FILE"] as? String
+        topShelfSettings["INFOPLIST_FILE"]?.string
             == "Config/ContextPanelTVTopShelf-Info.plist"
     )
-    #expect(topShelfSettings["TVOS_DEPLOYMENT_TARGET"] as? String == "17.0")
-    #expect(topShelfSettings["TARGETED_DEVICE_FAMILY"] as? String == "3")
-    #expect(topShelfSettings["SKIP_INSTALL"] as? String == "true")
-    #expect(topShelfSettings["APPLICATION_EXTENSION_API_ONLY"] as? String == "true")
+    #expect(topShelfSettings["TVOS_DEPLOYMENT_TARGET"]?.string == "17.0")
+    #expect(topShelfSettings["TARGETED_DEVICE_FAMILY"]?.string == "3")
+    #expect(topShelfSettings["SKIP_INSTALL"]?.bool == true)
+    #expect(topShelfSettings["APPLICATION_EXTENSION_API_ONLY"]?.bool == true)
     #expect(
-        (topShelfSettings["SWIFT_ACTIVE_COMPILATION_CONDITIONS"] as? String)?
+        topShelfSettings["SWIFT_ACTIVE_COMPILATION_CONDITIONS"]?.string?
             .contains("CONTEXT_PANEL_TV_TOP_SHELF_EXTENSION") == true
+    )
+    #expect(
+        topShelfSettings["SWIFT_ACTIVE_COMPILATION_CONDITIONS"]?.string?
+            .contains("$(inherited)") == true
     )
     let topShelfDependencies = try #require(project.dependencies(named: "ContextPanelTVTopShelfExtension"))
     #expect(topShelfDependencies == ["ContextPanelCoreTV", "ContextPanelTVSupport"])
@@ -467,9 +472,9 @@ import Testing
     let topShelfReleaseSettings = try #require(
         project.releaseTargetSettings(named: "ContextPanelTVTopShelfExtension")
     )
-    #expect(topShelfReleaseSettings["CODE_SIGN_IDENTITY"] as? String == "Apple Distribution")
+    #expect(topShelfReleaseSettings["CODE_SIGN_IDENTITY"]?.string == "Apple Distribution")
     #expect(
-        topShelfReleaseSettings["PROVISIONING_PROFILE_SPECIFIER"] as? String
+        topShelfReleaseSettings["PROVISIONING_PROFILE_SPECIFIER"]?.string
             == "$(CONTEXT_PANEL_APP_STORE_TV_TOP_SHELF_PROFILE_SPECIFIER)"
     )
 
@@ -554,19 +559,21 @@ import Testing
 }
 
 @Test func appAndRefreshAgentTargetsDoNotCarryGoogleOAuthBuildSettings() throws {
-    let project = try loadProjectYAML()
+    let project = try loadProjectSpec()
 
     for targetName in ["ContextPanel", "ContextPanelRefreshAgent"] {
-        let settings = try #require(project.targetSettings(named: targetName))
-        #expect(settings.keys.allSatisfy { !$0.hasPrefix("CONTEXT_PANEL_GOOGLE_") })
+        let configurations = try #require(project.allTargetSettings(named: targetName))
+        for settings in configurations {
+            #expect(settings.keys.allSatisfy { !$0.hasPrefix("CONTEXT_PANEL_GOOGLE_") })
+        }
     }
 
     let refreshAgentSettings = try #require(
         project.targetSettings(named: "ContextPanelRefreshAgent")
     )
-    #expect(refreshAgentSettings["GENERATE_INFOPLIST_FILE"] as? String == "false")
+    #expect(refreshAgentSettings["GENERATE_INFOPLIST_FILE"]?.bool == false)
     #expect(
-        refreshAgentSettings["INFOPLIST_FILE"] as? String
+        refreshAgentSettings["INFOPLIST_FILE"]?.string
             == "Config/ContextPanelRefreshAgent-Info.plist"
     )
 
@@ -639,185 +646,233 @@ private func loadInfoPlist(_ path: String) throws -> [String: Any] {
     return try #require(plist as? [String: Any])
 }
 
-private func loadProjectYAML() throws -> ProjectYAML {
-    let url = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        .appending(path: "project.yml")
-    let text = try String(contentsOf: url, encoding: .utf8)
-    return ProjectYAML(text: text)
+private func loadProjectSpec() throws -> ProjectSpec {
+    try ProjectSpecCache.outcome.get()
 }
 
-private struct ProjectYAML {
-    private let lines: [String]
+private enum ProjectSpecCache {
+    static let outcome: Result<ProjectSpec, ProjectSpecError> = {
+        do {
+            return .success(try ProjectSpec.load())
+        } catch let error as ProjectSpecError {
+            return .failure(error)
+        } catch {
+            return .failure(.unexpected(String(describing: error)))
+        }
+    }()
+}
 
-    init(text: String) {
-        lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
+private struct ProjectSpec: Sendable {
+    private static let readerTimeout: TimeInterval = 15
+    private let targets: [String: ProjectSpecValue]
+
+    static func load(timeout: TimeInterval = readerTimeout) throws -> ProjectSpec {
+        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let projectURL = root.appending(path: "project.yml")
+        let readerURL = root.appending(path: "scripts/context-panel-project-spec-json.rb")
+        guard FileManager.default.fileExists(atPath: projectURL.path) else {
+            throw ProjectSpecError.missingFile("project.yml")
+        }
+        guard FileManager.default.fileExists(atPath: readerURL.path) else {
+            throw ProjectSpecError.missingFile("scripts/context-panel-project-spec-json.rb")
+        }
+
+        let outputURL = FileManager.default.temporaryDirectory
+            .appending(path: "context-panel-project-spec-\(UUID().uuidString).json")
+        let errorURL = FileManager.default.temporaryDirectory
+            .appending(path: "context-panel-project-spec-\(UUID().uuidString).err")
+        FileManager.default.createFile(atPath: outputURL.path, contents: nil)
+        FileManager.default.createFile(atPath: errorURL.path, contents: nil)
+        defer {
+            try? FileManager.default.removeItem(at: outputURL)
+            try? FileManager.default.removeItem(at: errorURL)
+        }
+
+        let outputHandle = try FileHandle(forWritingTo: outputURL)
+        let errorHandle = try FileHandle(forWritingTo: errorURL)
+        defer {
+            try? outputHandle.close()
+            try? errorHandle.close()
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ruby")
+        process.arguments = [readerURL.path, "--project", projectURL.path]
+        process.currentDirectoryURL = root
+        process.standardOutput = outputHandle
+        process.standardError = errorHandle
+
+        let completion = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in completion.signal() }
+        do {
+            try process.run()
+        } catch {
+            throw ProjectSpecError.launchFailed(String(describing: error))
+        }
+
+        if completion.wait(timeout: .now() + timeout) == .timedOut {
+            process.terminate()
+            if completion.wait(timeout: .now() + 1) == .timedOut, process.isRunning {
+                kill(process.processIdentifier, SIGKILL)
+                _ = completion.wait(timeout: .now() + 1)
+            }
+            throw ProjectSpecError.timedOut(timeout)
+        }
+
+        let errorData = try Data(contentsOf: errorURL)
+        guard process.terminationReason == .exit, process.terminationStatus == 0 else {
+            let errorText = String(decoding: errorData.prefix(2_000), as: UTF8.self)
+                .replacingOccurrences(of: root.path, with: "<repo>")
+            throw ProjectSpecError.readerFailed(process.terminationStatus, errorText)
+        }
+
+        let outputData = try Data(contentsOf: outputURL)
+        let payload: ProjectSpecPayload
+        do {
+            payload = try JSONDecoder().decode(ProjectSpecPayload.self, from: outputData)
+        } catch {
+            throw ProjectSpecError.invalidJSON(String(describing: error))
+        }
+        guard payload.schemaVersion == 1 else {
+            throw ProjectSpecError.unsupportedSchema(payload.schemaVersion)
+        }
+        guard case let .object(targets)? = payload.project["targets"] else {
+            throw ProjectSpecError.missingTargets
+        }
+        return ProjectSpec(targets: targets)
     }
 
-    func target(named targetName: String) -> [String: Any]? {
-        guard let targetLine = firstLineIndex(matching: "  \(targetName):") else {
-            return nil
-        }
-        return mapping(after: targetLine, indentation: 4)
+    func target(named targetName: String) -> [String: ProjectSpecValue]? {
+        targets[targetName]?.object
     }
 
-    func targetSettings(named targetName: String) -> [String: Any]? {
-        guard let targetLine = firstLineIndex(matching: "  \(targetName):") else {
-            return nil
-        }
-        guard let settingsLine = firstLineIndex(
-            after: targetLine,
-            matching: "    settings:",
-            beforeIndentLessThan: 4
-        ) else {
-            return nil
-        }
-        guard let baseLine = firstLineIndex(
-            after: settingsLine,
-            matching: "      base:",
-            beforeIndentLessThan: 6
-        ) else {
-            return nil
-        }
-        return mapping(after: baseLine, indentation: 8)
+    func targetSettings(named targetName: String) -> [String: ProjectSpecValue]? {
+        settings(named: targetName)?["base"]?.object
     }
 
-    func releaseTargetSettings(named targetName: String) -> [String: Any]? {
-        guard let targetLine = firstLineIndex(matching: "  \(targetName):") else {
-            return nil
+    func releaseTargetSettings(named targetName: String) -> [String: ProjectSpecValue]? {
+        settings(named: targetName)?["configs"]?.object?["Release"]?.object
+    }
+
+    func allTargetSettings(named targetName: String) -> [[String: ProjectSpecValue]]? {
+        guard let settings = settings(named: targetName) else { return nil }
+        let supportedKeys = Set(["base", "configs"])
+        guard Set(settings.keys).isSubset(of: supportedKeys) else { return nil }
+        var configurations = settings["base"]?.object.map { [$0] } ?? []
+        if let configuredValues = settings["configs"]?.object?.values {
+            let configured = configuredValues.compactMap(\.object)
+            guard configured.count == configuredValues.count else { return nil }
+            configurations.append(contentsOf: configured)
         }
-        guard let configsLine = firstLineIndex(
-            after: targetLine,
-            matching: "      configs:",
-            beforeIndentLessThan: 4
-        ) else {
-            return nil
-        }
-        guard let releaseLine = firstLineIndex(
-            after: configsLine,
-            matching: "        Release:",
-            beforeIndentLessThan: 8
-        ) else {
-            return nil
-        }
-        return mapping(after: releaseLine, indentation: 10)
+        return configurations
     }
 
     func dependencies(named targetName: String) -> [String]? {
-        guard let targetLine = firstLineIndex(matching: "  \(targetName):") else {
-            return nil
-        }
-        guard let dependenciesLine = firstLineIndex(
-            after: targetLine,
-            matching: "    dependencies:",
-            beforeIndentLessThan: 4
-        ) else {
-            return []
-        }
-
-        var dependencies: [String] = []
-        var index = dependenciesLine + 1
-        while index < lines.count {
-            let line = lines[index]
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            let indent = indentation(of: line)
-            guard !trimmed.isEmpty else {
-                index += 1
-                continue
-            }
-            if indent <= 4 { break }
-            if indent == 6, trimmed.hasPrefix("- target: ") {
-                dependencies.append(String(trimmed.dropFirst("- target: ".count)))
-            }
-            index += 1
-        }
-        return dependencies
+        guard let target = target(named: targetName) else { return nil }
+        guard let dependencies = target["dependencies"]?.array else { return [] }
+        let names = dependencies.compactMap { $0.object?["target"]?.string }
+        return names.count == dependencies.count ? names : nil
     }
 
-    func dependencySettings(named dependencyName: String, in targetName: String) -> [String: Any]? {
-        guard let targetLine = firstLineIndex(matching: "  \(targetName):") else {
-            return nil
-        }
-        guard let dependenciesLine = firstLineIndex(
-            after: targetLine,
-            matching: "    dependencies:",
-            beforeIndentLessThan: 4
-        ) else {
-            return nil
-        }
-
-        var index = dependenciesLine + 1
-        while index < lines.count {
-            let line = lines[index]
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            let indent = indentation(of: line)
-            guard !trimmed.isEmpty else {
-                index += 1
-                continue
-            }
-            if indent <= 4 { break }
-            if indent == 6, trimmed == "- target: \(dependencyName)" {
-                return mapping(after: index, indentation: 8)
-            }
-            index += 1
-        }
-        return nil
+    func dependencySettings(
+        named dependencyName: String,
+        in targetName: String
+    ) -> [String: ProjectSpecValue]? {
+        target(named: targetName)?["dependencies"]?.array?
+            .compactMap(\.object)
+            .first { $0["target"]?.string == dependencyName }
     }
 
-    private func firstLineIndex(matching text: String) -> Int? {
-        lines.firstIndex { $0 == text }
+    private func settings(named targetName: String) -> [String: ProjectSpecValue]? {
+        target(named: targetName)?["settings"]?.object
+    }
+}
+
+private struct ProjectSpecPayload: Decodable, Sendable {
+    let schemaVersion: Int
+    let project: [String: ProjectSpecValue]
+}
+
+private enum ProjectSpecValue: Decodable, Sendable {
+    case string(String)
+    case bool(Bool)
+    case number(Double)
+    case object([String: ProjectSpecValue])
+    case array([ProjectSpecValue])
+    case null
+
+    var string: String? {
+        guard case let .string(value) = self else { return nil }
+        return value
     }
 
-    private func firstLineIndex(
-        after startIndex: Int,
-        matching text: String,
-        beforeIndentLessThan minimumIndent: Int
-    ) -> Int? {
-        var index = startIndex + 1
-        while index < lines.count {
-            let line = lines[index]
-            let indent = indentation(of: line)
-            if !line.trimmingCharacters(in: .whitespaces).isEmpty {
-                if indent < minimumIndent { return nil }
-                if line == text { return index }
-            }
-            index += 1
+    var bool: Bool? {
+        guard case let .bool(value) = self else { return nil }
+        return value
+    }
+
+    var object: [String: ProjectSpecValue]? {
+        guard case let .object(value) = self else { return nil }
+        return value
+    }
+
+    var array: [ProjectSpecValue]? {
+        guard case let .array(value) = self else { return nil }
+        return value
+    }
+
+    var stringArray: [String]? {
+        guard let array else { return nil }
+        let values = array.compactMap(\.string)
+        return values.count == array.count ? values : nil
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            self = .null
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? container.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? container.decode(Double.self) {
+            self = .number(value)
+        } else if let value = try? container.decode([String: ProjectSpecValue].self) {
+            self = .object(value)
+        } else {
+            self = .array(try container.decode([ProjectSpecValue].self))
         }
-        return nil
     }
+}
 
-    private func mapping(after startIndex: Int, indentation: Int) -> [String: Any] {
-        var result: [String: Any] = [:]
-        var index = startIndex + 1
-        while index < lines.count {
-            let line = lines[index]
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            let indent = self.indentation(of: line)
-            guard !trimmed.isEmpty else {
-                index += 1
-                continue
-            }
-            if indent < indentation { break }
-            if indent == indentation,
-               let colonIndex = trimmed.firstIndex(of: ":") {
-                let key = String(trimmed[..<colonIndex])
-                let valueStart = trimmed.index(after: colonIndex)
-                let rawValue = trimmed[valueStart...].trimmingCharacters(in: .whitespaces)
-                result[key] = normalizedValue(rawValue, nextLineIndex: index + 1)
-            }
-            index += 1
+private enum ProjectSpecError: Error, CustomStringConvertible, Sendable {
+    case missingFile(String)
+    case launchFailed(String)
+    case timedOut(TimeInterval)
+    case readerFailed(Int32, String)
+    case invalidJSON(String)
+    case unsupportedSchema(Int)
+    case missingTargets
+    case unexpected(String)
+
+    var description: String {
+        switch self {
+        case let .missingFile(path):
+            "Project specification input is missing: \(path)"
+        case let .launchFailed(message):
+            "Project specification reader could not launch: \(message)"
+        case let .timedOut(timeout):
+            "Project specification reader exceeded the \(timeout)-second deadline"
+        case let .readerFailed(status, errorText):
+            "Project specification reader exited with status \(status): \(errorText)"
+        case let .invalidJSON(message):
+            "Project specification reader returned invalid JSON: \(message)"
+        case let .unsupportedSchema(version):
+            "Project specification reader returned unsupported schema \(version)"
+        case .missingTargets:
+            "Project specification reader returned no targets"
+        case let .unexpected(message):
+            "Project specification reader failed unexpectedly: \(message)"
         }
-        return result
-    }
-
-    private func normalizedValue(_ rawValue: String, nextLineIndex: Int) -> String {
-        if rawValue == ">-", nextLineIndex < lines.count {
-            return lines[nextLineIndex].trimmingCharacters(in: .whitespaces)
-        }
-        return rawValue.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-    }
-
-    private func indentation(of line: String) -> Int {
-        line.prefix { $0 == " " }.count
     }
 }
