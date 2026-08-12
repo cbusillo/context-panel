@@ -2338,12 +2338,18 @@ import Testing
             await connector.refresh(now: now)
         }
     }
-    guard await http.waitUntilFirstTokenPOSTStarts() else {
+    do {
+        try await http.waitUntilFirstTokenPOSTStarts()
+    } catch let startError {
         await http.releaseFirstTokenPOST()
         firstRefresh.cancel()
-        _ = try? await firstRefresh.value
-        Issue.record("first Claude token POST did not start before the test deadline")
-        return
+        do {
+            _ = try await firstRefresh.value
+        } catch is CancellationError {
+        } catch {
+            throw error
+        }
+        throw startError
     }
 
     let secondRefresh: ConnectorRefreshResult?
@@ -2400,14 +2406,6 @@ import Testing
     let directory = try temporaryProviderConnectorDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let lock = SnapshotRefreshLock(lockURL: directory.appending(path: "refresh.lock"))
-    let gate = SnapshotLockTestGate()
-    let holder = Task {
-        try await lock.withLock {
-            await gate.markStarted()
-            await gate.waitForRelease()
-        }
-    }
-    #expect(await gate.waitUntilStarted())
     let http = StubHTTPClient(responses: [ConnectorHTTPResponse(
         statusCode: 200,
         data: Data(#"{"access_token":"new-access","refresh_token":"new-refresh"}"#.utf8)
@@ -2415,21 +2413,20 @@ import Testing
     let store = CountingCredentialStore(storage: [:])
     let service = ClaudeOAuthCodeExchangeService(httpClient: http, credentialStore: store, lock: lock)
 
-    await #expect(throws: ConnectorError.foregroundRefreshRequired(
-        "Claude usage is already refreshing. Try signing in again in a moment."
-    )) {
-        try await service.exchangeAndSave(
-            authorizationCode: ClaudeOAuthAuthorizationCode(code: "code", state: nil),
-            codeVerifier: "verifier",
-            state: "state",
-            accountID: "claude-oauth-default"
-        )
+    try await withHeldSnapshotLock(lock) {
+        await #expect(throws: ConnectorError.foregroundRefreshRequired(
+            "Claude usage is already refreshing. Try signing in again in a moment."
+        )) {
+            try await service.exchangeAndSave(
+                authorizationCode: ClaudeOAuthAuthorizationCode(code: "code", state: nil),
+                codeVerifier: "verifier",
+                state: "state",
+                accountID: "claude-oauth-default"
+            )
+        }
+        #expect(http.requests.isEmpty)
+        #expect(store.saveCount == 0)
     }
-    #expect(http.requests.isEmpty)
-    #expect(store.saveCount == 0)
-
-    await gate.release()
-    _ = try await holder.value
 }
 
 @Test func claudeOAuthCodeExchangeCancellationDoesNotSaveCredentials() async throws {
@@ -2447,11 +2444,18 @@ import Testing
             accountID: "claude-oauth-default"
         )
     }
-    guard await http.waitUntilFirstTokenPOSTStarts() else {
+    do {
+        try await http.waitUntilFirstTokenPOSTStarts()
+    } catch let startError {
         exchange.cancel()
         await http.releaseFirstTokenPOST()
-        Issue.record("Claude authorization-code POST did not start before the test deadline")
-        return
+        do {
+            _ = try await exchange.value
+        } catch is CancellationError {
+        } catch {
+            throw error
+        }
+        throw startError
     }
 
     exchange.cancel()
@@ -2466,6 +2470,14 @@ import Testing
 
     #expect(store.saveCount == 0)
     #expect(try await lock.withLock { true } == true)
+}
+
+@Test func claudeOAuthTestGateTimesOutWhenTheExpectedSignalNeverArrives() async {
+    let gate = BoundedTestGate()
+
+    await #expect(throws: BoundedTestGateError.self) {
+        try await gate.waitUntilStarted(timeout: .milliseconds(10))
+    }
 }
 
 @Test func claudeOAuthCodeExchangeCommitCanRejectStaleFlow() async throws {
@@ -2662,21 +2674,15 @@ private final class StubHTTPClient: ConnectorHTTPClient, @unchecked Sendable {
 }
 
 private actor GatedClaudeHTTPClient: ConnectorHTTPClient {
-    private var firstTokenPOSTStarted = false
-    private var firstTokenPOSTReleased = false
-    private var firstTokenPOSTReleaseWaiter: CheckedContinuation<Void, Never>?
+    private let firstTokenPOSTGate = BoundedTestGate()
     private(set) var tokenPOSTCount = 0
 
     func data(for request: ConnectorHTTPRequest) async throws -> ConnectorHTTPResponse {
         if request.method == "POST", request.url == ClaudeOAuthMetadata.tokenEndpoint {
             tokenPOSTCount += 1
             if tokenPOSTCount == 1 {
-                firstTokenPOSTStarted = true
-                if !firstTokenPOSTReleased {
-                    await withCheckedContinuation { continuation in
-                        firstTokenPOSTReleaseWaiter = continuation
-                    }
-                }
+                await firstTokenPOSTGate.markStarted()
+                await firstTokenPOSTGate.waitForRelease()
             }
             return ConnectorHTTPResponse(
                 statusCode: 200,
@@ -2693,47 +2699,114 @@ private actor GatedClaudeHTTPClient: ConnectorHTTPClient {
         )
     }
 
-    func waitUntilFirstTokenPOSTStarts() async -> Bool {
-        for _ in 0..<200 {
-            if firstTokenPOSTStarted {
-                return true
-            }
-            try? await Task.sleep(for: .milliseconds(5))
-        }
-        return firstTokenPOSTStarted
+    func waitUntilFirstTokenPOSTStarts() async throws {
+        try await firstTokenPOSTGate.waitUntilStarted()
     }
 
-    func releaseFirstTokenPOST() {
-        firstTokenPOSTReleased = true
-        firstTokenPOSTReleaseWaiter?.resume()
-        firstTokenPOSTReleaseWaiter = nil
+    func releaseFirstTokenPOST() async {
+        await firstTokenPOSTGate.release()
     }
 }
 
-private actor SnapshotLockTestGate {
+private actor BoundedTestGate {
+    private struct StartWaiter {
+        let continuation: CheckedContinuation<Void, Error>
+        let timeoutTask: Task<Void, Never>
+    }
+
     private var started = false
     private var released = false
+    private var startWaiters: [UUID: StartWaiter] = [:]
+    private var releaseWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
 
     func markStarted() {
         started = true
+        let waiters = startWaiters
+        startWaiters.removeAll()
+        waiters.values.forEach { waiter in
+            waiter.timeoutTask.cancel()
+            waiter.continuation.resume()
+        }
     }
 
-    func waitUntilStarted() async -> Bool {
-        for _ in 0..<200 {
-            if started { return true }
-            try? await Task.sleep(for: .milliseconds(5))
+    func waitUntilStarted(timeout: Duration = .seconds(1)) async throws {
+        if started { return }
+        let waiterID = UUID()
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            guard !Task.isCancelled else {
+                continuation.resume(throwing: CancellationError())
+                return
+            }
+            let timeoutTask = Task.detached {
+                try? await Task.sleep(for: timeout)
+                await self.failStartWaiter(waiterID)
+            }
+            startWaiters[waiterID] = StartWaiter(
+                continuation: continuation,
+                timeoutTask: timeoutTask
+            )
         }
-        return started
     }
 
     func waitForRelease() async {
-        while !released {
-            try? await Task.sleep(for: .milliseconds(5))
+        if released { return }
+        let waiterID = UUID()
+        await withCheckedContinuation { continuation in
+            releaseWaiters[waiterID] = continuation
         }
     }
 
     func release() {
         released = true
+        let waiters = releaseWaiters
+        releaseWaiters.removeAll()
+        waiters.values.forEach { $0.resume() }
+    }
+
+    private func failStartWaiter(_ waiterID: UUID) {
+        startWaiters.removeValue(forKey: waiterID)?.continuation.resume(
+            throwing: BoundedTestGateError.timedOut("test gate did not start before the deadline")
+        )
+    }
+}
+
+private enum BoundedTestGateError: Error {
+    case timedOut(String)
+}
+
+private func withHeldSnapshotLock<T>(
+    _ lock: SnapshotRefreshLock,
+    operation: () async throws -> T
+) async throws -> T {
+    let gate = BoundedTestGate()
+    let holder = Task {
+        try await lock.withLock {
+            await gate.markStarted()
+            await gate.waitForRelease()
+            return true
+        }
+    }
+
+    do {
+        try await gate.waitUntilStarted()
+        let result = try await operation()
+        await gate.release()
+        guard try await holder.value == true else {
+            throw BoundedTestGateError.timedOut("snapshot lock holder did not acquire the lock")
+        }
+        return result
+    } catch let operationError {
+        await gate.release()
+        holder.cancel()
+        do {
+            _ = try await holder.value
+        } catch is CancellationError {
+        } catch {
+            if operationError is BoundedTestGateError {
+                throw error
+            }
+        }
+        throw operationError
     }
 }
 
