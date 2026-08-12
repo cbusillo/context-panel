@@ -624,7 +624,10 @@ class PlatformArgumentTests(unittest.TestCase):
     def test_platform_rejects_unsupported_miscased_and_empty_values(self):
         for platform in ("WATCH_OS", "ios", ""):
             with self.subTest(platform=platform):
-                self.assertIn("--platform", self.assert_rejected("--platform", platform))
+                self.assertIn(
+                    "argument --platform:",
+                    self.assert_rejected("--platform", platform),
+                )
 
     def test_copy_from_platform_defaults_to_none_and_accepts_supported_platforms(self):
         self.assertIsNone(self.parse().copy_from_platform)
@@ -637,7 +640,7 @@ class PlatformArgumentTests(unittest.TestCase):
 
     def test_copy_from_platform_rejects_unsupported_platforms(self):
         self.assertIn(
-            "--copy-from-platform",
+            "argument --copy-from-platform:",
             self.assert_rejected("--copy-from-platform", "WATCH_OS"),
         )
 
