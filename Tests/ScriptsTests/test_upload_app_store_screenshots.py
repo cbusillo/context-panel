@@ -11,12 +11,43 @@ from unittest import mock
 
 MODULE_PATH = Path(__file__).resolve().parents[2] / "scripts" / "upload-app-store-screenshots.py"
 SCREENSHOT_ROOT = MODULE_PATH.parents[1] / "Resources" / "AppStore" / "Screenshots"
+WORKFLOW_PATH = MODULE_PATH.parents[1] / ".github" / "workflows" / "upload-app-store-screenshots.yml"
 SPEC = importlib.util.spec_from_file_location("upload_app_store_screenshots", MODULE_PATH)
 if SPEC is None or SPEC.loader is None:
     raise RuntimeError(f"Unable to load {MODULE_PATH}")
 upload_app_store_screenshots = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = upload_app_store_screenshots
 SPEC.loader.exec_module(upload_app_store_screenshots)
+
+
+def workflow_choice_options(workflow: str, input_name: str) -> list[str]:
+    lines = workflow.splitlines()
+    marker = f"      {input_name}:"
+    try:
+        start = lines.index(marker)
+    except ValueError as error:
+        raise AssertionError(f"workflow input not found: {input_name}") from error
+
+    block = []
+    for line in lines[start + 1 :]:
+        if line and len(line) - len(line.lstrip()) <= 6:
+            break
+        block.append(line)
+
+    try:
+        options_start = next(index for index, line in enumerate(block) if line.strip() == "options:")
+    except StopIteration as error:
+        raise AssertionError(f"workflow input has no options: {input_name}") from error
+
+    options = []
+    for line in block[options_start + 1 :]:
+        stripped = line.strip()
+        if not stripped.startswith("- "):
+            break
+        options.append(stripped[2:].strip('"\''))
+    if not options:
+        raise AssertionError(f"workflow input has no choice values: {input_name}")
+    return options
 
 
 class FakeASCClient:
@@ -447,6 +478,35 @@ class UploadAppStoreScreenshotsTests(unittest.TestCase):
                 ),
             ],
         )
+
+    def test_workflow_screenshot_set_choices_match_approved_sets(self):
+        options = workflow_choice_options(WORKFLOW_PATH.read_text(), "screenshot_set")
+
+        self.assertEqual(set(options), set(upload_app_store_screenshots.APPROVED_SETS))
+        self.assertEqual(len(options), len(set(options)))
+        self.assertEqual(options[0], "macos")
+
+    def test_workflow_choice_options_scopes_to_the_named_input(self):
+        workflow = """\
+"on":
+  workflow_dispatch:
+    inputs:
+      decoy:
+        type: choice
+        options:
+          - wrong
+      screenshot_set:
+        type: choice
+        options:
+          - macos
+          - "ios"
+      trailing:
+        type: string
+"""
+
+        self.assertEqual(workflow_choice_options(workflow, "screenshot_set"), ["macos", "ios"])
+        with self.assertRaisesRegex(AssertionError, "workflow input not found: missing"):
+            workflow_choice_options(workflow, "missing")
 
     def test_full_platform_upload_prunes_unapproved_display_type_screenshots(self):
         client = FakeASCClient()
