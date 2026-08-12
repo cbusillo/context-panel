@@ -104,6 +104,24 @@ def workflow_choice_options(workflow: str, input_name: str) -> tuple[str, ...]:
     return tuple(options)
 
 
+def assert_lines_in_order(document: str, *expected_lines: str) -> None:
+    normalized_lines = [re.sub(r"\s+", " ", line).strip() for line in document.splitlines()]
+    search_start = 0
+    previous_line = "the start of the document"
+    for expected_line in expected_lines:
+        normalized_expected_line = re.sub(r"\s+", " ", expected_line).strip()
+        if not normalized_expected_line:
+            raise AssertionError("expected lines must not be empty")
+        try:
+            line_index = normalized_lines.index(normalized_expected_line, search_start)
+        except ValueError as error:
+            raise AssertionError(
+                f"expected line {normalized_expected_line!r} after {previous_line}"
+            ) from error
+        previous_line = f"line {line_index + 1} ({normalized_expected_line!r})"
+        search_start = line_index + 1
+
+
 class ReleaseWorkflowTests(unittest.TestCase):
     def read(self, relative_path: str) -> str:
         return (REPO_ROOT / relative_path).read_text()
@@ -1878,15 +1896,13 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("ContextPanelBuildFingerprint.txt", context_panel_target)
         self.assertIn("basedOnDependencyAnalysis: false", context_panel_target)
 
-        archive_index = upload_script.index('run_xcodebuild "${archive_args[@]}" archive')
-        verify_index = upload_script.index("verify_archived_build_fingerprint", archive_index)
-        manifest_index = upload_script.index(
-            "scripts/context-panel-write-expected-build.sh", verify_index
+        assert_lines_in_order(
+            upload_script,
+            'run_xcodebuild "${archive_args[@]}" archive',
+            "verify_archived_build_fingerprint",
+            "scripts/context-panel-write-expected-build.sh \\",
+            "-exportArchive \\",
         )
-        export_index = upload_script.index("-exportArchive", manifest_index)
-        self.assertLess(archive_index, verify_index)
-        self.assertLess(verify_index, manifest_index)
-        self.assertLess(manifest_index, export_index)
         self.assertIn("archived app is missing the build fingerprint", upload_script)
         self.assertIn("archived app build fingerprint does not match the source tree", upload_script)
         self.assertIn("--layout macos", upload_script)
@@ -1925,13 +1941,12 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
 
     def test_companion_archives_emit_expected_signed_build_manifests(self):
         upload_script = self.read("scripts/upload-app-store-connect-companion-app.sh")
-        archive_index = upload_script.index('run_xcodebuild "${archive_args[@]}" archive')
-        manifest_index = upload_script.index(
-            "scripts/context-panel-write-expected-build.sh", archive_index
+        assert_lines_in_order(
+            upload_script,
+            'run_xcodebuild "${archive_args[@]}" archive',
+            'scripts/context-panel-write-expected-build.sh "${expected_build_args[@]}"',
+            "-exportArchive \\",
         )
-        export_index = upload_script.index("-exportArchive", manifest_index)
-        self.assertLess(archive_index, manifest_index)
-        self.assertLess(manifest_index, export_index)
         self.assertIn('--layout "$platform"', upload_script)
         self.assertIn('--version "$marketing_version"', upload_script)
         self.assertIn('--build-number "$build_number"', upload_script)
@@ -3578,13 +3593,13 @@ exit 65
             script.count("'com.apple.developer.icloud-container-environment' 'Production'"),
             4,
         )
-        archive_index = script.index('run_xcodebuild "${archive_args[@]}" archive')
-        widget_validation_index = script.index("\tassert_companion_widget_archive_ready\n", archive_index)
-        watch_validation_index = script.index("\t\tassert_ios_watch_archive_ready\n", widget_validation_index)
-        export_index = script.index("\t-exportArchive", watch_validation_index)
-        self.assertLess(archive_index, widget_validation_index)
-        self.assertLess(widget_validation_index, watch_validation_index)
-        self.assertLess(watch_validation_index, export_index)
+        assert_lines_in_order(
+            script,
+            'run_xcodebuild "${archive_args[@]}" archive',
+            "assert_companion_widget_archive_ready",
+            "assert_ios_watch_archive_ready",
+            "-exportArchive \\",
+        )
 
     def test_companion_upload_retains_generic_watch_archive_evidence(self):
         script = self.read("scripts/upload-app-store-connect-companion-app.sh")
