@@ -126,9 +126,6 @@ final class TVRuntimeReceiptRelayProvider {
 
 @MainActor
 final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
-    private static let retiredBadgeExpiryRequestIdentifier = "context-panel-provider-badge-expiry"
-    private static let retiredProviderBadgesPreferenceKey = "tv-provider-badges-enabled"
-
     private let remoteStore = CompanionCloudKitSyncStoreFactory.make()
     let runtimeReceiptRelayProvider = TVRuntimeReceiptRelayProvider()
     private let notificationCenter = UNUserNotificationCenter.current()
@@ -254,13 +251,16 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
     }
 
     private func clearRetiredProviderBadge() {
-        UserDefaults.standard.removeObject(forKey: Self.retiredProviderBadgesPreferenceKey)
-        notificationCenter.removePendingNotificationRequests(
-            withIdentifiers: [Self.retiredBadgeExpiryRequestIdentifier]
+        let badgeCount = TVRetiredProviderBadgeCleanup(
+            providerAlertStateURL: TVLocalCacheLocations.live().providerAlertStateURL
+        ).perform(
+            defaults: .standard,
+            removePendingNotificationRequests: { [notificationCenter] identifiers in
+                notificationCenter.removePendingNotificationRequests(withIdentifiers: identifiers)
+            }
         )
-        try? FileManager.default.removeItem(at: TVLocalCacheLocations.live().providerAlertStateURL)
         Task { [notificationCenter] in
-            try? await notificationCenter.setBadgeCount(0)
+            try? await notificationCenter.setBadgeCount(badgeCount)
         }
     }
 }

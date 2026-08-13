@@ -741,16 +741,52 @@ import Testing
     #expect(!source.contains("fileManager.urls(for: .cachesDirectory"))
 }
 
-@Test func tvOSRetiredProviderBadgeIsClearedWithoutSchedulingReplacementNotifications() throws {
+@Test func tvRetiredProviderBadgeCleanupClearsStoredStateAndReturnsZeroBadgeCount() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-tv-badge-cleanup-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let suiteName = "ContextPanelTVBadgeCleanupTests-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let alertStateURL = directory.appending(path: "provider-alert-state.json")
+    try Data("retired-state".utf8).write(to: alertStateURL)
+    defaults.set(true, forKey: TVRetiredProviderBadgeCleanup.badgesPreferenceKey)
+    var removedRequestIdentifiers: [[String]] = []
+    let cleanup = TVRetiredProviderBadgeCleanup(providerAlertStateURL: alertStateURL)
+
+    #expect(TVRetiredProviderBadgeCleanup.expiryRequestIdentifier == "context-panel-provider-badge-expiry")
+    #expect(TVRetiredProviderBadgeCleanup.badgesPreferenceKey == "tv-provider-badges-enabled")
+    let badgeCount = cleanup.perform(
+        defaults: defaults,
+        removePendingNotificationRequests: { removedRequestIdentifiers.append($0) }
+    )
+
+    #expect(badgeCount == 0)
+    #expect(removedRequestIdentifiers == [[TVRetiredProviderBadgeCleanup.expiryRequestIdentifier]])
+    #expect(defaults.object(forKey: TVRetiredProviderBadgeCleanup.badgesPreferenceKey) == nil)
+    #expect(!FileManager.default.fileExists(atPath: alertStateURL.path))
+
+    let repeatedBadgeCount = cleanup.perform(
+        defaults: defaults,
+        removePendingNotificationRequests: { removedRequestIdentifiers.append($0) }
+    )
+    #expect(repeatedBadgeCount == 0)
+    #expect(removedRequestIdentifiers == [
+        [TVRetiredProviderBadgeCleanup.expiryRequestIdentifier],
+        [TVRetiredProviderBadgeCleanup.expiryRequestIdentifier],
+    ])
+}
+
+@Test func tvOSAppDelegateDoesNotScheduleReplacementProviderBadgeNotifications() throws {
     let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         .appending(path: "Sources/ContextPanelTV/TVSystemSurfaces.swift")
     let source = try String(contentsOf: sourceURL, encoding: .utf8)
 
-    #expect(source.contains("clearRetiredProviderBadge()"))
-    #expect(source.contains("notificationCenter.setBadgeCount(0)"))
-    #expect(source.contains("retiredBadgeExpiryRequestIdentifier"))
+    #expect(source.contains("TVRetiredProviderBadgeCleanup("))
+    #expect(source.contains("notificationCenter.setBadgeCount(badgeCount)"))
     #expect(!source.contains("UNTimeIntervalNotificationTrigger"))
-    #expect(!source.contains("requestAuthorization(options: [.badge])"))
+    #expect(!source.contains(".badge"))
 }
 
 private actor TVDeadlineBlocker {
