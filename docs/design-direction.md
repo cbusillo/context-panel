@@ -219,6 +219,8 @@ without suggesting that selecting a row performs an action.
 - Table-like app summaries should share one column definition between headers
   and data rows so reset labels, percentages, bars, and status text remain
   aligned as content changes.
+- tvOS status headers stay outside focus-driven scrolling so selecting runway
+  cards cannot move titles or sync controls beyond the television safe area.
 - The widget should preserve last-good values through refresh and loading states
   whenever possible.
 - Stale widget data preserves its last-good numeric value when available, colors
