@@ -223,6 +223,8 @@ without suggesting that selecting a row performs an action.
   cards cannot move titles or sync controls beyond the television safe area.
 - tvOS card controls reserve horizontal focus clearance and draw their rings
   inside card bounds so both outer provider cards remain fully visible.
+- tvOS global stale states keep the headline neutral, avoid repeating the same
+  status on every card, and render saved quantitative bars in a warm neutral.
 - The widget should preserve last-good values through refresh and loading states
   whenever possible.
 - Stale widget data preserves its last-good numeric value when available, colors

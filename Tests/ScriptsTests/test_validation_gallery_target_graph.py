@@ -299,6 +299,15 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         )
         self.assertIn(".strokeBorder(", tv_app)
 
+    def test_tv_stale_state_uses_quiet_global_status_and_warm_instruments(self):
+        tv_app = TV_APP_SOURCE.read_text()
+
+        self.assertIn("private var showsPerCardStatus: Bool", tv_app)
+        self.assertIn("if showsStatus {", tv_app)
+        self.assertIn("status == .stale ? TVTheme.staleInstrumentColor", tv_app)
+        self.assertIn("static let staleInstrumentColor", tv_app)
+        self.assertIn(".font(.title3.weight(.semibold))", tv_app)
+
     @staticmethod
     def yaml_target_block(project: str, target: str) -> str:
         lines = project.splitlines()
