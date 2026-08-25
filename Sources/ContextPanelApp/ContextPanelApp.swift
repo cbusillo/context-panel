@@ -2769,21 +2769,29 @@ private struct PaceBandControl: View {
     }
 }
 
+private enum AllLimitsScanLayout {
+    static let spacing: CGFloat = 12
+    static let providerWidth: CGFloat = 46
+    static let limitWidth: CGFloat = 190
+    static let statusWidth: CGFloat = 82
+}
+
 struct AllLimitsScanCard: View {
     let rows: [KeepWorkingLimitRow]
     let providerAccessAlerts: [ProviderAccessAlert]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            HStack(spacing: AllLimitsScanLayout.spacing) {
                 Text("Provider")
-                Spacer()
+                    .frame(width: AllLimitsScanLayout.providerWidth, alignment: .leading)
+                Spacer(minLength: 0)
                 Text("5-hour")
-                    .frame(width: 190, alignment: .leading)
+                    .frame(width: AllLimitsScanLayout.limitWidth, alignment: .leading)
                 Text("Weekly")
-                    .frame(width: 190, alignment: .leading)
+                    .frame(width: AllLimitsScanLayout.limitWidth, alignment: .leading)
                 Text("Status")
-                    .frame(width: 82, alignment: .trailing)
+                    .frame(width: AllLimitsScanLayout.statusWidth, alignment: .trailing)
             }
             .font(.system(size: 10, weight: .medium))
             .foregroundStyle(CPTheme.tertiaryText)
@@ -2827,17 +2835,18 @@ private struct AllLimitsScanRow: View {
     let status: UsageStatus
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: AllLimitsScanLayout.spacing) {
             ProviderBadge(provider: provider, compact: true)
-                .frame(width: 46, alignment: .leading)
+                .frame(width: AllLimitsScanLayout.providerWidth, alignment: .leading)
+            Spacer(minLength: 0)
             LimitWindowScanCell(row: fiveHour, fallback: "5-hour")
-                .frame(width: 190, alignment: .leading)
+                .frame(width: AllLimitsScanLayout.limitWidth, alignment: .leading)
             LimitWindowScanCell(row: weekly, fallback: "Weekly")
-                .frame(width: 190, alignment: .leading)
+                .frame(width: AllLimitsScanLayout.limitWidth, alignment: .leading)
             Text(status.previewStatusText.capitalized)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(CPTheme.statusColor(status))
-                .frame(width: 82, alignment: .trailing)
+                .frame(width: AllLimitsScanLayout.statusWidth, alignment: .trailing)
         }
         .padding(.vertical, 7)
         .overlay(alignment: .top) {

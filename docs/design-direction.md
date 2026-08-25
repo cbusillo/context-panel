@@ -216,6 +216,9 @@ without suggesting that selecting a row performs an action.
 - Layouts should be stable under dynamic data: changing reset text, account
   names, loading states, hover states, or stale messages must not resize fixed
   widget structures unpredictably.
+- Table-like app summaries should share one column definition between headers
+  and data rows so reset labels, percentages, bars, and status text remain
+  aligned as content changes.
 - The widget should preserve last-good values through refresh and loading states
   whenever possible.
 - Stale widget data preserves its last-good numeric value when available, colors
