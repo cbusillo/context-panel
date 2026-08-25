@@ -256,6 +256,27 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         )
         self.assertIn("Sample OpenAI Personal", tv_preview)
 
+    def test_tv_runway_header_stays_outside_focus_driven_scrolling(self):
+        tv_app = TV_APP_SOURCE.read_text()
+        runway_start = tv_app.index("struct TVRunwayContent: View")
+        runway_end = tv_app.index("private struct TVKeepWorkingForecastCard", runway_start)
+        runway = tv_app[runway_start:runway_end]
+
+        self.assertRegex(
+            runway,
+            re.compile(
+                r"VStack\(alignment: \.leading, spacing: 40\) \{\s*"
+                r"TVHeaderView\([\s\S]*?\)\s*ScrollView \{"
+            ),
+        )
+        self.assertNotRegex(
+            runway,
+            re.compile(
+                r"ScrollView \{\s*VStack\(alignment: \.leading, spacing: 40\) \{\s*"
+                r"TVHeaderView\("
+            ),
+        )
+
     @staticmethod
     def yaml_target_block(project: str, target: str) -> str:
         lines = project.splitlines()

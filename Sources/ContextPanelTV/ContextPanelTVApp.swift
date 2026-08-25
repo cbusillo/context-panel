@@ -185,36 +185,37 @@ struct TVRunwayContent: View {
         ZStack(alignment: .bottom) {
             TVTheme.background.ignoresSafeArea()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 40) {
-                    TVHeaderView(
-                        presentation: presentation,
-                        receivedAt: receivedAt,
-                        isRefreshing: isRefreshing,
-                        presentationModeRawValue: $presentationModeRawValue,
-                        presentationDate: presentationDate,
-                        onRefresh: onRefresh
-                    )
+            VStack(alignment: .leading, spacing: 40) {
+                TVHeaderView(
+                    presentation: presentation,
+                    receivedAt: receivedAt,
+                    isRefreshing: isRefreshing,
+                    presentationModeRawValue: $presentationModeRawValue,
+                    presentationDate: presentationDate,
+                    onRefresh: onRefresh
+                )
 
-                    if let keepWorkingForecast {
-                        TVKeepWorkingForecastCard(forecast: keepWorkingForecast)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 40) {
+                        if let keepWorkingForecast {
+                            TVKeepWorkingForecastCard(forecast: keepWorkingForecast)
+                        }
+
+                        if presentation.isEmpty {
+                            TVEmptyRunwayView(presentation: presentation)
+                        } else {
+                            TVProviderOverviewGrid(
+                                sections: presentation.sections,
+                                mode: presentationMode,
+                                detailActionMode: detailActionMode
+                            )
+                        }
                     }
-
-                    if presentation.isEmpty {
-                        TVEmptyRunwayView(presentation: presentation)
-                    } else {
-                        TVProviderOverviewGrid(
-                            sections: presentation.sections,
-                            mode: presentationMode,
-                            detailActionMode: detailActionMode
-                        )
-                    }
-
+                    .padding(.bottom, noticeMessage == nil ? 48 : 160)
                 }
-                .padding(.horizontal, 72)
-                .padding(.top, 48)
-                .padding(.bottom, noticeMessage == nil ? 48 : 160)
             }
+            .padding(.horizontal, 72)
+            .safeAreaPadding(.top, 24)
 
             if let noticeMessage {
                 TVSyncAlert(message: noticeMessage)
