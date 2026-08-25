@@ -283,7 +283,7 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         grid_end = tv_app.index("private struct TVProviderOverviewCard: View", grid_start)
         grid = tv_app[grid_start:grid_end]
 
-        self.assertIn("private static let focusHorizontalInset: CGFloat = 12", grid)
+        self.assertIn("private static let focusHorizontalInset: CGFloat = 32", grid)
         self.assertIn(
             "Self.maximumCardWidth + (Self.focusHorizontalInset * 2)",
             grid,
@@ -297,6 +297,7 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
             grid.count(".padding(.horizontal, Self.focusHorizontalInset)"),
             2,
         )
+        self.assertIn(".strokeBorder(", tv_app)
 
     @staticmethod
     def yaml_target_block(project: str, target: str) -> str:

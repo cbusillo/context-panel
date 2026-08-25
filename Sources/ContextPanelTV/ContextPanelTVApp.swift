@@ -733,7 +733,7 @@ private struct TVHeaderView: View {
 
 private struct TVProviderOverviewGrid: View {
     private static let cardSpacing: CGFloat = 30
-    private static let focusHorizontalInset: CGFloat = 12
+    private static let focusHorizontalInset: CGFloat = 32
     private static let maximumCardWidth: CGFloat = 560
 
     let sections: [TVProviderRunwaySection]
@@ -888,7 +888,7 @@ private struct TVProviderOverviewCard: View {
         )
         .overlay {
             RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .stroke(
+                .strokeBorder(
                     isFocused ? Color.white.opacity(0.9) : Color.white.opacity(0.1),
                     lineWidth: isFocused ? 3 : 1
                 )
