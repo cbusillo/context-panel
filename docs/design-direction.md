@@ -221,8 +221,8 @@ without suggesting that selecting a row performs an action.
   aligned as content changes.
 - tvOS status headers stay outside focus-driven scrolling so selecting runway
   cards cannot move titles or sync controls beyond the television safe area.
-- tvOS card controls reserve internal horizontal focus insets so scaling and
-  focus rings remain visible on both outer provider cards.
+- tvOS card controls reserve horizontal focus clearance and draw their rings
+  inside card bounds so both outer provider cards remain fully visible.
 - The widget should preserve last-good values through refresh and loading states
   whenever possible.
 - Stale widget data preserves its last-good numeric value when available, colors
