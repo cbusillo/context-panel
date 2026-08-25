@@ -646,8 +646,7 @@ private struct TVHeaderView: View {
                     .font(.system(size: 58, weight: .bold, design: .rounded))
 
                 Text(presentation.headline)
-                    .font(.title2.weight(.semibold))
-                    .foregroundStyle(statusColor)
+                    .font(.title3.weight(.semibold))
 
                 Text(presentation.detail)
                     .font(.body)
@@ -740,6 +739,11 @@ private struct TVProviderOverviewGrid: View {
     let mode: TVPresentationMode
     let detailActionMode: TVDetailActionMode
 
+    private var showsPerCardStatus: Bool {
+        guard let firstStatus = sections.first?.status else { return false }
+        return sections.dropFirst().contains { $0.status != firstStatus }
+    }
+
     var body: some View {
         GeometryReader { geometry in
             let totalSpacing = Self.cardSpacing * CGFloat(max(sections.count - 1, 0))
@@ -785,7 +789,8 @@ private struct TVProviderOverviewGrid: View {
         TVProviderOverviewCard(
             section: section,
             mode: mode,
-            detailActionMode: detailActionMode
+            detailActionMode: detailActionMode,
+            showsStatus: showsPerCardStatus
         )
         .frame(width: cardWidth)
     }
@@ -798,6 +803,7 @@ private struct TVProviderOverviewCard: View {
     let section: TVProviderRunwaySection
     let mode: TVPresentationMode
     let detailActionMode: TVDetailActionMode
+    let showsStatus: Bool
 
     private var lane: TVRunwayLane {
         section.primaryLane ?? section.lanes[0]
@@ -818,10 +824,12 @@ private struct TVProviderOverviewCard: View {
 
                 Spacer(minLength: 12)
 
-                Text(section.status.tvStatusLabel)
-                    .font(.system(size: 24, weight: .semibold, design: .rounded))
-                    .foregroundStyle(TVTheme.statusColor(section.status))
-                    .lineLimit(1)
+                if showsStatus {
+                    Text(section.status.tvStatusLabel)
+                        .font(.system(size: 24, weight: .semibold, design: .rounded))
+                        .foregroundStyle(TVTheme.statusColor(section.status))
+                        .lineLimit(1)
+                }
             }
 
             Text(lane.title)
@@ -841,11 +849,15 @@ private struct TVProviderOverviewCard: View {
                 }
             } else {
                 Text(lane.kind == .accountStatus ? "No fresh capacity" : "Unknown")
-                    .font(.system(size: 64, weight: .bold, design: .rounded))
+                    .font(.system(size: 56, weight: .semibold, design: .rounded))
                     .foregroundStyle(.secondary)
             }
 
-            TVCapacityBar(ratio: lane.capacityRatio, provider: lane.provider)
+            TVCapacityBar(
+                ratio: lane.capacityRatio,
+                provider: lane.provider,
+                status: lane.status
+            )
 
             if let closestLane = section.closestLane {
                 VStack(alignment: .leading, spacing: 4) {
@@ -878,8 +890,8 @@ private struct TVProviderOverviewCard: View {
         .background(
             LinearGradient(
                 colors: [
-                    TVTheme.providerColor(section.provider).opacity(0.22),
-                    Color.white.opacity(0.05),
+                    TVTheme.providerColor(section.provider).opacity(isFocused ? 0.16 : 0.12),
+                    Color.white.opacity(0.04),
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -889,11 +901,12 @@ private struct TVProviderOverviewCard: View {
         .overlay {
             RoundedRectangle(cornerRadius: 28, style: .continuous)
                 .strokeBorder(
-                    isFocused ? Color.white.opacity(0.9) : Color.white.opacity(0.1),
-                    lineWidth: isFocused ? 3 : 1
+                    isFocused ? Color.white.opacity(0.76) : Color.white.opacity(0.1),
+                    lineWidth: isFocused ? 2.5 : 1
                 )
         }
         .scaleEffect(isFocused && !reduceMotion ? 1.025 : 1)
+        .brightness(isFocused ? 0.025 : 0)
         .shadow(color: .black.opacity(isFocused ? 0.45 : 0.16), radius: isFocused ? 26 : 10, y: 12)
         .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.78), value: isFocused)
         .accessibilityElement(children: .ignore)
@@ -1155,7 +1168,11 @@ private struct TVProviderPrimaryCard: View {
                         .foregroundStyle(.secondary)
                 }
 
-                TVCapacityBar(ratio: lane.capacityRatio, provider: lane.provider)
+                TVCapacityBar(
+                    ratio: lane.capacityRatio,
+                    provider: lane.provider,
+                    status: lane.status
+                )
                     .frame(width: 620)
             }
         }
@@ -1318,6 +1335,11 @@ private struct TVProviderLaneRow: View {
 private struct TVCapacityBar: View {
     let ratio: Double?
     let provider: Provider
+    let status: UsageStatus
+
+    private var fillColor: Color {
+        status == .stale ? TVTheme.staleInstrumentColor : TVTheme.providerColor(provider)
+    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -1327,7 +1349,7 @@ private struct TVCapacityBar: View {
 
                 if let ratio {
                     Capsule()
-                        .fill(TVTheme.providerColor(provider))
+                        .fill(fillColor)
                         .frame(width: geometry.size.width * min(max(ratio, 0), 1))
                 } else {
                     Capsule()
@@ -1431,7 +1453,11 @@ private struct TVRunwaySummaryView: View {
                         .font(.title2)
                         .foregroundStyle(.secondary)
                 }
-                TVCapacityBar(ratio: lane.capacityRatio, provider: lane.provider)
+                TVCapacityBar(
+                    ratio: lane.capacityRatio,
+                    provider: lane.provider,
+                    status: lane.status
+                )
                     .frame(maxWidth: 900)
             }
 
@@ -1693,6 +1719,8 @@ private enum TVTheme {
             Color(red: 0.38, green: 0.66, blue: 1)
         }
     }
+
+    static let staleInstrumentColor = Color(red: 0.64, green: 0.57, blue: 0.45)
 
     static func statusColor(_ status: UsageStatus) -> Color {
         switch status {
