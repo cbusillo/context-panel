@@ -277,6 +277,27 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
             ),
         )
 
+    def test_tv_provider_cards_reserve_horizontal_focus_insets(self):
+        tv_app = TV_APP_SOURCE.read_text()
+        grid_start = tv_app.index("private struct TVProviderOverviewGrid: View")
+        grid_end = tv_app.index("private struct TVProviderOverviewCard: View", grid_start)
+        grid = tv_app[grid_start:grid_end]
+
+        self.assertIn("private static let focusHorizontalInset: CGFloat = 12", grid)
+        self.assertIn(
+            "Self.maximumCardWidth + (Self.focusHorizontalInset * 2)",
+            grid,
+        )
+        self.assertIn("controlWidth - (Self.focusHorizontalInset * 2)", grid)
+        self.assertEqual(
+            grid.count("overviewCard(for: section, cardWidth: cardWidth)"),
+            2,
+        )
+        self.assertEqual(
+            grid.count(".padding(.horizontal, Self.focusHorizontalInset)"),
+            2,
+        )
+
     @staticmethod
     def yaml_target_block(project: str, target: str) -> str:
         lines = project.splitlines()

@@ -732,18 +732,25 @@ private struct TVHeaderView: View {
 }
 
 private struct TVProviderOverviewGrid: View {
+    private static let cardSpacing: CGFloat = 30
+    private static let focusHorizontalInset: CGFloat = 12
+    private static let maximumCardWidth: CGFloat = 560
+
     let sections: [TVProviderRunwaySection]
     let mode: TVPresentationMode
     let detailActionMode: TVDetailActionMode
 
     var body: some View {
         GeometryReader { geometry in
-            let spacing: CGFloat = 30
-            let totalSpacing = spacing * CGFloat(max(sections.count - 1, 0))
+            let totalSpacing = Self.cardSpacing * CGFloat(max(sections.count - 1, 0))
             let availableWidth = max(geometry.size.width - totalSpacing, 1)
-            let cardWidth = min(560, availableWidth / CGFloat(max(sections.count, 1)))
+            let controlWidth = min(
+                Self.maximumCardWidth + (Self.focusHorizontalInset * 2),
+                availableWidth / CGFloat(max(sections.count, 1))
+            )
+            let cardWidth = max(controlWidth - (Self.focusHorizontalInset * 2), 1)
 
-            HStack(alignment: .top, spacing: spacing) {
+            HStack(alignment: .top, spacing: Self.cardSpacing) {
                 ForEach(sections) { section in
                     detailControl(for: section, cardWidth: cardWidth)
                 }
@@ -760,12 +767,14 @@ private struct TVProviderOverviewGrid: View {
         case .navigation:
             NavigationLink(value: section.provider.rawValue) {
                 overviewCard(for: section, cardWidth: cardWidth)
+                    .padding(.horizontal, Self.focusHorizontalInset)
             }
             .buttonStyle(TVFocusButtonStyle())
             .focusEffectDisabled()
         case .readOnly:
             Button(action: {}) {
                 overviewCard(for: section, cardWidth: cardWidth)
+                    .padding(.horizontal, Self.focusHorizontalInset)
             }
             .buttonStyle(TVFocusButtonStyle())
             .focusEffectDisabled()
