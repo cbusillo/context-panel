@@ -219,8 +219,9 @@ without suggesting that selecting a row performs an action.
 - Table-like app summaries should share one column definition between headers
   and data rows so reset labels, percentages, bars, and status text remain
   aligned as content changes.
-- tvOS status headers stay outside focus-driven scrolling so selecting runway
-  cards cannot move titles or sync controls beyond the television safe area.
+- tvOS status headers and pooled forecast cards stay outside focus-driven
+  scrolling so selecting runway cards cannot move decision context or controls
+  beyond the television safe area.
 - tvOS card controls reserve horizontal focus clearance and draw their rings
   inside card bounds so both outer provider cards remain fully visible.
 - tvOS global stale states keep the headline neutral, avoid repeating the same

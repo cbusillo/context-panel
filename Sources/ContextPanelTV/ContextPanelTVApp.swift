@@ -195,12 +195,12 @@ struct TVRunwayContent: View {
                     onRefresh: onRefresh
                 )
 
+                if let keepWorkingForecast {
+                    TVKeepWorkingForecastCard(forecast: keepWorkingForecast)
+                }
+
                 ScrollView {
                     VStack(alignment: .leading, spacing: 40) {
-                        if let keepWorkingForecast {
-                            TVKeepWorkingForecastCard(forecast: keepWorkingForecast)
-                        }
-
                         if presentation.isEmpty {
                             TVEmptyRunwayView(presentation: presentation)
                         } else {

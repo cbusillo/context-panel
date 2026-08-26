@@ -256,26 +256,22 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         )
         self.assertIn("Sample OpenAI Personal", tv_preview)
 
-    def test_tv_runway_header_stays_outside_focus_driven_scrolling(self):
+    def test_tv_runway_header_and_forecast_stay_outside_focus_driven_scrolling(self):
         tv_app = TV_APP_SOURCE.read_text()
         runway_start = tv_app.index("struct TVRunwayContent: View")
         runway_end = tv_app.index("private struct TVKeepWorkingForecastCard", runway_start)
         runway = tv_app[runway_start:runway_end]
 
-        self.assertRegex(
-            runway,
-            re.compile(
-                r"VStack\(alignment: \.leading, spacing: 40\) \{\s*"
-                r"TVHeaderView\([\s\S]*?\)\s*ScrollView \{"
-            ),
-        )
-        self.assertNotRegex(
-            runway,
-            re.compile(
-                r"ScrollView \{\s*VStack\(alignment: \.leading, spacing: 40\) \{\s*"
-                r"TVHeaderView\("
-            ),
-        )
+        header_start = runway.index("TVHeaderView(")
+        forecast_start = runway.index("if let keepWorkingForecast")
+        scroll_start = runway.index("ScrollView {")
+        grid_start = runway.index("TVProviderOverviewGrid(")
+
+        self.assertLess(header_start, forecast_start)
+        self.assertLess(forecast_start, scroll_start)
+        self.assertLess(scroll_start, grid_start)
+        self.assertNotIn("TVHeaderView(", runway[scroll_start:])
+        self.assertNotIn("TVKeepWorkingForecastCard", runway[scroll_start:])
 
     def test_tv_provider_cards_reserve_horizontal_focus_insets(self):
         tv_app = TV_APP_SOURCE.read_text()
