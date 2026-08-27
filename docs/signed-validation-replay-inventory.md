@@ -84,7 +84,8 @@ their evidence chain:
 - expected-build manifest set and target identity;
 - final-report target;
 - visual approval requirement and decision set;
-- runtime receipt identity membership.
+- runtime receipt identity membership, with retained bodies required to
+  reproduce their cited IDs and current train build identity.
 
 The visual approval export for `1.0.60` is selected by the requirement and
 decision set, not by a filename suffix. The retained `-final` export belongs to
