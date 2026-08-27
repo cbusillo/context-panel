@@ -225,6 +225,9 @@ without suggesting that selecting a row performs an action.
 - tvOS card controls reserve horizontal and vertical focus clearance and draw
   their rings inside card bounds so outer cards and top edges remain fully
   visible.
+- tvOS runway composition top-aligns the full-screen content and uses a compact,
+  full-width forecast band so decision context does not strand the right side or
+  push focused provider cards against the bottom edge.
 - tvOS global stale states keep the headline neutral, avoid repeating the same
   status on every card, and render saved quantitative bars in a warm neutral.
 - The widget should preserve last-good values through refresh and loading states

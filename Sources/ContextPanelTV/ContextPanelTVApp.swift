@@ -185,7 +185,7 @@ struct TVRunwayContent: View {
         ZStack(alignment: .bottom) {
             TVTheme.background.ignoresSafeArea()
 
-            VStack(alignment: .leading, spacing: 40) {
+            VStack(alignment: .leading, spacing: 28) {
                 TVHeaderView(
                     presentation: presentation,
                     receivedAt: receivedAt,
@@ -216,6 +216,7 @@ struct TVRunwayContent: View {
             }
             .padding(.horizontal, 72)
             .safeAreaPadding(.top, 24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
             if let noticeMessage {
                 TVSyncAlert(message: noticeMessage)
@@ -251,22 +252,34 @@ private struct TVKeepWorkingForecastCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(accountText)
-                .font(.headline)
-                .foregroundStyle(.secondary)
-            HStack(alignment: .lastTextBaseline, spacing: 20) {
+        HStack(alignment: .center, spacing: 32) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(accountText)
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
                 Text(capacityText)
                     .font(.system(size: 42, weight: .semibold, design: .rounded))
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Divider()
+                .frame(height: 72)
+
+            VStack(alignment: .leading, spacing: 8) {
                 Text(outcomeText)
                     .font(.title3.weight(.medium))
                     .foregroundStyle(outcomeColor)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Text(resetText)
+                    .font(.body)
+                    .foregroundStyle(.secondary)
             }
-            Text(resetText)
-                .font(.body)
-                .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(28)
+        .padding(.horizontal, 28)
+        .padding(.vertical, 20)
+        .frame(maxWidth: .infinity)
         .background(Color.white.opacity(0.07))
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
@@ -731,6 +744,8 @@ private struct TVHeaderView: View {
 }
 
 private struct TVProviderOverviewGrid: View {
+    @FocusState private var focusedProviderRawValue: String?
+
     private static let cardSpacing: CGFloat = 30
     private static let focusHorizontalInset: CGFloat = 32
     private static let focusVerticalInset: CGFloat = 28
@@ -761,6 +776,14 @@ private struct TVProviderOverviewGrid: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .center)
+            .onAppear {
+                #if DEBUG
+                if let requestedFocusProviderRawValue = TVPreviewFixtures.requestedFocusProviderRawValue,
+                   sections.contains(where: { $0.provider.rawValue == requestedFocusProviderRawValue }) {
+                    focusedProviderRawValue = requestedFocusProviderRawValue
+                }
+                #endif
+            }
         }
         .frame(height: 520)
     }
@@ -776,6 +799,7 @@ private struct TVProviderOverviewGrid: View {
             }
             .buttonStyle(TVFocusButtonStyle())
             .focusEffectDisabled()
+            .focused($focusedProviderRawValue, equals: section.provider.rawValue)
         case .readOnly:
             Button(action: {}) {
                 overviewCard(for: section, cardWidth: cardWidth)
@@ -784,6 +808,7 @@ private struct TVProviderOverviewGrid: View {
             }
             .buttonStyle(TVFocusButtonStyle())
             .focusEffectDisabled()
+            .focused($focusedProviderRawValue, equals: section.provider.rawValue)
         }
     }
 
