@@ -1,0 +1,150 @@
+{
+  "schemaVersion": 1,
+  "kind": "context-panel-replay-inventory-policy",
+  "algorithm": "sha256",
+  "digestDomain": "context-panel.replay-inventory.v1",
+  "requiredCategories": [
+    "previous-source-manifest",
+    "current-source-manifest",
+    "archived-comparison",
+    "coordinator-final-report",
+    "expected-build-manifests",
+    "release-evidence-ledger",
+    "release-evidence-lineage",
+    "physical-runtime-receipts",
+    "visual-approvals"
+  ],
+  "recoverabilityClasses": [
+    "durable",
+    "single-copy",
+    "fragile",
+    "reference-only"
+  ],
+  "sourceRoots": {
+    "shadow-trains": {
+      "sourceClass": "signed-train-export",
+      "defaultRecoverability": "single-copy",
+      "versionControl": "absent"
+    },
+    "build-release-evidence": {
+      "sourceClass": "local-build-root",
+      "defaultRecoverability": "fragile",
+      "versionControl": "absent"
+    },
+    "code-evidence": {
+      "sourceClass": "local-code-root",
+      "defaultRecoverability": "fragile",
+      "versionControl": "absent"
+    }
+  },
+  "inadmissibleSourceClasses": [
+    "live-coordinator-container",
+    "working-tree"
+  ],
+  "trains": [
+    {
+      "trainId": "1.0.57-202608090510",
+      "version": "1.0.57",
+      "buildNumber": "202608090510",
+      "trainClass": "rc-shadow",
+      "admissibleClaims": [
+        "rc-shadow-agreement"
+      ],
+      "trainRoot": "shadow-trains",
+      "trainPath": "2026-08-09/train-1-fresh-1.0.57-202608090510",
+      "previousManifest": {
+        "root": "shadow-trains",
+        "path": "2026-08-08/train-0-source-manifest.json"
+      },
+      "currentManifestPath": "source-manifest.json",
+      "comparisonPath": "comparison.json",
+      "finalReportPath": "final-report.json",
+      "lineagePath": "release-evidence-shadow-lineage.json",
+      "ledgerPath": "release-evidence-shadow.json",
+      "expectedBuildManifests": {
+        "ios": "ios/app-store-connect-companion-1.0.57-202608090510/ExpectedBuildManifest-ios.json",
+        "macos": "macos/app-store-connect-1.0.57-202608090510/ExpectedBuildManifest-macos.json",
+        "tvos": "tvos/app-store-connect-companion-1.0.57-202608090510/ExpectedBuildManifest-tvos.json",
+        "visionos": "visionos/app-store-connect-companion-1.0.57-202608090510/ExpectedBuildManifest-visionos.json"
+      },
+      "runtimeReceiptDirs": [],
+      "visualApprovals": {
+        "mode": "file",
+        "path": "visual-reviews-export-final.json"
+      },
+      "sealedMetadataDigest": "6aca8cce4877183dd53e47a8f0c3f75bfd3086d205ae65fbd931aafad1d47f10"
+    },
+    {
+      "trainId": "1.0.60-202608101107",
+      "version": "1.0.60",
+      "buildNumber": "202608101107",
+      "trainClass": "release-enforced",
+      "admissibleClaims": [
+        "rc-enforced",
+        "release-enforced"
+      ],
+      "trainRoot": "shadow-trains",
+      "trainPath": "2026-08-10/train-2-final-1.0.60-202608101107",
+      "previousManifest": {
+        "root": "shadow-trains",
+        "path": "2026-08-09/train-1-fresh-1.0.57-202608090510/source-manifest.json"
+      },
+      "currentManifestPath": "source-manifest.json",
+      "comparisonPath": "release-comparison.json",
+      "finalReportPath": "final-report.json",
+      "lineagePath": "release-evidence-release-enforced-lineage.json",
+      "ledgerPath": "release-evidence-release-enforced.json",
+      "expectedBuildManifests": {
+        "ios": "ios/app-store-connect-companion-1.0.60-202608101107/ExpectedBuildManifest-ios.json",
+        "macos": "macos/app-store-connect-1.0.60-202608101107/ExpectedBuildManifest-macos.json",
+        "tvos": "tvos/app-store-connect-companion-1.0.60-202608101107/ExpectedBuildManifest-tvos.json",
+        "visionos": "visionos/app-store-connect-companion-1.0.60-202608101107/ExpectedBuildManifest-visionos.json"
+      },
+      "runtimeReceiptDirs": [],
+      "visualApprovals": {
+        "mode": "file",
+        "path": "visual-reviews-export.json"
+      },
+      "sealedMetadataDigest": "441e44c7467fda9908e7fca1e078464fa3a63323e6fd1b09d9ea56dd4b17ec0c"
+    },
+    {
+      "trainId": "1.0.61-202608270330",
+      "version": "1.0.61",
+      "buildNumber": "202608270330",
+      "trainClass": "beta-enforced-tvos-slice",
+      "admissibleClaims": [
+        "beta-enforced",
+        "tvos-runtime-slice"
+      ],
+      "notAdmissibleFor": [
+        "rc-qualification",
+        "release-qualification"
+      ],
+      "trainRoot": "code-evidence",
+      "trainPath": "validation-1.0.61-202608270330",
+      "previousManifest": {
+        "root": "build-release-evidence",
+        "path": "1.0.61-202608252337/source-manifest.json"
+      },
+      "currentManifestPath": "source-manifest.json",
+      "comparisonPath": "comparison-beta.json",
+      "finalReportPath": "final-report-beta-tvos.json",
+      "lineagePath": "release-evidence-beta-enforced-lineage.json",
+      "ledgerPath": "release-evidence-beta-enforced.json",
+      "expectedBuildManifests": {
+        "ios": "ios/ExpectedBuildManifest-ios.json",
+        "macos": "macos/ExpectedBuildManifest-macos.json",
+        "tvos": "tvos/ExpectedBuildManifest-tvos.json",
+        "visionos": "visionos/ExpectedBuildManifest-visionos.json"
+      },
+      "runtimeReceiptDirs": [
+        "tvos-validation-container/Runtime Receipts"
+      ],
+      "visualApprovals": {
+        "mode": "embedded",
+        "pointer": "visualApprovals"
+      },
+      "sealedMetadataDigest": "2d053f6094bde02b116b79ec62358ea33d7a8a48dfb447e7e97bb2b3aa72521f"
+    }
+  ]
+}

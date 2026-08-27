@@ -786,6 +786,21 @@ scripts/context-panel-surface-manifest.py compare \
 
 ### Release Evidence Carry-Forward Gate
 
+Before replaying historical signed trains, validate the committed public-safe
+input inventory:
+
+```sh
+scripts/context-panel-replay-inventory.py check --json
+```
+
+The inventory policy, recoverability classes, explicit-root sealing command,
+and retained residual risks are documented in
+`docs/signed-validation-replay-inventory.md`. The offline check is the CI gate.
+The explicit-root `verify` command is the operator proof that retained private
+artifacts still reproduce the committed inventory byte-for-byte. Do not use a
+working tree, live coordinator container, or discovered local path as replay
+evidence.
+
 Use the full source-manifest comparison without filtering or rewriting its
 `requiredSurfaces`. After the coordinator final report and sealed expected-build
 manifests are available, produce the privacy-safe release evidence ledger in

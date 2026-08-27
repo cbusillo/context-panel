@@ -220,6 +220,16 @@ acceptable.
   `requiresPlacementReview=true` remains a separate physical/OS-composited
   review requirement. RC and release train floors still require exact-build
   runtime proof for every capable shipping surface.
+- Historical replay input qualification starts with
+  `scripts/context-panel-replay-inventory.py check --json`. Re-sealing requires
+  explicit private root bindings; never discover or record host paths. The
+  generated inventory may contain only digests, enums, targets, and symbolic
+  root-relative paths. Raw receipts, device data, approval bodies, profiles,
+  screenshots, and validation containers remain private. A `reference-only` or
+  `fragile` classification is an explicit residual risk, not missing evidence
+  that may be silently upgraded. The rejected
+  `feat/simulator-first-rc-validation` working tree is never qualification
+  evidence.
 - After the coordinator final report is available, evaluate the full comparison
   with `scripts/context-panel-release-gate.py shadow`. Do not filter or rewrite
   `requiredSurfaces`. Carry-forward must bind to the previous approved ledger,

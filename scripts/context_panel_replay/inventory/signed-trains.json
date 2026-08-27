@@ -1,0 +1,538 @@
+{
+  "algorithm": "sha256",
+  "digestDomain": "context-panel.replay-inventory.v1",
+  "inventoryId": "32394f214f05c6718bca77441f06aab67af92e486db0a557d0b75de53e218831",
+  "kind": "context-panel-replay-input-inventory",
+  "policyDigest": "09779005cab033fd2282c8b6eadaceef331c6aff15b52c8aae02d8d8ddb79649",
+  "schemaVersion": 1,
+  "state": "complete-with-reference-only",
+  "summary": {
+    "fragileInputCount": 9,
+    "inputCount": 27,
+    "missingCount": 0,
+    "referenceOnlyInputCount": 2,
+    "residualRiskCount": 3,
+    "trainCount": 3
+  },
+  "trains": [
+    {
+      "admissibleClaims": [
+        "rc-shadow-agreement"
+      ],
+      "buildNumber": "202608090510",
+      "contractFingerprint": "901f88103cf87e909b5e31ac7f68fb06a5f48f31cc61662522bb445304a86828",
+      "currentManifestId": "f83990ea0788c02f63f13a6d484fb0da1f7f6afe3921f92e88d38c5df4f54688",
+      "inputs": [
+        {
+          "byteSize": 11962,
+          "canonicalDigest": "2dc5bc013903fc5cfef94faff14b08a6dc4318e346a872a3a15b5db2c95d5a96",
+          "category": "archived-comparison",
+          "rawDigest": "42581e8efa3e4f96ac906b9abcd17c3e9831538288ccc915f7da3a3f5c7c7e0f",
+          "recoverability": "single-copy",
+          "selectionRule": "ledger.comparisonDigest",
+          "sourceClass": "signed-train-export",
+          "sourcePath": "2026-08-09/train-1-fresh-1.0.57-202608090510/comparison.json",
+          "sourceRoot": "shadow-trains",
+          "versionControl": "absent"
+        },
+        {
+          "byteSize": 50087,
+          "canonicalDigest": "9b4f7d39ea32e8ec6ed6b59f27e58af283f146e246e7a87a184e596b4aab1aa9",
+          "category": "coordinator-final-report",
+          "rawDigest": "db783c00a284550eacde3a458d3bbd58cbf705e8506192b81ace0f7c2c115f73",
+          "recoverability": "single-copy",
+          "selectionRule": "ledger.validationReportDigest",
+          "sourceClass": "signed-train-export",
+          "sourcePath": "2026-08-09/train-1-fresh-1.0.57-202608090510/final-report.json",
+          "sourceRoot": "shadow-trains",
+          "versionControl": "absent"
+        },
+        {
+          "byteSize": 131237,
+          "canonicalDigest": "0ad26a2e09dad0681b14ed6230241cc8f03d5b693c9dd2b5f221579c05110bea",
+          "category": "current-source-manifest",
+          "rawDigest": "b6ac3106201cb6c73d04ea53cefe4ffe61789d6a24aed379062b9e182eb2efef",
+          "recoverability": "single-copy",
+          "selectionRule": "comparison.currentManifestId",
+          "sourceClass": "signed-train-export",
+          "sourcePath": "2026-08-09/train-1-fresh-1.0.57-202608090510/source-manifest.json",
+          "sourceRoot": "shadow-trains",
+          "versionControl": "absent"
+        },
+        {
+          "byteSize": 19263,
+          "canonicalDigest": "f9fbe4993f96ddb5f994053ee2ba4da3ad6459a054c566e117d0eb66ff816be3",
+          "category": "expected-build-manifests",
+          "memberCount": 4,
+          "rawDigest": "c77a5a2a17591b1b853fd66d984f2b4ea590e251339fb2e2b3f61b9b01ba5d71",
+          "recoverability": "single-copy",
+          "selectionRule": "lineage.generation.expectedBuildManifests",
+          "sourceClass": "signed-train-export",
+          "sourcePath": "2026-08-09/train-1-fresh-1.0.57-202608090510",
+          "sourceRoot": "shadow-trains",
+          "versionControl": "absent"
+        },
+        {
+          "byteSize": 0,
+          "canonicalDigest": "afd8202564bc4fb72623e3ff1a2bae68204ad0a79244cb3c1d87ee8c726b3321",
+          "category": "physical-runtime-receipts",
+          "rawDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "recoverability": "reference-only",
+          "referencedCount": 354,
+          "retainedCount": 0,
+          "selectionRule": "final-report.runtimeSurfaces.receiptIDs",
+          "sourceClass": "signed-ledger-reference",
+          "sourcePath": null,
+          "sourceRoot": null,
+          "versionControl": "absent"
+        },
+        {
+          "byteSize": 131237,
+          "canonicalDigest": "4591c13ca3d4d4a1977b061b94608d1826ce3f8a2b68d30053f875924c4994d9",
+          "category": "previous-source-manifest",
+          "rawDigest": "8bf681f856f02e954966d3b6441b56e214a81c692953255e60ff631617477ada",
+          "recoverability": "single-copy",
+          "selectionRule": "comparison.previousManifestId",
+          "sourceClass": "signed-train-export",
+          "sourcePath": "2026-08-08/train-0-source-manifest.json",
+          "sourceRoot": "shadow-trains",
+          "versionControl": "absent"
+        },
+        {
+          "byteSize": 42039,
+          "canonicalDigest": "492ffe790bbfea9e8aa9bdde7af65def13fd9365145a3a6270e11270513ce07f",
+          "category": "release-evidence-ledger",
+          "rawDigest": "cec5173f8f04aac862ee9d82632b7b8f40fc43f37bdbf161475c0f7d29f65918",
+          "recoverability": "single-copy",
+          "selectionRule": "lineage.ledger",
+          "sourceClass": "signed-train-export",
+          "sourcePath": "2026-08-09/train-1-fresh-1.0.57-202608090510/release-evidence-shadow.json",
+          "sourceRoot": "shadow-trains",
+          "versionControl": "absent"
+        },
+        {
+          "byteSize": 133567,
+          "canonicalDigest": "21268018bedc11b4e31d37b2ed4102eef553451970187cdedde3b2b21296322f",
+          "category": "release-evidence-lineage",
+          "rawDigest": "aa6be644c5e3923e752eca5ecacac64f905a882715dbd7f65986a4bf363c9502",
+          "recoverability": "single-copy",
+          "selectionRule": "policy.required-ledger",
+          "sourceClass": "signed-train-export",
+          "sourcePath": "2026-08-09/train-1-fresh-1.0.57-202608090510/release-evidence-shadow-lineage.json",
+          "sourceRoot": "shadow-trains",
+          "versionControl": "absent"
+        },
+        {
+          "byteSize": 17974,
+          "canonicalDigest": "c335c58bdf644a2218f9f96e0b1ef95ac724e959663cf876a31a2c2b7f59c7c4",
+          "category": "visual-approvals",
+          "rawDigest": "96339e0b9f69e8f48faeadd1dfaaefa1c0a62020a5a733138e068572d0947cd8",
+          "recoverability": "single-copy",
+          "requirementCount": 12,
+          "selectionRule": "final-report.requirement-and-decision-set",
+          "sourceClass": "signed-train-export",
+          "sourcePath": "2026-08-09/train-1-fresh-1.0.57-202608090510/visual-reviews-export-final.json",
+          "sourceRoot": "shadow-trains",
+          "versionControl": "absent"
+        }
+      ],
+      "missing": [],
+      "notAdmissibleFor": [],
+      "previousManifestId": "2a90c0a70828554c2ad8f1aa23771148aa40cecf174176b42b58c3964a2c5d13",
+      "residualRisks": [
+        {
+          "category": "physical-runtime-receipts",
+          "code": "receipt-bodies-not-retained",
+          "referencedCount": 354,
+          "retainedCount": 0,
+          "unsupportedClaims": [
+            "receipt-body-replay"
+          ]
+        }
+      ],
+      "scope": {
+        "actual-runtime": [
+          "ios.app",
+          "ios.widget",
+          "ipados.app",
+          "ipados.widget",
+          "macos.app",
+          "macos.refresh-agent",
+          "macos.widget",
+          "tvos.app",
+          "tvos.top-shelf",
+          "visionos.app",
+          "visionos.widget",
+          "watchos.app",
+          "watchos.complication"
+        ],
+        "os-composited-placement": [],
+        "shared-view": [
+          "ios.app",
+          "ios.widget",
+          "ipados.app",
+          "ipados.widget",
+          "macos.app",
+          "macos.widget",
+          "tvos.app",
+          "tvos.top-shelf",
+          "visionos.app",
+          "visionos.widget",
+          "watchos.app",
+          "watchos.complication"
+        ]
+      },
+      "state": "complete-with-reference-only",
+      "trainClass": "rc-shadow",
+      "trainId": "1.0.57-202608090510",
+      "version": "1.0.57"
+    },
+    {
+      "admissibleClaims": [
+        "rc-enforced",
+        "release-enforced"
+      ],
+      "buildNumber": "202608101107",
+      "contractFingerprint": "901f88103cf87e909b5e31ac7f68fb06a5f48f31cc61662522bb445304a86828",
+      "currentManifestId": "f73c3746766bd8e2b6afb7b0c9d2a0d1ffc6b22205c32e18963af44e0809733c",
+      "inputs": [
+        {
+          "byteSize": 13123,
+          "canonicalDigest": "909a359f2c2b00975c8d41b7773c3886e211b17ad335943d6c6c08527781e325",
+          "category": "archived-comparison",
+          "rawDigest": "cd3c8f7c82672cc321eaddf0a4cb17786def8e20b5293c7571b3145ad9bddcdf",
+          "recoverability": "single-copy",
+          "selectionRule": "ledger.comparisonDigest",
+          "sourceClass": "signed-train-export",
+          "sourcePath": "2026-08-10/train-2-final-1.0.60-202608101107/release-comparison.json",
+          "sourceRoot": "shadow-trains",
+          "versionControl": "absent"
+        },
+        {
+          "byteSize": 55557,
+          "canonicalDigest": "1f78bdea85d17f9c3a11dc9262ebb6e698979ca15bbba136363b75083ca3f07f",
+          "category": "coordinator-final-report",
+          "rawDigest": "2eadbf9ea5cd173d396154567140346eec8bcc769f49872641c7ed783ea3c8d6",
+          "recoverability": "single-copy",
+          "selectionRule": "ledger.validationReportDigest",
+          "sourceClass": "signed-train-export",
+          "sourcePath": "2026-08-10/train-2-final-1.0.60-202608101107/final-report.json",
+          "sourceRoot": "shadow-trains",
+          "versionControl": "absent"
+        },
+        {
+          "byteSize": 131237,
+          "canonicalDigest": "119a6507b825b61947d7d072eac0bdd0838184f064cfbd355fa253a81a17eec3",
+          "category": "current-source-manifest",
+          "rawDigest": "bc14c4e493f5959c5f728eb89975f5604d2f08b0b6c897d6d27cf6a58b590c74",
+          "recoverability": "single-copy",
+          "selectionRule": "comparison.currentManifestId",
+          "sourceClass": "signed-train-export",
+          "sourcePath": "2026-08-10/train-2-final-1.0.60-202608101107/source-manifest.json",
+          "sourceRoot": "shadow-trains",
+          "versionControl": "absent"
+        },
+        {
+          "byteSize": 19263,
+          "canonicalDigest": "49e16e8a8a233e0717e50df796e49e1dc8773ac72a88bcaf3c1824834e025518",
+          "category": "expected-build-manifests",
+          "memberCount": 4,
+          "rawDigest": "9ced36c9ba9bd15df14c764c594931e84421647146b3e7673748abeaf5d3426d",
+          "recoverability": "single-copy",
+          "selectionRule": "lineage.generation.expectedBuildManifests",
+          "sourceClass": "signed-train-export",
+          "sourcePath": "2026-08-10/train-2-final-1.0.60-202608101107",
+          "sourceRoot": "shadow-trains",
+          "versionControl": "absent"
+        },
+        {
+          "byteSize": 0,
+          "canonicalDigest": "791508954a05424316f82269d0c588bcb581547ba946469de8ea01dd257a0216",
+          "category": "physical-runtime-receipts",
+          "rawDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "recoverability": "reference-only",
+          "referencedCount": 321,
+          "retainedCount": 0,
+          "selectionRule": "final-report.runtimeSurfaces.receiptIDs",
+          "sourceClass": "signed-ledger-reference",
+          "sourcePath": null,
+          "sourceRoot": null,
+          "versionControl": "absent"
+        },
+        {
+          "byteSize": 131237,
+          "canonicalDigest": "0ad26a2e09dad0681b14ed6230241cc8f03d5b693c9dd2b5f221579c05110bea",
+          "category": "previous-source-manifest",
+          "rawDigest": "b6ac3106201cb6c73d04ea53cefe4ffe61789d6a24aed379062b9e182eb2efef",
+          "recoverability": "single-copy",
+          "selectionRule": "comparison.previousManifestId",
+          "sourceClass": "signed-train-export",
+          "sourcePath": "2026-08-09/train-1-fresh-1.0.57-202608090510/source-manifest.json",
+          "sourceRoot": "shadow-trains",
+          "versionControl": "absent"
+        },
+        {
+          "byteSize": 43660,
+          "canonicalDigest": "bf16c47ec47d159e8f9dd5cb6ae2ada7e4a2fe65cf8b8cd542c4c061e4dfa48b",
+          "category": "release-evidence-ledger",
+          "rawDigest": "c9ea1375743420afc024612d68ecb22531785e2a6ba478872fe758117e5f3236",
+          "recoverability": "single-copy",
+          "selectionRule": "lineage.ledger",
+          "sourceClass": "signed-train-export",
+          "sourcePath": "2026-08-10/train-2-final-1.0.60-202608101107/release-evidence-release-enforced.json",
+          "sourceRoot": "shadow-trains",
+          "versionControl": "absent"
+        },
+        {
+          "byteSize": 961409,
+          "canonicalDigest": "8c8d16953fc9401f8c461de6bd4c01b08057e4530e85a4e2d0ccea75770a463d",
+          "category": "release-evidence-lineage",
+          "rawDigest": "231a162c2ce2db85aa8f170d7ac1dcda5398c236b6337f442c13a674462f469a",
+          "recoverability": "single-copy",
+          "selectionRule": "policy.required-ledger",
+          "sourceClass": "signed-train-export",
+          "sourcePath": "2026-08-10/train-2-final-1.0.60-202608101107/release-evidence-release-enforced-lineage.json",
+          "sourceRoot": "shadow-trains",
+          "versionControl": "absent"
+        },
+        {
+          "byteSize": 27717,
+          "canonicalDigest": "f5093e8fac87fb21a7dbf52fc3e7f35aa30cc3a28d447b7bbde98a2dce133339",
+          "category": "visual-approvals",
+          "rawDigest": "c56e96488d6d6d76380df4ece6e0b9ed83f552ed098a44ffce2a22673459f44a",
+          "recoverability": "single-copy",
+          "requirementCount": 18,
+          "selectionRule": "final-report.requirement-and-decision-set",
+          "sourceClass": "signed-train-export",
+          "sourcePath": "2026-08-10/train-2-final-1.0.60-202608101107/visual-reviews-export.json",
+          "sourceRoot": "shadow-trains",
+          "versionControl": "absent"
+        }
+      ],
+      "missing": [],
+      "notAdmissibleFor": [],
+      "previousManifestId": "f83990ea0788c02f63f13a6d484fb0da1f7f6afe3921f92e88d38c5df4f54688",
+      "residualRisks": [
+        {
+          "category": "physical-runtime-receipts",
+          "code": "receipt-bodies-not-retained",
+          "referencedCount": 321,
+          "retainedCount": 0,
+          "unsupportedClaims": [
+            "receipt-body-replay"
+          ]
+        }
+      ],
+      "scope": {
+        "actual-runtime": [
+          "ios.app",
+          "ios.widget",
+          "ipados.app",
+          "ipados.widget",
+          "macos.app",
+          "macos.refresh-agent",
+          "macos.widget",
+          "tvos.app",
+          "tvos.top-shelf",
+          "visionos.app",
+          "visionos.widget",
+          "watchos.app",
+          "watchos.complication"
+        ],
+        "os-composited-placement": [
+          "ios.widget",
+          "ipados.widget",
+          "macos.widget",
+          "tvos.top-shelf",
+          "visionos.widget",
+          "watchos.complication"
+        ],
+        "shared-view": [
+          "ios.app",
+          "ios.widget",
+          "ipados.app",
+          "ipados.widget",
+          "macos.app",
+          "macos.widget",
+          "tvos.app",
+          "tvos.top-shelf",
+          "visionos.app",
+          "visionos.widget",
+          "watchos.app",
+          "watchos.complication"
+        ]
+      },
+      "state": "complete-with-reference-only",
+      "trainClass": "release-enforced",
+      "trainId": "1.0.60-202608101107",
+      "version": "1.0.60"
+    },
+    {
+      "admissibleClaims": [
+        "beta-enforced",
+        "tvos-runtime-slice"
+      ],
+      "buildNumber": "202608270330",
+      "contractFingerprint": "901f88103cf87e909b5e31ac7f68fb06a5f48f31cc61662522bb445304a86828",
+      "currentManifestId": "b570be7f7300dfe8a8fe2fb20f626b553047aff6817fb3262f3cc575f780a82f",
+      "inputs": [
+        {
+          "byteSize": 10913,
+          "canonicalDigest": "e50c0d325e7ace8b4b44022d2a5018f57c2211a879f9cf71197a149d0054ec62",
+          "category": "archived-comparison",
+          "rawDigest": "9e70268add3ec91aebee200afc9fcb689339f4a3d8b531fc6131aaf398112ae1",
+          "recoverability": "fragile",
+          "selectionRule": "ledger.comparisonDigest",
+          "sourceClass": "local-code-root",
+          "sourcePath": "validation-1.0.61-202608270330/comparison-beta.json",
+          "sourceRoot": "code-evidence",
+          "versionControl": "absent"
+        },
+        {
+          "byteSize": 6575,
+          "canonicalDigest": "67c699f49968b9ad662fc04a9af015dae39d0961d03fed5209555546c4d7de36",
+          "category": "coordinator-final-report",
+          "rawDigest": "1efa8f4ca56e6742f8328071d57b4c744d9a6ed974db065d536e8bf93f3d018c",
+          "recoverability": "fragile",
+          "selectionRule": "ledger.validationReportDigest",
+          "sourceClass": "local-code-root",
+          "sourcePath": "validation-1.0.61-202608270330/final-report-beta-tvos.json",
+          "sourceRoot": "code-evidence",
+          "versionControl": "absent"
+        },
+        {
+          "byteSize": 131536,
+          "canonicalDigest": "367b99b5b7b5a4e5002283def2f53cd52d56280a8aa50bb321afc0ccec287041",
+          "category": "current-source-manifest",
+          "rawDigest": "bf33744a1ee8052c2936636c3bc209293ac464ab9b399ad9292eadb1845d00af",
+          "recoverability": "fragile",
+          "selectionRule": "comparison.currentManifestId",
+          "sourceClass": "local-code-root",
+          "sourcePath": "validation-1.0.61-202608270330/source-manifest.json",
+          "sourceRoot": "code-evidence",
+          "versionControl": "absent"
+        },
+        {
+          "byteSize": 19263,
+          "canonicalDigest": "f6c1f606011ff3c7a4a17b18fdde5fefd86765fea3b406bd8a7bc65a97d6cade",
+          "category": "expected-build-manifests",
+          "memberCount": 4,
+          "rawDigest": "a55171eb4baf1cb160f3901684bba5709e3affa24d18451560906d02e7c3143e",
+          "recoverability": "fragile",
+          "selectionRule": "lineage.generation.expectedBuildManifests",
+          "sourceClass": "local-code-root",
+          "sourcePath": "validation-1.0.61-202608270330",
+          "sourceRoot": "code-evidence",
+          "versionControl": "absent"
+        },
+        {
+          "byteSize": 13141,
+          "canonicalDigest": "81e8dbda986bb99f72619b12e7459bd4e5ce49f1346aef4d6750ef616c959f66",
+          "category": "physical-runtime-receipts",
+          "rawDigest": "9f12bca791e4f1f418aa6adc1d51f84c7d04a32dbf59f28093059d3a9afe570d",
+          "recoverability": "fragile",
+          "referencedCount": 9,
+          "retainedCount": 8,
+          "selectionRule": "final-report.runtimeSurfaces.receiptIDs",
+          "sourceClass": "local-code-root",
+          "sourcePath": "validation-1.0.61-202608270330",
+          "sourceRoot": "code-evidence",
+          "versionControl": "absent"
+        },
+        {
+          "byteSize": 131536,
+          "canonicalDigest": "fa13cd4f6f9000b6a640d9506c6e719352f759edc3dd5cca06f02d22ed1a885a",
+          "category": "previous-source-manifest",
+          "rawDigest": "1d768c7ff6e5f4fe7bc1ed8c514a387fe8972e1164a0c2b0e5c3f5f6a4edba3d",
+          "recoverability": "fragile",
+          "selectionRule": "comparison.previousManifestId",
+          "sourceClass": "local-build-root",
+          "sourcePath": "1.0.61-202608252337/source-manifest.json",
+          "sourceRoot": "build-release-evidence",
+          "versionControl": "absent"
+        },
+        {
+          "byteSize": 11869,
+          "canonicalDigest": "92f7d53746682aa8b2a7ec22f66bc482b17ca524b95b2795bdf04277434f4403",
+          "category": "release-evidence-ledger",
+          "rawDigest": "f7a73f0ad443a35ee7b007ea2accd95d5ee6b08a6e4c25917d026e4d48e33ab8",
+          "recoverability": "fragile",
+          "selectionRule": "lineage.ledger",
+          "sourceClass": "local-code-root",
+          "sourcePath": "validation-1.0.61-202608270330/release-evidence-beta-enforced.json",
+          "sourceRoot": "code-evidence",
+          "versionControl": "absent"
+        },
+        {
+          "byteSize": 1913866,
+          "canonicalDigest": "085908a06e3b6bb61fc7b29bb1658e4156e169377cc1b9b3d20efeb65f78688f",
+          "category": "release-evidence-lineage",
+          "rawDigest": "f04a92e49f7d651f804573c573854f4aee452f247fd4958fdaf1ae3748e712d5",
+          "recoverability": "fragile",
+          "selectionRule": "policy.required-ledger",
+          "sourceClass": "local-code-root",
+          "sourcePath": "validation-1.0.61-202608270330/release-evidence-beta-enforced-lineage.json",
+          "sourceRoot": "code-evidence",
+          "versionControl": "absent"
+        },
+        {
+          "byteSize": 2123,
+          "canonicalDigest": "6119a180ae3a20e49e5bc4e9711cefad82604cde7775f7c60dd040c474378664",
+          "category": "visual-approvals",
+          "rawDigest": "6119a180ae3a20e49e5bc4e9711cefad82604cde7775f7c60dd040c474378664",
+          "recoverability": "fragile",
+          "requirementCount": 2,
+          "selectionRule": "final-report.visualApprovals",
+          "sourceClass": "signed-report-embedded",
+          "sourcePath": "validation-1.0.61-202608270330/final-report-beta-tvos.json",
+          "sourceRoot": "code-evidence",
+          "versionControl": "absent"
+        }
+      ],
+      "missing": [],
+      "notAdmissibleFor": [
+        "rc-qualification",
+        "release-qualification"
+      ],
+      "previousManifestId": "10cb85081ac8be881a9ebf9690870bb5ee9e5566c79f3d4b07ea0aee80cc5bd5",
+      "residualRisks": [
+        {
+          "category": "physical-runtime-receipts",
+          "code": "receipt-bodies-not-retained",
+          "referencedCount": 9,
+          "retainedCount": 8,
+          "unsupportedClaims": [
+            "receipt-body-replay"
+          ]
+        }
+      ],
+      "scope": {
+        "actual-runtime": [
+          "tvos.app",
+          "tvos.top-shelf"
+        ],
+        "os-composited-placement": [
+          "tvos.top-shelf"
+        ],
+        "shared-view": [
+          "ios.app",
+          "ios.widget",
+          "ipados.app",
+          "ipados.widget",
+          "macos.app",
+          "macos.widget",
+          "tvos.app",
+          "tvos.top-shelf",
+          "visionos.app",
+          "visionos.widget",
+          "watchos.app",
+          "watchos.complication"
+        ]
+      },
+      "state": "complete-with-reference-only",
+      "trainClass": "beta-enforced-tvos-slice",
+      "trainId": "1.0.61-202608270330",
+      "version": "1.0.61"
+    }
+  ]
+}
