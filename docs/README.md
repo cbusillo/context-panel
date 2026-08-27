@@ -12,5 +12,6 @@
 - [Signed Validation Runtime Receipts](signed-validation-runtime-receipts.md)
 - [Signed Validation Operator Flow](signed-validation-operator-flow.md)
 - [Signed Validation Galleries](signed-validation-galleries.md)
+- [Signed Validation Replay Inventory](signed-validation-replay-inventory.md)
 - [Repository Settings](repo-settings.md)
 - [Test Lanes](test-lanes.md)

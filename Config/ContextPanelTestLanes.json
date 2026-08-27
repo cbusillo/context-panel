@@ -46,6 +46,7 @@
     "fast-local-python": [
       "Tests/ScriptsTests/test_runtime_receipts.py",
       "Tests/ScriptsTests/test_runtime_session.py",
+      "Tests/ScriptsTests/test_replay_inventory.py",
       "Tests/ScriptsTests/test_surface_manifest.py",
       "Tests/ScriptsTests/test_test_lanes.py",
       "Tests/ScriptsTests/test_validation_gallery_target_graph.py"
