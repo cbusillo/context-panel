@@ -733,6 +733,7 @@ private struct TVHeaderView: View {
 private struct TVProviderOverviewGrid: View {
     private static let cardSpacing: CGFloat = 30
     private static let focusHorizontalInset: CGFloat = 32
+    private static let focusVerticalInset: CGFloat = 28
     private static let maximumCardWidth: CGFloat = 560
 
     let sections: [TVProviderRunwaySection]
@@ -760,7 +761,6 @@ private struct TVProviderOverviewGrid: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.vertical, 28)
         }
         .frame(height: 520)
     }
@@ -772,6 +772,7 @@ private struct TVProviderOverviewGrid: View {
             NavigationLink(value: section.provider.rawValue) {
                 overviewCard(for: section, cardWidth: cardWidth)
                     .padding(.horizontal, Self.focusHorizontalInset)
+                    .padding(.vertical, Self.focusVerticalInset)
             }
             .buttonStyle(TVFocusButtonStyle())
             .focusEffectDisabled()
@@ -779,6 +780,7 @@ private struct TVProviderOverviewGrid: View {
             Button(action: {}) {
                 overviewCard(for: section, cardWidth: cardWidth)
                     .padding(.horizontal, Self.focusHorizontalInset)
+                    .padding(.vertical, Self.focusVerticalInset)
             }
             .buttonStyle(TVFocusButtonStyle())
             .focusEffectDisabled()

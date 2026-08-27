@@ -273,13 +273,14 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         self.assertNotIn("TVHeaderView(", runway[scroll_start:])
         self.assertNotIn("TVKeepWorkingForecastCard", runway[scroll_start:])
 
-    def test_tv_provider_cards_reserve_horizontal_focus_insets(self):
+    def test_tv_provider_cards_reserve_focus_insets(self):
         tv_app = TV_APP_SOURCE.read_text()
         grid_start = tv_app.index("private struct TVProviderOverviewGrid: View")
         grid_end = tv_app.index("private struct TVProviderOverviewCard: View", grid_start)
         grid = tv_app[grid_start:grid_end]
 
         self.assertIn("private static let focusHorizontalInset: CGFloat = 32", grid)
+        self.assertIn("private static let focusVerticalInset: CGFloat = 28", grid)
         self.assertIn(
             "Self.maximumCardWidth + (Self.focusHorizontalInset * 2)",
             grid,
@@ -293,6 +294,11 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
             grid.count(".padding(.horizontal, Self.focusHorizontalInset)"),
             2,
         )
+        self.assertEqual(
+            grid.count(".padding(.vertical, Self.focusVerticalInset)"),
+            2,
+        )
+        self.assertNotIn(".padding(.vertical, 28)", grid)
         self.assertIn(".strokeBorder(", tv_app)
 
     def test_tv_stale_state_uses_quiet_global_status_and_warm_instruments(self):

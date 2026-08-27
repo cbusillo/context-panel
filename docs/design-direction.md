@@ -222,8 +222,9 @@ without suggesting that selecting a row performs an action.
 - tvOS status headers and pooled forecast cards stay outside focus-driven
   scrolling so selecting runway cards cannot move decision context or controls
   beyond the television safe area.
-- tvOS card controls reserve horizontal focus clearance and draw their rings
-  inside card bounds so both outer provider cards remain fully visible.
+- tvOS card controls reserve horizontal and vertical focus clearance and draw
+  their rings inside card bounds so outer cards and top edges remain fully
+  visible.
 - tvOS global stale states keep the headline neutral, avoid repeating the same
   status on every card, and render saved quantitative bars in a warm neutral.
 - The widget should preserve last-good values through refresh and loading states
