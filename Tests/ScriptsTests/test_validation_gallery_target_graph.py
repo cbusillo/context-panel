@@ -14,6 +14,7 @@ WATCH_WIDGET_SOURCE = REPO_ROOT / "Sources" / "ContextPanelWatchWidget" / "Conte
 TV_APP_SOURCE = REPO_ROOT / "Sources" / "ContextPanelTV" / "ContextPanelTVApp.swift"
 TV_GALLERY_SOURCE = REPO_ROOT / "Sources" / "ContextPanelTV" / "TVValidationGallery.swift"
 TV_PREVIEW_SOURCE = REPO_ROOT / "Sources" / "ContextPanelTV" / "TVPreviewFixtures.swift"
+TV_SYSTEM_SURFACES_SOURCE = REPO_ROOT / "Sources" / "ContextPanelTV" / "TVSystemSurfaces.swift"
 TV_TOP_SHELF_SOURCE = (
     REPO_ROOT / "Sources" / "ContextPanelTVTopShelf" / "ContextPanelTVTopShelfProvider.swift"
 )
@@ -272,6 +273,47 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         self.assertLess(scroll_start, grid_start)
         self.assertNotIn("TVHeaderView(", runway[scroll_start:])
         self.assertNotIn("TVKeepWorkingForecastCard", runway[scroll_start:])
+
+    def test_tv_runway_top_aligns_a_compact_full_width_forecast(self):
+        tv_app = TV_APP_SOURCE.read_text()
+        runway_start = tv_app.index("struct TVRunwayContent: View")
+        forecast_end = tv_app.index("private struct TVSystemSurfacePublication", runway_start)
+        runway = tv_app[runway_start:forecast_end]
+
+        self.assertIn("VStack(alignment: .leading, spacing: 28)", runway)
+        self.assertIn(
+            ".frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)",
+            runway,
+        )
+        self.assertIn("HStack(alignment: .center, spacing: 32)", runway)
+        self.assertIn("Divider()", runway)
+        self.assertIn(".padding(.vertical, 20)", runway)
+        self.assertIn(".frame(maxWidth: .infinity)", runway)
+
+    def test_tv_full_screen_fixture_suppresses_unrelated_system_notices(self):
+        tv_preview = TV_PREVIEW_SOURCE.read_text()
+        tv_system_surfaces = TV_SYSTEM_SURFACES_SOURCE.read_text()
+
+        self.assertIn("static var usesFixture: Bool", tv_preview)
+        self.assertEqual(
+            tv_system_surfaces.count("if preparePreviewFixtureRuntime()"),
+            2,
+        )
+        self.assertIn("guard TVPreviewFixtures.usesFixture else", tv_system_surfaces)
+        self.assertIn("TVPreferenceKeys.cloudKitSubscriptionError", tv_system_surfaces)
+        self.assertIn("TVPreferenceKeys.remoteNotificationRegistrationError", tv_system_surfaces)
+
+    def test_tv_full_screen_fixture_can_select_each_provider_focus_state(self):
+        tv_app = TV_APP_SOURCE.read_text()
+        tv_preview = TV_PREVIEW_SOURCE.read_text()
+
+        self.assertIn("CONTEXT_PANEL_TV_INITIAL_FOCUS_PROVIDER", tv_preview)
+        self.assertIn("@FocusState private var focusedProviderRawValue", tv_app)
+        self.assertEqual(
+            tv_app.count(".focused($focusedProviderRawValue, equals: section.provider.rawValue)"),
+            2,
+        )
+        self.assertIn("TVPreviewFixtures.requestedFocusProviderRawValue", tv_app)
 
     def test_tv_provider_cards_reserve_focus_insets(self):
         tv_app = TV_APP_SOURCE.read_text()

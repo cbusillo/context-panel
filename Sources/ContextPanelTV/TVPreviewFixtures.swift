@@ -3,12 +3,20 @@ import ContextPanelCore
 import Foundation
 
 enum TVPreviewFixtures {
+    static var usesFixture: Bool {
+        ProcessInfo.processInfo.environment["CONTEXT_PANEL_TV_FIXTURE"] != nil
+    }
+
     static var forcesRemoteFailure: Bool {
         ProcessInfo.processInfo.environment["CONTEXT_PANEL_TV_FORCE_REMOTE_FAILURE"] == "1"
     }
 
     static var requestedProviderRawValue: String? {
         ProcessInfo.processInfo.environment["CONTEXT_PANEL_TV_INITIAL_PROVIDER"]
+    }
+
+    static var requestedFocusProviderRawValue: String? {
+        ProcessInfo.processInfo.environment["CONTEXT_PANEL_TV_INITIAL_FOCUS_PROVIDER"]
     }
 
     static var opensValidationGallery: Bool {

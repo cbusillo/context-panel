@@ -136,6 +136,11 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         clearRetiredProviderBadge()
+        #if DEBUG
+        if preparePreviewFixtureRuntime() {
+            return true
+        }
+        #endif
         application.registerForRemoteNotifications()
         registerCloudKitSubscription()
         return true
@@ -143,6 +148,11 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
 
     func applicationDidBecomeActive(_ application: UIApplication) {
         clearRetiredProviderBadge()
+        #if DEBUG
+        if preparePreviewFixtureRuntime() {
+            return
+        }
+        #endif
         application.registerForRemoteNotifications()
         registerCloudKitSubscription()
         synchronizeRuntimeReceipts()
@@ -203,6 +213,15 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
             }
         }
     }
+
+    #if DEBUG
+    private func preparePreviewFixtureRuntime() -> Bool {
+        guard TVPreviewFixtures.usesFixture else { return false }
+        UserDefaults.standard.removeObject(forKey: TVPreferenceKeys.cloudKitSubscriptionError)
+        UserDefaults.standard.removeObject(forKey: TVPreferenceKeys.remoteNotificationRegistrationError)
+        return true
+    }
+    #endif
 
     private static func cloudKitNotificationMetadata(
         _ userInfo: [AnyHashable: Any]
