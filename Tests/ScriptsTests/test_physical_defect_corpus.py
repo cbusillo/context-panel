@@ -96,6 +96,15 @@ class PhysicalDefectCorpusTests(unittest.TestCase):
             self.assertNotIn("positive", incident)
             self.assertNotIn("riskSignals", incident["candidatePolicy"])
 
+    def test_added_patch_lines_keep_source_content_starting_with_plus(self):
+        self.assertEqual(
+            corpus_module._added_patch_lines(
+                "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -0,0 +1 @@\n+++ value\n"
+                "diff --git a/b b/b\n--- a/b\n+++ b/b\n@@ -0,0 +1 @@\n+normal\n"
+            ),
+            ["+++ value", "+normal"],
+        )
+
     def test_matcher_mutations_and_unsupported_paths_are_rejected(self):
         self.assert_invalid(
             lambda source: source["incidents"][0]["candidatePolicy"]["pathMatchers"].__setitem__(
@@ -140,7 +149,7 @@ class PhysicalDefectCorpusTests(unittest.TestCase):
         )
         self.assert_invalid(
             lambda source: source["incidents"][0]["negativeNearMiss"].__setitem__(
-                "commit", "87c2db78a3e680d742ac663fcd3cf7c773bfe380"
+                "commit", SIBLING_COMMIT
             )
         )
 
@@ -167,6 +176,7 @@ class PhysicalDefectCorpusTests(unittest.TestCase):
                 ("diff.algorithm", "histogram"),
                 ("diff.context", "7"),
                 ("diff.indentHeuristic", "false"),
+                ("diff.interHunkContext", "6"),
                 ("diff.noprefix", "true"),
                 ("log.showSignature", "true"),
             ):
@@ -304,7 +314,11 @@ class PhysicalDefectCorpusTests(unittest.TestCase):
         self.assertEqual(list(rejection_stages.values()).count("path-match"), 3)
         self.assertEqual(
             payload["summary"],
-            {"caseCount": 8, "negativeNearMissCount": 4, "positiveCount": 4, "residualRiskCount": 7},
+            {"caseCount": 8, "negativeNearMissCount": 4, "positiveCount": 4, "residualRiskCount": 8},
+        )
+        self.assertIn(
+            "surface-policy-cutoff-drift",
+            {risk["id"] for risk in payload["residualRisks"]},
         )
 
     def test_rejects_private_or_device_specific_corpus_content(self):
@@ -326,7 +340,41 @@ class PhysicalDefectCorpusTests(unittest.TestCase):
             "signing_key=public-value",
             "account_id=public-account",
             "client_id=public-client",
+            "openai_api_key=public-value",
+            "anthropic_api_key=public-value",
+            "google_api_key=public-value",
+            "aws_access_key_id=public-value",
+            "provider_account_id=public-account",
+            "openaiApiKey=public-value",
+            "anthropicApiKey: public-value",
+            "vendorApiKey: public-value",
+            "{\"provider_account_id\":\"public-account\"}",
+            "https://example.com/?openaiApiKey=public-value",
+            "(openaiApiKey=public-value)",
+            "[anthropicApiKey: public-value]",
+            "trace(userDeviceName=studio)",
+            "config[\"openaiApiKey\"] = public-value",
+            "{\"_openai_api_key\":\"public-value\"}",
+            "`openaiApiKey`=public-value",
+            "openai/api/key=public-value",
+            "positive raw receipt=public-value",
+            "user/device/name=public-value",
+            "secret1=public-value",
+            "apiKey1=public-value",
+            "token0: public-value",
+            "tokens[0]: public-value",
+            "openaiSigningKey=public-value",
+            "openaiOrganizationId=public-value",
+            "openaiApiKey" + (" " * 120) + "=public-value",
             "ghp_AAAAAAAAAAAAAAAAAAAAAAAA",
+            "x_ghp_AAAAAAAAAAAAAAAAAAAAAAAA",
+            "_AKIAAAAAAAAAAAAAAAAA",
+            "x_AKIAAAAAAAAAAAAAAAAA",
+            "_AIzaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "_ya29.AAAAAAAAAAAAAAAAAAAAAAAA",
+            "_GOCSPX-AAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "_eyJAAAAAAAA.BBBBBBBB.CCCCCCCC",
+            "github_pat_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
             "sk-proj-AAAAAAAAAAAAAAAAAAAAAAAA",
             "sk-ant-AAAAAAAAAAAAAAAAAAAAAAAA",
             "AKIAAAAAAAAAAAAAAAAA",
@@ -334,6 +382,14 @@ class PhysicalDefectCorpusTests(unittest.TestCase):
             "eyJAAAAAAAA.BBBBBBBB.CCCCCCCC",
             "owner@example.com",
             "acct_AAAAAAAAAAAAAAAAAAAAAAAA",
+            "project_AAAAAAAAAAAAAAAAAAAAAAAA",
+            "ya29.AAAAAAAAAAAAAAAAAAAAAAAA",
+            "GOCSPX-AAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "1//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "4/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "GOCSPX-AAAAAAAAAAAAAAAAAAA-",
+            "1//AAAAAAAAAAAAAAAAAAA-",
+            "4/AAAAAAAAAAAAAAAAAAA-",
             "https://user:password@example.com/public-record",
             "https://user@example.com/public-record",
             "ssh://user:password@example.com/repository",
@@ -365,6 +421,36 @@ class PhysicalDefectCorpusTests(unittest.TestCase):
             with self.subTest(unsafe=unsafe):
                 self.assert_invalid(lambda source: source["incidents"][0].__setitem__("observation", unsafe))
         self.assert_invalid(lambda source: source["incidents"][0].__setitem__("rawReceipt", "body"))
+
+    def test_rejects_qualified_private_fields_and_compiled_payload_values(self):
+        for key in (
+            "openaiApiKey",
+            "awsAccessKeyId",
+            "providerAccountId",
+            "positiveRawReceipt",
+            "negativeReceiptBody",
+            "userDeviceName",
+            "openaiSecretKey",
+            "googleProjectId",
+        ):
+            with self.subTest(key=key), self.assertRaises(CorpusError):
+                corpus_module._public_safe({key: "public-value"})
+        payload = compile_corpus(CORPUS_PATH, SURFACE_POLICY_PATH)
+        for value in (
+            "openai_api_key=public-value",
+            "openaiApiKey=public-value",
+            "{\"provider_account_id\":\"public-account\"}",
+            "github_pat_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "config[\"openaiApiKey\"] = public-value",
+            "GOCSPX-AAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "1//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "`openaiApiKey`=public-value",
+            "positive raw receipt=public-value",
+            "GOCSPX-AAAAAAAAAAAAAAAAAAA-",
+        ):
+            with self.subTest(value=value), self.assertRaises(CorpusError):
+                payload["cases"][0]["observation"] = value
+                corpus_module._public_safe(payload, "compiled physical defect corpus")
 
     def test_allows_public_app_group_identifiers(self):
         source = self.source()

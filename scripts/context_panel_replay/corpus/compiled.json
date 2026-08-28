@@ -373,8 +373,8 @@
       ]
     }
   ],
-  "corpusDigest": "b00acaa61369e931c121d06a69f6fcf1a99396d280f31597b24f56162130452c",
-  "corpusVersion": 5,
+  "corpusDigest": "55e8a646a60d4b1a4f147bb4a30bd5744776c8dadd9c3467cfe3b8eeba97eeff",
+  "corpusVersion": 6,
   "curatedThroughCommit": "a93ab1fb94bb56fe6600ca68810841610d7e5702",
   "gitVersion": "2.55.0",
   "residualRisks": [
@@ -432,11 +432,31 @@
           "path": ".github/workflows/ci.yml"
         }
       ],
-      "consequence": "Corpus validation fails closed when a developer or CI runner does not provide the exact pinned Git compiler version.",
+      "consequence": "The entire commit gate and CI job fail closed when a developer or runner does not provide the exact pinned Git compiler version.",
       "evidenceGap": "Byte-identical historical patch rendering is not claimed across Git versions, including hosted fork runners and upgraded local toolchains.",
       "id": "pinned-git-toolchain-availability",
-      "mitigation": "Keep the required Git version explicit, update it only with reviewed artifact regeneration, and provision matching Git before running the corpus lane.",
+      "mitigation": "Keep the version explicit, update it only with reviewed artifact regeneration, and provision matching Git before any commit-gate or CI run.",
       "riskClass": "toolchain-dependency"
+    },
+    {
+      "affectedSurfaces": [
+        "tvos.app",
+        "tvos.top-shelf",
+        "watchos.app",
+        "watchos.complication"
+      ],
+      "citations": [
+        {
+          "anchor": "\"evidencePolicy\"",
+          "kind": "repository-anchor",
+          "path": "Config/ContextPanelSurfacePolicy.json"
+        }
+      ],
+      "consequence": "Current surface-policy evidence requirements can diverge from the historical policy snapshot used to replay this corpus.",
+      "evidenceGap": "Compilation intentionally resolves surface policy at the curation cutoff and does not claim that the live policy remains semantically identical.",
+      "id": "surface-policy-cutoff-drift",
+      "mitigation": "Compare live evidence classes, capabilities, and change requirements before generalizing corpus results; advance the cutoff and corpus version through reviewed regeneration when semantics change.",
+      "riskClass": "policy-cutoff-drift"
     },
     {
       "affectedSurfaces": [
@@ -523,7 +543,7 @@
     "caseCount": 8,
     "negativeNearMissCount": 4,
     "positiveCount": 4,
-    "residualRiskCount": 7
+    "residualRiskCount": 8
   },
   "surfacePolicyDigest": "b664a2a099223207144f7b75c3be98dff8f552aabf3225db0b3e4534b3eee273"
 }

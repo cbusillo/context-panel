@@ -25,6 +25,7 @@ POSITIVE_CAUSAL_CONFIDENCE = "confirmed-by-public-record"
 RESIDUAL_RISK_CLASSES = {
     "historical-evidence-loss",
     "over-triggered-policy",
+    "policy-cutoff-drift",
     "unrepresented-surface",
     "unsupported-evidence-class",
     "toolchain-dependency",
@@ -55,37 +56,58 @@ PRIVATE_NETWORK_PATTERN = re.compile(
     r")"
 )
 SECRET_PATTERN = re.compile(
-    r"(?i)(?:\b(?:aws[_ -]?secret[_ -]?access[_ -]?key|account[_ -]?id|client[_ -]?id|"
+    r"(?i)(?:(?<![A-Za-z0-9])(?:aws[_ -]?secret[_ -]?access[_ -]?key|"
+    r"(?:aws[_ -]?)?access[_ -]?key(?:[_ -]?id)?|"
+    r"(?:account|client|organization|project|provider[_ -]?account)[_ -]?id|"
     r"(?:access|app|auth|client|consumer|encryption|private|refresh|session|signing)[_ -]?"
     r"(?:key|secret|token)|api[_ -]?key|authorization|credential|password|secret|token|x-api-key)"
     r"\s*[:=]|\b(?:bearer|basic)\s+\S+)"
 )
 STANDALONE_SECRET_PATTERN = re.compile(
-    r"(?:\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bAIza[0-9A-Za-z_-]{30,}\b|"
-    r"\bgh[pousr]_[A-Za-z0-9]{20,}\b|\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}\b|"
-    r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b)"
+    r"(?:(?<![A-Za-z0-9])(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Z0-9])|"
+    r"(?<![A-Za-z0-9])AIza[0-9A-Za-z_-]{30,}(?![A-Za-z0-9_-])|"
+    r"(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{20,}(?![A-Za-z0-9])|"
+    r"(?<![A-Za-z0-9])github_pat_[A-Za-z0-9_]{20,}(?![A-Za-z0-9_])|"
+    r"(?<![A-Za-z0-9])sk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])|"
+    r"(?<![A-Za-z0-9])ya29\.[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])|"
+    r"(?<![A-Za-z0-9])GOCSPX-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])|"
+    r"(?<![A-Za-z0-9])(?:1//|4/)[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])|"
+    r"(?<![A-Za-z0-9])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?![A-Za-z0-9_-]))"
 )
 EMAIL_PATTERN = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
-ACCOUNT_IDENTIFIER_PATTERN = re.compile(r"(?i)\b(?:acct|account|org|user)[_-][A-Za-z0-9]{12,}\b")
+ACCOUNT_IDENTIFIER_PATTERN = re.compile(
+    r"(?i)\b(?:acct|account|org|organization|proj|project|user)[_-][A-Za-z0-9]{12,}\b"
+)
+ASSIGNMENT_SEPARATOR_PATTERN = re.compile(r"[:=]")
 URI_USERINFO_PATTERN = re.compile(
     r"(?i)(?:(?:\b[a-z][a-z0-9+.-]*:)?//[^\s/@]+(?::[^\s/@]*)?@|"
     r"(?<![\w@])[^:\s/@]+:[^@\s/]+@[a-z0-9.-]+(?::\d+)?\b)"
 )
 DEVICE_PATTERN = re.compile(r"(?i)\b(?:device[-_ ]?(?:id|name)|udid|serial(?:[-_ ]?number)?)\b")
-UNSAFE_FIELD_NAMES = {
+UNSAFE_FIELD_SUFFIXES = {
+    "accesskey",
+    "accesskeyid",
     "accountid",
+    "apikey",
     "authorization",
     "clientid",
+    "clientkey",
     "credential",
     "device",
     "deviceid",
     "devicename",
+    "encryptionkey",
+    "organizationid",
     "password",
+    "privatekey",
+    "projectid",
     "rawreceipt",
     "receiptbody",
     "secret",
+    "secretkey",
     "serialnumber",
     "sessionid",
+    "signingkey",
     "token",
     "udid",
 }
@@ -159,11 +181,26 @@ def _relative_path(value: Any, label: str) -> str:
     return value
 
 
+def _unsafe_field_name(value: str) -> bool:
+    normalized = re.sub(r"[^a-z0-9]", "", value.lower())
+    normalized = re.sub(r"\d+$", "", normalized)
+    return any(
+        normalized.endswith(suffix) or normalized.endswith(f"{suffix}s")
+        for suffix in UNSAFE_FIELD_SUFFIXES
+    )
+
+
+def _unsafe_assignment_label(value: str) -> bool:
+    return any(
+        _unsafe_field_name(value[:match.start()])
+        for match in ASSIGNMENT_SEPARATOR_PATTERN.finditer(value)
+    )
+
+
 def _public_safe(value: Any, label: str = "corpus") -> None:
     if isinstance(value, dict):
         for key, item in value.items():
-            normalized = key.lower().replace("_", "").replace("-", "")
-            if normalized in UNSAFE_FIELD_NAMES:
+            if _unsafe_field_name(key):
                 raise CorpusError(f"{label} contains a private field")
             _public_safe(item, f"{label}.{key}")
     elif isinstance(value, list):
@@ -180,6 +217,7 @@ def _public_safe(value: Any, label: str = "corpus") -> None:
             or STANDALONE_SECRET_PATTERN.search(value)
             or EMAIL_PATTERN.search(value)
             or ACCOUNT_IDENTIFIER_PATTERN.search(value)
+            or _unsafe_assignment_label(value)
             or URI_USERINFO_PATTERN.search(value)
             or "-----BEGIN" in value
             or DEVICE_PATTERN.search(value)
@@ -289,6 +327,8 @@ def _git_output(arguments: list[str]) -> str:
             "-c",
             "diff.indentHeuristic=true",
             "-c",
+            "diff.interHunkContext=0",
+            "-c",
             "diff.orderFile=/dev/null",
             "-c",
             "diff.suppressBlankEmpty=false",
@@ -313,6 +353,19 @@ def _git_succeeds(arguments: list[str]) -> bool:
     except CorpusError:
         return False
     return True
+
+
+def _added_patch_lines(patch: str) -> list[str]:
+    added_lines: list[str] = []
+    in_hunk = False
+    for line in patch.splitlines():
+        if line.startswith("diff --git "):
+            in_hunk = False
+        elif line.startswith("@@ "):
+            in_hunk = True
+        elif in_hunk and line.startswith("+"):
+            added_lines.append(line)
+    return added_lines
 
 
 def _commit_change(
@@ -348,9 +401,8 @@ def _commit_change(
         ]
     )
     added_lines_by_path = {
-        path: [
-            line
-            for line in _git_output(
+        path: _added_patch_lines(
+            _git_output(
                 [
                     f"--attr-source={immutable_attr_source}",
                     "diff",
@@ -364,9 +416,8 @@ def _commit_change(
                     "--",
                     path,
                 ]
-            ).splitlines()
-            if line.startswith("+") and not line.startswith("+++")
-        ]
+            )
+        )
         for path in paths
     }
     return {

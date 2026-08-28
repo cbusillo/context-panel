@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "corpusVersion": 5,
+  "corpusVersion": 6,
   "curatedThroughCommit": "a93ab1fb94bb56fe6600ca68810841610d7e5702",
   "gitVersion": "2.55.0",
   "incidents": [
@@ -238,12 +238,23 @@
       ]
     },
     {
+      "id": "surface-policy-cutoff-drift",
+      "riskClass": "policy-cutoff-drift",
+      "affectedSurfaces": ["tvos.app", "tvos.top-shelf", "watchos.app", "watchos.complication"],
+      "consequence": "Current surface-policy evidence requirements can diverge from the historical policy snapshot used to replay this corpus.",
+      "evidenceGap": "Compilation intentionally resolves surface policy at the curation cutoff and does not claim that the live policy remains semantically identical.",
+      "mitigation": "Compare live evidence classes, capabilities, and change requirements before generalizing corpus results; advance the cutoff and corpus version through reviewed regeneration when semantics change.",
+      "citations": [
+        {"kind": "repository-anchor", "path": "Config/ContextPanelSurfacePolicy.json", "anchor": "\"evidencePolicy\""}
+      ]
+    },
+    {
       "id": "pinned-git-toolchain-availability",
       "riskClass": "toolchain-dependency",
       "affectedSurfaces": ["tvos.app", "tvos.top-shelf", "watchos.app", "watchos.complication"],
-      "consequence": "Corpus validation fails closed when a developer or CI runner does not provide the exact pinned Git compiler version.",
+      "consequence": "The entire commit gate and CI job fail closed when a developer or runner does not provide the exact pinned Git compiler version.",
       "evidenceGap": "Byte-identical historical patch rendering is not claimed across Git versions, including hosted fork runners and upgraded local toolchains.",
-      "mitigation": "Keep the required Git version explicit, update it only with reviewed artifact regeneration, and provision matching Git before running the corpus lane.",
+      "mitigation": "Keep the version explicit, update it only with reviewed artifact regeneration, and provision matching Git before any commit-gate or CI run.",
       "citations": [
         {"kind": "repository-anchor", "path": ".github/workflows/ci.yml", "anchor": "macos-26"}
       ]

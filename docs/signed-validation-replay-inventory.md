@@ -184,8 +184,10 @@ downloads the checksum-pinned upstream source archive and builds that exact
 compiler, while every runner reports installed and required versions on a
 mismatch. The compiler uses a scrubbed environment plus explicit diff,
 signature, path-order, and attribute settings. Unsupported, over-triggered,
-and unrepresented coverage remain residual risks rather than invented
-positives.
+unrepresented, and live-policy-drift coverage remain residual risks rather
+than invented positives. Corpus evidence expectations stay bound to the
+curation-cutoff policy; operators must compare live evidence semantics before
+generalizing historical replay results.
 
 Run the deterministic offline check with:
 
