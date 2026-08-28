@@ -140,6 +140,30 @@ are evaluated by the compositor-sensitive surface policy and active regression
 watchlist. The comparison output reports these as explicit conditions rather
 than assuming that a source fingerprint proves OS-owned pixels.
 
+## Runtime Regression Watchlist
+
+`Config/ContextPanelReleaseEvidencePolicy.json` contains the executable runtime
+regression watchlist. It is a release-gate overlay, not a comparison-schema or
+ledger-schema field: active entries can only add `actual-runtime`, or add both
+`actual-runtime` and `os-composited-placement`, to the comparison-derived scope
+for one surface. They can never remove shared-view, runtime, or placement
+evidence already required by the comparison.
+
+An entry is active while `enteredAt <= generatedAt < effectiveExpiresAt`. The
+initial interval is capped at 30 days. At most two ordered extensions may be
+recorded before the prior expiry, and each may add no more than 14 days. At the
+exact expiry boundary the entry is inert. Extensions do not extend the 90-day
+evidence-retention limit, selected-RC expiry, or carry-forward eligibility.
+
+Entries are sorted by `surfaceId`, use bounded public-safe `reason` and
+`exitCriteria` tokens, and may request only evidence supported by that surface.
+There is at most one retained entry per surface. Adding, extending, replacing,
+or removing an entry changes `policyDigest` and intentionally requires fresh
+lineage under the new policy. Expired entries are otherwise exact gate no-ops,
+including when surface capabilities later change. Gate report validation
+recomputes the exact effective scope at the report's original `generatedAt`; a
+broader arbitrary superset is not accepted.
+
 ## Signed Build Manifest
 
 Every shipping Xcode target runs `scripts/stamp-context-panel-build.sh` before

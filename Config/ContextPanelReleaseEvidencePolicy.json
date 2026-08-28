@@ -9,5 +9,11 @@
       "visionos.widget",
       "watchos.complication"
     ]
+  },
+  "runtimeRegressionWatchlist": {
+    "maximumEntryDays": 30,
+    "maximumExtensionDays": 14,
+    "maximumExtensions": 2,
+    "entries": []
   }
 }
