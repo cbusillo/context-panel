@@ -15,7 +15,9 @@ from types import SimpleNamespace
 from unittest import mock
 
 
-PACKAGE_PATH = Path(__file__).resolve().parents[2] / "scripts" / "context_panel_validation"
+SCRIPTS_PATH = Path(__file__).resolve().parents[2] / "scripts"
+sys.path.insert(0, str(SCRIPTS_PATH))
+PACKAGE_PATH = SCRIPTS_PATH / "context_panel_validation"
 SPEC = importlib.util.spec_from_file_location(
     "context_panel_validation",
     PACKAGE_PATH / "__init__.py",

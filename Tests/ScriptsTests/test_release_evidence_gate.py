@@ -171,6 +171,11 @@ def policy(*, patch_sensitive=()):
 
 
 def surface_policy(surface: str, evidence_class: str):
+    selected_evidence = (
+        ["actual-runtime", "os-composited-placement"]
+        if evidence_class == "os-composited-placement"
+        else [evidence_class]
+    )
     return {
         "schemaVersion": 1,
         "evidencePolicy": {
@@ -180,7 +185,7 @@ def surface_policy(surface: str, evidence_class: str):
                 "os-composited-placement",
             ],
             "trainMinimumEvidence": {
-                train: [evidence_class]
+                train: selected_evidence
                 for train in ("beta", "rc", "release")
             },
             "changeRequirements": {
@@ -198,8 +203,9 @@ def surface_policy(surface: str, evidence_class: str):
         "surfaces": [
             {
                 "id": surface_id,
+                "artifactId": surface_id,
                 "evidenceCapabilities": (
-                    [evidence_class] if surface_id == surface else []
+                    selected_evidence if surface_id == surface else []
                 ),
             }
             for surface_id in RUNTIME_SURFACES
@@ -216,14 +222,67 @@ def comparison(
     previous_manifest_id=PREVIOUS_MANIFEST,
     current_manifest_id=MANIFEST,
 ):
+    selected_evidence = (
+        ["actual-runtime", "os-composited-placement"]
+        if evidence_class == "os-composited-placement"
+        else [evidence_class]
+    )
     required = {
         "shared-view": [],
         "actual-runtime": [],
         "os-composited-placement": [],
     }
-    required[evidence_class] = [surface]
+    for selected_class in selected_evidence:
+        required[selected_class] = [surface]
+
+    def changes_for(surface_id: str) -> dict[str, bool]:
+        return {
+            "render": surface_id == surface and evidence_class == "shared-view" and not eligible,
+            "runtime": surface_id == surface and evidence_class == "actual-runtime" and not eligible,
+            "placement": (
+                surface_id == surface
+                and evidence_class == "os-composited-placement"
+                and not eligible
+            ),
+            "contract": False,
+            "exactBuild": evidence_class == "actual-runtime" and not eligible,
+        }
+
+    def reason_codes_for(changes: dict[str, bool]) -> list[str]:
+        reason_codes = [
+            reason_code
+            for change_key, reason_code in (
+                ("render", "render-fingerprint-changed"),
+                ("runtime", "runtime-fingerprint-changed"),
+                ("placement", "placement-fingerprint-changed"),
+                ("contract", "contract-fingerprint-changed"),
+                ("exactBuild", "exact-build-changed"),
+            )
+            if changes[change_key]
+        ]
+        return reason_codes or ["unchanged"]
+
+    def carry_forward_for(surface_id: str) -> dict[str, dict[str, object]]:
+        if surface_id != surface:
+            return {}
+        result: dict[str, dict[str, object]] = {}
+        for selected_class in selected_evidence:
+            is_fresh = not eligible
+            carry_eligible = eligible
+            conditions = (
+                ["matching-host-os", "matching-current-runtime-receipt"]
+                if selected_class == "os-composited-placement" and carry_eligible
+                else []
+            )
+            result[selected_class] = {
+                "eligible": carry_eligible and not is_fresh,
+                "conditions": conditions if not is_fresh else [],
+            }
+        return result
+
     return {
-        "schemaVersion": 1,
+        "kind": "context-panel-surface-comparison",
+        "schemaVersion": 2,
         "train": train,
         "previousManifestId": previous_manifest_id,
         "currentManifestId": current_manifest_id,
@@ -237,54 +296,12 @@ def comparison(
             {
                 "surfaceId": surface_id,
                 "artifactId": surface_id,
-                "reasonCodes": ["unchanged"],
-                "changes": {
-                    "render": (
-                        surface_id == surface
-                        and evidence_class == "shared-view"
-                        and not eligible
-                    ),
-                    "runtime": (
-                        surface_id == surface
-                        and evidence_class == "actual-runtime"
-                        and not eligible
-                    ),
-                    "placement": (
-                        surface_id == surface
-                        and evidence_class == "os-composited-placement"
-                        and not eligible
-                    ),
-                    "contract": False,
-                    "exactBuild": (
-                        evidence_class == "actual-runtime"
-                        and not eligible
-                    ),
-                },
-                "minimumEvidence": [evidence_class] if surface_id == surface else [],
-                "freshEvidence": (
-                    [evidence_class]
-                    if surface_id == surface and not eligible
-                    else []
-                ),
-                "requiredEvidence": [evidence_class] if surface_id == surface else [],
-                "carryForward": (
-                    {
-                        evidence_class: {
-                            "eligible": eligible,
-                            "conditions": (
-                                [
-                                    "matching-host-os",
-                                    "matching-current-runtime-receipt",
-                                ]
-                                if evidence_class == "os-composited-placement"
-                                and eligible
-                                else []
-                            ),
-                        }
-                    }
-                    if surface_id == surface
-                    else {}
-                ),
+                "reasonCodes": reason_codes_for(changes_for(surface_id)),
+                "changes": changes_for(surface_id),
+                "minimumEvidence": selected_evidence if surface_id == surface else [],
+                "freshEvidence": selected_evidence if surface_id == surface and not eligible else [],
+                "requiredEvidence": selected_evidence if surface_id == surface else [],
+                "carryForward": carry_forward_for(surface_id),
             }
             for surface_id in RUNTIME_SURFACES
         ],
@@ -580,6 +597,7 @@ def previous_lineage(
     *,
     host_os=None,
     policy_payload=None,
+    legacy_comparison=False,
 ):
     release_policy = policy_payload or policy()
     comparison_payload = comparison(
@@ -589,6 +607,9 @@ def previous_lineage(
         previous_manifest_id="d" * 64,
         current_manifest_id=PREVIOUS_MANIFEST,
     )
+    if legacy_comparison:
+        comparison_payload.pop("kind")
+        comparison_payload["schemaVersion"] = 1
     validation_report = report(
         surface,
         runtime=evidence_class != "shared-view",
@@ -615,6 +636,7 @@ def previous_lineage(
         surface_policy=surface_policy(surface, evidence_class),
         shadow_evidence=shadow_payload,
         now=NOW,
+        _allow_legacy_comparison=legacy_comparison,
     )
     return build_release_evidence_lineage(
         payload,
@@ -857,24 +879,108 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         surface = "watchos.app"
         comparison_payload = comparison(surface, "shared-view")
         comparison_payload["requiredSurfaces"]["shared-view"] = []
-        with self.assertRaisesRegex(ReleaseEvidenceError, "do not match"):
+        with self.assertRaisesRegex(ReleaseEvidenceError, "surface comparison is invalid"):
             self.evaluate(
                 surface,
                 "shared-view",
                 comparison_payload=comparison_payload,
             )
 
+    def test_release_gate_rejects_legacy_v1_comparison(self):
+        surface = "watchos.app"
+        comparison_payload = comparison(surface, "shared-view")
+        comparison_payload.pop("kind")
+        comparison_payload["schemaVersion"] = 1
+        with self.assertRaisesRegex(ReleaseEvidenceError, "surface comparison is invalid"):
+            self.evaluate(
+                surface,
+                "shared-view",
+                comparison_payload=comparison_payload,
+            )
+
+    def test_signed_lineage_reconstruction_preserves_legacy_v1_comparison_digest(self):
+        surface = "watchos.app"
+        previous = previous_lineage(
+            surface,
+            "shared-view",
+            legacy_comparison=True,
+        )
+        raw_comparison = previous["generation"]["comparison"]
+        self.assertEqual(
+            previous["ledger"]["comparisonDigest"],
+            hashlib.sha256(
+                json.dumps(
+                    raw_comparison,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
+        )
+        payload = self.evaluate(
+            surface,
+            "shared-view",
+            eligible=True,
+            previous_ledger=previous,
+        )
+        self.assertNotIn("previous-ledger", " ".join(payload["blockers"]))
+
     def test_release_rc_requirement_cannot_be_removed(self):
         surface = "watchos.app"
         comparison_payload = comparison(surface, "actual-runtime", train="release")
         comparison_payload.pop("releaseRequiresApprovedRCTarget")
-        with self.assertRaisesRegex(ReleaseEvidenceError, "RC requirement"):
+        with self.assertRaisesRegex(ReleaseEvidenceError, "surface comparison is invalid"):
             self.evaluate(
                 surface,
                 "actual-runtime",
                 train="release",
                 comparison_payload=comparison_payload,
                 validation_report=report(surface, runtime=True),
+            )
+
+    def test_release_rc_requirement_cannot_be_disabled(self):
+        surface = "watchos.app"
+        comparison_payload = comparison(surface, "actual-runtime", train="release")
+        comparison_payload["releaseRequiresApprovedRCTarget"] = False
+        with self.assertRaisesRegex(ReleaseEvidenceError, "release RC requirement"):
+            self.evaluate(
+                surface,
+                "actual-runtime",
+                train="release",
+                comparison_payload=comparison_payload,
+                validation_report=report(surface, runtime=True),
+            )
+
+    def test_comparison_artifact_must_match_policy_and_expected_identity(self):
+        surface = "watchos.app"
+        comparison_payload = comparison(surface, "actual-runtime")
+        target = next(
+            item for item in comparison_payload["surfaces"] if item["surfaceId"] == surface
+        )
+        target["artifactId"] = "wrong-artifact"
+        with self.assertRaisesRegex(ReleaseEvidenceError, "artifact does not match policy"):
+            self.evaluate(
+                surface,
+                "actual-runtime",
+                comparison_payload=comparison_payload,
+                validation_report=report(surface, runtime=True),
+            )
+
+        identities = list(all_identities())
+        index = next(index for index, item in enumerate(identities) if item.surface == surface)
+        original = identities[index]
+        identities[index] = ExpectedSurfaceIdentity(
+            **{**original.__dict__, "artifact_id": "wrong-artifact"}
+        )
+        with self.assertRaisesRegex(ReleaseEvidenceError, "signed-build artifact"):
+            evaluate_release_evidence(
+                train="beta",
+                mode="shadow",
+                comparison=comparison(surface, "actual-runtime"),
+                validation_report=report(surface, runtime=True),
+                identities=tuple(identities),
+                policy=policy(),
+                surface_policy=surface_policy(surface, "actual-runtime"),
+                now=NOW,
             )
 
     def test_carry_forward_does_not_renew_source_expiry(self):

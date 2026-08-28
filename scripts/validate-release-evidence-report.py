@@ -6,6 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
+from context_panel_comparison_schema import ComparisonSchemaError, validate_current_comparison
 from context_panel_release_gate import (
     ReleaseEvidenceError,
     load_json_object,
@@ -67,20 +68,18 @@ def main() -> None:
     try:
         validation_payload = load_json_object(arguments.validation_report, "validation report")
         comparison = load_json_object(arguments.comparison, "surface comparison")
+        validate_current_comparison(comparison)
         policy = load_json_object(arguments.policy, "release evidence policy")
         surface_policy = load_json_object(
             arguments.surface_policy,
             "surface evidence policy",
         )
-        required = comparison.get("requiredSurfaces")
-        if not isinstance(required, dict):
-            raise ReleaseEvidenceError("surface comparison requirements are invalid")
         identities = load_expected_surface_identities(
             arguments.expected_build_manifests,
             Target(arguments.version, arguments.build_number),
             tuple(RUNTIME_SURFACES),
         )
-    except (ReleaseEvidenceError, RuntimeEvidenceError) as error:
+    except (ComparisonSchemaError, ReleaseEvidenceError, RuntimeEvidenceError) as error:
         raise SystemExit(f"release evidence binding is invalid: {error}") from error
     blockers = release_evidence_report_blockers(
         payload,

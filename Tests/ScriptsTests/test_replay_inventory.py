@@ -1,5 +1,7 @@
+import copy
 import importlib
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -13,6 +15,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 inventory_module = importlib.import_module("context_panel_replay.inventory")
+adapter_v1_module = importlib.import_module("context_panel_replay.comparison_adapter_v1")
+adapters_module = importlib.import_module("context_panel_replay.comparison_adapters")
 InventoryError = inventory_module.InventoryError
 canonical_digest = inventory_module.canonical_digest
 canonical_json = inventory_module.canonical_json
@@ -25,6 +29,12 @@ scan_public = inventory_module._scan_public
 hash_parts = inventory_module._hash_parts
 expected_build_identity_digest = inventory_module._expected_build_identity_digest
 expected_surface_identities = inventory_module._expected_surface_identities
+adapt_v1_comparison = adapter_v1_module.adapt_v1_comparison
+adapter_contract_digest = adapter_v1_module.adapter_contract_digest
+adapter_dependency_digest = adapter_v1_module.adapter_dependency_digest
+adapter_implementation_digest = adapter_v1_module.adapter_implementation_digest
+adapt_comparison_for_replay = adapters_module.adapt_comparison_for_replay
+ComparisonAdapterError = adapters_module.ComparisonAdapterError
 
 
 class ReplayInventoryTests(unittest.TestCase):
@@ -258,11 +268,37 @@ class ReplayInventoryTests(unittest.TestCase):
             "train": "rc",
             "previousManifestId": previous["manifestId"],
             "currentManifestId": current["manifestId"],
+            "contractChanged": False,
+            "exactBuildSame": True,
+            "removedSurfaces": [],
             "requiredSurfaces": {
+                "shared-view": ["macos.app"],
                 "actual-runtime": ["macos.app"],
                 "os-composited-placement": [],
-                "shared-view": ["macos.app"],
             },
+            "requiresRuntimeSession": True,
+            "requiresPlacementReview": False,
+            "surfaces": [
+                {
+                    "surfaceId": "macos.app",
+                    "artifactId": "Context Panel.app",
+                    "reasonCodes": ["unchanged"],
+                    "changes": {
+                        "render": False,
+                        "runtime": False,
+                        "placement": False,
+                        "contract": False,
+                        "exactBuild": False,
+                    },
+                    "minimumEvidence": ["shared-view", "actual-runtime"],
+                    "freshEvidence": [],
+                    "requiredEvidence": ["shared-view", "actual-runtime"],
+                    "carryForward": {
+                        "shared-view": {"eligible": True, "conditions": []},
+                    },
+                }
+            ],
+            "releaseRequiresApprovedRCTarget": True,
         }
         required_surfaces = comparison["requiredSurfaces"]
         assert isinstance(required_surfaces, dict)
@@ -435,6 +471,190 @@ class ReplayInventoryTests(unittest.TestCase):
                 {"archive": copied / "archive"},
             )
             self.assertEqual(first_inventory, second_inventory)
+
+    def test_v1_adapter_is_frozen_and_preserves_its_input(self):
+        raw = {
+            "schemaVersion": 1,
+            "train": "beta",
+            "previousManifestId": "a" * 64,
+            "currentManifestId": "b" * 64,
+            "contractChanged": False,
+            "exactBuildSame": True,
+            "removedSurfaces": [],
+            "requiredSurfaces": {
+                "shared-view": ["macos.app"],
+                "actual-runtime": [],
+                "os-composited-placement": [],
+            },
+            "requiresRuntimeSession": False,
+            "requiresPlacementReview": False,
+            "surfaces": [
+                {
+                    "surfaceId": "macos.app",
+                    "artifactId": "Context Panel.app",
+                    "reasonCodes": ["unchanged"],
+                    "changes": {
+                        "render": False,
+                        "runtime": False,
+                        "placement": False,
+                        "contract": False,
+                        "exactBuild": False,
+                    },
+                    "minimumEvidence": ["shared-view"],
+                    "freshEvidence": [],
+                    "requiredEvidence": ["shared-view"],
+                    "carryForward": {
+                        "shared-view": {"eligible": True, "conditions": []},
+                    },
+                }
+            ],
+            "releaseRequiresApprovedRCTarget": True,
+        }
+        original = copy.deepcopy(raw)
+        adapted = adapt_v1_comparison(raw)
+        expected = copy.deepcopy(raw)
+        expected["kind"] = "context-panel-surface-comparison"
+        expected["schemaVersion"] = 2
+        self.assertEqual(adapted, expected)
+        self.assertEqual(raw, original)
+        self.assertEqual(
+            adapter_contract_digest(),
+            "b75a0eb0f30eac298f95c7b267c797427641612f3ae729c6a2e3e08345f2761e",
+        )
+        self.assertEqual(
+            adapter_implementation_digest(),
+            "27a8bd159bdb0763a54ac96a96eeb30dfcd332a821729b22405589b260228b42",
+        )
+        self.assertEqual(
+            adapter_dependency_digest(),
+            "520ad05b6654f9c112d60ceb638b89ff2a0f53c38dde84647a87dcc469db4032",
+        )
+        self.assertEqual(
+            canonical_digest(adapted),
+            "790c22083857109e73190acc4cfd7b905d1fca511f9cb6bd58c04b499b72cffe",
+        )
+        self.assertIs(adapt_comparison_for_replay(adapted), adapted)
+        incomplete_v2 = copy.deepcopy(adapted)
+        incomplete_v2["surfaces"][0]["carryForward"] = {}
+        with self.assertRaisesRegex(ComparisonAdapterError, "current comparison is invalid"):
+            adapt_comparison_for_replay(incomplete_v2)
+        legacy_ordered = copy.deepcopy(original)
+        legacy_ordered["surfaces"][0]["carryForward"] = {
+            "actual-runtime": {"eligible": True, "conditions": []},
+            "shared-view": {"eligible": True, "conditions": []},
+        }
+        adapted_legacy_ordered = adapt_v1_comparison(legacy_ordered)
+        self.assertEqual(
+            list(adapted_legacy_ordered["surfaces"][0]["carryForward"]),
+            ["actual-runtime", "shared-view"],
+        )
+        for unsupported_version in (1.0, 3):
+            unsupported = copy.deepcopy(adapted)
+            unsupported["schemaVersion"] = unsupported_version
+            with self.assertRaisesRegex(ComparisonAdapterError, "schema is unsupported"):
+                adapt_comparison_for_replay(unsupported)
+        operation = adapter_v1_module.ADAPTER_CONTRACT["operation"]
+        adapter_v1_module.ADAPTER_CONTRACT["operation"] = "tampered"
+        try:
+            with self.assertRaisesRegex(
+                adapter_v1_module.ComparisonAdapterV1Error,
+                "contract digest is invalid",
+            ):
+                adapt_v1_comparison(original)
+        finally:
+            adapter_v1_module.ADAPTER_CONTRACT["operation"] = operation
+        validator = adapter_v1_module.comparison_schema.validate_comparison_v2
+        adapter_v1_module.comparison_schema.validate_comparison_v2 = lambda comparison, **_: comparison
+        try:
+            with self.assertRaisesRegex(
+                adapter_v1_module.ComparisonAdapterV1Error,
+                "dependency digest is invalid",
+            ):
+                adapt_v1_comparison(original)
+        finally:
+            adapter_v1_module.comparison_schema.validate_comparison_v2 = validator
+        constant_mutations = (
+            ("COMPARISON_KIND", "tampered-kind"),
+            ("CURRENT_COMPARISON_SCHEMA_VERSION", 3),
+            ("EVIDENCE_CLASSES", (*adapter_v1_module.comparison_schema.EVIDENCE_CLASSES, "tampered")),
+            ("TRAIN_NAMES", (*adapter_v1_module.comparison_schema.TRAIN_NAMES, "tampered")),
+            ("ROOT_KEYS", adapter_v1_module.comparison_schema.ROOT_KEYS | {"tampered"}),
+            ("SURFACE_KEYS", adapter_v1_module.comparison_schema.SURFACE_KEYS | {"tampered"}),
+            ("CHANGE_KEYS", adapter_v1_module.comparison_schema.CHANGE_KEYS | {"tampered"}),
+            ("CARRY_RULE_KEYS", adapter_v1_module.comparison_schema.CARRY_RULE_KEYS | {"tampered"}),
+            ("REASON_CODES", (*adapter_v1_module.comparison_schema.REASON_CODES, "tampered")),
+            (
+                "PLACEMENT_CARRY_CONDITIONS",
+                (*adapter_v1_module.comparison_schema.PLACEMENT_CARRY_CONDITIONS, "tampered"),
+            ),
+            ("SHA256_PATTERN", re.compile(r"^[0-9a-f]{63}$")),
+            (
+                "SHA256_PATTERN",
+                re.compile(
+                    adapter_v1_module.comparison_schema.SHA256_PATTERN.pattern,
+                    re.IGNORECASE,
+                ),
+            ),
+        )
+        for name, mutated in constant_mutations:
+            original_constant = getattr(adapter_v1_module.comparison_schema, name)
+            setattr(adapter_v1_module.comparison_schema, name, mutated)
+            try:
+                self.assertNotEqual(
+                    adapter_dependency_digest(),
+                    adapter_v1_module.ADAPTER_DEPENDENCY_DIGEST,
+                    name,
+                )
+            finally:
+                setattr(adapter_v1_module.comparison_schema, name, original_constant)
+        helper_replacements = (
+            "_error",
+            "_is_sha256",
+            "_canonical_subset",
+            "_expected_reason_codes",
+            "validate_comparison_v2",
+            "validate_legacy_v1_comparison_for_reconstruction",
+        )
+        for name in helper_replacements:
+            original_helper = getattr(adapter_v1_module.comparison_schema, name)
+            setattr(
+                adapter_v1_module.comparison_schema,
+                name,
+                adapter_v1_module.comparison_schema.validate_current_comparison,
+            )
+            try:
+                self.assertNotEqual(
+                    adapter_dependency_digest(),
+                    adapter_v1_module.ADAPTER_DEPENDENCY_DIGEST,
+                    name,
+                )
+            finally:
+                setattr(adapter_v1_module.comparison_schema, name, original_helper)
+        original_error = adapter_v1_module.comparison_schema.ComparisonSchemaError
+        adapter_v1_module.comparison_schema.ComparisonSchemaError = (
+            adapter_v1_module.ComparisonAdapterV1Error
+        )
+        try:
+            self.assertNotEqual(
+                adapter_dependency_digest(),
+                adapter_v1_module.ADAPTER_DEPENDENCY_DIGEST,
+            )
+        finally:
+            adapter_v1_module.comparison_schema.ComparisonSchemaError = original_error
+        raw["unexpected"] = True
+        with self.assertRaises(ComparisonAdapterError):
+            adapt_comparison_for_replay(raw)
+
+    def test_replay_verifies_raw_lineage_before_adapter_conversion(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            policy, roots = self.fixture(root)
+            comparison_path = root / "archive/train/comparison.json"
+            comparison = json.loads(comparison_path.read_text())
+            comparison["unexpected"] = True
+            self.write_json(comparison_path, comparison)
+            with self.assertRaisesRegex(InventoryError, "lineage generation inputs diverge"):
+                seal_inventory(policy, roots)
 
     def test_missing_required_file_fails_closed(self):
         with tempfile.TemporaryDirectory() as temporary:
