@@ -11,6 +11,12 @@ import tempfile
 from typing import Any
 import uuid
 
+from context_panel_comparison_schema import (
+    ComparisonSchemaError,
+    EVIDENCE_CLASSES,
+    validate_current_comparison,
+)
+
 from .models import EXIT_BLOCKED, EXIT_OK, EXIT_UNKNOWN, Target, ValidationReport
 from .runtime_evidence import (
     ExpectedSurfaceIdentity,
@@ -37,25 +43,6 @@ MAXIMUM_DECISION_COUNT = 512
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 REQUIREMENT_ID_PATTERN = re.compile(r"^[a-z0-9]+(?:[.-][a-z0-9]+)*$")
 CONTEXT_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._:/()+-]{0,95}$")
-COMPARISON_KEYS = {
-    "schemaVersion",
-    "train",
-    "previousManifestId",
-    "currentManifestId",
-    "contractChanged",
-    "exactBuildSame",
-    "removedSurfaces",
-    "requiredSurfaces",
-    "requiresRuntimeSession",
-    "requiresPlacementReview",
-    "surfaces",
-    "releaseRequiresApprovedRCTarget",
-}
-REQUIRED_SURFACE_CLASSES = {
-    "shared-view",
-    "actual-runtime",
-    "os-composited-placement",
-}
 SURFACE_DEVICES = {
     "macos": "Mac",
     "ios": "iPhone",
@@ -112,15 +99,6 @@ def _validated_requirement_id(value: object) -> str:
     ):
         raise VisualApprovalError("visual review requirement identifier is invalid")
     return value
-
-
-def _normalized_string_list(value: object, allowed: set[str] | None = None) -> tuple[str, ...]:
-    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
-        raise VisualApprovalError("visual review surface requirements are invalid")
-    normalized = tuple(sorted(set(value)))
-    if len(normalized) != len(value) or (allowed is not None and any(item not in allowed for item in normalized)):
-        raise VisualApprovalError("visual review surface requirements are invalid")
-    return normalized
 
 
 @dataclass(frozen=True)
@@ -512,70 +490,43 @@ def load_visual_review_plan(
     identities: tuple[ExpectedSurfaceIdentity, ...],
 ) -> tuple[tuple[str, ...], tuple[VisualReviewRequirement, ...], str]:
     comparison = _load_json_object(comparison_path, "surface comparison")
-    if set(comparison) != COMPARISON_KEYS or comparison.get("schemaVersion") != 1:
-        raise VisualApprovalError("surface comparison is invalid")
+    try:
+        validate_current_comparison(comparison)
+    except ComparisonSchemaError as error:
+        raise VisualApprovalError("surface comparison is invalid") from error
     current_manifest_id = comparison.get("currentManifestId")
     required_surfaces = comparison.get("requiredSurfaces")
-    if (
-        not _is_sha256(current_manifest_id)
-        or not isinstance(required_surfaces, dict)
-        or set(required_surfaces) != REQUIRED_SURFACE_CLASSES
-    ):
+    if not _is_sha256(current_manifest_id) or not isinstance(required_surfaces, dict):
         raise VisualApprovalError("surface comparison is invalid")
     identity_by_surface = {item.surface: item for item in identities}
     if not identity_by_surface or any(item.manifest_id != current_manifest_id for item in identities):
         raise VisualApprovalError("visual review build identity does not match the surface comparison")
     allowed_surfaces = set(identity_by_surface)
     full_required_by_class = {
-        evidence_class: _normalized_string_list(
-            required_surfaces[evidence_class],
-            allowed_surfaces,
-        )
-        for evidence_class in REQUIRED_SURFACE_CLASSES
+        evidence_class: tuple(required_surfaces[evidence_class])
+        for evidence_class in EVIDENCE_CLASSES
     }
+    if any(
+        surface not in allowed_surfaces
+        for surfaces in full_required_by_class.values()
+        for surface in surfaces
+    ):
+        raise VisualApprovalError("surface comparison requires an unknown build surface")
     comparison_surfaces = comparison.get("surfaces")
-    if not isinstance(comparison_surfaces, list):
-        raise VisualApprovalError("surface comparison is invalid")
-    comparison_surface_ids: set[str] = set()
     fresh_by_class = {evidence_class: [] for evidence_class in VISUAL_REVIEW_CLASSES}
     for surface in comparison_surfaces:
-        if not isinstance(surface, dict):
+        surface_id = surface["surfaceId"]
+        if surface_id not in SURFACE_NAMES:
             raise VisualApprovalError("surface comparison is invalid")
-        surface_id = surface.get("surfaceId")
-        fresh_evidence = surface.get("freshEvidence")
-        if (
-            not isinstance(surface_id, str)
-            or surface_id not in SURFACE_NAMES
-            or surface_id in comparison_surface_ids
-        ):
-            raise VisualApprovalError("surface comparison is invalid")
-        normalized_fresh = _normalized_string_list(
-            fresh_evidence,
-            REQUIRED_SURFACE_CLASSES,
-        )
-        comparison_surface_ids.add(surface_id)
-        for evidence_class in normalized_fresh:
+        for evidence_class in surface["freshEvidence"]:
             if surface_id not in full_required_by_class[evidence_class]:
                 raise VisualApprovalError("surface comparison fresh evidence is inconsistent")
             if evidence_class in VISUAL_REVIEW_CLASSES:
                 fresh_by_class[evidence_class].append(surface_id)
-    required_comparison_surfaces = {
-        surface
-        for surfaces in full_required_by_class.values()
-        for surface in surfaces
-    }
-    if not required_comparison_surfaces.issubset(comparison_surface_ids):
-        raise VisualApprovalError("surface comparison is incomplete")
     required_by_class = {
         "actual-runtime": full_required_by_class["actual-runtime"],
-        "shared-view": _normalized_string_list(
-            fresh_by_class["shared-view"],
-            allowed_surfaces,
-        ),
-        "os-composited-placement": _normalized_string_list(
-            fresh_by_class["os-composited-placement"],
-            allowed_surfaces,
-        ),
+        "shared-view": tuple(fresh_by_class["shared-view"]),
+        "os-composited-placement": tuple(fresh_by_class["os-composited-placement"]),
     }
     if bool(full_required_by_class["actual-runtime"]) != comparison.get("requiresRuntimeSession"):
         raise VisualApprovalError("surface comparison runtime requirement is inconsistent")
