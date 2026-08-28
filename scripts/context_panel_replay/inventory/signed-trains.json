@@ -1,9 +1,9 @@
 {
   "algorithm": "sha256",
   "digestDomain": "context-panel.replay-inventory.v1",
-  "inventoryId": "32394f214f05c6718bca77441f06aab67af92e486db0a557d0b75de53e218831",
+  "inventoryId": "a29b5023a2d383bc5dcfc7e572891531dffc7a69e3d43d62e0d1ff3c50f1f371",
   "kind": "context-panel-replay-input-inventory",
-  "policyDigest": "09779005cab033fd2282c8b6eadaceef331c6aff15b52c8aae02d8d8ddb79649",
+  "policyDigest": "d1dcc1daa1e7bcbef4046ec2fec1897371129a5cc4029c84c00a037db607c226",
   "schemaVersion": 1,
   "state": "complete-with-reference-only",
   "summary": {
@@ -426,10 +426,10 @@
           "versionControl": "absent"
         },
         {
-          "byteSize": 13141,
+          "byteSize": 13554,
           "canonicalDigest": "81e8dbda986bb99f72619b12e7459bd4e5ce49f1346aef4d6750ef616c959f66",
           "category": "physical-runtime-receipts",
-          "rawDigest": "9f12bca791e4f1f418aa6adc1d51f84c7d04a32dbf59f28093059d3a9afe570d",
+          "rawDigest": "8be3f52689cae8037c1c91d00185ddfdbb4513253242c2f5df1a10424dad3f77",
           "recoverability": "fragile",
           "referencedCount": 9,
           "retainedCount": 8,

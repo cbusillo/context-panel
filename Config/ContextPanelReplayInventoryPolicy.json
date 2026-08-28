@@ -140,6 +140,7 @@
       "runtimeReceiptDirs": [
         "tvos-validation-container/Runtime Receipts"
       ],
+      "runtimeSessionPath": "tvos-validation-container/runtime-session.json",
       "visualApprovals": {
         "mode": "embedded",
         "pointer": "visualApprovals"
