@@ -16,6 +16,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from context_panel_comparison_schema import ComparisonSchemaError, validate_current_comparison
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, utils
 from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
@@ -1744,14 +1745,12 @@ def validate_release_evidence_report(args: argparse.Namespace) -> None:
         ) from error
     try:
         comparison = load_json_object(Path(comparison_value), "surface comparison")
+        validate_current_comparison(comparison)
         policy = load_json_object(Path(policy_value), "release evidence policy")
         surface_policy = load_json_object(
             Path(surface_policy_value),
             "surface evidence policy",
         )
-        required = comparison.get("requiredSurfaces")
-        if not isinstance(required, dict):
-            raise ReleaseEvidenceError("surface comparison requirements are invalid")
         identities = load_expected_surface_identities(
             [Path(value) for value in manifest_values],
             Target(args.version, args.build_number),
@@ -1789,7 +1788,7 @@ def validate_release_evidence_report(args: argparse.Namespace) -> None:
             if getattr(args, "release_evidence_shadow_evidence", None)
             else None
         )
-    except (ReleaseEvidenceError, RuntimeEvidenceError) as error:
+    except (ComparisonSchemaError, ReleaseEvidenceError, RuntimeEvidenceError) as error:
         raise AppStoreConnectError(f"release evidence binding is invalid: {error}") from error
     blockers = release_evidence_report_blockers(
         payload,

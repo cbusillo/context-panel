@@ -11,6 +11,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from .comparison_adapters import ComparisonAdapterError, adapt_comparison_for_replay
+
 
 POLICY_KIND = "context-panel-replay-inventory-policy"
 INVENTORY_KIND = "context-panel-replay-input-inventory"
@@ -1292,7 +1294,7 @@ def _validate_chain(
     lineage: dict[str, Any],
     expected_builds: list[dict[str, Any]],
     expected_by_surface: dict[str, dict[str, Any]],
-) -> None:
+) -> dict[str, Any]:
     if lineage.get("schemaVersion") != 1 or lineage.get("kind") != LINEAGE_KIND:
         raise InventoryError("release evidence lineage identity is invalid")
     if ledger.get("schemaVersion") != 1 or ledger.get("kind") != LEDGER_KIND:
@@ -1342,6 +1344,10 @@ def _validate_chain(
             or expected_source.get("buildNumber") != train["buildNumber"]
         ):
             raise InventoryError("expected-build manifest target is invalid")
+    try:
+        return adapt_comparison_for_replay(comparison)
+    except ComparisonAdapterError as error:
+        raise InventoryError("retained comparison adapter rejected the comparison") from error
 
 
 def _seal_train(train: dict[str, Any], policy: dict[str, Any], roots: dict[str, Path]) -> dict[str, Any]:
@@ -1389,7 +1395,7 @@ def _seal_train(train: dict[str, Any], policy: dict[str, Any], roots: dict[str, 
         train,
         current,
     )
-    _validate_chain(
+    comparison = _validate_chain(
         train,
         previous,
         current,
@@ -1425,9 +1431,7 @@ def _seal_train(train: dict[str, Any], policy: dict[str, Any], roots: dict[str, 
         values = scope.get(evidence_class)
         if not isinstance(values, list) or any(not isinstance(value, str) or SURFACE_PATTERN.fullmatch(value) is None for value in values):
             raise InventoryError("comparison required surface scope is invalid")
-        if len(values) != len(set(values)):
-            raise InventoryError("comparison required surface scope is invalid")
-        normalized_scope[evidence_class] = sorted(values)
+        normalized_scope[evidence_class] = list(values)
     result = {
         "trainId": train["trainId"],
         "version": train["version"],

@@ -10,15 +10,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+from context_panel_comparison_schema import (
+    ComparisonSchemaError,
+    EVIDENCE_CLASSES,
+    validate_current_comparison,
+)
+
 
 DEFAULT_POLICY_PATH = Path("Config/ContextPanelSurfacePolicy.json")
 BASE_INPUT_CLASSES = ("shared", "render", "runtime")
 INPUT_CLASSES = (*BASE_INPUT_CLASSES, "placement")
-EVIDENCE_CLASSES = (
-    "shared-view",
-    "actual-runtime",
-    "os-composited-placement",
-)
 TRAIN_NAMES = ("beta", "rc", "release")
 CHANGE_KINDS = ("render", "runtime", "placement", "unknown")
 SUPPORTED_PROJECT_KEYS = {"name", "options", "settings", "packages", "targets", "schemes"}
@@ -279,8 +280,7 @@ def validate_evidence_policy(evidence_policy: Any) -> dict[str, Any]:
     if (
         not isinstance(classes, list)
         or any(not isinstance(value, str) for value in classes)
-        or len(classes) != len(set(classes))
-        or set(classes) != set(EVIDENCE_CLASSES)
+        or classes != list(EVIDENCE_CLASSES)
     ):
         raise SurfacePolicyError("surface evidence classes are invalid")
 
@@ -324,7 +324,7 @@ def validate_evidence_policy(evidence_policy: Any) -> dict[str, Any]:
         raise SurfacePolicyError("release evidence policy must require an approved RC target")
     return {
         **evidence_policy,
-        "classes": [str(value) for value in classes],
+        "classes": list(EVIDENCE_CLASSES),
         "trainMinimumEvidence": train_minimums,
         "changeRequirements": change_requirements,
     }
@@ -565,9 +565,9 @@ def resolve_policy(root: Path, policy_path: Path = DEFAULT_POLICY_PATH) -> Resol
             raise SurfacePolicyError(f"surface id is missing or duplicated: {surface_id}")
         surface_ids.add(surface_id)
         surfaces_by_id[surface_id] = surface
-        artifact_id = str(surface.get("artifactId") or "")
-        if not artifact_id:
-            raise SurfacePolicyError(f"surface artifact id is missing: {surface_id}")
+        artifact_id = surface.get("artifactId")
+        if not isinstance(artifact_id, str) or not artifact_id:
+            raise SurfacePolicyError(f"surface artifact id is invalid: {surface_id}")
         artifact_contract = (
             str(surface.get("bundleIdentifier") or ""),
             str(surface.get("projectTarget") or ""),
@@ -1106,7 +1106,7 @@ def compare_manifests(
     if previous.get("schemaVersion") != 1 or current.get("schemaVersion") != 1:
         raise SurfacePolicyError("surface manifest schema is unsupported")
     evidence_policy = validate_evidence_policy(current.get("evidencePolicy"))
-    class_order = [str(value) for value in evidence_policy["classes"]]
+    class_order = list(EVIDENCE_CLASSES)
     train_minimums = evidence_policy["trainMinimumEvidence"]
     if train not in TRAIN_NAMES:
         raise SurfacePolicyError(f"unknown release train: {train}")
@@ -1243,8 +1243,9 @@ def compare_manifests(
         ]
         for evidence_class in class_order
     }
-    return {
-        "schemaVersion": 1,
+    comparison = {
+        "kind": "context-panel-surface-comparison",
+        "schemaVersion": 2,
         "train": train,
         "previousManifestId": previous.get("manifestId"),
         "currentManifestId": current.get("manifestId"),
@@ -1259,6 +1260,10 @@ def compare_manifests(
             evidence_policy.get("releaseRequiresApprovedRCTarget")
         ),
     }
+    try:
+        return validate_current_comparison(comparison)
+    except ComparisonSchemaError as error:
+        raise SurfacePolicyError("generated surface comparison is invalid") from error
 
 
 def validation_summary(resolved: ResolvedPolicy) -> dict[str, Any]:

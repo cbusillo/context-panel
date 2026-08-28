@@ -107,7 +107,8 @@ class VisualApprovalTests(unittest.TestCase):
 
     def write_plan_files(self) -> tuple[Path, Path]:
         comparison = {
-            "schemaVersion": 1,
+            "kind": "context-panel-surface-comparison",
+            "schemaVersion": 2,
             "train": "beta",
             "previousManifestId": "c" * 64,
             "currentManifestId": MANIFEST_ID,
@@ -124,15 +125,49 @@ class VisualApprovalTests(unittest.TestCase):
             "surfaces": [
                 {
                     "surfaceId": "watchos.app",
+                    "artifactId": "watchos.app",
+                    "reasonCodes": ["exact-build-changed"],
+                    "changes": {
+                        "render": False,
+                        "runtime": False,
+                        "placement": False,
+                        "contract": False,
+                        "exactBuild": True,
+                    },
+                    "minimumEvidence": [],
                     "freshEvidence": ["shared-view"],
+                    "requiredEvidence": ["shared-view"],
+                    "carryForward": {
+                        "shared-view": {"eligible": False, "conditions": []},
+                    },
                 },
                 {
                     "surfaceId": "watchos.complication",
+                    "artifactId": "watchos.complication",
+                    "reasonCodes": ["exact-build-changed"],
+                    "changes": {
+                        "render": False,
+                        "runtime": False,
+                        "placement": False,
+                        "contract": False,
+                        "exactBuild": True,
+                    },
+                    "minimumEvidence": [],
                     "freshEvidence": [
                         "shared-view",
                         "actual-runtime",
                         "os-composited-placement",
                     ],
+                    "requiredEvidence": [
+                        "shared-view",
+                        "actual-runtime",
+                        "os-composited-placement",
+                    ],
+                    "carryForward": {
+                        "shared-view": {"eligible": False, "conditions": []},
+                        "actual-runtime": {"eligible": False, "conditions": []},
+                        "os-composited-placement": {"eligible": False, "conditions": []},
+                    },
                 },
             ],
             "releaseRequiresApprovedRCTarget": True,
@@ -231,11 +266,14 @@ class VisualApprovalTests(unittest.TestCase):
         comparison_path, requirements_path = self.write_plan_files()
         comparison = json.loads(comparison_path.read_text())
         comparison["surfaces"][0]["freshEvidence"] = []
+        comparison["surfaces"][0]["requiredEvidence"] = []
+        comparison["surfaces"][0]["carryForward"]["shared-view"]["eligible"] = True
         comparison["surfaces"][1]["freshEvidence"] = [
             "shared-view",
             "actual-runtime",
             "os-composited-placement",
         ]
+        comparison["requiredSurfaces"]["shared-view"] = ["watchos.complication"]
         comparison_path.write_text(json.dumps(comparison))
         requirement_payload = json.loads(requirements_path.read_text())
         requirement_payload["requirements"] = [
@@ -288,11 +326,24 @@ class VisualApprovalTests(unittest.TestCase):
     def test_nonrequired_comparison_surface_does_not_require_an_attached_identity(self) -> None:
         comparison_path, requirements_path = self.write_plan_files()
         comparison = json.loads(comparison_path.read_text())
-        comparison["surfaces"].append(
+        comparison["surfaces"].insert(
+            0,
             {
                 "surfaceId": "macos.app",
+                "artifactId": "macos.app",
+                "reasonCodes": ["exact-build-changed"],
+                "changes": {
+                    "render": False,
+                    "runtime": False,
+                    "placement": False,
+                    "contract": False,
+                    "exactBuild": True,
+                },
+                "minimumEvidence": [],
                 "freshEvidence": [],
-            }
+                "requiredEvidence": [],
+                "carryForward": {},
+            },
         )
         comparison_path.write_text(json.dumps(comparison))
 
@@ -315,7 +366,32 @@ class VisualApprovalTests(unittest.TestCase):
         ]
         comparison_path.write_text(json.dumps(comparison))
 
-        with self.assertRaisesRegex(VisualApprovalError, "surface comparison is incomplete"):
+        with self.assertRaisesRegex(VisualApprovalError, "surface comparison is invalid"):
+            load_visual_review_plan(
+                comparison_path,
+                requirements_path,
+                (self.shared_identity, self.placement_identity),
+            )
+
+    def test_required_surface_without_expected_build_identity_is_rejected(self) -> None:
+        comparison_path, requirements_path = self.write_plan_files()
+        with self.assertRaisesRegex(
+            VisualApprovalError,
+            "unknown build surface",
+        ):
+            load_visual_review_plan(
+                comparison_path,
+                requirements_path,
+                (self.shared_identity,),
+            )
+
+    def test_coordinator_plan_rejects_legacy_v1_comparison(self) -> None:
+        comparison_path, requirements_path = self.write_plan_files()
+        comparison = json.loads(comparison_path.read_text())
+        comparison.pop("kind")
+        comparison["schemaVersion"] = 1
+        comparison_path.write_text(json.dumps(comparison))
+        with self.assertRaisesRegex(VisualApprovalError, "surface comparison is invalid"):
             load_visual_review_plan(
                 comparison_path,
                 requirements_path,
@@ -326,6 +402,8 @@ class VisualApprovalTests(unittest.TestCase):
         comparison_path, requirements_path = self.write_plan_files()
         comparison = json.loads(comparison_path.read_text())
         comparison["surfaces"][0]["freshEvidence"] = []
+        comparison["surfaces"][0]["minimumEvidence"] = ["shared-view"]
+        comparison["surfaces"][0]["carryForward"]["shared-view"]["eligible"] = True
         comparison_path.write_text(json.dumps(comparison))
 
         _, requirements, _ = load_visual_review_plan(
@@ -344,7 +422,7 @@ class VisualApprovalTests(unittest.TestCase):
 
         with self.assertRaisesRegex(
             VisualApprovalError,
-            "visual review surface requirements are invalid",
+            "surface comparison is invalid",
         ):
             load_visual_review_plan(
                 comparison_path,
@@ -356,7 +434,21 @@ class VisualApprovalTests(unittest.TestCase):
         comparison_path, requirements_path = self.write_plan_files()
         comparison = json.loads(comparison_path.read_text())
         comparison["surfaces"][0]["freshEvidence"] = []
+        comparison["surfaces"][0]["requiredEvidence"] = []
+        comparison["surfaces"][0]["carryForward"]["shared-view"]["eligible"] = True
         comparison["surfaces"][1]["freshEvidence"] = ["actual-runtime"]
+        comparison["surfaces"][1]["requiredEvidence"] = ["actual-runtime"]
+        comparison["surfaces"][1]["carryForward"]["shared-view"]["eligible"] = True
+        comparison["surfaces"][1]["carryForward"]["os-composited-placement"] = {
+            "eligible": True,
+            "conditions": ["matching-host-os", "matching-current-runtime-receipt"],
+        }
+        comparison["requiredSurfaces"] = {
+            "shared-view": [],
+            "actual-runtime": ["watchos.complication"],
+            "os-composited-placement": [],
+        }
+        comparison["requiresPlacementReview"] = False
         comparison_path.write_text(json.dumps(comparison))
         requirements = json.loads(requirements_path.read_text())
         requirements["requirements"] = []
@@ -415,7 +507,21 @@ class VisualApprovalTests(unittest.TestCase):
         comparison["surfaces"] = [
             {
                 "surfaceId": "watchos.app",
+                "artifactId": "watchos.app",
+                "reasonCodes": ["exact-build-changed"],
+                "changes": {
+                    "render": False,
+                    "runtime": False,
+                    "placement": False,
+                    "contract": False,
+                    "exactBuild": True,
+                },
+                "minimumEvidence": [],
                 "freshEvidence": ["shared-view"],
+                "requiredEvidence": ["shared-view"],
+                "carryForward": {
+                    "shared-view": {"eligible": False, "conditions": []},
+                },
             }
         ]
         comparison_path.write_text(json.dumps(comparison))

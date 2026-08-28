@@ -91,6 +91,24 @@ The visual approval export for `1.0.60` is selected by the requirement and
 decision set, not by a filename suffix. The retained `-final` export belongs to
 a different reduced plan and must not be treated as authoritative.
 
+## Comparison Schema Compatibility
+
+Production comparison generation, coordinator planning, direct release-gate
+inputs, report validation, and submission accept only schema v2. Retained v1
+comparisons are replay-only: inventory lineage validation verifies the raw
+archived chain before the adapter deep-copies the v1 payload, injects its frozen
+v2 identity, and validates with the pinned reconstruction contract. Release-gate
+lineage reconstruction may validate an embedded signed v1 comparison while
+preserving its raw comparison digest; that exception is unavailable to direct
+production inputs.
+
+The v1 adapter verifies its contract, implementation, and transitive dependency
+digests at runtime. Any source, dependency, or contract behavior change requires
+an explicit adapter version and fixture/digest update; do not route retained
+replay through a future current-schema validator. Its legacy exceptions preserve
+historical carry-forward map insertion order and incomplete maps present in the
+retained v1 corpus; production v2 rejects both forms.
+
 ## Recoverability
 
 Every input has one recoverability class:

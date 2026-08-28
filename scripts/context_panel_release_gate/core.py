@@ -7,6 +7,12 @@ from pathlib import Path
 import re
 from typing import Any
 
+from context_panel_comparison_schema import (
+    ComparisonSchemaError,
+    EVIDENCE_CLASSES,
+    validate_current_comparison,
+    validate_legacy_v1_comparison_for_reconstruction,
+)
 from context_panel_validation.models import Target
 from context_panel_validation.runtime_evidence import (
     ExpectedSurfaceIdentity,
@@ -24,11 +30,6 @@ SHADOW_EVIDENCE_KIND = "context-panel-shadow-comparison"
 MAX_LINEAGE_DEPTH = 8
 TRAINS = {"beta", "rc", "release"}
 MODES = {"shadow", "enforce"}
-EVIDENCE_CLASSES = (
-    "shared-view",
-    "actual-runtime",
-    "os-composited-placement",
-)
 LEDGER_KEYS = {
     "schemaVersion",
     "kind",
@@ -244,21 +245,30 @@ def _validate_surface_policy(
     ):
         raise ReleaseEvidenceError("surface evidence policy is invalid")
     capabilities_by_surface: dict[str, set[str]] = {}
+    artifact_ids_by_surface: dict[str, str] = {}
     for item in surfaces:
         if not isinstance(item, dict) or not isinstance(item.get("id"), str):
             raise ReleaseEvidenceError("surface evidence policy is invalid")
         capabilities = item.get("evidenceCapabilities")
+        artifact_id = item.get("artifactId")
         if (
             item["id"] in capabilities_by_surface
             or item["id"] not in RUNTIME_SURFACES
             or not isinstance(capabilities, list)
+            or not isinstance(artifact_id, str)
+            or not artifact_id
             or any(value not in EVIDENCE_CLASSES for value in capabilities)
         ):
             raise ReleaseEvidenceError("surface evidence policy is invalid")
         capabilities_by_surface[item["id"]] = set(capabilities)
+        artifact_ids_by_surface[item["id"]] = artifact_id
     if set(capabilities_by_surface) != set(RUNTIME_SURFACES):
         raise ReleaseEvidenceError("surface evidence policy is invalid")
     for surface, comparison_surface in comparison_surfaces.items():
+        if comparison_surface.get("artifactId") != artifact_ids_by_surface[surface]:
+            raise ReleaseEvidenceError(
+                f"surface comparison artifact does not match policy for {surface}"
+            )
         capabilities = capabilities_by_surface[surface]
         changes = comparison_surface.get("changes")
         reason_codes = comparison_surface.get("reasonCodes")
@@ -341,97 +351,21 @@ def _validate_comparison(
     comparison: dict[str, Any],
     train: str,
     surface_policy: dict[str, Any] | None = None,
+    allow_legacy_reconstruction: bool = False,
 ) -> dict[str, dict[str, Any]]:
-    if comparison.get("schemaVersion") != 1 or comparison.get("train") != train:
+    try:
+        validated = (
+            validate_legacy_v1_comparison_for_reconstruction(comparison)
+            if allow_legacy_reconstruction and comparison.get("schemaVersion") == 1
+            else validate_current_comparison(comparison)
+        )
+    except ComparisonSchemaError as error:
+        raise ReleaseEvidenceError(f"surface comparison is invalid: {error}") from error
+    if validated["train"] != train:
         raise ReleaseEvidenceError("surface comparison does not match the requested train")
-    if not _is_sha256(comparison.get("previousManifestId")) or not _is_sha256(
-        comparison.get("currentManifestId")
-    ):
-        raise ReleaseEvidenceError("surface comparison manifest identity is invalid")
-    release_requires_rc = comparison.get("releaseRequiresApprovedRCTarget")
-    if (
-        not isinstance(release_requires_rc, bool)
-        or (train == "release" and not release_requires_rc)
-        or not isinstance(comparison.get("contractChanged"), bool)
-        or not isinstance(comparison.get("exactBuildSame"), bool)
-        or not isinstance(comparison.get("requiresRuntimeSession"), bool)
-        or not isinstance(comparison.get("requiresPlacementReview"), bool)
-        or not isinstance(comparison.get("removedSurfaces"), list)
-        or any(not isinstance(value, str) for value in comparison["removedSurfaces"])
-    ):
+    if train == "release" and not validated["releaseRequiresApprovedRCTarget"]:
         raise ReleaseEvidenceError("surface comparison release RC requirement is invalid")
-    surfaces = comparison.get("surfaces")
-    required = comparison.get("requiredSurfaces")
-    if (
-        not isinstance(surfaces, list)
-        or not isinstance(required, dict)
-        or set(required) != set(EVIDENCE_CLASSES)
-    ):
-        raise ReleaseEvidenceError("surface comparison is invalid")
-    surface_map: dict[str, dict[str, Any]] = {}
-    for item in surfaces:
-        if not isinstance(item, dict) or not isinstance(item.get("surfaceId"), str):
-            raise ReleaseEvidenceError("surface comparison contains an invalid surface")
-        surface = item["surfaceId"]
-        if surface in surface_map:
-            raise ReleaseEvidenceError("surface comparison duplicates a surface")
-        carry_forward = item.get("carryForward")
-        required_evidence = item.get("requiredEvidence")
-        if (
-            not isinstance(carry_forward, dict)
-            or not set(carry_forward).issubset(EVIDENCE_CLASSES)
-            or not isinstance(required_evidence, list)
-            or any(value not in EVIDENCE_CLASSES for value in required_evidence)
-            or len(required_evidence) != len(set(required_evidence))
-        ):
-            raise ReleaseEvidenceError("surface comparison evidence is invalid")
-        changes = item.get("changes")
-        if (
-            not isinstance(changes, dict)
-            or changes.get("contract") != comparison["contractChanged"]
-            or changes.get("exactBuild") == comparison["exactBuildSame"]
-        ):
-            raise ReleaseEvidenceError("surface comparison changes are inconsistent")
-        for evidence_class, carry_rule in carry_forward.items():
-            expected_conditions = (
-                ["matching-host-os", "matching-current-runtime-receipt"]
-                if evidence_class == "os-composited-placement"
-                and carry_rule.get("eligible") is True
-                else []
-            )
-            if (
-                not isinstance(carry_rule, dict)
-                or not isinstance(carry_rule.get("eligible"), bool)
-                or not isinstance(carry_rule.get("conditions"), list)
-                or any(not isinstance(value, str) for value in carry_rule["conditions"])
-                or len(carry_rule["conditions"]) != len(set(carry_rule["conditions"]))
-                or carry_rule["conditions"] != expected_conditions
-            ):
-                raise ReleaseEvidenceError(
-                    f"surface comparison carry-forward rule is invalid for {surface}:{evidence_class}"
-                )
-        surface_map[surface] = item
-    for evidence_class in EVIDENCE_CLASSES:
-        values = required[evidence_class]
-        if (
-            not isinstance(values, list)
-            or any(not isinstance(value, str) or value not in surface_map for value in values)
-            or len(values) != len(set(values))
-        ):
-            raise ReleaseEvidenceError("surface comparison requirements are invalid")
-        expected = {
-            surface
-            for surface, item in surface_map.items()
-            if evidence_class in item["requiredEvidence"]
-        }
-        if set(values) != expected:
-            raise ReleaseEvidenceError("surface comparison requirements do not match its surfaces")
-    if (
-        comparison["requiresRuntimeSession"] != bool(required["actual-runtime"])
-        or comparison["requiresPlacementReview"]
-        != bool(required["os-composited-placement"])
-    ):
-        raise ReleaseEvidenceError("surface comparison requirement flags are inconsistent")
+    surface_map = {item["surfaceId"]: item for item in validated["surfaces"]}
     if surface_policy is not None:
         _validate_surface_policy(
             surface_policy,
@@ -1057,6 +991,7 @@ def _verified_lineage_ledger(
         now=generated_at,
         _lineage_depth=lineage_depth + 1,
         _lineage_seen=lineage_seen | {ledger_id},
+        _allow_legacy_comparison=True,
     )
     if reconstructed != ledger:
         raise ReleaseEvidenceError(
@@ -1195,6 +1130,7 @@ def _shadow_state(
                 now=embedded_generated_at,
                 _lineage_depth=lineage_depth + 1,
                 _lineage_seen=lineage_seen | {run["ledgerID"]},
+                _allow_legacy_comparison=True,
             )
             if reconstructed_ledger != embedded_ledger:
                 raise ReleaseEvidenceError(
@@ -1264,6 +1200,7 @@ def evaluate_release_evidence(
     now: datetime | None = None,
     _lineage_depth: int = 0,
     _lineage_seen: frozenset[str] | None = None,
+    _allow_legacy_comparison: bool = False,
 ) -> dict[str, Any]:
     if train not in TRAINS or mode not in MODES:
         raise ReleaseEvidenceError("release evidence train or mode is invalid")
@@ -1271,11 +1208,11 @@ def evaluate_release_evidence(
         raise ReleaseEvidenceError("release evidence exceeds the lineage depth limit")
     lineage_seen = _lineage_seen or frozenset()
     policy = _validate_policy(policy)
-    surface_comparison = _validate_comparison(comparison, train, surface_policy)
-    _validate_surface_policy(
+    surface_comparison = _validate_comparison(
+        comparison,
+        train,
         surface_policy,
-        train=train,
-        comparison_surfaces=surface_comparison,
+        allow_legacy_reconstruction=_allow_legacy_comparison,
     )
     policy_digest = _hash_payload(policy)
     surface_policy_digest = _hash_payload(surface_policy)
@@ -1304,6 +1241,11 @@ def evaluate_release_evidence(
         raise ReleaseEvidenceError("expected signed-build identity does not match the comparison")
     if set(identity_by_surface) != set(RUNTIME_SURFACES):
         raise ReleaseEvidenceError("expected signed-build manifests do not cover every shipping surface")
+    if any(
+        identity_by_surface[surface].artifact_id != comparison_surface["artifactId"]
+        for surface, comparison_surface in surface_comparison.items()
+    ):
+        raise ReleaseEvidenceError("expected signed-build artifact does not match the comparison")
     contract_fingerprints = {item.contract_fingerprint for item in identities}
     if len(contract_fingerprints) != 1:
         raise ReleaseEvidenceError("expected signed-build identities do not share one contract")

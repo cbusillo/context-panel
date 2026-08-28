@@ -441,6 +441,36 @@ class ValidationReportGateTests(unittest.TestCase):
         ):
             submit_app_store_review.validate_release_evidence_report(args)
 
+    def test_release_evidence_preflight_rejects_legacy_comparison_before_consuming_it(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            release_report = root / "release-evidence.json"
+            validation_report = root / "validation.json"
+            comparison = root / "comparison.json"
+            policy = root / "policy.json"
+            surface_policy = root / "surface-policy.json"
+            for path, payload in (
+                (release_report, {}),
+                (validation_report, {}),
+                (comparison, {"schemaVersion": 1}),
+                (policy, {}),
+                (surface_policy, {}),
+            ):
+                path.write_text(json.dumps(payload))
+            args = self.live_args(
+                release_evidence_report=str(release_report),
+                validation_report=str(validation_report),
+                release_evidence_comparison=str(comparison),
+                release_evidence_policy=str(policy),
+                release_evidence_surface_policy=str(surface_policy),
+                release_evidence_expected_build_manifests=[str(root / "missing.json")],
+            )
+            with self.assertRaisesRegex(
+                submit_app_store_review.AppStoreConnectError,
+                "release evidence binding is invalid",
+            ):
+                submit_app_store_review.validate_release_evidence_report(args)
+
 
 class FakeASCClient:
     def __init__(

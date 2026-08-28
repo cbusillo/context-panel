@@ -1,3 +1,5 @@
+import ast
+import copy
 import hashlib
 import importlib
 import json
@@ -17,6 +19,7 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 cli_module = importlib.import_module("context_panel_surface_manifest.cli")
 core_module = importlib.import_module("context_panel_surface_manifest.core")
 artifact_module = importlib.import_module("context_panel_surface_manifest.artifact")
+comparison_schema_module = importlib.import_module("context_panel_comparison_schema")
 
 evidence_template = cli_module.evidence_template
 SurfacePolicyError = core_module.SurfacePolicyError
@@ -27,6 +30,8 @@ generate_manifest = core_module.generate_manifest
 resolve_policy = core_module.resolve_policy
 seal_expected_build = core_module.seal_expected_build
 validation_summary = core_module.validation_summary
+ComparisonSchemaError = comparison_schema_module.ComparisonSchemaError
+validate_current_comparison = comparison_schema_module.validate_current_comparison
 
 
 class SurfaceManifestTests(unittest.TestCase):
@@ -46,6 +51,7 @@ class SurfaceManifestTests(unittest.TestCase):
             "context-panel-surface-manifest.py",
             "stamp-context-panel-build.sh",
             "context-panel-write-expected-build.sh",
+            "context_panel_comparison_schema.py",
         ):
             shutil.copy2(REPO_ROOT / "scripts" / filename, scripts / filename)
         shutil.copytree(
@@ -474,11 +480,29 @@ class SurfaceManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(SurfacePolicyError, "changeRequirements is invalid"):
             compare_manifests(self.baseline, malformed, "release")
 
+        malformed = json.loads(json.dumps(self.baseline))
+        malformed["evidencePolicy"]["classes"].reverse()
+        with self.assertRaisesRegex(SurfacePolicyError, "evidence classes are invalid"):
+            compare_manifests(self.baseline, malformed, "release")
+
     def test_manifest_surface_capabilities_fail_closed(self):
         malformed = json.loads(json.dumps(self.baseline))
         malformed["surfaces"][0].pop("evidenceCapabilities")
         with self.assertRaisesRegex(SurfacePolicyError, "evidence capabilities are invalid"):
             compare_manifests(self.baseline, malformed, "release")
+
+    def test_policy_rejects_nonstring_artifact_identifier_at_producer_boundary(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = self.fixture(temporary_directory)
+            policy_path = root / "Config/ContextPanelSurfacePolicy.json"
+            policy = json.loads(policy_path.read_text())
+            policy["surfaces"][0]["artifactId"] = 42
+            policy_path.write_text(json.dumps(policy))
+            with self.assertRaisesRegex(
+                SurfacePolicyError,
+                "surface artifact id is invalid: macos.app",
+            ):
+                resolve_policy(root)
 
     def test_unsupported_project_top_level_key_fails_closed(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -576,6 +600,244 @@ class SurfaceManifestTests(unittest.TestCase):
         self.assertEqual(comparison["requiredSurfaces"]["actual-runtime"], [])
         self.assertEqual(comparison["requiredSurfaces"]["os-composited-placement"], [])
 
+    def test_comparison_v2_rejects_hand_trimmed_or_noncanonical_payloads(self):
+        comparison = compare_manifests(self.baseline, self.manifest(REPO_ROOT), "beta")
+        self.assertEqual(comparison["kind"], "context-panel-surface-comparison")
+        self.assertEqual(comparison["schemaVersion"], 2)
+        mutations = (
+            lambda value: value.__setitem__("unexpected", True),
+            lambda value: value["surfaces"][0].pop("artifactId"),
+            lambda value: value["surfaces"][0]["changes"].__setitem__("extra", False),
+            lambda value: value["surfaces"][0]["carryForward"].__setitem__("extra", {}),
+            lambda value: value["surfaces"][0]["carryForward"].pop(
+                value["surfaces"][0]["requiredEvidence"][0]
+            ),
+            lambda value: value.__setitem__("surfaces", list(reversed(value["surfaces"]))),
+            lambda value: value["requiredSurfaces"]["shared-view"].reverse(),
+            lambda value: value["requiredSurfaces"]["shared-view"].append(
+                value["requiredSurfaces"]["shared-view"][0]
+            ),
+            lambda value: value.__setitem__("schemaVersion", 2.0),
+            lambda value: value["surfaces"][0]["reasonCodes"].__setitem__(
+                0,
+                "render-fingerprint-changed",
+            ),
+            lambda value: value["surfaces"][0].__setitem__("reasonCodes", ["new-surface"]),
+            lambda value: value["removedSurfaces"].append(value["surfaces"][0]["surfaceId"]),
+            lambda value: value["surfaces"][0].__setitem__(
+                "carryForward",
+                dict(reversed(list(value["surfaces"][0]["carryForward"].items()))),
+            ),
+        )
+        for mutate in mutations:
+            candidate = copy.deepcopy(comparison)
+            mutate(candidate)
+            with self.assertRaises(ComparisonSchemaError):
+                validate_current_comparison(candidate)
+
+    def test_comparison_v2_rejects_inconsistent_fresh_and_placement_evidence(self):
+        comparison = compare_manifests(self.baseline, self.manifest(REPO_ROOT), "beta")
+        fresh_candidate = copy.deepcopy(comparison)
+        fresh_surface = next(
+            surface
+            for surface in fresh_candidate["surfaces"]
+            if "actual-runtime" in surface["carryForward"]
+        )
+        surface_id = fresh_surface["surfaceId"]
+        fresh_surface["freshEvidence"] = ["actual-runtime"]
+        fresh_surface["requiredEvidence"] = ["shared-view", "actual-runtime"]
+        fresh_surface["carryForward"]["actual-runtime"]["eligible"] = True
+        fresh_candidate["requiredSurfaces"]["actual-runtime"] = [surface_id]
+        fresh_candidate["requiresRuntimeSession"] = True
+        with self.assertRaisesRegex(ComparisonSchemaError, "fresh evidence cannot carry forward"):
+            validate_current_comparison(fresh_candidate)
+
+        placement_candidate = copy.deepcopy(comparison)
+        placement_surface = next(
+            surface
+            for surface in placement_candidate["surfaces"]
+            if "os-composited-placement" in surface["carryForward"]
+        )
+        placement_surface["freshEvidence"] = ["os-composited-placement"]
+        placement_surface["requiredEvidence"] = ["shared-view", "os-composited-placement"]
+        placement_surface["carryForward"]["os-composited-placement"] = {
+            "eligible": False,
+            "conditions": [],
+        }
+        placement_candidate["requiredSurfaces"]["os-composited-placement"] = [
+            placement_surface["surfaceId"]
+        ]
+        runtime_surface = next(
+            surface
+            for surface in placement_candidate["surfaces"]
+            if surface["surfaceId"] != placement_surface["surfaceId"]
+            and "actual-runtime" in surface["carryForward"]
+        )
+        runtime_surface["freshEvidence"] = ["actual-runtime"]
+        runtime_surface["requiredEvidence"] = ["shared-view", "actual-runtime"]
+        runtime_surface["carryForward"]["actual-runtime"] = {
+            "eligible": False,
+            "conditions": [],
+        }
+        placement_candidate["requiredSurfaces"]["actual-runtime"] = [
+            runtime_surface["surfaceId"]
+        ]
+        placement_candidate["requiresRuntimeSession"] = True
+        placement_candidate["requiresPlacementReview"] = True
+        with self.assertRaisesRegex(
+            ComparisonSchemaError,
+            "placement evidence requires runtime evidence",
+        ):
+            validate_current_comparison(placement_candidate)
+
+    def test_comparison_v2_derives_carry_forward_eligibility_from_changes(self):
+        def invalid_eligible(comparison, surface_id, evidence_class):
+            candidate = copy.deepcopy(comparison)
+            surface = {item["surfaceId"]: item for item in candidate["surfaces"]}[surface_id]
+            surface["freshEvidence"] = [
+                item for item in surface["freshEvidence"] if item != evidence_class
+            ]
+            surface["requiredEvidence"] = [
+                item
+                for item in ("shared-view", "actual-runtime", "os-composited-placement")
+                if item in surface["minimumEvidence"] or item in surface["freshEvidence"]
+            ]
+            surface["carryForward"][evidence_class]["eligible"] = True
+            if evidence_class == "os-composited-placement":
+                surface["carryForward"][evidence_class]["conditions"] = [
+                    "matching-host-os",
+                    "matching-current-runtime-receipt",
+                ]
+            for required_class in ("shared-view", "actual-runtime", "os-composited-placement"):
+                candidate["requiredSurfaces"][required_class] = [
+                    item["surfaceId"]
+                    for item in candidate["surfaces"]
+                    if required_class in item["requiredEvidence"]
+                ]
+            candidate["requiresRuntimeSession"] = bool(
+                candidate["requiredSurfaces"]["actual-runtime"]
+            )
+            candidate["requiresPlacementReview"] = bool(
+                candidate["requiredSurfaces"]["os-composited-placement"]
+            )
+            return candidate
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = self.fixture(temporary_directory)
+            self.append(root / "Sources/ContextPanelWidgetUI/ContextPanelWidgetViews.swift")
+            render_comparison = compare_manifests(self.baseline, self.manifest(root), "release")
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = self.fixture(temporary_directory)
+            self.append(root / "Sources/ContextPanelCloudKitSync/CompanionCloudKitSyncStore.swift")
+            runtime_comparison = compare_manifests(self.baseline, self.manifest(root), "release")
+        exact_build_comparison = compare_manifests(
+            self.baseline,
+            self.manifest(REPO_ROOT, version="1.0.54", build="2026073002"),
+            "release",
+        )
+        placement_manifest = copy.deepcopy(self.baseline)
+        self.surfaces(placement_manifest)["macos.widget"]["fingerprints"]["placement"] = "f" * 64
+        placement_comparison = compare_manifests(self.baseline, placement_manifest, "beta")
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = self.fixture(temporary_directory)
+            self.append(root / "scripts/context_panel_comparison_schema.py")
+            contract_comparison = compare_manifests(self.baseline, self.manifest(root), "release")
+        previous_without_widget = copy.deepcopy(self.baseline)
+        previous_without_widget["surfaces"] = [
+            surface for surface in previous_without_widget["surfaces"] if surface["id"] != "macos.widget"
+        ]
+        new_surface_comparison = compare_manifests(previous_without_widget, self.baseline, "release")
+
+        candidates = (
+            invalid_eligible(render_comparison, "macos.widget", "shared-view"),
+            invalid_eligible(runtime_comparison, "macos.app", "actual-runtime"),
+            invalid_eligible(exact_build_comparison, "macos.widget", "actual-runtime"),
+            invalid_eligible(placement_comparison, "macos.widget", "os-composited-placement"),
+            invalid_eligible(contract_comparison, "macos.widget", "shared-view"),
+            invalid_eligible(new_surface_comparison, "macos.widget", "shared-view"),
+        )
+        for candidate in candidates:
+            with self.assertRaisesRegex(
+                ComparisonSchemaError,
+                "carry-forward eligibility is inconsistent",
+            ):
+                validate_current_comparison(candidate)
+
+    def test_comparison_schema_is_a_surface_tooling_contract_input(self):
+        self.assertIn("scripts/context_panel_comparison_schema.py", self.baseline["files"])
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = self.fixture(temporary_directory)
+            self.append(root / "scripts/context_panel_comparison_schema.py")
+            changed = self.manifest(root)
+        self.assertNotEqual(
+            self.baseline["contractFingerprint"],
+            changed["contractFingerprint"],
+        )
+
+    def test_production_comparison_imports_cannot_reach_replay(self):
+        scripts_root = REPO_ROOT / "scripts"
+
+        def module_path(module_name: str) -> Path | None:
+            parts = module_name.split(".")
+            module_file = scripts_root.joinpath(*parts).with_suffix(".py")
+            package_file = scripts_root.joinpath(*parts) / "__init__.py"
+            if module_file.is_file():
+                return module_file
+            if package_file.is_file():
+                return package_file
+            return None
+
+        def local_imports(module_name: str, path: Path) -> set[str]:
+            imports: set[str] = set()
+            package_parts = module_name.split(".")
+            if path.name != "__init__.py":
+                package_parts.pop()
+            for node in ast.walk(ast.parse(path.read_text())):
+                if isinstance(node, ast.Import):
+                    imports.update(alias.name for alias in node.names if alias.name.startswith("context_panel_"))
+                elif isinstance(node, ast.ImportFrom):
+                    if node.level:
+                        base = package_parts[: len(package_parts) - node.level + 1]
+                        prefix = ".".join((*base, *(node.module or "").split("."))).strip(".")
+                        if prefix.startswith("context_panel_"):
+                            imports.add(prefix)
+                    elif node.module and node.module.startswith("context_panel_"):
+                        imports.add(node.module)
+            return imports
+
+        pending = [
+            "context_panel_comparison_schema",
+            "context_panel_surface_manifest",
+            "context_panel_surface_manifest.core",
+            "context_panel_surface_manifest.cli",
+            "context_panel_validation",
+            "context_panel_validation.visual_approvals",
+            "context_panel_validation.cli",
+            "context_panel_release_gate",
+            "context_panel_release_gate.core",
+            "context_panel_release_gate.cli",
+        ]
+        entrypoint_paths = (
+            scripts_root / "context-panel-surface-manifest.py",
+            scripts_root / "context-panel-validation.py",
+            scripts_root / "context-panel-release-gate.py",
+            scripts_root / "validate-release-evidence-report.py",
+            scripts_root / "submit-app-store-review.py",
+        )
+        visited: set[str] = set()
+        for path in entrypoint_paths:
+            self.assertTrue(path.is_file(), path)
+            pending.extend(local_imports(path.stem, path))
+        while pending:
+            module_name = pending.pop()
+            if module_name in visited:
+                continue
+            visited.add(module_name)
+            self.assertFalse(module_name.startswith("context_panel_replay"))
+            path = module_path(module_name)
+            self.assertIsNotNone(path, module_name)
+            assert path is not None
+            pending.extend(local_imports(module_name, path) - visited)
     def test_beta_runtime_change_scopes_runtime_session_to_affected_surfaces(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = self.fixture(temporary_directory)
@@ -778,8 +1040,10 @@ class SurfaceManifestTests(unittest.TestCase):
                 (bundle / "Contents/embedded.provisionprofile").write_bytes(
                     f"profile-{artifact_id}".encode("utf-8")
                 )
+                embedded_payload = embedded_manifest(self.baseline)
+                self.assertEqual(embedded_payload["schemaVersion"], 1)
                 (bundle / "Contents/Resources/ContextPanelSurfaceManifest.json").write_text(
-                    json.dumps(embedded_manifest(self.baseline))
+                    json.dumps(embedded_payload)
                 )
 
             entitlements = plistlib.dumps(
