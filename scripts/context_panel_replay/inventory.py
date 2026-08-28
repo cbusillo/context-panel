@@ -21,6 +21,8 @@ VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+$")
 BUILD_PATTERN = re.compile(r"^\d{12}$")
 TOKEN_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.-]{0,95}$")
 SURFACE_PATTERN = re.compile(r"^[a-z0-9]+(?:[.-][a-z0-9]+)*$")
+SURFACE_MANIFEST_ALGORITHM = "sha256"
+SURFACE_DIGEST_DOMAIN = "context-panel-surface/v1"
 UNSAFE_STRING_PATTERNS = (
     re.compile(r"(?:^|\s)(?:/Users/|/Volumes/|/private/|~/|file://)"),
     re.compile(r"\b[A-Z0-9]{10}\.group\."),
@@ -124,6 +126,36 @@ BUILD_KEYS = {
     "contractFingerprint",
 }
 FINGERPRINT_KEYS = {"render", "runtime", "placement", "combined"}
+EXPECTED_MANIFEST_KEYS = {
+    "schemaVersion",
+    "kind",
+    "algorithm",
+    "digestDomain",
+    "sourceManifestId",
+    "contractFingerprint",
+    "layout",
+    "archive",
+    "source",
+    "artifacts",
+    "surfaces",
+    "expectedBuildId",
+}
+EXPECTED_ARTIFACT_KEYS = {
+    "artifactId",
+    "bundleIdentifier",
+    "marketingVersion",
+    "buildNumber",
+    "sourceCommit",
+    "configuration",
+    "xcodeBuild",
+    "treeState",
+    "codeSignatureValid",
+    "executableSha256",
+    "executableUUIDs",
+    "entitlementsSha256",
+    "profileSha256",
+}
+EXPECTED_SURFACE_KEYS = {"id", "artifactId", "bundleIdentifier", "fingerprints"}
 SESSION_KEYS = {
     "schemaVersion",
     "id",
@@ -224,10 +256,10 @@ def raw_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _hash_parts(domain: str, parts: list[str]) -> str:
+def _hash_parts(domain: str, parts: list[bytes | str]) -> str:
     digest = hashlib.sha256()
     for part in [domain, *parts]:
-        encoded = part.encode()
+        encoded = part if isinstance(part, bytes) else part.encode("utf-8")
         digest.update(struct.pack(">Q", len(encoded)))
         digest.update(encoded)
     return digest.hexdigest()
@@ -714,10 +746,10 @@ def _validate_retained_session(
     created_at = _parse_iso8601(session.get("createdAt"))
     expires_at = _parse_iso8601(session.get("expiresAt"))
     enabled_surfaces = session.get("enabledSurfaces")
+    _normalized_uuid(session.get("id"), "session id")
     if (
         set(session) != SESSION_KEYS
         or not _is_schema_version_one(session.get("schemaVersion"))
-        or _normalized_uuid(session.get("id"), "session id") is None
         or created_at is None
         or expires_at is None
         or created_at > expires_at
@@ -751,9 +783,157 @@ def _validate_retained_session(
     )
 
 
+def _normalized_uuid_list(value: Any, label: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or not value:
+        raise InventoryError(f"{label} is invalid")
+    normalized = [_normalized_uuid(item, label).upper() for item in value]
+    canonical = tuple(sorted(set(normalized)))
+    if len(canonical) != len(value):
+        raise InventoryError(f"{label} is invalid")
+    return canonical
+
+
+def _expected_surface_identities(
+    expected_builds: list[dict[str, Any]],
+    train: dict[str, Any],
+    current: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    identities: dict[str, dict[str, Any]] = {}
+    manifest_identity: tuple[str, str] | None = None
+    for expected in expected_builds:
+        if not isinstance(expected, dict) or set(expected) != EXPECTED_MANIFEST_KEYS:
+            raise InventoryError("expected signed build manifest is invalid")
+        digest_domain = expected.get("digestDomain")
+        expected_build_id = expected.get("expectedBuildId")
+        unsigned = {key: value for key, value in expected.items() if key != "expectedBuildId"}
+        if (
+            not _is_schema_version_one(expected.get("schemaVersion"))
+            or expected.get("kind") != "context-panel-expected-signed-build"
+            or expected.get("algorithm") != SURFACE_MANIFEST_ALGORITHM
+            or digest_domain != SURFACE_DIGEST_DOMAIN
+            or _sha256(expected.get("sourceManifestId"), "expected manifest id")
+            != current.get("manifestId")
+            or _sha256(expected.get("contractFingerprint"), "expected contract fingerprint")
+            != current.get("contractFingerprint")
+            or _sha256(expected_build_id, "expected build id")
+            != _hash_parts(
+                f"{digest_domain}/expected-build",
+                [canonical_json(unsigned)],
+            )
+        ):
+            raise InventoryError("expected signed build manifest target is invalid")
+        source = expected.get("source")
+        artifacts_payload = expected.get("artifacts")
+        surfaces_payload = expected.get("surfaces")
+        if (
+            not isinstance(source, dict)
+            or source.get("marketingVersion") != train["version"]
+            or source.get("buildNumber") != train["buildNumber"]
+            or not isinstance(artifacts_payload, list)
+            or not isinstance(surfaces_payload, list)
+        ):
+            raise InventoryError("expected signed build manifest target is invalid")
+        current_manifest_identity = (
+            str(expected["sourceManifestId"]),
+            str(expected["contractFingerprint"]),
+        )
+        if manifest_identity is not None and manifest_identity != current_manifest_identity:
+            raise InventoryError("expected signed build manifests do not share one identity")
+        manifest_identity = current_manifest_identity
+
+        artifacts: dict[str, dict[str, Any]] = {}
+        for artifact in artifacts_payload:
+            if not isinstance(artifact, dict) or set(artifact) != EXPECTED_ARTIFACT_KEYS:
+                raise InventoryError("expected signed build artifact is invalid")
+            artifact_id = artifact.get("artifactId")
+            executable_uuids = _normalized_uuid_list(
+                artifact.get("executableUUIDs"),
+                "expected signed build executable UUIDs",
+            )
+            if (
+                not isinstance(artifact_id, str)
+                or not artifact_id
+                or artifact_id in artifacts
+                or not isinstance(artifact.get("bundleIdentifier"), str)
+                or not artifact.get("bundleIdentifier")
+                or artifact.get("marketingVersion") != train["version"]
+                or artifact.get("buildNumber") != train["buildNumber"]
+                or artifact.get("codeSignatureValid") is not True
+            ):
+                raise InventoryError("expected signed build artifact is invalid")
+            for key in (
+                "executableSha256",
+                "entitlementsSha256",
+                "profileSha256",
+            ):
+                _sha256(artifact.get(key), f"expected signed build {key}")
+            artifacts[artifact_id] = {**artifact, "executableUUIDs": executable_uuids}
+
+        seen_surfaces: set[str] = set()
+        for surface_payload in surfaces_payload:
+            if not isinstance(surface_payload, dict) or set(surface_payload) != EXPECTED_SURFACE_KEYS:
+                raise InventoryError("expected signed build surface is invalid")
+            surface = surface_payload.get("id")
+            if surface not in SURFACE_PLATFORMS or surface in seen_surfaces:
+                raise InventoryError("expected signed build surface is invalid")
+            seen_surfaces.add(str(surface))
+            artifact = artifacts.get(str(surface_payload.get("artifactId")))
+            fingerprints = surface_payload.get("fingerprints")
+            if (
+                artifact is None
+                or surface_payload.get("bundleIdentifier") != artifact.get("bundleIdentifier")
+                or not isinstance(fingerprints, dict)
+                or set(fingerprints) != FINGERPRINT_KEYS
+            ):
+                raise InventoryError("expected signed build surface is invalid")
+            fingerprint_values = {
+                key: _sha256(fingerprints.get(key), f"expected signed build {key} fingerprint")
+                for key in FINGERPRINT_KEYS
+            }
+            identity = {
+                "surface": str(surface),
+                "platform": SURFACE_PLATFORMS[str(surface)],
+                "artifactID": str(surface_payload["artifactId"]),
+                "bundleIdentifier": str(surface_payload["bundleIdentifier"]),
+                "marketingVersion": train["version"],
+                "buildNumber": train["buildNumber"],
+                "manifestID": str(expected["sourceManifestId"]),
+                "contractFingerprint": str(expected["contractFingerprint"]),
+                "fingerprints": fingerprint_values,
+                "executableUUIDs": artifact["executableUUIDs"],
+                "expectedBuildID": str(expected_build_id),
+            }
+            existing = identities.get(str(surface))
+            if existing is not None and existing != identity:
+                raise InventoryError("expected signed build surface identity conflicts")
+            identities[str(surface)] = identity
+    return identities
+
+
+def _expected_build_identity_digest(
+    identities: dict[str, dict[str, Any]],
+) -> str:
+    return canonical_digest(
+        [
+            {
+                "surface": surface,
+                "manifestID": identity["manifestID"],
+                "contractFingerprint": identity["contractFingerprint"],
+                "expectedBuildID": identity["expectedBuildID"],
+                "identityDigest": canonical_digest(identity),
+                "renderFingerprint": identity["fingerprints"]["render"],
+                "runtimeFingerprint": identity["fingerprints"]["runtime"],
+                "placementFingerprint": identity["fingerprints"]["placement"],
+            }
+            for surface, identity in sorted(identities.items())
+        ]
+    )
+
+
 def _validate_retained_receipt(
     payload: dict[str, Any],
     expected_surface: str,
+    expected_identity: dict[str, Any],
     train: dict[str, Any],
     current: dict[str, Any],
     session: dict[str, Any],
@@ -780,8 +960,11 @@ def _validate_retained_receipt(
     platform = _receipt_string(build_identity.get("platform"), "platform")
     if platform != SURFACE_PLATFORMS.get(surface):
         raise InventoryError("runtime receipt platform does not match surface")
-    _receipt_string(build_identity.get("artifactID"), "artifact id")
-    _receipt_string(build_identity.get("bundleIdentifier"), "bundle identifier")
+    artifact_id = _receipt_string(build_identity.get("artifactID"), "artifact id")
+    bundle_identifier = _receipt_string(
+        build_identity.get("bundleIdentifier"),
+        "bundle identifier",
+    )
     if (
         _receipt_string(build.get("marketingVersion"), "marketing version")
         != train["version"]
@@ -810,6 +993,41 @@ def _validate_retained_receipt(
     ]
     if executable_uuid_values != sorted(set(canonical_executable_uuids)):
         raise InventoryError("runtime receipt executable UUIDs are invalid")
+    actual_identity = {
+        "platform": platform,
+        "artifactID": artifact_id,
+        "bundleIdentifier": bundle_identifier,
+        "marketingVersion": str(build["marketingVersion"]),
+        "buildNumber": str(build["buildNumber"]),
+        "manifestID": str(build["manifestID"]),
+        "contractFingerprint": str(build["contractFingerprint"]),
+        "fingerprints": {
+            "render": fingerprint_values[0],
+            "runtime": fingerprint_values[1],
+            "placement": fingerprint_values[2],
+            "combined": fingerprint_values[3],
+        },
+    }
+    expected_values = {
+        key: expected_identity[key]
+        for key in (
+            "platform",
+            "artifactID",
+            "bundleIdentifier",
+            "marketingVersion",
+            "buildNumber",
+            "manifestID",
+            "contractFingerprint",
+            "fingerprints",
+        )
+    }
+    if (
+        actual_identity != expected_values
+        or not set(canonical_executable_uuids).issubset(expected_identity["executableUUIDs"])
+    ):
+        raise InventoryError(
+            "runtime receipt build identity does not match expected signed build surface"
+        )
     session_id = _normalized_uuid(payload.get("sessionID"), "session id")
     process_instance_id = _normalized_uuid(payload.get("processInstanceID"), "process instance id")
     session_created_at = _parse_iso8601(payload.get("sessionCreatedAt"))
@@ -911,6 +1129,7 @@ def _receipt_entry(
     report: dict[str, Any],
     comparison: dict[str, Any],
     current: dict[str, Any],
+    expected_by_surface: dict[str, dict[str, Any]],
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     required = comparison.get("requiredSurfaces")
     actual_runtime = required.get("actual-runtime") if isinstance(required, dict) else None
@@ -920,6 +1139,12 @@ def _receipt_entry(
     ):
         raise InventoryError("comparison actual-runtime scope is invalid")
     referenced = _receipt_ids(report, set(actual_runtime))
+    missing_expected = sorted(set(actual_runtime) - set(expected_by_surface))
+    if missing_expected:
+        raise InventoryError(
+            "expected signed build manifests do not cover required runtime surfaces: "
+            + ", ".join(missing_expected)
+        )
     referenced_ids = set(referenced)
     retained: dict[str, str] = {}
     retained_members: list[dict[str, str]] = []
@@ -939,6 +1164,8 @@ def _receipt_entry(
         )
         total_size += session_path.stat().st_size
     for directory in train["runtimeReceiptDirs"]:
+        if session is None:
+            raise InventoryError("runtime session locator is invalid")
         root_id = train["trainRoot"]
         relative_dir = _train_relative(train["trainPath"], directory)
         root = roots[root_id]
@@ -959,6 +1186,7 @@ def _receipt_entry(
             receipt_id = _validate_retained_receipt(
                 payload,
                 referenced[declared_id],
+                expected_by_surface[referenced[declared_id]],
                 train,
                 current,
                 session,
@@ -1063,6 +1291,7 @@ def _validate_chain(
     ledger: dict[str, Any],
     lineage: dict[str, Any],
     expected_builds: list[dict[str, Any]],
+    expected_by_surface: dict[str, dict[str, Any]],
 ) -> None:
     if lineage.get("schemaVersion") != 1 or lineage.get("kind") != LINEAGE_KIND:
         raise InventoryError("release evidence lineage identity is invalid")
@@ -1085,6 +1314,12 @@ def _validate_chain(
         raise InventoryError("comparison digest does not match the ledger")
     if ledger.get("validationReportDigest") != canonical_digest(report):
         raise InventoryError("validation report digest does not match the ledger")
+    if ledger.get("expectedBuildIdentityDigest") != _expected_build_identity_digest(
+        expected_by_surface
+    ):
+        raise InventoryError(
+            "expected signed build identity digest does not match the ledger"
+        )
     if comparison.get("previousManifestId") != previous.get("manifestId"):
         raise InventoryError("previous source manifest does not match the comparison")
     current_manifest_id = current.get("manifestId")
@@ -1149,7 +1384,22 @@ def _seal_train(train: dict[str, Any], policy: dict[str, Any], roots: dict[str, 
         selection_rule="lineage.generation.expectedBuildManifests",
     )
     entries.append(expected_entry)
-    _validate_chain(train, previous, current, comparison, report, ledger, lineage, expected_builds)
+    expected_by_surface = _expected_surface_identities(
+        expected_builds,
+        train,
+        current,
+    )
+    _validate_chain(
+        train,
+        previous,
+        current,
+        comparison,
+        report,
+        ledger,
+        lineage,
+        expected_builds,
+        expected_by_surface,
+    )
     receipt_entry, receipt_risk = _receipt_entry(
         train,
         roots,
@@ -1157,6 +1407,7 @@ def _seal_train(train: dict[str, Any], policy: dict[str, Any], roots: dict[str, 
         report,
         comparison,
         current,
+        expected_by_surface,
     )
     visual_entry, visual_risk = _visual_entry(train, roots, root_policy, report)
     entries.extend((receipt_entry, visual_entry))
@@ -1302,7 +1553,7 @@ def _validate_entry(
     if not isinstance(entry, dict):
         raise InventoryError("replay input inventory entry is invalid")
     category = entry.get("category")
-    if category not in policy["requiredCategories"]:
+    if not isinstance(category, str) or category not in policy["requiredCategories"]:
         raise InventoryError("replay input inventory category is invalid")
     _exact_keys(entry, _expected_entry_shape(category), f"{category} inventory entry")
     selection_rule = entry.get("selectionRule")

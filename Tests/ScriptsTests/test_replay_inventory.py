@@ -15,6 +15,7 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 inventory_module = importlib.import_module("context_panel_replay.inventory")
 InventoryError = inventory_module.InventoryError
 canonical_digest = inventory_module.canonical_digest
+canonical_json = inventory_module.canonical_json
 check_inventory = inventory_module.check_inventory
 render_json = inventory_module.render_json
 seal_inventory = inventory_module.seal_inventory
@@ -22,6 +23,8 @@ verify_inventory = inventory_module.verify_inventory
 write_inventory = inventory_module.write_inventory
 scan_public = inventory_module._scan_public
 hash_parts = inventory_module._hash_parts
+expected_build_identity_digest = inventory_module._expected_build_identity_digest
+expected_surface_identities = inventory_module._expected_surface_identities
 
 
 class ReplayInventoryTests(unittest.TestCase):
@@ -57,10 +60,13 @@ class ReplayInventoryTests(unittest.TestCase):
         surface: str = "macos.app",
         *,
         platform: str = "macOS",
+        artifact_id: str = "Context Panel.app",
+        bundle_identifier: str = "com.shinycomputers.contextpanel",
         session_expires_at: str = "2026-08-27T12:30:00Z",
         observed_at: str = "2026-08-27T12:05:00Z",
         retention_expires_at: str = "2026-08-28T12:05:00Z",
         executable_uuids: list[str] | None = None,
+        fingerprints: dict[str, str] | None = None,
         manifest_id: str = "b" * 64,
         marketing_version: str = "1.0.1",
         build_number: str = "202608270001",
@@ -72,12 +78,7 @@ class ReplayInventoryTests(unittest.TestCase):
         executable_uuids = executable_uuids or [
             "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
         ]
-        fingerprints = {
-            "render": "1" * 64,
-            "runtime": "2" * 64,
-            "placement": "3" * 64,
-            "combined": "4" * 64,
-        }
+        fingerprints = fingerprints or self.surface_fingerprints()
         build = {
             "marketingVersion": marketing_version,
             "buildNumber": build_number,
@@ -98,8 +99,8 @@ class ReplayInventoryTests(unittest.TestCase):
             "buildIdentity": {
                 "surface": surface,
                 "platform": platform,
-                "artifactID": "Context Panel.app",
-                "bundleIdentifier": "com.shinycomputers.contextpanel",
+                "artifactID": artifact_id,
+                "bundleIdentifier": bundle_identifier,
                 "build": build,
                 "fingerprints": fingerprints,
                 "executableUUIDs": executable_uuids,
@@ -121,8 +122,8 @@ class ReplayInventoryTests(unittest.TestCase):
                 str(self.timestamp_seconds(retention_expires_at)),
                 surface,
                 platform,
-                "Context Panel.app",
-                "com.shinycomputers.contextpanel",
+                artifact_id,
+                bundle_identifier,
                 build["marketingVersion"],
                 build["buildNumber"],
                 build["manifestID"],
@@ -141,6 +142,72 @@ class ReplayInventoryTests(unittest.TestCase):
                 payload["stateBranch"],
                 payload["outcome"],
             ],
+        )
+        return payload
+
+    def surface_fingerprints(self) -> dict[str, str]:
+        return {
+            "render": "1" * 64,
+            "runtime": "2" * 64,
+            "placement": "3" * 64,
+            "combined": "4" * 64,
+        }
+
+    def expected_build_manifest(
+        self,
+        platform: str,
+        current: dict[str, Any],
+    ) -> dict[str, Any]:
+        artifacts: list[dict[str, Any]] = []
+        surfaces: list[dict[str, Any]] = []
+        if platform == "macos":
+            artifacts.append(
+                {
+                    "artifactId": "Context Panel.app",
+                    "bundleIdentifier": "com.shinycomputers.contextpanel",
+                    "marketingVersion": "1.0.1",
+                    "buildNumber": "202608270001",
+                    "sourceCommit": "0" * 40,
+                    "configuration": "Release",
+                    "xcodeBuild": "27A000",
+                    "treeState": "clean",
+                    "codeSignatureValid": True,
+                    "executableSha256": "6" * 64,
+                    "executableUUIDs": [
+                        "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+                        "BBBBBBBB-CCCC-DDDD-EEEE-FFFFFFFFFFFF",
+                    ],
+                    "entitlementsSha256": "7" * 64,
+                    "profileSha256": "8" * 64,
+                }
+            )
+            surfaces.append(
+                {
+                    "id": "macos.app",
+                    "artifactId": "Context Panel.app",
+                    "bundleIdentifier": "com.shinycomputers.contextpanel",
+                    "fingerprints": self.surface_fingerprints(),
+                }
+            )
+        payload = {
+            "schemaVersion": 1,
+            "kind": "context-panel-expected-signed-build",
+            "algorithm": "sha256",
+            "digestDomain": "context-panel-surface/v1",
+            "sourceManifestId": current["manifestId"],
+            "contractFingerprint": current["contractFingerprint"],
+            "layout": f"{platform}-archive",
+            "archive": {"layout": f"{platform}-archive", "name": f"ContextPanel-{platform}.zip"},
+            "source": {
+                "marketingVersion": "1.0.1",
+                "buildNumber": "202608270001",
+            },
+            "artifacts": artifacts,
+            "surfaces": surfaces,
+        }
+        payload["expectedBuildId"] = hash_parts(
+            "context-panel-surface/v1/expected-build",
+            [canonical_json(payload)],
         )
         return payload
 
@@ -197,6 +264,8 @@ class ReplayInventoryTests(unittest.TestCase):
                 "shared-view": ["macos.app"],
             },
         }
+        required_surfaces = comparison["requiredSurfaces"]
+        assert isinstance(required_surfaces, dict)
         receipt = self.receipt_payload()
         receipt_id = receipt["id"]
         visual = {
@@ -224,15 +293,7 @@ class ReplayInventoryTests(unittest.TestCase):
         expected_builds = []
         expected_paths = {}
         for platform in ("ios", "macos", "tvos", "visionos"):
-            payload = {
-                "schemaVersion": 1,
-                "sourceManifestId": current["manifestId"],
-                "expectedBuildId": canonical_digest(platform),
-                "source": {
-                    "marketingVersion": "1.0.1",
-                    "buildNumber": "202608270001",
-                },
-            }
+            payload = self.expected_build_manifest(platform, current)
             relative = f"expected/ExpectedBuildManifest-{platform}.json"
             expected_paths[platform] = relative
             expected_builds.append(payload)
@@ -246,6 +307,13 @@ class ReplayInventoryTests(unittest.TestCase):
             "target": {"version": "1.0.1", "buildNumber": "202608270001"},
             "comparisonDigest": canonical_digest(comparison),
             "validationReportDigest": canonical_digest(report),
+            "expectedBuildIdentityDigest": expected_build_identity_digest(
+                expected_surface_identities(
+                    expected_builds,
+                    {"version": "1.0.1", "buildNumber": "202608270001"},
+                    current,
+                )
+            ),
         }
         ledger["ledgerID"] = canonical_digest(ledger)
         lineage = {
@@ -344,7 +412,7 @@ class ReplayInventoryTests(unittest.TestCase):
                             "contractFingerprint": current["contractFingerprint"],
                             "scope": {
                                 key: sorted(value)
-                                for key, value in comparison["requiredSurfaces"].items()
+                                for key, value in required_surfaces.items()
                             },
                         }
                     ),
@@ -384,7 +452,10 @@ class ReplayInventoryTests(unittest.TestCase):
             current = json.loads(current_path.read_text())
             current["manifestId"] = "f" * 64
             self.write_json(current_path, current)
-            with self.assertRaisesRegex(InventoryError, "current source manifest"):
+            with self.assertRaisesRegex(
+                InventoryError,
+                "current source manifest|expected signed build manifest",
+            ):
                 seal_inventory(policy, roots)
 
     def test_ledger_tamper_fails(self):
@@ -397,6 +468,41 @@ class ReplayInventoryTests(unittest.TestCase):
             self.write_json(ledger_path, ledger)
             with self.assertRaisesRegex(InventoryError, "lineage ledger"):
                 seal_inventory(policy, roots)
+
+    def test_expected_build_identity_must_match_signed_ledger(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            policy_path, roots = self.fixture(root, retain_receipt=True)
+            policy = json.loads(policy_path.read_text())
+            train = policy["trains"][0]
+            manifest_path = (
+                root
+                / "archive/train"
+                / train["expectedBuildManifests"]["macos"]
+            )
+            manifest = json.loads(manifest_path.read_text())
+            manifest["artifacts"][0]["executableSha256"] = "f" * 64
+            manifest.pop("expectedBuildId")
+            manifest["expectedBuildId"] = hash_parts(
+                "context-panel-surface/v1/expected-build",
+                [canonical_json(manifest)],
+            )
+            self.write_json(manifest_path, manifest)
+            lineage_path = root / "archive/train/lineage.json"
+            lineage = json.loads(lineage_path.read_text())
+            lineage["generation"]["expectedBuildManifests"] = [
+                json.loads(
+                    (
+                        root
+                        / "archive/train"
+                        / train["expectedBuildManifests"][platform]
+                    ).read_text()
+                )
+                for platform in ("ios", "macos", "tvos", "visionos")
+            ]
+            self.write_json(lineage_path, lineage)
+            with self.assertRaisesRegex(InventoryError, "identity digest"):
+                seal_inventory(policy_path, roots)
 
     def test_missing_receipt_bodies_are_reference_only(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -595,19 +701,64 @@ class ReplayInventoryTests(unittest.TestCase):
             with self.assertRaisesRegex(InventoryError, "executable UUIDs"):
                 seal_inventory(policy, roots)
 
+    def test_retained_receipt_allows_loaded_uuid_subset_for_multiarch_artifact(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            policy, roots = self.fixture(root, retain_receipt=True)
+            receipt = self.receipt_payload(
+                executable_uuids=["BBBBBBBB-CCCC-DDDD-EEEE-FFFFFFFFFFFF"]
+            )
+            self.replace_receipt(root, receipt)
+
+            receipts = next(
+                item
+                for item in seal_inventory(policy, roots)["trains"][0]["inputs"]
+                if item["category"] == "physical-runtime-receipts"
+            )
+
+            self.assertEqual(receipts["retainedCount"], 1)
+
     def test_retained_receipt_build_must_match_train_manifest(self):
         cases = (
-            {"manifest_id": "f" * 64},
-            {"marketing_version": "1.0.2"},
-            {"build_number": "202608270002"},
-            {"contract_fingerprint": "f" * 64},
+            ("manifest", self.receipt_payload(manifest_id="f" * 64)),
+            ("marketing-version", self.receipt_payload(marketing_version="1.0.2")),
+            ("build-number", self.receipt_payload(build_number="202608270002")),
+            ("contract", self.receipt_payload(contract_fingerprint="f" * 64)),
         )
-        for overrides in cases:
-            with self.subTest(overrides=overrides), tempfile.TemporaryDirectory() as temporary:
+        for label, receipt in cases:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 policy, roots = self.fixture(root, retain_receipt=True)
-                self.replace_receipt(root, self.receipt_payload(**overrides))
+                self.replace_receipt(root, receipt)
                 with self.assertRaisesRegex(InventoryError, "build identity"):
+                    seal_inventory(policy, roots)
+
+    def test_retained_receipt_must_match_expected_surface_identity(self):
+        cases = (
+            ("artifact", self.receipt_payload(artifact_id="Other.app")),
+            (
+                "bundle",
+                self.receipt_payload(bundle_identifier="com.shinycomputers.other"),
+            ),
+            (
+                "fingerprints",
+                self.receipt_payload(
+                    fingerprints={**self.surface_fingerprints(), "render": "9" * 64}
+                ),
+            ),
+            (
+                "executable-uuids",
+                self.receipt_payload(
+                    executable_uuids=["CCCCCCCC-DDDD-EEEE-FFFF-000000000000"]
+                ),
+            ),
+        )
+        for label, receipt in cases:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                policy, roots = self.fixture(root, retain_receipt=True)
+                self.replace_receipt(root, receipt)
+                with self.assertRaisesRegex(InventoryError, "expected signed build surface"):
                     seal_inventory(policy, roots)
 
     def test_check_and_verify_reject_stale_inventory(self):
