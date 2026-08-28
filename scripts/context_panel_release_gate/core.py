@@ -109,7 +109,7 @@ def _is_sha256(value: object) -> bool:
 
 
 def _hash_payload(payload: object) -> str:
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -179,6 +179,30 @@ def _target(payload: object, label: str) -> Target:
     ):
         raise ReleaseEvidenceError(f"{label} target is invalid")
     return Target(version, build_number)
+
+
+def _validated_shadow_disagreement(
+    payload: object,
+    *,
+    error_message: str,
+) -> dict[str, str]:
+    if (
+        not isinstance(payload, dict)
+        or set(payload)
+        != {"surface", "evidenceClass", "classification", "resolution"}
+        or payload.get("surface") not in RUNTIME_SURFACES
+        or payload.get("evidenceClass") not in EVIDENCE_CLASSES
+        or payload.get("classification") not in SHADOW_CLASSIFICATIONS
+        or not isinstance(payload.get("resolution"), str)
+        or PUBLIC_TOKEN_PATTERN.fullmatch(payload["resolution"]) is None
+    ):
+        raise ReleaseEvidenceError(error_message)
+    return {
+        "surface": payload["surface"],
+        "evidenceClass": payload["evidenceClass"],
+        "classification": payload["classification"],
+        "resolution": payload["resolution"].strip(),
+    }
 
 
 def _validate_policy(policy: dict[str, Any]) -> dict[str, Any]:
@@ -605,8 +629,8 @@ def _fresh_evidence(
             or not set(receipt_ids).issubset(current_receipts)
         ):
             return None
-        host_os = str(next(iter(host_os_values)))
-        if HOST_OS_PATTERN.fullmatch(host_os) is None:
+        host_os = next(iter(host_os_values))
+        if not isinstance(host_os, str) or HOST_OS_PATTERN.fullmatch(host_os) is None:
             return None
     else:
         host_os = None
@@ -708,17 +732,10 @@ def _validate_ledger(
     ):
         raise ReleaseEvidenceError(f"{label} shadow evidence is invalid")
     for disagreement in shadow["disagreements"]:
-        if (
-            not isinstance(disagreement, dict)
-            or set(disagreement)
-            != {"surface", "evidenceClass", "classification", "resolution"}
-            or disagreement.get("surface") not in RUNTIME_SURFACES
-            or disagreement.get("evidenceClass") not in EVIDENCE_CLASSES
-            or disagreement.get("classification") not in SHADOW_CLASSIFICATIONS
-            or not isinstance(disagreement.get("resolution"), str)
-            or PUBLIC_TOKEN_PATTERN.fullmatch(disagreement["resolution"]) is None
-        ):
-            raise ReleaseEvidenceError(f"{label} shadow evidence is invalid")
+        _validated_shadow_disagreement(
+            disagreement,
+            error_message=f"{label} shadow evidence is invalid",
+        )
     expected_shadow_state = (
         "passed"
         if shadow["qualifiedTrainCount"] >= shadow["requiredTrainCount"]
@@ -1152,24 +1169,11 @@ def _shadow_state(
         if run["runbookState"] != "approved" or run["ledgerState"] != "approved":
             blockers.add("shadow-run-not-approved")
         for disagreement in run["disagreements"]:
-            if (
-                not isinstance(disagreement, dict)
-                or set(disagreement)
-                != {"surface", "evidenceClass", "classification", "resolution"}
-                or disagreement.get("surface") not in RUNTIME_SURFACES
-                or disagreement.get("evidenceClass") not in EVIDENCE_CLASSES
-                or disagreement.get("classification") not in SHADOW_CLASSIFICATIONS
-                or not isinstance(disagreement.get("resolution"), str)
-                or PUBLIC_TOKEN_PATTERN.fullmatch(disagreement["resolution"]) is None
-            ):
-                raise ReleaseEvidenceError("shadow disagreement is invalid")
             disagreements.append(
-                {
-                    "surface": disagreement["surface"],
-                    "evidenceClass": disagreement["evidenceClass"],
-                    "classification": disagreement["classification"],
-                    "resolution": disagreement["resolution"].strip(),
-                }
+                _validated_shadow_disagreement(
+                    disagreement,
+                    error_message="shadow disagreement is invalid",
+                )
             )
             if disagreement["classification"] in {"unresolved", "runbook-correct"}:
                 blockers.add("shadow-disagreement-not-ledger-safe")
@@ -1224,8 +1228,8 @@ def evaluate_release_evidence(
     target = _validate_report(validation_report, current_manifest_id)
     validation_report_digest = _hash_payload(validation_report)
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    required_surfaces = comparison["requiredSurfaces"]
-    required_scope = {
+    required_surfaces: dict[str, list[str]] = comparison["requiredSurfaces"]
+    required_scope: set[str] = {
         surface
         for evidence_class in EVIDENCE_CLASSES
         for surface in required_surfaces[evidence_class]
@@ -1505,7 +1509,6 @@ def release_evidence_report_blockers(
     validated_policy: dict[str, Any] | None = None
     authoritative_required: dict[str, list[str]] | None = None
     authoritative_scope: set[str] = set()
-    comparison_surface_scope: set[str] = set()
     validated_comparison_surfaces: dict[str, dict[str, Any]] = {}
     try:
         if policy is None:
@@ -1523,8 +1526,7 @@ def release_evidence_report_blockers(
             train,
             surface_policy,
         )
-        comparison_surface_scope = set(validated_comparison_surfaces)
-        if comparison_surface_scope != set(RUNTIME_SURFACES):
+        if set(validated_comparison_surfaces) != set(RUNTIME_SURFACES):
             blockers.append("surface comparison does not cover every shipping surface")
         authoritative_required = comparison["requiredSurfaces"]
         authoritative_scope = {
@@ -1696,13 +1698,14 @@ def release_evidence_report_blockers(
         blockers.append(str(error))
     if payload.get("train") != train:
         blockers.append(f"train must be {train}")
-    target = payload.get("target")
-    if not isinstance(target, dict):
+    try:
+        target = _target(payload.get("target"), "release evidence report")
+    except ReleaseEvidenceError:
         blockers.append("target is missing or malformed")
     else:
-        if target.get("version") != version:
+        if target.version != version:
             blockers.append(f"target version must be {version}")
-        if target.get("buildNumber") != build_number:
+        if target.build_number != build_number:
             blockers.append(f"target build number must be {build_number}")
     report_blockers = payload.get("blockers")
     if (
