@@ -4,6 +4,7 @@ import sys
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -20,7 +21,7 @@ from context_panel_validation import ExpectedSurfaceIdentity, RUNTIME_SURFACES
 from context_panel_validation.runtime_evidence import canonical_json, hash_parts
 
 
-NOW = datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 8, 12, tzinfo=timezone.utc)
 MANIFEST = "a" * 64
 PREVIOUS_MANIFEST = "b" * 64
 CONTRACT = "c" * 64
@@ -30,7 +31,7 @@ def sha(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-def ledger_id(payload):
+def ledger_id(payload: dict[str, Any]) -> str:
     encoded = json.dumps(
         {key: value for key, value in payload.items() if key != "ledgerID"},
         sort_keys=True,
@@ -39,8 +40,12 @@ def ledger_id(payload):
     return hashlib.sha256(encoded).hexdigest()
 
 
-def expected_manifest(surface: str, *, manifest_id: str = MANIFEST):
-    unsigned = {
+def expected_manifest(
+    surface: str,
+    *,
+    manifest_id: str = MANIFEST,
+) -> dict[str, Any]:
+    unsigned: dict[str, Any] = {
         "schemaVersion": 1,
         "kind": "context-panel-expected-signed-build",
         "algorithm": "sha256",
@@ -93,7 +98,10 @@ def expected_manifest(surface: str, *, manifest_id: str = MANIFEST):
     }
 
 
-def all_expected_manifests(*, manifest_id: str = MANIFEST):
+def all_expected_manifests(
+    *,
+    manifest_id: str = MANIFEST,
+) -> tuple[dict[str, Any], ...]:
     return tuple(
         expected_manifest(surface, manifest_id=manifest_id)
         for surface in RUNTIME_SURFACES
@@ -159,7 +167,7 @@ def expected_identity_set_digest(*identities: ExpectedSurfaceIdentity) -> str:
     ).hexdigest()
 
 
-def policy(*, patch_sensitive=()):
+def policy(*, patch_sensitive: tuple[str, ...] = ()) -> dict[str, Any]:
     return {
         "schemaVersion": 1,
         "maximumEvidenceAgeDays": 90,
@@ -171,7 +179,7 @@ def policy(*, patch_sensitive=()):
     }
 
 
-def surface_policy(surface: str, evidence_class: str):
+def surface_policy(surface: str, evidence_class: str) -> dict[str, Any]:
     selected_evidence = (
         ["actual-runtime", "os-composited-placement"]
         if evidence_class == "os-composited-placement"
@@ -218,11 +226,11 @@ def comparison(
     surface: str,
     evidence_class: str,
     *,
-    eligible=False,
-    train="beta",
-    previous_manifest_id=PREVIOUS_MANIFEST,
-    current_manifest_id=MANIFEST,
-):
+    eligible: bool = False,
+    train: str = "beta",
+    previous_manifest_id: str = PREVIOUS_MANIFEST,
+    current_manifest_id: str = MANIFEST,
+) -> dict[str, Any]:
     selected_evidence = (
         ["actual-runtime", "os-composited-placement"]
         if evidence_class == "os-composited-placement"
@@ -267,15 +275,15 @@ def comparison(
         if surface_id != surface:
             return {}
         result: dict[str, dict[str, object]] = {}
-        for selected_class in selected_evidence:
+        for carry_class in selected_evidence:
             is_fresh = not eligible
             carry_eligible = eligible
             conditions = (
                 ["matching-host-os", "matching-current-runtime-receipt"]
-                if selected_class == "os-composited-placement" and carry_eligible
+                if carry_class == "os-composited-placement" and carry_eligible
                 else []
             )
-            result[selected_class] = {
+            result[carry_class] = {
                 "eligible": carry_eligible and not is_fresh,
                 "conditions": conditions if not is_fresh else [],
             }
@@ -317,12 +325,12 @@ def comparison(
 def report(
     surface: str,
     *,
-    runtime=False,
-    visual_class=None,
-    host_os=None,
-    manifest_id=MANIFEST,
-):
-    requirements = []
+    runtime: bool = False,
+    visual_class: str | None = None,
+    host_os: str | None = None,
+    manifest_id: str = MANIFEST,
+) -> dict[str, Any]:
+    requirements: list[dict[str, Any]] = []
     if visual_class is not None:
         requirements.append(
             {
@@ -398,12 +406,12 @@ def ledger(
     evidence_class: str,
     expected: ExpectedSurfaceIdentity,
     *,
-    host_os=None,
-    policy_payload=None,
-    surface_policy_payload=None,
-):
+    host_os: str | None = None,
+    policy_payload: dict[str, Any] | None = None,
+    surface_policy_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     state = "proven" if evidence_class == "actual-runtime" else "approved"
-    payload = {
+    payload: dict[str, Any] = {
         "schemaVersion": 1,
         "kind": "context-panel-release-evidence",
         "mode": "shadow",
@@ -486,7 +494,12 @@ def ledger(
     return payload
 
 
-def host_evidence(surface: str, host_os: str, *, observed_at="2026-08-08T11:59:00Z"):
+def host_evidence(
+    surface: str,
+    host_os: str,
+    *,
+    observed_at: str = "2026-08-08T11:59:00Z",
+) -> dict[str, Any]:
     return {
         "schemaVersion": 1,
         "kind": "context-panel-host-os-evidence",
@@ -504,20 +517,20 @@ def host_evidence(surface: str, host_os: str, *, observed_at="2026-08-08T11:59:0
 
 def shadow_evidence(
     *,
-    duplicate=False,
-    runbook_state="approved",
-    ledger_state="approved",
-    disagreements=None,
-    surface="watchos.app",
-    evidence_class="actual-runtime",
-    policy_payload=None,
-):
+    duplicate: bool = False,
+    runbook_state: str = "approved",
+    ledger_state: str = "approved",
+    disagreements: list[dict[str, str]] | None = None,
+    surface: str = "watchos.app",
+    evidence_class: str = "actual-runtime",
+    policy_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     release_policy = policy_payload or policy()
-    runs = []
+    runs: list[dict[str, Any]] = []
     for index in range(2):
         train = "beta" if duplicate or index == 0 else "rc"
-        embedded_ledger = None
-        generation = None
+        embedded_ledger: dict[str, Any] | None = None
+        generation: dict[str, Any] | None = None
         if ledger_state == "approved":
             validation_report = report(
                 surface,
@@ -600,16 +613,15 @@ def previous_lineage(
     surface: str,
     evidence_class: str,
     *,
-    host_os=None,
-    policy_payload=None,
-    legacy_comparison=False,
-    legacy_comparison_version=1,
-):
+    host_os: str | None = None,
+    policy_payload: dict[str, Any] | None = None,
+    legacy_comparison: bool = False,
+    legacy_comparison_version: int = 1,
+) -> dict[str, Any]:
     release_policy = policy_payload or policy()
     comparison_payload = comparison(
         surface,
         evidence_class,
-        train="beta",
         previous_manifest_id="d" * 64,
         current_manifest_id=PREVIOUS_MANIFEST,
     )
@@ -658,7 +670,7 @@ def previous_lineage(
     )
 
 
-def selected_rc_ledger(surface: str):
+def selected_rc_ledger(surface: str) -> dict[str, Any]:
     comparison_payload = comparison(surface, "actual-runtime", train="rc")
     validation_report = report(surface, runtime=True)
     identities = all_identities()
@@ -685,8 +697,12 @@ def selected_rc_ledger(surface: str):
 
 
 class ReleaseEvidenceGateTests(unittest.TestCase):
-    def evaluate(self, surface, evidence_class, **kwargs):
-        expected = identity(surface)
+    @staticmethod
+    def evaluate(
+        surface: str,
+        evidence_class: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         return evaluate_release_evidence(
             train=kwargs.pop("train", "beta"),
             mode=kwargs.pop("mode", "shadow"),
@@ -705,17 +721,17 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             **kwargs,
         )
 
+    @staticmethod
     def report_blockers(
-        self,
-        payload,
-        surface,
-        evidence_class,
+        payload: dict[str, Any],
+        surface: str,
+        evidence_class: str,
         *,
-        enforce,
-        validation_report=None,
-        comparison_payload=None,
-        policy_payload=None,
-    ):
+        enforce: bool,
+        validation_report: dict[str, Any] | None = None,
+        comparison_payload: dict[str, Any] | None = None,
+        policy_payload: dict[str, Any] | None = None,
+    ) -> list[str]:
         return release_evidence_report_blockers(
             payload,
             version="1.0.54",
@@ -730,7 +746,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             now=NOW,
         )
 
-    def test_fresh_shared_view_is_approved_in_shadow_mode(self):
+    def test_fresh_shared_view_is_approved_in_shadow_mode(self) -> None:
         surface = "watchos.app"
         payload = self.evaluate(
             surface,
@@ -743,12 +759,12 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             "fresh",
         )
 
-    def test_missing_runtime_blocks(self):
+    def test_missing_runtime_blocks(self) -> None:
         payload = self.evaluate("watchos.app", "actual-runtime")
         self.assertEqual(payload["state"], "blocked")
         self.assertEqual(payload["blockers"], ["watchos.app:actual-runtime:missing"])
 
-    def test_shared_view_carries_forward_only_with_matching_fingerprint(self):
+    def test_shared_view_carries_forward_only_with_matching_fingerprint(self) -> None:
         surface = "watchos.app"
         payload = self.evaluate(
             surface,
@@ -759,7 +775,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         evidence = payload["surfaces"][0]["evidence"]["shared-view"]
         self.assertEqual(evidence["source"], "carry-forward")
 
-    def test_placement_carry_forward_requires_current_runtime_and_host_os(self):
+    def test_placement_carry_forward_requires_current_runtime_and_host_os(self) -> None:
         surface = "watchos.complication"
         host = host_evidence(surface, "watchOS 27.0")
         payload = self.evaluate(
@@ -777,7 +793,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         evidence = payload["surfaces"][0]["evidence"]["os-composited-placement"]
         self.assertEqual(evidence["source"], "carry-forward")
 
-    def test_major_minor_host_os_change_invalidates_placement(self):
+    def test_major_minor_host_os_change_invalidates_placement(self) -> None:
         surface = "watchos.complication"
         host = host_evidence(surface, "watchOS 28.0")
         payload = self.evaluate(
@@ -794,7 +810,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         )
         self.assertEqual(payload["state"], "blocked")
 
-    def test_patch_sensitive_surface_invalidates_patch_change(self):
+    def test_patch_sensitive_surface_invalidates_patch_change(self) -> None:
         surface = "watchos.complication"
         patch_policy = policy(patch_sensitive=(surface,))
         host = host_evidence(surface, "watchOS 27.0.1")
@@ -814,7 +830,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         )
         self.assertEqual(payload["state"], "blocked")
 
-    def test_expired_previous_ledger_fails_closed(self):
+    def test_expired_previous_ledger_fails_closed(self) -> None:
         surface = "watchos.app"
         short_policy = policy()
         short_policy["maximumEvidenceAgeDays"] = 1
@@ -833,7 +849,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 now=NOW + timedelta(days=2),
             )
 
-    def test_release_requires_exact_selected_rc(self):
+    def test_release_requires_exact_selected_rc(self) -> None:
         surface = "watchos.app"
         release_comparison = comparison(surface, "actual-runtime", train="release")
         with self.assertRaisesRegex(ReleaseEvidenceError, "selected exact approved RC"):
@@ -847,7 +863,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 shadow_evidence=shadow_evidence(),
             )
 
-    def test_release_reuses_exact_enforced_selected_rc(self):
+    def test_release_reuses_exact_enforced_selected_rc(self) -> None:
         surface = "watchos.app"
         selected_rc = selected_rc_ledger(surface)
         payload = self.evaluate(
@@ -860,7 +876,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         evidence = payload["surfaces"][0]["evidence"]["actual-runtime"]
         self.assertEqual(evidence["source"], "selected-rc")
 
-    def test_tampered_ledger_identity_fails_closed(self):
+    def test_tampered_ledger_identity_fails_closed(self) -> None:
         surface = "watchos.app"
         previous = previous_lineage(surface, "shared-view")
         previous["ledger"]["surfaces"][0]["evidence"]["shared-view"][
@@ -875,7 +891,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 previous_ledger=previous,
             )
 
-    def test_enforcement_requires_two_resolved_shadow_runs(self):
+    def test_enforcement_requires_two_resolved_shadow_runs(self) -> None:
         surface = "watchos.app"
         payload = self.evaluate(
             surface,
@@ -886,7 +902,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         self.assertEqual(payload["state"], "blocked")
         self.assertIn("shadow-comparison:pending", payload["blockers"])
 
-    def test_comparison_required_surfaces_cannot_omit_surface_requirements(self):
+    def test_comparison_required_surfaces_cannot_omit_surface_requirements(self) -> None:
         surface = "watchos.app"
         comparison_payload = comparison(surface, "shared-view")
         comparison_payload["requiredSurfaces"]["shared-view"] = []
@@ -897,7 +913,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 comparison_payload=comparison_payload,
             )
 
-    def test_release_gate_rejects_legacy_v1_comparison(self):
+    def test_release_gate_rejects_legacy_v1_comparison(self) -> None:
         surface = "watchos.app"
         comparison_payload = comparison(surface, "shared-view")
         comparison_payload.pop("kind")
@@ -911,7 +927,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 comparison_payload=comparison_payload,
             )
 
-    def test_release_gate_rejects_legacy_v2_comparison(self):
+    def test_release_gate_rejects_legacy_v2_comparison(self) -> None:
         surface = "watchos.app"
         comparison_payload = comparison(surface, "shared-view")
         comparison_payload.pop("runtimeState")
@@ -924,7 +940,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 comparison_payload=comparison_payload,
             )
 
-    def test_signed_lineage_reconstruction_preserves_legacy_v1_comparison_digest(self):
+    def test_signed_lineage_reconstruction_preserves_legacy_v1_comparison_digest(self) -> None:
         surface = "watchos.app"
         previous = previous_lineage(
             surface,
@@ -939,7 +955,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                     raw_comparison,
                     sort_keys=True,
                     separators=(",", ":"),
-                ).encode("utf-8")
+                ).encode()
             ).hexdigest(),
         )
         payload = self.evaluate(
@@ -950,7 +966,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         )
         self.assertNotIn("previous-ledger", " ".join(payload["blockers"]))
 
-    def test_signed_lineage_reconstruction_preserves_legacy_v2_comparison_digest(self):
+    def test_signed_lineage_reconstruction_preserves_legacy_v2_comparison_digest(self) -> None:
         surface = "watchos.app"
         previous = previous_lineage(
             surface,
@@ -966,7 +982,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                     raw_comparison,
                     sort_keys=True,
                     separators=(",", ":"),
-                ).encode("utf-8")
+                ).encode()
             ).hexdigest(),
         )
         payload = self.evaluate(
@@ -977,7 +993,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         )
         self.assertNotIn("previous-ledger", " ".join(payload["blockers"]))
 
-    def test_release_rc_requirement_cannot_be_removed(self):
+    def test_release_rc_requirement_cannot_be_removed(self) -> None:
         surface = "watchos.app"
         comparison_payload = comparison(surface, "actual-runtime", train="release")
         comparison_payload.pop("releaseRequiresApprovedRCTarget")
@@ -990,7 +1006,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 validation_report=report(surface, runtime=True),
             )
 
-    def test_release_rc_requirement_cannot_be_disabled(self):
+    def test_release_rc_requirement_cannot_be_disabled(self) -> None:
         surface = "watchos.app"
         comparison_payload = comparison(surface, "actual-runtime", train="release")
         comparison_payload["releaseRequiresApprovedRCTarget"] = False
@@ -1003,7 +1019,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 validation_report=report(surface, runtime=True),
             )
 
-    def test_comparison_artifact_must_match_policy_and_expected_identity(self):
+    def test_comparison_artifact_must_match_policy_and_expected_identity(self) -> None:
         surface = "watchos.app"
         comparison_payload = comparison(surface, "actual-runtime")
         target = next(
@@ -1036,7 +1052,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 now=NOW,
             )
 
-    def test_carry_forward_does_not_renew_source_expiry(self):
+    def test_carry_forward_does_not_renew_source_expiry(self) -> None:
         surface = "watchos.app"
         short_policy = policy()
         short_policy["maximumEvidenceAgeDays"] = 1
@@ -1055,7 +1071,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         )
         self.assertEqual(payload["expiresAt"], "2026-08-09T12:00:00Z")
 
-    def test_blocked_validation_report_fails_closed(self):
+    def test_blocked_validation_report_fails_closed(self) -> None:
         surface = "watchos.app"
         validation_report = report(surface, runtime=True)
         validation_report["summary"]["exitCode"] = 30
@@ -1067,7 +1083,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 validation_report=validation_report,
             )
 
-    def test_rejected_visual_decision_is_not_fresh_evidence(self):
+    def test_rejected_visual_decision_is_not_fresh_evidence(self) -> None:
         surface = "watchos.app"
         validation_report = report(surface, visual_class="shared-view")
         validation_report["visualApprovals"]["requirements"][0]["decision"]["value"] = "rejected"
@@ -1078,7 +1094,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         )
         self.assertEqual(payload["state"], "blocked")
 
-    def test_future_host_os_observation_fails_closed(self):
+    def test_future_host_os_observation_fails_closed(self) -> None:
         surface = "watchos.complication"
         with self.assertRaisesRegex(ReleaseEvidenceError, "host OS evidence is invalid"):
             self.evaluate(
@@ -1098,7 +1114,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 ),
             )
 
-    def test_duplicate_shadow_train_fails_closed(self):
+    def test_duplicate_shadow_train_fails_closed(self) -> None:
         surface = "watchos.app"
         with self.assertRaisesRegex(ReleaseEvidenceError, "duplicates a signed train"):
             self.evaluate(
@@ -1109,7 +1125,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 shadow_evidence=shadow_evidence(duplicate=True),
             )
 
-    def test_shadow_state_mismatch_blocks_qualification(self):
+    def test_shadow_state_mismatch_blocks_qualification(self) -> None:
         surface = "watchos.app"
         payload = self.evaluate(
             surface,
@@ -1121,7 +1137,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         self.assertEqual(payload["shadow"]["state"], "pending")
         self.assertIn("runbook-ledger-state-mismatch", payload["shadow"]["blockers"])
 
-    def test_blocked_shadow_runs_never_qualify(self):
+    def test_blocked_shadow_runs_never_qualify(self) -> None:
         surface = "watchos.app"
         payload = self.evaluate(
             surface,
@@ -1138,7 +1154,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         self.assertIn("shadow-run-not-approved", payload["shadow"]["blockers"])
         self.assertEqual(payload["state"], "blocked")
 
-    def test_unresolved_and_runbook_correct_disagreements_block_qualification(self):
+    def test_unresolved_and_runbook_correct_disagreements_block_qualification(self) -> None:
         surface = "watchos.app"
         for classification in ("unresolved", "runbook-correct"):
             with self.subTest(classification=classification):
@@ -1164,7 +1180,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                     payload["shadow"]["blockers"],
                 )
 
-    def test_runtime_carry_forward_requires_exact_current_build_identity(self):
+    def test_runtime_carry_forward_requires_exact_current_build_identity(self) -> None:
         surface = "watchos.app"
         payload = self.evaluate(
             surface,
@@ -1178,7 +1194,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             "none",
         )
 
-    def test_runtime_evidence_requires_current_receipts(self):
+    def test_runtime_evidence_requires_current_receipts(self) -> None:
         surface = "watchos.app"
         validation_report = report(surface, runtime=True)
         validation_report["runtimeSurfaces"][0]["receiptIDs"] = []
@@ -1189,7 +1205,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         )
         self.assertEqual(payload["state"], "blocked")
 
-    def test_runtime_evidence_rejects_stale_observation(self):
+    def test_runtime_evidence_rejects_stale_observation(self) -> None:
         surface = "watchos.app"
         tightened_policy = policy()
         tightened_policy["maximumEvidenceAgeDays"] = 7
@@ -1206,7 +1222,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         self.assertEqual(payload["state"], "blocked")
         self.assertIn("watchos.app:actual-runtime:missing", payload["blockers"])
 
-    def test_wrong_build_runtime_cannot_unlock_carry_forward(self):
+    def test_wrong_build_runtime_cannot_unlock_carry_forward(self) -> None:
         surface = "watchos.app"
         previous = previous_lineage(surface, "actual-runtime")
         validation_report = report(surface, runtime=True)
@@ -1220,7 +1236,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         )
         self.assertEqual(payload["state"], "blocked")
 
-    def test_selected_rc_mismatches_fail_closed(self):
+    def test_selected_rc_mismatches_fail_closed(self) -> None:
         surface = "watchos.app"
         mutations = {
             "target": lambda value: value["target"].update(buildNumber="different"),
@@ -1251,7 +1267,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                         selected_rc_ledger=selected,
                     )
 
-    def test_shipped_release_policy_is_valid(self):
+    def test_shipped_release_policy_is_valid(self) -> None:
         shipped_policy = json.loads(
             (REPO_ROOT / "Config/ContextPanelReleaseEvidencePolicy.json").read_text()
         )
@@ -1265,7 +1281,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             json.dumps(shipped_policy, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest())
 
-    def test_report_validation_honors_tightened_policy_age(self):
+    def test_report_validation_honors_tightened_policy_age(self) -> None:
         surface = "watchos.app"
         tightened_policy = policy()
         tightened_policy["maximumEvidenceAgeDays"] = 7
@@ -1290,7 +1306,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         )
         self.assertTrue(any("expired" in blocker for blocker in blockers))
 
-    def test_authoritative_scope_mismatch_fails_closed(self):
+    def test_authoritative_scope_mismatch_fails_closed(self) -> None:
         surface = "watchos.app"
         validation_report = report(surface, visual_class="shared-view")
         payload = self.evaluate(
@@ -1313,7 +1329,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             blockers,
         )
 
-    def test_comparison_cannot_omit_a_shipping_surface(self):
+    def test_comparison_cannot_omit_a_shipping_surface(self) -> None:
         surface = "watchos.app"
         comparison_payload = comparison(surface, "actual-runtime")
         comparison_payload["surfaces"] = comparison_payload["surfaces"][:-1]
@@ -1325,7 +1341,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 validation_report=report(surface, runtime=True),
             )
 
-    def test_comparison_cannot_lower_canonical_evidence_floor(self):
+    def test_comparison_cannot_lower_canonical_evidence_floor(self) -> None:
         surface = "watchos.app"
         comparison_payload = comparison(surface, "actual-runtime")
         target_surface = next(
@@ -1350,7 +1366,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 validation_report=report(surface, runtime=True),
             )
 
-    def test_enforced_empty_authoritative_scope_is_rejected(self):
+    def test_enforced_empty_authoritative_scope_is_rejected(self) -> None:
         surface = "watchos.app"
         validation_report = report(surface, runtime=True)
         payload = self.evaluate(
@@ -1412,7 +1428,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             blockers,
         )
 
-    def test_enforce_happy_path_validates_end_to_end(self):
+    def test_enforce_happy_path_validates_end_to_end(self) -> None:
         surface = "watchos.app"
         validation_report = report(surface, runtime=True)
         comparison_payload = comparison(surface, "actual-runtime")
@@ -1443,7 +1459,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             [],
         )
 
-    def test_report_validator_rejects_receipt_not_present_in_exact_report(self):
+    def test_report_validator_rejects_receipt_not_present_in_exact_report(self) -> None:
         surface = "watchos.app"
         validation_report = report(surface, runtime=True)
         comparison_payload = comparison(surface, "actual-runtime")
@@ -1477,7 +1493,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             blockers,
         )
 
-    def test_report_validator_rejects_source_relabel_without_lineage(self):
+    def test_report_validator_rejects_source_relabel_without_lineage(self) -> None:
         surface = "watchos.app"
         validation_report = report(surface, visual_class="shared-view")
         comparison_payload = comparison(surface, "shared-view")
@@ -1514,7 +1530,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             blockers,
         )
 
-    def test_release_report_validation_requires_exact_selected_rc(self):
+    def test_release_report_validation_requires_exact_selected_rc(self) -> None:
         surface = "watchos.app"
         validation_report = report(surface, runtime=True)
         comparison_payload = comparison(surface, "actual-runtime", train="release")
@@ -1554,7 +1570,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             [],
         )
 
-    def test_same_signed_target_with_conflicting_artifact_digest_is_duplicate(self):
+    def test_same_signed_target_with_conflicting_artifact_digest_is_duplicate(self) -> None:
         surface = "watchos.app"
         evidence = shadow_evidence()
         evidence["runs"][1]["train"] = evidence["runs"][0]["train"]
@@ -1569,7 +1585,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 shadow_evidence=evidence,
             )
 
-    def test_shadow_comparison_reconstructs_each_embedded_ledger(self):
+    def test_shadow_comparison_reconstructs_each_embedded_ledger(self) -> None:
         surface = "watchos.app"
         evidence = shadow_evidence()
         embedded_ledger = evidence["runs"][0]["ledger"]
@@ -1591,7 +1607,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 shadow_evidence=evidence,
             )
 
-    def test_previous_and_selected_rc_roots_require_lineage_bundles(self):
+    def test_previous_and_selected_rc_roots_require_lineage_bundles(self) -> None:
         surface = "watchos.app"
         with self.assertRaisesRegex(ReleaseEvidenceError, "lineage is invalid"):
             self.evaluate(
@@ -1617,7 +1633,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 ),
             )
 
-    def test_lineage_revalidates_complete_expected_build_manifests(self):
+    def test_lineage_revalidates_complete_expected_build_manifests(self) -> None:
         surface = "watchos.app"
         selected = selected_rc_ledger(surface)
         selected["generation"]["expectedBuildManifests"][0]["artifacts"][0][
@@ -1639,7 +1655,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 selected_rc_ledger=selected,
             )
 
-    def test_shadow_generation_context_must_be_leaf_and_bounded(self):
+    def test_shadow_generation_context_must_be_leaf_and_bounded(self) -> None:
         surface = "watchos.app"
         nested = shadow_evidence()
         nested["runs"][0]["generation"]["shadowEvidence"] = {
@@ -1672,7 +1688,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 shadow_evidence=oversized,
             )
 
-    def test_shadow_comparison_cannot_reuse_one_ledger_for_two_targets(self):
+    def test_shadow_comparison_cannot_reuse_one_ledger_for_two_targets(self) -> None:
         surface = "watchos.app"
         evidence = shadow_evidence()
         evidence["runs"][1]["ledgerID"] = evidence["runs"][0]["ledgerID"]
@@ -1685,7 +1701,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 shadow_evidence=evidence,
             )
 
-    def test_privacy_fields_reject_paths_and_unbounded_host_text(self):
+    def test_privacy_fields_reject_paths_and_unbounded_host_text(self) -> None:
         surface = "watchos.complication"
         with self.assertRaisesRegex(ReleaseEvidenceError, "host OS evidence is invalid"):
             self.evaluate(
@@ -1705,7 +1721,6 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             )
         invalid_shadow = shadow_evidence(
             surface=surface,
-            evidence_class="actual-runtime",
             disagreements=[
                 {
                     "surface": surface,
@@ -1723,7 +1738,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 shadow_evidence=invalid_shadow,
             )
 
-    def test_policy_digest_mismatch_fails_closed(self):
+    def test_policy_digest_mismatch_fails_closed(self) -> None:
         surface = "watchos.app"
         validation_report = report(surface, runtime=True)
         comparison_payload = comparison(surface, "actual-runtime")
@@ -1750,7 +1765,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         )
         self.assertIn("release evidence policy binding is invalid", blockers)
 
-    def test_private_evidence_fields_fail_closed(self):
+    def test_private_evidence_fields_fail_closed(self) -> None:
         surface = "watchos.app"
         previous = previous_lineage(surface, "shared-view")
         previous["ledger"]["surfaces"][0]["evidence"]["shared-view"][
@@ -1765,7 +1780,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 previous_ledger=previous,
             )
 
-    def test_report_validator_rejects_evidence_free_payload(self):
+    def test_report_validator_rejects_evidence_free_payload(self) -> None:
         payload = {
             "schemaVersion": 1,
             "kind": "context-panel-release-evidence",
@@ -1787,7 +1802,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         )
         self.assertTrue(blockers)
 
-    def test_report_validator_binds_exact_validation_report(self):
+    def test_report_validator_binds_exact_validation_report(self) -> None:
         surface = "watchos.app"
         validation_report = report(surface, visual_class="shared-view")
         payload = self.evaluate(
@@ -1806,7 +1821,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         )
         self.assertIn("release evidence does not match the exact validation report", blockers)
 
-    def test_report_validator_rejects_shadow_report_in_enforcement(self):
+    def test_report_validator_rejects_shadow_report_in_enforcement(self) -> None:
         surface = "watchos.app"
         payload = self.evaluate(
             surface,
@@ -1823,7 +1838,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         self.assertIn("release evidence mode must be enforce", blockers)
         self.assertIn("shadow comparison evidence must be passed", blockers)
 
-    def test_report_validator_accepts_structural_shadow_report(self):
+    def test_report_validator_accepts_structural_shadow_report(self) -> None:
         surface = "watchos.app"
         payload = self.evaluate(
             surface,
