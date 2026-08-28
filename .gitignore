@@ -31,7 +31,7 @@ DerivedData/
 .swiftpm/
 __pycache__/
 *.pyc
-.code/
+.venv/
 .idea/
 dist/
 .local/
