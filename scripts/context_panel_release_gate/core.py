@@ -1388,13 +1388,13 @@ def evaluate_release_evidence(
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if set(surface_comparison) != set(RUNTIME_SURFACES):
         raise ReleaseEvidenceError("surface comparison does not cover every shipping surface")
-    required_surfaces = _effective_required_surfaces(
+    required_surfaces: dict[str, list[str]] = _effective_required_surfaces(
         comparison["requiredSurfaces"],
         policy=policy,
         surface_policy=surface_policy,
         at=now,
     )
-    required_scope = {
+    required_scope: set[str] = {
         surface
         for evidence_class in EVIDENCE_CLASSES
         for surface in required_surfaces[evidence_class]
