@@ -31,7 +31,7 @@
       "routineSwift": "python3 scripts/context-panel-test-lanes.py time-command --lane routine-ci-swift -- swift test"
     },
     "inspection": {
-      "ide": "IntelliJ IDEA",
+      "ide": "PyCharm",
       "scopePreference": "changed_files",
       "prepare": {
         "python": {
