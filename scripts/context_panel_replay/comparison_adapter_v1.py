@@ -5,7 +5,7 @@ import inspect
 import json
 from typing import Any
 
-import context_panel_comparison_schema as comparison_schema
+from context_panel_comparison_schema import comparison_schema_v2 as comparison_schema
 
 
 ADAPTER_SCHEMA_VERSION = 1

@@ -2,13 +2,21 @@ from __future__ import annotations
 
 from typing import Any
 
-from context_panel_comparison_schema import CURRENT_COMPARISON_SCHEMA_VERSION, validate_current_comparison
+from context_panel_comparison_schema import (
+    CURRENT_COMPARISON_SCHEMA_VERSION,
+    comparison_schema_v2,
+    validate_current_comparison,
+)
 
 from .comparison_adapter_v1 import ComparisonAdapterV1Error, adapt_v1_comparison
 
 
 class ComparisonAdapterError(RuntimeError):
     pass
+
+
+V2_COMPARISON_SCHEMA_VERSION = comparison_schema_v2.CURRENT_COMPARISON_SCHEMA_VERSION
+validate_comparison_v2 = comparison_schema_v2.validate_comparison_v2
 
 
 def adapt_comparison_for_replay(comparison: object) -> dict[str, Any]:
@@ -22,6 +30,11 @@ def adapt_comparison_for_replay(comparison: object) -> dict[str, Any]:
             return adapt_v1_comparison(comparison)
         except ComparisonAdapterV1Error as error:
             raise ComparisonAdapterError("retained v1 comparison is invalid") from error
+    if schema_version == V2_COMPARISON_SCHEMA_VERSION:
+        try:
+            return validate_comparison_v2(comparison)
+        except RuntimeError as error:
+            raise ComparisonAdapterError("retained v2 comparison is invalid") from error
     if schema_version == CURRENT_COMPARISON_SCHEMA_VERSION:
         try:
             return validate_current_comparison(comparison)

@@ -9,6 +9,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
+from context_panel_comparison_schema import derive_runtime_decision
 from context_panel_release_gate import (
     ReleaseEvidenceError,
     build_release_evidence_lineage,
@@ -280,9 +281,23 @@ def comparison(
             }
         return result
 
+    surfaces = [
+        {
+            "surfaceId": surface_id,
+            "artifactId": surface_id,
+            "reasonCodes": reason_codes_for(changes_for(surface_id)),
+            "changes": changes_for(surface_id),
+            "minimumEvidence": selected_evidence if surface_id == surface else [],
+            "freshEvidence": selected_evidence if surface_id == surface and not eligible else [],
+            "requiredEvidence": selected_evidence if surface_id == surface else [],
+            "carryForward": carry_forward_for(surface_id),
+        }
+        for surface_id in RUNTIME_SURFACES
+    ]
+    runtime_state, runtime_state_reasons = derive_runtime_decision(surfaces)
     return {
         "kind": "context-panel-surface-comparison",
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "train": train,
         "previousManifestId": previous_manifest_id,
         "currentManifestId": current_manifest_id,
@@ -292,19 +307,9 @@ def comparison(
         "requiredSurfaces": required,
         "requiresRuntimeSession": bool(required["actual-runtime"]),
         "requiresPlacementReview": bool(required["os-composited-placement"]),
-        "surfaces": [
-            {
-                "surfaceId": surface_id,
-                "artifactId": surface_id,
-                "reasonCodes": reason_codes_for(changes_for(surface_id)),
-                "changes": changes_for(surface_id),
-                "minimumEvidence": selected_evidence if surface_id == surface else [],
-                "freshEvidence": selected_evidence if surface_id == surface and not eligible else [],
-                "requiredEvidence": selected_evidence if surface_id == surface else [],
-                "carryForward": carry_forward_for(surface_id),
-            }
-            for surface_id in RUNTIME_SURFACES
-        ],
+        "runtimeState": runtime_state,
+        "runtimeStateReasons": runtime_state_reasons,
+        "surfaces": surfaces,
         "releaseRequiresApprovedRCTarget": True,
     }
 
@@ -598,6 +603,7 @@ def previous_lineage(
     host_os=None,
     policy_payload=None,
     legacy_comparison=False,
+    legacy_comparison_version=1,
 ):
     release_policy = policy_payload or policy()
     comparison_payload = comparison(
@@ -608,8 +614,13 @@ def previous_lineage(
         current_manifest_id=PREVIOUS_MANIFEST,
     )
     if legacy_comparison:
-        comparison_payload.pop("kind")
-        comparison_payload["schemaVersion"] = 1
+        comparison_payload.pop("runtimeState")
+        comparison_payload.pop("runtimeStateReasons")
+        if legacy_comparison_version == 1:
+            comparison_payload.pop("kind")
+        elif legacy_comparison_version != 2:
+            raise ValueError("unsupported legacy comparison version")
+        comparison_payload["schemaVersion"] = legacy_comparison_version
     validation_report = report(
         surface,
         runtime=evidence_class != "shared-view",
@@ -890,7 +901,22 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         surface = "watchos.app"
         comparison_payload = comparison(surface, "shared-view")
         comparison_payload.pop("kind")
+        comparison_payload.pop("runtimeState")
+        comparison_payload.pop("runtimeStateReasons")
         comparison_payload["schemaVersion"] = 1
+        with self.assertRaisesRegex(ReleaseEvidenceError, "surface comparison is invalid"):
+            self.evaluate(
+                surface,
+                "shared-view",
+                comparison_payload=comparison_payload,
+            )
+
+    def test_release_gate_rejects_legacy_v2_comparison(self):
+        surface = "watchos.app"
+        comparison_payload = comparison(surface, "shared-view")
+        comparison_payload.pop("runtimeState")
+        comparison_payload.pop("runtimeStateReasons")
+        comparison_payload["schemaVersion"] = 2
         with self.assertRaisesRegex(ReleaseEvidenceError, "surface comparison is invalid"):
             self.evaluate(
                 surface,
@@ -904,6 +930,33 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             surface,
             "shared-view",
             legacy_comparison=True,
+        )
+        raw_comparison = previous["generation"]["comparison"]
+        self.assertEqual(
+            previous["ledger"]["comparisonDigest"],
+            hashlib.sha256(
+                json.dumps(
+                    raw_comparison,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
+        )
+        payload = self.evaluate(
+            surface,
+            "shared-view",
+            eligible=True,
+            previous_ledger=previous,
+        )
+        self.assertNotIn("previous-ledger", " ".join(payload["blockers"]))
+
+    def test_signed_lineage_reconstruction_preserves_legacy_v2_comparison_digest(self):
+        surface = "watchos.app"
+        previous = previous_lineage(
+            surface,
+            "shared-view",
+            legacy_comparison=True,
+            legacy_comparison_version=2,
         )
         raw_comparison = previous["generation"]["comparison"]
         self.assertEqual(
@@ -1285,6 +1338,10 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         target_surface["requiredEvidence"] = []
         comparison_payload["requiredSurfaces"]["actual-runtime"] = []
         comparison_payload["requiresRuntimeSession"] = False
+        (
+            comparison_payload["runtimeState"],
+            comparison_payload["runtimeStateReasons"],
+        ) = derive_runtime_decision(comparison_payload["surfaces"])
         with self.assertRaisesRegex(ReleaseEvidenceError, "violates evidence policy"):
             self.evaluate(
                 surface,
@@ -1322,6 +1379,12 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 "os-composited-placement",
             )
         }
+        empty_comparison["requiresRuntimeSession"] = False
+        empty_comparison["requiresPlacementReview"] = False
+        (
+            empty_comparison["runtimeState"],
+            empty_comparison["runtimeStateReasons"],
+        ) = derive_runtime_decision(empty_comparison["surfaces"])
         payload["requiredEvidence"] = empty_comparison["requiredSurfaces"]
         payload["surfaces"] = []
         payload["comparisonDigest"] = hashlib.sha256(

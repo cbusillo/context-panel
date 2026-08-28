@@ -11,8 +11,10 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from context_panel_comparison_schema import (
+    CURRENT_COMPARISON_SCHEMA_VERSION,
     ComparisonSchemaError,
     EVIDENCE_CLASSES,
+    derive_runtime_decision,
     validate_current_comparison,
 )
 
@@ -1243,9 +1245,10 @@ def compare_manifests(
         ]
         for evidence_class in class_order
     }
+    runtime_state, runtime_state_reasons = derive_runtime_decision(results)
     comparison = {
         "kind": "context-panel-surface-comparison",
-        "schemaVersion": 2,
+        "schemaVersion": CURRENT_COMPARISON_SCHEMA_VERSION,
         "train": train,
         "previousManifestId": previous.get("manifestId"),
         "currentManifestId": current.get("manifestId"),
@@ -1255,6 +1258,8 @@ def compare_manifests(
         "requiredSurfaces": required_surfaces,
         "requiresRuntimeSession": bool(required_surfaces["actual-runtime"]),
         "requiresPlacementReview": bool(required_surfaces["os-composited-placement"]),
+        "runtimeState": runtime_state,
+        "runtimeStateReasons": runtime_state_reasons,
         "surfaces": results,
         "releaseRequiresApprovedRCTarget": bool(
             evidence_policy.get("releaseRequiresApprovedRCTarget")
