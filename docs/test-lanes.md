@@ -67,11 +67,13 @@ names, or absolute checkout paths.
 
 ## JetBrains Inspection Preparation
 
-The repository declares its worktree-local Python SDK preparation in
-`.github/github.json`. Before a JetBrains inspection, the inspection helper uses
-`uv` to create a Python 3.13 environment at `.venv` and generates the local
-`.idea` project model with `Tests` marked as a test root. Both directories are
-ignored and must be generated independently in each linked worktree.
+The repository declares PyCharm as its preferred inspection IDE and defines its
+worktree-local Python SDK preparation in `.github/github.json`. Before an
+inspection, the helper uses `uv` to create a Python 3.13 environment at `.venv`
+and generates the local `.idea` project model with `Tests` marked as a test root.
+Both directories are ignored and must be generated independently in each linked
+worktree. PyCharm is preferred because it reliably registers each worktree's
+path-specific virtual environment without manual SDK configuration.
 
 This preparation exists only to provide semantic Python inspection for the
 repository's validation scripts and tests. Context Panel is not a Python
