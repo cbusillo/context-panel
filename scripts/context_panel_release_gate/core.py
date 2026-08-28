@@ -79,6 +79,10 @@ PUBLIC_TOKEN_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 VERSION_PATTERN = re.compile(r"^[0-9]+(?:\.[0-9]+){1,3}$")
 BUILD_NUMBER_PATTERN = re.compile(r"^[0-9]+$")
 PRIVACY_MARKER = "context-panel-release-evidence-public-v1"
+WATCHLIST_REQUIRED_EVIDENCE = (
+    ("actual-runtime",),
+    ("actual-runtime", "os-composited-placement"),
+)
 GENERATION_KEYS = {
     "comparison",
     "validationReport",
@@ -211,6 +215,7 @@ def _validate_policy(policy: dict[str, Any]) -> dict[str, Any]:
         "maximumEvidenceAgeDays",
         "requiredShadowTrainCount",
         "hostOSCompatibility",
+        "runtimeRegressionWatchlist",
     } or policy.get("schemaVersion") != 1:
         raise ReleaseEvidenceError("release evidence policy is invalid")
     maximum_age = policy.get("maximumEvidenceAgeDays")
@@ -236,7 +241,160 @@ def _validate_policy(policy: dict[str, Any]) -> dict[str, Any]:
         != len(compatibility["patchSensitiveSurfaces"])
     ):
         raise ReleaseEvidenceError("release evidence policy is invalid")
+    _validate_runtime_regression_watchlist(policy.get("runtimeRegressionWatchlist"))
     return policy
+
+
+def _validate_runtime_regression_watchlist(payload: object) -> dict[str, Any]:
+    if (
+        not isinstance(payload, dict)
+        or set(payload)
+        != {
+            "maximumEntryDays",
+            "maximumExtensionDays",
+            "maximumExtensions",
+            "entries",
+        }
+    ):
+        raise ReleaseEvidenceError("runtime regression watchlist is invalid")
+    maximum_entry_days = payload.get("maximumEntryDays")
+    maximum_extension_days = payload.get("maximumExtensionDays")
+    maximum_extensions = payload.get("maximumExtensions")
+    entries = payload.get("entries")
+    if (
+        not isinstance(maximum_entry_days, int)
+        or isinstance(maximum_entry_days, bool)
+        or maximum_entry_days < 1
+        or maximum_entry_days > 30
+        or not isinstance(maximum_extension_days, int)
+        or isinstance(maximum_extension_days, bool)
+        or maximum_extension_days < 1
+        or maximum_extension_days > 14
+        or not isinstance(maximum_extensions, int)
+        or isinstance(maximum_extensions, bool)
+        or maximum_extensions < 0
+        or maximum_extensions > 2
+        or not isinstance(entries, list)
+        or len(entries) > len(RUNTIME_SURFACES)
+    ):
+        raise ReleaseEvidenceError("runtime regression watchlist is invalid")
+    surface_ids: list[str] = []
+    for entry in entries:
+        if (
+            not isinstance(entry, dict)
+            or set(entry)
+            != {
+                "surfaceId",
+                "requiredEvidence",
+                "reason",
+                "exitCriteria",
+                "enteredAt",
+                "expiresAt",
+                "extensions",
+            }
+        ):
+            raise ReleaseEvidenceError("runtime regression watchlist entry is invalid")
+        surface_id = entry.get("surfaceId")
+        required_evidence = entry.get("requiredEvidence")
+        reason = entry.get("reason")
+        exit_criteria = entry.get("exitCriteria")
+        entered_at = parse_iso8601(entry.get("enteredAt"))
+        expires_at = parse_iso8601(entry.get("expiresAt"))
+        extensions = entry.get("extensions")
+        if (
+            surface_id not in RUNTIME_SURFACES
+            or not isinstance(required_evidence, list)
+            or tuple(required_evidence) not in WATCHLIST_REQUIRED_EVIDENCE
+            or not isinstance(reason, str)
+            or PUBLIC_TOKEN_PATTERN.fullmatch(reason) is None
+            or not isinstance(exit_criteria, str)
+            or PUBLIC_TOKEN_PATTERN.fullmatch(exit_criteria) is None
+            or entered_at is None
+            or expires_at is None
+            or expires_at <= entered_at
+            or expires_at > entered_at + timedelta(days=maximum_entry_days)
+            or not isinstance(extensions, list)
+            or len(extensions) > maximum_extensions
+        ):
+            raise ReleaseEvidenceError("runtime regression watchlist entry is invalid")
+        surface_ids.append(surface_id)
+        previous_expiry = expires_at
+        previous_extension_at: datetime | None = None
+        for extension in extensions:
+            if (
+                not isinstance(extension, dict)
+                or set(extension) != {"extendedAt", "expiresAt", "reason"}
+            ):
+                raise ReleaseEvidenceError("runtime regression watchlist extension is invalid")
+            extended_at = parse_iso8601(extension.get("extendedAt"))
+            extension_expiry = parse_iso8601(extension.get("expiresAt"))
+            extension_reason = extension.get("reason")
+            if (
+                extended_at is None
+                or extension_expiry is None
+                or not isinstance(extension_reason, str)
+                or PUBLIC_TOKEN_PATTERN.fullmatch(extension_reason) is None
+                or extended_at < entered_at
+                or extended_at >= previous_expiry
+                or (
+                    previous_extension_at is not None
+                    and extended_at <= previous_extension_at
+                )
+                or extension_expiry <= previous_expiry
+                or extension_expiry
+                > previous_expiry + timedelta(days=maximum_extension_days)
+            ):
+                raise ReleaseEvidenceError("runtime regression watchlist extension is invalid")
+            previous_extension_at = extended_at
+            previous_expiry = extension_expiry
+    if surface_ids != sorted(surface_ids) or len(surface_ids) != len(set(surface_ids)):
+        raise ReleaseEvidenceError("runtime regression watchlist entries are invalid")
+    return payload
+
+
+def _effective_required_surfaces(
+    required_surfaces: dict[str, list[str]],
+    *,
+    policy: dict[str, Any],
+    surface_policy: dict[str, Any],
+    at: datetime,
+) -> dict[str, list[str]]:
+    capabilities = {
+        item["id"]: set(item["evidenceCapabilities"])
+        for item in surface_policy["surfaces"]
+    }
+    required = {
+        evidence_class: set(required_surfaces[evidence_class])
+        for evidence_class in EVIDENCE_CLASSES
+    }
+    entries = policy["runtimeRegressionWatchlist"]["entries"]
+    for entry in entries:
+        surface_id = entry["surfaceId"]
+        entry_evidence = set(entry["requiredEvidence"])
+        effective_expiry = (
+            entry["extensions"][-1]["expiresAt"]
+            if entry["extensions"]
+            else entry["expiresAt"]
+        )
+        entered_at = parse_iso8601(entry["enteredAt"])
+        expires_at = parse_iso8601(effective_expiry)
+        if entered_at is None or expires_at is None:
+            raise ReleaseEvidenceError("runtime regression watchlist entry is invalid")
+        if at < expires_at and not entry_evidence.issubset(capabilities[surface_id]):
+            raise ReleaseEvidenceError(
+                f"runtime regression watchlist exceeds evidence capabilities for {surface_id}"
+            )
+        if entered_at <= at < expires_at:
+            for evidence_class in entry["requiredEvidence"]:
+                required[evidence_class].add(surface_id)
+    return {
+        evidence_class: [
+            surface
+            for surface in RUNTIME_SURFACES
+            if surface in required[evidence_class]
+        ]
+        for evidence_class in EVIDENCE_CLASSES
+    }
 
 
 def _validate_surface_policy(
@@ -1228,7 +1386,14 @@ def evaluate_release_evidence(
     target = _validate_report(validation_report, current_manifest_id)
     validation_report_digest = _hash_payload(validation_report)
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    required_surfaces: dict[str, list[str]] = comparison["requiredSurfaces"]
+    if set(surface_comparison) != set(RUNTIME_SURFACES):
+        raise ReleaseEvidenceError("surface comparison does not cover every shipping surface")
+    required_surfaces: dict[str, list[str]] = _effective_required_surfaces(
+        comparison["requiredSurfaces"],
+        policy=policy,
+        surface_policy=surface_policy,
+        at=now,
+    )
     required_scope: set[str] = {
         surface
         for evidence_class in EVIDENCE_CLASSES
@@ -1236,8 +1401,6 @@ def evaluate_release_evidence(
     }
     if not required_scope:
         raise ReleaseEvidenceError("release evidence requires a non-empty authoritative scope")
-    if set(surface_comparison) != set(RUNTIME_SURFACES):
-        raise ReleaseEvidenceError("surface comparison does not cover every shipping surface")
     identity_by_surface = {item.surface: item for item in identities}
     if not identity_by_surface or any(
         item.manifest_id != current_manifest_id
@@ -1314,6 +1477,17 @@ def evaluate_release_evidence(
         selected_rc_expires_at = parse_iso8601(
             verified_selected_rc_ledger.get("expiresAt")
         )
+        selected_rc_generated_at = parse_iso8601(
+            verified_selected_rc_ledger.get("generatedAt")
+        )
+        if selected_rc_generated_at is None:
+            raise ReleaseEvidenceError("selected RC evidence is invalid")
+        selected_rc_required_surfaces = _effective_required_surfaces(
+            comparison["requiredSurfaces"],
+            policy=policy,
+            surface_policy=surface_policy,
+            at=selected_rc_generated_at,
+        )
         if (
             verified_selected_rc_ledger.get("train") != "rc"
             or verified_selected_rc_ledger.get("mode") != "enforce"
@@ -1321,7 +1495,8 @@ def evaluate_release_evidence(
             != next(iter(contract_fingerprints))
             or verified_selected_rc_ledger.get("expectedBuildIdentityDigest")
             != expected_identity_digest
-            or verified_selected_rc_ledger.get("requiredEvidence") != required_surfaces
+            or verified_selected_rc_ledger.get("requiredEvidence")
+            != selected_rc_required_surfaces
             or not isinstance(verified_selected_rc_ledger.get("shadow"), dict)
             or verified_selected_rc_ledger["shadow"].get("state") != "passed"
         ):
@@ -1501,6 +1676,7 @@ def release_evidence_report_blockers(
         return ["the release evidence report root must be a JSON object"]
     blockers: list[str] = []
     observed_now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    generated_at = parse_iso8601(payload.get("generatedAt"))
     allowed_states = (
         frozenset({"approved"})
         if enforce
@@ -1529,6 +1705,13 @@ def release_evidence_report_blockers(
         if set(validated_comparison_surfaces) != set(RUNTIME_SURFACES):
             blockers.append("surface comparison does not cover every shipping surface")
         authoritative_required = comparison["requiredSurfaces"]
+        if validated_policy is not None and generated_at is not None:
+            authoritative_required = _effective_required_surfaces(
+                comparison["requiredSurfaces"],
+                policy=validated_policy,
+                surface_policy=surface_policy,
+                at=generated_at,
+            )
         authoritative_scope = {
             surface
             for evidence_class in EVIDENCE_CLASSES
@@ -1727,7 +1910,6 @@ def release_evidence_report_blockers(
             blockers.append("shadow comparison evidence must be passed")
     elif payload.get("mode") != "shadow":
         blockers.append("shadow validation requires a shadow-mode report")
-    generated_at = parse_iso8601(payload.get("generatedAt"))
     if (
         generated_at is not None
         and validation_report is not None

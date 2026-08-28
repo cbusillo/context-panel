@@ -167,7 +167,11 @@ def expected_identity_set_digest(*identities: ExpectedSurfaceIdentity) -> str:
     ).hexdigest()
 
 
-def policy(*, patch_sensitive: tuple[str, ...] = ()) -> dict[str, Any]:
+def policy(
+    *,
+    patch_sensitive: tuple[str, ...] = (),
+    watchlist_entries: tuple[dict[str, Any], ...] = (),
+) -> dict[str, Any]:
     return {
         "schemaVersion": 1,
         "maximumEvidenceAgeDays": 90,
@@ -176,7 +180,65 @@ def policy(*, patch_sensitive: tuple[str, ...] = ()) -> dict[str, Any]:
             "invalidateMajorMinorChanges": True,
             "patchSensitiveSurfaces": list(patch_sensitive),
         },
+        "runtimeRegressionWatchlist": {
+            "maximumEntryDays": 30,
+            "maximumExtensionDays": 14,
+            "maximumExtensions": 2,
+            "entries": list(watchlist_entries),
+        },
     }
+
+
+def watchlist_entry(
+    surface: str,
+    *,
+    required_evidence: tuple[str, ...] = ("actual-runtime",),
+    entered_at: str = "2026-08-01T00:00:00Z",
+    expires_at: str = "2026-08-20T00:00:00Z",
+    extensions: tuple[dict[str, str], ...] = (),
+) -> dict[str, Any]:
+    return {
+        "surfaceId": surface,
+        "requiredEvidence": list(required_evidence),
+        "reason": "runtime-regression",
+        "exitCriteria": "two-clean-signed-trains",
+        "enteredAt": entered_at,
+        "expiresAt": expires_at,
+        "extensions": list(extensions),
+    }
+
+
+def watchlist_surface_policy(
+    surface: str,
+    *,
+    placement: bool = False,
+) -> dict[str, Any]:
+    payload = surface_policy(surface, "shared-view")
+    capabilities = ["shared-view", "actual-runtime"]
+    if placement:
+        capabilities.append("os-composited-placement")
+    next(
+        item for item in payload["surfaces"] if item["id"] == surface
+    )["evidenceCapabilities"] = capabilities
+    return payload
+
+
+def watchlist_comparison(
+    surface: str,
+    *,
+    placement: bool = False,
+) -> dict[str, Any]:
+    payload = comparison(surface, "shared-view")
+    carry_forward = next(
+        item for item in payload["surfaces"] if item["surfaceId"] == surface
+    )["carryForward"]
+    carry_forward["actual-runtime"] = {"eligible": True, "conditions": []}
+    if placement:
+        carry_forward["os-composited-placement"] = {
+            "eligible": True,
+            "conditions": ["matching-host-os", "matching-current-runtime-receipt"],
+        }
+    return payload
 
 
 def surface_policy(surface: str, evidence_class: str) -> dict[str, Any]:
@@ -731,6 +793,8 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         validation_report: dict[str, Any] | None = None,
         comparison_payload: dict[str, Any] | None = None,
         policy_payload: dict[str, Any] | None = None,
+        surface_policy_payload: dict[str, Any] | None = None,
+        now: datetime = NOW,
     ) -> list[str]:
         return release_evidence_report_blockers(
             payload,
@@ -742,8 +806,10 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             comparison=comparison_payload or comparison(surface, evidence_class),
             identities=all_identities(),
             policy=policy_payload or policy(),
-            surface_policy=surface_policy(surface, evidence_class),
-            now=NOW,
+            surface_policy=(
+                surface_policy_payload or surface_policy(surface, evidence_class)
+            ),
+            now=now,
         )
 
     def test_fresh_shared_view_is_approved_in_shadow_mode(self) -> None:
@@ -763,6 +829,204 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         payload = self.evaluate("watchos.app", "actual-runtime")
         self.assertEqual(payload["state"], "blocked")
         self.assertEqual(payload["blockers"], ["watchos.app:actual-runtime:missing"])
+
+    def test_active_watchlist_widens_required_evidence(self) -> None:
+        surface = "watchos.app"
+        watchlist_policy = policy(watchlist_entries=(watchlist_entry(surface),))
+        payload = self.evaluate(
+            surface,
+            "shared-view",
+            comparison_payload=watchlist_comparison(surface),
+            validation_report=report(surface, runtime=True, visual_class="shared-view"),
+            policy_payload=watchlist_policy,
+            surface_policy_payload=watchlist_surface_policy(surface),
+        )
+        self.assertEqual(payload["requiredEvidence"]["shared-view"], [surface])
+        self.assertEqual(payload["requiredEvidence"]["actual-runtime"], [surface])
+        self.assertEqual(payload["blockers"], [])
+        self.assertEqual(payload["expiresAt"], "2026-11-06T12:00:00Z")
+
+    def test_active_watchlist_missing_runtime_blocks(self) -> None:
+        surface = "watchos.app"
+        watchlist_policy = policy(watchlist_entries=(watchlist_entry(surface),))
+        payload = self.evaluate(
+            surface,
+            "shared-view",
+            comparison_payload=watchlist_comparison(surface),
+            validation_report=report(surface, visual_class="shared-view"),
+            policy_payload=watchlist_policy,
+            surface_policy_payload=watchlist_surface_policy(surface),
+        )
+        self.assertEqual(payload["state"], "blocked")
+        self.assertIn(f"{surface}:actual-runtime:missing", payload["blockers"])
+
+    def test_expired_watchlist_entry_is_an_exact_no_op(self) -> None:
+        surface = "watchos.app"
+        expired = watchlist_entry(surface, expires_at="2026-08-08T12:00:00Z")
+        watchlist_policy = policy(watchlist_entries=(expired,))
+        payload = self.evaluate(
+            surface,
+            "shared-view",
+            comparison_payload=watchlist_comparison(surface),
+            validation_report=report(surface, visual_class="shared-view"),
+            policy_payload=watchlist_policy,
+            surface_policy_payload=watchlist_surface_policy(surface),
+        )
+        self.assertEqual(
+            payload["requiredEvidence"],
+            watchlist_comparison(surface)["requiredSurfaces"],
+        )
+        self.assertNotIn("actual-runtime", payload["surfaces"][0]["evidence"])
+
+    def test_expired_watchlist_entry_ignores_stale_capability_mismatch(self) -> None:
+        surface = "watchos.app"
+        expired = watchlist_entry(
+            surface,
+            required_evidence=("actual-runtime", "os-composited-placement"),
+            entered_at="2026-06-01T00:00:00Z",
+            expires_at="2026-06-20T00:00:00Z",
+        )
+        watchlist_policy = policy(watchlist_entries=(expired,))
+        payload = self.evaluate(
+            surface,
+            "shared-view",
+            validation_report=report(surface, visual_class="shared-view"),
+            policy_payload=watchlist_policy,
+        )
+        self.assertEqual(
+            payload["requiredEvidence"],
+            comparison(surface, "shared-view")["requiredSurfaces"],
+        )
+
+    def test_watchlist_extension_uses_final_expiry(self) -> None:
+        surface = "watchos.app"
+        entry = watchlist_entry(
+            surface,
+            expires_at="2026-08-08T00:00:00Z",
+            extensions=(
+                {
+                    "extendedAt": "2026-08-07T00:00:00Z",
+                    "expiresAt": "2026-08-10T00:00:00Z",
+                    "reason": "regression-persists",
+                },
+            ),
+        )
+        watchlist_policy = policy(watchlist_entries=(entry,))
+        payload = self.evaluate(
+            surface,
+            "shared-view",
+            comparison_payload=watchlist_comparison(surface),
+            validation_report=report(surface, runtime=True, visual_class="shared-view"),
+            policy_payload=watchlist_policy,
+            surface_policy_payload=watchlist_surface_policy(surface),
+        )
+        self.assertEqual(payload["requiredEvidence"]["actual-runtime"], [surface])
+
+    def test_watchlist_policy_rejects_invalid_entries(self) -> None:
+        surface = "watchos.app"
+        cases = []
+        unsupported = watchlist_entry(
+            surface,
+            required_evidence=("actual-runtime", "os-composited-placement"),
+        )
+        cases.append(policy(watchlist_entries=(unsupported,)))
+        duplicate = watchlist_entry(surface)
+        cases.append(policy(watchlist_entries=(duplicate, duplicate)))
+        too_long = watchlist_entry(surface, expires_at="2026-09-15T00:00:00Z")
+        cases.append(policy(watchlist_entries=(too_long,)))
+        late_extension = watchlist_entry(
+            surface,
+            extensions=(
+                {
+                    "extendedAt": "2026-08-20T00:00:00Z",
+                    "expiresAt": "2026-08-21T00:00:00Z",
+                    "reason": "late-extension",
+                },
+            ),
+        )
+        cases.append(policy(watchlist_entries=(late_extension,)))
+        excessive_extension = watchlist_entry(
+            surface,
+            extensions=(
+                {
+                    "extendedAt": "2026-08-19T00:00:00Z",
+                    "expiresAt": "2026-09-10T00:00:00Z",
+                    "reason": "long-extension",
+                },
+            ),
+        )
+        cases.append(policy(watchlist_entries=(excessive_extension,)))
+        for policy_payload in cases:
+            with self.subTest(policy_payload=policy_payload):
+                with self.assertRaisesRegex(
+                    ReleaseEvidenceError,
+                    "runtime regression watchlist",
+                ):
+                    self.evaluate(
+                        surface,
+                        "shared-view",
+                        comparison_payload=watchlist_comparison(surface),
+                        validation_report=report(surface, visual_class="shared-view"),
+                        policy_payload=policy_payload,
+                        surface_policy_payload=watchlist_surface_policy(surface),
+                    )
+
+    def test_watchlist_report_scope_is_reconstructed_at_generation_time(self) -> None:
+        surface = "watchos.app"
+        watchlist_policy = policy(watchlist_entries=(watchlist_entry(surface),))
+        validation_report = report(surface, runtime=True, visual_class="shared-view")
+        comparison_payload = watchlist_comparison(surface)
+        surface_policy_payload = watchlist_surface_policy(surface)
+        payload = self.evaluate(
+            surface,
+            "shared-view",
+            comparison_payload=comparison_payload,
+            validation_report=validation_report,
+            policy_payload=watchlist_policy,
+            surface_policy_payload=surface_policy_payload,
+        )
+        blockers = self.report_blockers(
+            payload,
+            surface,
+            "shared-view",
+            enforce=False,
+            validation_report=validation_report,
+            comparison_payload=comparison_payload,
+            policy_payload=watchlist_policy,
+            surface_policy_payload=surface_policy_payload,
+            now=NOW + timedelta(days=15),
+        )
+        self.assertEqual(blockers, [])
+
+    def test_watchlist_policy_tampering_breaks_report_binding(self) -> None:
+        surface = "watchos.app"
+        watchlist_policy = policy(watchlist_entries=(watchlist_entry(surface),))
+        validation_report = report(surface, runtime=True, visual_class="shared-view")
+        comparison_payload = watchlist_comparison(surface)
+        surface_policy_payload = watchlist_surface_policy(surface)
+        payload = self.evaluate(
+            surface,
+            "shared-view",
+            comparison_payload=comparison_payload,
+            validation_report=validation_report,
+            policy_payload=watchlist_policy,
+            surface_policy_payload=surface_policy_payload,
+        )
+        tampered_policy = json.loads(json.dumps(watchlist_policy))
+        tampered_policy["runtimeRegressionWatchlist"]["entries"][0]["reason"] = (
+            "different-public-reason"
+        )
+        blockers = self.report_blockers(
+            payload,
+            surface,
+            "shared-view",
+            enforce=False,
+            validation_report=validation_report,
+            comparison_payload=comparison_payload,
+            policy_payload=tampered_policy,
+            surface_policy_payload=surface_policy_payload,
+        )
+        self.assertIn("release evidence policy binding is invalid", blockers)
 
     def test_shared_view_carries_forward_only_with_matching_fingerprint(self) -> None:
         surface = "watchos.app"
