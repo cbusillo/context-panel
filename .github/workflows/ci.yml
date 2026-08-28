@@ -21,6 +21,41 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Provision physical corpus Git compiler
+        if: >-
+          ${{ github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          required="$(jq -r '.gitVersion' Config/ContextPanelPhysicalDefectCorpus.json)"
+          if [[ "$required" != "2.55.0" ]]; then
+            echo "::error::No checksum-pinned CI compiler is configured for required Git $required"
+            exit 1
+          fi
+          archive="$RUNNER_TEMP/git-$required.tar.xz"
+          source_dir="$RUNNER_TEMP/git-$required"
+          install_dir="$RUNNER_TEMP/git-$required-install"
+          curl --fail --location --silent --show-error \
+            "https://www.kernel.org/pub/software/scm/git/git-$required.tar.xz" \
+            --output "$archive"
+          echo "457fdb04dc8728e007d4688695e6912e6f680727920f2a40bf11eacc17505357  $archive" \
+            | shasum -a 256 --check
+          tar -xf "$archive" -C "$RUNNER_TEMP"
+          make -C "$source_dir" -j"$(sysctl -n hw.ncpu)" \
+            prefix="$install_dir" NO_GETTEXT=YesPlease NO_TCLTK=YesPlease
+          make -C "$source_dir" prefix="$install_dir" NO_GETTEXT=YesPlease NO_TCLTK=YesPlease install
+          echo "$install_dir/bin" >> "$GITHUB_PATH"
+
+      - name: Verify physical corpus Git compiler
+        run: |
+          required="$(jq -r '.gitVersion' Config/ContextPanelPhysicalDefectCorpus.json)"
+          actual="$(git --version | awk '{print $3}')"
+          if [[ "$actual" != "$required" ]]; then
+            echo "::error::Installed Git version $actual does not match corpus-required version $required"
+            exit 1
+          fi
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app

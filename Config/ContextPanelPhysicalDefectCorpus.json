@@ -1,0 +1,274 @@
+{
+  "schemaVersion": 2,
+  "corpusVersion": 5,
+  "curatedThroughCommit": "a93ab1fb94bb56fe6600ca68810841610d7e5702",
+  "gitVersion": "2.55.0",
+  "incidents": [
+    {
+      "id": "tvos-local-cache-container",
+      "observation": "The Apple TV app needed an app-local cache container to retain the last known snapshot when offline on physical hardware.",
+      "causalConfidence": "confirmed-by-public-record",
+      "affectedSurfaces": ["tvos.app"],
+      "citations": [
+        {
+          "kind": "pull-request",
+          "number": 385,
+          "mergeCommit": "b1d8e0cc9a91a16746edc699e844df59e6b4edef",
+          "implementationCommit": "0a7656663719bf6ed897c14affc61594f13a9298"
+        }
+      ],
+      "candidatePolicy": {
+        "inputBoundaries": ["runtime"],
+        "pathMatchers": [
+          "Sources/ContextPanelTV/ContextPanelTVApp.swift",
+          "Sources/ContextPanelTVSupport/TVLocalCacheLocations.swift"
+        ],
+        "diffContentMatchers": [
+          "^\\+        let localCacheLocations = TVLocalCacheLocations\\.live\\(\\)$"
+        ],
+        "evidenceOracle": [
+          {
+            "surface": "tvos.app",
+            "evidenceClass": "actual-runtime",
+            "sourceConstraint": "physical-exact-build"
+          }
+        ]
+      },
+      "negativeNearMiss": {
+        "id": "tvos-local-cache-container-focus-border-render",
+        "surfaces": ["tvos.app"],
+        "inputBoundaries": ["render"],
+        "rationale": "A focus-border rendering adjustment touched the same tvOS app source without changing local cache container construction.",
+        "commit": "98809d1b5987962ead8b1da77786de5d538e0d7d"
+      }
+    },
+    {
+      "id": "tvos-top-shelf-shared-storage-domain",
+      "observation": "Top Shelf needed its derived document in the shared Library Caches domain so the Apple TV app and extension converged on physical hardware.",
+      "causalConfidence": "confirmed-by-public-record",
+      "affectedSurfaces": ["tvos.app", "tvos.top-shelf"],
+      "citations": [
+        {
+          "kind": "pull-request",
+          "number": 396,
+          "mergeCommit": "010e552cfc82e2671411a6ccee5e39b39b3abaae",
+          "implementationCommit": "c0bc64a90b4d5561f0cd242e0db153076b77f1e5"
+        }
+      ],
+      "candidatePolicy": {
+        "inputBoundaries": ["runtime"],
+        "pathMatchers": [
+          "Sources/ContextPanelTV/TVSystemSurfaces.swift",
+          "Sources/ContextPanelTVSupport/TVTopShelfDocument.swift"
+        ],
+        "diffContentMatchers": [
+          "^\\+            \\.appending\\(path: \"Caches\", directoryHint: \\.isDirectory\\)$"
+        ],
+        "evidenceOracle": [
+          {
+            "surface": "tvos.app",
+            "evidenceClass": "actual-runtime",
+            "sourceConstraint": "physical-exact-build"
+          },
+          {
+            "surface": "tvos.top-shelf",
+            "evidenceClass": "actual-runtime",
+            "sourceConstraint": "physical-exact-build"
+          },
+          {
+            "surface": "tvos.top-shelf",
+            "evidenceClass": "os-composited-placement",
+            "sourceConstraint": "os-composited-physical"
+          }
+        ]
+      },
+      "negativeNearMiss": {
+        "id": "tvos-top-shelf-shared-storage-domain-artwork-path",
+        "surfaces": ["tvos.top-shelf"],
+        "inputBoundaries": ["runtime"],
+        "rationale": "A Top Shelf artwork-directory addition touched the same document model without changing the shared root Caches domain.",
+        "commit": "426eab772bd9f3953b337cf6432ec2bee149059e"
+      }
+    },
+    {
+      "id": "watch-complication-cache-convergence",
+      "observation": "The Watch app and complication needed to converge on a compatible cache state after companion refreshes.",
+      "causalConfidence": "confirmed-by-public-record",
+      "affectedSurfaces": ["watchos.app", "watchos.complication"],
+      "citations": [
+        {
+          "kind": "pull-request",
+          "number": 466,
+          "mergeCommit": "7e4479cfe36256a1b28f5224ae5a3187d586524f",
+          "implementationCommit": "f3f7a8ee9f2c5c2f0753398331d72eeedd5ef3a1"
+        }
+      ],
+      "candidatePolicy": {
+        "inputBoundaries": ["runtime"],
+        "pathMatchers": [
+          "Sources/ContextPanelWatchSupport/WatchCompanionCache.swift",
+          "Sources/ContextPanelWatchSupport/WatchCompanionLoader.swift"
+        ],
+        "diffContentMatchers": [
+          "^\\+            if let payload = try Self\\.coordinatedLoadPayload\\(at: cacheURL\\) \\{$"
+        ],
+        "evidenceOracle": [
+          {
+            "surface": "watchos.app",
+            "evidenceClass": "actual-runtime",
+            "sourceConstraint": "physical-exact-build"
+          },
+          {
+            "surface": "watchos.complication",
+            "evidenceClass": "actual-runtime",
+            "sourceConstraint": "physical-exact-build"
+          }
+        ]
+      },
+      "negativeNearMiss": {
+        "id": "watch-complication-cache-convergence-timeline-reload",
+        "surfaces": ["watchos.complication"],
+        "inputBoundaries": ["runtime"],
+        "rationale": "A complication timeline-reload policy touched the same loader without changing cache coordination or app-and-complication convergence.",
+        "commit": "23fefedb02262c0ac17843009ebccdc462bd376c"
+      }
+    },
+    {
+      "id": "tvos-runway-safe-area-focus",
+      "observation": "The tvOS runway had to stay inside the safe area and preserve comfortable focused-card clearance on physical hardware.",
+      "causalConfidence": "confirmed-by-public-record",
+      "affectedSurfaces": ["tvos.app"],
+      "citations": [
+        {
+          "kind": "pull-request",
+          "number": 601,
+          "mergeCommit": "e450df6d8e1fffb2424827d83955848d2adaa3a0",
+          "implementationCommit": "4a57aeac5b681137d072287988ea6b0b73364ef8"
+        },
+        {
+          "kind": "pull-request",
+          "number": 607,
+          "mergeCommit": "9be5cbe2e46640340053751fcb7f68c743efa1aa",
+          "implementationCommit": "ae960d0ceae69b52890d4fd5ce856f65ddd9689d"
+        }
+      ],
+      "candidatePolicy": {
+        "inputBoundaries": ["render"],
+        "pathMatchers": ["Sources/ContextPanelTV/ContextPanelTVApp.swift"],
+        "diffContentMatchers": [
+          "^\\+            \\.safeAreaPadding\\(\\.top, 24\\)$",
+          "^\\+            \\.focused\\(\\$focusedProviderRawValue, equals: section\\.provider\\.rawValue\\)$"
+        ],
+        "evidenceOracle": [
+          {
+            "surface": "tvos.app",
+            "evidenceClass": "shared-view",
+            "sourceConstraint": "physical-exact-build"
+          },
+          {
+            "surface": "tvos.app",
+            "evidenceClass": "actual-runtime",
+            "sourceConstraint": "physical-exact-build"
+          }
+        ]
+      },
+      "negativeNearMiss": {
+        "id": "tvos-runway-safe-area-focus-status-polish",
+        "surfaces": ["tvos.app"],
+        "inputBoundaries": ["render"],
+        "rationale": "Status and card styling changed in the same runway view without changing safe-area padding or focus assignment.",
+        "commit": "6c55b6060fc2749571a0fcb638e693a038b55c52"
+      }
+    }
+  ],
+  "residualRisks": [
+    {
+      "id": "tvos-suspended-badge-delivery",
+      "riskClass": "unsupported-evidence-class",
+      "affectedSurfaces": ["tvos.app"],
+      "consequence": "A badge-only expiry can be accepted but not delivered while the Apple TV app is suspended.",
+      "evidenceGap": "The supported evidence classes cannot prove temporal local-notification delivery after suspension.",
+      "mitigation": "Badge behavior is retired rather than represented as placement or runtime coverage.",
+      "citations": [
+        {
+          "kind": "pull-request",
+          "number": 408,
+          "mergeCommit": "2cfa8fab897ac932290ad4c1084f800d4c2848ac",
+          "implementationCommit": "39d924933972cc8556b797783ca304f6f66c932c"
+        }
+      ]
+    },
+    {
+      "id": "watch-post-install-extension-activation",
+      "riskClass": "historical-evidence-loss",
+      "affectedSurfaces": ["watchos.app", "watchos.complication"],
+      "consequence": "A newly installed Watch extension can render an earlier cache state until the Watch restarts.",
+      "evidenceGap": "The corpus does not retain device-specific install traces or extension-process receipts.",
+      "mitigation": "Keep the documented restart boundary and treat pre-restart stale output as an operating-system near-miss.",
+      "citations": [
+        {
+          "kind": "pull-request",
+          "number": 466,
+          "mergeCommit": "7e4479cfe36256a1b28f5224ae5a3187d586524f",
+          "implementationCommit": "f3f7a8ee9f2c5c2f0753398331d72eeedd5ef3a1"
+        },
+        {"kind": "repository-anchor", "path": "AGENTS.md", "anchor": "build has reached the Watch, then restart the Watch before judging complication"}
+      ]
+    },
+    {
+      "id": "surface-policy-shared-input-overtriggering",
+      "riskClass": "over-triggered-policy",
+      "affectedSurfaces": ["tvos.app"],
+      "consequence": "A shared input can require more evidence than a narrow physical incident needs.",
+      "evidenceGap": "This replay-only corpus does not alter comparison or release-gate policy.",
+      "mitigation": "Keep the representative incident declarative and leave policy changes to the owning surface-policy workstream.",
+      "citations": [
+        {"kind": "repository-anchor", "path": "Config/ContextPanelSurfacePolicy.json", "anchor": "\"shared\": [\"core\", \"tv-app\", \"tv-support\"]"}
+      ]
+    },
+    {
+      "id": "literal-matchers-and-oracle-supersets",
+      "riskClass": "over-triggered-policy",
+      "affectedSurfaces": ["tvos.app", "tvos.top-shelf", "watchos.app", "watchos.complication"],
+      "consequence": "Equivalent future defects can evade commit-literal matchers while selected incidents can request evidence beyond baseline change requirements.",
+      "evidenceGap": "The corpus proves exact historical positives and overlapping-path controls; three controls reject at the path stage and one reaches content matching, so it does not establish matcher generality.",
+      "mitigation": "Treat matchers as fixed regression examples, inspect each compiled rejection stage, review oracle supersets explicitly, and add representative content-stage cases before generalizing candidate detection.",
+      "citations": [
+        {"kind": "repository-anchor", "path": "Config/ContextPanelSurfacePolicy.json", "anchor": "\"changeRequirements\""}
+      ]
+    },
+    {
+      "id": "pinned-git-toolchain-availability",
+      "riskClass": "toolchain-dependency",
+      "affectedSurfaces": ["tvos.app", "tvos.top-shelf", "watchos.app", "watchos.complication"],
+      "consequence": "Corpus validation fails closed when a developer or CI runner does not provide the exact pinned Git compiler version.",
+      "evidenceGap": "Byte-identical historical patch rendering is not claimed across Git versions, including hosted fork runners and upgraded local toolchains.",
+      "mitigation": "Keep the required Git version explicit, update it only with reviewed artifact regeneration, and provision matching Git before running the corpus lane.",
+      "citations": [
+        {"kind": "repository-anchor", "path": ".github/workflows/ci.yml", "anchor": "macos-26"}
+      ]
+    },
+    {
+      "id": "unrepresented-physical-product-surfaces",
+      "riskClass": "unrepresented-surface",
+      "affectedSurfaces": ["ios.app", "ipados.app", "macos.app", "visionos.app"],
+      "consequence": "The corpus cannot claim representative physical-only product coverage for these surfaces.",
+      "evidenceGap": "No equally defensible public-record incident was selected for these product surfaces.",
+      "mitigation": "Record the uncovered surfaces explicitly instead of manufacturing positives or negative controls.",
+      "citations": [
+        {"kind": "repository-anchor", "path": "Config/ContextPanelSurfacePolicy.json", "anchor": "\"id\": \"macos.app\""}
+      ]
+    },
+    {
+      "id": "historical-receipt-body-loss",
+      "riskClass": "historical-evidence-loss",
+      "affectedSurfaces": ["tvos.app", "tvos.top-shelf", "watchos.app", "watchos.complication"],
+      "consequence": "Historical citations establish context but cannot replay raw physical receipts.",
+      "evidenceGap": "Older retained validation bodies may be reference-only rather than reconstructable artifacts.",
+      "mitigation": "Treat the corpus as a declarative candidate suite and preserve retained-input limits in the replay inventory.",
+      "citations": [
+        {"kind": "repository-anchor", "path": "docs/signed-validation-replay-inventory.md", "anchor": "Reference-only evidence can support identity-set replay"}
+      ]
+    }
+  ]
+}
