@@ -17,6 +17,7 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
+from context_panel_comparison_schema import derive_runtime_decision
 from context_panel_validation import (
     ASCEvidence,
     MacEvidence,
@@ -108,7 +109,7 @@ class VisualApprovalTests(unittest.TestCase):
     def write_plan_files(self) -> tuple[Path, Path]:
         comparison = {
             "kind": "context-panel-surface-comparison",
-            "schemaVersion": 2,
+            "schemaVersion": 3,
             "train": "beta",
             "previousManifestId": "c" * 64,
             "currentManifestId": MANIFEST_ID,
@@ -172,6 +173,9 @@ class VisualApprovalTests(unittest.TestCase):
             ],
             "releaseRequiresApprovedRCTarget": True,
         }
+        comparison["runtimeState"], comparison["runtimeStateReasons"] = (
+            derive_runtime_decision(comparison["surfaces"])
+        )
         requirements = {
             "schemaVersion": 1,
             "kind": "context-panel-visual-review-requirements",
@@ -524,6 +528,9 @@ class VisualApprovalTests(unittest.TestCase):
                 },
             }
         ]
+        comparison["runtimeState"], comparison["runtimeStateReasons"] = (
+            derive_runtime_decision(comparison["surfaces"])
+        )
         comparison_path.write_text(json.dumps(comparison))
         requirements = json.loads(requirements_path.read_text())
         requirements["requirements"] = [requirements["requirements"][0]]

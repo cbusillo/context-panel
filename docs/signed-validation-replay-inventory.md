@@ -94,20 +94,26 @@ a different reduced plan and must not be treated as authoritative.
 ## Comparison Schema Compatibility
 
 Production comparison generation, coordinator planning, direct release-gate
-inputs, report validation, and submission accept only schema v2. Retained v1
-comparisons are replay-only: inventory lineage validation verifies the raw
-archived chain before the adapter deep-copies the v1 payload, injects its frozen
-v2 identity, and validates with the pinned reconstruction contract. Release-gate
-lineage reconstruction may validate an embedded signed v1 comparison while
-preserving its raw comparison digest; that exception is unavailable to direct
-production inputs.
+inputs, report validation, and submission accept only schema v3. Schema v3 adds
+the canonical `runtimeState` and `runtimeStateReasons` decision contract without
+changing the current evidence floors. Retained v1 comparisons are replay-only:
+inventory lineage validation verifies the raw archived chain before the adapter
+deep-copies the v1 payload, injects its frozen v2 identity, and validates with
+the pinned reconstruction contract. Retained v2 comparisons validate directly
+against that same frozen v2 contract. Release-gate lineage reconstruction may
+validate embedded signed v1 or v2 comparisons while preserving their raw
+comparison digests; those exceptions are unavailable to direct production
+inputs.
 
 The v1 adapter verifies its contract, implementation, and transitive dependency
-digests at runtime. Any source, dependency, or contract behavior change requires
-an explicit adapter version and fixture/digest update; do not route retained
-replay through a future current-schema validator. Its legacy exceptions preserve
+digests at runtime. The exact schema v2 validator is retained in
+`scripts/context_panel_surface_manifest/comparison_schema_v2.py`; production v3
+and historical v1/v2 reconstruction share that frozen implementation rather
+than re-baselining the adapter. Any source, dependency, or contract behavior
+change requires an explicit adapter version and fixture/digest update; do not
+route retained replay through a future current-schema validator. Its legacy exceptions preserve
 historical carry-forward map insertion order and incomplete maps present in the
-retained v1 corpus; production v2 rejects both forms.
+retained v1 corpus; production v3 rejects both forms.
 
 ## Recoverability
 

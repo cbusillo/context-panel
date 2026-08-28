@@ -17,6 +17,7 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 inventory_module = importlib.import_module("context_panel_replay.inventory")
 adapter_v1_module = importlib.import_module("context_panel_replay.comparison_adapter_v1")
 adapters_module = importlib.import_module("context_panel_replay.comparison_adapters")
+current_schema_module = importlib.import_module("context_panel_comparison_schema")
 InventoryError = inventory_module.InventoryError
 canonical_digest = inventory_module.canonical_digest
 canonical_json = inventory_module.canonical_json
@@ -536,8 +537,14 @@ class ReplayInventoryTests(unittest.TestCase):
         self.assertIs(adapt_comparison_for_replay(adapted), adapted)
         incomplete_v2 = copy.deepcopy(adapted)
         incomplete_v2["surfaces"][0]["carryForward"] = {}
-        with self.assertRaisesRegex(ComparisonAdapterError, "current comparison is invalid"):
+        with self.assertRaisesRegex(ComparisonAdapterError, "v2 comparison is invalid"):
             adapt_comparison_for_replay(incomplete_v2)
+        current = copy.deepcopy(adapted)
+        current["schemaVersion"] = 3
+        current["runtimeState"], current["runtimeStateReasons"] = (
+            current_schema_module.derive_runtime_decision(current["surfaces"])
+        )
+        self.assertIs(adapt_comparison_for_replay(current), current)
         legacy_ordered = copy.deepcopy(original)
         legacy_ordered["surfaces"][0]["carryForward"] = {
             "actual-runtime": {"eligible": True, "conditions": []},
@@ -548,7 +555,7 @@ class ReplayInventoryTests(unittest.TestCase):
             list(adapted_legacy_ordered["surfaces"][0]["carryForward"]),
             ["actual-runtime", "shared-view"],
         )
-        for unsupported_version in (1.0, 3):
+        for unsupported_version in (1.0, 4):
             unsupported = copy.deepcopy(adapted)
             unsupported["schemaVersion"] = unsupported_version
             with self.assertRaisesRegex(ComparisonAdapterError, "schema is unsupported"):

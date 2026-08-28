@@ -9,6 +9,7 @@ from unittest.mock import patch
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
+from context_panel_comparison_schema import derive_runtime_decision
 from context_panel_release_gate.core import LEDGER_KEYS, _ledger_id
 from context_panel_replay.comparison_adapters import adapt_comparison_for_replay
 from context_panel_replay.inventory import InventoryError, canonical_digest, seal_inventory, write_inventory
@@ -156,6 +157,69 @@ class SignedTrainReplayTests(unittest.TestCase):
                 with self.assertRaisesRegex(ReplayError, "changed after"):
                     reconstruct_bundle(**arguments)
 
+    def test_synthetic_v3_tier_b_round_trip(self):
+        from Tests.ScriptsTests.test_replay_inventory import ReplayInventoryTests
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = ReplayInventoryTests()
+            policy, roots = fixture.fixture(root, retain_receipt=True)
+            comparison_path = root / "archive/train/comparison.json"
+            comparison = adapt_comparison_for_replay(self.load(comparison_path))
+            comparison["surfaces"][0]["carryForward"].update({
+                "actual-runtime": {"eligible": True, "conditions": []},
+                "os-composited-placement": {
+                    "eligible": True,
+                    "conditions": ["matching-host-os", "matching-current-runtime-receipt"],
+                },
+            })
+            comparison["schemaVersion"] = 3
+            comparison["runtimeState"], comparison["runtimeStateReasons"] = (
+                derive_runtime_decision(comparison["surfaces"])
+            )
+            comparison_path.write_text(json.dumps(comparison) + "\n")
+            ledger_path = root / "archive/train/ledger.json"
+            ledger = self.load(ledger_path)
+            ledger["comparisonDigest"] = canonical_digest(comparison)
+            ledger["ledgerID"] = _ledger_id(ledger)
+            fixture.write_json(ledger_path, ledger)
+            lineage_path = root / "archive/train/lineage.json"
+            lineage = self.load(lineage_path)
+            lineage["ledger"], lineage["generation"]["comparison"] = ledger, comparison
+            fixture.write_json(lineage_path, lineage)
+            inventory = seal_inventory(policy, roots)
+            inventory_path = root / "inventory.json"
+            write_inventory(inventory, inventory_path)
+            surface_policy = root / "surfaces.json"
+            fixture.write_json(
+                surface_policy,
+                {
+                    "schemaVersion": 1,
+                    "surfaces": [{
+                        "id": "macos.app",
+                        "artifactId": "Context Panel.app",
+                        "deviceClass": "Mac",
+                        "evidenceCapabilities": ["shared-view", "actual-runtime"],
+                    }],
+                },
+            )
+            arguments = dict(
+                inventory_policy_path=policy,
+                inventory_path=inventory_path,
+                release_policy_path=RELEASE_POLICY,
+                surface_policy_path=surface_policy,
+                root_bindings=roots,
+            )
+            bundle = reconstruct_bundle(**arguments)
+            self.assertEqual(bundle["trains"][0]["comparisonAdapter"], [3, 3])
+            report = build_report(bundle)
+            bundle_path, report_path = root / "bundle.json", root / "report-out.json"
+            write_json(bundle, bundle_path)
+            write_json(report, report_path)
+            self.assertEqual(
+                verify_replay(**arguments, bundle_path=bundle_path, report_path=report_path), report
+            )
+
     def test_bundle_rejects_unbounded_states_actions_receipts_and_claims(self):
         train = lambda bundle: bundle["trains"][0]
         surface = lambda bundle: train(bundle)["runtimeSurfaces"][0]
@@ -199,6 +263,11 @@ class SignedTrainReplayTests(unittest.TestCase):
             ),
             lambda bundle: bundle["trains"][0].__setitem__("comparisonDigest", "0" * 64),
             lambda bundle: bundle["trains"][0].__setitem__("comparisonAdapter", [99, 2]),
+            lambda bundle: bundle["trains"][0].__setitem__("comparisonAdapter", [True, 2]),
+            lambda bundle: bundle["trains"][0].__setitem__("comparisonAdapter", [1, 2.0]),
+            lambda bundle: bundle["trains"][0].__setitem__("comparisonAdapter", [1, 3]),
+            lambda bundle: bundle["trains"][0].__setitem__("comparisonAdapter", [2, 3]),
+            lambda bundle: bundle["trains"][0].__setitem__("comparisonAdapter", [3, 2]),
             lambda bundle: bundle["trains"][0].__setitem__("artifactObservations", []),
             new_surface,
         )

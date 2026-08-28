@@ -12,6 +12,7 @@ from context_panel_comparison_schema import (
     EVIDENCE_CLASSES,
     validate_current_comparison,
     validate_legacy_v1_comparison_for_reconstruction,
+    validate_legacy_v2_comparison_for_reconstruction,
 )
 from context_panel_validation.models import Target
 from context_panel_validation.runtime_evidence import (
@@ -357,6 +358,8 @@ def _validate_comparison(
         validated = (
             validate_legacy_v1_comparison_for_reconstruction(comparison)
             if allow_legacy_reconstruction and comparison.get("schemaVersion") == 1
+            else validate_legacy_v2_comparison_for_reconstruction(comparison)
+            if allow_legacy_reconstruction and comparison.get("schemaVersion") == 2
             else validate_current_comparison(comparison)
         )
     except ComparisonSchemaError as error:

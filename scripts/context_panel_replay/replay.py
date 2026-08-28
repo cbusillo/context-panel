@@ -759,7 +759,10 @@ def validate_bundle(
         if train["comparisonDigest"] != comparison["canonicalDigest"]:
             raise ReplayError("replay comparison digest is stale")
         adapter = _row(train["comparisonAdapter"], 2, "replay comparison adapter")
-        if type(adapter[0]) is not int or adapter[0] not in {1, 2} or adapter[1] != 2:
+        if (
+            any(type(version) is not int for version in adapter)
+            or tuple(adapter) not in {(1, 2), (2, 2), (3, 3)}
+        ):
             raise ReplayError("replay comparison adapter is invalid")
         sources = _validate_source_rows(train["sourceVerification"], inventory_train)
         source_state = _source_state(sources)

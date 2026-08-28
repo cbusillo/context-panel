@@ -599,11 +599,13 @@ class SurfaceManifestTests(unittest.TestCase):
         self.assertFalse(comparison["requiresPlacementReview"])
         self.assertEqual(comparison["requiredSurfaces"]["actual-runtime"], [])
         self.assertEqual(comparison["requiredSurfaces"]["os-composited-placement"], [])
+        self.assertEqual(comparison["runtimeState"], "not-required-no-session")
+        self.assertEqual(comparison["runtimeStateReasons"], [])
 
-    def test_comparison_v2_rejects_hand_trimmed_or_noncanonical_payloads(self):
+    def test_comparison_v3_rejects_hand_trimmed_or_noncanonical_payloads(self):
         comparison = compare_manifests(self.baseline, self.manifest(REPO_ROOT), "beta")
         self.assertEqual(comparison["kind"], "context-panel-surface-comparison")
-        self.assertEqual(comparison["schemaVersion"], 2)
+        self.assertEqual(comparison["schemaVersion"], 3)
         mutations = (
             lambda value: value.__setitem__("unexpected", True),
             lambda value: value["surfaces"][0].pop("artifactId"),
@@ -617,7 +619,11 @@ class SurfaceManifestTests(unittest.TestCase):
             lambda value: value["requiredSurfaces"]["shared-view"].append(
                 value["requiredSurfaces"]["shared-view"][0]
             ),
-            lambda value: value.__setitem__("schemaVersion", 2.0),
+            lambda value: value.__setitem__("schemaVersion", 3.0),
+            lambda value: value.__setitem__("runtimeState", "required-with-session"),
+            lambda value: value.__setitem__(
+                "runtimeStateReasons", ["train-minimum-required"]
+            ),
             lambda value: value["surfaces"][0]["reasonCodes"].__setitem__(
                 0,
                 "render-fingerprint-changed",
@@ -635,7 +641,7 @@ class SurfaceManifestTests(unittest.TestCase):
             with self.assertRaises(ComparisonSchemaError):
                 validate_current_comparison(candidate)
 
-    def test_comparison_v2_rejects_inconsistent_fresh_and_placement_evidence(self):
+    def test_comparison_v3_rejects_inconsistent_fresh_and_placement_evidence(self):
         comparison = compare_manifests(self.baseline, self.manifest(REPO_ROOT), "beta")
         fresh_candidate = copy.deepcopy(comparison)
         fresh_surface = next(
@@ -763,11 +769,71 @@ class SurfaceManifestTests(unittest.TestCase):
             ):
                 validate_current_comparison(candidate)
 
-    def test_comparison_schema_is_a_surface_tooling_contract_input(self):
-        self.assertIn("scripts/context_panel_comparison_schema.py", self.baseline["files"])
+    def test_runtime_state_is_derived_from_authoritative_evidence_scope(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = self.fixture(temporary_directory)
+            self.append(root / "Sources/ContextPanelRefreshAgent/ContextPanelRefreshAgent.swift")
+            runtime = compare_manifests(self.baseline, self.manifest(root), "beta")
+        self.assertEqual(runtime["runtimeState"], "required-with-session")
+        self.assertEqual(
+            runtime["runtimeStateReasons"], ["runtime-fingerprint-changed"]
+        )
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = self.fixture(temporary_directory)
+            self.append(root / "Sources/ContextPanelRefreshAgent/ContextPanelRefreshAgent.swift")
+            release_runtime = compare_manifests(
+                self.baseline,
+                self.manifest(root),
+                "release",
+            )
+        self.assertEqual(release_runtime["runtimeState"], "required-with-session")
+        self.assertEqual(
+            release_runtime["runtimeStateReasons"],
+            ["train-minimum-required", "runtime-fingerprint-changed"],
+        )
+
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = self.fixture(temporary_directory)
             self.append(root / "scripts/context_panel_comparison_schema.py")
+            unknown = compare_manifests(self.baseline, self.manifest(root), "beta")
+        self.assertEqual(unknown["runtimeState"], "unknown-fail-closed")
+        self.assertIn(
+            "contract-fingerprint-changed", unknown["runtimeStateReasons"]
+        )
+
+    def test_comparison_schema_is_a_surface_tooling_contract_input(self):
+        self.assertIn("scripts/context_panel_comparison_schema.py", self.baseline["files"])
+        frozen_schema_path = (
+            REPO_ROOT
+            / "scripts/context_panel_surface_manifest/comparison_schema_v2.py"
+        )
+        self.assertIn(
+            "scripts/context_panel_surface_manifest/comparison_schema_v2.py",
+            self.baseline["files"],
+        )
+        self.assertEqual(
+            hashlib.sha256(frozen_schema_path.read_bytes()).hexdigest(),
+            "a0e7d39db68bc75c5a8d62df9e48fb138643542f0457268c3558947ebb1d18fb",
+        )
+        self.assertIs(
+            sys.modules["context_panel_surface_manifest.comparison_schema_v2"],
+            comparison_schema_module.comparison_schema_v2,
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = self.fixture(temporary_directory)
+            self.append(root / "scripts/context_panel_comparison_schema.py")
+            changed = self.manifest(root)
+        self.assertNotEqual(
+            self.baseline["contractFingerprint"],
+            changed["contractFingerprint"],
+        )
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = self.fixture(temporary_directory)
+            self.append(
+                root / "scripts/context_panel_surface_manifest/comparison_schema_v2.py"
+            )
             changed = self.manifest(root)
         self.assertNotEqual(
             self.baseline["contractFingerprint"],
@@ -808,6 +874,7 @@ class SurfaceManifestTests(unittest.TestCase):
         pending = [
             "context_panel_comparison_schema",
             "context_panel_surface_manifest",
+            "context_panel_surface_manifest.comparison_schema_v2",
             "context_panel_surface_manifest.core",
             "context_panel_surface_manifest.cli",
             "context_panel_validation",
