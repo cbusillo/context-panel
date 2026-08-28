@@ -32,7 +32,16 @@
     },
     "inspection": {
       "ide": "IntelliJ IDEA",
-      "scopePreference": "changed_files"
+      "scopePreference": "changed_files",
+      "prepare": {
+        "python": {
+          "version": "3.13",
+          "moduleName": "context-panel",
+          "testRoots": ["Tests"],
+          "sync": false,
+          "requiredGeneratedState": [".venv", ".idea"]
+        }
+      }
     },
     "validate": {
       "default": "scripts/commit-gate.sh",

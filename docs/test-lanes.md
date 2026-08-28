@@ -65,6 +65,19 @@ and bounded runner metadata such as OS, architecture, and image version; they do
 not contain arbitrary environment values, credentials, command output, machine
 names, or absolute checkout paths.
 
+## JetBrains Inspection Preparation
+
+The repository declares its worktree-local Python SDK preparation in
+`.github/github.json`. Before a JetBrains inspection, the inspection helper uses
+`uv` to create a Python 3.13 environment at `.venv` and generates the local
+`.idea` project model with `Tests` marked as a test root. Both directories are
+ignored and must be generated independently in each linked worktree.
+
+This preparation exists only to provide semantic Python inspection for the
+repository's validation scripts and tests. Context Panel is not a Python
+package, so the preparation does not run dependency synchronization and does
+not require a `pyproject.toml` or `uv.lock`.
+
 ## Audit Baseline
 
 The initial lane manifest is anchored to source commit
