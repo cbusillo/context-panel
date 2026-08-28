@@ -148,6 +148,13 @@ profiles, screenshots with private content, or validation containers to the
 repository. The rejected `feat/simulator-first-rc-validation` working tree is
 reference material only and is inadmissible as replay evidence.
 
+## Signed Train Replay
+
+Issue #609 adds sidecar replay without changing release decisions. Tier B
+rechecks the three-root projection; Tier A freezes it and derives the report.
+`check` and `verify` are gates; reference-only evidence stays
+`sources-unverified`.
+
 ## Physical Defect Corpus
 
 `Config/ContextPanelPhysicalDefectCorpus.json` is a separate, versioned,

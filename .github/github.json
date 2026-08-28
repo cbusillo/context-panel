@@ -59,6 +59,8 @@
       "physicalDefectCorpusCheck": "python3 scripts/context-panel-defect-corpus.py check --json",
       "signedValidationReplayInventorySeal": "scripts/context-panel-replay-inventory.py seal --root shadow-trains=<absolute-shadow-trains-root> --root build-release-evidence=<absolute-release-evidence-root> --root code-evidence=<absolute-code-evidence-root> --json",
       "signedValidationReplayInventoryVerify": "scripts/context-panel-replay-inventory.py verify --root shadow-trains=<absolute-shadow-trains-root> --root build-release-evidence=<absolute-release-evidence-root> --root code-evidence=<absolute-code-evidence-root> --json",
+      "signedValidationTrainReplayCheck": "python3 scripts/context-panel-signed-train-replay.py check --json",
+      "signedValidationTrainReplayVerify": "python3 scripts/context-panel-signed-train-replay.py verify --root shadow-trains=<absolute-shadow-trains-root> --root build-release-evidence=<absolute-release-evidence-root> --root code-evidence=<absolute-code-evidence-root> --json",
       "signedValidationReplayInventoryTests": "python3 -m unittest Tests/ScriptsTests/test_replay_inventory.py",
       "physicalDefectCorpusTests": "python3 -m unittest Tests/ScriptsTests/test_physical_defect_corpus.py",
       "runtimeReceiptSession": "scripts/context-panel-runtime-session.py status",
