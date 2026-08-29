@@ -773,6 +773,11 @@ build.
 Before treating a companion TestFlight build as release evidence, validate this
 sequence from signed runtimes.
 
+New archive collection emits expected-build schema v2. Retained sealed
+expected-build schema v1 manifests remain replay-compatible, but unsealed
+intermediate artifact-evidence JSON from the older schema must be regenerated
+from the archive before sealing; do not carry it across release-tooling updates.
+
 First compare the prior approved full source manifest with the candidate source
 manifest for the intended train:
 

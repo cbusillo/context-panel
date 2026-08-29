@@ -755,16 +755,6 @@ def _validate_retained_session(
     )
 
 
-def _normalized_uuid_list(value: Any, label: str) -> tuple[str, ...]:
-    if not isinstance(value, list) or not value:
-        raise InventoryError(f"{label} is invalid")
-    normalized = [_normalized_uuid(item, label).upper() for item in value]
-    canonical = tuple(sorted(set(normalized)))
-    if len(canonical) != len(value):
-        raise InventoryError(f"{label} is invalid")
-    return canonical
-
-
 def _expected_surface_identities(
     expected_builds: list[dict[str, Any]],
     train: dict[str, Any],

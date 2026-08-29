@@ -19,6 +19,7 @@ from context_panel_comparison_schema import (
     toolchain_changed,
     validate_current_comparison,
 )
+from context_panel_expected_build import ARCHITECTURE_PATTERN, SIGNING_CLASSES
 
 
 DEFAULT_POLICY_PATH = Path("Config/ContextPanelSurfacePolicy.json")
@@ -1060,7 +1061,7 @@ def seal_expected_build(
             if not SHA256_PATTERN.fullmatch(str(raw_artifact.get(key) or "")):
                 raise SurfacePolicyError(f"artifact evidence hash is invalid: {artifact_id}: {key}")
         signing_class = raw_artifact.get("signingClass")
-        if not isinstance(signing_class, str) or not signing_class:
+        if signing_class not in SIGNING_CLASSES:
             raise SurfacePolicyError(f"artifact signing class is invalid: {artifact_id}")
         raw_uuids = raw_artifact.get("executableUUIDs")
         if not isinstance(raw_uuids, list) or not raw_uuids:
@@ -1072,7 +1073,11 @@ def seal_expected_build(
         if (
             not isinstance(raw_architectures, list)
             or not raw_architectures
-            or any(not isinstance(value, str) or not value for value in raw_architectures)
+            or any(
+                not isinstance(value, str)
+                or ARCHITECTURE_PATTERN.fullmatch(value) is None
+                for value in raw_architectures
+            )
         ):
             raise SurfacePolicyError(f"artifact architectures are missing: {artifact_id}")
         architectures = sorted(set(raw_architectures))

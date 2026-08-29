@@ -15,8 +15,25 @@ EXPECTED_BUILD_KIND = "context-panel-expected-signed-build"
 SURFACE_MANIFEST_ALGORITHM = "sha256"
 SURFACE_DIGEST_DOMAIN = "context-panel-surface/v1"
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+ARCHITECTURE_PATTERN = re.compile(r"^[A-Za-z0-9_.+-]{1,64}$")
 UUID_PATTERN = re.compile(
     r"^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$"
+)
+SIGNING_CLASSES = frozenset(
+    {
+        "3rd Party Mac Developer Application",
+        "3rd Party Mac Developer Installer",
+        "Apple Development",
+        "Apple Distribution",
+        "Apple Mac OS Application Signing",
+        "Developer ID Application",
+        "Developer ID Installer",
+        "Mac Developer",
+        "TestFlight Beta Distribution",
+        "iPhone Developer",
+        "iPhone Distribution",
+        "ad-hoc",
+    }
 )
 FINGERPRINT_KEYS = {"render", "runtime", "placement", "combined"}
 EXPECTED_MANIFEST_KEYS = {
@@ -201,7 +218,11 @@ def validate_expected_build_manifest(
         normalized_artifact = {**artifact, "executableUUIDs": executable_uuids}
         if schema_version == EXPECTED_BUILD_SCHEMA_V2:
             architectures = sorted_unique_nonempty_strings(artifact.get("architectures"))
-            if architectures is None or not isinstance(artifact.get("signingClass"), str) or not artifact.get("signingClass"):
+            if (
+                architectures is None
+                or any(ARCHITECTURE_PATTERN.fullmatch(value) is None for value in architectures)
+                or artifact.get("signingClass") not in SIGNING_CLASSES
+            ):
                 fail("expected signed build artifact is invalid")
             for key in (
                 "bundleContractSha256",

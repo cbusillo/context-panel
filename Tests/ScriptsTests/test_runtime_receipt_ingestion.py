@@ -403,12 +403,44 @@ class RuntimeReceiptIngestionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             manifest_path = Path(temporary_directory) / "ExpectedBuildManifest-v2.json"
             manifest_path.write_text(json.dumps(payload))
-            with self.assertRaisesRegex(RuntimeEvidenceError, "expected signed build manifest is invalid"):
+            with self.assertRaisesRegex(
+                RuntimeEvidenceError,
+                "expected signed build manifest is invalid",
+            ):
                 load_expected_surface_identities(
                     [manifest_path],
                     TARGET,
                     ("macos.app",),
                 )
+
+        for key, value in (
+            ("signingClass", "Other"),
+            ("architectures", ["../../arm64"]),
+        ):
+            with self.subTest(key=key):
+                payload = expected_manifest(("macos.app",))
+                payload["artifacts"][0][key] = value
+                unsigned = {
+                    name: item
+                    for name, item in payload.items()
+                    if name != "expectedBuildId"
+                }
+                payload["expectedBuildId"] = runtime_module.hash_parts(
+                    f"{payload['digestDomain']}/expected-build",
+                    [runtime_module.canonical_json(unsigned)],
+                )
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    manifest_path = Path(temporary_directory) / "ExpectedBuildManifest-v2.json"
+                    manifest_path.write_text(json.dumps(payload))
+                    with self.assertRaisesRegex(
+                        RuntimeEvidenceError,
+                        "expected signed build artifact is invalid",
+                    ):
+                        load_expected_surface_identities(
+                            [manifest_path],
+                            TARGET,
+                            ("macos.app",),
+                        )
 
     def test_incremental_manifests_cannot_mix_disjoint_contract_identities(self):
         surfaces = ("macos.app", "macos.widget")

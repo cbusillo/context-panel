@@ -8,6 +8,8 @@ import subprocess
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+from context_panel_expected_build import SIGNING_CLASSES, hash_parts
+
 from .core import SurfacePolicyError, load_json_object, manifest_surface_map
 
 
@@ -20,6 +22,8 @@ UUID_LINE_PATTERN = re.compile(
 SIGNING_IDENTIFIER_PATTERN = re.compile(rb"^Identifier=(.+)$", re.MULTILINE)
 TEAM_IDENTIFIER_PATTERN = re.compile(rb"^TeamIdentifier=(.+)$", re.MULTILINE)
 AUTHORITY_PATTERN = re.compile(rb"^Authority=(.+)$", re.MULTILINE)
+SIGNATURE_PATTERN = re.compile(rb"^Signature=(.+)$", re.MULTILINE)
+ORDER_SENSITIVE_ENTITLEMENT_KEYS = frozenset({"keychain-access-groups"})
 
 
 def run_command(arguments: Sequence[str]) -> subprocess.CompletedProcess[bytes]:
@@ -113,6 +117,17 @@ def semantic_value(value: Any) -> Any:
     return value
 
 
+def semantic_entitlements(value: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key in sorted(value):
+        item = value[key]
+        if key in ORDER_SENSITIVE_ENTITLEMENT_KEYS and isinstance(item, list):
+            result[str(key)] = [semantic_value(member) for member in item]
+        else:
+            result[str(key)] = semantic_value(item)
+    return result
+
+
 def canonical_entitlements(data: bytes) -> dict[str, Any]:
     entitlements = plist_from_command_output(
         data,
@@ -121,7 +136,7 @@ def canonical_entitlements(data: bytes) -> dict[str, Any]:
     )
     if not isinstance(entitlements, dict) or not entitlements:
         raise SurfacePolicyError("artifact signed entitlements are invalid")
-    return semantic_value(entitlements)
+    return semantic_entitlements(entitlements)
 
 
 def canonical_entitlements_hash(data: bytes) -> str:
@@ -140,20 +155,23 @@ def entitlement_contract_hash(entitlements: dict[str, Any]) -> str:
     return canonical_json_hash({"effectiveEntitlements": entitlements})
 
 
-def signing_class(authorities: list[str]) -> str:
-    joined = "\n".join(authorities).lower()
-    if not joined:
-        return "ad-hoc"
-    if "apple distribution" in joined:
-        return "Apple Distribution"
-    if "apple development" in joined:
-        return "Apple Development"
-    if "developer id application" in joined:
-        return "Developer ID Application"
-    return "Other"
+def signing_class(authorities: list[str], signature: str = "") -> str:
+    if not authorities:
+        if signature.lower() == "adhoc":
+            return "ad-hoc"
+        raise SurfacePolicyError("artifact signing authority is unavailable")
+    leaf_authority = authorities[0].strip()
+    for candidate in sorted(SIGNING_CLASSES - {"ad-hoc"}, key=len, reverse=True):
+        if leaf_authority == candidate or leaf_authority.startswith(f"{candidate}:"):
+            return candidate
+    raise SurfacePolicyError("artifact signing class is unsupported")
 
 
-def inspect_signing_metadata(bundle: Path, bundle_identifier: str, runner: CommandRunner) -> tuple[str, str]:
+def inspect_signing_metadata(
+    bundle: Path,
+    bundle_identifier: str,
+    runner: CommandRunner,
+) -> tuple[str, str, str]:
     result = runner(["/usr/bin/codesign", "-d", "--verbose=4", str(bundle)])
     if result.returncode != 0:
         raise SurfacePolicyError("artifact code signing metadata is unavailable")
@@ -162,13 +180,20 @@ def inspect_signing_metadata(bundle: Path, bundle_identifier: str, runner: Comma
         raise SurfacePolicyError("artifact signing identifier does not match bundle identifier")
     team_identifier = _first_metadata_value(TEAM_IDENTIFIER_PATTERN, result.stderr)
     authorities = [match.decode("utf-8", "replace") for match in AUTHORITY_PATTERN.findall(result.stderr)]
-    normalized_class = signing_class(authorities)
+    signature = _first_metadata_value(SIGNATURE_PATTERN, result.stderr)
+    normalized_class = signing_class(authorities, signature)
+    if normalized_class == "ad-hoc" or not team_identifier:
+        raise SurfacePolicyError("artifact distribution signing identity is unavailable")
+    team_identity_sha256 = hash_parts(
+        "context-panel-artifact/signing-team/v1",
+        [team_identifier],
+    )
     contract = {
         "identifierMatchesBundleIdentifier": True,
         "signingClass": normalized_class,
-        "teamIdentitySha256": sha256_bytes(team_identifier.encode("utf-8")) if team_identifier else None,
+        "teamIdentitySha256": team_identity_sha256,
     }
-    return normalized_class, canonical_json_hash(contract)
+    return normalized_class, canonical_json_hash(contract), team_identifier
 
 
 def _first_metadata_value(pattern: re.Pattern[bytes], data: bytes) -> str:
@@ -192,16 +217,28 @@ def profile_payload(path: Path, runner: CommandRunner) -> dict[str, Any]:
 
 def profile_capability_hash(payload: dict[str, Any]) -> str:
     effective_entitlements = payload.get("Entitlements")
-    if not isinstance(effective_entitlements, dict) or not effective_entitlements:
+    team_identifiers = payload.get("TeamIdentifier")
+    application_prefixes = payload.get("ApplicationIdentifierPrefix")
+    platforms = payload.get("Platform")
+    if (
+        not isinstance(effective_entitlements, dict)
+        or not effective_entitlements
+        or not isinstance(team_identifiers, list)
+        or not team_identifiers
+        or not isinstance(application_prefixes, list)
+        or not application_prefixes
+        or not isinstance(platforms, list)
+        or not platforms
+    ):
         raise SurfacePolicyError("artifact provisioning profile entitlements are invalid")
     contract = {
-        "TeamIdentifier": semantic_value(payload.get("TeamIdentifier")),
-        "ApplicationIdentifierPrefix": semantic_value(payload.get("ApplicationIdentifierPrefix")),
-        "Platform": semantic_value(payload.get("Platform")),
+        "TeamIdentifier": semantic_value(team_identifiers),
+        "ApplicationIdentifierPrefix": semantic_value(application_prefixes),
+        "Platform": semantic_value(platforms),
         "ProvisionsAllDevices": bool(payload.get("ProvisionsAllDevices"))
         if "ProvisionsAllDevices" in payload
         else None,
-        "Entitlements": semantic_value(effective_entitlements),
+        "Entitlements": semantic_entitlements(effective_entitlements),
     }
     return canonical_json_hash(contract)
 
@@ -260,12 +297,14 @@ def inspect_bundle(
     signature = runner(["/usr/bin/codesign", "--verify", "--strict", str(bundle)])
     if signature.returncode != 0:
         raise SurfacePolicyError(f"archive artifact code signature is invalid: {artifact_id}")
-    signing_class_name, signing_contract_sha256 = inspect_signing_metadata(
+    signing_class_name, signing_contract_sha256, signing_team_identifier = inspect_signing_metadata(
         bundle,
         actual_identity["bundleIdentifier"],
         runner,
     )
-    entitlements = runner(["/usr/bin/codesign", "-d", "--entitlements", "-", str(bundle)])
+    entitlements = runner(
+        ["/usr/bin/codesign", "-d", "--entitlements", "-", "--xml", str(bundle)]
+    )
     if entitlements.returncode != 0:
         raise SurfacePolicyError(f"archive artifact entitlements are unavailable: {artifact_id}")
     canonical_signed_entitlements = canonical_entitlements(entitlements.stdout)
@@ -279,6 +318,12 @@ def inspect_bundle(
         raise SurfacePolicyError(f"archive artifact UUIDs are unavailable: {artifact_id}")
     embedded_profile = profile_path(bundle, profile_override)
     decoded_profile = profile_payload(embedded_profile, runner)
+    profile_team_identifiers = decoded_profile.get("TeamIdentifier")
+    if (
+        not isinstance(profile_team_identifiers, list)
+        or signing_team_identifier not in profile_team_identifiers
+    ):
+        raise SurfacePolicyError("artifact signing team does not match provisioning profile")
 
     return {
         "artifactId": artifact_id,

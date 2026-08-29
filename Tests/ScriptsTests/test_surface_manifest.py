@@ -1309,6 +1309,16 @@ class SurfaceManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(SurfacePolicyError, "artifact evidence hash is invalid"):
             seal_expected_build(self.baseline, missing_v2)
 
+        invalid_signing_class = json.loads(json.dumps(template))
+        invalid_signing_class["artifacts"][0]["signingClass"] = "Other"
+        with self.assertRaisesRegex(SurfacePolicyError, "signing class is invalid"):
+            seal_expected_build(self.baseline, invalid_signing_class)
+
+        invalid_architecture = json.loads(json.dumps(template))
+        invalid_architecture["artifacts"][0]["architectures"] = ["../../arm64"]
+        with self.assertRaisesRegex(SurfacePolicyError, "architectures are missing"):
+            seal_expected_build(self.baseline, invalid_architecture)
+
     def test_semantic_entitlement_key_and_list_order_is_canonical(self):
         first = plistlib.dumps(
             {
@@ -1326,6 +1336,22 @@ class SurfaceManifestTests(unittest.TestCase):
         self.assertEqual(
             entitlement_contract_hash(canonical_entitlements(first)),
             entitlement_contract_hash(canonical_entitlements(second)),
+        )
+
+    def test_keychain_access_group_order_remains_semantic(self):
+        first = canonical_entitlements(
+            plistlib.dumps(
+                {"keychain-access-groups": ["TEAM.primary", "TEAM.secondary"]}
+            )
+        )
+        second = canonical_entitlements(
+            plistlib.dumps(
+                {"keychain-access-groups": ["TEAM.secondary", "TEAM.primary"]}
+            )
+        )
+        self.assertNotEqual(
+            entitlement_contract_hash(first),
+            entitlement_contract_hash(second),
         )
 
     def test_profile_renewal_metadata_and_certificates_do_not_change_capability_hash(self):
@@ -1410,7 +1436,15 @@ class SurfaceManifestTests(unittest.TestCase):
     def test_signing_class_normalization_uses_public_class_only(self):
         self.assertEqual(signing_class(["Apple Distribution: Example Corp (TEAMID1234)"]), "Apple Distribution")
         self.assertEqual(signing_class(["Developer ID Application: Example Corp (TEAMID1234)"]), "Developer ID Application")
-        self.assertEqual(signing_class([]), "ad-hoc")
+        self.assertEqual(
+            signing_class(["TestFlight Beta Distribution"]),
+            "TestFlight Beta Distribution",
+        )
+        self.assertEqual(signing_class([], "adhoc"), "ad-hoc")
+        with self.assertRaisesRegex(SurfacePolicyError, "authority is unavailable"):
+            signing_class([])
+        with self.assertRaisesRegex(SurfacePolicyError, "class is unsupported"):
+            signing_class(["Unknown Signing Authority"])
 
     def test_empty_or_invalid_entitlements_fail_closed(self):
         for payload in (b"", plistlib.dumps({}), b"not-a-plist"):
@@ -1526,12 +1560,14 @@ class SurfaceManifestTests(unittest.TestCase):
                 }
             )
             profile_overrides = {}
+            commands: list[list[str]] = []
             for artifact_id in self.baseline["archiveLayouts"]["macos"]:
                 profile = Path(temporary_directory) / f"{artifact_id}.provisionprofile"
                 profile.write_bytes(f"external-profile-{artifact_id}".encode("utf-8"))
                 profile_overrides[artifact_id] = profile
 
             def runner(arguments):
+                commands.append(list(arguments))
                 if "--verify" in arguments:
                     return subprocess.CompletedProcess(arguments, 0, b"", b"")
                 if "--verbose=4" in arguments:
@@ -1574,6 +1610,47 @@ class SurfaceManifestTests(unittest.TestCase):
             self.assertEqual(len(sealed["surfaces"]), 3)
             self.assertEqual(sealed["artifacts"][0]["architectures"], ["arm64"])
             self.assertEqual(sealed["artifacts"][0]["signingClass"], "Apple Distribution")
+            self.assertTrue(
+                any(
+                    command[1:5] == ["-d", "--entitlements", "-", "--xml"]
+                    for command in commands
+                    if command and command[0] == "/usr/bin/codesign"
+                )
+            )
+
+            mismatched_profile_payload = plistlib.dumps(
+                {
+                    "TeamIdentifier": ["OTHERTEAM1"],
+                    "ApplicationIdentifierPrefix": ["OTHERTEAM1"],
+                    "Platform": ["OSX"],
+                    "ProvisionsAllDevices": True,
+                    "Entitlements": {
+                        "com.apple.security.application-groups": ["example.group"]
+                    },
+                }
+            )
+
+            def mismatched_profile_runner(arguments):
+                if arguments[:4] == ["/usr/bin/security", "cms", "-D", "-i"]:
+                    return subprocess.CompletedProcess(
+                        arguments,
+                        0,
+                        mismatched_profile_payload,
+                        b"",
+                    )
+                return runner(arguments)
+
+            with self.assertRaisesRegex(
+                SurfacePolicyError,
+                "signing team does not match",
+            ):
+                collect_archive_evidence(
+                    self.baseline,
+                    archive,
+                    "macos",
+                    profile_paths=profile_overrides,
+                    runner=mismatched_profile_runner,
+                )
 
             app_manifest = (
                 archive
