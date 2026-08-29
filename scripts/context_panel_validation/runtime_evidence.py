@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -23,7 +24,6 @@ from .models import (
     Target,
     ValidationReport,
     classify_install,
-    iso8601,
 )
 from .session import (
     ACTIVE_SESSION_LIFECYCLES,
@@ -39,6 +39,11 @@ from .session import (
 
 RUNTIME_EVIDENCE_SCHEMA_VERSION = 1
 MAXIMUM_RUNTIME_RECEIPT_COUNT = 4096
+MAXIMUM_RUNTIME_SESSION_DURATION_SECONDS = 6 * 60 * 60
+MAXIMUM_RUNTIME_RECEIPT_TTL_SECONDS = 7 * 24 * 60 * 60
+MAXIMUM_RUNTIME_CLOCK_SKEW_SECONDS = 5 * 60
+MAXIMUM_RUNTIME_SESSION_RECEIPT_COUNT = 512
+MAXIMUM_RUNTIME_PROCESS_SEQUENCE = (2**63) - 1
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 UUID_PATTERN = re.compile(
     r"^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$"
@@ -235,6 +240,98 @@ def normalized_uuid_list(value: object) -> tuple[str, ...] | None:
 
 def is_nonnegative_integer(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def has_possible_deduplicated_receipt_counts(payload: dict[str, object]) -> bool:
+    receipt_count = payload.get("receiptCount")
+    local_count = payload.get("localReceiptCount")
+    remote_count = payload.get("remoteReceiptCount")
+    return (
+        all(
+            is_nonnegative_integer(value)
+            for value in (receipt_count, local_count, remote_count)
+        )
+        and max(local_count, remote_count) <= receipt_count
+        and receipt_count <= local_count + remote_count
+    )
+
+
+def is_whole_number_in_range(value: object, minimum: int, maximum: int) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and value == int(value)
+        and minimum <= value <= maximum
+    )
+
+
+def canonical_whole_second_timestamp(value: object) -> tuple[datetime, str] | None:
+    parsed = parse_iso8601(value)
+    if parsed is None or parsed.microsecond != 0:
+        return None
+    return parsed, parsed.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def canonical_whole_second_utc(value: datetime) -> str:
+    normalized = normalize_utc(value).replace(microsecond=0)
+    return normalized.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def canonical_whole_second_timestamp_text(value: object) -> str | None:
+    canonical = canonical_whole_second_timestamp(value)
+    return canonical[1] if canonical is not None else None
+
+
+def canonicalized_persisted_timestamp(value: object) -> object:
+    parsed = parse_iso8601(value)
+    if parsed is None:
+        return value
+    return parsed.replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def is_canonical_whole_second_timestamp(value: object) -> bool:
+    canonical = canonical_whole_second_timestamp(value)
+    return canonical is not None and value == canonical[1]
+
+
+def validated_runtime_session_timestamps(
+    payload: dict[str, object],
+) -> tuple[datetime, str, datetime, str] | None:
+    created = canonical_whole_second_timestamp(payload.get("createdAt"))
+    expires = canonical_whole_second_timestamp(payload.get("expiresAt"))
+    if created is None or expires is None:
+        return None
+    created_at, created_at_text = created
+    expires_at, expires_at_text = expires
+    if (
+        expires_at < created_at
+        or (expires_at - created_at).total_seconds()
+        > MAXIMUM_RUNTIME_SESSION_DURATION_SECONDS
+    ):
+        return None
+    return created_at, created_at_text, expires_at, expires_at_text
+
+
+def valid_runtime_session_contract(payload: object) -> bool:
+    if not isinstance(payload, dict) or set(payload) != RUNTIME_SESSION_KEYS:
+        return False
+    enabled_surfaces = payload.get("enabledSurfaces")
+    return (
+        payload.get("schemaVersion") == 1
+        and normalized_uuid(payload.get("id")) == payload.get("id")
+        and validated_runtime_session_timestamps(payload) is not None
+        and is_sha256(payload.get("expectedManifestID"))
+        and is_sorted_unique_strings(enabled_surfaces, RUNTIME_SURFACES)
+        and bool(enabled_surfaces)
+        and is_whole_number_in_range(payload.get("minimumWriteIntervalSeconds"), 0, 5 * 60)
+        and is_whole_number_in_range(
+            payload.get("receiptTTLSeconds"), 60, MAXIMUM_RUNTIME_RECEIPT_TTL_SECONDS
+        )
+        and isinstance(payload.get("maximumReceiptCount"), int)
+        and not isinstance(payload.get("maximumReceiptCount"), bool)
+        and 0 < payload["maximumReceiptCount"] <= MAXIMUM_RUNTIME_SESSION_RECEIPT_COUNT
+    )
 
 
 def is_sha256(value: object) -> bool:
@@ -449,8 +546,10 @@ class RuntimeReceiptEvidence:
             runtime_session_id=payload.get("runtimeSessionID"),
             surface=payload.get("surface"),
             source=payload.get("source"),
-            server_received_at=payload.get("serverReceivedAt"),
-            observed_at=payload.get("observedAt"),
+            server_received_at=canonicalized_persisted_timestamp(
+                payload.get("serverReceivedAt")
+            ),
+            observed_at=canonicalized_persisted_timestamp(payload.get("observedAt")),
             process_instance_id=payload.get("processInstanceID"),
             process_sequence=payload.get("processSequence"),
             loaded_executable_uuids=(
@@ -465,15 +564,18 @@ class RuntimeReceiptEvidence:
             or normalized_uuid(evidence.runtime_session_id) != evidence.runtime_session_id
             or evidence.surface not in RUNTIME_SURFACES
             or evidence.source not in {"local", "cloudkit"}
-            or parse_iso8601(evidence.observed_at) is None
+            or not is_canonical_whole_second_timestamp(evidence.observed_at)
             or (
                 evidence.server_received_at is not None
-                and parse_iso8601(evidence.server_received_at) is None
+                and not is_canonical_whole_second_timestamp(evidence.server_received_at)
             )
+            or (evidence.source == "local" and evidence.server_received_at is not None)
+            or (evidence.source == "cloudkit" and evidence.server_received_at is None)
             or normalized_uuid(evidence.process_instance_id) != evidence.process_instance_id
             or not isinstance(evidence.process_sequence, int)
             or isinstance(evidence.process_sequence, bool)
             or evidence.process_sequence <= 0
+            or evidence.process_sequence > MAXIMUM_RUNTIME_PROCESS_SEQUENCE
             or not evidence.loaded_executable_uuids
             or not is_sha256(evidence.identity_digest)
             or evidence.state_branch not in STATE_BRANCHES
@@ -595,15 +697,19 @@ class RuntimeObservationSummary:
                 raise RuntimeEvidenceError("runtime observation summary is invalid")
             surface_diagnostics.append((str(item["surface"]), str(item["code"])))
         summary = cls(
-            attempted_at=payload.get("attemptedAt"),
+            attempted_at=canonicalized_persisted_timestamp(payload.get("attemptedAt")),
             result=payload.get("result"),
             runtime_session_id=payload.get("runtimeSessionID"),
             runtime_session_active=payload.get("runtimeSessionActive"),
-            runtime_session_created_at=payload.get("runtimeSessionCreatedAt"),
-            runtime_session_expires_at=payload.get("runtimeSessionExpiresAt"),
+            runtime_session_created_at=canonicalized_persisted_timestamp(
+                payload.get("runtimeSessionCreatedAt")
+            ),
+            runtime_session_expires_at=canonicalized_persisted_timestamp(
+                payload.get("runtimeSessionExpiresAt")
+            ),
             expected_manifest_id=payload.get("expectedManifestID"),
             enabled_surfaces=tuple(enabled_surfaces),
-            exported_at=payload.get("exportedAt"),
+            exported_at=canonicalized_persisted_timestamp(payload.get("exportedAt")),
             sync_healthy=sync.get("healthy"),
             sync_action=sync.get("sessionAction"),
             uploaded_receipt_count=sync.get("uploadedReceiptCount"),
@@ -623,7 +729,7 @@ def validate_observation_summary(summary: RuntimeObservationSummary) -> None:
         summary.exported_at,
     )
     if (
-        parse_iso8601(summary.attempted_at) is None
+        not is_canonical_whole_second_timestamp(summary.attempted_at)
         or summary.result not in {"healthy", "degraded", "missing", "diagnostic"}
         or (
             summary.runtime_session_id is not None
@@ -633,13 +739,19 @@ def validate_observation_summary(summary: RuntimeObservationSummary) -> None:
             summary.runtime_session_active is not None
             and not isinstance(summary.runtime_session_active, bool)
         )
-        or any(value is not None and parse_iso8601(value) is None for value in optional_timestamps)
+        or any(
+            value is not None and not is_canonical_whole_second_timestamp(value)
+            for value in optional_timestamps
+        )
         or (
             summary.expected_manifest_id is not None
             and not is_sha256(summary.expected_manifest_id)
         )
+        or any(
+            not isinstance(surface, str) or surface not in RUNTIME_SURFACES
+            for surface in summary.enabled_surfaces
+        )
         or tuple(sorted(set(summary.enabled_surfaces))) != summary.enabled_surfaces
-        or any(surface not in RUNTIME_SURFACES for surface in summary.enabled_surfaces)
         or (
             summary.sync_healthy is not None
             and not isinstance(summary.sync_healthy, bool)
@@ -659,6 +771,13 @@ def validate_observation_summary(summary: RuntimeObservationSummary) -> None:
         )
         or any(not isinstance(value, str) or not value for value in summary.diagnostics)
         or tuple(sorted(set(summary.diagnostics))) != summary.diagnostics
+        or any(
+            not isinstance(surface, str)
+            or surface not in RUNTIME_SURFACES
+            or not isinstance(code, str)
+            or not code
+            for surface, code in summary.surface_diagnostics
+        )
         or tuple(sorted(set(summary.surface_diagnostics))) != summary.surface_diagnostics
     ):
         raise RuntimeEvidenceError("runtime observation summary is invalid")
@@ -727,7 +846,7 @@ class RuntimeEvidenceState:
             coordinator_session_id=payload.get("coordinatorSessionID"),
             target=Target(target.get("version"), target.get("buildNumber")),
             requested_surfaces=tuple(requested_surfaces),
-            updated_at=payload.get("updatedAt"),
+            updated_at=canonicalized_persisted_timestamp(payload.get("updatedAt")),
             revision=payload.get("revision"),
             expected_surfaces=tuple(
                 ExpectedSurfaceIdentity.from_dict(item) for item in expected_surfaces
@@ -758,7 +877,7 @@ def validate_runtime_evidence_state(state: RuntimeEvidenceState) -> None:
         or tuple(sorted(set(state.requested_surfaces))) != state.requested_surfaces
         or not state.requested_surfaces
         or any(surface not in RUNTIME_SURFACES for surface in state.requested_surfaces)
-        or parse_iso8601(state.updated_at) is None
+        or not is_canonical_whole_second_timestamp(state.updated_at)
         or not isinstance(state.revision, int)
         or isinstance(state.revision, bool)
         or state.revision < 1
@@ -1020,20 +1139,13 @@ class RuntimeSessionAdapter:
             and payload.get("valid") is True
             and isinstance(payload.get("active"), bool)
             and normalized_uuid(payload.get("id")) == payload.get("id")
-            and parse_iso8601(payload.get("createdAt")) is not None
-            and parse_iso8601(payload.get("expiresAt")) is not None
+            and validated_runtime_session_timestamps(payload) is not None
             and is_sha256(payload.get("expectedManifestID"))
             and is_sorted_unique_strings(enabled_surfaces, RUNTIME_SURFACES)
+            and bool(enabled_surfaces)
             and is_sorted_unique_strings(observed_surfaces, RUNTIME_SURFACES)
-            and all(
-                is_nonnegative_integer(payload.get(key))
-                for key in (
-                    "receiptCount",
-                    "localReceiptCount",
-                    "remoteReceiptCount",
-                    "retainedSessionCount",
-                )
-            )
+            and has_possible_deduplicated_receipt_counts(payload)
+            and is_nonnegative_integer(payload.get("retainedSessionCount"))
             and isinstance(retained_session_ids, list)
             and all(isinstance(value, str) for value in retained_session_ids)
             and all(normalized_uuid(value) == value for value in retained_session_ids)
@@ -1051,9 +1163,9 @@ class RuntimeSessionAdapter:
             set(payload) != RUNTIME_EXPORT_KEYS
             or payload.get("schemaVersion") != 1
             or not isinstance(payload.get("active"), bool)
-            or parse_iso8601(payload.get("exportedAt")) is None
+            or canonical_whole_second_timestamp(payload.get("exportedAt")) is None
             or not isinstance(session, dict)
-            or set(session) != RUNTIME_SESSION_KEYS
+            or not valid_runtime_session_contract(session)
             or not isinstance(receipts, list)
             or not all(isinstance(entry, dict) for entry in receipts)
             or not all(
@@ -1061,17 +1173,25 @@ class RuntimeSessionAdapter:
                 for key in ("receiptCount", "localReceiptCount", "remoteReceiptCount")
             )
             or payload.get("receiptCount") != len(receipts)
+            or not has_possible_deduplicated_receipt_counts(payload)
+            or sum(entry.get("source") == "local" for entry in receipts)
+            > payload.get("localReceiptCount")
+            or sum(entry.get("source") == "cloudkit" for entry in receipts)
+            > payload.get("remoteReceiptCount")
             or payload.get("active") != status.get("active")
         ):
             return False
-        status_session = {
-            "id": status.get("id"),
-            "createdAt": status.get("createdAt"),
-            "expiresAt": status.get("expiresAt"),
-            "expectedManifestID": status.get("expectedManifestID"),
-            "enabledSurfaces": status.get("enabledSurfaces"),
-        }
-        return all(session.get(key) == value for key, value in status_session.items())
+        status_timestamps = validated_runtime_session_timestamps(status)
+        session_timestamps = validated_runtime_session_timestamps(session)
+        if status_timestamps is None or session_timestamps is None:
+            return False
+        return (
+            session.get("id") == status.get("id")
+            and session_timestamps[0] == status_timestamps[0]
+            and session_timestamps[2] == status_timestamps[2]
+            and session.get("expectedManifestID") == status.get("expectedManifestID")
+            and session.get("enabledSurfaces") == status.get("enabledSurfaces")
+        )
 
 
 class RuntimeEvidenceStore:
@@ -1142,7 +1262,9 @@ class RuntimeEvidenceStore:
                 expected_surfaces=tuple(
                     expected_by_surface[surface] for surface in sorted(expected_by_surface)
                 ),
-                updated_at=iso8601(max(normalize_utc(now), parse_iso8601(state.updated_at))),
+                updated_at=canonical_whole_second_utc(
+                    max(normalize_utc(now), parse_iso8601(state.updated_at))
+                ),
                 revision=state.revision if created else state.revision + 1,
             )
             validate_runtime_evidence_state(next_state)
@@ -1180,7 +1302,7 @@ class RuntimeEvidenceStore:
             coordinator_session_id=session.id,
             target=session.target,
             requested_surfaces=session.requested_surfaces,
-            updated_at=iso8601(normalize_utc(now)),
+            updated_at=canonical_whole_second_utc(now),
             revision=1,
             expected_surfaces=(),
             receipts=(),
@@ -1275,8 +1397,7 @@ def reconcile_runtime_observation(
         raw_receipts = export.get("receipts")
         assert isinstance(raw_receipts, list)
         seen_in_export: dict[str, RuntimeReceiptEvidence] = {}
-        conflicting_ids: set[str] = set()
-        conflicting_surfaces: set[str] = set()
+        diagnostic_surfaces: set[str] = set()
         for entry in raw_receipts:
             parsed, diagnostic = validated_runtime_receipt(
                 entry,
@@ -1289,6 +1410,7 @@ def reconcile_runtime_observation(
                 surface, code = diagnostic
                 if surface is not None:
                     latest_surface_diagnostics[surface] = code
+                    diagnostic_surfaces.add(surface)
                     if code == "newer-build-observed":
                         superseded = True
                         superseded_surfaces.add(surface)
@@ -1298,24 +1420,19 @@ def reconcile_runtime_observation(
             if parsed is None:
                 continue
             assert parsed is not None
-            if parsed.surface not in conflicting_surfaces:
+            if parsed.surface not in diagnostic_surfaces:
                 latest_surface_diagnostics[parsed.surface] = None
             existing = seen_in_export.get(parsed.receipt_id)
             if existing is not None:
                 merged = merged_duplicate_receipt(existing, parsed)
                 if merged is None:
-                    conflicting_ids.add(parsed.receipt_id)
-                    conflicting_surfaces.add(parsed.surface)
-                    latest_surface_diagnostics[parsed.surface] = "conflicting-duplicate-receipt"
-                elif parsed.receipt_id not in conflicting_ids:
-                    seen_in_export[parsed.receipt_id] = merged
-            elif parsed.receipt_id not in conflicting_ids:
+                    raise RuntimeEvidenceError(
+                        "validated duplicate runtime receipt identity is inconsistent"
+                    )
+                seen_in_export[parsed.receipt_id] = merged
+            else:
                 seen_in_export[parsed.receipt_id] = parsed
-        exact_receipts = [
-            receipt
-            for receipt_id, receipt in seen_in_export.items()
-            if receipt_id not in conflicting_ids
-        ]
+        exact_receipts = list(seen_in_export.values())
 
     receipts_by_id = {receipt.receipt_id: receipt for receipt in state.receipts}
     for receipt in exact_receipts:
@@ -1335,13 +1452,25 @@ def reconcile_runtime_observation(
 
     sync = observation.sync_payload or {}
     runtime_session_active = status.get("active") if runtime_session_id is not None else None
-    runtime_session_created_at = status.get("createdAt") if runtime_session_id is not None else None
-    runtime_session_expires_at = status.get("expiresAt") if runtime_session_id is not None else None
+    runtime_session_created_at = (
+        canonical_whole_second_timestamp_text(status.get("createdAt"))
+        if runtime_session_id is not None
+        else None
+    )
+    runtime_session_expires_at = (
+        canonical_whole_second_timestamp_text(status.get("expiresAt"))
+        if runtime_session_id is not None
+        else None
+    )
     expected_manifest_id = status.get("expectedManifestID") if runtime_session_id is not None else None
     enabled_surfaces = (
         tuple(status.get("enabledSurfaces", [])) if runtime_session_id is not None else ()
     )
-    exported_at = export.get("exportedAt") if export is not None else None
+    exported_at = (
+        canonical_whole_second_timestamp_text(export.get("exportedAt"))
+        if export is not None
+        else None
+    )
     result = "healthy"
     surface_diagnostics = {
         (surface, code)
@@ -1358,7 +1487,7 @@ def reconcile_runtime_observation(
     elif diagnostics or surface_diagnostics:
         result = "degraded"
     summary = RuntimeObservationSummary(
-        attempted_at=iso8601(observation.attempted_at),
+        attempted_at=canonical_whole_second_utc(observation.attempted_at),
         result=result,
         runtime_session_id=runtime_session_id,
         runtime_session_active=runtime_session_active,
@@ -1378,7 +1507,7 @@ def reconcile_runtime_observation(
     validate_observation_summary(summary)
     next_state = replace(
         state,
-        updated_at=iso8601(
+        updated_at=canonical_whole_second_utc(
             max(observation.attempted_at, parse_iso8601(state.updated_at))
         ),
         revision=state.revision + 1,
@@ -1396,14 +1525,28 @@ def validated_runtime_receipt(
     requested_surfaces: tuple[str, ...],
     expected_by_surface: dict[str, ExpectedSurfaceIdentity],
 ) -> tuple[RuntimeReceiptEvidence | None, tuple[str | None, str] | None]:
-    if not isinstance(entry, dict) or set(entry) != RUNTIME_ENTRY_KEYS:
+    if not isinstance(entry, dict):
         return None, (None, "invalid-receipt-entry")
     receipt = entry.get("receipt")
-    if not isinstance(receipt, dict) or set(receipt) != RUNTIME_RECEIPT_KEYS:
+    if not isinstance(receipt, dict):
         return None, (None, "invalid-receipt-contract")
     build_identity = receipt.get("buildIdentity")
-    if not isinstance(build_identity, dict) or set(build_identity) != RUNTIME_BUILD_IDENTITY_KEYS:
+    if not isinstance(build_identity, dict):
         return None, (None, "invalid-receipt-contract")
+    surface = build_identity.get("surface")
+    attributed_surface: str | None = None
+    if isinstance(surface, str) and surface in RUNTIME_SURFACES:
+        if surface not in requested_surfaces:
+            return None, None
+        attributed_surface = surface
+    elif set(build_identity) == RUNTIME_BUILD_IDENTITY_KEYS:
+        return None, (None, "invalid-receipt-surface")
+    if set(entry) != RUNTIME_ENTRY_KEYS:
+        return None, (attributed_surface, "invalid-receipt-entry")
+    if set(receipt) != RUNTIME_RECEIPT_KEYS:
+        return None, (attributed_surface, "invalid-receipt-contract")
+    if set(build_identity) != RUNTIME_BUILD_IDENTITY_KEYS:
+        return None, (attributed_surface, "invalid-receipt-contract")
     build = build_identity.get("build")
     fingerprints = build_identity.get("fingerprints")
     executable_uuids = normalized_uuid_list(build_identity.get("executableUUIDs"))
@@ -1416,33 +1559,42 @@ def validated_runtime_receipt(
         or executable_uuids is None
         or not isinstance(session, dict)
     ):
-        return None, (None, "invalid-receipt-contract")
-    surface = build_identity.get("surface")
+        return None, (attributed_surface, "invalid-receipt-contract")
     if not isinstance(surface, str) or surface not in RUNTIME_SURFACES:
         return None, (None, "invalid-receipt-surface")
-    if surface not in requested_surfaces:
-        return None, None
+    session_timestamps = validated_runtime_session_timestamps(session)
+    if not valid_runtime_session_contract(session) or session_timestamps is None:
+        return None, (surface, "invalid-receipt-contract")
+    session_created_at, session_created_at_text, session_expires_at, session_expires_at_text = (
+        session_timestamps
+    )
     server_received_at = entry.get("serverReceivedAt")
     observed_at = receipt.get("observedAt")
     retention_expires_at = receipt.get("retentionExpiresAt")
+    observed_timestamp = canonical_whole_second_timestamp(observed_at)
+    retention_timestamp = canonical_whole_second_timestamp(retention_expires_at)
+    server_received_timestamp = canonical_whole_second_timestamp(server_received_at)
+    receipt_ttl_seconds = int(session["receiptTTLSeconds"])
     if (
         receipt.get("schemaVersion") != 1
         or receipt.get("evidenceClass") != "actual-runtime"
         or not is_sha256(receipt.get("id"))
         or normalized_uuid(receipt.get("sessionID")) != session.get("id")
-        or receipt.get("sessionCreatedAt") != session.get("createdAt")
-        or receipt.get("sessionExpiresAt") != session.get("expiresAt")
-        or parse_iso8601(observed_at) is None
-        or parse_iso8601(retention_expires_at) is None
-        or parse_iso8601(retention_expires_at) <= parse_iso8601(observed_at)
+        or canonical_whole_second_timestamp(receipt.get("sessionCreatedAt"))
+        != (session_created_at, session_created_at_text)
+        or canonical_whole_second_timestamp(receipt.get("sessionExpiresAt"))
+        != (session_expires_at, session_expires_at_text)
+        or observed_timestamp is None
+        or retention_timestamp is None
         or normalized_uuid(receipt.get("processInstanceID")) is None
         or not isinstance(receipt.get("processSequence"), int)
         or isinstance(receipt.get("processSequence"), bool)
         or int(receipt["processSequence"]) <= 0
+        or int(receipt["processSequence"]) > MAXIMUM_RUNTIME_PROCESS_SEQUENCE
         or entry.get("source") not in {"local", "cloudkit"}
         or (
             server_received_at is not None
-            and parse_iso8601(server_received_at) is None
+            and server_received_timestamp is None
         )
         or (entry.get("source") == "local" and server_received_at is not None)
         or (entry.get("source") == "cloudkit" and server_received_at is None)
@@ -1467,6 +1619,29 @@ def validated_runtime_receipt(
     ):
         return None, (surface, "invalid-receipt-contract")
 
+    observed_at_value, observed_at_text = observed_timestamp
+    retention_expires_at_value, _ = retention_timestamp
+    if (
+        observed_at_value
+        < session_created_at - timedelta(seconds=MAXIMUM_RUNTIME_CLOCK_SKEW_SECONDS)
+        or observed_at_value >= session_expires_at
+        or retention_expires_at_value <= observed_at_value
+        or (retention_expires_at_value - observed_at_value).total_seconds()
+        > MAXIMUM_RUNTIME_RECEIPT_TTL_SECONDS
+        or (retention_expires_at_value - observed_at_value).total_seconds() != receipt_ttl_seconds
+        or surface not in session["enabledSurfaces"]
+        or (
+            server_received_timestamp is not None
+            and (
+                server_received_timestamp[0]
+                < session_created_at - timedelta(seconds=MAXIMUM_RUNTIME_CLOCK_SKEW_SECONDS)
+                or server_received_timestamp[0]
+                > retention_expires_at_value
+                + timedelta(seconds=MAXIMUM_RUNTIME_CLOCK_SKEW_SECONDS)
+            )
+        )
+    ):
+        return None, (surface, "invalid-receipt-contract")
     install_state = classify_install(
         build.get("marketingVersion"),
         build.get("buildNumber"),
@@ -1510,15 +1685,50 @@ def validated_runtime_receipt(
         mismatches.append("executable-uuids")
     if mismatches:
         return None, (surface, f"identity-mismatch:{mismatches[0]}")
+    process_instance_id = normalized_uuid(receipt["processInstanceID"])
+    session_id = normalized_uuid(receipt["sessionID"])
+    assert process_instance_id is not None and session_id is not None
+    expected_receipt_id = hash_parts(
+        "context-panel/runtime-receipt/id/v1",
+        [
+            session_id.lower(),
+            str(int(session_created_at.timestamp())),
+            str(int(session_expires_at.timestamp())),
+            str(int(observed_at_value.timestamp())),
+            str(int(retention_expires_at_value.timestamp())),
+            surface,
+            str(build_identity["platform"]),
+            str(build_identity["artifactID"]),
+            str(build_identity["bundleIdentifier"]),
+            str(build["marketingVersion"]),
+            str(build["buildNumber"]),
+            str(build["manifestID"]),
+            str(build["contractFingerprint"]),
+            *[str(fingerprints[key]) for key in ("render", "runtime", "placement", "combined")],
+            ",".join(executable_uuids),
+            process_instance_id.lower(),
+            str(receipt["processSequence"]),
+            str(receipt["trigger"]),
+            str(receipt["presentationMode"]),
+            str(receipt["selectedSource"]),
+            str(receipt["presentationDigest"]),
+            str(receipt["stateBranch"]),
+            str(receipt["outcome"]),
+        ],
+    )
+    if receipt["id"] != expected_receipt_id:
+        return None, (surface, "invalid-receipt-contract")
     return (
         RuntimeReceiptEvidence(
             receipt_id=str(receipt["id"]),
             runtime_session_id=str(session["id"]),
             surface=surface,
             source=str(entry["source"]),
-            server_received_at=server_received_at,
-            observed_at=str(observed_at),
-            process_instance_id=str(normalized_uuid(receipt["processInstanceID"])),
+            server_received_at=(
+                server_received_timestamp[1] if server_received_timestamp is not None else None
+            ),
+            observed_at=observed_at_text,
+            process_instance_id=process_instance_id,
             process_sequence=int(receipt["processSequence"]),
             loaded_executable_uuids=executable_uuids,
             identity_digest=expected.identity_digest(),

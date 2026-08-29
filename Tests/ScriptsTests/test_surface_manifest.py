@@ -1055,25 +1055,33 @@ class SurfaceManifestTests(unittest.TestCase):
         self.assertEqual(comparison["requiredSurfaces"]["actual-runtime"], [])
         self.assertFalse(comparison["requiresRuntimeSession"])
 
-    def test_rc_toolchain_divergence_forces_runtime_capable_surfaces(self):
+    def test_rc_and_release_toolchain_divergence_force_runtime_capable_surfaces(self):
         next_build = copy.deepcopy(self.baseline)
         next_build["toolchain"] = {
             **next_build["toolchain"],
             "swiftLanguageVersion": "6.1",
         }
-        comparison = compare_manifests(self.baseline, next_build, "rc")
         runtime_capable = sorted(
             surface_id
             for surface_id, surface in self.surfaces(next_build).items()
             if "actual-runtime" in surface["evidenceCapabilities"]
         )
-        self.assertTrue(comparison["toolchainChanged"])
-        self.assertEqual(comparison["riskSurfaces"]["toolchain-divergence"], runtime_capable)
-        self.assertEqual(comparison["requiredSurfaces"]["actual-runtime"], runtime_capable)
-        self.assertTrue(comparison["requiresRuntimeSession"])
-        for surface in comparison["surfaces"]:
-            if surface["surfaceId"] in runtime_capable:
-                self.assertIn("actual-runtime", surface["freshEvidence"])
+        for train in ("rc", "release"):
+            with self.subTest(train=train):
+                comparison = compare_manifests(self.baseline, next_build, train)
+                self.assertTrue(comparison["toolchainChanged"])
+                self.assertEqual(
+                    comparison["riskSurfaces"]["toolchain-divergence"],
+                    runtime_capable,
+                )
+                self.assertEqual(
+                    comparison["requiredSurfaces"]["actual-runtime"],
+                    runtime_capable,
+                )
+                self.assertTrue(comparison["requiresRuntimeSession"])
+                for surface in comparison["surfaces"]:
+                    if surface["surfaceId"] in runtime_capable:
+                        self.assertIn("actual-runtime", surface["freshEvidence"])
 
     def test_toolchain_divergence_with_no_runtime_capable_surfaces_is_valid(self):
         previous = copy.deepcopy(self.baseline)
@@ -1481,6 +1489,100 @@ class SurfaceManifestTests(unittest.TestCase):
         )
         self.assertEqual(comparison["artifactRiskCodes"], [])
         self.assertEqual(comparison["artifactRiskSurfaces"], {})
+
+    def test_semantic_artifact_risk_scope_matrix_is_exact_across_trains(self):
+        surfaces = self.surfaces(self.baseline)
+        artifact_id = surfaces["ios.app"]["artifactId"]
+        affected_surfaces = sorted(
+            surface_id
+            for surface_id, surface in surfaces.items()
+            if surface["artifactId"] == artifact_id
+        )
+        runtime_capable = sorted(
+            surface_id
+            for surface_id, surface in surfaces.items()
+            if "actual-runtime" in surface["evidenceCapabilities"]
+        )
+        previous = self.expected_build(self.baseline)
+        cases = (
+            ("bundle", "bundleContractSha256", "bundle-contract-changed"),
+            ("signing", "signingContractSha256", "signing-contract-changed"),
+            (
+                "app-group-entitlement",
+                "entitlementContractSha256",
+                "entitlement-contract-changed",
+            ),
+            (
+                "cloudkit-profile-capability",
+                "profileCapabilitySha256",
+                "profile-capability-changed",
+            ),
+        )
+        for label, field, risk_code in cases:
+            def mutate(template, semantic_field=field):
+                next(
+                    artifact
+                    for artifact in template["artifacts"]
+                    if artifact["artifactId"] == artifact_id
+                )[semantic_field] = "f" * 64
+
+            current = self.expected_build(self.baseline, mutate)
+            for train in ("beta", "rc", "release"):
+                with self.subTest(label=label, train=train):
+                    control = compare_manifests(
+                        self.baseline,
+                        self.baseline,
+                        train,
+                        [previous],
+                        [previous],
+                    )
+                    comparison = compare_manifests(
+                        self.baseline,
+                        self.baseline,
+                        train,
+                        [previous],
+                        [current],
+                    )
+                    expected_runtime = [] if train == "beta" else runtime_capable
+                    self.assertEqual(comparison["artifactRiskCodes"], [risk_code])
+                    self.assertEqual(
+                        comparison["artifactRiskSurfaces"],
+                        {risk_code: affected_surfaces},
+                    )
+                    self.assertEqual(
+                        comparison["requiredSurfaces"]["actual-runtime"],
+                        expected_runtime,
+                    )
+                    self.assertEqual(
+                        comparison["requiredSurfaces"]["os-composited-placement"],
+                        [],
+                    )
+                    self.assertEqual(
+                        comparison["requiresRuntimeSession"],
+                        bool(expected_runtime),
+                    )
+                    self.assertFalse(comparison["requiresPlacementReview"])
+                    if train != "beta":
+                        control_surfaces = {
+                            surface["surfaceId"]: surface
+                            for surface in control["surfaces"]
+                        }
+                        risk_surfaces = {
+                            surface["surfaceId"]: surface
+                            for surface in comparison["surfaces"]
+                        }
+                        for surface_id in runtime_capable:
+                            self.assertTrue(
+                                control_surfaces[surface_id]["carryForward"][
+                                    "actual-runtime"
+                                ]["eligible"]
+                            )
+                            self.assertEqual(
+                                risk_surfaces[surface_id]["carryForward"][
+                                    "actual-runtime"
+                                ]["eligible"],
+                                surface_id not in affected_surfaces,
+                            )
 
     def test_artifact_architecture_addition_is_safe_but_loss_escalates(self):
         previous = self.expected_build(self.baseline)
