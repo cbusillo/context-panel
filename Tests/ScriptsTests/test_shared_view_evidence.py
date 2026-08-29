@@ -376,6 +376,22 @@ class SharedViewEvidenceTests(unittest.TestCase):
                     self.surface_policy,
                 )
 
+    def test_rejects_presentations_unsupported_by_the_surface_host(self) -> None:
+        payload = json.loads(DEFAULT_MATRIX_PATH.read_text())
+        companion_detail = copy.deepcopy(payload)
+        companion_detail["surfaces"][2]["cells"][1]["presentation"] = "detail"
+        mac_settings = copy.deepcopy(payload)
+        mac_settings["surfaces"][0]["cells"][1]["presentation"] = "settings"
+        widget_overview = copy.deepcopy(payload)
+        widget_overview["surfaces"][4]["cells"][1]["presentation"] = "overview"
+
+        for candidate in (companion_detail, mac_settings, widget_overview):
+            with self.assertRaises(SharedViewEvidenceError):
+                validate_shared_view_matrix(
+                    SharedViewMatrix.from_dict(candidate),
+                    self.surface_policy,
+                )
+
     def test_rejects_missing_extra_duplicate_and_uncanonical_matrix_cells(self) -> None:
         payload = json.loads(DEFAULT_MATRIX_PATH.read_text())
         candidates = []

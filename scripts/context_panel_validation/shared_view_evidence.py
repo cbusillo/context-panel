@@ -41,6 +41,8 @@ GALLERY_PRESENTATIONS = (
     "settings",
     "widget",
 )
+MAC_GALLERY_PRESENTATIONS = ("overview", "detail", "reconnect", "diagnostics", "widget")
+COMPANION_GALLERY_PRESENTATIONS = ("overview", "settings", "diagnostics", "widget")
 NO_SELECTOR = "not-applicable"
 URL_GALLERY_SURFACES = (
     "macos.app",
@@ -334,7 +336,14 @@ def _validate_cell_coordinates(surface_id: str, cell: SharedViewCell) -> None:
         fixture_ids = FIXTURE_IDS
         families = GALLERY_FAMILIES
         appearances = GALLERY_APPEARANCES
-        presentations = GALLERY_PRESENTATIONS
+        if surface_id.endswith(".widget"):
+            presentations = ("widget",)
+        else:
+            presentations = (
+                MAC_GALLERY_PRESENTATIONS
+                if surface_id.startswith("macos.")
+                else COMPANION_GALLERY_PRESENTATIONS
+            )
     elif surface_id == "watchos.app":
         fixture_ids = WATCH_APP_FIXTURE_IDS
         families = (NO_SELECTOR,)

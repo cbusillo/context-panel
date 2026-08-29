@@ -293,6 +293,41 @@ import WidgetKit
 }
 
 @MainActor
+@Test func validationGalleryMarksUnsupportedRequestedPresentation() throws {
+    let preview: (ValidationGalleryContext) -> AnyView = { context in
+        AnyView(Text("Selected \(context.presentation.rawValue)"))
+    }
+
+    func render(presentation: ValidationGalleryPresentation) throws -> Data {
+        let route = ValidationGalleryRoute(
+            fixtureID: .healthy,
+            family: .systemMedium,
+            appearance: .light,
+            presentation: presentation
+        )
+        let content = ValidationGalleryView(
+            route: route,
+            supportedPresentations: [.overview],
+            applicationPreview: preview
+        )
+        .frame(width: 1_024, height: 768)
+        .environment(\.colorScheme, .light)
+        let hostingView = NSHostingView(rootView: content)
+        hostingView.appearance = NSAppearance(named: .aqua)
+        hostingView.frame = NSRect(x: 0, y: 0, width: 1_024, height: 768)
+        hostingView.layoutSubtreeIfNeeded()
+        let bitmap = try #require(hostingView.bitmapImageRepForCachingDisplay(in: hostingView.bounds))
+        hostingView.cacheDisplay(in: hostingView.bounds, to: bitmap)
+        return try #require(bitmap.representation(using: .png, properties: [:]))
+    }
+
+    let supported = try render(presentation: .overview)
+    let unsupported = try render(presentation: .detail)
+
+    #expect(supported != unsupported)
+}
+
+@MainActor
 private func renderGallery(
     route: ValidationGalleryRoute,
     width: CGFloat,

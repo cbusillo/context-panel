@@ -41,7 +41,7 @@
       "id": "ios.app",
       "cells": [
         { "id": "baseline", "fixtureID": "healthy", "family": "systemMedium", "appearance": "light", "presentation": "overview", "accessibility": "default", "justification": "Phone overview baseline." },
-        { "id": "stress", "fixtureID": "dense-accounts", "family": "systemMedium", "appearance": "dark", "presentation": "detail", "accessibility": "default", "justification": "Phone dense-account detail." }
+        { "id": "stress", "fixtureID": "dense-accounts", "family": "systemMedium", "appearance": "dark", "presentation": "overview", "accessibility": "default", "justification": "Phone dense-account overview." }
       ]
     },
     {
@@ -69,7 +69,7 @@
       "id": "visionos.app",
       "cells": [
         { "id": "baseline", "fixtureID": "healthy", "family": "systemLarge", "appearance": "light", "presentation": "overview", "accessibility": "default", "justification": "Spatial app overview baseline." },
-        { "id": "stress", "fixtureID": "dense-accounts", "family": "systemLarge", "appearance": "dark", "presentation": "detail", "accessibility": "default", "justification": "Spatial app account density." }
+        { "id": "stress", "fixtureID": "dense-accounts", "family": "systemLarge", "appearance": "dark", "presentation": "overview", "accessibility": "default", "justification": "Spatial app account-density overview." }
       ]
     },
     {
