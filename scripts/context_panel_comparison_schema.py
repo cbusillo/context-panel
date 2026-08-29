@@ -104,9 +104,14 @@ def _validate_artifact_fields(comparison: dict[str, Any]) -> None:
             _error("surface comparison artifact evidence is invalid")
     for key in ("previousExpectedBuildIds", "currentExpectedBuildIds"):
         values = evidence[key]
-        if not isinstance(values, list) or values != sorted(set(values)) or any(
-            not isinstance(value, str) or SHA256_PATTERN.fullmatch(value) is None
-            for value in values
+        if (
+            not isinstance(values, list)
+            or any(
+                not isinstance(value, str)
+                or SHA256_PATTERN.fullmatch(value) is None
+                for value in values
+            )
+            or values != sorted(set(values))
         ):
             _error("surface comparison artifact evidence is not canonical")
         state_key = "previousState" if key.startswith("previous") else "currentState"
@@ -124,9 +129,15 @@ def _validate_artifact_fields(comparison: dict[str, Any]) -> None:
         _error("surface comparison artifact risk surface map is invalid")
     for code in codes:
         values = surfaces[code]
-        if not isinstance(values, list) or values != sorted(set(values)) or any(
-            not isinstance(value, str) or value not in known_surfaces for value in values
-        ) or not values:
+        if (
+            not isinstance(values, list)
+            or any(
+                not isinstance(value, str) or value not in known_surfaces
+                for value in values
+            )
+            or values != sorted(set(values))
+            or not values
+        ):
             _error("surface comparison artifact risk surface map is not canonical")
     unknown = "artifact-evidence-unknown" in codes
     if comparison["escalationState"] not in ESCALATION_STATES or (

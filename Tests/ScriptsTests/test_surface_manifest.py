@@ -1548,6 +1548,29 @@ class SurfaceManifestTests(unittest.TestCase):
         ):
             validate_current_comparison(tampered)
 
+        for key, malformed in (
+            ("previousExpectedBuildIds", ["a" * 64, 1]),
+            ("currentExpectedBuildIds", ["a" * 64, None]),
+        ):
+            with self.subTest(key=key):
+                malformed_comparison = copy.deepcopy(comparison)
+                malformed_comparison["artifactEvidence"][key] = malformed
+                with self.assertRaisesRegex(
+                    ComparisonSchemaError,
+                    "artifact evidence is not canonical",
+                ):
+                    validate_current_comparison(malformed_comparison)
+
+        malformed_surfaces = copy.deepcopy(comparison)
+        malformed_surfaces["artifactRiskSurfaces"][
+            "artifact-evidence-unknown"
+        ] = [runtime_surfaces[0], 1]
+        with self.assertRaisesRegex(
+            ComparisonSchemaError,
+            "artifact risk surface map is not canonical",
+        ):
+            validate_current_comparison(malformed_surfaces)
+
     def test_partial_layout_evidence_is_missing_without_crashing(self):
         partial = self.expected_build(self.baseline, layout="ios")
         comparison = compare_manifests(
