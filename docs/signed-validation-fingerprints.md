@@ -120,15 +120,17 @@ Compare two manifests with:
 scripts/context-panel-surface-manifest.py compare \
   --previous previous.json \
   --current current.json \
+  --previous-expected-build-manifest previous-expected.json \
+  --current-expected-build-manifest current-expected.json \
   --train rc
 ```
 
-Comparison payloads currently use schema v4. Schema v3 remains frozen in
-`scripts/context_panel_surface_manifest/comparison_schema_v3.py` for archived
+Comparison payloads currently use schema v5. Schema v4 remains frozen in
+`scripts/context_panel_surface_manifest/comparison_schema_v4.py` for archived
 reconstruction, while `scripts/context_panel_comparison_schema.py` owns the
-current v4 wrapper. The v4 root records `toolchainChanged`, canonical
-`riskCodes`, exact `riskSurfaces`, and `observationRiskCodes`; the existing
-per-surface reason and evidence fields remain unchanged.
+current v5 wrapper. V5 keeps the v4 surface projection exact and adds root-only
+artifact evidence, canonical artifact risks, affected artifact-risk surfaces,
+and a fail-closed escalation state.
 
 Toolchain divergence is recorded on beta, RC, and release comparisons. Beta is
 simulator-first and does not gain an actual-runtime session solely because the

@@ -638,7 +638,7 @@ class SurfaceManifestTests(unittest.TestCase):
     def test_comparison_v4_rejects_hand_trimmed_or_noncanonical_payloads(self):
         comparison = compare_manifests(self.baseline, self.manifest(REPO_ROOT), "beta")
         self.assertEqual(comparison["kind"], "context-panel-surface-comparison")
-        self.assertEqual(comparison["schemaVersion"], 4)
+        self.assertEqual(comparison["schemaVersion"], 5)
         mutations = (
             lambda value: value.__setitem__("unexpected", True),
             lambda value: value["surfaces"][0].pop("artifactId"),
@@ -976,7 +976,7 @@ class SurfaceManifestTests(unittest.TestCase):
     def test_v4_roots_record_only_active_risks_and_observations(self):
         comparison = compare_manifests(self.baseline, self.manifest(REPO_ROOT), "beta")
         self.assertEqual(set(comparison), comparison_schema_module.ROOT_KEYS)
-        self.assertEqual(comparison["schemaVersion"], 4)
+        self.assertEqual(comparison["schemaVersion"], 5)
         self.assertEqual(comparison["riskCodes"], [])
         self.assertEqual(comparison["riskSurfaces"], {})
         self.assertEqual(comparison["observationRiskCodes"], [])

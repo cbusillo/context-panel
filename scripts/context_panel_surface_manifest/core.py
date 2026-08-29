@@ -22,6 +22,8 @@ from context_panel_comparison_schema import (
 from context_panel_expected_build import (
     ARCHITECTURE_PATTERN,
     DISTRIBUTION_SIGNING_CLASSES,
+    ExpectedBuildSchemaError,
+    derive_artifact_comparison,
 )
 
 
@@ -1149,6 +1151,8 @@ def compare_manifests(
     previous: dict[str, Any],
     current: dict[str, Any],
     train: str,
+    previous_expected_build_manifests: list[dict[str, Any]] | None = None,
+    current_expected_build_manifests: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if previous.get("schemaVersion") != 1 or current.get("schemaVersion") != 1:
         raise SurfacePolicyError("surface manifest schema is unsupported")
@@ -1303,6 +1307,48 @@ def compare_manifests(
         for surface_id, surface in current_surfaces.items()
         if "actual-runtime" in set(surface.get("evidenceCapabilities") or [])
     }
+    try:
+        artifact_fields = derive_artifact_comparison(
+            previous_expected_build_manifests,
+            current_expected_build_manifests,
+            previous_manifest_id=str(previous.get("manifestId") or ""),
+            current_manifest_id=str(current.get("manifestId") or ""),
+            previous_contract_fingerprint=previous_contract_fingerprint,
+            current_contract_fingerprint=current_contract_fingerprint,
+            previous_target=(str(previous_source.get("marketingVersion") or ""), str(previous_source.get("buildNumber") or "")),
+            current_target=(str(current_source.get("marketingVersion") or ""), str(current_source.get("buildNumber") or "")),
+            previous_surfaces=previous_surfaces,
+            current_surfaces=current_surfaces,
+            runtime_capable_surface_ids=runtime_capable_surface_ids,
+            train=train,
+            toolchain_changed=manifest_toolchain_changed,
+            exact_build_same=exact_build_same,
+        )
+    except ExpectedBuildSchemaError as error:
+        raise SurfacePolicyError("expected signed build manifest is invalid") from error
+    if train in {"rc", "release"}:
+        artifact_runtime_surfaces = {
+            surface_id
+            for surface_ids in artifact_fields["artifactRiskSurfaces"].values()
+            for surface_id in surface_ids
+        }
+        for surface in results:
+            if (
+                surface["surfaceId"] in artifact_runtime_surfaces
+                and surface["surfaceId"] in runtime_capable_surface_ids
+                and "actual-runtime" not in surface["freshEvidence"]
+            ):
+                surface["freshEvidence"].append("actual-runtime")
+                surface["requiredEvidence"].append("actual-runtime")
+                surface["carryForward"]["actual-runtime"] = {"eligible": False, "conditions": []}
+    required_surfaces = {
+        evidence_class: [
+            surface["surfaceId"]
+            for surface in results
+            if evidence_class in surface["requiredEvidence"]
+        ]
+        for evidence_class in class_order
+    }
     risk_codes, risk_surfaces, observation_risk_codes = derive_risk_fields(
         results,
         toolchain_delta=manifest_toolchain_changed,
@@ -1327,6 +1373,7 @@ def compare_manifests(
         "riskCodes": risk_codes,
         "riskSurfaces": risk_surfaces,
         "observationRiskCodes": observation_risk_codes,
+        **artifact_fields,
         "surfaces": results,
         "releaseRequiresApprovedRCTarget": bool(
             evidence_policy.get("releaseRequiresApprovedRCTarget")

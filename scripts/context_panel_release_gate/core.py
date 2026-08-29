@@ -14,6 +14,7 @@ from context_panel_comparison_schema import (
     validate_legacy_v1_comparison_for_reconstruction,
     validate_legacy_v2_comparison_for_reconstruction,
     validate_legacy_v3_comparison_for_reconstruction,
+    validate_comparison_v4,
 )
 from context_panel_validation.models import Target
 from context_panel_validation.runtime_evidence import (
@@ -545,15 +546,17 @@ def _validate_comparison(
     allow_legacy_reconstruction: bool = False,
 ) -> dict[str, dict[str, Any]]:
     try:
-        validated = (
-            validate_legacy_v1_comparison_for_reconstruction(comparison)
-            if allow_legacy_reconstruction and comparison.get("schemaVersion") == 1
-            else validate_legacy_v2_comparison_for_reconstruction(comparison)
-            if allow_legacy_reconstruction and comparison.get("schemaVersion") == 2
-            else validate_legacy_v3_comparison_for_reconstruction(comparison)
-            if allow_legacy_reconstruction and comparison.get("schemaVersion") == 3
-            else validate_current_comparison(comparison)
-        )
+        schema_version = comparison.get("schemaVersion")
+        if schema_version == 1:
+            validated = validate_legacy_v1_comparison_for_reconstruction(comparison)
+        elif schema_version == 2:
+            validated = validate_legacy_v2_comparison_for_reconstruction(comparison)
+        elif schema_version == 3:
+            validated = validate_legacy_v3_comparison_for_reconstruction(comparison)
+        elif schema_version == 4:
+            validated = validate_comparison_v4(comparison)
+        else:
+            validated = validate_current_comparison(comparison)
     except ComparisonSchemaError as error:
         raise ReleaseEvidenceError(f"surface comparison is invalid: {error}") from error
     if validated["train"] != train:
@@ -1431,6 +1434,10 @@ def evaluate_release_evidence(
     if len(contract_fingerprints) != 1:
         raise ReleaseEvidenceError("expected signed-build identities do not share one contract")
     expected_identity_digest = _expected_identity_digest(identities)
+    if comparison.get("schemaVersion") == 5 and comparison["artifactEvidence"].get(
+        "currentExpectedBuildIds"
+    ) != sorted({item.expected_build_id for item in identities}):
+        raise ReleaseEvidenceError("comparison artifact evidence does not bind current builds")
 
     previous_surfaces: dict[str, dict[str, Any]] = {}
     previous_expires_at: datetime | None = None
@@ -1456,6 +1463,19 @@ def evaluate_release_evidence(
             required_shadow_train_count=policy["requiredShadowTrainCount"],
         )
         previous_expires_at = parse_iso8601(verified_previous_ledger.get("expiresAt"))
+        if comparison.get("schemaVersion") == 5:
+            generation = previous_ledger.get("generation")
+            manifests = generation.get("expectedBuildManifests") if isinstance(generation, dict) else None
+            if not isinstance(manifests, list) or comparison["artifactEvidence"].get(
+                "previousExpectedBuildIds"
+            ) != sorted(
+                {
+                    item.get("expectedBuildId")
+                    for item in manifests
+                    if isinstance(item, dict) and isinstance(item.get("expectedBuildId"), str)
+                }
+            ):
+                raise ReleaseEvidenceError("comparison artifact evidence does not bind previous builds")
     selected_rc_surfaces: dict[str, dict[str, Any]] = {}
     selected_rc_expires_at: datetime | None = None
     if selected_rc_ledger is not None:

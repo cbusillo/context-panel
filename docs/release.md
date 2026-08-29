@@ -785,6 +785,8 @@ manifest for the intended train:
 scripts/context-panel-surface-manifest.py compare \
   --previous <previous-source-manifest.json> \
   --current <candidate-source-manifest.json> \
+  --previous-expected-build-manifest <previous-expected-build.json> \
+  --current-expected-build-manifest <candidate-expected-build.json> \
   --train <beta|rc|release> \
   --output <comparison.json>
 ```
