@@ -1236,6 +1236,61 @@ class RuntimeReceiptIngestionTests(unittest.TestCase):
                     "invalid-receipt-contract",
                 )
 
+    def test_structural_tamper_diagnostic_is_surface_scoped_and_order_independent(self):
+        surfaces = ("macos.app",)
+        status = runtime_status(surfaces)
+        valid = runtime_receipt("macos.app", status)
+        mutations = (
+            ("entry", lambda entry: entry.update({"unexpected": True})),
+            (
+                "receipt",
+                lambda entry: entry["receipt"].update({"unexpected": True}),
+            ),
+            (
+                "build-identity",
+                lambda entry: entry["receipt"]["buildIdentity"].update(
+                    {"unexpected": True}
+                ),
+            ),
+            (
+                "build",
+                lambda entry: entry["receipt"]["buildIdentity"]["build"].update(
+                    {"unexpected": True}
+                ),
+            ),
+            (
+                "fingerprints",
+                lambda entry: entry["receipt"]["buildIdentity"][
+                    "fingerprints"
+                ].update({"unexpected": "f" * 64}),
+            ),
+        )
+        for label, mutate in mutations:
+            malformed = json.loads(json.dumps(valid))
+            mutate(malformed)
+            for entries in ([malformed, valid], [valid, malformed]):
+                with self.subTest(label=label, malformed_first=entries[0] is malformed):
+                    temporary, _, _, _, state = self.fixture(surfaces)
+                    self.addCleanup(temporary.cleanup)
+                    next_state, _ = runtime_module.reconcile_runtime_observation(
+                        state,
+                        observation(status, runtime_export(status, entries)),
+                    )
+                    report = build_runtime_evidence_report(
+                        next_state,
+                        NOW + timedelta(minutes=2),
+                    )
+                    self.assertEqual(len(next_state.receipts), 1)
+                    self.assertEqual(report["provenSurfaceCount"], 0)
+                    self.assertEqual(
+                        report["surfaces"][0]["reason"],
+                        (
+                            "invalid-receipt-entry"
+                            if label == "entry"
+                            else "invalid-receipt-contract"
+                        ),
+                    )
+
     def test_expected_archive_identity_change_evicts_same_receipt_as_conflict(self):
         surfaces = ("macos.app",)
         temporary, _, _, _, state = self.fixture(surfaces)

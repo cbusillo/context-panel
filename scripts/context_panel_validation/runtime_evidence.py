@@ -1530,11 +1530,11 @@ def validated_runtime_receipt(
     elif set(build_identity) == RUNTIME_BUILD_IDENTITY_KEYS:
         return None, (None, "invalid-receipt-surface")
     if set(entry) != RUNTIME_ENTRY_KEYS:
-        return None, (None, "invalid-receipt-entry")
+        return None, (surface, "invalid-receipt-entry")
     if set(receipt) != RUNTIME_RECEIPT_KEYS:
-        return None, (None, "invalid-receipt-contract")
+        return None, (surface, "invalid-receipt-contract")
     if set(build_identity) != RUNTIME_BUILD_IDENTITY_KEYS:
-        return None, (None, "invalid-receipt-contract")
+        return None, (surface, "invalid-receipt-contract")
     build = build_identity.get("build")
     fingerprints = build_identity.get("fingerprints")
     executable_uuids = normalized_uuid_list(build_identity.get("executableUUIDs"))
@@ -1547,7 +1547,7 @@ def validated_runtime_receipt(
         or executable_uuids is None
         or not isinstance(session, dict)
     ):
-        return None, (None, "invalid-receipt-contract")
+        return None, (surface, "invalid-receipt-contract")
     if not isinstance(surface, str) or surface not in RUNTIME_SURFACES:
         return None, (None, "invalid-receipt-surface")
     session_timestamps = validated_runtime_session_timestamps(session)
