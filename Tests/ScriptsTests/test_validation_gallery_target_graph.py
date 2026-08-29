@@ -18,9 +18,45 @@ TV_SYSTEM_SURFACES_SOURCE = REPO_ROOT / "Sources" / "ContextPanelTV" / "TVSystem
 TV_TOP_SHELF_SOURCE = (
     REPO_ROOT / "Sources" / "ContextPanelTVTopShelf" / "ContextPanelTVTopShelfProvider.swift"
 )
+SHARED_VIEW_EVIDENCE_SOURCE = REPO_ROOT / "scripts" / "context_panel_validation" / "shared_view_evidence.py"
+VALIDATION_CLI_SOURCE = REPO_ROOT / "scripts" / "context_panel_validation" / "cli.py"
+VALIDATION_ENTRY_POINT = REPO_ROOT / "scripts" / "context-panel-validation.py"
 
 
 class ValidationGalleryTargetGraphTests(unittest.TestCase):
+    def test_shared_view_planner_has_no_live_storage_or_publication_paths(self):
+        planner = SHARED_VIEW_EVIDENCE_SOURCE.read_text()
+        cli = VALIDATION_CLI_SOURCE.read_text()
+        entry_point = VALIDATION_ENTRY_POINT.read_text()
+        planner_imports = re.findall(r"^(?:from|import)\s+([^\s.]+)", planner, flags=re.MULTILINE)
+        plan_start = cli.index("def run_plan_shared_view_evidence")
+        plan_end = cli.index("\ndef emit_session_state", plan_start)
+        plan_function = cli[plan_start:plan_end]
+
+        self.assertEqual(
+            planner_imports,
+            ["__future__", "dataclasses", "hashlib", "json", "os", "pathlib", "re", "tempfile", "typing", "context_panel_comparison_schema"],
+        )
+        self.assertIn("from context_panel_validation.cli import main", entry_point)
+        for forbidden in (
+            "CloudKit",
+            "WidgetKit",
+            "Keychain",
+            "ProviderCredential",
+            "AppGroup",
+            "Snapshot",
+            "Subscription",
+            "Timeline",
+            "RuntimeReceipt",
+            "ContextPanelLocations",
+            "current-snapshot",
+            "publish",
+        ):
+            self.assertNotIn(forbidden, planner)
+            self.assertNotIn(forbidden, plan_function)
+        self.assertNotIn("SessionStateStore", plan_function)
+        self.assertNotIn("RuntimeEvidenceStore", plan_function)
+
     def test_fixture_source_is_foundation_only(self):
         source = FIXTURE_SOURCE.read_text()
         imports = re.findall(r"^import\s+(\S+)$", source, flags=re.MULTILINE)

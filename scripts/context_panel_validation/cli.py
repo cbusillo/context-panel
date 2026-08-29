@@ -39,6 +39,15 @@ from .runtime_evidence import (
     build_runtime_evidence_report,
     load_expected_surface_identities,
 )
+from .shared_view_evidence import (
+    DEFAULT_MATRIX_PATH,
+    DEFAULT_SURFACE_POLICY_PATH,
+    SharedViewEvidenceError,
+    load_shared_view_matrix,
+    load_surface_policy,
+    plan_shared_view_evidence,
+    write_requirements_payload,
+)
 from .session import (
     ACTIVE_SESSION_LIFECYCLES,
     DEFAULT_DURATION_HOURS,
@@ -202,11 +211,43 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Export bounded public visual requirement and decision metadata",
     )
     add_target_arguments(export_visual_reviews)
+    plan_shared_view_evidence_parser = subparsers.add_parser(
+        "plan-shared-view-evidence",
+        help="Plan bounded shared-view review requirements without coordinator state",
+    )
+    plan_shared_view_evidence_parser.add_argument(
+        "--surface-comparison",
+        required=True,
+        type=Path,
+        help="Validated current schema-v5 surface-manifest comparison",
+    )
+    plan_shared_view_evidence_parser.add_argument(
+        "--matrix",
+        type=Path,
+        default=DEFAULT_MATRIX_PATH,
+        help="Canonical shared-view matrix JSON",
+    )
+    plan_shared_view_evidence_parser.add_argument(
+        "--surface-policy",
+        type=Path,
+        default=DEFAULT_SURFACE_POLICY_PATH,
+        help="Canonical Context Panel surface policy JSON",
+    )
+    plan_shared_view_evidence_parser.add_argument(
+        "--output",
+        required=True,
+        type=Path,
+        help="Requirements JSON destination",
+    )
+    plan_shared_view_evidence_parser.add_argument(
+        "--json", action="store_true", help="Emit the planned payload as stable JSON"
+    )
     args = parser.parse_args(argv)
-    if not VERSION_PATTERN.fullmatch(args.version):
-        parser.error("--version must contain numeric dot-separated components")
-    if not BUILD_PATTERN.fullmatch(args.build_number):
-        parser.error("--build-number must contain digits only")
+    if args.command != "plan-shared-view-evidence":
+        if not VERSION_PATTERN.fullmatch(args.version):
+            parser.error("--version must contain numeric dot-separated components")
+        if not BUILD_PATTERN.fullmatch(args.build_number):
+            parser.error("--build-number must contain digits only")
     return args
 
 
@@ -304,6 +345,27 @@ def run_final_report(args: argparse.Namespace) -> int:
     else:
         print(render_final_report(report))
     return report.exit_code
+
+
+def run_plan_shared_view_evidence(args: argparse.Namespace) -> int:
+    try:
+        comparison = json.loads(args.surface_comparison.expanduser().read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise SharedViewEvidenceError("surface comparison is unavailable or invalid") from error
+    surface_policy = load_surface_policy(args.surface_policy)
+    matrix = load_shared_view_matrix(args.matrix, surface_policy)
+    payload = plan_shared_view_evidence(comparison, matrix, surface_policy)
+    write_requirements_payload(args.output, payload)
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        requirements = payload["requirements"]
+        surfaces = {item["surface"] for item in requirements}
+        print(
+            f"Planned {len(requirements)} shared-view requirements across "
+            f"{len(surfaces)} fresh shared-view surfaces."
+        )
+    return 0
 
 
 def emit_session_state(
@@ -666,6 +728,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_status(args)
         if args.command == "final-report":
             return run_final_report(args)
+        if args.command == "plan-shared-view-evidence":
+            return run_plan_shared_view_evidence(args)
         if args.command == "record-watch-restart":
             return run_record_watch_restart(args)
         if args.command == "start-session":
@@ -693,7 +757,7 @@ def main(argv: list[str] | None = None) -> int:
     except CoordinatorSessionConflictError as error:
         print(str(error), file=sys.stderr)
         return EXIT_BLOCKED
-    except CoordinatorSessionError as error:
+    except (CoordinatorSessionError, SharedViewEvidenceError) as error:
         print(str(error), file=sys.stderr)
         return EXIT_UNKNOWN
     except Exception:

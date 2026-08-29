@@ -25,6 +25,38 @@ Runtime receipts and OS-composited placement approvals remain separate evidence
 classes. The gallery labels that boundary in both its persistent header and each
 render tile.
 
+## Shared-View Matrix Planning
+
+Stage 1 defines the complete, bounded shared-view review contract in
+`Config/ContextPanelSharedViewMatrix.json`. Its schema-v1 matrix covers exactly
+the surfaces whose surface-policy capability includes `shared-view`, in policy
+order, with two canonical representative cells per surface. Cells use only
+synthetic fixture IDs and the existing gallery family, appearance, and
+presentation vocabulary. Accessibility is explicit for every cell.
+
+Create schema-v1 visual-review requirements from a current schema-v5 comparison:
+
+```sh
+scripts/context-panel-validation.py plan-shared-view-evidence \
+  --surface-comparison <comparison.json> \
+  --output <visual-review-requirements.json> \
+  --json
+```
+
+The planner validates the comparison, surface policy, and matrix before an
+atomic write. It binds `currentManifestID` to the schema-v5 comparison and emits
+only cells for surfaces with fresh `shared-view` evidence. It does not create a
+coordinator session, launch a simulator, install an app, read local account or
+provider state, or claim runtime or placement proof. A beta comparison that has
+only fresh shared-view surfaces therefore plans successfully with no runtime
+surface.
+
+Each fixture contract ID is a deterministic hash over the versioned matrix
+domain and its canonical cell contract. `pixelDiffPolicy` is explicitly
+`advisory-only`: Stage 1 does not compare pixels or make automated approval
+decisions. Private simulator capture, artifact handling, and any later capture
+or approval integration remain a Stage 2 boundary.
+
 ## Fixture Isolation
 
 `ContextPanelValidationFixtures` is a Foundation-only target. It contains fixed
