@@ -747,8 +747,11 @@ def validate_observation_summary(summary: RuntimeObservationSummary) -> None:
             summary.expected_manifest_id is not None
             and not is_sha256(summary.expected_manifest_id)
         )
+        or any(
+            not isinstance(surface, str) or surface not in RUNTIME_SURFACES
+            for surface in summary.enabled_surfaces
+        )
         or tuple(sorted(set(summary.enabled_surfaces))) != summary.enabled_surfaces
-        or any(surface not in RUNTIME_SURFACES for surface in summary.enabled_surfaces)
         or (
             summary.sync_healthy is not None
             and not isinstance(summary.sync_healthy, bool)

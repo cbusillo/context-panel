@@ -1331,6 +1331,26 @@ class RuntimeReceiptIngestionTests(unittest.TestCase):
                         )
                     )
 
+    def test_observation_summary_rejects_mixed_type_enabled_surfaces(self):
+        temporary, _, _, _, state = self.fixture(("macos.app",))
+        self.addCleanup(temporary.cleanup)
+        status = runtime_status(("macos.app",))
+        next_state, _ = runtime_module.reconcile_runtime_observation(
+            state,
+            observation(status, runtime_export(status, [])),
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeEvidenceError,
+            "runtime observation summary is invalid",
+        ):
+            runtime_module.validate_observation_summary(
+                replace(
+                    next_state.last_observation,
+                    enabled_surfaces=("macos.app", 1),
+                )
+            )
+
     def test_expected_archive_identity_change_evicts_same_receipt_as_conflict(self):
         surfaces = ("macos.app",)
         temporary, _, _, _, state = self.fixture(surfaces)
