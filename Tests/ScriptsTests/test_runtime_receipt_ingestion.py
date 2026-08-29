@@ -415,6 +415,7 @@ class RuntimeReceiptIngestionTests(unittest.TestCase):
 
         for key, value in (
             ("signingClass", "Other"),
+            ("signingClass", "ad-hoc"),
             ("architectures", ["../../arm64"]),
         ):
             with self.subTest(key=key):

@@ -1314,6 +1314,11 @@ class SurfaceManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(SurfacePolicyError, "signing class is invalid"):
             seal_expected_build(self.baseline, invalid_signing_class)
 
+        ad_hoc_signing_class = json.loads(json.dumps(template))
+        ad_hoc_signing_class["artifacts"][0]["signingClass"] = "ad-hoc"
+        with self.assertRaisesRegex(SurfacePolicyError, "signing class is invalid"):
+            seal_expected_build(self.baseline, ad_hoc_signing_class)
+
         invalid_architecture = json.loads(json.dumps(template))
         invalid_architecture["artifacts"][0]["architectures"] = ["../../arm64"]
         with self.assertRaisesRegex(SurfacePolicyError, "architectures are missing"):

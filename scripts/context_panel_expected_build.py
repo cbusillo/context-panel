@@ -35,6 +35,7 @@ SIGNING_CLASSES = frozenset(
         "ad-hoc",
     }
 )
+DISTRIBUTION_SIGNING_CLASSES = SIGNING_CLASSES - {"ad-hoc"}
 FINGERPRINT_KEYS = {"render", "runtime", "placement", "combined"}
 EXPECTED_MANIFEST_KEYS = {
     "schemaVersion",
@@ -221,7 +222,7 @@ def validate_expected_build_manifest(
             if (
                 architectures is None
                 or any(ARCHITECTURE_PATTERN.fullmatch(value) is None for value in architectures)
-                or artifact.get("signingClass") not in SIGNING_CLASSES
+                or artifact.get("signingClass") not in DISTRIBUTION_SIGNING_CLASSES
             ):
                 fail("expected signed build artifact is invalid")
             for key in (
