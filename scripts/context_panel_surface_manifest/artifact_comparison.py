@@ -54,6 +54,7 @@ def derive_artifact_comparison(
     train: str,
     toolchain_changed: bool,
     exact_build_same: bool,
+    validate_surface_binding: bool = True,
 ) -> dict[str, Any]:
     def collect(
         payloads: list[dict[str, Any]] | None,
@@ -99,16 +100,18 @@ def derive_artifact_comparison(
                     raise ExpectedBuildSchemaError(
                         "expected signed build surface is duplicated"
                     )
-                source_surface = source_surfaces[surface_id]
-                if (
-                    surface["artifactId"] != source_surface.get("artifactId")
-                    or surface["bundleIdentifier"]
-                    != source_surface.get("bundleIdentifier")
-                    or surface["fingerprints"] != source_surface.get("fingerprints")
-                ):
-                    raise ExpectedBuildSchemaError(
-                        "expected signed build surface does not bind source"
-                    )
+                if validate_surface_binding:
+                    source_surface = source_surfaces[surface_id]
+                    if (
+                        surface["artifactId"] != source_surface.get("artifactId")
+                        or surface["bundleIdentifier"]
+                        != source_surface.get("bundleIdentifier")
+                        or surface["fingerprints"]
+                        != source_surface.get("fingerprints")
+                    ):
+                        raise ExpectedBuildSchemaError(
+                            "expected signed build surface does not bind source"
+                        )
                 surfaces[surface_id] = surface
         expected_artifacts = {
             str(surface.get("artifactId")) for surface in source_surfaces.values()

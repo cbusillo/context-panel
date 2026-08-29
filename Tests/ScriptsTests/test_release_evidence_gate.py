@@ -3,6 +3,7 @@ import copy
 import json
 import sys
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from context_panel_release_gate import (
     release_evidence_report_blockers,
 )
 from context_panel_release_gate.cli import render_lineage
+import context_panel_release_gate.core as release_gate_core
 from context_panel_validation import ExpectedSurfaceIdentity, RUNTIME_SURFACES, Target
 from context_panel_validation.runtime_evidence import (
     canonical_json,
@@ -752,11 +754,17 @@ def previous_lineage(
     *,
     host_os: str | None = None,
     policy_payload: dict[str, Any] | None = None,
+    surface_policy_payload: dict[str, Any] | None = None,
+    comparison_payload_override: dict[str, Any] | None = None,
     legacy_comparison: bool = False,
     legacy_comparison_version: int = 1,
 ) -> dict[str, Any]:
     release_policy = policy_payload or policy()
-    comparison_payload = comparison(
+    configured_surface_policy = surface_policy_payload or surface_policy(
+        surface,
+        evidence_class,
+    )
+    comparison_payload = comparison_payload_override or comparison(
         surface,
         evidence_class,
         previous_manifest_id="d" * 64,
@@ -803,7 +811,7 @@ def previous_lineage(
         identities=identities,
         expected_build_manifests=expected_manifests,
         policy=release_policy,
-        surface_policy=surface_policy(surface, evidence_class),
+        surface_policy=configured_surface_policy,
         shadow_evidence=shadow_payload,
         now=NOW,
         _allow_legacy_comparison=legacy_comparison,
@@ -944,6 +952,44 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         self.assertNotIn(
             "comparison artifact",
             " ".join(payload["blockers"]),
+        )
+
+    def test_report_validation_propagates_artifact_risk_scope(self) -> None:
+        surface = "watchos.app"
+        comparison_payload = comparison(surface, "actual-runtime")
+        validation_report = report(surface, runtime=True)
+        payload = self.evaluate(
+            surface,
+            "actual-runtime",
+            validation_report=validation_report,
+            comparison_payload=comparison_payload,
+        )
+        with patch.object(
+            release_gate_core,
+            "_validate_surface_policy",
+            wraps=release_gate_core._validate_surface_policy,
+        ) as validate_policy:
+            release_evidence_report_blockers(
+                payload,
+                version="1.0.54",
+                build_number="202608080418",
+                train="beta",
+                enforce=False,
+                validation_report=validation_report,
+                comparison=comparison_payload,
+                identities=all_identities(),
+                expected_build_manifests=all_expected_manifests(),
+                policy=policy(),
+                surface_policy=surface_policy(surface, "actual-runtime"),
+                now=NOW,
+            )
+        self.assertGreaterEqual(validate_policy.call_count, 2)
+        self.assertTrue(
+            all(
+                call.kwargs["artifact_risk_surfaces"]
+                == comparison_payload["artifactRiskSurfaces"]
+                for call in validate_policy.call_args_list
+            )
         )
 
     def test_rc_unknown_artifact_evidence_accepts_fresh_runtime(self) -> None:

@@ -96,15 +96,16 @@ a different reduced plan and must not be treated as authoritative.
 ## Comparison Schema Compatibility
 
 Production comparison generation, coordinator planning, direct release-gate
-inputs, report validation, and submission accept only schema v4. Schema v4 adds
-canonical toolchain and risk-root fields while preserving the v3 runtime
-decision contract. Retained v1 comparisons are replay-only:
+inputs, report validation, and submission accept only schema v5. Schema v5 adds
+artifact evidence and surface-scoped artifact-risk escalation while preserving
+the v4 surface projection. Retained v1 comparisons are replay-only:
 inventory lineage validation verifies the raw archived chain before the adapter
 deep-copies the v1 payload, injects its frozen v2 identity, and validates with
 the pinned reconstruction contract. Retained v2 comparisons validate directly
 against that same frozen v2 contract. Retained v3 comparisons use
-`validate_legacy_v3_comparison_for_reconstruction`. Release-gate lineage
-reconstruction may validate embedded signed v1, v2, or v3 comparisons while
+`validate_legacy_v3_comparison_for_reconstruction`; retained v4 comparisons use
+their frozen v4 validator. Release-gate lineage reconstruction may validate
+embedded signed v1, v2, v3, or v4 comparisons while
 preserving their raw comparison digests; those exceptions are unavailable to
 direct production inputs.
 

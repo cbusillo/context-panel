@@ -42,6 +42,9 @@ derive_risk_fields = comparison_schema_module.derive_risk_fields
 validate_current_comparison = comparison_schema_module.validate_current_comparison
 ReleaseEvidenceError = release_gate_module.ReleaseEvidenceError
 validate_release_comparison = release_gate_module._validate_comparison
+validate_artifact_comparison_inputs = (
+    release_gate_module._validate_artifact_comparison_inputs
+)
 
 
 def v2_artifact_contract(seed: bytes, architectures: list[str] | None = None) -> dict[str, object]:
@@ -1561,6 +1564,15 @@ class SurfaceManifestTests(unittest.TestCase):
             [partial["expectedBuildId"]],
         )
         self.assertEqual(comparison["artifactRiskCodes"], ["artifact-evidence-unknown"])
+        with self.assertRaisesRegex(
+            ReleaseEvidenceError,
+            "previous expected-build coverage is incomplete",
+        ):
+            validate_artifact_comparison_inputs(
+                comparison,
+                current_manifests=(partial,),
+                previous_lineage=None,
+            )
 
     def test_legacy_and_mixed_artifact_evidence_fail_closed(self):
         current = self.expected_build(self.baseline)
