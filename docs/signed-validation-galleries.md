@@ -31,8 +31,12 @@ Stage 1 defines the complete, bounded shared-view review contract in
 `Config/ContextPanelSharedViewMatrix.json`. Its schema-v1 matrix covers exactly
 the surfaces whose surface-policy capability includes `shared-view`, in policy
 order, with two canonical representative cells per surface. Cells use only
-synthetic fixture IDs and the existing gallery family, appearance, and
-presentation vocabulary. Accessibility is explicit for every cell.
+synthetic fixture IDs and each host gallery's existing selectors: URL-route
+family, appearance, and presentation values on Mac and companion hosts; Watch
+complication families; and Apple TV surface and presentation modes. The
+`not-applicable` sentinel marks an axis the host gallery does not expose, rather
+than inventing an unreachable selector. Accessibility is explicit for every
+cell.
 
 Create schema-v1 visual-review requirements from a current schema-v5 comparison:
 
@@ -49,10 +53,13 @@ only cells for surfaces with fresh `shared-view` evidence. It does not create a
 coordinator session, launch a simulator, install an app, read local account or
 provider state, or claim runtime or placement proof. A beta comparison that has
 only fresh shared-view surfaces therefore plans successfully with no runtime
-surface.
+surface. A comparison with fresh `os-composited-placement` evidence is rejected
+because the shared-view-only output could not satisfy the existing combined
+visual-review requirements contract; placement planning remains a later stage.
 
 Each fixture contract ID is a deterministic hash over the versioned matrix
-domain and its canonical cell contract. `pixelDiffPolicy` is explicitly
+domain, complete matrix digest, relevant surface-policy contract, and canonical
+cell contract. `pixelDiffPolicy` is explicitly
 `advisory-only`: Stage 1 does not compare pixels or make automated approval
 decisions. Private simulator capture, artifact handling, and any later capture
 or approval integration remain a Stage 2 boundary.

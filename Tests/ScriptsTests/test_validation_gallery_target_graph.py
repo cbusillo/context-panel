@@ -1,11 +1,26 @@
 from pathlib import Path
 import re
+import sys
 import unittest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+from context_panel_validation.shared_view_evidence import (
+    FIXTURE_IDS,
+    GALLERY_APPEARANCES,
+    GALLERY_FAMILIES,
+    GALLERY_PRESENTATIONS,
+    TV_GALLERY_SURFACES,
+    TV_PRESENTATIONS,
+    WATCH_COMPLICATION_FAMILIES,
+)
+
+
 FIXTURE_SOURCE = REPO_ROOT / "Sources" / "ContextPanelValidationFixtures" / "ValidationFixtureCatalog.swift"
 GALLERY_SOURCE_ROOT = REPO_ROOT / "Sources" / "ContextPanelValidationGalleryUI"
+GALLERY_ROUTE_SOURCE = GALLERY_SOURCE_ROOT / "ValidationGalleryRoute.swift"
 MAC_APP_SOURCE = REPO_ROOT / "Sources" / "ContextPanelApp" / "ContextPanelApp.swift"
 COMPANION_APP_SOURCE = REPO_ROOT / "Sources" / "ContextPanelCompanion" / "ContextPanelCompanionApp.swift"
 WATCH_APP_SOURCE = REPO_ROOT / "Sources" / "ContextPanelWatch" / "ContextPanelWatchApp.swift"
@@ -15,6 +30,9 @@ TV_APP_SOURCE = REPO_ROOT / "Sources" / "ContextPanelTV" / "ContextPanelTVApp.sw
 TV_GALLERY_SOURCE = REPO_ROOT / "Sources" / "ContextPanelTV" / "TVValidationGallery.swift"
 TV_PREVIEW_SOURCE = REPO_ROOT / "Sources" / "ContextPanelTV" / "TVPreviewFixtures.swift"
 TV_SYSTEM_SURFACES_SOURCE = REPO_ROOT / "Sources" / "ContextPanelTV" / "TVSystemSurfaces.swift"
+TV_RUNWAY_PRESENTATION_SOURCE = (
+    REPO_ROOT / "Sources" / "ContextPanelTVSupport" / "TVRunwayPresentation.swift"
+)
 TV_TOP_SHELF_SOURCE = (
     REPO_ROOT / "Sources" / "ContextPanelTVTopShelf" / "ContextPanelTVTopShelfProvider.swift"
 )
@@ -24,6 +42,45 @@ VALIDATION_ENTRY_POINT = REPO_ROOT / "scripts" / "context-panel-validation.py"
 
 
 class ValidationGalleryTargetGraphTests(unittest.TestCase):
+    def test_shared_view_vocabularies_match_swift_gallery_contracts(self):
+        fixture_source = FIXTURE_SOURCE.read_text()
+        route_source = GALLERY_ROUTE_SOURCE.read_text()
+        watch_widget_source = WATCH_WIDGET_SOURCE.read_text()
+        tv_gallery_source = TV_GALLERY_SOURCE.read_text()
+        tv_presentation_source = TV_RUNWAY_PRESENTATION_SOURCE.read_text()
+
+        self.assertEqual(
+            FIXTURE_IDS,
+            self.swift_enum_raw_values(fixture_source, "ValidationFixtureID"),
+        )
+        self.assertEqual(
+            GALLERY_FAMILIES,
+            self.swift_enum_raw_values(route_source, "ValidationGalleryFamily"),
+        )
+        self.assertEqual(
+            GALLERY_APPEARANCES,
+            self.swift_enum_raw_values(route_source, "ValidationGalleryAppearance"),
+        )
+        self.assertEqual(
+            GALLERY_PRESENTATIONS,
+            self.swift_enum_raw_values(route_source, "ValidationGalleryPresentation"),
+        )
+        self.assertEqual(
+            WATCH_COMPLICATION_FAMILIES,
+            self.swift_enum_raw_values(
+                watch_widget_source,
+                "ContextPanelWatchComplicationFamily",
+            ),
+        )
+        self.assertEqual(
+            TV_GALLERY_SURFACES,
+            self.swift_enum_raw_values(tv_gallery_source, "TVValidationSurface"),
+        )
+        self.assertEqual(
+            TV_PRESENTATIONS,
+            self.swift_enum_raw_values(tv_presentation_source, "TVPresentationMode"),
+        )
+
     def test_shared_view_planner_has_no_live_storage_or_publication_paths(self):
         planner = SHARED_VIEW_EVIDENCE_SOURCE.read_text()
         cli = VALIDATION_CLI_SOURCE.read_text()
@@ -387,6 +444,22 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         self.assertIn("status == .stale ? TVTheme.staleInstrumentColor", tv_app)
         self.assertIn("static let staleInstrumentColor", tv_app)
         self.assertIn(".font(.title3.weight(.semibold))", tv_app)
+
+    @staticmethod
+    def swift_enum_raw_values(source: str, enum_name: str) -> tuple[str, ...]:
+        match = re.search(
+            rf"(?:public\s+|private\s+)?enum\s+{re.escape(enum_name)}\b[^{{]*{{(.*?)\n}}",
+            source,
+            flags=re.DOTALL,
+        )
+        if match is None:
+            raise AssertionError(f"Swift enum {enum_name} was not found")
+        cases = re.findall(
+            r'^\s*case\s+([A-Za-z][A-Za-z0-9]*)(?:\s*=\s*"([^"]+)")?\s*$',
+            match.group(1),
+            flags=re.MULTILINE,
+        )
+        return tuple(raw_value or name for name, raw_value in cases)
 
     @staticmethod
     def yaml_target_block(project: str, target: str) -> str:

@@ -1,10 +1,12 @@
 import contextlib
 import copy
+import hashlib
 import io
 import json
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 from unittest import mock
@@ -14,12 +16,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from context_panel_comparison_schema import derive_risk_fields, derive_runtime_decision
+from context_panel_validation import ExpectedSurfaceIdentity, load_visual_review_plan
 from context_panel_validation import cli as cli_module
 from context_panel_validation.shared_view_evidence import (
     DEFAULT_MATRIX_PATH,
     DEFAULT_SURFACE_POLICY_PATH,
     SharedViewEvidenceError,
     SharedViewMatrix,
+    VISUAL_MAXIMUM_REQUIREMENT_COUNT,
     canonical_json,
     fixture_contract_id,
     load_shared_view_matrix,
@@ -27,10 +31,34 @@ from context_panel_validation.shared_view_evidence import (
     plan_shared_view_evidence,
     validate_shared_view_matrix,
 )
+from context_panel_validation.models import EXIT_UNKNOWN
 from context_panel_validation.visual_approvals import MAXIMUM_REQUIREMENT_COUNT
 
 
 MANIFEST_ID = "a" * 64
+
+
+def sha(value: str) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def identity_for(surface_id: str, platform: str) -> ExpectedSurfaceIdentity:
+    return ExpectedSurfaceIdentity(
+        surface=surface_id,
+        platform=platform,
+        artifact_id=surface_id,
+        bundle_identifier=f"com.example.{surface_id}",
+        marketing_version="1.0.0",
+        build_number="1",
+        manifest_id=MANIFEST_ID,
+        contract_fingerprint=sha(f"{surface_id}:contract"),
+        render_fingerprint=sha(f"{surface_id}:render"),
+        runtime_fingerprint=sha(f"{surface_id}:runtime"),
+        placement_fingerprint=sha(f"{surface_id}:placement"),
+        combined_fingerprint=sha(f"{surface_id}:combined"),
+        executable_uuids=("AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",),
+        expected_build_id=sha(f"{surface_id}:build"),
+    )
 
 
 def comparison_for(surface_evidence: dict[str, list[str]]) -> dict[str, Any]:
@@ -131,6 +159,7 @@ class SharedViewEvidenceTests(unittest.TestCase):
         self.assertNotIn("macos.refresh-agent", policy_shared)
 
     def test_matrix_is_bounded_canonical_and_uses_two_justified_cells_per_surface(self) -> None:
+        self.assertEqual(VISUAL_MAXIMUM_REQUIREMENT_COUNT, MAXIMUM_REQUIREMENT_COUNT)
         self.assertLessEqual(self.matrix.max_cell_count, MAXIMUM_REQUIREMENT_COUNT)
         self.assertEqual(self.matrix.max_cell_count, 24)
         self.assertEqual(self.matrix.cell_order, ("baseline", "stress"))
@@ -139,6 +168,44 @@ class SharedViewEvidenceTests(unittest.TestCase):
             self.assertEqual(tuple(cell.id for cell in surface.cells), self.matrix.cell_order)
             self.assertTrue(all(cell.justification for cell in surface.cells))
         self.assertEqual(self.matrix.pixel_diff_policy, "advisory-only")
+
+    def test_watch_and_tv_cells_use_their_host_gallery_coordinates(self) -> None:
+        cells_by_surface = {
+            surface.id: tuple(
+                (cell.fixture_id, cell.family, cell.appearance, cell.presentation)
+                for cell in surface.cells
+            )
+            for surface in self.matrix.surfaces
+        }
+
+        self.assertEqual(
+            cells_by_surface["watchos.app"],
+            (
+                ("healthy", "not-applicable", "not-applicable", "not-applicable"),
+                ("dense-accounts", "not-applicable", "not-applicable", "not-applicable"),
+            ),
+        )
+        self.assertEqual(
+            cells_by_surface["watchos.complication"],
+            (
+                ("healthy", "circular", "not-applicable", "not-applicable"),
+                ("reset-visible", "rectangular", "not-applicable", "not-applicable"),
+            ),
+        )
+        self.assertEqual(
+            cells_by_surface["tvos.app"],
+            (
+                ("healthy", "runway", "not-applicable", "fullDetail"),
+                ("dense-accounts", "provider", "not-applicable", "countsOnly"),
+            ),
+        )
+        self.assertEqual(
+            cells_by_surface["tvos.top-shelf"],
+            (
+                ("healthy", "topShelf", "not-applicable", "fullDetail"),
+                ("fit-fallback", "topShelf", "not-applicable", "countsOnly"),
+            ),
+        )
 
     def test_matrix_hash_and_fixture_contract_ids_are_deterministic(self) -> None:
         matrix_again = SharedViewMatrix.from_dict(json.loads(DEFAULT_MATRIX_PATH.read_text()))
@@ -151,6 +218,24 @@ class SharedViewEvidenceTests(unittest.TestCase):
             fixture_contract_id(matrix_again, first_surface, first_cell),
         )
 
+    def test_fixture_contract_id_binds_matrix_and_surface_policy_contracts(self) -> None:
+        first_surface = self.surface_policy[0]
+        first_cell = self.matrix.surfaces[0].cells[0]
+        baseline_id = fixture_contract_id(self.matrix, first_surface, first_cell)
+        matrix_payload = json.loads(DEFAULT_MATRIX_PATH.read_text())
+        matrix_payload["surfaces"][1]["cells"][1]["justification"] = "Changed contract."
+        changed_matrix = SharedViewMatrix.from_dict(matrix_payload)
+        changed_policy_surface = replace(first_surface, device_class="changed-device")
+
+        self.assertNotEqual(
+            fixture_contract_id(changed_matrix, first_surface, changed_matrix.surfaces[0].cells[0]),
+            baseline_id,
+        )
+        self.assertNotEqual(
+            fixture_contract_id(self.matrix, changed_policy_surface, first_cell),
+            baseline_id,
+        )
+
     def test_planner_binds_schema_v5_and_emits_fresh_shared_view_only(self) -> None:
         comparison = comparison_for(
             {
@@ -158,7 +243,6 @@ class SharedViewEvidenceTests(unittest.TestCase):
                 "watchos.complication": [
                     "shared-view",
                     "actual-runtime",
-                    "os-composited-placement",
                 ],
             }
         )
@@ -186,6 +270,38 @@ class SharedViewEvidenceTests(unittest.TestCase):
             self.assertIsNone(requirement["presentationFamily"])
             self.assertIsNone(requirement["placementHost"])
 
+    def test_planner_output_loads_through_the_visual_review_contract(self) -> None:
+        comparison = comparison_for(
+            {
+                "watchos.app": ["shared-view"],
+                "watchos.complication": ["shared-view", "actual-runtime"],
+            }
+        )
+        payload = plan_shared_view_evidence(comparison, self.matrix, self.surface_policy)
+        policy_by_id = {surface.id: surface for surface in self.surface_policy}
+        identities = tuple(
+            identity_for(surface_id, policy_by_id[surface_id].platform)
+            for surface_id in ("watchos.app", "watchos.complication")
+        )
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            comparison_path = root / "comparison.json"
+            requirements_path = root / "requirements.json"
+            comparison_path.write_text(json.dumps(comparison))
+            requirements_path.write_text(json.dumps(payload))
+
+            runtime_surfaces, requirements, manifest_id = load_visual_review_plan(
+                comparison_path,
+                requirements_path,
+                identities,
+            )
+
+        self.assertEqual(runtime_surfaces, ("watchos.complication",))
+        self.assertEqual(len(requirements), 4)
+        self.assertEqual(manifest_id, MANIFEST_ID)
+        self.assertTrue(all(requirement.evidence_class == "shared-view" for requirement in requirements))
+
     def test_shared_only_beta_plan_requires_no_runtime_surface(self) -> None:
         comparison = comparison_for({"watchos.app": ["shared-view"]})
 
@@ -195,7 +311,7 @@ class SharedViewEvidenceTests(unittest.TestCase):
         self.assertFalse(comparison["requiresRuntimeSession"])
         self.assertEqual([item["surface"] for item in requirements], ["watchos.app"] * 2)
 
-    def test_planner_excludes_nonfresh_shared_runtime_and_placement_claims(self) -> None:
+    def test_planner_rejects_fresh_placement_requirements(self) -> None:
         comparison = comparison_for(
             {
                 "watchos.app": [],
@@ -203,9 +319,11 @@ class SharedViewEvidenceTests(unittest.TestCase):
             }
         )
 
-        payload = plan_shared_view_evidence(comparison, self.matrix, self.surface_policy)
-
-        self.assertEqual(payload["requirements"], [])
+        with self.assertRaisesRegex(
+            SharedViewEvidenceError,
+            "requires placement requirements outside the shared-view planner",
+        ):
+            plan_shared_view_evidence(comparison, self.matrix, self.surface_policy)
 
     def test_rejects_stale_unknown_and_tampered_comparisons(self) -> None:
         comparison = comparison_for({"watchos.app": ["shared-view"]})
@@ -223,12 +341,19 @@ class SharedViewEvidenceTests(unittest.TestCase):
         payload = json.loads(DEFAULT_MATRIX_PATH.read_text())
         over_budget = copy.deepcopy(payload)
         over_budget["maxCellCount"] = MAXIMUM_REQUIREMENT_COUNT + 1
+        inexact_budget = copy.deepcopy(payload)
+        inexact_budget["maxCellCount"] += 1
         missing_justification = copy.deepcopy(payload)
         missing_justification["surfaces"][0]["cells"][0]["justification"] = ""
 
         for candidate in (over_budget, missing_justification):
             with self.assertRaises(SharedViewEvidenceError):
                 SharedViewMatrix.from_dict(candidate)
+        with self.assertRaises(SharedViewEvidenceError):
+            validate_shared_view_matrix(
+                SharedViewMatrix.from_dict(inexact_budget),
+                self.surface_policy,
+            )
 
     def test_rejects_matrix_cells_outside_allowlisted_vocabularies(self) -> None:
         payload = json.loads(DEFAULT_MATRIX_PATH.read_text())
@@ -246,7 +371,10 @@ class SharedViewEvidenceTests(unittest.TestCase):
 
         for candidate in candidates:
             with self.assertRaises(SharedViewEvidenceError):
-                SharedViewMatrix.from_dict(candidate)
+                validate_shared_view_matrix(
+                    SharedViewMatrix.from_dict(candidate),
+                    self.surface_policy,
+                )
 
     def test_rejects_missing_extra_duplicate_and_uncanonical_matrix_cells(self) -> None:
         payload = json.loads(DEFAULT_MATRIX_PATH.read_text())
@@ -295,6 +423,40 @@ class SharedViewEvidenceTests(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             self.assertEqual(json.loads(stdout.getvalue()), json.loads(output_path.read_text()))
+            self.assertFalse(list(root.glob(".requirements.json.*")))
+
+    def test_cli_rejection_preserves_existing_output_and_returns_unknown(self) -> None:
+        comparison = comparison_for(
+            {
+                "watchos.complication": [
+                    "shared-view",
+                    "actual-runtime",
+                    "os-composited-placement",
+                ]
+            }
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            comparison_path = root / "comparison.json"
+            output_path = root / "requirements.json"
+            comparison_path.write_text(json.dumps(comparison))
+            output_path.write_text("existing output\n")
+            stderr = io.StringIO()
+
+            with contextlib.redirect_stderr(stderr):
+                exit_code = cli_module.main(
+                    [
+                        "plan-shared-view-evidence",
+                        "--surface-comparison",
+                        str(comparison_path),
+                        "--output",
+                        str(output_path),
+                    ]
+                )
+
+            self.assertEqual(exit_code, EXIT_UNKNOWN)
+            self.assertEqual(output_path.read_text(), "existing output\n")
+            self.assertIn("requires placement requirements", stderr.getvalue())
             self.assertFalse(list(root.glob(".requirements.json.*")))
 
 

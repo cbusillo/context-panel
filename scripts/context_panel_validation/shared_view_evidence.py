@@ -41,12 +41,45 @@ GALLERY_PRESENTATIONS = (
     "settings",
     "widget",
 )
+NO_SELECTOR = "not-applicable"
+URL_GALLERY_SURFACES = (
+    "macos.app",
+    "macos.widget",
+    "ios.app",
+    "ipados.app",
+    "ios.widget",
+    "ipados.widget",
+    "visionos.app",
+    "visionos.widget",
+)
+WATCH_APP_FIXTURE_IDS = (
+    "healthy",
+    "missing",
+    "stale",
+    "loading",
+    "failed",
+    "dense-accounts",
+    "fit-fallback",
+)
+WATCH_COMPLICATION_FIXTURE_IDS = ("healthy", "reset-visible", "missing")
+WATCH_COMPLICATION_FAMILIES = ("circular", "rectangular", "inline", "corner")
+TV_FIXTURE_IDS = (
+    "healthy",
+    "reset-visible",
+    "stale",
+    "loading",
+    "missing",
+    "failed",
+    "dense-accounts",
+    "fit-fallback",
+)
+TV_GALLERY_SURFACES = ("runway", "provider", "topShelf")
+TV_PRESENTATIONS = ("fullDetail", "projectOnly", "countsOnly")
 ACCESSIBILITY_CONTEXTS = ("default",)
 VISUAL_MAXIMUM_REQUIREMENT_COUNT = 128
 
 _CELL_ID_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 _JUSTIFICATION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 .,'()/+-]{0,159}$")
-_SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
 class SharedViewEvidenceError(ValueError):
@@ -133,12 +166,6 @@ class SharedViewCell:
             raise SharedViewEvidenceError("shared-view matrix cell identifier is invalid")
         if cell.fixture_id not in FIXTURE_IDS:
             raise SharedViewEvidenceError("shared-view matrix fixture is not allowlisted")
-        if cell.family not in GALLERY_FAMILIES:
-            raise SharedViewEvidenceError("shared-view matrix family is not allowlisted")
-        if cell.appearance not in GALLERY_APPEARANCES:
-            raise SharedViewEvidenceError("shared-view matrix appearance is not allowlisted")
-        if cell.presentation not in GALLERY_PRESENTATIONS:
-            raise SharedViewEvidenceError("shared-view matrix presentation is not allowlisted")
         if cell.accessibility not in ACCESSIBILITY_CONTEXTS:
             raise SharedViewEvidenceError("shared-view matrix accessibility is not allowlisted")
         if _JUSTIFICATION_PATTERN.fullmatch(cell.justification) is None:
@@ -294,10 +321,50 @@ def validate_shared_view_matrix(
         cell_ids = tuple(cell.id for cell in surface.cells)
         if cell_ids != matrix.cell_order:
             raise SharedViewEvidenceError("shared-view matrix cells are missing, duplicate, or uncanonical")
+        for cell in surface.cells:
+            _validate_cell_coordinates(surface.id, cell)
         cell_count += len(surface.cells)
-    if cell_count > matrix.max_cell_count:
-        raise SharedViewEvidenceError("shared-view matrix exceeds its cell budget")
+    if cell_count != matrix.max_cell_count:
+        raise SharedViewEvidenceError("shared-view matrix cell budget is not exact")
     return matrix
+
+
+def _validate_cell_coordinates(surface_id: str, cell: SharedViewCell) -> None:
+    if surface_id in URL_GALLERY_SURFACES:
+        fixture_ids = FIXTURE_IDS
+        families = GALLERY_FAMILIES
+        appearances = GALLERY_APPEARANCES
+        presentations = GALLERY_PRESENTATIONS
+    elif surface_id == "watchos.app":
+        fixture_ids = WATCH_APP_FIXTURE_IDS
+        families = (NO_SELECTOR,)
+        appearances = (NO_SELECTOR,)
+        presentations = (NO_SELECTOR,)
+    elif surface_id == "watchos.complication":
+        fixture_ids = WATCH_COMPLICATION_FIXTURE_IDS
+        families = WATCH_COMPLICATION_FAMILIES
+        appearances = (NO_SELECTOR,)
+        presentations = (NO_SELECTOR,)
+    elif surface_id == "tvos.app":
+        fixture_ids = TV_FIXTURE_IDS
+        families = tuple(value for value in TV_GALLERY_SURFACES if value != "topShelf")
+        appearances = (NO_SELECTOR,)
+        presentations = TV_PRESENTATIONS
+    elif surface_id == "tvos.top-shelf":
+        fixture_ids = TV_FIXTURE_IDS
+        families = ("topShelf",)
+        appearances = (NO_SELECTOR,)
+        presentations = TV_PRESENTATIONS
+    else:
+        raise SharedViewEvidenceError("shared-view matrix surface has no gallery vocabulary")
+    if cell.fixture_id not in fixture_ids:
+        raise SharedViewEvidenceError("shared-view matrix fixture is not selectable for its surface")
+    if cell.family not in families:
+        raise SharedViewEvidenceError("shared-view matrix family is not selectable for its surface")
+    if cell.appearance not in appearances:
+        raise SharedViewEvidenceError("shared-view matrix appearance is not selectable for its surface")
+    if cell.presentation not in presentations:
+        raise SharedViewEvidenceError("shared-view matrix presentation is not selectable for its surface")
 
 
 def load_shared_view_matrix(
@@ -317,9 +384,11 @@ def fixture_contract_id(
         matrix.fixture_contract_domain,
         {
             "matrixSchemaVersion": matrix.schema_version,
+            "matrixDigest": matrix.digest(),
             "surface": surface.id,
             "platform": surface.platform,
             "device": surface.device_class,
+            "evidenceCapabilities": list(surface.evidence_capabilities),
             "cell": cell.to_contract_dict(),
         },
     )
@@ -346,6 +415,10 @@ def plan_shared_view_evidence(
     fresh_shared_surfaces: set[str] = set()
     for surface in validated_comparison["surfaces"]:
         surface_id = surface["surfaceId"]
+        if "os-composited-placement" in surface["freshEvidence"]:
+            raise SharedViewEvidenceError(
+                "surface comparison requires placement requirements outside the shared-view planner"
+            )
         if "shared-view" in surface["freshEvidence"]:
             if surface_id not in shared_surface_ids:
                 raise SharedViewEvidenceError("surface comparison claims shared-view for an uncovered surface")

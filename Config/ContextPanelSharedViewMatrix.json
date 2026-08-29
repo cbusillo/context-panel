@@ -82,29 +82,29 @@
     {
       "id": "watchos.app",
       "cells": [
-        { "id": "baseline", "fixtureID": "healthy", "family": "systemSmall", "appearance": "light", "presentation": "overview", "accessibility": "default", "justification": "Watch app overview baseline." },
-        { "id": "stress", "fixtureID": "dense-accounts", "family": "systemSmall", "appearance": "dark", "presentation": "detail", "accessibility": "default", "justification": "Watch app account density." }
+        { "id": "baseline", "fixtureID": "healthy", "family": "not-applicable", "appearance": "not-applicable", "presentation": "not-applicable", "accessibility": "default", "justification": "Watch app healthy state." },
+        { "id": "stress", "fixtureID": "dense-accounts", "family": "not-applicable", "appearance": "not-applicable", "presentation": "not-applicable", "accessibility": "default", "justification": "Watch app account density." }
       ]
     },
     {
       "id": "watchos.complication",
       "cells": [
-        { "id": "baseline", "fixtureID": "healthy", "family": "systemSmall", "appearance": "light", "presentation": "widget", "accessibility": "default", "justification": "Watch complication baseline." },
-        { "id": "stress", "fixtureID": "fit-fallback", "family": "systemSmall", "appearance": "dark", "presentation": "widget", "accessibility": "default", "justification": "Watch complication label fallback." }
+        { "id": "baseline", "fixtureID": "healthy", "family": "circular", "appearance": "not-applicable", "presentation": "not-applicable", "accessibility": "default", "justification": "Circular available-state complication." },
+        { "id": "stress", "fixtureID": "reset-visible", "family": "rectangular", "appearance": "not-applicable", "presentation": "not-applicable", "accessibility": "default", "justification": "Rectangular close-state complication." }
       ]
     },
     {
       "id": "tvos.app",
       "cells": [
-        { "id": "baseline", "fixtureID": "healthy", "family": "systemLarge", "appearance": "light", "presentation": "overview", "accessibility": "default", "justification": "TV overview baseline." },
-        { "id": "stress", "fixtureID": "dense-accounts", "family": "systemLarge", "appearance": "dark", "presentation": "detail", "accessibility": "default", "justification": "TV account density." }
+        { "id": "baseline", "fixtureID": "healthy", "family": "runway", "appearance": "not-applicable", "presentation": "fullDetail", "accessibility": "default", "justification": "TV runway full-detail baseline." },
+        { "id": "stress", "fixtureID": "dense-accounts", "family": "provider", "appearance": "not-applicable", "presentation": "countsOnly", "accessibility": "default", "justification": "TV provider account-density stress." }
       ]
     },
     {
       "id": "tvos.top-shelf",
       "cells": [
-        { "id": "baseline", "fixtureID": "healthy", "family": "systemMedium", "appearance": "light", "presentation": "widget", "accessibility": "default", "justification": "Top Shelf baseline." },
-        { "id": "stress", "fixtureID": "fit-fallback", "family": "systemLarge", "appearance": "dark", "presentation": "widget", "accessibility": "default", "justification": "Top Shelf label fallback." }
+        { "id": "baseline", "fixtureID": "healthy", "family": "topShelf", "appearance": "not-applicable", "presentation": "fullDetail", "accessibility": "default", "justification": "Top Shelf full-detail baseline." },
+        { "id": "stress", "fixtureID": "fit-fallback", "family": "topShelf", "appearance": "not-applicable", "presentation": "countsOnly", "accessibility": "default", "justification": "Top Shelf label fallback." }
       ]
     }
   ]
