@@ -91,6 +91,28 @@ outside this slice. Runtime surfaces are derived from
 `os-composited-placement` surface must have at least one explicit context in the
 requirements file, and no context may name a surface outside the comparison.
 
+For shared-view contexts, plan the requirements before starting a coordinator
+session. The planner accepts only a current schema-v5 comparison and binds the
+output's `currentManifestID` to that comparison:
+
+```sh
+scripts/context-panel-validation.py plan-shared-view-evidence \
+  --surface-comparison <comparison.json> \
+  --output <visual-review-requirements.json>
+```
+
+It reads the canonical schema-v1 matrix at
+`Config/ContextPanelSharedViewMatrix.json` unless `--matrix` or
+`--surface-policy` is supplied. The matrix covers every shared-view-capable
+surface with bounded, canonical cells and each host gallery's real selectors.
+An axis set to `not-applicable` is intentionally absent from that host gallery;
+the capture step must not try to drive it. Pixel policy is `advisory-only`. The
+command is read-only with respect to coordinator state: it does not start a
+session, inspect a runtime, launch a simulator, or capture private artifacts.
+Comparisons with fresh placement evidence are rejected because this stage emits
+shared-view requirements only; placement planning remains a later stage. Private
+capture and any pixel-comparison implementation are deferred to Stage 2.
+
 The requirements file uses schema v1 and stores bounded public context:
 
 - stable requirement ID and evidence class

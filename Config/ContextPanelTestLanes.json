@@ -49,6 +49,7 @@
       "Tests/ScriptsTests/test_physical_defect_corpus.py",
       "Tests/ScriptsTests/test_replay_inventory.py",
       "Tests/ScriptsTests/test_signed_train_replay.py",
+      "Tests/ScriptsTests/test_shared_view_evidence.py",
       "Tests/ScriptsTests/test_surface_manifest.py",
       "Tests/ScriptsTests/test_test_lanes.py",
       "Tests/ScriptsTests/test_validation_gallery_target_graph.py"

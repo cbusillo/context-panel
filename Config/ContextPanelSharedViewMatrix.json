@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "kind": "context-panel-shared-view-matrix",
+  "fixtureContractDomain": "context-panel-shared-view-fixture-contract/v1",
+  "pixelDiffPolicy": "advisory-only",
+  "maxCellCount": 24,
+  "surfaceOrder": [
+    "macos.app",
+    "macos.widget",
+    "ios.app",
+    "ipados.app",
+    "ios.widget",
+    "ipados.widget",
+    "visionos.app",
+    "visionos.widget",
+    "watchos.app",
+    "watchos.complication",
+    "tvos.app",
+    "tvos.top-shelf"
+  ],
+  "cellOrder": [
+    "baseline",
+    "stress"
+  ],
+  "surfaces": [
+    {
+      "id": "macos.app",
+      "cells": [
+        { "id": "baseline", "fixtureID": "healthy", "family": "systemLarge", "appearance": "light", "presentation": "overview", "accessibility": "default", "justification": "Baseline desktop overview." },
+        { "id": "stress", "fixtureID": "dense-accounts", "family": "systemLarge", "appearance": "dark", "presentation": "detail", "accessibility": "default", "justification": "Dense-account detail pressure." }
+      ]
+    },
+    {
+      "id": "macos.widget",
+      "cells": [
+        { "id": "baseline", "fixtureID": "healthy", "family": "systemSmall", "appearance": "light", "presentation": "widget", "accessibility": "default", "justification": "Compact widget baseline." },
+        { "id": "stress", "fixtureID": "fit-fallback", "family": "systemMedium", "appearance": "dark", "presentation": "widget", "accessibility": "default", "justification": "Long-label widget fallback." }
+      ]
+    },
+    {
+      "id": "ios.app",
+      "cells": [
+        { "id": "baseline", "fixtureID": "healthy", "family": "systemMedium", "appearance": "light", "presentation": "overview", "accessibility": "default", "justification": "Phone overview baseline." },
+        { "id": "stress", "fixtureID": "dense-accounts", "family": "systemMedium", "appearance": "dark", "presentation": "detail", "accessibility": "default", "justification": "Phone dense-account detail." }
+      ]
+    },
+    {
+      "id": "ipados.app",
+      "cells": [
+        { "id": "baseline", "fixtureID": "healthy", "family": "systemLarge", "appearance": "light", "presentation": "overview", "accessibility": "default", "justification": "Tablet overview baseline." },
+        { "id": "stress", "fixtureID": "fit-fallback", "family": "systemLarge", "appearance": "dark", "presentation": "settings", "accessibility": "default", "justification": "Tablet long-label settings." }
+      ]
+    },
+    {
+      "id": "ios.widget",
+      "cells": [
+        { "id": "baseline", "fixtureID": "healthy", "family": "systemSmall", "appearance": "light", "presentation": "widget", "accessibility": "default", "justification": "Phone compact widget baseline." },
+        { "id": "stress", "fixtureID": "dense-accounts", "family": "systemMedium", "appearance": "dark", "presentation": "widget", "accessibility": "default", "justification": "Phone widget account density." }
+      ]
+    },
+    {
+      "id": "ipados.widget",
+      "cells": [
+        { "id": "baseline", "fixtureID": "healthy", "family": "systemMedium", "appearance": "light", "presentation": "widget", "accessibility": "default", "justification": "Tablet widget baseline." },
+        { "id": "stress", "fixtureID": "fit-fallback", "family": "systemLarge", "appearance": "dark", "presentation": "widget", "accessibility": "default", "justification": "Tablet widget label fallback." }
+      ]
+    },
+    {
+      "id": "visionos.app",
+      "cells": [
+        { "id": "baseline", "fixtureID": "healthy", "family": "systemLarge", "appearance": "light", "presentation": "overview", "accessibility": "default", "justification": "Spatial app overview baseline." },
+        { "id": "stress", "fixtureID": "dense-accounts", "family": "systemLarge", "appearance": "dark", "presentation": "detail", "accessibility": "default", "justification": "Spatial app account density." }
+      ]
+    },
+    {
+      "id": "visionos.widget",
+      "cells": [
+        { "id": "baseline", "fixtureID": "healthy", "family": "systemMedium", "appearance": "light", "presentation": "widget", "accessibility": "default", "justification": "Spatial widget baseline." },
+        { "id": "stress", "fixtureID": "fit-fallback", "family": "systemLarge", "appearance": "dark", "presentation": "widget", "accessibility": "default", "justification": "Spatial widget label fallback." }
+      ]
+    },
+    {
+      "id": "watchos.app",
+      "cells": [
+        { "id": "baseline", "fixtureID": "healthy", "family": "not-applicable", "appearance": "not-applicable", "presentation": "not-applicable", "accessibility": "default", "justification": "Watch app healthy state." },
+        { "id": "stress", "fixtureID": "dense-accounts", "family": "not-applicable", "appearance": "not-applicable", "presentation": "not-applicable", "accessibility": "default", "justification": "Watch app account density." }
+      ]
+    },
+    {
+      "id": "watchos.complication",
+      "cells": [
+        { "id": "baseline", "fixtureID": "healthy", "family": "circular", "appearance": "not-applicable", "presentation": "not-applicable", "accessibility": "default", "justification": "Circular available-state complication." },
+        { "id": "stress", "fixtureID": "reset-visible", "family": "rectangular", "appearance": "not-applicable", "presentation": "not-applicable", "accessibility": "default", "justification": "Rectangular close-state complication." }
+      ]
+    },
+    {
+      "id": "tvos.app",
+      "cells": [
+        { "id": "baseline", "fixtureID": "healthy", "family": "runway", "appearance": "not-applicable", "presentation": "fullDetail", "accessibility": "default", "justification": "TV runway full-detail baseline." },
+        { "id": "stress", "fixtureID": "dense-accounts", "family": "provider", "appearance": "not-applicable", "presentation": "countsOnly", "accessibility": "default", "justification": "TV provider account-density stress." }
+      ]
+    },
+    {
+      "id": "tvos.top-shelf",
+      "cells": [
+        { "id": "baseline", "fixtureID": "healthy", "family": "topShelf", "appearance": "not-applicable", "presentation": "fullDetail", "accessibility": "default", "justification": "Top Shelf full-detail baseline." },
+        { "id": "stress", "fixtureID": "fit-fallback", "family": "topShelf", "appearance": "not-applicable", "presentation": "countsOnly", "accessibility": "default", "justification": "Top Shelf label fallback." }
+      ]
+    }
+  ]
+}
