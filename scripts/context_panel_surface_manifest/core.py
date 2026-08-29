@@ -1338,8 +1338,16 @@ def compare_manifests(
                 and surface["surfaceId"] in runtime_capable_surface_ids
                 and "actual-runtime" not in surface["freshEvidence"]
             ):
-                surface["freshEvidence"].append("actual-runtime")
-                surface["requiredEvidence"].append("actual-runtime")
+                surface["freshEvidence"] = [
+                    evidence_class
+                    for evidence_class in class_order
+                    if evidence_class in {*surface["freshEvidence"], "actual-runtime"}
+                ]
+                surface["requiredEvidence"] = [
+                    evidence_class
+                    for evidence_class in class_order
+                    if evidence_class in {*surface["requiredEvidence"], "actual-runtime"}
+                ]
                 surface["carryForward"]["actual-runtime"] = {"eligible": False, "conditions": []}
     required_surfaces = {
         evidence_class: [

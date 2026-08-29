@@ -97,6 +97,9 @@ def _validate_artifact_fields(comparison: dict[str, Any]) -> None:
             for value in values
         ):
             _error("surface comparison artifact evidence is not canonical")
+        state_key = "previousState" if key.startswith("previous") else "currentState"
+        if (evidence[state_key] in {"complete", "legacy-incomplete"}) != bool(values):
+            _error("surface comparison artifact evidence identity is inconsistent")
     codes = comparison["artifactRiskCodes"]
     if not isinstance(codes, list) or codes != [code for code in ARTIFACT_RISK_CODES if code in codes]:
         _error("surface comparison artifact risk codes are not canonical")
@@ -108,17 +111,47 @@ def _validate_artifact_fields(comparison: dict[str, Any]) -> None:
         values = surfaces[code]
         if not isinstance(values, list) or values != sorted(set(values)) or any(
             not isinstance(value, str) or value not in known_surfaces for value in values
-        ):
+        ) or not values:
             _error("surface comparison artifact risk surface map is not canonical")
     unknown = "artifact-evidence-unknown" in codes
     if comparison["escalationState"] not in ESCALATION_STATES or (
         comparison["escalationState"] == "unknown-fail-closed"
     ) != unknown:
         _error("surface comparison artifact escalation state is invalid")
-    if evidence["previousState"] == evidence["currentState"] == "not-evaluated" and (
-        codes or comparison["escalationState"] != "resolved"
+    evidence_complete = evidence["previousState"] == evidence["currentState"] == "complete"
+    evidence_not_evaluated = (
+        evidence["previousState"] == evidence["currentState"] == "not-evaluated"
+    )
+    runtime_surfaces = sorted(
+        item["surfaceId"]
+        for item in comparison["surfaces"]
+        if "actual-runtime" in item["carryForward"]
+    )
+    if evidence_complete:
+        if unknown:
+            _error("surface comparison complete artifact evidence is inconsistent")
+    elif evidence_not_evaluated:
+        if codes or surfaces or comparison["escalationState"] != "resolved":
+            _error("surface comparison unevaluated artifact evidence is inconsistent")
+    elif runtime_surfaces and (
+        codes != ["artifact-evidence-unknown"]
+        or surfaces != {"artifact-evidence-unknown": runtime_surfaces}
     ):
-        _error("surface comparison unevaluated artifact evidence is invalid")
+        _error("surface comparison incomplete artifact evidence is not fail-closed")
+    elif not runtime_surfaces and (
+        codes or surfaces or comparison["escalationState"] != "resolved"
+    ):
+        _error("surface comparison inapplicable artifact evidence is inconsistent")
+    if comparison["train"] in {"rc", "release"}:
+        required_runtime = set(comparison["requiredSurfaces"]["actual-runtime"])
+        artifact_runtime = {
+            surface_id
+            for values in surfaces.values()
+            for surface_id in values
+            if surface_id in runtime_surfaces
+        }
+        if not artifact_runtime <= required_runtime:
+            _error("surface comparison artifact risk is not fail-closed")
 
 
 def validate_comparison_v5(

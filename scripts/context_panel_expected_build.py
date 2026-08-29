@@ -361,7 +361,12 @@ def derive_artifact_comparison(
         "currentExpectedBuildIds": current_ids,
     }
     if previous_state == current_state == "not-evaluated":
-        return {"artifactEvidence": evidence, "artifactRiskCodes": [], "artifactRiskSurfaces": {}, "escalationState": "resolved"}
+        return {
+            "artifactEvidence": evidence,
+            "artifactRiskCodes": [],
+            "artifactRiskSurfaces": {},
+            "escalationState": "resolved",
+        }
     current_by_artifact = {
         artifact_id: sorted(
             surface_id for surface_id, surface in current_surfaces.items()
@@ -378,13 +383,25 @@ def derive_artifact_comparison(
             and previous_surfaces[surface_id].get("artifactId") != surface.get("artifactId")
         )
         if mapping:
-            risks["artifact-mapping-changed"] = mapping
+            risks["artifact-mapping-changed"] = sorted(
+                {
+                    affected_surface
+                    for surface_id in mapping
+                    for affected_surface in current_by_artifact.get(
+                        str(current_surfaces[surface_id].get("artifactId")),
+                        [surface_id],
+                    )
+                }
+            )
         for artifact_id in sorted(set(previous_artifacts) & set(current_artifacts)):
             previous_artifact = previous_artifacts[artifact_id]
             current_artifact = current_artifacts[artifact_id]
             affected = current_by_artifact.get(artifact_id, [])
             if not affected:
                 continue
+            comparable_surfaces = [
+                surface_id for surface_id in affected if surface_id in previous_surfaces
+            ]
             for key, code in (
                 ("bundleContractSha256", "bundle-contract-changed"),
                 ("signingContractSha256", "signing-contract-changed"),
@@ -399,10 +416,11 @@ def derive_artifact_comparison(
                 previous_artifact["executableSha256"] != current_artifact["executableSha256"]
                 and exact_build_same
                 and not toolchain_changed
+                and comparable_surfaces
                 and all(
-                    previous_surfaces[surface_id]["fingerprints"]["runtime"]
-                    == current_surfaces[surface_id]["fingerprints"]["runtime"]
-                    for surface_id in affected
+                    previous_surfaces[surface_id]["fingerprints"]
+                    == current_surfaces[surface_id]["fingerprints"]
+                    for surface_id in comparable_surfaces
                 )
             ):
                 risks.setdefault("unexplained-executable-drift", []).extend(affected)

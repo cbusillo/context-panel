@@ -8,6 +8,7 @@ import re
 from typing import Any
 
 from context_panel_comparison_schema import (
+    CURRENT_COMPARISON_SCHEMA_VERSION,
     ComparisonSchemaError,
     EVIDENCE_CLASSES,
     validate_current_comparison,
@@ -15,6 +16,10 @@ from context_panel_comparison_schema import (
     validate_legacy_v2_comparison_for_reconstruction,
     validate_legacy_v3_comparison_for_reconstruction,
     validate_comparison_v4,
+)
+from context_panel_expected_build import (
+    ExpectedBuildSchemaError,
+    derive_artifact_comparison,
 )
 from context_panel_validation.models import Target
 from context_panel_validation.runtime_evidence import (
@@ -166,6 +171,131 @@ def _expected_identity_digest(identities: tuple[ExpectedSurfaceIdentity, ...]) -
             for identity in sorted(identities, key=lambda item: item.surface)
         ]
     )
+
+
+def _expected_build_surface_map(
+    manifests: list[dict[str, Any]],
+    *,
+    label: str,
+) -> dict[str, dict[str, Any]]:
+    surfaces: dict[str, dict[str, Any]] = {}
+    for manifest in manifests:
+        payload_surfaces = manifest.get("surfaces")
+        if not isinstance(payload_surfaces, list):
+            raise ReleaseEvidenceError(f"{label} expected-build surfaces are invalid")
+        for surface in payload_surfaces:
+            surface_id = surface.get("id") if isinstance(surface, dict) else None
+            if not isinstance(surface_id, str) or surface_id in surfaces:
+                raise ReleaseEvidenceError(f"{label} expected-build surfaces are invalid")
+            surfaces[surface_id] = surface
+    return surfaces
+
+
+def _expected_build_identity_context(
+    manifests: list[dict[str, Any]],
+    *,
+    label: str,
+) -> tuple[str, tuple[str, str]]:
+    contracts = {manifest.get("contractFingerprint") for manifest in manifests}
+    targets = {
+        (source.get("marketingVersion"), source.get("buildNumber"))
+        for manifest in manifests
+        for source in [manifest.get("source")]
+        if isinstance(source, dict)
+    }
+    if (
+        len(contracts) != 1
+        or not all(isinstance(value, str) for value in contracts)
+        or len(targets) != 1
+        or not all(isinstance(value, str) for target in targets for value in target)
+    ):
+        raise ReleaseEvidenceError(f"{label} expected-build identity is invalid")
+    return str(next(iter(contracts))), tuple(next(iter(targets)))
+
+
+def _validate_artifact_comparison_inputs(
+    comparison: dict[str, Any],
+    *,
+    current_manifests: tuple[dict[str, Any], ...],
+    previous_lineage: dict[str, Any] | None,
+) -> None:
+    evidence = comparison["artifactEvidence"]
+    if evidence["previousState"] == "not-evaluated":
+        previous_payloads: list[dict[str, Any]] | None = None
+    elif evidence["previousState"] == "missing":
+        previous_payloads = []
+    else:
+        generation = previous_lineage.get("generation") if previous_lineage else None
+        manifests = generation.get("expectedBuildManifests") if isinstance(generation, dict) else None
+        if not isinstance(manifests, list) or any(
+            not isinstance(item, dict) for item in manifests
+        ):
+            return
+        previous_payloads = manifests
+    if evidence["currentState"] == "not-evaluated":
+        current_payloads: list[dict[str, Any]] | None = None
+    elif evidence["currentState"] == "missing":
+        current_payloads = []
+    else:
+        current_payloads = list(current_manifests)
+
+    previous_surfaces = (
+        _expected_build_surface_map(previous_payloads, label="previous")
+        if previous_payloads
+        else {}
+    )
+    current_surfaces = (
+        _expected_build_surface_map(current_payloads, label="current")
+        if current_payloads
+        else {}
+    )
+    previous_contract, previous_target = (
+        _expected_build_identity_context(previous_payloads, label="previous")
+        if previous_payloads
+        else ("", ("", ""))
+    )
+    current_contract, current_target = (
+        _expected_build_identity_context(current_payloads, label="current")
+        if current_payloads
+        else ("", ("", ""))
+    )
+    runtime_capable_surface_ids = {
+        surface["surfaceId"]
+        for surface in comparison["surfaces"]
+        if "actual-runtime" in surface["carryForward"]
+    }
+    try:
+        expected = derive_artifact_comparison(
+            previous_payloads,
+            current_payloads,
+            previous_manifest_id=str(comparison["previousManifestId"]),
+            current_manifest_id=str(comparison["currentManifestId"]),
+            previous_contract_fingerprint=previous_contract,
+            current_contract_fingerprint=current_contract,
+            previous_target=previous_target,
+            current_target=current_target,
+            previous_surfaces=previous_surfaces,
+            current_surfaces=current_surfaces,
+            runtime_capable_surface_ids=runtime_capable_surface_ids,
+            train=str(comparison["train"]),
+            toolchain_changed=bool(comparison["toolchainChanged"]),
+            exact_build_same=bool(comparison["exactBuildSame"]),
+        )
+    except (ExpectedBuildSchemaError, KeyError, TypeError, ValueError) as error:
+        raise ReleaseEvidenceError("comparison artifact evidence is invalid") from error
+    observed = {
+        key: comparison[key]
+        for key in (
+            "artifactEvidence",
+            "artifactRiskCodes",
+            "artifactRiskSurfaces",
+            "escalationState",
+        )
+    }
+    if observed != expected:
+        raise ReleaseEvidenceError(
+            "comparison artifact risks do not match expected-build evidence"
+        )
 
 
 def _ledger_id(payload: dict[str, Any]) -> str:
@@ -547,13 +677,18 @@ def _validate_comparison(
 ) -> dict[str, dict[str, Any]]:
     try:
         schema_version = comparison.get("schemaVersion")
-        if schema_version == 1:
+        if (
+            not allow_legacy_reconstruction
+            and schema_version != CURRENT_COMPARISON_SCHEMA_VERSION
+        ):
+            raise ComparisonSchemaError("surface comparison schema is not current")
+        if allow_legacy_reconstruction and schema_version == 1:
             validated = validate_legacy_v1_comparison_for_reconstruction(comparison)
-        elif schema_version == 2:
+        elif allow_legacy_reconstruction and schema_version == 2:
             validated = validate_legacy_v2_comparison_for_reconstruction(comparison)
-        elif schema_version == 3:
+        elif allow_legacy_reconstruction and schema_version == 3:
             validated = validate_legacy_v3_comparison_for_reconstruction(comparison)
-        elif schema_version == 4:
+        elif allow_legacy_reconstruction and schema_version == 4:
             validated = validate_comparison_v4(comparison)
         else:
             validated = validate_current_comparison(comparison)
@@ -1174,6 +1309,7 @@ def _verified_lineage_ledger(
         comparison=generation["comparison"],
         validation_report=generation["validationReport"],
         identities=identities,
+        expected_build_manifests=tuple(generation["expectedBuildManifests"]),
         policy=policy,
         surface_policy=surface_policy,
         previous_ledger=generation["previousLedger"],
@@ -1313,6 +1449,7 @@ def _shadow_state(
                 comparison=generation["comparison"],
                 validation_report=generation["validationReport"],
                 identities=generation_identities,
+                expected_build_manifests=tuple(generation["expectedBuildManifests"]),
                 policy=policy,
                 surface_policy=surface_policy,
                 previous_ledger=generation["previousLedger"],
@@ -1370,6 +1507,7 @@ def evaluate_release_evidence(
     comparison: dict[str, Any],
     validation_report: dict[str, Any],
     identities: tuple[ExpectedSurfaceIdentity, ...],
+    expected_build_manifests: tuple[dict[str, Any], ...] | None = None,
     policy: dict[str, Any],
     surface_policy: dict[str, Any],
     previous_ledger: dict[str, Any] | None = None,
@@ -1476,6 +1614,12 @@ def evaluate_release_evidence(
                 }
             ):
                 raise ReleaseEvidenceError("comparison artifact evidence does not bind previous builds")
+    if comparison.get("schemaVersion") == 5 and expected_build_manifests is not None:
+        _validate_artifact_comparison_inputs(
+            comparison,
+            current_manifests=expected_build_manifests,
+            previous_lineage=previous_ledger,
+        )
     selected_rc_surfaces: dict[str, dict[str, Any]] = {}
     selected_rc_expires_at: datetime | None = None
     if selected_rc_ledger is not None:
@@ -1695,6 +1839,7 @@ def release_evidence_report_blockers(
     validation_report: dict[str, Any] | None = None,
     comparison: dict[str, Any] | None = None,
     identities: tuple[ExpectedSurfaceIdentity, ...] = (),
+    expected_build_manifests: tuple[dict[str, Any], ...] | None = None,
     policy: dict[str, Any] | None = None,
     surface_policy: dict[str, Any] | None = None,
     previous_ledger: dict[str, Any] | None = None,
@@ -1963,6 +2108,7 @@ def release_evidence_report_blockers(
                 comparison=comparison,
                 validation_report=validation_report,
                 identities=identities,
+                expected_build_manifests=expected_build_manifests,
                 policy=policy,
                 surface_policy=surface_policy,
                 previous_ledger=previous_ledger,
