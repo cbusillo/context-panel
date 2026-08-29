@@ -14,6 +14,8 @@ from context_panel_comparison_schema import (
     CURRENT_COMPARISON_SCHEMA_VERSION,
     ComparisonSchemaError,
     EVIDENCE_CLASSES,
+    artifact_runtime_escalation_surfaces,
+    derive_artifact_comparison,
     derive_runtime_decision,
     derive_risk_fields,
     toolchain_changed,
@@ -23,7 +25,6 @@ from context_panel_expected_build import (
     ARCHITECTURE_PATTERN,
     DISTRIBUTION_SIGNING_CLASSES,
     ExpectedBuildSchemaError,
-    derive_artifact_comparison,
 )
 
 
@@ -1317,16 +1318,15 @@ def compare_manifests(
         )
     except ExpectedBuildSchemaError as error:
         raise SurfacePolicyError("expected signed build manifest is invalid") from error
-    if train in {"rc", "release"}:
-        artifact_runtime_surfaces = {
-            surface_id
-            for surface_ids in artifact_fields["artifactRiskSurfaces"].values()
-            for surface_id in surface_ids
-        }
+    artifact_runtime_surfaces = artifact_runtime_escalation_surfaces(
+        train=train,
+        artifact_risk_surfaces=artifact_fields["artifactRiskSurfaces"],
+        runtime_capable_surface_ids=runtime_capable_surface_ids,
+    )
+    if artifact_runtime_surfaces:
         for surface in results:
             if (
                 surface["surfaceId"] in artifact_runtime_surfaces
-                and surface["surfaceId"] in runtime_capable_surface_ids
                 and "actual-runtime" not in surface["freshEvidence"]
             ):
                 surface["freshEvidence"] = [

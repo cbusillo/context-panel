@@ -119,13 +119,15 @@ than backfilling v2 fields.
 The v1 adapter verifies its contract, implementation, and transitive dependency
 digests at runtime. The exact schema v2 validator is retained in
 `scripts/context_panel_surface_manifest/comparison_schema_v2.py`; frozen v3 is
-in `scripts/context_panel_surface_manifest/comparison_schema_v3.py`, and current
-v4 is in `scripts/context_panel_comparison_schema.py`. Any source, dependency,
+in `scripts/context_panel_surface_manifest/comparison_schema_v3.py`, frozen v4
+is in `scripts/context_panel_surface_manifest/comparison_schema_v4.py`, and
+current v5 is in `scripts/context_panel_comparison_schema.py`. Any source, dependency,
 or contract behavior change requires an explicit adapter version and
 fixture/digest update; do not route retained replay through a future
 current-schema validator. Legacy exceptions preserve historical carry-forward
 map insertion order and incomplete maps present in the retained v1 corpus;
-production v4 rejects both forms.
+production v5 rejects both forms. Replay adapters dispatch retained v1-v4
+comparisons to their exact frozen validators.
 
 ## Recoverability
 

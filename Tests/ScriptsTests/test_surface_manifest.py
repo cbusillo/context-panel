@@ -21,6 +21,7 @@ cli_module = importlib.import_module("context_panel_surface_manifest.cli")
 core_module = importlib.import_module("context_panel_surface_manifest.core")
 artifact_module = importlib.import_module("context_panel_surface_manifest.artifact")
 comparison_schema_module = importlib.import_module("context_panel_comparison_schema")
+release_gate_module = importlib.import_module("context_panel_release_gate.core")
 
 evidence_template = cli_module.evidence_template
 SurfacePolicyError = core_module.SurfacePolicyError
@@ -39,6 +40,8 @@ validation_summary = core_module.validation_summary
 ComparisonSchemaError = comparison_schema_module.ComparisonSchemaError
 derive_risk_fields = comparison_schema_module.derive_risk_fields
 validate_current_comparison = comparison_schema_module.validate_current_comparison
+ReleaseEvidenceError = release_gate_module.ReleaseEvidenceError
+validate_release_comparison = release_gate_module._validate_comparison
 
 
 def v2_artifact_contract(seed: bytes, architectures: list[str] | None = None) -> dict[str, object]:
@@ -1374,6 +1377,47 @@ class SurfaceManifestTests(unittest.TestCase):
         by_surface = {item["surfaceId"]: item for item in rc["surfaces"]}
         for surface_id in ("ios.app", "ipados.app"):
             self.assertIn("actual-runtime", by_surface[surface_id]["freshEvidence"])
+
+    def test_artifact_escalation_round_trips_through_release_policy(self):
+        surfaces = self.surfaces(self.baseline)
+        shared_artifact = surfaces["ios.app"]["artifactId"]
+        previous = self.expected_build(self.baseline)
+
+        def change_signing_contract(template):
+            next(
+                item for item in template["artifacts"]
+                if item["artifactId"] == shared_artifact
+            )["signingContractSha256"] = "f" * 64
+
+        current = self.expected_build(self.baseline, change_signing_contract)
+        comparison = compare_manifests(
+            self.baseline,
+            self.baseline,
+            "rc",
+            [previous],
+            [current],
+        )
+        surface_policy = json.loads(
+            (REPO_ROOT / "Config/ContextPanelSurfacePolicy.json").read_text()
+        )
+        validated = validate_release_comparison(comparison, "rc", surface_policy)
+        self.assertIn("ios.app", validated)
+
+        stripped = copy.deepcopy(comparison)
+        ios_surface = next(
+            item for item in stripped["surfaces"]
+            if item["surfaceId"] == "ios.app"
+        )
+        ios_surface["freshEvidence"].remove("actual-runtime")
+        ios_surface["carryForward"]["actual-runtime"] = {
+            "eligible": True,
+            "conditions": [],
+        }
+        with self.assertRaisesRegex(
+            ReleaseEvidenceError,
+            "surface comparison is invalid",
+        ):
+            validate_release_comparison(stripped, "rc", surface_policy)
 
     def test_artifact_risk_vocabulary_ignores_raw_provenance_noise(self):
         previous = self.expected_build(self.baseline)

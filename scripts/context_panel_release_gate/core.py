@@ -11,16 +11,15 @@ from context_panel_comparison_schema import (
     CURRENT_COMPARISON_SCHEMA_VERSION,
     ComparisonSchemaError,
     EVIDENCE_CLASSES,
+    artifact_runtime_escalation_surfaces,
+    derive_artifact_comparison,
     validate_current_comparison,
     validate_legacy_v1_comparison_for_reconstruction,
     validate_legacy_v2_comparison_for_reconstruction,
     validate_legacy_v3_comparison_for_reconstruction,
     validate_comparison_v4,
 )
-from context_panel_expected_build import (
-    ExpectedBuildSchemaError,
-    derive_artifact_comparison,
-)
+from context_panel_expected_build import ExpectedBuildSchemaError
 from context_panel_validation.models import Target
 from context_panel_validation.runtime_evidence import (
     ExpectedSurfaceIdentity,
@@ -222,7 +221,10 @@ def _validate_artifact_comparison_inputs(
     evidence = comparison["artifactEvidence"]
     if evidence["previousState"] == "not-evaluated":
         previous_payloads: list[dict[str, Any]] | None = None
-    elif evidence["previousState"] == "missing":
+    elif (
+        evidence["previousState"] == "missing"
+        and not evidence["previousExpectedBuildIds"]
+    ):
         previous_payloads = []
     else:
         generation = previous_lineage.get("generation") if previous_lineage else None
@@ -236,7 +238,10 @@ def _validate_artifact_comparison_inputs(
         previous_payloads = manifests
     if evidence["currentState"] == "not-evaluated":
         current_payloads: list[dict[str, Any]] | None = None
-    elif evidence["currentState"] == "missing":
+    elif (
+        evidence["currentState"] == "missing"
+        and not evidence["currentExpectedBuildIds"]
+    ):
         current_payloads = []
     else:
         current_payloads = list(current_manifests)
@@ -537,6 +542,7 @@ def _validate_surface_policy(
     train: str,
     comparison_surfaces: dict[str, dict[str, Any]],
     toolchain_changed: bool = False,
+    artifact_risk_surfaces: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     evidence_policy = surface_policy.get("evidencePolicy")
     surfaces = surface_policy.get("surfaces")
@@ -582,6 +588,15 @@ def _validate_surface_policy(
         artifact_ids_by_surface[item["id"]] = artifact_id
     if set(capabilities_by_surface) != set(RUNTIME_SURFACES):
         raise ReleaseEvidenceError("surface evidence policy is invalid")
+    artifact_runtime_surfaces = artifact_runtime_escalation_surfaces(
+        train=train,
+        artifact_risk_surfaces=artifact_risk_surfaces or {},
+        runtime_capable_surface_ids={
+            surface_id
+            for surface_id, capabilities in capabilities_by_surface.items()
+            if "actual-runtime" in capabilities
+        },
+    )
     for surface, comparison_surface in comparison_surfaces.items():
         if comparison_surface.get("artifactId") != artifact_ids_by_surface[surface]:
             raise ReleaseEvidenceError(
@@ -621,6 +636,8 @@ def _validate_surface_policy(
             and train in {"rc", "release"}
             and "actual-runtime" in capabilities
         ):
+            fresh.add("actual-runtime")
+        if surface in artifact_runtime_surfaces:
             fresh.add("actual-runtime")
         fresh_evidence = [
             value for value in EVIDENCE_CLASSES if value in capabilities and value in fresh
@@ -707,6 +724,7 @@ def _validate_comparison(
             train=train,
             comparison_surfaces=surface_map,
             toolchain_changed=bool(validated.get("toolchainChanged", False)),
+            artifact_risk_surfaces=validated.get("artifactRiskSurfaces", {}),
         )
     return surface_map
 

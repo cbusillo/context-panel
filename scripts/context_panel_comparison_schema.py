@@ -8,6 +8,22 @@ from types import ModuleType
 from typing import Any, cast
 
 
+def _load_artifact_comparison() -> ModuleType:
+    path = (
+        Path(__file__).with_name("context_panel_surface_manifest")
+        / "artifact_comparison.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "context_panel_artifact_comparison", path
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("artifact comparison policy is unavailable")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def _load_v4_schema() -> ModuleType:
     path = Path(__file__).with_name("context_panel_surface_manifest") / "comparison_schema_v4.py"
     spec = importlib.util.spec_from_file_location(
@@ -23,6 +39,7 @@ def _load_v4_schema() -> ModuleType:
 
 comparison_schema_v4 = _load_v4_schema()
 _v4 = comparison_schema_v4
+artifact_comparison = _load_artifact_comparison()
 comparison_schema_v3 = _v4.comparison_schema_v3
 comparison_schema_v2 = _v4.comparison_schema_v2
 
@@ -52,18 +69,13 @@ SHA256_PATTERN = _v4.SHA256_PATTERN
 LEGACY_V1_ROOT_KEYS = _v4.LEGACY_V1_ROOT_KEYS
 LEGACY_V2_ROOT_KEYS = _v4.LEGACY_V2_ROOT_KEYS
 LEGACY_V3_ROOT_KEYS = _v4.LEGACY_V3_ROOT_KEYS
+ARTIFACT_RISK_CODES = artifact_comparison.ARTIFACT_RISK_CODES
+artifact_runtime_escalation_surfaces = (
+    artifact_comparison.artifact_runtime_escalation_surfaces
+)
+derive_artifact_comparison = artifact_comparison.derive_artifact_comparison
 ARTIFACT_EVIDENCE_STATES = ("complete", "legacy-incomplete", "missing", "not-evaluated")
 ESCALATION_STATES = ("resolved", "unknown-fail-closed")
-ARTIFACT_RISK_CODES = (
-    "artifact-mapping-changed",
-    "bundle-contract-changed",
-    "signing-contract-changed",
-    "entitlement-contract-changed",
-    "profile-capability-changed",
-    "architecture-loss",
-    "unexplained-executable-drift",
-    "artifact-evidence-unknown",
-)
 ComparisonSchemaError = _v4.ComparisonSchemaError
 validate_comparison_v2 = _v4.validate_comparison_v2
 validate_comparison_v3 = _v4.validate_comparison_v3
@@ -145,16 +157,27 @@ def _validate_artifact_fields(comparison: dict[str, Any]) -> None:
         codes or surfaces or comparison["escalationState"] != "resolved"
     ):
         _error("surface comparison inapplicable artifact evidence is inconsistent")
-    if comparison["train"] in {"rc", "release"}:
+    artifact_runtime = artifact_runtime_escalation_surfaces(
+        train=comparison["train"],
+        artifact_risk_surfaces=surfaces,
+        runtime_capable_surface_ids=set(runtime_surfaces),
+    )
+    if artifact_runtime:
         required_runtime = set(comparison["requiredSurfaces"]["actual-runtime"])
-        artifact_runtime = {
-            surface_id
-            for values in surfaces.values()
-            for surface_id in values
-            if surface_id in runtime_surfaces
-        }
         if not artifact_runtime <= required_runtime:
             _error("surface comparison artifact risk is not fail-closed")
+        by_surface = {
+            item["surfaceId"]: item for item in comparison["surfaces"]
+        }
+        for surface_id in artifact_runtime:
+            surface = by_surface[surface_id]
+            if (
+                "actual-runtime" not in surface["freshEvidence"]
+                or "actual-runtime" not in surface["requiredEvidence"]
+                or surface["carryForward"].get("actual-runtime")
+                != {"eligible": False, "conditions": []}
+            ):
+                _error("surface comparison artifact risk is not fail-closed")
 
 
 def validate_comparison_v5(
