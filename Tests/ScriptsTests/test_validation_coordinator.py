@@ -2176,6 +2176,45 @@ class CLITests(unittest.TestCase):
                     self.assertEqual(function(SimpleNamespace(**target_args, **arguments)), 0)
                 self.assertEqual(json.loads(stdout.getvalue())["session"]["lifecycle"], lifecycle)
 
+    def test_start_session_rejects_contradictory_explicit_runtime_scope_without_state(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            args = SimpleNamespace(
+                version="1.0.53",
+                build_number="202607301200",
+                json=True,
+                surfaces=["macos.app"],
+                duration_hours=72,
+                retention_days=30,
+                replace=False,
+                surface_comparison=Path(temp_dir) / "comparison.json",
+                visual_review_requirements=Path(temp_dir) / "requirements.json",
+                expected_build_manifests=[],
+            )
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {"CONTEXT_PANEL_VALIDATION_STATE_ROOT": temp_dir},
+                    clear=False,
+                ),
+                mock.patch.object(
+                    cli_module,
+                    "load_expected_surface_identities",
+                    return_value=(),
+                ),
+                mock.patch.object(
+                    cli_module,
+                    "load_visual_review_plan",
+                    return_value=(("macos.widget",), (), "a" * 64),
+                ),
+                self.assertRaisesRegex(
+                    cli_module.VisualApprovalError,
+                    "explicit runtime surfaces do not match",
+                ),
+            ):
+                cli_module.run_start_session(args)
+
+            self.assertFalse(list(Path(temp_dir).rglob("*.json")))
+
     def test_invalid_session_bounds_exit_unknown_without_writing_state(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             stderr = io.StringIO()

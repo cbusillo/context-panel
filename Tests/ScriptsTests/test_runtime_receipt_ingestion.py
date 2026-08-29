@@ -69,6 +69,14 @@ SURFACE_BUNDLES = {
         "companion.ios.widget",
         "com.shinycomputers.contextpanel.widget",
     ),
+    "visionos.app": (
+        "companion.visionos.app",
+        "com.shinycomputers.contextpanel",
+    ),
+    "visionos.widget": (
+        "companion.visionos.widget",
+        "com.shinycomputers.contextpanel.widget",
+    ),
     "watchos.app": ("watchos.app", "com.shinycomputers.contextpanel.watch"),
     "watchos.complication": (
         "watchos.complication",
@@ -1033,6 +1041,21 @@ class RuntimeReceiptIngestionTests(unittest.TestCase):
             [(item["surface"], item["state"]) for item in report["surfaces"]],
             [("ios.app", "proven"), ("ipados.app", "proven")],
         )
+
+    def test_each_shipping_surface_accepts_its_own_authentic_receipt(self):
+        for surface in sorted(SURFACE_BUNDLES):
+            with self.subTest(surface=surface):
+                temporary, _, _, _, state = self.fixture((surface,))
+                self.addCleanup(temporary.cleanup)
+                status = runtime_status((surface,))
+                next_state, _ = runtime_module.reconcile_runtime_observation(
+                    state,
+                    observation(status, runtime_export(status, [runtime_receipt(surface, status)])),
+                )
+                report = build_runtime_evidence_report(next_state, NOW)
+                self.assertEqual(report["provenSurfaceCount"], 1)
+                self.assertEqual(report["surfaces"][0]["surface"], surface)
+                self.assertEqual(report["surfaces"][0]["state"], "proven")
 
     def test_v1_and_v2_expected_builds_produce_compatible_runtime_identity(self):
         v1_payload = legacy_v1_expected_manifest(("macos.app",))
