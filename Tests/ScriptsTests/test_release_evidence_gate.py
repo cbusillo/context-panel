@@ -10,13 +10,19 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-from context_panel_comparison_schema import derive_risk_fields, derive_runtime_decision
+from context_panel_comparison_schema import (
+    EVIDENCE_CLASSES,
+    derive_risk_fields,
+    derive_runtime_decision,
+    validate_current_comparison,
+)
 from context_panel_release_gate import (
     ReleaseEvidenceError,
     build_release_evidence_lineage,
     evaluate_release_evidence,
     release_evidence_report_blockers,
 )
+from context_panel_release_gate.cli import render_lineage
 from context_panel_validation import ExpectedSurfaceIdentity, RUNTIME_SURFACES
 from context_panel_validation.runtime_evidence import canonical_json, hash_parts
 
@@ -774,6 +780,72 @@ def selected_rc_ledger(surface: str) -> dict[str, Any]:
 
 
 class ReleaseEvidenceGateTests(unittest.TestCase):
+    def test_lineage_serialization_preserves_comparison_map_order(self) -> None:
+        comparison_payload = comparison(
+            "watchos.complication",
+            "os-composited-placement",
+            train="rc",
+        )
+        for surface in comparison_payload["surfaces"]:
+            surface["changes"]["contract"] = True
+            surface["reasonCodes"] = [
+                reason
+                for reason in (
+                    "render-fingerprint-changed"
+                    if surface["surfaceId"] == "watchos.complication"
+                    else None,
+                    "placement-fingerprint-changed"
+                    if surface["surfaceId"] == "watchos.complication"
+                    else None,
+                    "contract-fingerprint-changed",
+                )
+                if reason is not None
+            ]
+        target = next(
+            surface
+            for surface in comparison_payload["surfaces"]
+            if surface["surfaceId"] == "watchos.complication"
+        )
+        target["changes"]["render"] = True
+        target["minimumEvidence"] = list(EVIDENCE_CLASSES)
+        target["freshEvidence"] = list(EVIDENCE_CLASSES)
+        target["requiredEvidence"] = list(EVIDENCE_CLASSES)
+        target["carryForward"] = {
+            evidence_class: {"eligible": False, "conditions": []}
+            for evidence_class in EVIDENCE_CLASSES
+        }
+        comparison_payload["contractChanged"] = True
+        comparison_payload["requiredSurfaces"]["shared-view"] = [
+            "watchos.complication"
+        ]
+        (
+            comparison_payload["runtimeState"],
+            comparison_payload["runtimeStateReasons"],
+        ) = derive_runtime_decision(comparison_payload["surfaces"])
+        (
+            comparison_payload["riskCodes"],
+            comparison_payload["riskSurfaces"],
+            comparison_payload["observationRiskCodes"],
+        ) = derive_risk_fields(
+            comparison_payload["surfaces"],
+            toolchain_delta=False,
+            runtime_capable_surface_ids={"watchos.complication"},
+            requires_placement_review=True,
+        )
+        serialized = render_lineage(
+            {"generation": {"comparison": comparison_payload}}
+        )
+        restored = json.loads(serialized)["generation"]["comparison"]
+        self.assertEqual(validate_current_comparison(restored), restored)
+        self.assertEqual(
+            list(restored["riskSurfaces"]),
+            [
+                "render-divergence",
+                "placement-divergence",
+                "contract-divergence",
+            ],
+        )
+
     @staticmethod
     def evaluate(
         surface: str,

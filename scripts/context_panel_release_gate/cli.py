@@ -19,6 +19,10 @@ from .core import (
 )
 
 
+def render_lineage(lineage: dict[str, Any]) -> str:
+    return json.dumps(lineage, indent=2) + "\n"
+
+
 DEFAULT_POLICY = Path("Config/ContextPanelReleaseEvidencePolicy.json")
 DEFAULT_SURFACE_POLICY = Path("Config/ContextPanelSurfacePolicy.json")
 
@@ -139,9 +143,7 @@ def run(argv: list[str] | None = None) -> int:
             shadow_evidence=shadow_evidence,
         )
         arguments.lineage_output.parent.mkdir(parents=True, exist_ok=True)
-        arguments.lineage_output.write_text(
-            json.dumps(lineage, indent=2, sort_keys=True) + "\n"
-        )
+        arguments.lineage_output.write_text(render_lineage(lineage))
     if arguments.mode == "enforce" and payload["state"] != "approved":
         return 20
     return 0
