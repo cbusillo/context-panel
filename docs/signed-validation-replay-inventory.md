@@ -96,15 +96,16 @@ a different reduced plan and must not be treated as authoritative.
 ## Comparison Schema Compatibility
 
 Production comparison generation, coordinator planning, direct release-gate
-inputs, report validation, and submission accept only schema v4. Schema v4 adds
-canonical toolchain and risk-root fields while preserving the v3 runtime
-decision contract. Retained v1 comparisons are replay-only:
+inputs, report validation, and submission accept only schema v5. Schema v5 adds
+artifact evidence and surface-scoped artifact-risk escalation while preserving
+the v4 surface projection. Retained v1 comparisons are replay-only:
 inventory lineage validation verifies the raw archived chain before the adapter
 deep-copies the v1 payload, injects its frozen v2 identity, and validates with
 the pinned reconstruction contract. Retained v2 comparisons validate directly
 against that same frozen v2 contract. Retained v3 comparisons use
-`validate_legacy_v3_comparison_for_reconstruction`. Release-gate lineage
-reconstruction may validate embedded signed v1, v2, or v3 comparisons while
+`validate_legacy_v3_comparison_for_reconstruction`; retained v4 comparisons use
+their frozen v4 validator. Release-gate lineage reconstruction may validate
+embedded signed v1, v2, v3, or v4 comparisons while
 preserving their raw comparison digests; those exceptions are unavailable to
 direct production inputs.
 
@@ -119,13 +120,15 @@ than backfilling v2 fields.
 The v1 adapter verifies its contract, implementation, and transitive dependency
 digests at runtime. The exact schema v2 validator is retained in
 `scripts/context_panel_surface_manifest/comparison_schema_v2.py`; frozen v3 is
-in `scripts/context_panel_surface_manifest/comparison_schema_v3.py`, and current
-v4 is in `scripts/context_panel_comparison_schema.py`. Any source, dependency,
+in `scripts/context_panel_surface_manifest/comparison_schema_v3.py`, frozen v4
+is in `scripts/context_panel_surface_manifest/comparison_schema_v4.py`, and
+current v5 is in `scripts/context_panel_comparison_schema.py`. Any source, dependency,
 or contract behavior change requires an explicit adapter version and
 fixture/digest update; do not route retained replay through a future
 current-schema validator. Legacy exceptions preserve historical carry-forward
 map insertion order and incomplete maps present in the retained v1 corpus;
-production v4 rejects both forms.
+production v5 rejects both forms. Replay adapters dispatch retained v1-v4
+comparisons to their exact frozen validators.
 
 ## Recoverability
 

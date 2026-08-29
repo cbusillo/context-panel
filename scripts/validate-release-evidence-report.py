@@ -16,8 +16,8 @@ from context_panel_validation import (
     RUNTIME_SURFACES,
     RuntimeEvidenceError,
     Target,
-    load_expected_surface_identities,
 )
+from context_panel_validation.runtime_evidence import expected_surface_identities_from_payloads
 
 
 DEFAULT_POLICY = Path("Config/ContextPanelReleaseEvidencePolicy.json")
@@ -74,8 +74,12 @@ def main() -> None:
             arguments.surface_policy,
             "surface evidence policy",
         )
-        identities = load_expected_surface_identities(
-            arguments.expected_build_manifests,
+        expected_build_manifests = tuple(
+            load_json_object(path, "expected signed build manifest")
+            for path in arguments.expected_build_manifests
+        )
+        identities = expected_surface_identities_from_payloads(
+            list(expected_build_manifests),
             Target(arguments.version, arguments.build_number),
             tuple(RUNTIME_SURFACES),
         )
@@ -90,6 +94,7 @@ def main() -> None:
         validation_report=validation_payload,
         comparison=comparison,
         identities=identities,
+        expected_build_manifests=expected_build_manifests,
         policy=policy,
         surface_policy=surface_policy,
         previous_ledger=optional_payload(arguments.previous_ledger, "previous ledger"),

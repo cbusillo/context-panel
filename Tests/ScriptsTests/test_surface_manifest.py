@@ -21,6 +21,7 @@ cli_module = importlib.import_module("context_panel_surface_manifest.cli")
 core_module = importlib.import_module("context_panel_surface_manifest.core")
 artifact_module = importlib.import_module("context_panel_surface_manifest.artifact")
 comparison_schema_module = importlib.import_module("context_panel_comparison_schema")
+release_gate_module = importlib.import_module("context_panel_release_gate.core")
 
 evidence_template = cli_module.evidence_template
 SurfacePolicyError = core_module.SurfacePolicyError
@@ -39,6 +40,11 @@ validation_summary = core_module.validation_summary
 ComparisonSchemaError = comparison_schema_module.ComparisonSchemaError
 derive_risk_fields = comparison_schema_module.derive_risk_fields
 validate_current_comparison = comparison_schema_module.validate_current_comparison
+ReleaseEvidenceError = release_gate_module.ReleaseEvidenceError
+validate_release_comparison = release_gate_module._validate_comparison
+validate_artifact_comparison_inputs = (
+    release_gate_module._validate_artifact_comparison_inputs
+)
 
 
 def v2_artifact_contract(seed: bytes, architectures: list[str] | None = None) -> dict[str, object]:
@@ -107,6 +113,15 @@ class SurfaceManifestTests(unittest.TestCase):
             xcode_build=xcode_build,
             tree_state=tree_state,
         )
+
+    @staticmethod
+    def expected_build(manifest, mutate=None, layout=None):
+        template = evidence_template(manifest, layout)
+        for artifact in template["artifacts"]:
+            artifact.update(v2_artifact_contract(artifact["artifactId"].encode()))
+        if mutate is not None:
+            mutate(template)
+        return seal_expected_build(manifest, template)
 
     @staticmethod
     def surfaces(manifest):
@@ -638,7 +653,7 @@ class SurfaceManifestTests(unittest.TestCase):
     def test_comparison_v4_rejects_hand_trimmed_or_noncanonical_payloads(self):
         comparison = compare_manifests(self.baseline, self.manifest(REPO_ROOT), "beta")
         self.assertEqual(comparison["kind"], "context-panel-surface-comparison")
-        self.assertEqual(comparison["schemaVersion"], 4)
+        self.assertEqual(comparison["schemaVersion"], 5)
         mutations = (
             lambda value: value.__setitem__("unexpected", True),
             lambda value: value["surfaces"][0].pop("artifactId"),
@@ -976,7 +991,7 @@ class SurfaceManifestTests(unittest.TestCase):
     def test_v4_roots_record_only_active_risks_and_observations(self):
         comparison = compare_manifests(self.baseline, self.manifest(REPO_ROOT), "beta")
         self.assertEqual(set(comparison), comparison_schema_module.ROOT_KEYS)
-        self.assertEqual(comparison["schemaVersion"], 4)
+        self.assertEqual(comparison["schemaVersion"], 5)
         self.assertEqual(comparison["riskCodes"], [])
         self.assertEqual(comparison["riskSurfaces"], {})
         self.assertEqual(comparison["observationRiskCodes"], [])
@@ -1323,6 +1338,373 @@ class SurfaceManifestTests(unittest.TestCase):
         invalid_architecture["artifacts"][0]["architectures"] = ["../../arm64"]
         with self.assertRaisesRegex(SurfacePolicyError, "architectures are missing"):
             seal_expected_build(self.baseline, invalid_architecture)
+
+    def test_artifact_semantic_risks_fan_out_without_escalating_beta(self):
+        surfaces = self.surfaces(self.baseline)
+        shared_artifact = surfaces["ios.app"]["artifactId"]
+        self.assertEqual(shared_artifact, surfaces["ipados.app"]["artifactId"])
+        previous = self.expected_build(self.baseline)
+
+        def change_entitlement_contract(template):
+            artifact = next(
+                item for item in template["artifacts"]
+                if item["artifactId"] == shared_artifact
+            )
+            artifact["entitlementContractSha256"] = "f" * 64
+
+        current = self.expected_build(self.baseline, change_entitlement_contract)
+        beta = compare_manifests(
+            self.baseline,
+            self.baseline,
+            "beta",
+            [previous],
+            [current],
+        )
+        self.assertEqual(beta["artifactEvidence"]["previousState"], "complete")
+        self.assertEqual(beta["artifactEvidence"]["currentState"], "complete")
+        self.assertEqual(beta["artifactRiskCodes"], ["entitlement-contract-changed"])
+        self.assertEqual(
+            beta["artifactRiskSurfaces"]["entitlement-contract-changed"],
+            ["ios.app", "ipados.app"],
+        )
+        self.assertNotIn("ios.app", beta["requiredSurfaces"]["actual-runtime"])
+        self.assertFalse(beta["requiresRuntimeSession"])
+
+        rc = compare_manifests(
+            self.baseline,
+            self.baseline,
+            "rc",
+            [previous],
+            [current],
+        )
+        by_surface = {item["surfaceId"]: item for item in rc["surfaces"]}
+        for surface_id in ("ios.app", "ipados.app"):
+            self.assertIn("actual-runtime", by_surface[surface_id]["freshEvidence"])
+
+    def test_artifact_escalation_round_trips_through_release_policy(self):
+        surfaces = self.surfaces(self.baseline)
+        shared_artifact = surfaces["ios.app"]["artifactId"]
+        previous = self.expected_build(self.baseline)
+
+        def change_signing_contract(template):
+            next(
+                item for item in template["artifacts"]
+                if item["artifactId"] == shared_artifact
+            )["signingContractSha256"] = "f" * 64
+
+        current = self.expected_build(self.baseline, change_signing_contract)
+        comparison = compare_manifests(
+            self.baseline,
+            self.baseline,
+            "rc",
+            [previous],
+            [current],
+        )
+        surface_policy = json.loads(
+            (REPO_ROOT / "Config/ContextPanelSurfacePolicy.json").read_text()
+        )
+        validated = validate_release_comparison(comparison, "rc", surface_policy)
+        self.assertIn("ios.app", validated)
+
+        stripped = copy.deepcopy(comparison)
+        ios_surface = next(
+            item for item in stripped["surfaces"]
+            if item["surfaceId"] == "ios.app"
+        )
+        ios_surface["freshEvidence"].remove("actual-runtime")
+        ios_surface["carryForward"]["actual-runtime"] = {
+            "eligible": True,
+            "conditions": [],
+        }
+        with self.assertRaisesRegex(
+            ReleaseEvidenceError,
+            "surface comparison is invalid",
+        ):
+            validate_release_comparison(stripped, "rc", surface_policy)
+
+    def test_artifact_risk_vocabulary_ignores_raw_provenance_noise(self):
+        previous = self.expected_build(self.baseline)
+        semantic_cases = (
+            ("bundleContractSha256", "bundle-contract-changed", "e" * 64),
+            ("signingContractSha256", "signing-contract-changed", "d" * 64),
+            ("entitlementContractSha256", "entitlement-contract-changed", "c" * 64),
+            ("profileCapabilitySha256", "profile-capability-changed", "b" * 64),
+        )
+        artifact_id = previous["artifacts"][0]["artifactId"]
+        expected_surfaces = sorted(
+            surface_id
+            for surface_id, surface in self.surfaces(self.baseline).items()
+            if surface["artifactId"] == artifact_id
+        )
+        for field, risk_code, replacement in semantic_cases:
+            with self.subTest(field=field):
+                def mutate(
+                    template,
+                    semantic_field=field,
+                    semantic_replacement=replacement,
+                ):
+                    next(
+                        item for item in template["artifacts"]
+                        if item["artifactId"] == artifact_id
+                    )[semantic_field] = semantic_replacement
+
+                current = self.expected_build(self.baseline, mutate)
+                comparison = compare_manifests(
+                    self.baseline,
+                    self.baseline,
+                    "beta",
+                    [previous],
+                    [current],
+                )
+                self.assertEqual(comparison["artifactRiskCodes"], [risk_code])
+                self.assertEqual(
+                    comparison["artifactRiskSurfaces"][risk_code],
+                    expected_surfaces,
+                )
+
+        def mutate_raw_provenance(template):
+            artifact = next(
+                item for item in template["artifacts"]
+                if item["artifactId"] == artifact_id
+            )
+            artifact["executableUUIDs"] = ["AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"]
+            artifact["entitlementsSha256"] = "a" * 64
+            artifact["profileSha256"] = "9" * 64
+
+        noisy = self.expected_build(self.baseline, mutate_raw_provenance)
+        comparison = compare_manifests(
+            self.baseline,
+            self.baseline,
+            "beta",
+            [previous],
+            [noisy],
+        )
+        self.assertEqual(comparison["artifactRiskCodes"], [])
+        self.assertEqual(comparison["artifactRiskSurfaces"], {})
+
+    def test_artifact_architecture_addition_is_safe_but_loss_escalates(self):
+        previous = self.expected_build(self.baseline)
+        artifact_id = self.surfaces(self.baseline)["macos.widget"]["artifactId"]
+
+        def architectures(template, values):
+            next(
+                item for item in template["artifacts"]
+                if item["artifactId"] == artifact_id
+            )["architectures"] = values
+
+        universal = self.expected_build(
+            self.baseline,
+            lambda template: architectures(template, ["arm64", "x86_64"]),
+        )
+        addition = compare_manifests(
+            self.baseline,
+            self.baseline,
+            "beta",
+            [previous],
+            [universal],
+        )
+        self.assertEqual(addition["artifactRiskCodes"], [])
+
+        loss = compare_manifests(
+            self.baseline,
+            self.baseline,
+            "beta",
+            [universal],
+            [previous],
+        )
+        self.assertEqual(loss["artifactRiskCodes"], ["architecture-loss"])
+
+    def test_missing_artifact_evidence_is_surface_scoped_and_fail_closed(self):
+        current = self.expected_build(self.baseline)
+        comparison = compare_manifests(
+            self.baseline,
+            self.baseline,
+            "rc",
+            [],
+            [current],
+        )
+        runtime_surfaces = sorted(
+            surface_id
+            for surface_id, surface in self.surfaces(self.baseline).items()
+            if "actual-runtime" in surface["evidenceCapabilities"]
+        )
+        self.assertEqual(comparison["artifactEvidence"]["previousState"], "missing")
+        self.assertEqual(comparison["artifactRiskCodes"], ["artifact-evidence-unknown"])
+        self.assertEqual(
+            comparison["artifactRiskSurfaces"]["artifact-evidence-unknown"],
+            runtime_surfaces,
+        )
+        self.assertEqual(comparison["escalationState"], "unknown-fail-closed")
+        self.assertTrue(
+            set(runtime_surfaces) <= set(comparison["requiredSurfaces"]["actual-runtime"])
+        )
+        tampered = copy.deepcopy(comparison)
+        tampered["artifactRiskCodes"] = []
+        tampered["artifactRiskSurfaces"] = {}
+        tampered["escalationState"] = "resolved"
+        with self.assertRaisesRegex(
+            ComparisonSchemaError,
+            "incomplete artifact evidence is not fail-closed",
+        ):
+            validate_current_comparison(tampered)
+
+        for key, malformed in (
+            ("previousExpectedBuildIds", ["a" * 64, 1]),
+            ("currentExpectedBuildIds", ["a" * 64, None]),
+        ):
+            with self.subTest(key=key):
+                malformed_comparison = copy.deepcopy(comparison)
+                malformed_comparison["artifactEvidence"][key] = malformed
+                with self.assertRaisesRegex(
+                    ComparisonSchemaError,
+                    "artifact evidence is not canonical",
+                ):
+                    validate_current_comparison(malformed_comparison)
+
+        malformed_surfaces = copy.deepcopy(comparison)
+        malformed_surfaces["artifactRiskSurfaces"][
+            "artifact-evidence-unknown"
+        ] = [runtime_surfaces[0], 1]
+        with self.assertRaisesRegex(
+            ComparisonSchemaError,
+            "artifact risk surface map is not canonical",
+        ):
+            validate_current_comparison(malformed_surfaces)
+
+    def test_partial_layout_evidence_is_missing_without_crashing(self):
+        partial = self.expected_build(self.baseline, layout="ios")
+        comparison = compare_manifests(
+            self.baseline,
+            self.baseline,
+            "rc",
+            [partial],
+            [partial],
+        )
+        self.assertEqual(comparison["artifactEvidence"]["previousState"], "missing")
+        self.assertEqual(comparison["artifactEvidence"]["currentState"], "missing")
+        self.assertEqual(
+            comparison["artifactEvidence"]["previousExpectedBuildIds"],
+            [partial["expectedBuildId"]],
+        )
+        self.assertEqual(comparison["artifactRiskCodes"], ["artifact-evidence-unknown"])
+        with self.assertRaisesRegex(
+            ReleaseEvidenceError,
+            "previous expected-build coverage is incomplete",
+        ):
+            validate_artifact_comparison_inputs(
+                comparison,
+                current_manifests=(partial,),
+                previous_lineage=None,
+            )
+
+    def test_legacy_and_mixed_artifact_evidence_fail_closed(self):
+        current = self.expected_build(self.baseline)
+        legacy = copy.deepcopy(current)
+        legacy["schemaVersion"] = 1
+        for artifact in legacy["artifacts"]:
+            for key in (
+                "bundleContractSha256",
+                "signingClass",
+                "signingContractSha256",
+                "entitlementContractSha256",
+                "profileCapabilitySha256",
+                "architectures",
+            ):
+                artifact.pop(key)
+        unsigned = {key: value for key, value in legacy.items() if key != "expectedBuildId"}
+        legacy["expectedBuildId"] = core_module.hash_parts(
+            f"{legacy['digestDomain']}/expected-build",
+            [core_module.canonical_json(unsigned)],
+        )
+
+        legacy_comparison = compare_manifests(
+            self.baseline,
+            self.baseline,
+            "rc",
+            [legacy],
+            [current],
+        )
+        self.assertEqual(
+            legacy_comparison["artifactEvidence"]["previousState"],
+            "legacy-incomplete",
+        )
+        self.assertEqual(
+            legacy_comparison["artifactRiskCodes"],
+            ["artifact-evidence-unknown"],
+        )
+
+        mixed = compare_manifests(
+            self.baseline,
+            self.baseline,
+            "beta",
+            None,
+            [current],
+        )
+        self.assertEqual(mixed["artifactEvidence"]["previousState"], "not-evaluated")
+        self.assertEqual(mixed["artifactEvidence"]["currentState"], "complete")
+        self.assertEqual(mixed["artifactRiskCodes"], ["artifact-evidence-unknown"])
+        self.assertFalse(mixed["requiresRuntimeSession"])
+
+    def test_artifact_mapping_change_fans_out_by_current_artifact(self):
+        previous = self.expected_build(self.baseline)
+        current_manifest = copy.deepcopy(self.baseline)
+        current_surfaces = self.surfaces(current_manifest)
+        remapped_artifact = "companion.ios.remapped"
+        current_surfaces["ios.app"]["artifactId"] = remapped_artifact
+        current_surfaces["ipados.app"]["artifactId"] = remapped_artifact
+        current = self.expected_build(current_manifest)
+        comparison = compare_manifests(
+            self.baseline,
+            current_manifest,
+            "beta",
+            [previous],
+            [current],
+        )
+        self.assertEqual(comparison["artifactRiskCodes"], ["artifact-mapping-changed"])
+        self.assertEqual(
+            comparison["artifactRiskSurfaces"]["artifact-mapping-changed"],
+            ["ios.app", "ipados.app"],
+        )
+
+    def test_unexplained_executable_drift_requires_stable_source_context(self):
+        previous = self.expected_build(self.baseline)
+        artifact_id = previous["artifacts"][0]["artifactId"]
+
+        def change_executable(template):
+            next(
+                item for item in template["artifacts"]
+                if item["artifactId"] == artifact_id
+            )["executableSha256"] = "8" * 64
+
+        drifted = self.expected_build(self.baseline, change_executable)
+        unexplained = compare_manifests(
+            self.baseline,
+            self.baseline,
+            "beta",
+            [previous],
+            [drifted],
+        )
+        self.assertEqual(
+            unexplained["artifactRiskCodes"],
+            ["unexplained-executable-drift"],
+        )
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = self.fixture(temporary_directory)
+            self.append(root / "Sources/ContextPanelWidgetUI/ContextPanelWidgetViews.swift")
+            changed_manifest = self.manifest(root)
+        explained_build = self.expected_build(changed_manifest, change_executable)
+        explained = compare_manifests(
+            self.baseline,
+            changed_manifest,
+            "beta",
+            [previous],
+            [explained_build],
+        )
+        self.assertNotIn(
+            "unexplained-executable-drift",
+            explained["artifactRiskCodes"],
+        )
 
     def test_semantic_entitlement_key_and_list_order_is_canonical(self):
         first = plistlib.dumps(

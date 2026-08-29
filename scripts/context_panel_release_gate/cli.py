@@ -118,6 +118,7 @@ def run(argv: list[str] | None = None) -> int:
         comparison=comparison,
         validation_report=report,
         identities=identities,
+        expected_build_manifests=expected_build_manifests,
         policy=policy,
         surface_policy=surface_policy,
         previous_ledger=previous_ledger,

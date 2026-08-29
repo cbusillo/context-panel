@@ -209,6 +209,10 @@ acceptable.
 - Before opening a signed validation coordinator session, compare the previous
   and current full source manifests with
   `scripts/context-panel-surface-manifest.py compare --train <beta|rc|release>`.
+  Comparisons intended for release-gate, report-validation, or submission use
+  repeated `--previous-expected-build-manifest` and
+  `--current-expected-build-manifest` arguments covering every archive layout;
+  source-only comparisons are diagnostic and cannot enter the signed gate.
   For beta work, do not open a runtime session when
   `requiresRuntimeSession=false`; automated shared-view evidence is the gate for
   render-only changes. When runtime proof is required, pass only the surfaces in

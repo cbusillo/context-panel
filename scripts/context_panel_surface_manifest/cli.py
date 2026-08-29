@@ -97,6 +97,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     compare_parser.add_argument("--previous", type=Path, required=True)
     compare_parser.add_argument("--current", type=Path, required=True)
+    compare_parser.add_argument(
+        "--previous-expected-build-manifest", type=Path, action="append"
+    )
+    compare_parser.add_argument(
+        "--current-expected-build-manifest", type=Path, action="append"
+    )
     compare_parser.add_argument("--train", choices=("beta", "rc", "release"), required=True)
     compare_parser.add_argument("--output", type=Path)
 
@@ -251,8 +257,32 @@ def run(arguments: argparse.Namespace) -> None:
     if arguments.command == "compare":
         previous = load_json_object(arguments.previous, "previous surface manifest")
         current = load_json_object(arguments.current, "current surface manifest")
+        previous_expected_paths = getattr(arguments, "previous_expected_build_manifest", None)
+        current_expected_paths = getattr(arguments, "current_expected_build_manifest", None)
+        previous_expected = (
+            [
+                load_json_object(path, "previous expected signed build manifest")
+                for path in previous_expected_paths
+            ]
+            if previous_expected_paths is not None
+            else None
+        )
+        current_expected = (
+            [
+                load_json_object(path, "current expected signed build manifest")
+                for path in current_expected_paths
+            ]
+            if current_expected_paths is not None
+            else None
+        )
         write_json(
-            compare_manifests(previous, current, arguments.train),
+            compare_manifests(
+                previous,
+                current,
+                arguments.train,
+                previous_expected,
+                current_expected,
+            ),
             arguments.output,
             sort_keys=False,
         )

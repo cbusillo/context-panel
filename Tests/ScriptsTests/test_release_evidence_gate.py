@@ -1,7 +1,9 @@
 import hashlib
+import copy
 import json
 import sys
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -23,8 +25,13 @@ from context_panel_release_gate import (
     release_evidence_report_blockers,
 )
 from context_panel_release_gate.cli import render_lineage
-from context_panel_validation import ExpectedSurfaceIdentity, RUNTIME_SURFACES
-from context_panel_validation.runtime_evidence import canonical_json, hash_parts
+import context_panel_release_gate.core as release_gate_core
+from context_panel_validation import ExpectedSurfaceIdentity, RUNTIME_SURFACES, Target
+from context_panel_validation.runtime_evidence import (
+    canonical_json,
+    expected_surface_identities_from_payloads,
+    hash_parts,
+)
 
 
 NOW = datetime(2026, 8, 8, 12, tzinfo=timezone.utc)
@@ -52,7 +59,7 @@ def expected_manifest(
     manifest_id: str = MANIFEST,
 ) -> dict[str, Any]:
     unsigned: dict[str, Any] = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "kind": "context-panel-expected-signed-build",
         "algorithm": "sha256",
         "digestDomain": "context-panel-surface/v1",
@@ -79,6 +86,12 @@ def expected_manifest(
                 "executableUUIDs": ["AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"],
                 "entitlementsSha256": sha(f"{surface}:entitlements"),
                 "profileSha256": sha(f"{surface}:profile"),
+                "bundleContractSha256": sha(f"{surface}:bundle-contract"),
+                "signingClass": "Apple Distribution",
+                "signingContractSha256": sha(f"{surface}:signing-contract"),
+                "entitlementContractSha256": sha(f"{surface}:entitlement-contract"),
+                "profileCapabilitySha256": sha(f"{surface}:profile-capability"),
+                "architectures": ["arm64"],
             }
         ],
         "surfaces": [
@@ -244,7 +257,27 @@ def watchlist_comparison(
             "eligible": True,
             "conditions": ["matching-host-os", "matching-current-runtime-receipt"],
         }
+    refresh_missing_artifact_evidence(payload)
     return payload
+
+
+def refresh_missing_artifact_evidence(payload: dict[str, Any]) -> None:
+    runtime_surfaces = sorted(
+        item["surfaceId"]
+        for item in payload["surfaces"]
+        if "actual-runtime" in item["carryForward"]
+    )
+    payload["artifactEvidence"]["previousState"] = "missing"
+    payload["artifactEvidence"]["previousExpectedBuildIds"] = []
+    payload["artifactRiskCodes"] = (
+        ["artifact-evidence-unknown"] if runtime_surfaces else []
+    )
+    payload["artifactRiskSurfaces"] = (
+        {"artifact-evidence-unknown": runtime_surfaces} if runtime_surfaces else {}
+    )
+    payload["escalationState"] = (
+        "unknown-fail-closed" if runtime_surfaces else "resolved"
+    )
 
 
 def surface_policy(surface: str, evidence_class: str) -> dict[str, Any]:
@@ -377,9 +410,22 @@ def comparison(
         runtime_capable_surface_ids=set(RUNTIME_SURFACES),
         requires_placement_review=bool(required["os-composited-placement"]),
     )
+    artifact_runtime_surfaces = sorted(
+        item["surfaceId"]
+        for item in surfaces
+        if "actual-runtime" in item["carryForward"]
+    )
+    artifact_risk_codes = (
+        ["artifact-evidence-unknown"] if artifact_runtime_surfaces else []
+    )
+    artifact_risk_surfaces = (
+        {"artifact-evidence-unknown": artifact_runtime_surfaces}
+        if artifact_runtime_surfaces
+        else {}
+    )
     return {
         "kind": "context-panel-surface-comparison",
-        "schemaVersion": 4,
+        "schemaVersion": 5,
         "train": train,
         "previousManifestId": previous_manifest_id,
         "currentManifestId": current_manifest_id,
@@ -395,6 +441,20 @@ def comparison(
         "riskCodes": risk_codes,
         "riskSurfaces": risk_surfaces,
         "observationRiskCodes": observation_risk_codes,
+        "artifactEvidence": {
+            "previousState": "missing",
+            "currentState": "complete",
+            "previousExpectedBuildIds": [],
+            "currentExpectedBuildIds": sorted(
+                manifest["expectedBuildId"]
+                for manifest in all_expected_manifests(manifest_id=current_manifest_id)
+            ),
+        },
+        "artifactRiskCodes": artifact_risk_codes,
+        "artifactRiskSurfaces": artifact_risk_surfaces,
+        "escalationState": (
+            "unknown-fail-closed" if artifact_runtime_surfaces else "resolved"
+        ),
         "surfaces": surfaces,
         "releaseRequiresApprovedRCTarget": True,
     }
@@ -636,6 +696,7 @@ def shadow_evidence(
                 comparison=comparison_payload,
                 validation_report=validation_report,
                 identities=identities,
+                expected_build_manifests=all_expected_manifests(),
                 policy=release_policy,
                 surface_policy=surface_policy(surface, evidence_class),
                 now=NOW,
@@ -693,11 +754,17 @@ def previous_lineage(
     *,
     host_os: str | None = None,
     policy_payload: dict[str, Any] | None = None,
+    surface_policy_payload: dict[str, Any] | None = None,
+    comparison_payload_override: dict[str, Any] | None = None,
     legacy_comparison: bool = False,
     legacy_comparison_version: int = 1,
 ) -> dict[str, Any]:
     release_policy = policy_payload or policy()
-    comparison_payload = comparison(
+    configured_surface_policy = surface_policy_payload or surface_policy(
+        surface,
+        evidence_class,
+    )
+    comparison_payload = comparison_payload_override or comparison(
         surface,
         evidence_class,
         previous_manifest_id="d" * 64,
@@ -711,6 +778,10 @@ def previous_lineage(
         comparison_payload.pop("riskCodes")
         comparison_payload.pop("riskSurfaces")
         comparison_payload.pop("observationRiskCodes")
+        comparison_payload.pop("artifactEvidence")
+        comparison_payload.pop("artifactRiskCodes")
+        comparison_payload.pop("artifactRiskSurfaces")
+        comparison_payload.pop("escalationState")
         if legacy_comparison_version == 1:
             comparison_payload.pop("kind")
         elif legacy_comparison_version not in {2, 3}:
@@ -738,8 +809,9 @@ def previous_lineage(
         comparison=comparison_payload,
         validation_report=validation_report,
         identities=identities,
+        expected_build_manifests=expected_manifests,
         policy=release_policy,
-        surface_policy=surface_policy(surface, evidence_class),
+        surface_policy=configured_surface_policy,
         shadow_evidence=shadow_payload,
         now=NOW,
         _allow_legacy_comparison=legacy_comparison,
@@ -765,6 +837,7 @@ def selected_rc_ledger(surface: str) -> dict[str, Any]:
         comparison=comparison_payload,
         validation_report=validation_report,
         identities=identities,
+        expected_build_manifests=expected_manifests,
         policy=policy(),
         surface_policy=surface_policy(surface, "actual-runtime"),
         shadow_evidence=shadow_payload,
@@ -780,6 +853,158 @@ def selected_rc_ledger(surface: str) -> dict[str, Any]:
 
 
 class ReleaseEvidenceGateTests(unittest.TestCase):
+    def test_release_gate_recomputes_v5_artifact_risks_from_lineage(self) -> None:
+        surface = "watchos.app"
+        current_manifests = list(copy.deepcopy(all_expected_manifests()))
+        artifact = current_manifests[0]["artifacts"][0]
+        artifact["signingContractSha256"] = "f" * 64
+        unsigned = {
+            key: value
+            for key, value in current_manifests[0].items()
+            if key != "expectedBuildId"
+        }
+        current_manifests[0]["expectedBuildId"] = hash_parts(
+            "context-panel-surface/v1/expected-build",
+            [canonical_json(unsigned)],
+        )
+        identities = expected_surface_identities_from_payloads(
+            current_manifests,
+            Target("1.0.54", "202608080418"),
+            tuple(RUNTIME_SURFACES),
+        )
+        comparison_payload = comparison(surface, "actual-runtime", train="rc")
+        comparison_payload["artifactEvidence"]["previousState"] = "complete"
+        comparison_payload["artifactEvidence"]["previousExpectedBuildIds"] = sorted(
+            manifest["expectedBuildId"]
+            for manifest in all_expected_manifests(manifest_id=PREVIOUS_MANIFEST)
+        )
+        comparison_payload["artifactRiskCodes"] = []
+        comparison_payload["artifactRiskSurfaces"] = {}
+        comparison_payload["escalationState"] = "resolved"
+        comparison_payload["artifactEvidence"]["currentExpectedBuildIds"] = sorted(
+            manifest["expectedBuildId"] for manifest in current_manifests
+        )
+        with self.assertRaisesRegex(
+            ReleaseEvidenceError,
+            "artifact risks do not match expected-build evidence",
+        ):
+            evaluate_release_evidence(
+                train="rc",
+                mode="shadow",
+                comparison=comparison_payload,
+                validation_report=report(surface, runtime=True),
+                identities=identities,
+                expected_build_manifests=tuple(current_manifests),
+                policy=policy(),
+                surface_policy=surface_policy(surface, "actual-runtime"),
+                previous_ledger=previous_lineage(surface, "actual-runtime"),
+                now=NOW,
+            )
+
+    def test_release_gate_accepts_matching_v5_artifact_risks(self) -> None:
+        current_manifests = list(copy.deepcopy(all_expected_manifests()))
+        changed_surface = current_manifests[0]["surfaces"][0]["id"]
+        artifact = current_manifests[0]["artifacts"][0]
+        artifact["signingContractSha256"] = "f" * 64
+        unsigned = {
+            key: value
+            for key, value in current_manifests[0].items()
+            if key != "expectedBuildId"
+        }
+        current_manifests[0]["expectedBuildId"] = hash_parts(
+            "context-panel-surface/v1/expected-build",
+            [canonical_json(unsigned)],
+        )
+        identities = expected_surface_identities_from_payloads(
+            current_manifests,
+            Target("1.0.54", "202608080418"),
+            tuple(RUNTIME_SURFACES),
+        )
+        comparison_payload = comparison(changed_surface, "actual-runtime", train="rc")
+        comparison_payload["artifactEvidence"] = {
+            "previousState": "complete",
+            "currentState": "complete",
+            "previousExpectedBuildIds": sorted(
+                manifest["expectedBuildId"]
+                for manifest in all_expected_manifests(manifest_id=PREVIOUS_MANIFEST)
+            ),
+            "currentExpectedBuildIds": sorted(
+                manifest["expectedBuildId"] for manifest in current_manifests
+            ),
+        }
+        comparison_payload["artifactRiskCodes"] = ["signing-contract-changed"]
+        comparison_payload["artifactRiskSurfaces"] = {
+            "signing-contract-changed": [changed_surface]
+        }
+        comparison_payload["escalationState"] = "resolved"
+        payload = evaluate_release_evidence(
+            train="rc",
+            mode="shadow",
+            comparison=comparison_payload,
+            validation_report=report(changed_surface, runtime=True),
+            identities=identities,
+            expected_build_manifests=tuple(current_manifests),
+            policy=policy(),
+            surface_policy=surface_policy(changed_surface, "actual-runtime"),
+            previous_ledger=previous_lineage(changed_surface, "actual-runtime"),
+            now=NOW,
+        )
+        self.assertNotIn(
+            "comparison artifact",
+            " ".join(payload["blockers"]),
+        )
+
+    def test_report_validation_propagates_artifact_risk_scope(self) -> None:
+        surface = "watchos.app"
+        comparison_payload = comparison(surface, "actual-runtime")
+        validation_report = report(surface, runtime=True)
+        payload = self.evaluate(
+            surface,
+            "actual-runtime",
+            validation_report=validation_report,
+            comparison_payload=comparison_payload,
+        )
+        with patch.object(
+            release_gate_core,
+            "_validate_surface_policy",
+            wraps=release_gate_core._validate_surface_policy,
+        ) as validate_policy:
+            release_evidence_report_blockers(
+                payload,
+                version="1.0.54",
+                build_number="202608080418",
+                train="beta",
+                enforce=False,
+                validation_report=validation_report,
+                comparison=comparison_payload,
+                identities=all_identities(),
+                expected_build_manifests=all_expected_manifests(),
+                policy=policy(),
+                surface_policy=surface_policy(surface, "actual-runtime"),
+                now=NOW,
+            )
+        self.assertGreaterEqual(validate_policy.call_count, 2)
+        self.assertTrue(
+            all(
+                call.kwargs["artifact_risk_surfaces"]
+                == comparison_payload["artifactRiskSurfaces"]
+                for call in validate_policy.call_args_list
+            )
+        )
+
+    def test_rc_unknown_artifact_evidence_accepts_fresh_runtime(self) -> None:
+        surface = "watchos.app"
+        comparison_payload = comparison(surface, "actual-runtime", train="rc")
+        self.assertEqual(comparison_payload["escalationState"], "unknown-fail-closed")
+        payload = self.evaluate(
+            surface,
+            "actual-runtime",
+            train="rc",
+            comparison_payload=comparison_payload,
+            validation_report=report(surface, runtime=True),
+        )
+        self.assertEqual(payload["state"], "shadow-approved")
+
     def test_lineage_serialization_preserves_comparison_map_order(self) -> None:
         comparison_payload = comparison(
             "watchos.complication",
@@ -861,6 +1086,10 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             ),
             validation_report=kwargs.pop("validation_report", report(surface)),
             identities=all_identities(),
+            expected_build_manifests=kwargs.pop(
+                "expected_build_manifests",
+                all_expected_manifests(),
+            ),
             policy=kwargs.pop("policy_payload", policy()),
             surface_policy=kwargs.pop(
                 "surface_policy_payload",
@@ -892,6 +1121,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             validation_report=validation_report or report(surface),
             comparison=comparison_payload or comparison(surface, evidence_class),
             identities=all_identities(),
+            expected_build_manifests=all_expected_manifests(),
             policy=policy_payload or policy(),
             surface_policy=(
                 surface_policy_payload or surface_policy(surface, evidence_class)
@@ -1291,6 +1521,24 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 comparison_payload=comparison_payload,
             )
 
+    def test_release_gate_rejects_frozen_v4_comparison(self) -> None:
+        surface = "watchos.app"
+        comparison_payload = comparison(surface, "shared-view")
+        for key in (
+            "artifactEvidence",
+            "artifactRiskCodes",
+            "artifactRiskSurfaces",
+            "escalationState",
+        ):
+            comparison_payload.pop(key)
+        comparison_payload["schemaVersion"] = 4
+        with self.assertRaisesRegex(ReleaseEvidenceError, "schema is not current"):
+            self.evaluate(
+                surface,
+                "shared-view",
+                comparison_payload=comparison_payload,
+            )
+
     def test_signed_lineage_reconstruction_preserves_legacy_v1_comparison_digest(self) -> None:
         surface = "watchos.app"
         previous = previous_lineage(
@@ -1425,6 +1673,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 comparison=comparison(surface, "actual-runtime"),
                 validation_report=report(surface, runtime=True),
                 identities=tuple(identities),
+                expected_build_manifests=all_expected_manifests(),
                 policy=policy(),
                 surface_policy=surface_policy(surface, "actual-runtime"),
                 now=NOW,
@@ -1593,6 +1842,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             comparison=comparison(surface, "actual-runtime"),
             validation_report=report(surface, runtime=True),
             identities=all_identities(),
+            expected_build_manifests=all_expected_manifests(),
             policy=tightened_policy,
             surface_policy=surface_policy(surface, "actual-runtime"),
             now=NOW + timedelta(days=8),
@@ -1679,6 +1929,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             validation_report=validation_report,
             comparison=comparison(surface, "actual-runtime"),
             identities=all_identities(),
+            expected_build_manifests=all_expected_manifests(),
             policy=tightened_policy,
             now=NOW + timedelta(days=8),
         )
@@ -1797,6 +2048,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             validation_report=validation_report,
             comparison=empty_comparison,
             identities=all_identities(),
+            expected_build_manifests=all_expected_manifests(),
             policy=policy(),
             surface_policy=surface_policy(surface, "actual-runtime"),
             now=NOW,
@@ -1829,6 +2081,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 validation_report=validation_report,
                 comparison=comparison_payload,
                 identities=all_identities(),
+                expected_build_manifests=all_expected_manifests(),
                 policy=policy(),
                 surface_policy=surface_policy(surface, "actual-runtime"),
                 shadow_evidence=shadow_evidence(),
@@ -1862,6 +2115,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             validation_report=validation_report,
             comparison=comparison_payload,
             identities=all_identities(),
+            expected_build_manifests=all_expected_manifests(),
             policy=policy(),
             surface_policy=surface_policy(surface, "actual-runtime"),
             now=NOW,
@@ -1898,6 +2152,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             validation_report=validation_report,
             comparison=comparison_payload,
             identities=all_identities(),
+            expected_build_manifests=all_expected_manifests(),
             policy=policy(),
             surface_policy=surface_policy(surface, "shared-view"),
             shadow_evidence=shadow_payload,
@@ -1932,6 +2187,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             "validation_report": validation_report,
             "comparison": comparison_payload,
             "identities": all_identities(),
+            "expected_build_manifests": all_expected_manifests(),
             "policy": policy(),
             "surface_policy": surface_policy(surface, "actual-runtime"),
             "shadow_evidence": shadow_payload,
@@ -2137,6 +2393,7 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             validation_report=validation_report,
             comparison=comparison_payload,
             identities=all_identities(),
+            expected_build_manifests=all_expected_manifests(),
             policy=policy(),
             surface_policy=surface_policy(surface, "actual-runtime"),
             now=NOW,

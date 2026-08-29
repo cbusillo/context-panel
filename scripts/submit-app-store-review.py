@@ -30,8 +30,8 @@ from context_panel_validation import (
     RUNTIME_SURFACES,
     RuntimeEvidenceError,
     Target,
-    load_expected_surface_identities,
 )
+from context_panel_validation.runtime_evidence import expected_surface_identities_from_payloads
 
 
 API_BASE = "https://api.appstoreconnect.apple.com/v1"
@@ -1751,8 +1751,12 @@ def validate_release_evidence_report(args: argparse.Namespace) -> None:
             Path(surface_policy_value),
             "surface evidence policy",
         )
-        identities = load_expected_surface_identities(
-            [Path(value) for value in manifest_values],
+        expected_build_manifests = tuple(
+            load_json_object(Path(value), "expected signed build manifest")
+            for value in manifest_values
+        )
+        identities = expected_surface_identities_from_payloads(
+            list(expected_build_manifests),
             Target(args.version, args.build_number),
             tuple(RUNTIME_SURFACES),
         )
@@ -1799,6 +1803,7 @@ def validate_release_evidence_report(args: argparse.Namespace) -> None:
         validation_report=validation_payload,
         comparison=comparison,
         identities=identities,
+        expected_build_manifests=expected_build_manifests,
         policy=policy,
         surface_policy=surface_policy,
         previous_ledger=previous_ledger,

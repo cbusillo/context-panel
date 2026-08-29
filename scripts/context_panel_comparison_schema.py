@@ -5,240 +5,207 @@ import importlib.util
 import sys
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, NoReturn
+from typing import Any, cast
 
 
-def _load_v3_schema() -> ModuleType:
-    path = Path(__file__).with_name("context_panel_surface_manifest") / "comparison_schema_v3.py"
+def _load_artifact_comparison() -> ModuleType:
+    path = (
+        Path(__file__).with_name("context_panel_surface_manifest")
+        / "artifact_comparison.py"
+    )
     spec = importlib.util.spec_from_file_location(
-        "context_panel_surface_manifest.comparison_schema_v3", path
+        "context_panel_artifact_comparison", path
     )
     if spec is None or spec.loader is None:
-        raise RuntimeError("frozen comparison schema v3 is unavailable")
+        raise RuntimeError("artifact comparison policy is unavailable")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
 
-comparison_schema_v3 = _load_v3_schema()
-_v3 = comparison_schema_v3
-comparison_schema_v2 = _v3.comparison_schema_v2
-_v2 = comparison_schema_v2
+def _load_v4_schema() -> ModuleType:
+    path = Path(__file__).with_name("context_panel_surface_manifest") / "comparison_schema_v4.py"
+    spec = importlib.util.spec_from_file_location(
+        "context_panel_surface_manifest.comparison_schema_v4", path
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("frozen comparison schema v4 is unavailable")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
-COMPARISON_KIND = _v3.COMPARISON_KIND
-V2_COMPARISON_SCHEMA_VERSION = _v3.V2_COMPARISON_SCHEMA_VERSION
-V3_COMPARISON_SCHEMA_VERSION = _v3.CURRENT_COMPARISON_SCHEMA_VERSION
-CURRENT_COMPARISON_SCHEMA_VERSION = 4
-EVIDENCE_CLASSES = _v3.EVIDENCE_CLASSES
-TRAIN_NAMES = _v3.TRAIN_NAMES
-V3_ROOT_KEYS = _v3.ROOT_KEYS
-ROOT_KEYS = V3_ROOT_KEYS | {
-    "toolchainChanged",
-    "riskCodes",
-    "riskSurfaces",
-    "observationRiskCodes",
+comparison_schema_v4 = _load_v4_schema()
+_v4 = comparison_schema_v4
+artifact_comparison = _load_artifact_comparison()
+comparison_schema_v3 = _v4.comparison_schema_v3
+comparison_schema_v2 = _v4.comparison_schema_v2
+
+COMPARISON_KIND = _v4.COMPARISON_KIND
+V2_COMPARISON_SCHEMA_VERSION = _v4.V2_COMPARISON_SCHEMA_VERSION
+V3_COMPARISON_SCHEMA_VERSION = _v4.V3_COMPARISON_SCHEMA_VERSION
+V4_COMPARISON_SCHEMA_VERSION = _v4.CURRENT_COMPARISON_SCHEMA_VERSION
+CURRENT_COMPARISON_SCHEMA_VERSION = 5
+EVIDENCE_CLASSES = _v4.EVIDENCE_CLASSES
+TRAIN_NAMES = _v4.TRAIN_NAMES
+V3_ROOT_KEYS = _v4.V3_ROOT_KEYS
+V4_ROOT_KEYS = _v4.ROOT_KEYS
+ROOT_KEYS = V4_ROOT_KEYS | {
+    "artifactEvidence",
+    "artifactRiskCodes",
+    "artifactRiskSurfaces",
+    "escalationState",
 }
-SURFACE_KEYS = _v3.SURFACE_KEYS
-CHANGE_KEYS = _v3.CHANGE_KEYS
-CARRY_RULE_KEYS = _v3.CARRY_RULE_KEYS
-REASON_CODES = _v3.REASON_CODES
-RUNTIME_STATES = _v3.RUNTIME_STATES
-RUNTIME_STATE_REASON_CODES = _v3.RUNTIME_STATE_REASON_CODES
-PLACEMENT_CARRY_CONDITIONS = _v3.PLACEMENT_CARRY_CONDITIONS
-SHA256_PATTERN = _v3.SHA256_PATTERN
-LEGACY_V1_ROOT_KEYS = _v3.LEGACY_V1_ROOT_KEYS
-LEGACY_V2_ROOT_KEYS = _v2.ROOT_KEYS
-LEGACY_V3_ROOT_KEYS = _v3.ROOT_KEYS
-RISK_CODES = (
-    "unmapped-surface",
-    "render-divergence",
-    "runtime-divergence",
-    "placement-divergence",
-    "contract-divergence",
-    "toolchain-divergence",
+SURFACE_KEYS = _v4.SURFACE_KEYS
+CHANGE_KEYS = _v4.CHANGE_KEYS
+CARRY_RULE_KEYS = _v4.CARRY_RULE_KEYS
+REASON_CODES = _v4.REASON_CODES
+RUNTIME_STATES = _v4.RUNTIME_STATES
+RUNTIME_STATE_REASON_CODES = _v4.RUNTIME_STATE_REASON_CODES
+PLACEMENT_CARRY_CONDITIONS = _v4.PLACEMENT_CARRY_CONDITIONS
+SHA256_PATTERN = _v4.SHA256_PATTERN
+LEGACY_V1_ROOT_KEYS = _v4.LEGACY_V1_ROOT_KEYS
+LEGACY_V2_ROOT_KEYS = _v4.LEGACY_V2_ROOT_KEYS
+LEGACY_V3_ROOT_KEYS = _v4.LEGACY_V3_ROOT_KEYS
+ARTIFACT_RISK_CODES = artifact_comparison.ARTIFACT_RISK_CODES
+artifact_runtime_escalation_surfaces = (
+    artifact_comparison.artifact_runtime_escalation_surfaces
 )
-OBSERVATION_RISK_CODES = ("host-os-divergence",)
-RISK_CHANGE_KEYS = {
-    "render-divergence": "render",
-    "runtime-divergence": "runtime",
-    "placement-divergence": "placement",
-    "contract-divergence": "contract",
-}
-ComparisonSchemaError = _v3.ComparisonSchemaError
-_error: Callable[[str], NoReturn] = getattr(_v3, "_error")
-_is_sha256 = getattr(_v3, "_is_sha256")
-_canonical_subset = getattr(_v3, "_canonical_subset")
-_expected_reason_codes = getattr(_v3, "_expected_reason_codes")
-derive_runtime_decision = _v3.derive_runtime_decision
-validate_comparison_v2 = _v2.validate_comparison_v2
-validate_comparison_v3 = _v3.validate_comparison_v3
-validate_legacy_v1_comparison_for_reconstruction = (
-    _v3.validate_legacy_v1_comparison_for_reconstruction
-)
-validate_legacy_v2_comparison_for_reconstruction = (
-    _v3.validate_legacy_v2_comparison_for_reconstruction
-)
+derive_artifact_comparison = artifact_comparison.derive_artifact_comparison
+ARTIFACT_EVIDENCE_STATES = ("complete", "legacy-incomplete", "missing", "not-evaluated")
+ESCALATION_STATES = ("resolved", "unknown-fail-closed")
+ComparisonSchemaError = _v4.ComparisonSchemaError
+validate_comparison_v2 = _v4.validate_comparison_v2
+validate_comparison_v3 = _v4.validate_comparison_v3
+validate_comparison_v4 = _v4.validate_comparison_v4
+derive_runtime_decision = _v4.derive_runtime_decision
+derive_risk_fields = _v4.derive_risk_fields
+toolchain_changed = _v4.toolchain_changed
+_expected_reason_codes = _v4._expected_reason_codes
+validate_legacy_v1_comparison_for_reconstruction = _v4.validate_legacy_v1_comparison_for_reconstruction
+validate_legacy_v2_comparison_for_reconstruction = _v4.validate_legacy_v2_comparison_for_reconstruction
+validate_legacy_v3_comparison_for_reconstruction = _v4.validate_legacy_v3_comparison_for_reconstruction
 
 
-def toolchain_changed(previous: dict[str, Any], current: dict[str, Any]) -> bool:
-    previous_source = previous.get("source")
-    current_source = current.get("source")
-    if not isinstance(previous_source, dict) or not isinstance(current_source, dict):
-        return True
-    if "xcodeBuild" not in previous_source or "xcodeBuild" not in current_source:
-        return True
-    if "toolchain" not in previous or "toolchain" not in current:
-        return True
-    return (
-        previous_source["xcodeBuild"] != current_source["xcodeBuild"]
-        or previous["toolchain"] != current["toolchain"]
-    )
+def _error(message: str) -> None:
+    raise ComparisonSchemaError(message)
 
 
-def derive_risk_fields(
-    surfaces: list[dict[str, Any]],
-    *,
-    toolchain_delta: bool,
-    runtime_capable_surface_ids: set[str],
-    requires_placement_review: bool,
-) -> tuple[list[str], dict[str, list[str]], list[str]]:
-    if (
-        not isinstance(surfaces, list)
-        or type(toolchain_delta) is not bool
-        or not isinstance(runtime_capable_surface_ids, set)
-        or any(
-            not isinstance(surface_id, str) or not surface_id
-            for surface_id in runtime_capable_surface_ids
-        )
-        or type(requires_placement_review) is not bool
-    ):
-        _error("surface comparison risk inputs are invalid")
-    for surface in surfaces:
-        if (
-            not isinstance(surface, dict)
-            or not isinstance(surface.get("surfaceId"), str)
-            or not surface["surfaceId"]
-            or not isinstance(surface.get("reasonCodes"), list)
-            or any(not isinstance(value, str) for value in surface["reasonCodes"])
-            or not isinstance(surface.get("changes"), dict)
-            or any(
-                type(surface["changes"].get(change_key)) is not bool
-                for change_key in RISK_CHANGE_KEYS.values()
-            )
-        ):
-            _error("surface comparison risk inputs are invalid")
-    risk_surfaces: dict[str, list[str]] = {
-        "unmapped-surface": sorted(
-            surface["surfaceId"]
-            for surface in surfaces
-            if "new-surface" in surface["reasonCodes"]
-        )
-    }
-    if not risk_surfaces["unmapped-surface"]:
-        risk_surfaces.pop("unmapped-surface")
-    for risk_code, change_key in RISK_CHANGE_KEYS.items():
-        affected = [
-            surface["surfaceId"]
-            for surface in surfaces
-            if surface["changes"][change_key]
-        ]
-        if affected:
-            risk_surfaces[risk_code] = sorted(affected)
-    if toolchain_delta:
-        affected = sorted(
-            surface["surfaceId"]
-            for surface in surfaces
-            if surface["surfaceId"] in runtime_capable_surface_ids
-        )
-        if affected:
-            risk_surfaces["toolchain-divergence"] = affected
-    risk_codes = [code for code in RISK_CODES if code in risk_surfaces]
-    observation_risk_codes: list[str] = (
-        ["host-os-divergence"] if requires_placement_review else []
-    )
-    return (
-        risk_codes,
-        {code: risk_surfaces[code] for code in risk_codes},
-        observation_risk_codes,
-    )
-
-
-def _validate_risk_surfaces(
-    comparison: dict[str, Any],
-    *,
-    runtime_capable_surface_ids: set[str] | None,
-) -> None:
-    risk_codes = comparison["riskCodes"]
-    if not isinstance(risk_codes, list) or any(
-        not isinstance(value, str) for value in risk_codes
-    ) or risk_codes != [code for code in RISK_CODES if code in risk_codes]:
-        _error("surface comparison risk codes are not canonical")
-    risk_surfaces = comparison["riskSurfaces"]
-    if (
-        not isinstance(risk_surfaces, dict)
-        or set(risk_surfaces) != set(risk_codes)
-        or list(risk_surfaces) != risk_codes
-    ):
-        _error("surface comparison risk surface map is invalid")
-    surface_id_set = {surface["surfaceId"] for surface in comparison["surfaces"]}
-    for risk_code in risk_codes:
-        values = risk_surfaces[risk_code]
+def _validate_artifact_fields(comparison: dict[str, Any]) -> None:
+    evidence = comparison["artifactEvidence"]
+    if not isinstance(evidence, dict) or set(evidence) != {
+        "previousState", "currentState", "previousExpectedBuildIds", "currentExpectedBuildIds"
+    }:
+        _error("surface comparison artifact evidence is invalid")
+    for key in ("previousState", "currentState"):
+        if evidence[key] not in ARTIFACT_EVIDENCE_STATES:
+            _error("surface comparison artifact evidence is invalid")
+    for key in ("previousExpectedBuildIds", "currentExpectedBuildIds"):
+        values = evidence[key]
         if (
             not isinstance(values, list)
-            or any(not isinstance(value, str) or not value for value in values)
+            or any(
+                not isinstance(value, str)
+                or SHA256_PATTERN.fullmatch(value) is None
+                for value in values
+            )
             or values != sorted(set(values))
-            or not set(values) <= surface_id_set
         ):
-            _error("surface comparison risk surface map is not canonical")
-    inferred_runtime_capable_surface_ids = {
-        surface["surfaceId"]
-        for surface in comparison["surfaces"]
-        if "actual-runtime" in surface["carryForward"]
-    }
-    if (
-        runtime_capable_surface_ids is not None
-        and surface_id_set & runtime_capable_surface_ids
-        != inferred_runtime_capable_surface_ids
-    ):
-        _error("surface comparison runtime capability set is inconsistent")
-    expected_codes, expected_surfaces, _ = derive_risk_fields(
-        comparison["surfaces"],
-        toolchain_delta=comparison["toolchainChanged"],
-        runtime_capable_surface_ids=inferred_runtime_capable_surface_ids,
-        requires_placement_review=comparison["requiresPlacementReview"],
+            _error("surface comparison artifact evidence is not canonical")
+        state_key = "previousState" if key.startswith("previous") else "currentState"
+        state = evidence[state_key]
+        if (state == "not-evaluated" and values) or (
+            state in {"complete", "legacy-incomplete"} and not values
+        ):
+            _error("surface comparison artifact evidence identity is inconsistent")
+    codes = comparison["artifactRiskCodes"]
+    if not isinstance(codes, list) or codes != [code for code in ARTIFACT_RISK_CODES if code in codes]:
+        _error("surface comparison artifact risk codes are not canonical")
+    surfaces = comparison["artifactRiskSurfaces"]
+    known_surfaces = {item["surfaceId"] for item in comparison["surfaces"]}
+    if not isinstance(surfaces, dict) or list(surfaces) != codes:
+        _error("surface comparison artifact risk surface map is invalid")
+    for code in codes:
+        values = surfaces[code]
+        if (
+            not isinstance(values, list)
+            or any(
+                not isinstance(value, str) or value not in known_surfaces
+                for value in values
+            )
+            or values != sorted(set(values))
+            or not values
+        ):
+            _error("surface comparison artifact risk surface map is not canonical")
+    unknown = "artifact-evidence-unknown" in codes
+    if comparison["escalationState"] not in ESCALATION_STATES or (
+        comparison["escalationState"] == "unknown-fail-closed"
+    ) != unknown:
+        _error("surface comparison artifact escalation state is invalid")
+    evidence_complete = evidence["previousState"] == evidence["currentState"] == "complete"
+    evidence_not_evaluated = (
+        evidence["previousState"] == evidence["currentState"] == "not-evaluated"
     )
-    if risk_codes != expected_codes or risk_surfaces != expected_surfaces:
-        _error("surface comparison risk surface map is inconsistent")
+    runtime_surfaces = sorted(
+        item["surfaceId"]
+        for item in comparison["surfaces"]
+        if "actual-runtime" in item["carryForward"]
+    )
+    if evidence_complete:
+        if unknown:
+            _error("surface comparison complete artifact evidence is inconsistent")
+    elif evidence_not_evaluated:
+        if codes or surfaces or comparison["escalationState"] != "resolved":
+            _error("surface comparison unevaluated artifact evidence is inconsistent")
+    elif runtime_surfaces and (
+        codes != ["artifact-evidence-unknown"]
+        or surfaces != {"artifact-evidence-unknown": runtime_surfaces}
+    ):
+        _error("surface comparison incomplete artifact evidence is not fail-closed")
+    elif not runtime_surfaces and (
+        codes or surfaces or comparison["escalationState"] != "resolved"
+    ):
+        _error("surface comparison inapplicable artifact evidence is inconsistent")
+    artifact_runtime = artifact_runtime_escalation_surfaces(
+        train=comparison["train"],
+        artifact_risk_surfaces=surfaces,
+        runtime_capable_surface_ids=set(runtime_surfaces),
+    )
+    if artifact_runtime:
+        required_runtime = set(comparison["requiredSurfaces"]["actual-runtime"])
+        if not artifact_runtime <= required_runtime:
+            _error("surface comparison artifact risk is not fail-closed")
+        by_surface = {
+            item["surfaceId"]: item for item in comparison["surfaces"]
+        }
+        for surface_id in artifact_runtime:
+            surface = by_surface[surface_id]
+            if (
+                "actual-runtime" not in surface["freshEvidence"]
+                or "actual-runtime" not in surface["requiredEvidence"]
+                or surface["carryForward"].get("actual-runtime")
+                != {"eligible": False, "conditions": []}
+            ):
+                _error("surface comparison artifact risk is not fail-closed")
 
 
-def validate_comparison_v4(
+def validate_comparison_v5(
     comparison: object,
     *,
     runtime_capable_surface_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     if not isinstance(comparison, dict) or set(comparison) != ROOT_KEYS:
         _error("surface comparison root keys are invalid")
-    if type(comparison["schemaVersion"]) is not int or comparison[
-        "schemaVersion"
-    ] != CURRENT_COMPARISON_SCHEMA_VERSION:
+    payload = cast(dict[str, Any], comparison)
+    if payload.get("schemaVersion") != CURRENT_COMPARISON_SCHEMA_VERSION:
         _error("surface comparison identity is invalid")
-    v3 = {key: copy.deepcopy(comparison[key]) for key in V3_ROOT_KEYS}
-    v3["schemaVersion"] = V3_COMPARISON_SCHEMA_VERSION
-    validate_comparison_v3(v3)
-    if not isinstance(comparison["toolchainChanged"], bool):
-        _error("surface comparison toolchain flag is invalid")
-    _validate_risk_surfaces(
-        comparison,
-        runtime_capable_surface_ids=runtime_capable_surface_ids,
-    )
-    observation_risk_codes = comparison["observationRiskCodes"]
-    if observation_risk_codes not in ([], list(OBSERVATION_RISK_CODES)):
-        _error("surface comparison observation risk codes are invalid")
-    if comparison["requiresPlacementReview"] != bool(observation_risk_codes):
-        _error("surface comparison observation risk codes are inconsistent")
-    return comparison
+    v4 = {key: copy.deepcopy(payload[key]) for key in V4_ROOT_KEYS}
+    v4["schemaVersion"] = V4_COMPARISON_SCHEMA_VERSION
+    validate_comparison_v4(v4, runtime_capable_surface_ids=runtime_capable_surface_ids)
+    _validate_artifact_fields(payload)
+    return payload
 
 
 def validate_current_comparison(
@@ -246,13 +213,6 @@ def validate_current_comparison(
     *,
     runtime_capable_surface_ids: set[str] | None = None,
 ) -> dict[str, Any]:
-    return validate_comparison_v4(
-        comparison,
-        runtime_capable_surface_ids=runtime_capable_surface_ids,
+    return validate_comparison_v5(
+        comparison, runtime_capable_surface_ids=runtime_capable_surface_ids
     )
-
-
-def validate_legacy_v3_comparison_for_reconstruction(
-    comparison: object,
-) -> dict[str, Any]:
-    return validate_comparison_v3(comparison)

@@ -577,7 +577,7 @@ class ReplayInventoryTests(unittest.TestCase):
             list(adapted_legacy_ordered["surfaces"][0]["carryForward"]),
             ["actual-runtime", "shared-view"],
         )
-        for unsupported_version in (1.0, 5):
+        for unsupported_version in (1.0, 6):
             unsupported = copy.deepcopy(adapted)
             unsupported["schemaVersion"] = unsupported_version
             with self.assertRaisesRegex(ComparisonAdapterError, "schema is unsupported"):
