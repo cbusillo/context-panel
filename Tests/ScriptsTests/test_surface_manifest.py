@@ -31,6 +31,7 @@ resolve_policy = core_module.resolve_policy
 seal_expected_build = core_module.seal_expected_build
 validation_summary = core_module.validation_summary
 ComparisonSchemaError = comparison_schema_module.ComparisonSchemaError
+derive_risk_fields = comparison_schema_module.derive_risk_fields
 validate_current_comparison = comparison_schema_module.validate_current_comparison
 
 
@@ -409,6 +410,16 @@ class SurfaceManifestTests(unittest.TestCase):
             self.assertNotEqual(
                 baseline[surface_id]["fingerprints"], mutated[surface_id]["fingerprints"]
             )
+
+    def test_surface_policy_requires_toolchain_identity(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = self.fixture(temporary_directory)
+            policy_path = root / "Config/ContextPanelSurfacePolicy.json"
+            policy = json.loads(policy_path.read_text())
+            policy.pop("toolchain")
+            policy_path.write_text(json.dumps(policy, indent=2, sort_keys=True) + "\n")
+            with self.assertRaisesRegex(SurfacePolicyError, "toolchain is missing"):
+                resolve_policy(root)
 
     def test_swiftpm_manifest_is_explicitly_non_shipping(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -1000,6 +1011,19 @@ class SurfaceManifestTests(unittest.TestCase):
             if surface["surfaceId"] in runtime_capable:
                 self.assertIn("actual-runtime", surface["freshEvidence"])
 
+    def test_toolchain_divergence_with_no_runtime_capable_surfaces_is_valid(self):
+        previous = copy.deepcopy(self.baseline)
+        current = copy.deepcopy(self.baseline)
+        current["source"]["xcodeBuild"] = "27A000"
+        for manifest in (previous, current):
+            for surface in manifest["surfaces"]:
+                surface["evidenceCapabilities"] = ["shared-view"]
+        comparison = compare_manifests(previous, current, "beta")
+        self.assertTrue(comparison["toolchainChanged"])
+        self.assertEqual(comparison["riskCodes"], [])
+        self.assertEqual(comparison["riskSurfaces"], {})
+        self.assertEqual(validate_current_comparison(comparison), comparison)
+
     def test_build_number_only_change_is_not_toolchain_risk(self):
         next_build = copy.deepcopy(self.baseline)
         next_build["source"]["buildNumber"] = "2026073002"
@@ -1031,6 +1055,25 @@ class SurfaceManifestTests(unittest.TestCase):
         )
         with self.assertRaises(ComparisonSchemaError):
             validate_current_comparison(reversed_map)
+        missing_risks = copy.deepcopy(comparison)
+        missing_risks["riskCodes"] = []
+        missing_risks["riskSurfaces"] = {}
+        with self.assertRaises(ComparisonSchemaError):
+            validate_current_comparison(missing_risks)
+        empty_extra_risk = copy.deepcopy(comparison)
+        empty_extra_risk["riskCodes"].append("placement-divergence")
+        empty_extra_risk["riskSurfaces"]["placement-divergence"] = []
+        with self.assertRaises(ComparisonSchemaError):
+            validate_current_comparison(empty_extra_risk)
+
+    def test_risk_derivation_rejects_malformed_surface_inputs(self):
+        with self.assertRaises(ComparisonSchemaError):
+            derive_risk_fields(
+                [{"surfaceId": "macos.app"}],
+                toolchain_delta=False,
+                runtime_capable_surface_ids=set(),
+                requires_placement_review=False,
+            )
 
     def test_legacy_v3_comparison_reconstructs_without_v4_roots(self):
         current = compare_manifests(self.baseline, self.manifest(REPO_ROOT), "beta")

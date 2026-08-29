@@ -105,6 +105,26 @@ def derive_risk_fields(
     runtime_capable_surface_ids: set[str],
     requires_placement_review: bool,
 ) -> tuple[list[str], dict[str, list[str]], list[str]]:
+    if (
+        not isinstance(surfaces, list)
+        or type(toolchain_delta) is not bool
+        or not isinstance(runtime_capable_surface_ids, set)
+        or any(
+            not isinstance(surface_id, str) or not surface_id
+            for surface_id in runtime_capable_surface_ids
+        )
+        or type(requires_placement_review) is not bool
+    ):
+        _error("surface comparison risk inputs are invalid")
+    for surface in surfaces:
+        if (
+            not isinstance(surface, dict)
+            or not isinstance(surface.get("surfaceId"), str)
+            or not surface["surfaceId"]
+            or not isinstance(surface.get("reasonCodes"), list)
+            or any(not isinstance(value, str) for value in surface["reasonCodes"])
+        ):
+            _error("surface comparison risk inputs are invalid")
     risk_surfaces: dict[str, list[str]] = {}
     for risk_code, reason_code in REASON_CODE_RISKS.items():
         affected = [
@@ -150,8 +170,7 @@ def _validate_risk_surfaces(
         or list(risk_surfaces) != risk_codes
     ):
         _error("surface comparison risk surface map is invalid")
-    surface_ids = [surface["surfaceId"] for surface in comparison["surfaces"]]
-    surface_id_set = set(surface_ids)
+    surface_id_set = {surface["surfaceId"] for surface in comparison["surfaces"]}
     for risk_code in risk_codes:
         values = risk_surfaces[risk_code]
         if (
@@ -161,27 +180,25 @@ def _validate_risk_surfaces(
             or not set(values) <= surface_id_set
         ):
             _error("surface comparison risk surface map is not canonical")
-        reason_code = REASON_CODE_RISKS.get(risk_code)
-        if reason_code is not None:
-            expected = sorted(
-                surface["surfaceId"]
-                for surface in comparison["surfaces"]
-                if reason_code in surface["reasonCodes"]
-            )
-            if values != expected:
-                _error("surface comparison risk surface map is inconsistent")
-        elif risk_code == "toolchain-divergence":
-            if comparison["toolchainChanged"] is not True:
-                _error("surface comparison toolchain risk is inconsistent")
-            if runtime_capable_surface_ids is not None:
-                expected = sorted(surface_id_set & runtime_capable_surface_ids)
-                if values != expected:
-                    _error("surface comparison toolchain risk surfaces are inconsistent")
-    if comparison["toolchainChanged"] and "toolchain-divergence" not in risk_codes:
-        if runtime_capable_surface_ids is None or runtime_capable_surface_ids & surface_id_set:
-            _error("surface comparison toolchain change is not recorded")
-    if not comparison["toolchainChanged"] and "toolchain-divergence" in risk_codes:
-        _error("surface comparison toolchain risk is inconsistent")
+    inferred_runtime_capable_surface_ids = {
+        surface["surfaceId"]
+        for surface in comparison["surfaces"]
+        if "actual-runtime" in surface["carryForward"]
+    }
+    if (
+        runtime_capable_surface_ids is not None
+        and surface_id_set & runtime_capable_surface_ids
+        != inferred_runtime_capable_surface_ids
+    ):
+        _error("surface comparison runtime capability set is inconsistent")
+    expected_codes, expected_surfaces, _ = derive_risk_fields(
+        comparison["surfaces"],
+        toolchain_delta=comparison["toolchainChanged"],
+        runtime_capable_surface_ids=inferred_runtime_capable_surface_ids,
+        requires_placement_review=comparison["requiresPlacementReview"],
+    )
+    if risk_codes != expected_codes or risk_surfaces != expected_surfaces:
+        _error("surface comparison risk surface map is inconsistent")
 
 
 def validate_comparison_v4(

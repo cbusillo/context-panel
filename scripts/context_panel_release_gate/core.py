@@ -483,12 +483,12 @@ def _validate_surface_policy(
                 and "actual-runtime" in train_minimums[train]
             ):
                 fresh.add("actual-runtime")
-            if (
-                toolchain_changed
-                and train in {"rc", "release"}
-                and "actual-runtime" in capabilities
-            ):
-                fresh.add("actual-runtime")
+        if (
+            toolchain_changed
+            and train in {"rc", "release"}
+            and "actual-runtime" in capabilities
+        ):
+            fresh.add("actual-runtime")
         fresh_evidence = [
             value for value in EVIDENCE_CLASSES if value in capabilities and value in fresh
         ]
@@ -552,10 +552,7 @@ def _validate_comparison(
             if allow_legacy_reconstruction and comparison.get("schemaVersion") == 2
             else validate_legacy_v3_comparison_for_reconstruction(comparison)
             if allow_legacy_reconstruction and comparison.get("schemaVersion") == 3
-            else validate_current_comparison(
-                comparison,
-                runtime_capable_surface_ids=set(RUNTIME_SURFACES),
-            )
+            else validate_current_comparison(comparison)
         )
     except ComparisonSchemaError as error:
         raise ReleaseEvidenceError(f"surface comparison is invalid: {error}") from error
