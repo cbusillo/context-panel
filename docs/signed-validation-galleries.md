@@ -111,14 +111,16 @@ The executor recomputes the canonical planner output from the exact schema-v5
 comparison and requires the supplied requirements file to match it exactly.
 Empty plans are rejected. The receipt records a deterministic
 `requirementsDigest` and a unique `captureRunID`. Each run writes only beneath
-`<artifact-root>/<currentManifestID>/<captureRunID>/`; PNG files and the complete
-run `index.json` use `0600`, while each private directory uses `0700` and the
-public receipt uses `0644`.
+`<artifact-root>/<currentManifestID>/<captureRunID>/`; a hidden sibling staging
+directory is atomically renamed only after every PNG and the complete run
+`index.json` are ready. PNG files and `index.json` use `0600`, while each private
+directory uses `0700` and the public receipt uses `0644`.
 
 Before creating a simulator, one `xcrun simctl list -j` catalog read validates
 the configured runtime and device profile. Each profile uses a unique run-scoped
-simulator name. The executor captures a pre-route baseline, applies the gallery
-route fresh for every cell, captures two valid PNGs separated by a settle, and
+simulator name. For every cell, the executor captures a post-appearance,
+pre-route baseline, applies the gallery route fresh, captures two valid and
+decodable PNGs separated by a settle, and
 publishes only stable images that differ from the baseline and every other
 requirement in that profile. Light and dark use both `simctl ui appearance` and
 the route; adaptive appearance uses the route only. After the first cell, every

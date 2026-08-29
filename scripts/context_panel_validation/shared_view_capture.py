@@ -393,23 +393,26 @@ def _prepare_private_directory(path: Path) -> None:
     os.chmod(path, 0o700)
 
 
-def _create_run_directory(
+def _create_run_directories(
     manifest_directory: Path,
     run_id_factory: Callable[[], str],
-) -> tuple[str, Path]:
+) -> tuple[str, Path, Path]:
     for _ in range(8):
         run_id = run_id_factory()
         if not isinstance(run_id, str) or not CAPTURE_RUN_ID_PATTERN.fullmatch(run_id):
             raise SharedViewCaptureError("capture run identifier is invalid")
         run_directory = manifest_directory / run_id
+        staging_directory = manifest_directory / f".{run_id}.staging"
+        if run_directory.exists():
+            continue
         try:
-            run_directory.mkdir(mode=0o700)
+            staging_directory.mkdir(mode=0o700)
         except FileExistsError:
             continue
         except OSError as error:
             raise SharedViewCaptureError("capture run directory is unavailable") from error
-        os.chmod(run_directory, 0o700)
-        return run_id, run_directory
+        os.chmod(staging_directory, 0o700)
+        return run_id, staging_directory, run_directory
     raise SharedViewCaptureError("capture run identifier is not unique")
 
 
@@ -448,8 +451,11 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
     chunk_index = 0
     width = 0
     height = 0
+    bit_depth = 0
+    color_type = 0
     saw_idat = False
     saw_iend = False
+    compressed_image = bytearray()
     while offset < len(data):
         if len(data) - offset < 12:
             raise SharedViewCaptureError("captured image is invalid")
@@ -470,12 +476,21 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
                 raise SharedViewCaptureError("captured image is invalid")
             width = int.from_bytes(chunk_data[0:4], "big")
             height = int.from_bytes(chunk_data[4:8], "big")
-            if width <= 0 or height <= 0:
+            bit_depth = chunk_data[8]
+            color_type = chunk_data[9]
+            if (
+                width <= 0
+                or height <= 0
+                or bit_depth != 8
+                or color_type not in {2, 6}
+                or chunk_data[10:13] != b"\x00\x00\x00"
+            ):
                 raise SharedViewCaptureError("captured image is invalid")
         elif chunk_type == b"IHDR":
             raise SharedViewCaptureError("captured image is invalid")
         if chunk_type == b"IDAT":
             saw_idat = True
+            compressed_image.extend(chunk_data)
         if chunk_type == b"IEND":
             if chunk_length != 0 or chunk_end != len(data):
                 raise SharedViewCaptureError("captured image is invalid")
@@ -486,6 +501,17 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
             break
     if not saw_idat or not saw_iend or offset != len(data):
         raise SharedViewCaptureError("captured image is invalid")
+    channels = 3 if color_type == 2 else 4
+    try:
+        image_data = zlib.decompress(bytes(compressed_image))
+    except zlib.error as error:
+        raise SharedViewCaptureError("captured image is invalid") from error
+    row_size = 1 + (width * channels)
+    if len(image_data) != height * row_size:
+        raise SharedViewCaptureError("captured image is invalid")
+    for row_offset in range(0, len(image_data), row_size):
+        if image_data[row_offset] > 4:
+            raise SharedViewCaptureError("captured image is invalid")
     return PNGSnapshot(
         content=data,
         digest=hashlib.sha256(data).hexdigest(),
@@ -551,6 +577,24 @@ def _unknown_results(
             status="unknown",
             captured_at=now(),
             host_mechanism="simctl-gallery",
+            appearance_mechanism=None,
+            error_code=error_code,
+        )
+        for requirement in requirements
+    }
+
+
+def _blocked_results(
+    requirements: tuple[CaptureRequirement, ...],
+    error_code: str,
+    now: Callable[[], datetime],
+) -> dict[str, dict[str, object]]:
+    return {
+        requirement.requirement_id: _result(
+            requirement,
+            status="blocked",
+            captured_at=now(),
+            host_mechanism="unconfigured-profile",
             appearance_mechanism=None,
             error_code=error_code,
         )
@@ -670,6 +714,7 @@ def _take_screenshot(
     descriptor, temporary_name = tempfile.mkstemp(prefix=prefix, suffix=".png", dir=artifact_directory)
     os.close(descriptor)
     temporary_path = Path(temporary_name)
+    temporary_path.unlink()
     result = _run(
         runner,
         ["xcrun", "simctl", "io", simulator_id, "screenshot", str(temporary_path)],
@@ -740,7 +785,6 @@ def _capture_profile(
     artifact_paths: dict[str, Path] = {}
     simulator_name = _simulator_name(profile.name, capture_run_id)
     lifecycle_error: str | None = None
-    baseline: PNGSnapshot | None = None
     created = _run(
         runner,
         [
@@ -753,12 +797,18 @@ def _capture_profile(
         ],
         SIMCTL_CREATE_TIMEOUT,
     )
-    simulator_id = _created_simulator_id(created)
-    cleanup_target = simulator_id or simulator_name
-    if created.returncode != 0 or created.timed_out:
+    simulator_id: str | None = None
+    cleanup_target: str | None = None
+    if created.timed_out:
         lifecycle_error = _command_error_code(created, "simctl-create")
-    elif simulator_id is None:
-        lifecycle_error = "simctl-create-invalid-udid"
+        cleanup_target = simulator_name
+    elif created.returncode != 0:
+        lifecycle_error = _command_error_code(created, "simctl-create")
+    else:
+        simulator_id = _created_simulator_id(created)
+        cleanup_target = simulator_id or simulator_name
+        if simulator_id is None:
+            lifecycle_error = "simctl-create-invalid-udid"
 
     prerequisites = (
         ("boot", SIMCTL_BOOT_TIMEOUT, "simctl-boot"),
@@ -778,22 +828,9 @@ def _capture_profile(
                 lifecycle_error = _command_error_code(command_result, error_base)
                 break
 
-    if lifecycle_error is None and simulator_id is not None:
-        baseline, baseline_path, baseline_error = _take_screenshot(
-            runner,
-            simulator_id,
-            artifact_directory,
-            f".{profile.name}.baseline.",
-            "simctl-baseline-screenshot",
-            "simulator-baseline-image-invalid",
-        )
-        if baseline_path is not None:
-            baseline_path.unlink(missing_ok=True)
-        lifecycle_error = baseline_error
-
     if lifecycle_error is not None:
         results = _unknown_results(requirements, lifecycle_error, now)
-    elif simulator_id is not None and baseline is not None:
+    elif simulator_id is not None:
         seen_digests: dict[str, str | None] = {}
         for index, requirement in enumerate(requirements):
             appearance_mechanism: str | None = None
@@ -830,6 +867,26 @@ def _capture_profile(
                     )
                     continue
                 appearance_mechanism = "simctl-ui-appearance"
+            route_baseline, route_baseline_path, route_baseline_error = _take_screenshot(
+                runner,
+                simulator_id,
+                artifact_directory,
+                f".{requirement.requirement_id}.baseline.",
+                "simctl-baseline-screenshot",
+                "simulator-baseline-image-invalid",
+            )
+            if route_baseline_path is not None:
+                route_baseline_path.unlink(missing_ok=True)
+            if route_baseline_error is not None or route_baseline is None:
+                results[requirement.requirement_id] = _result(
+                    requirement,
+                    status="unknown",
+                    captured_at=now(),
+                    host_mechanism="simctl-gallery",
+                    appearance_mechanism=appearance_mechanism,
+                    error_code=route_baseline_error,
+                )
+                continue
             opened = _run(
                 runner,
                 ["xcrun", "simctl", "openurl", simulator_id, _capture_url(requirement)],
@@ -900,7 +957,7 @@ def _capture_profile(
                             error_code="capture-unstable",
                         )
                         continue
-                    if second_snapshot.digest == baseline.digest:
+                    if second_snapshot.digest == route_baseline.digest:
                         results[requirement.requirement_id] = _result(
                             requirement,
                             status="unknown",
@@ -962,7 +1019,10 @@ def _capture_profile(
             finally:
                 first_path.unlink(missing_ok=True)
 
-    cleanup_status, cleanup_error = _cleanup_simulator(runner, cleanup_target)
+    if cleanup_target is None:
+        cleanup_status, cleanup_error = "not-created", None
+    else:
+        cleanup_status, cleanup_error = _cleanup_simulator(runner, cleanup_target)
     if cleanup_error is not None:
         artifacts_removed = _remove_profile_artifacts(artifact_paths)
         final_error = cleanup_error if artifacts_removed else "artifact-cleanup-failed"
@@ -1055,7 +1115,10 @@ def execute_shared_view_capture(
     _prepare_private_directory(private_root)
     manifest_directory = private_root / plan.current_manifest_id
     _prepare_private_directory(manifest_directory)
-    capture_run_id, run_directory = _create_run_directory(manifest_directory, run_id_factory)
+    capture_run_id, staging_directory, run_directory = _create_run_directories(
+        manifest_directory,
+        run_id_factory,
+    )
     cleanup_statuses = {profile_name: "not-started" for profile_name in active_profile_names}
     run_published = False
     try:
@@ -1063,14 +1126,17 @@ def execute_shared_view_capture(
             requirements = tuple(configured_groups[profile_name])
             profile_error = profile_errors.get(profile_name)
             if profile_error is not None:
-                capture_results.update(_unknown_results(requirements, profile_error, now))
+                if profile_error.startswith("simctl-profile-"):
+                    capture_results.update(_blocked_results(requirements, profile_error, now))
+                else:
+                    capture_results.update(_unknown_results(requirements, profile_error, now))
                 continue
             profile_capture_completed = False
             try:
                 outcome = _capture_profile(
                     profiles[profile_name],
                     requirements,
-                    run_directory,
+                    staging_directory,
                     capture_run_id,
                     active_runner,
                     sleeper,
@@ -1102,11 +1168,16 @@ def execute_shared_view_capture(
             ],
             "captures": captures,
         }
-        _atomic_write_json(run_directory / "index.json", receipt, 0o600)
+        _atomic_write_json(staging_directory / "index.json", receipt, 0o600)
+        try:
+            os.replace(staging_directory, run_directory)
+        except OSError as error:
+            raise SharedViewCaptureError("capture run publication failed") from error
         _atomic_write_json(public_output, receipt, 0o644)
         run_published = True
     finally:
         if not run_published:
+            shutil.rmtree(staging_directory, ignore_errors=True)
             shutil.rmtree(run_directory, ignore_errors=True)
     statuses = {capture["status"] for capture in captures}
     if statuses == {"captured"}:

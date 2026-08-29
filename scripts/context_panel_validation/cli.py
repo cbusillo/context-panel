@@ -255,6 +255,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Validated current schema-v5 surface-manifest comparison",
     )
     capture_shared_view_evidence_parser.add_argument(
+        "--matrix",
+        type=Path,
+        default=DEFAULT_MATRIX_PATH,
+        help="Canonical shared-view matrix JSON",
+    )
+    capture_shared_view_evidence_parser.add_argument(
+        "--surface-policy",
+        type=Path,
+        default=DEFAULT_SURFACE_POLICY_PATH,
+        help="Canonical Context Panel surface policy JSON",
+    )
+    capture_shared_view_evidence_parser.add_argument(
         "--requirements",
         required=True,
         type=Path,
@@ -723,6 +735,8 @@ def run_capture_shared_view_evidence(args: argparse.Namespace) -> int:
         args.capture_config,
         args.artifact_root,
         args.output,
+        matrix_path=args.matrix,
+        surface_policy_path=args.surface_policy,
     )
     if args.json:
         print(json.dumps(receipt, indent=2, sort_keys=True))

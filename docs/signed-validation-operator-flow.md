@@ -131,8 +131,9 @@ with an installed prebuilt companion app and `contextpanelcompanion` gallery
 links. It recomputes the planner output from the supplied comparison, rejects
 truncated or empty work, and records a deterministic requirements digest. Each
 capture run is isolated at
-`<artifact-root>/<currentManifestID>/<captureRunID>/`; only a complete run index
-and public receipt are published. It writes no coordinator/session/runtime,
+`<artifact-root>/<currentManifestID>/<captureRunID>/`; a hidden staging sibling
+is atomically renamed before the public receipt is written, so only a complete
+run index and artifact set are published. It writes no coordinator/session/runtime,
 approval, or visual-review state and never approves or rejects evidence.
 `macos`, `watchos`, and `tvos` requirements are returned as explicit
 `unsupported-host-mechanism` blocks; unavailable configured profiles are also
