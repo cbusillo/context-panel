@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import plistlib
 import re
 import subprocess
@@ -13,9 +14,12 @@ from .core import SurfacePolicyError, load_json_object, manifest_surface_map
 CommandRunner = Callable[[Sequence[str]], subprocess.CompletedProcess[bytes]]
 UUID_LINE_PATTERN = re.compile(
     rb"^UUID: ([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-"
-    rb"[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}) ",
+    rb"[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}) \(([^)]+)\)",
     re.MULTILINE,
 )
+SIGNING_IDENTIFIER_PATTERN = re.compile(rb"^Identifier=(.+)$", re.MULTILINE)
+TEAM_IDENTIFIER_PATTERN = re.compile(rb"^TeamIdentifier=(.+)$", re.MULTILINE)
+AUTHORITY_PATTERN = re.compile(rb"^Authority=(.+)$", re.MULTILINE)
 
 
 def run_command(arguments: Sequence[str]) -> subprocess.CompletedProcess[bytes]:
@@ -38,6 +42,17 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def canonical_json_hash(payload: object) -> str:
+    return sha256_bytes(
+        json.dumps(
+            payload,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    )
 
 
 def info_plist_path(bundle: Path) -> Path:
@@ -70,20 +85,142 @@ def profile_path(bundle: Path, override: Path | None = None) -> Path:
     raise SurfacePolicyError("artifact provisioning profile is missing")
 
 
-def canonical_entitlements_hash(data: bytes) -> str:
+def plist_from_command_output(data: bytes, unavailable: str, invalid: str) -> Any:
     start = data.find(b"<?xml")
     if start < 0:
         start = data.find(b"bplist")
     if start < 0:
-        raise SurfacePolicyError("artifact signed entitlements are unavailable")
+        raise SurfacePolicyError(unavailable)
     try:
-        entitlements = plistlib.loads(data[start:])
+        payload = plistlib.loads(data[start:])
     except Exception as error:
-        raise SurfacePolicyError("artifact signed entitlements are invalid") from error
-    if not isinstance(entitlements, dict):
+        raise SurfacePolicyError(invalid) from error
+    return payload
+
+
+def semantic_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): semantic_value(value[key]) for key in sorted(value)}
+    if isinstance(value, (list, tuple, set)):
+        members = [semantic_value(item) for item in value]
+        by_key = {
+            json.dumps(item, ensure_ascii=True, separators=(",", ":"), sort_keys=True): item
+            for item in members
+        }
+        return [by_key[key] for key in sorted(by_key)]
+    if isinstance(value, bytes):
+        return value.hex()
+    return value
+
+
+def canonical_entitlements(data: bytes) -> dict[str, Any]:
+    entitlements = plist_from_command_output(
+        data,
+        "artifact signed entitlements are unavailable",
+        "artifact signed entitlements are invalid",
+    )
+    if not isinstance(entitlements, dict) or not entitlements:
+        raise SurfacePolicyError("artifact signed entitlements are invalid")
+    return semantic_value(entitlements)
+
+
+def canonical_entitlements_hash(data: bytes) -> str:
+    entitlements = plist_from_command_output(
+        data,
+        "artifact signed entitlements are unavailable",
+        "artifact signed entitlements are invalid",
+    )
+    if not isinstance(entitlements, dict) or not entitlements:
         raise SurfacePolicyError("artifact signed entitlements are invalid")
     canonical = plistlib.dumps(entitlements, fmt=plistlib.FMT_BINARY, sort_keys=True)
     return sha256_bytes(canonical)
+
+
+def entitlement_contract_hash(entitlements: dict[str, Any]) -> str:
+    return canonical_json_hash({"effectiveEntitlements": entitlements})
+
+
+def signing_class(authorities: list[str]) -> str:
+    joined = "\n".join(authorities).lower()
+    if not joined:
+        return "ad-hoc"
+    if "apple distribution" in joined:
+        return "Apple Distribution"
+    if "apple development" in joined:
+        return "Apple Development"
+    if "developer id application" in joined:
+        return "Developer ID Application"
+    return "Other"
+
+
+def inspect_signing_metadata(bundle: Path, bundle_identifier: str, runner: CommandRunner) -> tuple[str, str]:
+    result = runner(["/usr/bin/codesign", "-d", "--verbose=4", str(bundle)])
+    if result.returncode != 0:
+        raise SurfacePolicyError("artifact code signing metadata is unavailable")
+    identifier = _first_metadata_value(SIGNING_IDENTIFIER_PATTERN, result.stderr)
+    if identifier != bundle_identifier:
+        raise SurfacePolicyError("artifact signing identifier does not match bundle identifier")
+    team_identifier = _first_metadata_value(TEAM_IDENTIFIER_PATTERN, result.stderr)
+    authorities = [match.decode("utf-8", "replace") for match in AUTHORITY_PATTERN.findall(result.stderr)]
+    normalized_class = signing_class(authorities)
+    contract = {
+        "identifierMatchesBundleIdentifier": True,
+        "signingClass": normalized_class,
+        "teamIdentitySha256": sha256_bytes(team_identifier.encode("utf-8")) if team_identifier else None,
+    }
+    return normalized_class, canonical_json_hash(contract)
+
+
+def _first_metadata_value(pattern: re.Pattern[bytes], data: bytes) -> str:
+    match = pattern.search(data)
+    return match.group(1).decode("utf-8", "replace").strip() if match else ""
+
+
+def profile_payload(path: Path, runner: CommandRunner) -> dict[str, Any]:
+    result = runner(["/usr/bin/security", "cms", "-D", "-i", str(path)])
+    if result.returncode != 0:
+        raise SurfacePolicyError("artifact provisioning profile is undecodable")
+    payload = plist_from_command_output(
+        result.stdout,
+        "artifact provisioning profile is undecodable",
+        "artifact provisioning profile is invalid",
+    )
+    if not isinstance(payload, dict) or not payload:
+        raise SurfacePolicyError("artifact provisioning profile is invalid")
+    return payload
+
+
+def profile_capability_hash(payload: dict[str, Any]) -> str:
+    effective_entitlements = payload.get("Entitlements")
+    if not isinstance(effective_entitlements, dict) or not effective_entitlements:
+        raise SurfacePolicyError("artifact provisioning profile entitlements are invalid")
+    contract = {
+        "TeamIdentifier": semantic_value(payload.get("TeamIdentifier")),
+        "ApplicationIdentifierPrefix": semantic_value(payload.get("ApplicationIdentifierPrefix")),
+        "Platform": semantic_value(payload.get("Platform")),
+        "ProvisionsAllDevices": bool(payload.get("ProvisionsAllDevices"))
+        if "ProvisionsAllDevices" in payload
+        else None,
+        "Entitlements": semantic_value(effective_entitlements),
+    }
+    return canonical_json_hash(contract)
+
+
+def bundle_contract_hash(
+    *,
+    artifact_id: str,
+    bundle_identifier: str,
+    package_type: str,
+    executable_name: str,
+) -> str:
+    return canonical_json_hash(
+        {
+            "artifactId": artifact_id,
+            "bundleIdentifier": bundle_identifier,
+            "packageType": package_type,
+            "executableName": executable_name,
+        }
+    )
 
 
 def inspect_bundle(
@@ -123,19 +260,25 @@ def inspect_bundle(
     signature = runner(["/usr/bin/codesign", "--verify", "--strict", str(bundle)])
     if signature.returncode != 0:
         raise SurfacePolicyError(f"archive artifact code signature is invalid: {artifact_id}")
-    entitlements = runner(
-        ["/usr/bin/codesign", "-d", "--entitlements", ":-", str(bundle)]
+    signing_class_name, signing_contract_sha256 = inspect_signing_metadata(
+        bundle,
+        actual_identity["bundleIdentifier"],
+        runner,
     )
+    entitlements = runner(["/usr/bin/codesign", "-d", "--entitlements", "-", str(bundle)])
     if entitlements.returncode != 0:
         raise SurfacePolicyError(f"archive artifact entitlements are unavailable: {artifact_id}")
+    canonical_signed_entitlements = canonical_entitlements(entitlements.stdout)
     uuids_result = runner(["/usr/bin/xcrun", "dwarfdump", "--uuid", str(executable)])
     if uuids_result.returncode != 0:
         raise SurfacePolicyError(f"archive artifact UUIDs are unavailable: {artifact_id}")
-    uuids = sorted(
-        {match.decode("ascii").upper() for match in UUID_LINE_PATTERN.findall(uuids_result.stdout)}
-    )
-    if not uuids:
+    uuid_entries = UUID_LINE_PATTERN.findall(uuids_result.stdout)
+    uuids = sorted({match[0].decode("ascii").upper() for match in uuid_entries})
+    architectures = sorted({match[1].decode("ascii").strip() for match in uuid_entries})
+    if not uuids or not architectures or any(not architecture for architecture in architectures):
         raise SurfacePolicyError(f"archive artifact UUIDs are unavailable: {artifact_id}")
+    embedded_profile = profile_path(bundle, profile_override)
+    decoded_profile = profile_payload(embedded_profile, runner)
 
     return {
         "artifactId": artifact_id,
@@ -144,7 +287,18 @@ def inspect_bundle(
         "executableSha256": sha256_file(executable),
         "executableUUIDs": uuids,
         "entitlementsSha256": canonical_entitlements_hash(entitlements.stdout),
-        "profileSha256": sha256_file(profile_path(bundle, profile_override)),
+        "profileSha256": sha256_file(embedded_profile),
+        "bundleContractSha256": bundle_contract_hash(
+            artifact_id=artifact_id,
+            bundle_identifier=actual_identity["bundleIdentifier"],
+            package_type=str(info.get("CFBundlePackageType") or ""),
+            executable_name=str(info.get("CFBundleExecutable") or ""),
+        ),
+        "signingClass": signing_class_name,
+        "signingContractSha256": signing_contract_sha256,
+        "entitlementContractSha256": entitlement_contract_hash(canonical_signed_entitlements),
+        "profileCapabilitySha256": profile_capability_hash(decoded_profile),
+        "architectures": architectures,
     }
 
 
@@ -212,7 +366,7 @@ def collect_archive_evidence(
             )
         )
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "sourceManifestId": source_manifest_id,
         "layout": layout_name,
         "archiveName": archive_path.name,

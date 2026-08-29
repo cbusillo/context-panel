@@ -105,6 +105,12 @@ def expected_manifest(surfaces: tuple[str, ...]) -> dict[str, object]:
                 "executableUUIDs": [LOADED_UUID, SECOND_UUID],
                 "entitlementsSha256": sha(f"{artifact_id}:entitlements"),
                 "profileSha256": sha(f"{artifact_id}:profile"),
+                "bundleContractSha256": sha(f"{artifact_id}:bundle-contract"),
+                "signingClass": "Apple Distribution",
+                "signingContractSha256": sha(f"{artifact_id}:signing-contract"),
+                "entitlementContractSha256": sha(f"{artifact_id}:entitlement-contract"),
+                "profileCapabilitySha256": sha(f"{artifact_id}:profile-capability"),
+                "architectures": ["arm64", "x86_64"],
             }
         )
         surface_entries.append(
@@ -116,7 +122,7 @@ def expected_manifest(surfaces: tuple[str, ...]) -> dict[str, object]:
             }
         )
     payload: dict[str, object] = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "kind": "context-panel-expected-signed-build",
         "algorithm": "sha256",
         "digestDomain": "context-panel-surface/v1",
@@ -135,6 +141,27 @@ def expected_manifest(surfaces: tuple[str, ...]) -> dict[str, object]:
         "artifacts": artifacts,
         "surfaces": surface_entries,
     }
+    payload["expectedBuildId"] = runtime_module.hash_parts(
+        "context-panel-surface/v1/expected-build",
+        [runtime_module.canonical_json(payload)],
+    )
+    return payload
+
+
+def legacy_v1_expected_manifest(surfaces: tuple[str, ...]) -> dict[str, object]:
+    payload = expected_manifest(surfaces)
+    payload["schemaVersion"] = 1
+    for artifact in payload["artifacts"]:
+        for key in (
+            "bundleContractSha256",
+            "signingClass",
+            "signingContractSha256",
+            "entitlementContractSha256",
+            "profileCapabilitySha256",
+            "architectures",
+        ):
+            artifact.pop(key)
+    payload.pop("expectedBuildId")
     payload["expectedBuildId"] = runtime_module.hash_parts(
         "context-panel-surface/v1/expected-build",
         [runtime_module.canonical_json(payload)],
@@ -334,6 +361,12 @@ class RuntimeReceiptIngestionTests(unittest.TestCase):
                     "executableUUIDs": [LOADED_UUID],
                     "entitlementsSha256": sha(f"{artifact_id}:entitlements"),
                     "profileSha256": sha(f"{artifact_id}:profile"),
+                    "bundleContractSha256": sha(f"{artifact_id}:bundle-contract"),
+                    "signingClass": "Apple Distribution",
+                    "signingContractSha256": sha(f"{artifact_id}:signing-contract"),
+                    "entitlementContractSha256": sha(f"{artifact_id}:entitlement-contract"),
+                    "profileCapabilitySha256": sha(f"{artifact_id}:profile-capability"),
+                    "architectures": ["arm64"],
                 }
             )
         sealed = seal_expected_build(source_manifest, artifact_evidence)
@@ -351,6 +384,31 @@ class RuntimeReceiptIngestionTests(unittest.TestCase):
             [identity.surface for identity in identities],
             list(surfaces),
         )
+
+    def test_loader_accepts_legacy_v1_expected_build_manifest(self):
+        payload = legacy_v1_expected_manifest(("macos.app",))
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            manifest_path = Path(temporary_directory) / "ExpectedBuildManifest-v1.json"
+            manifest_path.write_text(json.dumps(payload))
+            identities = load_expected_surface_identities(
+                [manifest_path],
+                TARGET,
+                ("macos.app",),
+            )
+        self.assertEqual([identity.surface for identity in identities], ["macos.app"])
+
+    def test_loader_rejects_v2_semantic_field_tamper(self):
+        payload = expected_manifest(("macos.app",))
+        payload["artifacts"][0]["profileCapabilitySha256"] = "f" * 64
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            manifest_path = Path(temporary_directory) / "ExpectedBuildManifest-v2.json"
+            manifest_path.write_text(json.dumps(payload))
+            with self.assertRaisesRegex(RuntimeEvidenceError, "expected signed build manifest is invalid"):
+                load_expected_surface_identities(
+                    [manifest_path],
+                    TARGET,
+                    ("macos.app",),
+                )
 
     def test_incremental_manifests_cannot_mix_disjoint_contract_identities(self):
         surfaces = ("macos.app", "macos.widget")

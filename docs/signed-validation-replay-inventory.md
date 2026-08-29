@@ -82,6 +82,8 @@ their evidence chain:
 - previous and current source-manifest IDs;
 - policy-pinned manifest, contract-fingerprint, and required-surface metadata;
 - expected-build manifest set and target identity;
+- expected-build schema v1/v2 compatibility, with v2 adding only public-safe
+  semantic artifact digests, signing class, and canonical architectures;
 - final-report target;
 - visual approval requirement and decision set;
 - runtime receipt identity membership, with retained bodies required to
@@ -105,6 +107,14 @@ against that same frozen v2 contract. Retained v3 comparisons use
 reconstruction may validate embedded signed v1, v2, or v3 comparisons while
 preserving their raw comparison digests; those exceptions are unavailable to
 direct production inputs.
+
+Expected signed-build manifests have their own compatibility contract. Newly
+sealed manifests use schema v2, which preserves v1 raw provenance fields and
+adds semantic bundle, signing, entitlement, provisioning-capability, and
+architecture contracts. Retained schema v1 expected-build manifests remain
+accepted during release-gate, validation, lineage, and replay reconstruction
+without rewriting; replay must keep their exact `expectedBuildId` binding rather
+than backfilling v2 fields.
 
 The v1 adapter verifies its contract, implementation, and transitive dependency
 digests at runtime. The exact schema v2 validator is retained in

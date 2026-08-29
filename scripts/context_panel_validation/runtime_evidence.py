@@ -13,6 +13,8 @@ import tempfile
 from typing import Any
 import uuid
 
+from context_panel_expected_build import validate_expected_build_manifest
+
 from .models import (
     EXIT_BLOCKED,
     EXIT_OK,
@@ -37,8 +39,6 @@ from .session import (
 
 RUNTIME_EVIDENCE_SCHEMA_VERSION = 1
 MAXIMUM_RUNTIME_RECEIPT_COUNT = 4096
-SURFACE_MANIFEST_ALGORITHM = "sha256"
-SURFACE_DIGEST_DOMAIN = "context-panel-surface/v1"
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 UUID_PATTERN = re.compile(
     r"^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$"
@@ -68,36 +68,6 @@ EXTENSION_HOST_SURFACES = {
     "watchos.complication": "watchos.app",
     "tvos.top-shelf": "tvos.app",
 }
-EXPECTED_MANIFEST_KEYS = {
-    "schemaVersion",
-    "kind",
-    "algorithm",
-    "digestDomain",
-    "sourceManifestId",
-    "contractFingerprint",
-    "layout",
-    "archive",
-    "source",
-    "artifacts",
-    "surfaces",
-    "expectedBuildId",
-}
-EXPECTED_ARTIFACT_KEYS = {
-    "artifactId",
-    "bundleIdentifier",
-    "marketingVersion",
-    "buildNumber",
-    "sourceCommit",
-    "configuration",
-    "xcodeBuild",
-    "treeState",
-    "codeSignatureValid",
-    "executableSha256",
-    "executableUUIDs",
-    "entitlementsSha256",
-    "profileSha256",
-}
-EXPECTED_SURFACE_KEYS = {"id", "artifactId", "bundleIdentifier", "fingerprints"}
 FINGERPRINT_KEYS = {"render", "runtime", "placement", "combined"}
 RUNTIME_SESSION_KEYS = {
     "schemaVersion",
@@ -853,37 +823,22 @@ def expected_surface_identities_from_payloads(
     manifest_identity: tuple[str, str] | None = None
     requested = set(requested_surfaces)
     for payload in payloads:
-        if not isinstance(payload, dict) or set(payload) != EXPECTED_MANIFEST_KEYS:
-            raise RuntimeEvidenceError("expected signed build manifest is invalid")
-        digest_domain = payload.get("digestDomain")
+        def expected_build_error(message: str) -> RuntimeEvidenceError:
+            if message == "expected signed build manifest target is invalid":
+                return RuntimeEvidenceError(
+                    "expected signed build manifest targets another build"
+                )
+            return RuntimeEvidenceError(message)
+
+        validated = validate_expected_build_manifest(
+            payload,
+            version=target.version,
+            build_number=target.build_number,
+            valid_surfaces=set(RUNTIME_SURFACES),
+            error=expected_build_error,
+        )
         expected_build_id = payload.get("expectedBuildId")
-        unsigned_payload = {key: value for key, value in payload.items() if key != "expectedBuildId"}
-        if (
-            payload.get("schemaVersion") != 1
-            or payload.get("kind") != "context-panel-expected-signed-build"
-            or payload.get("algorithm") != SURFACE_MANIFEST_ALGORITHM
-            or digest_domain != SURFACE_DIGEST_DOMAIN
-            or not is_sha256(payload.get("sourceManifestId"))
-            or not is_sha256(payload.get("contractFingerprint"))
-            or not is_sha256(expected_build_id)
-            or hash_parts(
-                f"{digest_domain}/expected-build",
-                [canonical_json(unsigned_payload)],
-            )
-            != expected_build_id
-        ):
-            raise RuntimeEvidenceError("expected signed build manifest is invalid")
-        source = payload.get("source")
-        artifacts_payload = payload.get("artifacts")
-        surfaces_payload = payload.get("surfaces")
-        if (
-            not isinstance(source, dict)
-            or source.get("marketingVersion") != target.version
-            or source.get("buildNumber") != target.build_number
-            or not isinstance(artifacts_payload, list)
-            or not isinstance(surfaces_payload, list)
-        ):
-            raise RuntimeEvidenceError("expected signed build manifest targets another build")
+        surfaces_payload = validated.surfaces
         current_manifest_identity = (
             str(payload["sourceManifestId"]),
             str(payload["contractFingerprint"]),
@@ -892,50 +847,18 @@ def expected_surface_identities_from_payloads(
             raise RuntimeEvidenceError("expected signed build manifests do not share one identity")
         manifest_identity = current_manifest_identity
 
-        artifacts: dict[str, dict[str, object]] = {}
-        for artifact in artifacts_payload:
-            if not isinstance(artifact, dict) or set(artifact) != EXPECTED_ARTIFACT_KEYS:
-                raise RuntimeEvidenceError("expected signed build artifact is invalid")
-            artifact_id = artifact.get("artifactId")
-            executable_uuids = normalized_uuid_list(artifact.get("executableUUIDs"))
-            if (
-                not isinstance(artifact_id, str)
-                or not artifact_id
-                or artifact_id in artifacts
-                or not isinstance(artifact.get("bundleIdentifier"), str)
-                or not artifact.get("bundleIdentifier")
-                or artifact.get("marketingVersion") != target.version
-                or artifact.get("buildNumber") != target.build_number
-                or artifact.get("codeSignatureValid") is not True
-                or executable_uuids is None
-                or any(
-                    not is_sha256(artifact.get(key))
-                    for key in ("executableSha256", "entitlementsSha256", "profileSha256")
-                )
-            ):
-                raise RuntimeEvidenceError("expected signed build artifact is invalid")
-            artifacts[artifact_id] = {**artifact, "executableUUIDs": executable_uuids}
-
         seen_manifest_surfaces: set[str] = set()
         for surface_payload in surfaces_payload:
-            if not isinstance(surface_payload, dict) or set(surface_payload) != EXPECTED_SURFACE_KEYS:
-                raise RuntimeEvidenceError("expected signed build surface is invalid")
             surface = surface_payload.get("id")
-            if surface not in RUNTIME_SURFACES or surface in seen_manifest_surfaces:
+            if surface in seen_manifest_surfaces:
                 raise RuntimeEvidenceError("expected signed build surface is invalid")
             seen_manifest_surfaces.add(str(surface))
             if surface not in requested:
                 continue
             artifact_id = surface_payload.get("artifactId")
-            artifact = artifacts.get(str(artifact_id))
+            artifact = validated.artifacts.get(str(artifact_id))
             fingerprints = surface_payload.get("fingerprints")
-            if (
-                artifact is None
-                or surface_payload.get("bundleIdentifier") != artifact.get("bundleIdentifier")
-                or not isinstance(fingerprints, dict)
-                or set(fingerprints) != FINGERPRINT_KEYS
-                or any(not is_sha256(fingerprints.get(key)) for key in FINGERPRINT_KEYS)
-            ):
+            if artifact is None or not isinstance(fingerprints, dict):
                 raise RuntimeEvidenceError("expected signed build surface is invalid")
             identity = ExpectedSurfaceIdentity(
                 surface=str(surface),
