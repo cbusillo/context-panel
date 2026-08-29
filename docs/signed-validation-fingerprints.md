@@ -120,10 +120,16 @@ Compare two manifests with:
 scripts/context-panel-surface-manifest.py compare \
   --previous previous.json \
   --current current.json \
-  --previous-expected-build-manifest previous-expected.json \
-  --current-expected-build-manifest current-expected.json \
+  --previous-expected-build-manifest previous-platform-1.json \
+  --previous-expected-build-manifest previous-platform-2.json \
+  --current-expected-build-manifest current-platform-1.json \
+  --current-expected-build-manifest current-platform-2.json \
   --train rc
 ```
+
+Repeat both expected-build options until every archive layout represented by
+the source manifest is covered. Partial coverage remains valid diagnostic
+input, but schema v5 records it as missing evidence and escalates fail-closed.
 
 Comparison payloads currently use schema v5. Schema v4 remains frozen in
 `scripts/context_panel_surface_manifest/comparison_schema_v4.py` for archived

@@ -785,11 +785,18 @@ manifest for the intended train:
 scripts/context-panel-surface-manifest.py compare \
   --previous <previous-source-manifest.json> \
   --current <candidate-source-manifest.json> \
-  --previous-expected-build-manifest <previous-expected-build.json> \
-  --current-expected-build-manifest <candidate-expected-build.json> \
+  --previous-expected-build-manifest <previous-platform-1.json> \
+  --previous-expected-build-manifest <previous-platform-2.json> \
+  --current-expected-build-manifest <candidate-platform-1.json> \
+  --current-expected-build-manifest <candidate-platform-2.json> \
   --train <beta|rc|release> \
   --output <comparison.json>
 ```
+
+Repeat each expected-build option for every archive layout that covers the
+shipping surface manifest. Partial layout coverage is recorded as missing
+artifact evidence and escalates fail-closed; it is useful for diagnostics but
+is not a complete signed-train comparison.
 
 ### Release Evidence Carry-Forward Gate
 

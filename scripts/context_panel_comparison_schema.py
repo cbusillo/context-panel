@@ -98,7 +98,10 @@ def _validate_artifact_fields(comparison: dict[str, Any]) -> None:
         ):
             _error("surface comparison artifact evidence is not canonical")
         state_key = "previousState" if key.startswith("previous") else "currentState"
-        if (evidence[state_key] in {"complete", "legacy-incomplete"}) != bool(values):
+        state = evidence[state_key]
+        if (state == "not-evaluated" and values) or (
+            state in {"complete", "legacy-incomplete"} and not values
+        ):
             _error("surface comparison artifact evidence identity is inconsistent")
     codes = comparison["artifactRiskCodes"]
     if not isinstance(codes, list) or codes != [code for code in ARTIFACT_RISK_CODES if code in codes]:
@@ -176,10 +179,6 @@ def validate_current_comparison(
     *,
     runtime_capable_surface_ids: set[str] | None = None,
 ) -> dict[str, Any]:
-    if isinstance(comparison, dict) and comparison.get("schemaVersion") == V4_COMPARISON_SCHEMA_VERSION:
-        return validate_comparison_v4(
-            comparison, runtime_capable_surface_ids=runtime_capable_surface_ids
-        )
     return validate_comparison_v5(
         comparison, runtime_capable_surface_ids=runtime_capable_surface_ids
     )

@@ -230,7 +230,9 @@ def _validate_artifact_comparison_inputs(
         if not isinstance(manifests, list) or any(
             not isinstance(item, dict) for item in manifests
         ):
-            return
+            raise ReleaseEvidenceError(
+                "comparison artifact evidence requires previous expected-build context"
+            )
         previous_payloads = manifests
     if evidence["currentState"] == "not-evaluated":
         current_payloads: list[dict[str, Any]] | None = None
@@ -1507,7 +1509,7 @@ def evaluate_release_evidence(
     comparison: dict[str, Any],
     validation_report: dict[str, Any],
     identities: tuple[ExpectedSurfaceIdentity, ...],
-    expected_build_manifests: tuple[dict[str, Any], ...] | None = None,
+    expected_build_manifests: tuple[dict[str, Any], ...],
     policy: dict[str, Any],
     surface_policy: dict[str, Any],
     previous_ledger: dict[str, Any] | None = None,
@@ -1601,7 +1603,9 @@ def evaluate_release_evidence(
             required_shadow_train_count=policy["requiredShadowTrainCount"],
         )
         previous_expires_at = parse_iso8601(verified_previous_ledger.get("expiresAt"))
-        if comparison.get("schemaVersion") == 5:
+        if comparison.get("schemaVersion") == 5 and comparison["artifactEvidence"].get(
+            "previousState"
+        ) in {"complete", "legacy-incomplete"}:
             generation = previous_ledger.get("generation")
             manifests = generation.get("expectedBuildManifests") if isinstance(generation, dict) else None
             if not isinstance(manifests, list) or comparison["artifactEvidence"].get(
@@ -1614,7 +1618,7 @@ def evaluate_release_evidence(
                 }
             ):
                 raise ReleaseEvidenceError("comparison artifact evidence does not bind previous builds")
-    if comparison.get("schemaVersion") == 5 and expected_build_manifests is not None:
+    if comparison.get("schemaVersion") == 5:
         _validate_artifact_comparison_inputs(
             comparison,
             current_manifests=expected_build_manifests,
@@ -1839,7 +1843,7 @@ def release_evidence_report_blockers(
     validation_report: dict[str, Any] | None = None,
     comparison: dict[str, Any] | None = None,
     identities: tuple[ExpectedSurfaceIdentity, ...] = (),
-    expected_build_manifests: tuple[dict[str, Any], ...] | None = None,
+    expected_build_manifests: tuple[dict[str, Any], ...] = (),
     policy: dict[str, Any] | None = None,
     surface_policy: dict[str, Any] | None = None,
     previous_ledger: dict[str, Any] | None = None,

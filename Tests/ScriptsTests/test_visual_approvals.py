@@ -109,7 +109,7 @@ class VisualApprovalTests(unittest.TestCase):
     def write_plan_files(self) -> tuple[Path, Path]:
         comparison = {
             "kind": "context-panel-surface-comparison",
-            "schemaVersion": 4,
+            "schemaVersion": 5,
             "train": "beta",
             "previousManifestId": "c" * 64,
             "currentManifestId": MANIFEST_ID,
@@ -124,6 +124,17 @@ class VisualApprovalTests(unittest.TestCase):
             "requiresRuntimeSession": True,
             "requiresPlacementReview": True,
             "toolchainChanged": False,
+            "artifactEvidence": {
+                "previousState": "missing",
+                "currentState": "complete",
+                "previousExpectedBuildIds": [],
+                "currentExpectedBuildIds": [self.shared_identity.expected_build_id],
+            },
+            "artifactRiskCodes": ["artifact-evidence-unknown"],
+            "artifactRiskSurfaces": {
+                "artifact-evidence-unknown": ["watchos.complication"]
+            },
+            "escalationState": "unknown-fail-closed",
             "surfaces": [
                 {
                     "surfaceId": "watchos.app",
@@ -525,6 +536,9 @@ class VisualApprovalTests(unittest.TestCase):
         comparison["requiresRuntimeSession"] = False
         comparison["requiresPlacementReview"] = False
         comparison["observationRiskCodes"] = []
+        comparison["artifactRiskCodes"] = []
+        comparison["artifactRiskSurfaces"] = {}
+        comparison["escalationState"] = "resolved"
         comparison["surfaces"] = [
             {
                 "surfaceId": "watchos.app",

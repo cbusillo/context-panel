@@ -1293,15 +1293,6 @@ def compare_manifests(
         )
 
     removed_surfaces = sorted(set(previous_surfaces) - set(current_surfaces))
-    required_surfaces = {
-        evidence_class: [
-            surface["surfaceId"]
-            for surface in results
-            if evidence_class in surface["requiredEvidence"]
-        ]
-        for evidence_class in class_order
-    }
-    runtime_state, runtime_state_reasons = derive_runtime_decision(results)
     runtime_capable_surface_ids = {
         surface_id
         for surface_id, surface in current_surfaces.items()
@@ -1349,6 +1340,7 @@ def compare_manifests(
                     if evidence_class in {*surface["requiredEvidence"], "actual-runtime"}
                 ]
                 surface["carryForward"]["actual-runtime"] = {"eligible": False, "conditions": []}
+    runtime_state, runtime_state_reasons = derive_runtime_decision(results)
     required_surfaces = {
         evidence_class: [
             surface["surfaceId"]

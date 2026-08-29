@@ -108,8 +108,9 @@ class SurfaceManifestTests(unittest.TestCase):
             tree_state=tree_state,
         )
 
-    def expected_build(self, manifest, mutate=None):
-        template = evidence_template(manifest)
+    @staticmethod
+    def expected_build(manifest, mutate=None, layout=None):
+        template = evidence_template(manifest, layout)
         for artifact in template["artifacts"]:
             artifact.update(v2_artifact_contract(artifact["artifactId"].encode()))
         if mutate is not None:
@@ -1390,11 +1391,15 @@ class SurfaceManifestTests(unittest.TestCase):
         )
         for field, risk_code, replacement in semantic_cases:
             with self.subTest(field=field):
-                def mutate(template, field=field, replacement=replacement):
+                def mutate(
+                    template,
+                    semantic_field=field,
+                    semantic_replacement=replacement,
+                ):
                     next(
                         item for item in template["artifacts"]
                         if item["artifactId"] == artifact_id
-                    )[field] = replacement
+                    )[semantic_field] = semantic_replacement
 
                 current = self.expected_build(self.baseline, mutate)
                 comparison = compare_manifests(
@@ -1432,7 +1437,7 @@ class SurfaceManifestTests(unittest.TestCase):
 
     def test_artifact_architecture_addition_is_safe_but_loss_escalates(self):
         previous = self.expected_build(self.baseline)
-        artifact_id = previous["artifacts"][0]["artifactId"]
+        artifact_id = self.surfaces(self.baseline)["macos.widget"]["artifactId"]
 
         def architectures(template, values):
             next(
@@ -1495,6 +1500,132 @@ class SurfaceManifestTests(unittest.TestCase):
             "incomplete artifact evidence is not fail-closed",
         ):
             validate_current_comparison(tampered)
+
+    def test_partial_layout_evidence_is_missing_without_crashing(self):
+        partial = self.expected_build(self.baseline, layout="ios")
+        comparison = compare_manifests(
+            self.baseline,
+            self.baseline,
+            "rc",
+            [partial],
+            [partial],
+        )
+        self.assertEqual(comparison["artifactEvidence"]["previousState"], "missing")
+        self.assertEqual(comparison["artifactEvidence"]["currentState"], "missing")
+        self.assertEqual(
+            comparison["artifactEvidence"]["previousExpectedBuildIds"],
+            [partial["expectedBuildId"]],
+        )
+        self.assertEqual(comparison["artifactRiskCodes"], ["artifact-evidence-unknown"])
+
+    def test_legacy_and_mixed_artifact_evidence_fail_closed(self):
+        current = self.expected_build(self.baseline)
+        legacy = copy.deepcopy(current)
+        legacy["schemaVersion"] = 1
+        for artifact in legacy["artifacts"]:
+            for key in (
+                "bundleContractSha256",
+                "signingClass",
+                "signingContractSha256",
+                "entitlementContractSha256",
+                "profileCapabilitySha256",
+                "architectures",
+            ):
+                artifact.pop(key)
+        unsigned = {key: value for key, value in legacy.items() if key != "expectedBuildId"}
+        legacy["expectedBuildId"] = core_module.hash_parts(
+            f"{legacy['digestDomain']}/expected-build",
+            [core_module.canonical_json(unsigned)],
+        )
+
+        legacy_comparison = compare_manifests(
+            self.baseline,
+            self.baseline,
+            "rc",
+            [legacy],
+            [current],
+        )
+        self.assertEqual(
+            legacy_comparison["artifactEvidence"]["previousState"],
+            "legacy-incomplete",
+        )
+        self.assertEqual(
+            legacy_comparison["artifactRiskCodes"],
+            ["artifact-evidence-unknown"],
+        )
+
+        mixed = compare_manifests(
+            self.baseline,
+            self.baseline,
+            "beta",
+            None,
+            [current],
+        )
+        self.assertEqual(mixed["artifactEvidence"]["previousState"], "not-evaluated")
+        self.assertEqual(mixed["artifactEvidence"]["currentState"], "complete")
+        self.assertEqual(mixed["artifactRiskCodes"], ["artifact-evidence-unknown"])
+        self.assertFalse(mixed["requiresRuntimeSession"])
+
+    def test_artifact_mapping_change_fans_out_by_current_artifact(self):
+        previous = self.expected_build(self.baseline)
+        current_manifest = copy.deepcopy(self.baseline)
+        current_surfaces = self.surfaces(current_manifest)
+        remapped_artifact = "companion.ios.remapped"
+        current_surfaces["ios.app"]["artifactId"] = remapped_artifact
+        current_surfaces["ipados.app"]["artifactId"] = remapped_artifact
+        current = self.expected_build(current_manifest)
+        comparison = compare_manifests(
+            self.baseline,
+            current_manifest,
+            "beta",
+            [previous],
+            [current],
+        )
+        self.assertEqual(comparison["artifactRiskCodes"], ["artifact-mapping-changed"])
+        self.assertEqual(
+            comparison["artifactRiskSurfaces"]["artifact-mapping-changed"],
+            ["ios.app", "ipados.app"],
+        )
+
+    def test_unexplained_executable_drift_requires_stable_source_context(self):
+        previous = self.expected_build(self.baseline)
+        artifact_id = previous["artifacts"][0]["artifactId"]
+
+        def change_executable(template):
+            next(
+                item for item in template["artifacts"]
+                if item["artifactId"] == artifact_id
+            )["executableSha256"] = "8" * 64
+
+        drifted = self.expected_build(self.baseline, change_executable)
+        unexplained = compare_manifests(
+            self.baseline,
+            self.baseline,
+            "beta",
+            [previous],
+            [drifted],
+        )
+        self.assertEqual(
+            unexplained["artifactRiskCodes"],
+            ["unexplained-executable-drift"],
+        )
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = self.fixture(temporary_directory)
+            self.append(root / "Sources/ContextPanelWidgetUI/ContextPanelWidgetViews.swift")
+            changed_manifest = self.manifest(root)
+        explained_build = self.expected_build(changed_manifest, change_executable)
+        explained = compare_manifests(
+            self.baseline,
+            changed_manifest,
+            "beta",
+            [previous],
+            [explained_build],
+        )
+        self.assertNotIn(
+            "unexplained-executable-drift",
+            explained["artifactRiskCodes"],
+        )
 
     def test_semantic_entitlement_key_and_list_order_is_canonical(self):
         first = plistlib.dumps(
