@@ -602,10 +602,10 @@ class SurfaceManifestTests(unittest.TestCase):
         self.assertEqual(comparison["runtimeState"], "not-required-no-session")
         self.assertEqual(comparison["runtimeStateReasons"], [])
 
-    def test_comparison_v3_rejects_hand_trimmed_or_noncanonical_payloads(self):
+    def test_comparison_v4_rejects_hand_trimmed_or_noncanonical_payloads(self):
         comparison = compare_manifests(self.baseline, self.manifest(REPO_ROOT), "beta")
         self.assertEqual(comparison["kind"], "context-panel-surface-comparison")
-        self.assertEqual(comparison["schemaVersion"], 3)
+        self.assertEqual(comparison["schemaVersion"], 4)
         mutations = (
             lambda value: value.__setitem__("unexpected", True),
             lambda value: value["surfaces"][0].pop("artifactId"),
@@ -939,6 +939,112 @@ class SurfaceManifestTests(unittest.TestCase):
                 self.assertTrue(
                     surface["carryForward"]["shared-view"]["eligible"]
                 )
+
+    def test_v4_roots_record_only_active_risks_and_observations(self):
+        comparison = compare_manifests(self.baseline, self.manifest(REPO_ROOT), "beta")
+        self.assertEqual(set(comparison), comparison_schema_module.ROOT_KEYS)
+        self.assertEqual(comparison["schemaVersion"], 4)
+        self.assertEqual(comparison["riskCodes"], [])
+        self.assertEqual(comparison["riskSurfaces"], {})
+        self.assertEqual(comparison["observationRiskCodes"], [])
+
+        placement = copy.deepcopy(self.baseline)
+        placement_surface = self.surfaces(placement)["macos.widget"]
+        placement_surface["fingerprints"]["placement"] = "f" * 64
+        placement_comparison = compare_manifests(self.baseline, placement, "beta")
+        self.assertEqual(
+            placement_comparison["riskCodes"], ["placement-divergence"]
+        )
+        self.assertEqual(
+            placement_comparison["riskSurfaces"],
+            {"placement-divergence": ["macos.widget"]},
+        )
+        self.assertEqual(
+            placement_comparison["observationRiskCodes"], ["host-os-divergence"]
+        )
+
+    def test_toolchain_divergence_records_on_beta_without_runtime_session(self):
+        next_build = copy.deepcopy(self.baseline)
+        next_build["source"]["xcodeBuild"] = "27A000"
+        comparison = compare_manifests(self.baseline, next_build, "beta")
+        runtime_capable = sorted(
+            surface_id
+            for surface_id, surface in self.surfaces(next_build).items()
+            if "actual-runtime" in surface["evidenceCapabilities"]
+        )
+        self.assertTrue(comparison["toolchainChanged"])
+        self.assertEqual(comparison["riskCodes"], ["toolchain-divergence"])
+        self.assertEqual(
+            comparison["riskSurfaces"], {"toolchain-divergence": runtime_capable}
+        )
+        self.assertEqual(comparison["requiredSurfaces"]["actual-runtime"], [])
+        self.assertFalse(comparison["requiresRuntimeSession"])
+
+    def test_rc_toolchain_divergence_forces_runtime_capable_surfaces(self):
+        next_build = copy.deepcopy(self.baseline)
+        next_build["toolchain"] = {
+            **next_build["toolchain"],
+            "swiftLanguageVersion": "6.1",
+        }
+        comparison = compare_manifests(self.baseline, next_build, "rc")
+        runtime_capable = sorted(
+            surface_id
+            for surface_id, surface in self.surfaces(next_build).items()
+            if "actual-runtime" in surface["evidenceCapabilities"]
+        )
+        self.assertTrue(comparison["toolchainChanged"])
+        self.assertEqual(comparison["riskSurfaces"]["toolchain-divergence"], runtime_capable)
+        self.assertEqual(comparison["requiredSurfaces"]["actual-runtime"], runtime_capable)
+        self.assertTrue(comparison["requiresRuntimeSession"])
+        for surface in comparison["surfaces"]:
+            if surface["surfaceId"] in runtime_capable:
+                self.assertIn("actual-runtime", surface["freshEvidence"])
+
+    def test_build_number_only_change_is_not_toolchain_risk(self):
+        next_build = copy.deepcopy(self.baseline)
+        next_build["source"]["buildNumber"] = "2026073002"
+        comparison = compare_manifests(self.baseline, next_build, "beta")
+        self.assertFalse(comparison["toolchainChanged"])
+        self.assertNotIn("toolchain-divergence", comparison["riskCodes"])
+        self.assertEqual(comparison["riskSurfaces"], {})
+
+    def test_v4_risk_maps_require_canonical_order_and_exact_surfaces(self):
+        candidate = copy.deepcopy(self.baseline)
+        surfaces = self.surfaces(candidate)
+        surfaces["macos.app"]["fingerprints"]["render"] = "a" * 64
+        surfaces["macos.app"]["fingerprints"]["runtime"] = "b" * 64
+        comparison = compare_manifests(self.baseline, candidate, "beta")
+        self.assertEqual(
+            comparison["riskCodes"], ["render-divergence", "runtime-divergence"]
+        )
+        reversed_codes = copy.deepcopy(comparison)
+        reversed_codes["riskCodes"].reverse()
+        with self.assertRaises(ComparisonSchemaError):
+            validate_current_comparison(reversed_codes)
+        wrong_surface = copy.deepcopy(comparison)
+        wrong_surface["riskSurfaces"]["render-divergence"] = ["macos.widget"]
+        with self.assertRaises(ComparisonSchemaError):
+            validate_current_comparison(wrong_surface)
+        reversed_map = copy.deepcopy(comparison)
+        reversed_map["riskSurfaces"] = dict(
+            reversed(list(reversed_map["riskSurfaces"].items()))
+        )
+        with self.assertRaises(ComparisonSchemaError):
+            validate_current_comparison(reversed_map)
+
+    def test_legacy_v3_comparison_reconstructs_without_v4_roots(self):
+        current = compare_manifests(self.baseline, self.manifest(REPO_ROOT), "beta")
+        legacy = {
+            key: copy.deepcopy(current[key])
+            for key in comparison_schema_module.V3_ROOT_KEYS
+        }
+        legacy["schemaVersion"] = 3
+        self.assertEqual(
+            comparison_schema_module.validate_legacy_v3_comparison_for_reconstruction(
+                legacy
+            ),
+            legacy,
+        )
 
     def test_beta_placement_only_change_requires_runtime_and_placement(self):
         mutated = json.loads(json.dumps(self.baseline))

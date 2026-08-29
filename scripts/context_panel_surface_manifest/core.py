@@ -15,6 +15,8 @@ from context_panel_comparison_schema import (
     ComparisonSchemaError,
     EVIDENCE_CLASSES,
     derive_runtime_decision,
+    derive_risk_fields,
+    toolchain_changed,
     validate_current_comparison,
 )
 
@@ -1124,6 +1126,7 @@ def compare_manifests(
     contract_changed = previous_contract_fingerprint != current_contract_fingerprint
     previous_source = previous.get("source") or {}
     current_source = current.get("source") or {}
+    manifest_toolchain_changed = toolchain_changed(previous, current)
     exact_build_same = all(
         previous_source.get(key) == current_source.get(key)
         for key in (
@@ -1186,6 +1189,12 @@ def compare_manifests(
                 and "actual-runtime" in train_minimums[train]
             ):
                 fresh.add("actual-runtime")
+        if (
+            manifest_toolchain_changed
+            and train in {"rc", "release"}
+            and "actual-runtime" in capabilities
+        ):
+            fresh.add("actual-runtime")
         fresh_evidence = ordered_intersection(fresh, capabilities, class_order)
         required_evidence = ordered_intersection(
             (*minimum, *fresh_evidence),
@@ -1246,6 +1255,17 @@ def compare_manifests(
         for evidence_class in class_order
     }
     runtime_state, runtime_state_reasons = derive_runtime_decision(results)
+    runtime_capable_surface_ids = {
+        surface_id
+        for surface_id, surface in current_surfaces.items()
+        if "actual-runtime" in set(surface.get("evidenceCapabilities") or [])
+    }
+    risk_codes, risk_surfaces, observation_risk_codes = derive_risk_fields(
+        results,
+        toolchain_delta=manifest_toolchain_changed,
+        runtime_capable_surface_ids=runtime_capable_surface_ids,
+        requires_placement_review=bool(required_surfaces["os-composited-placement"]),
+    )
     comparison = {
         "kind": "context-panel-surface-comparison",
         "schemaVersion": CURRENT_COMPARISON_SCHEMA_VERSION,
@@ -1260,6 +1280,10 @@ def compare_manifests(
         "requiresPlacementReview": bool(required_surfaces["os-composited-placement"]),
         "runtimeState": runtime_state,
         "runtimeStateReasons": runtime_state_reasons,
+        "toolchainChanged": manifest_toolchain_changed,
+        "riskCodes": risk_codes,
+        "riskSurfaces": risk_surfaces,
+        "observationRiskCodes": observation_risk_codes,
         "surfaces": results,
         "releaseRequiresApprovedRCTarget": bool(
             evidence_policy.get("releaseRequiresApprovedRCTarget")

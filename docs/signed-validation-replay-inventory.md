@@ -94,26 +94,28 @@ a different reduced plan and must not be treated as authoritative.
 ## Comparison Schema Compatibility
 
 Production comparison generation, coordinator planning, direct release-gate
-inputs, report validation, and submission accept only schema v3. Schema v3 adds
-the canonical `runtimeState` and `runtimeStateReasons` decision contract without
-changing the current evidence floors. Retained v1 comparisons are replay-only:
+inputs, report validation, and submission accept only schema v4. Schema v4 adds
+canonical toolchain and risk-root fields while preserving the v3 runtime
+decision contract. Retained v1 comparisons are replay-only:
 inventory lineage validation verifies the raw archived chain before the adapter
 deep-copies the v1 payload, injects its frozen v2 identity, and validates with
 the pinned reconstruction contract. Retained v2 comparisons validate directly
-against that same frozen v2 contract. Release-gate lineage reconstruction may
-validate embedded signed v1 or v2 comparisons while preserving their raw
-comparison digests; those exceptions are unavailable to direct production
-inputs.
+against that same frozen v2 contract. Retained v3 comparisons use
+`validate_legacy_v3_comparison_for_reconstruction`. Release-gate lineage
+reconstruction may validate embedded signed v1, v2, or v3 comparisons while
+preserving their raw comparison digests; those exceptions are unavailable to
+direct production inputs.
 
 The v1 adapter verifies its contract, implementation, and transitive dependency
 digests at runtime. The exact schema v2 validator is retained in
-`scripts/context_panel_surface_manifest/comparison_schema_v2.py`; production v3
-and historical v1/v2 reconstruction share that frozen implementation rather
-than re-baselining the adapter. Any source, dependency, or contract behavior
-change requires an explicit adapter version and fixture/digest update; do not
-route retained replay through a future current-schema validator. Its legacy exceptions preserve
-historical carry-forward map insertion order and incomplete maps present in the
-retained v1 corpus; production v3 rejects both forms.
+`scripts/context_panel_surface_manifest/comparison_schema_v2.py`; frozen v3 is
+in `scripts/context_panel_surface_manifest/comparison_schema_v3.py`, and current
+v4 is in `scripts/context_panel_comparison_schema.py`. Any source, dependency,
+or contract behavior change requires an explicit adapter version and
+fixture/digest update; do not route retained replay through a future
+current-schema validator. Legacy exceptions preserve historical carry-forward
+map insertion order and incomplete maps present in the retained v1 corpus;
+production v4 rejects both forms.
 
 ## Recoverability
 
@@ -177,7 +179,8 @@ their baseline evidence from the surface policy and must reduce physical
 evidence burden rather than claiming that a behavioral change needs no
 evidence. A required rationale explains why the historical change is similar
 but outside the incident signature, and compiled output records whether the
-control rejected at path or content matching. Evidence class and provenance are distinct:
+control rejected at path or content matching. Evidence class and provenance are
+distinct:
 shared-view evidence may come from a deterministic gallery or an exact physical
 build, and neither is placement evidence.
 

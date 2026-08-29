@@ -5,6 +5,7 @@ from typing import Any
 from context_panel_comparison_schema import (
     CURRENT_COMPARISON_SCHEMA_VERSION,
     comparison_schema_v2,
+    comparison_schema_v3,
     validate_current_comparison,
 )
 
@@ -16,7 +17,9 @@ class ComparisonAdapterError(RuntimeError):
 
 
 V2_COMPARISON_SCHEMA_VERSION = comparison_schema_v2.CURRENT_COMPARISON_SCHEMA_VERSION
+V3_COMPARISON_SCHEMA_VERSION = comparison_schema_v3.CURRENT_COMPARISON_SCHEMA_VERSION
 validate_comparison_v2 = comparison_schema_v2.validate_comparison_v2
+validate_comparison_v3 = comparison_schema_v3.validate_comparison_v3
 
 
 def adapt_comparison_for_replay(comparison: object) -> dict[str, Any]:
@@ -35,6 +38,11 @@ def adapt_comparison_for_replay(comparison: object) -> dict[str, Any]:
             return validate_comparison_v2(comparison)
         except RuntimeError as error:
             raise ComparisonAdapterError("retained v2 comparison is invalid") from error
+    if schema_version == V3_COMPARISON_SCHEMA_VERSION:
+        try:
+            return validate_comparison_v3(comparison)
+        except RuntimeError as error:
+            raise ComparisonAdapterError("retained v3 comparison is invalid") from error
     if schema_version == CURRENT_COMPARISON_SCHEMA_VERSION:
         try:
             return validate_current_comparison(comparison)
