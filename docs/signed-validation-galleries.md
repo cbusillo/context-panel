@@ -99,6 +99,7 @@ repository:
 
 ```sh
 scripts/context-panel-validation.py capture-shared-view-evidence \
+  --surface-comparison <comparison.json> \
   --requirements <visual-review-requirements.json> \
   --capture-config <private-capture-config.json> \
   --artifact-root <absolute-private-artifact-root> \
@@ -106,15 +107,28 @@ scripts/context-panel-validation.py capture-shared-view-evidence \
   --json
 ```
 
-The executor validates the full requirements contract against the canonical
-matrix and surface policy before making a simulator command or writing output.
-For each configured required profile it creates, boots, installs, uses the
-`contextpanelcompanion://validation-gallery` route with canonical selectors,
-captures, shuts down, and deletes one simulator. The private root and manifest
-directory use mode `0700`; PNG files and `index.json` use `0600`; the public
-receipt uses `0644`. The receipt carries only hashes, dimensions, bounded
-profile metadata, and sanitized status codes—never bundle paths, simulator
-UDIDs, command stderr, host data, or operator identity.
+The executor recomputes the canonical planner output from the exact schema-v5
+comparison and requires the supplied requirements file to match it exactly.
+Empty plans are rejected. The receipt records a deterministic
+`requirementsDigest` and a unique `captureRunID`. Each run writes only beneath
+`<artifact-root>/<currentManifestID>/<captureRunID>/`; PNG files and the complete
+run `index.json` use `0600`, while each private directory uses `0700` and the
+public receipt uses `0644`.
+
+Before creating a simulator, one `xcrun simctl list -j` catalog read validates
+the configured runtime and device profile. Each profile uses a unique run-scoped
+simulator name. The executor captures a pre-route baseline, applies the gallery
+route fresh for every cell, captures two valid PNGs separated by a settle, and
+publishes only stable images that differ from the baseline and every other
+requirement in that profile. Light and dark use both `simctl ui appearance` and
+the route; adaptive appearance uses the route only. After the first cell, every
+cell requires a successful app termination before its fresh route.
+
+Simulator deletion is fail-closed. The executor records only sanitized cleanup
+status, removes profile artifacts when deletion fails, and marks those captures
+unknown. The receipt carries hashes, dimensions, public runtime/device names and
+identifiers, product family, app identity, and bounded status codes—never bundle
+paths, simulator UDIDs, command stderr, host data, or operator identity.
 
 `macos`, `watchos`, and `tvos` shared-view requirements are recorded explicitly
 as `unsupported-host-mechanism`; they are not silently skipped. Missing iOS,

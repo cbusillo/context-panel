@@ -119,6 +119,7 @@ canonical matrix/policy contracts, but does not require a coordinator session:
 
 ```sh
 scripts/context-panel-validation.py capture-shared-view-evidence \
+  --surface-comparison <comparison.json> \
   --requirements <visual-review-requirements.json> \
   --capture-config <private-capture-config.json> \
   --artifact-root <absolute-private-artifact-root> \
@@ -127,10 +128,16 @@ scripts/context-panel-validation.py capture-shared-view-evidence \
 
 This path supports only throwaway `ios`, `ipados`, and `visionos` simulators
 with an installed prebuilt companion app and `contextpanelcompanion` gallery
-links. It writes no coordinator/session/runtime/visual-review state and never
-approves or rejects evidence. `macos`, `watchos`, and `tvos` requirements are
-returned as explicit `unsupported-host-mechanism` blocks; unavailable configured
-profiles are also blocked, and command/capture failures remain unknown.
+links. It recomputes the planner output from the supplied comparison, rejects
+truncated or empty work, and records a deterministic requirements digest. Each
+capture run is isolated at
+`<artifact-root>/<currentManifestID>/<captureRunID>/`; only a complete run index
+and public receipt are published. It writes no coordinator/session/runtime,
+approval, or visual-review state and never approves or rejects evidence.
+`macos`, `watchos`, and `tvos` requirements are returned as explicit
+`unsupported-host-mechanism` blocks; unavailable configured profiles are also
+blocked, and command, stability, PNG-validation, baseline, duplicate-digest, or
+cleanup failures remain unknown.
 
 The requirements file uses schema v1 and stores bounded public context:
 

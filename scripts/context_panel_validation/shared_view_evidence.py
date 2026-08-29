@@ -285,7 +285,11 @@ class SharedViewMatrix:
 def load_surface_policy(path: Path = DEFAULT_SURFACE_POLICY_PATH) -> tuple[SurfacePolicySurface, ...]:
     payload = _load_json_object(path, "surface policy")
     raw_surfaces = payload.get("surfaces")
-    if payload.get("schemaVersion") != 1 or not isinstance(raw_surfaces, list):
+    if (
+        type(payload.get("schemaVersion")) is not int
+        or payload.get("schemaVersion") != 1
+        or not isinstance(raw_surfaces, list)
+    ):
         raise SharedViewEvidenceError("surface policy is invalid")
     surfaces: list[SurfacePolicySurface] = []
     for raw_surface in raw_surfaces:

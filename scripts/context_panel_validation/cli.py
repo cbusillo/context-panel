@@ -7,6 +7,7 @@ import re
 import sys
 from datetime import timedelta
 from pathlib import Path
+from typing import cast
 
 from .asc import DEFAULT_ASC_ENV_FILE, collect_asc_evidence
 from .models import (
@@ -248,6 +249,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Capture private simulator gallery evidence without coordinator state",
     )
     capture_shared_view_evidence_parser.add_argument(
+        "--surface-comparison",
+        required=True,
+        type=Path,
+        help="Validated current schema-v5 surface-manifest comparison",
+    )
+    capture_shared_view_evidence_parser.add_argument(
         "--requirements",
         required=True,
         type=Path,
@@ -391,7 +398,7 @@ def run_plan_shared_view_evidence(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
-        requirements = payload["requirements"]
+        requirements = cast(list[dict[str, object]], payload["requirements"])
         surfaces = {item["surface"] for item in requirements}
         print(
             f"Planned {len(requirements)} shared-view requirements across "
@@ -437,7 +444,6 @@ def run_start_session(args: argparse.Namespace) -> int:
         )
     visual_requirements = None
     current_manifest_id = None
-    all_identities = ()
     if comparison_path is not None and requirements_path is not None:
         all_identities = load_expected_surface_identities(
             getattr(args, "expected_build_manifests", None) or [],
@@ -712,6 +718,7 @@ def run_export_visual_reviews(args: argparse.Namespace) -> int:
 
 def run_capture_shared_view_evidence(args: argparse.Namespace) -> int:
     exit_code, receipt = execute_shared_view_capture(
+        args.surface_comparison,
         args.requirements,
         args.capture_config,
         args.artifact_root,
@@ -720,9 +727,10 @@ def run_capture_shared_view_evidence(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(receipt, indent=2, sort_keys=True))
     else:
+        captures = cast(list[dict[str, object]], receipt["captures"])
         print(
-            f"Shared-view capture recorded {sum(item['status'] == 'captured' for item in receipt['captures'])} "
-            f"of {len(receipt['captures'])} required captures."
+            f"Shared-view capture recorded {sum(item['status'] == 'captured' for item in captures)} "
+            f"of {len(captures)} required captures."
         )
     return exit_code
 
