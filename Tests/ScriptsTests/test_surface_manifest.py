@@ -1529,6 +1529,13 @@ class SurfaceManifestTests(unittest.TestCase):
             current = self.expected_build(self.baseline, mutate)
             for train in ("beta", "rc", "release"):
                 with self.subTest(label=label, train=train):
+                    control = compare_manifests(
+                        self.baseline,
+                        self.baseline,
+                        train,
+                        [previous],
+                        [previous],
+                    )
                     comparison = compare_manifests(
                         self.baseline,
                         self.baseline,
@@ -1555,6 +1562,27 @@ class SurfaceManifestTests(unittest.TestCase):
                         bool(expected_runtime),
                     )
                     self.assertFalse(comparison["requiresPlacementReview"])
+                    if train != "beta":
+                        control_surfaces = {
+                            surface["surfaceId"]: surface
+                            for surface in control["surfaces"]
+                        }
+                        risk_surfaces = {
+                            surface["surfaceId"]: surface
+                            for surface in comparison["surfaces"]
+                        }
+                        for surface_id in runtime_capable:
+                            self.assertTrue(
+                                control_surfaces[surface_id]["carryForward"][
+                                    "actual-runtime"
+                                ]["eligible"]
+                            )
+                            self.assertEqual(
+                                risk_surfaces[surface_id]["carryForward"][
+                                    "actual-runtime"
+                                ]["eligible"],
+                                surface_id not in affected_surfaces,
+                            )
 
     def test_artifact_architecture_addition_is_safe_but_loss_escalates(self):
         previous = self.expected_build(self.baseline)

@@ -1387,8 +1387,7 @@ def reconcile_runtime_observation(
         raw_receipts = export.get("receipts")
         assert isinstance(raw_receipts, list)
         seen_in_export: dict[str, RuntimeReceiptEvidence] = {}
-        conflicting_ids: set[str] = set()
-        conflicting_surfaces: set[str] = set()
+        diagnostic_surfaces: set[str] = set()
         for entry in raw_receipts:
             parsed, diagnostic = validated_runtime_receipt(
                 entry,
@@ -1401,6 +1400,7 @@ def reconcile_runtime_observation(
                 surface, code = diagnostic
                 if surface is not None:
                     latest_surface_diagnostics[surface] = code
+                    diagnostic_surfaces.add(surface)
                     if code == "newer-build-observed":
                         superseded = True
                         superseded_surfaces.add(surface)
@@ -1410,24 +1410,19 @@ def reconcile_runtime_observation(
             if parsed is None:
                 continue
             assert parsed is not None
-            if parsed.surface not in conflicting_surfaces:
+            if parsed.surface not in diagnostic_surfaces:
                 latest_surface_diagnostics[parsed.surface] = None
             existing = seen_in_export.get(parsed.receipt_id)
             if existing is not None:
                 merged = merged_duplicate_receipt(existing, parsed)
                 if merged is None:
-                    conflicting_ids.add(parsed.receipt_id)
-                    conflicting_surfaces.add(parsed.surface)
-                    latest_surface_diagnostics[parsed.surface] = "conflicting-duplicate-receipt"
-                elif parsed.receipt_id not in conflicting_ids:
-                    seen_in_export[parsed.receipt_id] = merged
-            elif parsed.receipt_id not in conflicting_ids:
+                    raise RuntimeEvidenceError(
+                        "validated duplicate runtime receipt identity is inconsistent"
+                    )
+                seen_in_export[parsed.receipt_id] = merged
+            else:
                 seen_in_export[parsed.receipt_id] = parsed
-        exact_receipts = [
-            receipt
-            for receipt_id, receipt in seen_in_export.items()
-            if receipt_id not in conflicting_ids
-        ]
+        exact_receipts = list(seen_in_export.values())
 
     receipts_by_id = {receipt.receipt_id: receipt for receipt in state.receipts}
     for receipt in exact_receipts:

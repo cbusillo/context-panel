@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 import uuid
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -1209,28 +1210,72 @@ class RuntimeReceiptIngestionTests(unittest.TestCase):
             "invalid-receipt-contract",
         )
 
-    def test_later_valid_receipt_clears_invalid_duplicate_diagnostic(self):
+    def test_invalid_duplicate_diagnostic_is_order_independent(self):
         surfaces = ("macos.widget",)
-        temporary, _, _, _, state = self.fixture(surfaces)
-        self.addCleanup(temporary.cleanup)
         status = runtime_status(surfaces)
         first = runtime_receipt("macos.widget", status)
         conflicting = json.loads(json.dumps(first))
         conflicting["receipt"]["stateBranch"] = "failure"
         conflicting["receipt"]["outcome"] = "failure"
-        later = runtime_receipt("macos.widget", status, process_sequence=2)
+        for entries in ([first, conflicting], [conflicting, first]):
+            with self.subTest(order=[entry["receipt"]["outcome"] for entry in entries]):
+                temporary, _, _, _, state = self.fixture(surfaces)
+                self.addCleanup(temporary.cleanup)
+                next_state, _ = runtime_module.reconcile_runtime_observation(
+                    state,
+                    observation(status, runtime_export(status, entries)),
+                )
+                self.assertEqual(len(next_state.receipts), 1)
+                report = build_runtime_evidence_report(
+                    next_state,
+                    NOW + timedelta(minutes=2),
+                )
+                self.assertEqual(report["provenSurfaceCount"], 0)
+                self.assertEqual(
+                    report["surfaces"][0]["reason"],
+                    "invalid-receipt-contract",
+                )
 
-        next_state, _ = runtime_module.reconcile_runtime_observation(
+    def test_expected_archive_identity_change_evicts_same_receipt_as_conflict(self):
+        surfaces = ("macos.app",)
+        temporary, _, _, _, state = self.fixture(surfaces)
+        self.addCleanup(temporary.cleanup)
+        status = runtime_status(surfaces)
+        entry = runtime_receipt("macos.app", status)
+        proven_state, _ = runtime_module.reconcile_runtime_observation(
             state,
-            observation(status, runtime_export(status, [first, conflicting, later])),
+            observation(status, runtime_export(status, [entry])),
+        )
+        expected = proven_state.expected_surfaces[0]
+        resealed_state = replace(
+            proven_state,
+            expected_surfaces=(
+                replace(
+                    expected,
+                    executable_uuids=tuple(
+                        sorted(
+                            {
+                                *expected.executable_uuids,
+                                "CCCCCCCC-DDDD-EEEE-FFFF-000000000000",
+                            }
+                        )
+                    ),
+                    expected_build_id="c" * 64,
+                ),
+            ),
         )
 
-        self.assertEqual(len(next_state.receipts), 2)
+        next_state, _ = runtime_module.reconcile_runtime_observation(
+            resealed_state,
+            observation(status, runtime_export(status, [entry])),
+        )
         report = build_runtime_evidence_report(next_state, NOW + timedelta(minutes=2))
-        self.assertEqual(report["provenSurfaceCount"], 1)
+
+        self.assertEqual(next_state.receipts, ())
+        self.assertEqual(report["provenSurfaceCount"], 0)
         self.assertEqual(
             report["surfaces"][0]["reason"],
-            "exact-build-runtime-receipt",
+            "conflicting-duplicate-receipt",
         )
 
     def test_active_runtime_window_is_waiting_then_expired_silence_is_unknown(self):
