@@ -60,9 +60,68 @@ visual-review requirements contract; placement planning remains a later stage.
 Each fixture contract ID is a deterministic hash over the versioned matrix
 domain, complete matrix digest, relevant surface-policy contract, and canonical
 cell contract. `pixelDiffPolicy` is explicitly
-`advisory-only`: Stage 1 does not compare pixels or make automated approval
-decisions. Private simulator capture, artifact handling, and any later capture
-or approval integration remain a Stage 2 boundary.
+`advisory-only`: neither planning nor capture compares pixels or makes automated
+approval decisions.
+
+## Private Simulator Capture
+
+Stage 2b can capture the supported companion gallery routes for `ios.app`,
+`ios.widget`, `ipados.app`, `ipados.widget`, `visionos.app`, and
+`visionos.widget`. It is deliberately limited to throwaway simulators and an
+already-built companion `.app`; it never builds, starts a coordinator session,
+records a visual approval, reads runtime receipts, or exercises physical
+devices.
+
+Create a private schema-v1 config outside the repository. Its root keys are
+exactly `schemaVersion`, `kind`, and `profiles`; `kind` is
+`context-panel-shared-view-capture-config`. `profiles` may contain only `ios`,
+`ipados`, and `visionos`, and every profile has exactly
+`runtimeIdentifier`, `deviceTypeIdentifier`, and `appBundle`. The app bundle
+must be an absolute, existing, non-symlink `.app` whose bundle identifier is
+`com.shinycomputers.contextpanel`.
+
+```json
+{
+  "schemaVersion": 1,
+  "kind": "context-panel-shared-view-capture-config",
+  "profiles": {
+    "ios": {
+      "runtimeIdentifier": "com.apple.CoreSimulator.SimRuntime.iOS-<runtime>",
+      "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-<model>",
+      "appBundle": "/absolute/private/Context Panel.app"
+    }
+  }
+}
+```
+
+Run the executor with an explicit absolute private artifact root outside the
+repository:
+
+```sh
+scripts/context-panel-validation.py capture-shared-view-evidence \
+  --requirements <visual-review-requirements.json> \
+  --capture-config <private-capture-config.json> \
+  --artifact-root <absolute-private-artifact-root> \
+  --output <shared-view-capture-receipt.json> \
+  --json
+```
+
+The executor validates the full requirements contract against the canonical
+matrix and surface policy before making a simulator command or writing output.
+For each configured required profile it creates, boots, installs, uses the
+`contextpanelcompanion://validation-gallery` route with canonical selectors,
+captures, shuts down, and deletes one simulator. The private root and manifest
+directory use mode `0700`; PNG files and `index.json` use `0600`; the public
+receipt uses `0644`. The receipt carries only hashes, dimensions, bounded
+profile metadata, and sanitized status codes—never bundle paths, simulator
+UDIDs, command stderr, host data, or operator identity.
+
+`macos`, `watchos`, and `tvos` shared-view requirements are recorded explicitly
+as `unsupported-host-mechanism`; they are not silently skipped. Missing iOS,
+iPadOS, or visionOS profile configuration is likewise an explicit blocked
+result. Command or capture faults are `unknown`. A zero exit status means every
+required capture was produced; this remains advisory-only evidence, not an
+approval or pixel pass/fail decision.
 
 ## Fixture Isolation
 

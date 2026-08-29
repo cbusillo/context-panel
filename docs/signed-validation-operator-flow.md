@@ -111,7 +111,26 @@ command is read-only with respect to coordinator state: it does not start a
 session, inspect a runtime, launch a simulator, or capture private artifacts.
 Comparisons with fresh placement evidence are rejected because this stage emits
 shared-view requirements only; placement planning remains a later stage. Private
-capture and any pixel-comparison implementation are deferred to Stage 2.
+capture is a separate Stage 2b executor and never mutates coordinator state.
+
+For supported simulator-only companion gallery evidence, run the private capture
+executor after planning. It consumes the schema-v1 requirements file and the
+canonical matrix/policy contracts, but does not require a coordinator session:
+
+```sh
+scripts/context-panel-validation.py capture-shared-view-evidence \
+  --requirements <visual-review-requirements.json> \
+  --capture-config <private-capture-config.json> \
+  --artifact-root <absolute-private-artifact-root> \
+  --output <shared-view-capture-receipt.json>
+```
+
+This path supports only throwaway `ios`, `ipados`, and `visionos` simulators
+with an installed prebuilt companion app and `contextpanelcompanion` gallery
+links. It writes no coordinator/session/runtime/visual-review state and never
+approves or rejects evidence. `macos`, `watchos`, and `tvos` requirements are
+returned as explicit `unsupported-host-mechanism` blocks; unavailable configured
+profiles are also blocked, and command/capture failures remain unknown.
 
 The requirements file uses schema v1 and stores bounded public context:
 

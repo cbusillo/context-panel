@@ -403,7 +403,7 @@ def fixture_contract_id(
     )
 
 
-def _requirement_id(surface_id: str, cell_id: str) -> str:
+def shared_view_requirement_id(surface_id: str, cell_id: str) -> str:
     return f"shared-view.{surface_id.replace('.', '-')}.{cell_id}"
 
 
@@ -440,7 +440,7 @@ def plan_shared_view_evidence(
         for cell in matrix_surface.cells:
             requirements.append(
                 {
-                    "id": _requirement_id(policy_surface.id, cell.id),
+                    "id": shared_view_requirement_id(policy_surface.id, cell.id),
                     "evidenceClass": "shared-view",
                     "surface": policy_surface.id,
                     "fixtureContractID": fixture_contract_id(matrix, policy_surface, cell),
