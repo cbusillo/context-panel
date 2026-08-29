@@ -60,12 +60,11 @@ RISK_CODES = (
     "toolchain-divergence",
 )
 OBSERVATION_RISK_CODES = ("host-os-divergence",)
-REASON_CODE_RISKS = {
-    "unmapped-surface": "new-surface",
-    "render-divergence": "render-fingerprint-changed",
-    "runtime-divergence": "runtime-fingerprint-changed",
-    "placement-divergence": "placement-fingerprint-changed",
-    "contract-divergence": "contract-fingerprint-changed",
+RISK_CHANGE_KEYS = {
+    "render-divergence": "render",
+    "runtime-divergence": "runtime",
+    "placement-divergence": "placement",
+    "contract-divergence": "contract",
 }
 ComparisonSchemaError = _v3.ComparisonSchemaError
 _error: Callable[[str], NoReturn] = getattr(_v3, "_error")
@@ -123,14 +122,27 @@ def derive_risk_fields(
             or not surface["surfaceId"]
             or not isinstance(surface.get("reasonCodes"), list)
             or any(not isinstance(value, str) for value in surface["reasonCodes"])
+            or not isinstance(surface.get("changes"), dict)
+            or any(
+                type(surface["changes"].get(change_key)) is not bool
+                for change_key in RISK_CHANGE_KEYS.values()
+            )
         ):
             _error("surface comparison risk inputs are invalid")
-    risk_surfaces: dict[str, list[str]] = {}
-    for risk_code, reason_code in REASON_CODE_RISKS.items():
+    risk_surfaces: dict[str, list[str]] = {
+        "unmapped-surface": sorted(
+            surface["surfaceId"]
+            for surface in surfaces
+            if "new-surface" in surface["reasonCodes"]
+        )
+    }
+    if not risk_surfaces["unmapped-surface"]:
+        risk_surfaces.pop("unmapped-surface")
+    for risk_code, change_key in RISK_CHANGE_KEYS.items():
         affected = [
             surface["surfaceId"]
             for surface in surfaces
-            if reason_code in surface["reasonCodes"]
+            if surface["changes"][change_key]
         ]
         if affected:
             risk_surfaces[risk_code] = sorted(affected)

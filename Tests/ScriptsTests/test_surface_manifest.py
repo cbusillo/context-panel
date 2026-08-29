@@ -1066,6 +1066,38 @@ class SurfaceManifestTests(unittest.TestCase):
         with self.assertRaises(ComparisonSchemaError):
             validate_current_comparison(empty_extra_risk)
 
+    def test_new_surface_reports_every_changed_fingerprint_risk(self):
+        previous = copy.deepcopy(self.baseline)
+        previous["surfaces"] = [
+            surface
+            for surface in previous["surfaces"]
+            if surface["id"] != "macos.app"
+        ]
+        current = copy.deepcopy(self.baseline)
+        current["contractFingerprint"] = "f" * 64
+        comparison = compare_manifests(previous, current, "beta")
+        self.assertEqual(
+            comparison["riskCodes"],
+            [
+                "unmapped-surface",
+                "render-divergence",
+                "runtime-divergence",
+                "placement-divergence",
+                "contract-divergence",
+            ],
+        )
+        for risk_code in (
+            "unmapped-surface",
+            "render-divergence",
+            "runtime-divergence",
+            "placement-divergence",
+        ):
+            self.assertIn("macos.app", comparison["riskSurfaces"][risk_code])
+        self.assertEqual(
+            comparison["riskSurfaces"]["contract-divergence"],
+            sorted(surface["id"] for surface in current["surfaces"]),
+        )
+
     def test_risk_derivation_rejects_malformed_surface_inputs(self):
         with self.assertRaises(ComparisonSchemaError):
             derive_risk_fields(
