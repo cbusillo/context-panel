@@ -768,6 +768,13 @@ def validate_observation_summary(summary: RuntimeObservationSummary) -> None:
         )
         or any(not isinstance(value, str) or not value for value in summary.diagnostics)
         or tuple(sorted(set(summary.diagnostics))) != summary.diagnostics
+        or any(
+            not isinstance(surface, str)
+            or surface not in RUNTIME_SURFACES
+            or not isinstance(code, str)
+            or not code
+            for surface, code in summary.surface_diagnostics
+        )
         or tuple(sorted(set(summary.surface_diagnostics))) != summary.surface_diagnostics
     ):
         raise RuntimeEvidenceError("runtime observation summary is invalid")
@@ -1524,17 +1531,19 @@ def validated_runtime_receipt(
     if not isinstance(build_identity, dict):
         return None, (None, "invalid-receipt-contract")
     surface = build_identity.get("surface")
+    attributed_surface: str | None = None
     if isinstance(surface, str) and surface in RUNTIME_SURFACES:
         if surface not in requested_surfaces:
             return None, None
+        attributed_surface = surface
     elif set(build_identity) == RUNTIME_BUILD_IDENTITY_KEYS:
         return None, (None, "invalid-receipt-surface")
     if set(entry) != RUNTIME_ENTRY_KEYS:
-        return None, (surface, "invalid-receipt-entry")
+        return None, (attributed_surface, "invalid-receipt-entry")
     if set(receipt) != RUNTIME_RECEIPT_KEYS:
-        return None, (surface, "invalid-receipt-contract")
+        return None, (attributed_surface, "invalid-receipt-contract")
     if set(build_identity) != RUNTIME_BUILD_IDENTITY_KEYS:
-        return None, (surface, "invalid-receipt-contract")
+        return None, (attributed_surface, "invalid-receipt-contract")
     build = build_identity.get("build")
     fingerprints = build_identity.get("fingerprints")
     executable_uuids = normalized_uuid_list(build_identity.get("executableUUIDs"))
@@ -1547,7 +1556,7 @@ def validated_runtime_receipt(
         or executable_uuids is None
         or not isinstance(session, dict)
     ):
-        return None, (surface, "invalid-receipt-contract")
+        return None, (attributed_surface, "invalid-receipt-contract")
     if not isinstance(surface, str) or surface not in RUNTIME_SURFACES:
         return None, (None, "invalid-receipt-surface")
     session_timestamps = validated_runtime_session_timestamps(session)

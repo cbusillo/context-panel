@@ -1291,6 +1291,46 @@ class RuntimeReceiptIngestionTests(unittest.TestCase):
                         ),
                     )
 
+    def test_invalid_surface_cannot_poison_persisted_diagnostics(self):
+        surfaces = ("macos.app",)
+        status = runtime_status(surfaces)
+        valid = runtime_receipt("macos.app", status)
+        for invalid_surface in ("bogus.surface", 42):
+            with self.subTest(invalid_surface=invalid_surface):
+                malformed = json.loads(json.dumps(valid))
+                malformed["unexpected"] = True
+                malformed["receipt"]["buildIdentity"]["surface"] = invalid_surface
+                malformed["receipt"]["buildIdentity"]["unexpected"] = True
+                temporary, _, runtime_store, session, state = self.fixture(surfaces)
+                self.addCleanup(temporary.cleanup)
+
+                next_state, _ = runtime_store.reconcile(
+                    session,
+                    observation(status, runtime_export(status, [malformed, valid])),
+                )
+                report = build_runtime_evidence_report(
+                    next_state,
+                    NOW + timedelta(minutes=2),
+                )
+
+                self.assertEqual(next_state.last_observation.surface_diagnostics, ())
+                self.assertIn(
+                    "invalid-receipt-entry",
+                    next_state.last_observation.diagnostics,
+                )
+                self.assertEqual(report["provenSurfaceCount"], 1)
+                self.assertIsNotNone(runtime_store.load(session))
+                with self.assertRaisesRegex(
+                    RuntimeEvidenceError,
+                    "runtime observation summary is invalid",
+                ):
+                    runtime_module.validate_observation_summary(
+                        replace(
+                            next_state.last_observation,
+                            surface_diagnostics=(("bogus.surface", "invalid"),),
+                        )
+                    )
+
     def test_expected_archive_identity_change_evicts_same_receipt_as_conflict(self):
         surfaces = ("macos.app",)
         temporary, _, _, _, state = self.fixture(surfaces)
