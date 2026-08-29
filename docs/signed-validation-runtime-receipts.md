@@ -137,11 +137,12 @@ and exactly the session `receiptTTLSeconds`. `processSequence` must be in the
 closed range `1...Int64.max`, and the receipt surface must be enabled by that
 same exported session.
 
-Local envelopes must omit `serverReceivedAt`. CloudKit envelopes must provide
-it, with a timestamp from five minutes before session creation through five
+Local envelopes must carry `serverReceivedAt: null`. CloudKit envelopes must
+provide a timestamp from five minutes before session creation through five
 minutes after receipt retention. The export's total, local, and remote counts
-must agree. Equivalent local and CloudKit copies remain one proof record, with
-CloudKit transport metadata taking precedence even if a local copy reappears.
+must describe a possible deduplicated union. Equivalent local and CloudKit
+copies remain one proof record, with CloudKit transport metadata taking
+precedence even if a local copy reappears.
 
 Proof remains surface-specific even when iOS and iPadOS share one archive
 artifact and bundle identifier. Executable UUID evidence is membership-based:
@@ -257,9 +258,10 @@ paths, device identifiers, account data, credentials, provider responses, or
 App Store Connect IDs. The original coordinator lifecycle document remains
 schema v1, and the sidecar is removed with its parent session retention.
 Persisted and reported evidence uses this closed summary allow-list rather than
-receipt input documents; it cannot reconstruct session timestamps, retention,
+receipt input documents. It retains the runtime-session lifecycle timestamps
+needed to judge propagation and expiry, but omits per-receipt retention,
 presentation mode, selected source, presentation digest, raw build payloads,
-or relay/export data.
+and relay/export documents.
 Operator workflow state is separate again: grouped actions, bounded wait
 timestamps, notification decisions, and expiring deferrals live in the additive
 `Coordinator/Operator Flow` sidecar. They never change receipt proof, ordering,
