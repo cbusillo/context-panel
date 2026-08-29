@@ -122,6 +122,34 @@ Normal defaults are a 30-minute session, a 30-second equivalent-state throttle,
 a 24-hour receipt TTL, and 128 receipts. Equivalent repeated states are
 rate-limited, while a state transition can write immediately.
 
+### Coordinator Provenance Gate
+
+The coordinator accepts only schema-v1 receipt envelopes whose session and
+receipt timestamps resolve to whole UTC seconds. It canonicalizes accepted
+timestamps to `YYYY-MM-DDTHH:MM:SSZ` before writing the additive evidence
+sidecar, so an equivalent offset spelling cannot create a duplicate conflict.
+
+The coordinator independently rechecks the signed-host bounds: a session may
+span at most six hours; a receipt observation may be no earlier than five
+minutes before session creation and must precede session expiry; and receipt
+retention must be later than the observation, no more than seven days later,
+and exactly the session `receiptTTLSeconds`. `processSequence` must be in the
+closed range `1...Int64.max`, and the receipt surface must be enabled by that
+same exported session.
+
+Local envelopes must omit `serverReceivedAt`. CloudKit envelopes must provide
+it, with a timestamp from five minutes before session creation through five
+minutes after receipt retention. The export's total, local, and remote counts
+must agree. Equivalent local and CloudKit copies remain one proof record, with
+CloudKit transport metadata taking precedence even if a local copy reappears.
+
+Proof remains surface-specific even when iOS and iPadOS share one archive
+artifact and bundle identifier. Executable UUID evidence is membership-based:
+the loaded UUID list may be a non-empty subset of the archive's UUID list; an
+unknown extra UUID or a disjoint list fails identity validation. The coordinator
+accepts both v1 and v2 sealed expected-build manifests and does not require a
+v2-only field to establish this identity.
+
 Open a session for the canonical installed Mac build with:
 
 ```sh
@@ -228,6 +256,10 @@ does not store raw receipt/export documents, signed-host messages, private
 paths, device identifiers, account data, credentials, provider responses, or
 App Store Connect IDs. The original coordinator lifecycle document remains
 schema v1, and the sidecar is removed with its parent session retention.
+Persisted and reported evidence uses this closed summary allow-list rather than
+receipt input documents; it cannot reconstruct session timestamps, retention,
+presentation mode, selected source, presentation digest, raw build payloads,
+or relay/export data.
 Operator workflow state is separate again: grouped actions, bounded wait
 timestamps, notification decisions, and expiring deferrals live in the additive
 `Coordinator/Operator Flow` sidecar. They never change receipt proof, ordering,

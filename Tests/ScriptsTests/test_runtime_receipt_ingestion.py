@@ -59,6 +59,16 @@ SURFACE_BUNDLES = {
         "macos.refresh-agent",
         "com.shinycomputers.contextpanel.refresh-agent",
     ),
+    "ios.app": ("companion.ios.app", "com.shinycomputers.contextpanel"),
+    "ios.widget": (
+        "companion.ios.widget",
+        "com.shinycomputers.contextpanel.widget",
+    ),
+    "ipados.app": ("companion.ios.app", "com.shinycomputers.contextpanel"),
+    "ipados.widget": (
+        "companion.ios.widget",
+        "com.shinycomputers.contextpanel.widget",
+    ),
     "watchos.app": ("watchos.app", "com.shinycomputers.contextpanel.watch"),
     "watchos.complication": (
         "watchos.complication",
@@ -86,33 +96,34 @@ def fingerprints(surface: str) -> dict[str, str]:
 
 
 def expected_manifest(surfaces: tuple[str, ...]) -> dict[str, object]:
-    artifacts = []
+    artifacts: list[dict[str, object]] = []
     surface_entries = []
     for surface in surfaces:
         artifact_id, bundle_id = SURFACE_BUNDLES[surface]
-        artifacts.append(
-            {
-                "artifactId": artifact_id,
-                "bundleIdentifier": bundle_id,
-                "marketingVersion": TARGET.version,
-                "buildNumber": TARGET.build_number,
-                "sourceCommit": "0123456789abcdef",
-                "configuration": "Release",
-                "xcodeBuild": "17A000",
-                "treeState": "clean",
-                "codeSignatureValid": True,
-                "executableSha256": sha(f"{artifact_id}:executable"),
-                "executableUUIDs": [LOADED_UUID, SECOND_UUID],
-                "entitlementsSha256": sha(f"{artifact_id}:entitlements"),
-                "profileSha256": sha(f"{artifact_id}:profile"),
-                "bundleContractSha256": sha(f"{artifact_id}:bundle-contract"),
-                "signingClass": "Apple Distribution",
-                "signingContractSha256": sha(f"{artifact_id}:signing-contract"),
-                "entitlementContractSha256": sha(f"{artifact_id}:entitlement-contract"),
-                "profileCapabilitySha256": sha(f"{artifact_id}:profile-capability"),
-                "architectures": ["arm64", "x86_64"],
-            }
-        )
+        if not any(item["artifactId"] == artifact_id for item in artifacts):
+            artifacts.append(
+                {
+                    "artifactId": artifact_id,
+                    "bundleIdentifier": bundle_id,
+                    "marketingVersion": TARGET.version,
+                    "buildNumber": TARGET.build_number,
+                    "sourceCommit": "0123456789abcdef",
+                    "configuration": "Release",
+                    "xcodeBuild": "17A000",
+                    "treeState": "clean",
+                    "codeSignatureValid": True,
+                    "executableSha256": sha(f"{artifact_id}:executable"),
+                    "executableUUIDs": [LOADED_UUID, SECOND_UUID],
+                    "entitlementsSha256": sha(f"{artifact_id}:entitlements"),
+                    "profileSha256": sha(f"{artifact_id}:profile"),
+                    "bundleContractSha256": sha(f"{artifact_id}:bundle-contract"),
+                    "signingClass": "Apple Distribution",
+                    "signingContractSha256": sha(f"{artifact_id}:signing-contract"),
+                    "entitlementContractSha256": sha(f"{artifact_id}:entitlement-contract"),
+                    "profileCapabilitySha256": sha(f"{artifact_id}:profile-capability"),
+                    "architectures": ["arm64", "x86_64"],
+                }
+            )
         surface_entries.append(
             {
                 "id": surface,
@@ -619,6 +630,256 @@ class RuntimeReceiptIngestionTests(unittest.TestCase):
         self.assertFalse(superseded)
         self.assertEqual(len(next_state.receipts), 1)
 
+    def test_uuid_subset_superset_and_disjoint_controls(self):
+        surfaces = ("macos.app",)
+        cases = (
+            ("loaded-subset", [LOADED_UUID], True),
+            ("archive-set", [LOADED_UUID, SECOND_UUID], True),
+            (
+                "loaded-superset",
+                [LOADED_UUID, SECOND_UUID, "CCCCCCCC-DDDD-EEEE-FFFF-000000000000"],
+                False,
+            ),
+            ("disjoint", ["CCCCCCCC-DDDD-EEEE-FFFF-000000000000"], False),
+        )
+        for label, executable_uuids, is_proven in cases:
+            with self.subTest(label=label):
+                temporary, _, _, _, state = self.fixture(surfaces)
+                self.addCleanup(temporary.cleanup)
+                status = runtime_status(surfaces)
+                entry = runtime_receipt("macos.app", status)
+                entry["receipt"]["buildIdentity"]["executableUUIDs"] = executable_uuids
+                next_state, _ = runtime_module.reconcile_runtime_observation(
+                    state,
+                    observation(status, runtime_export(status, [entry])),
+                )
+                report = build_runtime_evidence_report(next_state, NOW + timedelta(minutes=2))
+                self.assertEqual(report["provenSurfaceCount"] == 1, is_proven)
+
+    def test_receipt_provenance_boundary_matrix(self):
+        surfaces = ("macos.app",)
+
+        def receipt_at(
+            status: dict[str, object],
+            observed_at: datetime,
+            *,
+            process_sequence: int = 1,
+            source: str = "cloudkit",
+        ) -> dict[str, object]:
+            entry = runtime_receipt(
+                "macos.app",
+                status,
+                observed_at=observed_at,
+                process_sequence=process_sequence,
+                source=source,
+            )
+            return entry
+
+        cases = []
+        status = runtime_status(surfaces, expires_at=NOW + timedelta(hours=6))
+        cases.append(("session-duration-six-hours", status, receipt_at(status, NOW + timedelta(seconds=1)), True))
+        status = runtime_status(surfaces, expires_at=NOW + timedelta(hours=6, seconds=1))
+        cases.append(("session-duration-over-six-hours", status, receipt_at(status, NOW + timedelta(seconds=1)), False))
+        status = runtime_status(surfaces)
+        cases.append(("observed-at-created-minus-five-minutes", status, receipt_at(status, NOW - timedelta(minutes=5)), True))
+        cases.append(("observed-before-clock-skew", status, receipt_at(status, NOW - timedelta(minutes=5, seconds=1)), False))
+        expires_at = NOW + timedelta(minutes=30)
+        status = runtime_status(surfaces, expires_at=expires_at)
+        cases.append(("observed-before-expiration", status, receipt_at(status, expires_at - timedelta(seconds=1)), True))
+        cases.append(("observed-at-expiration", status, receipt_at(status, expires_at), False))
+        status = runtime_status(surfaces)
+        cases.append(("process-sequence-int64-max", status, receipt_at(status, NOW + timedelta(seconds=1), process_sequence=(2**63) - 1), True))
+        cases.append(("process-sequence-over-int64-max", status, receipt_at(status, NOW + timedelta(seconds=1), process_sequence=2**63), False))
+        non_whole_second = receipt_at(status, NOW + timedelta(seconds=1))
+        non_whole_second["receipt"]["observedAt"] = "2026-08-01T12:00:01.500Z"
+        cases.append(("observed-at-subsecond", status, non_whole_second, False))
+        for label, status, entry, is_proven in cases:
+            with self.subTest(label=label):
+                temporary, _, _, _, state = self.fixture(surfaces)
+                self.addCleanup(temporary.cleanup)
+                next_state, _ = runtime_module.reconcile_runtime_observation(
+                    state,
+                    observation(status, runtime_export(status, [entry])),
+                )
+                report = build_runtime_evidence_report(next_state, NOW + timedelta(minutes=2))
+                self.assertEqual(report["provenSurfaceCount"] == 1, is_proven)
+
+        status = runtime_status(surfaces)
+        entry = receipt_at(status, NOW + timedelta(seconds=1))
+        export = runtime_export(status, [entry])
+        export["session"]["receiptTTLSeconds"] = 7 * 24 * 60 * 60
+        entry["receipt"]["retentionExpiresAt"] = (
+            NOW + timedelta(seconds=1, days=7)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        temporary, _, _, _, state = self.fixture(surfaces)
+        self.addCleanup(temporary.cleanup)
+        next_state, _ = runtime_module.reconcile_runtime_observation(
+            state,
+            observation(status, export),
+        )
+        self.assertEqual(build_runtime_evidence_report(next_state, NOW)["provenSurfaceCount"], 1)
+
+        entry["receipt"]["retentionExpiresAt"] = (
+            NOW + timedelta(days=7, seconds=2)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        temporary, _, _, _, state = self.fixture(surfaces)
+        self.addCleanup(temporary.cleanup)
+        next_state, _ = runtime_module.reconcile_runtime_observation(
+            state,
+            observation(status, export),
+        )
+        self.assertEqual(build_runtime_evidence_report(next_state, NOW)["provenSurfaceCount"], 0)
+
+        entry = receipt_at(status, NOW + timedelta(seconds=1))
+        entry["receipt"]["retentionExpiresAt"] = "2026-08-02T12:00:00Z"
+        temporary, _, _, _, state = self.fixture(surfaces)
+        self.addCleanup(temporary.cleanup)
+        next_state, _ = runtime_module.reconcile_runtime_observation(
+            state,
+            observation(status, runtime_export(status, [entry])),
+        )
+        self.assertEqual(build_runtime_evidence_report(next_state, NOW)["provenSurfaceCount"], 0)
+
+    def test_receipt_relay_timestamp_and_enabled_surface_boundaries(self):
+        surfaces = ("macos.app",)
+        status = runtime_status(surfaces)
+        cases = []
+        cases.append(("local-without-server-time", runtime_receipt("macos.app", status, source="local"), True))
+        local_server_time = runtime_receipt("macos.app", status, source="local")
+        local_server_time["serverReceivedAt"] = "2026-08-01T12:00:00Z"
+        cases.append(("local-with-server-time", local_server_time, False))
+        missing_cloudkit_server_time = runtime_receipt("macos.app", status)
+        missing_cloudkit_server_time["serverReceivedAt"] = None
+        cases.append(("cloudkit-without-server-time", missing_cloudkit_server_time, False))
+        lower_bound = runtime_receipt("macos.app", status)
+        lower_bound["serverReceivedAt"] = "2026-08-01T11:55:00Z"
+        cases.append(("cloudkit-server-created-minus-five-minutes", lower_bound, True))
+        too_early = runtime_receipt("macos.app", status)
+        too_early["serverReceivedAt"] = "2026-08-01T11:54:59Z"
+        cases.append(("cloudkit-server-before-created-skew", too_early, False))
+        upper_bound = runtime_receipt("macos.app", status)
+        upper_bound["serverReceivedAt"] = "2026-08-02T12:05:01Z"
+        cases.append(("cloudkit-server-retention-plus-five-minutes", upper_bound, True))
+        too_late = runtime_receipt("macos.app", status)
+        too_late["serverReceivedAt"] = "2026-08-02T12:05:02Z"
+        cases.append(("cloudkit-server-after-retention-skew", too_late, False))
+        for label, entry, is_proven in cases:
+            with self.subTest(label=label):
+                temporary, _, _, _, state = self.fixture(surfaces)
+                self.addCleanup(temporary.cleanup)
+                next_state, _ = runtime_module.reconcile_runtime_observation(
+                    state,
+                    observation(status, runtime_export(status, [entry])),
+                )
+                self.assertEqual(
+                    build_runtime_evidence_report(next_state, NOW)["provenSurfaceCount"] == 1,
+                    is_proven,
+                )
+
+        disabled_session = runtime_export(status, [runtime_receipt("macos.app", status)])
+        disabled_session["session"]["enabledSurfaces"] = ["macos.widget"]
+        temporary, _, _, _, state = self.fixture(surfaces)
+        self.addCleanup(temporary.cleanup)
+        next_state, _ = runtime_module.reconcile_runtime_observation(
+            state,
+            observation(status, disabled_session),
+        )
+        self.assertEqual(build_runtime_evidence_report(next_state, NOW)["provenSurfaceCount"], 0)
+
+    def test_equivalent_timestamps_canonicalize_before_duplicate_reconciliation(self):
+        surfaces = ("macos.app",)
+        temporary, _, _, _, state = self.fixture(surfaces)
+        self.addCleanup(temporary.cleanup)
+        status = runtime_status(surfaces)
+        local = runtime_receipt("macos.app", status, source="local")
+        for key in ("sessionCreatedAt", "sessionExpiresAt", "observedAt", "retentionExpiresAt"):
+            local["receipt"][key] = local["receipt"][key].replace("Z", "+00:00")
+        cloudkit = json.loads(json.dumps(local))
+        cloudkit["source"] = "cloudkit"
+        cloudkit["serverReceivedAt"] = "2026-08-01T12:00:06+00:00"
+
+        next_state, _ = runtime_module.reconcile_runtime_observation(
+            state,
+            observation(status, runtime_export(status, [local, cloudkit])),
+        )
+
+        self.assertEqual(len(next_state.receipts), 1)
+        self.assertEqual(next_state.receipts[0].source, "cloudkit")
+        self.assertEqual(next_state.receipts[0].observed_at, "2026-08-01T12:00:01Z")
+        self.assertEqual(next_state.receipts[0].server_received_at, "2026-08-01T12:00:06Z")
+
+    def test_cloudkit_duplicate_remains_authoritative_when_local_reappears(self):
+        surfaces = ("macos.app",)
+        temporary, _, _, _, state = self.fixture(surfaces)
+        self.addCleanup(temporary.cleanup)
+        status = runtime_status(surfaces)
+        cloudkit = runtime_receipt("macos.app", status)
+        local = runtime_receipt("macos.app", status, source="local")
+        cloudkit_state, _ = runtime_module.reconcile_runtime_observation(
+            state,
+            observation(status, runtime_export(status, [cloudkit])),
+        )
+        next_state, _ = runtime_module.reconcile_runtime_observation(
+            cloudkit_state,
+            observation(status, runtime_export(status, [local])),
+        )
+        self.assertEqual(next_state.receipts[0].source, "cloudkit")
+
+    def test_adapter_rejects_inconsistent_receipt_counts(self):
+        status = runtime_status(("macos.app",))
+        export = runtime_export(status, [runtime_receipt("macos.app", status)])
+        self.assertTrue(RuntimeSessionAdapter._valid_status_payload(status))
+        self.assertTrue(RuntimeSessionAdapter._valid_export_payload(export, status))
+
+        status["receiptCount"] = 2
+        self.assertFalse(RuntimeSessionAdapter._valid_status_payload(status))
+
+        status = runtime_status(("macos.app",))
+        export = runtime_export(status, [runtime_receipt("macos.app", status)])
+        export["remoteReceiptCount"] = 0
+        self.assertFalse(RuntimeSessionAdapter._valid_export_payload(export, status))
+
+    def test_ios_and_ipados_shared_artifact_receipts_remain_surface_specific(self):
+        surfaces = ("ios.app", "ipados.app")
+        temporary, _, _, _, state = self.fixture(surfaces)
+        self.addCleanup(temporary.cleanup)
+        status = runtime_status(surfaces)
+        ios_entry = runtime_receipt("ios.app", status)
+        forged_ipados_entry = json.loads(json.dumps(ios_entry))
+        forged_ipados_entry["receipt"]["buildIdentity"]["surface"] = "ipados.app"
+
+        next_state, _ = runtime_module.reconcile_runtime_observation(
+            state,
+            observation(status, runtime_export(status, [ios_entry, forged_ipados_entry])),
+        )
+        report = build_runtime_evidence_report(next_state, NOW)
+
+        self.assertEqual(report["provenSurfaceCount"], 1)
+        self.assertEqual(report["surfaces"][0]["surface"], "ios.app")
+        self.assertEqual(report["surfaces"][0]["state"], "proven")
+        self.assertEqual(report["surfaces"][1]["surface"], "ipados.app")
+        self.assertEqual(report["surfaces"][1]["state"], "diagnostic")
+
+    def test_v1_and_v2_expected_builds_produce_compatible_runtime_identity(self):
+        v1_payload = legacy_v1_expected_manifest(("macos.app",))
+        v2_payload = expected_manifest(("macos.app",))
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            v1_path = root / "ExpectedBuildManifest-v1.json"
+            v2_path = root / "ExpectedBuildManifest-v2.json"
+            v1_path.write_text(json.dumps(v1_payload))
+            v2_path.write_text(json.dumps(v2_payload))
+            v1_identity = load_expected_surface_identities([v1_path], TARGET, ("macos.app",))[0]
+            v2_identity = load_expected_surface_identities([v2_path], TARGET, ("macos.app",))[0]
+
+        self.assertEqual(v1_identity.surface, v2_identity.surface)
+        self.assertEqual(v1_identity.platform, v2_identity.platform)
+        self.assertEqual(v1_identity.artifact_id, v2_identity.artifact_id)
+        self.assertEqual(v1_identity.bundle_identifier, v2_identity.bundle_identifier)
+        self.assertEqual(v1_identity.manifest_id, v2_identity.manifest_id)
+        self.assertEqual(v1_identity.contract_fingerprint, v2_identity.contract_fingerprint)
+        self.assertEqual(v1_identity.executable_uuids, v2_identity.executable_uuids)
+
     def test_receipt_cannot_prove_a_runtime_session_targeting_another_manifest(self):
         surfaces = ("macos.app",)
         temporary, _, _, _, state = self.fixture(surfaces)
@@ -1059,11 +1320,75 @@ class RuntimeReceiptIngestionTests(unittest.TestCase):
             "deletedRemoteReceiptCount": 0,
             "messages": ["/private/device/path credential-secret account-123"],
         }
-        runtime_store.reconcile(
+        state, _ = runtime_store.reconcile(
             session,
             observation(status, runtime_export(status, [entry]), sync_payload=sync),
         )
-        persisted = store.runtime_evidence_path(session.id).read_text()
+        persisted = json.loads(store.runtime_evidence_path(session.id).read_text())
+        exported = state.to_dict()
+        report = build_runtime_evidence_report(state, NOW + timedelta(minutes=2))
+
+        self.assertEqual(
+            set(persisted),
+            {
+                "schemaVersion",
+                "coordinatorSessionID",
+                "target",
+                "requestedSurfaces",
+                "updatedAt",
+                "revision",
+                "expectedSurfaces",
+                "receipts",
+                "lastObservation",
+            },
+        )
+        self.assertEqual(
+            set(persisted["receipts"][0]),
+            {
+                "receiptID",
+                "runtimeSessionID",
+                "surface",
+                "source",
+                "serverReceivedAt",
+                "observedAt",
+                "processInstanceID",
+                "processSequence",
+                "loadedExecutableUUIDs",
+                "identityDigest",
+                "stateBranch",
+                "outcome",
+            },
+        )
+        self.assertEqual(
+            set(report),
+            {
+                "schemaVersion",
+                "state",
+                "provenSurfaceCount",
+                "requestedSurfaceCount",
+                "lastReconciledAt",
+                "runtimeSession",
+                "diagnostics",
+                "surfaces",
+            },
+        )
+        self.assertEqual(
+            set(report["surfaces"][0]),
+            {
+                "surface",
+                "state",
+                "reason",
+                "receiptCount",
+                "lastObservedAt",
+                "latestStateBranch",
+                "latestOutcome",
+                "manifestID",
+                "expectedBuildID",
+                "identityDigest",
+                "runtimeFingerprint",
+                "receiptIDs",
+            },
+        )
 
         for forbidden in (
             "/private/device/path",
@@ -1073,8 +1398,13 @@ class RuntimeReceiptIngestionTests(unittest.TestCase):
             "selectedSource",
             "bundlePath",
             "rawProviderResponse",
+            "sessionCreatedAt",
+            "sessionExpiresAt",
+            "retentionExpiresAt",
+            "trigger",
+            "presentationMode",
         ):
-            self.assertNotIn(forbidden, persisted)
+            self.assertNotIn(forbidden, json.dumps([persisted, exported, report]))
 
     def test_coordinator_status_reports_exact_surface_proof_from_persisted_export(self):
         surfaces = ("macos.app",)
