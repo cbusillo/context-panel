@@ -26,14 +26,35 @@ evidence_template = cli_module.evidence_template
 SurfacePolicyError = core_module.SurfacePolicyError
 compare_manifests = core_module.compare_manifests
 collect_archive_evidence = artifact_module.collect_archive_evidence
+canonical_entitlements = artifact_module.canonical_entitlements
+canonical_json_hash = artifact_module.canonical_json_hash
+entitlement_contract_hash = artifact_module.entitlement_contract_hash
 embedded_manifest = core_module.embedded_manifest
 generate_manifest = core_module.generate_manifest
+profile_capability_hash = artifact_module.profile_capability_hash
 resolve_policy = core_module.resolve_policy
 seal_expected_build = core_module.seal_expected_build
+signing_class = artifact_module.signing_class
 validation_summary = core_module.validation_summary
 ComparisonSchemaError = comparison_schema_module.ComparisonSchemaError
 derive_risk_fields = comparison_schema_module.derive_risk_fields
 validate_current_comparison = comparison_schema_module.validate_current_comparison
+
+
+def v2_artifact_contract(seed: bytes, architectures: list[str] | None = None) -> dict[str, object]:
+    return {
+        "codeSignatureValid": True,
+        "executableSha256": hashlib.sha256(seed + b"binary").hexdigest(),
+        "executableUUIDs": ["01234567-89AB-CDEF-0123-456789ABCDEF"],
+        "entitlementsSha256": hashlib.sha256(seed + b"entitlements").hexdigest(),
+        "profileSha256": hashlib.sha256(seed + b"profile").hexdigest(),
+        "bundleContractSha256": hashlib.sha256(seed + b"bundle-contract").hexdigest(),
+        "signingClass": "Apple Distribution",
+        "signingContractSha256": hashlib.sha256(seed + b"signing-contract").hexdigest(),
+        "entitlementContractSha256": hashlib.sha256(seed + b"entitlement-contract").hexdigest(),
+        "profileCapabilitySha256": hashlib.sha256(seed + b"profile-capability").hexdigest(),
+        "architectures": architectures or ["arm64"],
+    }
 
 
 class SurfaceManifestTests(unittest.TestCase):
@@ -1263,20 +1284,15 @@ class SurfaceManifestTests(unittest.TestCase):
         template = evidence_template(self.baseline)
         for artifact in template["artifacts"]:
             seed = artifact["artifactId"].encode()
-            artifact.update(
-                {
-                    "codeSignatureValid": True,
-                    "executableSha256": hashlib.sha256(seed + b"binary").hexdigest(),
-                    "executableUUIDs": ["01234567-89AB-CDEF-0123-456789ABCDEF"],
-                    "entitlementsSha256": hashlib.sha256(seed + b"entitlements").hexdigest(),
-                    "profileSha256": hashlib.sha256(seed + b"profile").hexdigest(),
-                }
-            )
+            artifact.update(v2_artifact_contract(seed))
         sealed = seal_expected_build(self.baseline, template)
+        self.assertEqual(sealed["schemaVersion"], 2)
         self.assertEqual(sealed["kind"], "context-panel-expected-signed-build")
         self.assertEqual(len(sealed["artifacts"]), 11)
         self.assertEqual(len(sealed["surfaces"]), 13)
         self.assertEqual(len(sealed["expectedBuildId"]), 64)
+        self.assertIn("bundleContractSha256", sealed["artifacts"][0])
+        self.assertIn("architectures", sealed["artifacts"][0])
 
         incomplete = json.loads(json.dumps(template))
         incomplete["artifacts"].pop()
@@ -1287,6 +1303,218 @@ class SurfaceManifestTests(unittest.TestCase):
         mismatched["artifacts"][0]["buildNumber"] = "wrong"
         with self.assertRaisesRegex(SurfacePolicyError, "artifact evidence identity mismatch"):
             seal_expected_build(self.baseline, mismatched)
+
+        missing_v2 = json.loads(json.dumps(template))
+        missing_v2["artifacts"][0].pop("profileCapabilitySha256")
+        with self.assertRaisesRegex(SurfacePolicyError, "artifact evidence hash is invalid"):
+            seal_expected_build(self.baseline, missing_v2)
+
+        invalid_signing_class = json.loads(json.dumps(template))
+        invalid_signing_class["artifacts"][0]["signingClass"] = "Other"
+        with self.assertRaisesRegex(SurfacePolicyError, "signing class is invalid"):
+            seal_expected_build(self.baseline, invalid_signing_class)
+
+        ad_hoc_signing_class = json.loads(json.dumps(template))
+        ad_hoc_signing_class["artifacts"][0]["signingClass"] = "ad-hoc"
+        with self.assertRaisesRegex(SurfacePolicyError, "signing class is invalid"):
+            seal_expected_build(self.baseline, ad_hoc_signing_class)
+
+        invalid_architecture = json.loads(json.dumps(template))
+        invalid_architecture["artifacts"][0]["architectures"] = ["../../arm64"]
+        with self.assertRaisesRegex(SurfacePolicyError, "architectures are missing"):
+            seal_expected_build(self.baseline, invalid_architecture)
+
+    def test_semantic_entitlement_key_and_list_order_is_canonical(self):
+        first = plistlib.dumps(
+            {
+                "com.apple.developer.icloud-container-identifiers": ["iCloud.beta", "iCloud.alpha"],
+                "com.apple.security.application-groups": ["group.two", "group.one", "group.one"],
+            }
+        )
+        second = plistlib.dumps(
+            {
+                "com.apple.security.application-groups": ["group.one", "group.two"],
+                "com.apple.developer.icloud-container-identifiers": ["iCloud.alpha", "iCloud.beta"],
+            }
+        )
+        self.assertEqual(canonical_entitlements(first), canonical_entitlements(second))
+        self.assertEqual(
+            entitlement_contract_hash(canonical_entitlements(first)),
+            entitlement_contract_hash(canonical_entitlements(second)),
+        )
+
+    def test_keychain_access_group_order_remains_semantic(self):
+        first = canonical_entitlements(
+            plistlib.dumps(
+                {"keychain-access-groups": ["TEAM.primary", "TEAM.secondary"]}
+            )
+        )
+        second = canonical_entitlements(
+            plistlib.dumps(
+                {"keychain-access-groups": ["TEAM.secondary", "TEAM.primary"]}
+            )
+        )
+        self.assertNotEqual(
+            entitlement_contract_hash(first),
+            entitlement_contract_hash(second),
+        )
+
+    def test_profile_renewal_metadata_and_certificates_do_not_change_capability_hash(self):
+        base = {
+            "UUID": "11111111-1111-1111-1111-111111111111",
+            "Name": "Old profile",
+            "CreationDate": "2026-01-01T00:00:00Z",
+            "ExpirationDate": "2026-02-01T00:00:00Z",
+            "DeveloperCertificates": [b"old certificate"],
+            "ProvisionedDevices": ["device-a"],
+            "TeamIdentifier": ["TEAMID1234"],
+            "ApplicationIdentifierPrefix": ["TEAMID1234"],
+            "Platform": ["OSX"],
+            "ProvisionsAllDevices": True,
+            "Entitlements": {
+                "com.apple.security.application-groups": ["group.two", "group.one"],
+                "com.apple.developer.icloud-container-identifiers": ["iCloud.context"],
+            },
+        }
+        renewed = {
+            **base,
+            "UUID": "22222222-2222-2222-2222-222222222222",
+            "Name": "Renewed profile",
+            "CreationDate": "2026-03-01T00:00:00Z",
+            "ExpirationDate": "2027-03-01T00:00:00Z",
+            "DeveloperCertificates": [b"new certificate"],
+            "ProvisionedDevices": ["device-b"],
+        }
+        self.assertEqual(profile_capability_hash(base), profile_capability_hash(renewed))
+
+    def test_semantic_contract_drift_changes_expected_hashes(self):
+        signing_a = canonical_json_hash(
+            {
+                "identifierMatchesBundleIdentifier": True,
+                "signingClass": "Apple Distribution",
+                "teamIdentitySha256": hashlib.sha256(b"TEAM-A").hexdigest(),
+            }
+        )
+        signing_b = canonical_json_hash(
+            {
+                "identifierMatchesBundleIdentifier": True,
+                "signingClass": "Apple Development",
+                "teamIdentitySha256": hashlib.sha256(b"TEAM-A").hexdigest(),
+            }
+        )
+        signing_c = canonical_json_hash(
+            {
+                "identifierMatchesBundleIdentifier": True,
+                "signingClass": "Apple Distribution",
+                "teamIdentitySha256": hashlib.sha256(b"TEAM-B").hexdigest(),
+            }
+        )
+        self.assertNotEqual(signing_a, signing_b)
+        self.assertNotEqual(signing_a, signing_c)
+
+        entitlements_a = canonical_entitlements(
+            plistlib.dumps({"com.apple.security.application-groups": ["group.one"]})
+        )
+        entitlements_b = canonical_entitlements(
+            plistlib.dumps({"com.apple.security.application-groups": ["group.two"]})
+        )
+        self.assertNotEqual(
+            entitlement_contract_hash(entitlements_a),
+            entitlement_contract_hash(entitlements_b),
+        )
+        profile_a = {
+            "TeamIdentifier": ["TEAMID1234"],
+            "ApplicationIdentifierPrefix": ["TEAMID1234"],
+            "Platform": ["OSX"],
+            "Entitlements": {
+                "com.apple.developer.icloud-container-identifiers": ["iCloud.one"]
+            },
+        }
+        profile_b = {
+            **profile_a,
+            "Entitlements": {
+                "com.apple.developer.icloud-container-identifiers": ["iCloud.two"]
+            },
+        }
+        self.assertNotEqual(profile_capability_hash(profile_a), profile_capability_hash(profile_b))
+
+    def test_signing_class_normalization_uses_public_class_only(self):
+        self.assertEqual(signing_class(["Apple Distribution: Example Corp (TEAMID1234)"]), "Apple Distribution")
+        self.assertEqual(signing_class(["Developer ID Application: Example Corp (TEAMID1234)"]), "Developer ID Application")
+        self.assertEqual(
+            signing_class(["TestFlight Beta Distribution"]),
+            "TestFlight Beta Distribution",
+        )
+        self.assertEqual(signing_class([], "adhoc"), "ad-hoc")
+        with self.assertRaisesRegex(SurfacePolicyError, "authority is unavailable"):
+            signing_class([])
+        with self.assertRaisesRegex(SurfacePolicyError, "class is unsupported"):
+            signing_class(["Unknown Signing Authority"])
+
+    def test_empty_or_invalid_entitlements_fail_closed(self):
+        for payload in (b"", plistlib.dumps({}), b"not-a-plist"):
+            with self.subTest(payload=payload[:12]):
+                with self.assertRaisesRegex(SurfacePolicyError, "entitlements"):
+                    canonical_entitlements(payload)
+
+    def test_undecodable_or_empty_profile_fails_closed(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            profile = Path(temporary_directory) / "embedded.provisionprofile"
+            profile.write_bytes(b"profile")
+
+            def undecodable_runner(arguments):
+                return subprocess.CompletedProcess(arguments, 1, b"", b"bad profile")
+
+            with self.assertRaisesRegex(SurfacePolicyError, "provisioning profile is undecodable"):
+                artifact_module.profile_payload(profile, undecodable_runner)
+
+            with self.assertRaisesRegex(SurfacePolicyError, "profile entitlements are invalid"):
+                profile_capability_hash({"TeamIdentifier": ["TEAMID1234"]})
+
+    def test_architecture_slice_loss_changes_expected_build_id(self):
+        template = evidence_template(self.baseline, "macos")
+        for artifact in template["artifacts"]:
+            artifact.update(v2_artifact_contract(artifact["artifactId"].encode(), ["arm64", "x86_64"]))
+        universal = seal_expected_build(self.baseline, template)
+        thin_template = json.loads(json.dumps(template))
+        thin_template["artifacts"][0]["architectures"] = ["arm64"]
+        thin = seal_expected_build(self.baseline, thin_template)
+        self.assertNotEqual(universal["artifacts"][0]["architectures"], thin["artifacts"][0]["architectures"])
+        self.assertNotEqual(universal["expectedBuildId"], thin["expectedBuildId"])
+
+    def test_expected_build_id_binds_raw_and_semantic_v2_fields(self):
+        template = evidence_template(self.baseline, "macos")
+        for artifact in template["artifacts"]:
+            artifact.update(v2_artifact_contract(artifact["artifactId"].encode()))
+        sealed = seal_expected_build(self.baseline, template)
+        for key in (
+            "executableSha256",
+            "executableUUIDs",
+            "entitlementsSha256",
+            "profileSha256",
+            "bundleContractSha256",
+            "signingContractSha256",
+            "entitlementContractSha256",
+            "profileCapabilitySha256",
+            "architectures",
+        ):
+            tampered = json.loads(json.dumps(sealed))
+            if isinstance(tampered["artifacts"][0][key], list):
+                tampered["artifacts"][0][key] = ["tampered"]
+            else:
+                tampered["artifacts"][0][key] = "f" * 64
+            self.assertNotEqual(
+                tampered["expectedBuildId"],
+                core_module.hash_parts(
+                    f"{tampered['digestDomain']}/expected-build",
+                    [
+                        core_module.canonical_json(
+                            {name: value for name, value in tampered.items() if name != "expectedBuildId"}
+                        )
+                    ],
+                ),
+                key,
+            )
 
     def test_archive_fixture_binds_embedded_manifests_and_signed_artifacts(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -1325,17 +1553,45 @@ class SurfaceManifestTests(unittest.TestCase):
             entitlements = plistlib.dumps(
                 {"com.apple.security.application-groups": ["example.group"]}
             )
+            profile_payload = plistlib.dumps(
+                {
+                    "TeamIdentifier": ["TEAMID1234"],
+                    "ApplicationIdentifierPrefix": ["TEAMID1234"],
+                    "Platform": ["OSX"],
+                    "ProvisionsAllDevices": True,
+                    "Entitlements": {
+                        "com.apple.security.application-groups": ["example.group"]
+                    },
+                }
+            )
             profile_overrides = {}
+            commands: list[list[str]] = []
             for artifact_id in self.baseline["archiveLayouts"]["macos"]:
                 profile = Path(temporary_directory) / f"{artifact_id}.provisionprofile"
                 profile.write_bytes(f"external-profile-{artifact_id}".encode("utf-8"))
                 profile_overrides[artifact_id] = profile
 
             def runner(arguments):
+                commands.append(list(arguments))
                 if "--verify" in arguments:
                     return subprocess.CompletedProcess(arguments, 0, b"", b"")
+                if "--verbose=4" in arguments:
+                    bundle_path = Path(arguments[-1])
+                    info = plistlib.loads((bundle_path / "Contents/Info.plist").read_bytes())
+                    return subprocess.CompletedProcess(
+                        arguments,
+                        0,
+                        b"",
+                        (
+                            f"Identifier={info['CFBundleIdentifier']}\n"
+                            "TeamIdentifier=TEAMID1234\n"
+                            "Authority=Apple Distribution: Example Corp (TEAMID1234)\n"
+                        ).encode(),
+                    )
                 if "--entitlements" in arguments:
                     return subprocess.CompletedProcess(arguments, 0, entitlements, b"")
+                if arguments[:4] == ["/usr/bin/security", "cms", "-D", "-i"]:
+                    return subprocess.CompletedProcess(arguments, 0, profile_payload, b"")
                 if "dwarfdump" in arguments:
                     return subprocess.CompletedProcess(
                         arguments,
@@ -1357,6 +1613,49 @@ class SurfaceManifestTests(unittest.TestCase):
             self.assertEqual(sealed["archive"]["name"], "ContextPanel.xcarchive")
             self.assertEqual(len(sealed["artifacts"]), 3)
             self.assertEqual(len(sealed["surfaces"]), 3)
+            self.assertEqual(sealed["artifacts"][0]["architectures"], ["arm64"])
+            self.assertEqual(sealed["artifacts"][0]["signingClass"], "Apple Distribution")
+            self.assertTrue(
+                any(
+                    command[1:5] == ["-d", "--entitlements", "-", "--xml"]
+                    for command in commands
+                    if command and command[0] == "/usr/bin/codesign"
+                )
+            )
+
+            mismatched_profile_payload = plistlib.dumps(
+                {
+                    "TeamIdentifier": ["OTHERTEAM1"],
+                    "ApplicationIdentifierPrefix": ["OTHERTEAM1"],
+                    "Platform": ["OSX"],
+                    "ProvisionsAllDevices": True,
+                    "Entitlements": {
+                        "com.apple.security.application-groups": ["example.group"]
+                    },
+                }
+            )
+
+            def mismatched_profile_runner(arguments):
+                if arguments[:4] == ["/usr/bin/security", "cms", "-D", "-i"]:
+                    return subprocess.CompletedProcess(
+                        arguments,
+                        0,
+                        mismatched_profile_payload,
+                        b"",
+                    )
+                return runner(arguments)
+
+            with self.assertRaisesRegex(
+                SurfacePolicyError,
+                "signing team does not match",
+            ):
+                collect_archive_evidence(
+                    self.baseline,
+                    archive,
+                    "macos",
+                    profile_paths=profile_overrides,
+                    runner=mismatched_profile_runner,
+                )
 
             app_manifest = (
                 archive

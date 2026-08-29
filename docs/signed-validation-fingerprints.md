@@ -211,10 +211,27 @@ artifact in the selected archive layout and emits
 - exact version, build, commit, configuration, Xcode build, and clean-tree state
 - bundle ID and per-surface render/runtime/placement/combined fingerprints
 - executable SHA-256 and Mach-O UUIDs
-- canonical signed-entitlement SHA-256
-- selected signing provisioning-profile SHA-256
+- canonical signed-entitlement SHA-256 and provisioning-profile SHA-256 as exact
+  provenance
+- v2 semantic contract digests for bundle identity, signing contract, effective
+  signed entitlements, and provisioning capabilities
+- public signing class and canonical architecture names
 - successful strict code-signature verification
 - the source-manifest and expected-build IDs
+
+Schema v2 is the current format for newly sealed expected-build manifests.
+Its semantic contracts avoid printing signing material in cleartext: team IDs,
+App Group values, CloudKit container IDs, certificate names, certificate
+serials, profile contents, device lists, and renewal dates do not appear as raw
+fields. These deterministic digests are public-safe comparison identifiers, not
+confidentiality guarantees for low-entropy or externally discoverable values.
+Existing schema v1 expected-build manifests remain valid for release-gate,
+validation, lineage, and replay reconstruction; they are not rewritten or
+interpreted as v2.
+
+Stage 4a seals and validates this semantic provenance but does not yet widen
+runtime requirements from it. Comparison schema v5 owns the later
+`artifact-risk-changed` policy signal and its exact surface scope.
 
 The embedded manifest is evidence only when it is sealed by a valid code
 signature and matches the freshly generated source manifest. The archive

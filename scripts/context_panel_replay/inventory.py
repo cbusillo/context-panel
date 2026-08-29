@@ -11,6 +11,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from context_panel_expected_build import validate_expected_build_manifest
+
 from .comparison_adapters import ComparisonAdapterError, adapt_comparison_for_replay
 
 
@@ -23,8 +25,6 @@ VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+$")
 BUILD_PATTERN = re.compile(r"^\d{12}$")
 TOKEN_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.-]{0,95}$")
 SURFACE_PATTERN = re.compile(r"^[a-z0-9]+(?:[.-][a-z0-9]+)*$")
-SURFACE_MANIFEST_ALGORITHM = "sha256"
-SURFACE_DIGEST_DOMAIN = "context-panel-surface/v1"
 UNSAFE_STRING_PATTERNS = (
     re.compile(r"(?:^|\s)(?:/Users/|/Volumes/|/private/|~/|file://)"),
     re.compile(r"\b[A-Z0-9]{10}\.group\."),
@@ -128,36 +128,6 @@ BUILD_KEYS = {
     "contractFingerprint",
 }
 FINGERPRINT_KEYS = {"render", "runtime", "placement", "combined"}
-EXPECTED_MANIFEST_KEYS = {
-    "schemaVersion",
-    "kind",
-    "algorithm",
-    "digestDomain",
-    "sourceManifestId",
-    "contractFingerprint",
-    "layout",
-    "archive",
-    "source",
-    "artifacts",
-    "surfaces",
-    "expectedBuildId",
-}
-EXPECTED_ARTIFACT_KEYS = {
-    "artifactId",
-    "bundleIdentifier",
-    "marketingVersion",
-    "buildNumber",
-    "sourceCommit",
-    "configuration",
-    "xcodeBuild",
-    "treeState",
-    "codeSignatureValid",
-    "executableSha256",
-    "executableUUIDs",
-    "entitlementsSha256",
-    "profileSha256",
-}
-EXPECTED_SURFACE_KEYS = {"id", "artifactId", "bundleIdentifier", "fingerprints"}
 SESSION_KEYS = {
     "schemaVersion",
     "id",
@@ -785,16 +755,6 @@ def _validate_retained_session(
     )
 
 
-def _normalized_uuid_list(value: Any, label: str) -> tuple[str, ...]:
-    if not isinstance(value, list) or not value:
-        raise InventoryError(f"{label} is invalid")
-    normalized = [_normalized_uuid(item, label).upper() for item in value]
-    canonical = tuple(sorted(set(normalized)))
-    if len(canonical) != len(value):
-        raise InventoryError(f"{label} is invalid")
-    return canonical
-
-
 def _expected_surface_identities(
     expected_builds: list[dict[str, Any]],
     train: dict[str, Any],
@@ -803,38 +763,17 @@ def _expected_surface_identities(
     identities: dict[str, dict[str, Any]] = {}
     manifest_identity: tuple[str, str] | None = None
     for expected in expected_builds:
-        if not isinstance(expected, dict) or set(expected) != EXPECTED_MANIFEST_KEYS:
-            raise InventoryError("expected signed build manifest is invalid")
-        digest_domain = expected.get("digestDomain")
+        validated = validate_expected_build_manifest(
+            expected,
+            version=train["version"],
+            build_number=train["buildNumber"],
+            current_manifest_id=str(current.get("manifestId") or ""),
+            contract_fingerprint=str(current.get("contractFingerprint") or ""),
+            valid_surfaces=set(SURFACE_PLATFORMS),
+            error=InventoryError,
+        )
         expected_build_id = expected.get("expectedBuildId")
-        unsigned = {key: value for key, value in expected.items() if key != "expectedBuildId"}
-        if (
-            not _is_schema_version_one(expected.get("schemaVersion"))
-            or expected.get("kind") != "context-panel-expected-signed-build"
-            or expected.get("algorithm") != SURFACE_MANIFEST_ALGORITHM
-            or digest_domain != SURFACE_DIGEST_DOMAIN
-            or _sha256(expected.get("sourceManifestId"), "expected manifest id")
-            != current.get("manifestId")
-            or _sha256(expected.get("contractFingerprint"), "expected contract fingerprint")
-            != current.get("contractFingerprint")
-            or _sha256(expected_build_id, "expected build id")
-            != _hash_parts(
-                f"{digest_domain}/expected-build",
-                [canonical_json(unsigned)],
-            )
-        ):
-            raise InventoryError("expected signed build manifest target is invalid")
-        source = expected.get("source")
-        artifacts_payload = expected.get("artifacts")
-        surfaces_payload = expected.get("surfaces")
-        if (
-            not isinstance(source, dict)
-            or source.get("marketingVersion") != train["version"]
-            or source.get("buildNumber") != train["buildNumber"]
-            or not isinstance(artifacts_payload, list)
-            or not isinstance(surfaces_payload, list)
-        ):
-            raise InventoryError("expected signed build manifest target is invalid")
+        surfaces_payload = validated.surfaces
         current_manifest_identity = (
             str(expected["sourceManifestId"]),
             str(expected["contractFingerprint"]),
@@ -843,49 +782,17 @@ def _expected_surface_identities(
             raise InventoryError("expected signed build manifests do not share one identity")
         manifest_identity = current_manifest_identity
 
-        artifacts: dict[str, dict[str, Any]] = {}
-        for artifact in artifacts_payload:
-            if not isinstance(artifact, dict) or set(artifact) != EXPECTED_ARTIFACT_KEYS:
-                raise InventoryError("expected signed build artifact is invalid")
-            artifact_id = artifact.get("artifactId")
-            executable_uuids = _normalized_uuid_list(
-                artifact.get("executableUUIDs"),
-                "expected signed build executable UUIDs",
-            )
-            if (
-                not isinstance(artifact_id, str)
-                or not artifact_id
-                or artifact_id in artifacts
-                or not isinstance(artifact.get("bundleIdentifier"), str)
-                or not artifact.get("bundleIdentifier")
-                or artifact.get("marketingVersion") != train["version"]
-                or artifact.get("buildNumber") != train["buildNumber"]
-                or artifact.get("codeSignatureValid") is not True
-            ):
-                raise InventoryError("expected signed build artifact is invalid")
-            for key in (
-                "executableSha256",
-                "entitlementsSha256",
-                "profileSha256",
-            ):
-                _sha256(artifact.get(key), f"expected signed build {key}")
-            artifacts[artifact_id] = {**artifact, "executableUUIDs": executable_uuids}
-
         seen_surfaces: set[str] = set()
         for surface_payload in surfaces_payload:
-            if not isinstance(surface_payload, dict) or set(surface_payload) != EXPECTED_SURFACE_KEYS:
-                raise InventoryError("expected signed build surface is invalid")
             surface = surface_payload.get("id")
-            if surface not in SURFACE_PLATFORMS or surface in seen_surfaces:
+            if surface in seen_surfaces:
                 raise InventoryError("expected signed build surface is invalid")
             seen_surfaces.add(str(surface))
-            artifact = artifacts.get(str(surface_payload.get("artifactId")))
+            artifact = validated.artifacts.get(str(surface_payload.get("artifactId")))
             fingerprints = surface_payload.get("fingerprints")
             if (
                 artifact is None
-                or surface_payload.get("bundleIdentifier") != artifact.get("bundleIdentifier")
                 or not isinstance(fingerprints, dict)
-                or set(fingerprints) != FINGERPRINT_KEYS
             ):
                 raise InventoryError("expected signed build surface is invalid")
             fingerprint_values = {

@@ -171,13 +171,19 @@ def evidence_template(
             "executableUUIDs": [],
             "entitlementsSha256": None,
             "profileSha256": None,
+            "bundleContractSha256": None,
+            "signingClass": None,
+            "signingContractSha256": None,
+            "entitlementContractSha256": None,
+            "profileCapabilitySha256": None,
+            "architectures": [],
         }
         previous = artifacts.get(artifact_id)
         if previous is not None and previous != artifact:
             raise SurfacePolicyError(f"source manifest artifact contract drifted: {artifact_id}")
         artifacts[artifact_id] = artifact
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "sourceManifestId": manifest.get("manifestId"),
         "layout": layout_name,
         "artifacts": [artifacts[artifact_id] for artifact_id in sorted(artifacts)],

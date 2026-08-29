@@ -19,6 +19,10 @@ from context_panel_comparison_schema import (
     toolchain_changed,
     validate_current_comparison,
 )
+from context_panel_expected_build import (
+    ARCHITECTURE_PATTERN,
+    DISTRIBUTION_SIGNING_CLASSES,
+)
 
 
 DEFAULT_POLICY_PATH = Path("Config/ContextPanelSurfacePolicy.json")
@@ -895,8 +899,8 @@ def generate_manifest(
         "archiveLayouts": policy["archiveLayouts"],
         "evidencePolicy": evidence_policy,
         "artifactEvidenceContract": {
-            "schemaVersion": 1,
-            "integrity": "code-signature-plus-manifest-match",
+            "schemaVersion": 2,
+            "integrity": "code-signature-plus-manifest-match-plus-semantic-contracts",
             "requiredFields": [
                 "bundleIdentifier",
                 "marketingVersion",
@@ -906,6 +910,12 @@ def generate_manifest(
                 "executableUUIDs",
                 "entitlementsSha256",
                 "profileSha256",
+                "bundleContractSha256",
+                "signingClass",
+                "signingContractSha256",
+                "entitlementContractSha256",
+                "profileCapabilitySha256",
+                "architectures",
             ],
         },
         "files": {path: resolved.file_hashes[path] for path in sorted(resolved.file_hashes)},
@@ -984,7 +994,7 @@ def seal_expected_build(
 ) -> dict[str, Any]:
     if source_manifest.get("schemaVersion") != 1:
         raise SurfacePolicyError("source manifest schema is unsupported")
-    if artifact_evidence.get("schemaVersion") != 1:
+    if artifact_evidence.get("schemaVersion") != 2:
         raise SurfacePolicyError("artifact evidence schema is unsupported")
     if artifact_evidence.get("sourceManifestId") != source_manifest.get("manifestId"):
         raise SurfacePolicyError("artifact evidence source manifest does not match")
@@ -1042,15 +1052,40 @@ def seal_expected_build(
                 raise SurfacePolicyError(f"artifact evidence identity mismatch: {artifact_id}: {key}")
         if raw_artifact.get("codeSignatureValid") is not True:
             raise SurfacePolicyError(f"artifact code signature is not valid: {artifact_id}")
-        for key in ("executableSha256", "entitlementsSha256", "profileSha256"):
+        for key in (
+            "executableSha256",
+            "entitlementsSha256",
+            "profileSha256",
+            "bundleContractSha256",
+            "signingContractSha256",
+            "entitlementContractSha256",
+            "profileCapabilitySha256",
+        ):
             if not SHA256_PATTERN.fullmatch(str(raw_artifact.get(key) or "")):
                 raise SurfacePolicyError(f"artifact evidence hash is invalid: {artifact_id}: {key}")
+        signing_class = raw_artifact.get("signingClass")
+        if signing_class not in DISTRIBUTION_SIGNING_CLASSES:
+            raise SurfacePolicyError(f"artifact signing class is invalid: {artifact_id}")
         raw_uuids = raw_artifact.get("executableUUIDs")
         if not isinstance(raw_uuids, list) or not raw_uuids:
             raise SurfacePolicyError(f"artifact executable UUIDs are missing: {artifact_id}")
         uuids = sorted({str(value).upper() for value in raw_uuids})
         if len(uuids) != len(raw_uuids) or any(not UUID_PATTERN.fullmatch(value) for value in uuids):
             raise SurfacePolicyError(f"artifact executable UUIDs are invalid: {artifact_id}")
+        raw_architectures = raw_artifact.get("architectures")
+        if (
+            not isinstance(raw_architectures, list)
+            or not raw_architectures
+            or any(
+                not isinstance(value, str)
+                or ARCHITECTURE_PATTERN.fullmatch(value) is None
+                for value in raw_architectures
+            )
+        ):
+            raise SurfacePolicyError(f"artifact architectures are missing: {artifact_id}")
+        architectures = sorted(set(raw_architectures))
+        if len(architectures) != len(raw_architectures):
+            raise SurfacePolicyError(f"artifact architectures are invalid: {artifact_id}")
         artifacts[artifact_id] = {
             **expected,
             "artifactId": artifact_id,
@@ -1059,6 +1094,12 @@ def seal_expected_build(
             "executableUUIDs": uuids,
             "entitlementsSha256": str(raw_artifact["entitlementsSha256"]),
             "profileSha256": str(raw_artifact["profileSha256"]),
+            "bundleContractSha256": str(raw_artifact["bundleContractSha256"]),
+            "signingClass": signing_class,
+            "signingContractSha256": str(raw_artifact["signingContractSha256"]),
+            "entitlementContractSha256": str(raw_artifact["entitlementContractSha256"]),
+            "profileCapabilitySha256": str(raw_artifact["profileCapabilitySha256"]),
+            "architectures": architectures,
         }
 
     missing_artifacts = sorted(set(expected_artifacts) - set(artifacts))
@@ -1068,7 +1109,7 @@ def seal_expected_build(
         )
 
     payload: dict[str, Any] = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "kind": "context-panel-expected-signed-build",
         "algorithm": source_manifest.get("algorithm"),
         "digestDomain": source_manifest.get("digestDomain"),

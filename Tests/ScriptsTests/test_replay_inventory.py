@@ -168,6 +168,8 @@ class ReplayInventoryTests(unittest.TestCase):
         self,
         platform: str,
         current: dict[str, Any],
+        *,
+        schema_version: int = 1,
     ) -> dict[str, Any]:
         artifacts: list[dict[str, Any]] = []
         surfaces: list[dict[str, Any]] = []
@@ -192,6 +194,17 @@ class ReplayInventoryTests(unittest.TestCase):
                     "profileSha256": "8" * 64,
                 }
             )
+            if schema_version == 2:
+                artifacts[-1].update(
+                    {
+                        "bundleContractSha256": "9" * 64,
+                        "signingClass": "Apple Distribution",
+                        "signingContractSha256": "a" * 64,
+                        "entitlementContractSha256": "b" * 64,
+                        "profileCapabilitySha256": "c" * 64,
+                        "architectures": ["arm64", "x86_64"],
+                    }
+                )
             surfaces.append(
                 {
                     "id": "macos.app",
@@ -201,7 +214,7 @@ class ReplayInventoryTests(unittest.TestCase):
                 }
             )
         payload = {
-            "schemaVersion": 1,
+            "schemaVersion": schema_version,
             "kind": "context-panel-expected-signed-build",
             "algorithm": "sha256",
             "digestDomain": "context-panel-surface/v1",
@@ -704,6 +717,36 @@ class ReplayInventoryTests(unittest.TestCase):
             self.write_json(ledger_path, ledger)
             with self.assertRaisesRegex(InventoryError, "lineage ledger"):
                 seal_inventory(policy, roots)
+
+    def test_expected_build_reconstruction_accepts_v1_and_v2(self):
+        current = {"manifestId": "1" * 64, "contractFingerprint": "2" * 64}
+        train = {"version": "1.0.1", "buildNumber": "202608270001"}
+        for schema_version in (1, 2):
+            with self.subTest(schema_version=schema_version):
+                identities = expected_surface_identities(
+                    [self.expected_build_manifest("macos", current, schema_version=schema_version)],
+                    train,
+                    current,
+                )
+                self.assertEqual(sorted(identities), ["macos.app"])
+
+    def test_expected_build_reconstruction_rejects_v2_tamper_and_missing_fields(self):
+        current = {"manifestId": "1" * 64, "contractFingerprint": "2" * 64}
+        train = {"version": "1.0.1", "buildNumber": "202608270001"}
+        tampered = self.expected_build_manifest("macos", current, schema_version=2)
+        tampered["artifacts"][0]["signingContractSha256"] = "f" * 64
+        with self.assertRaisesRegex(InventoryError, "expected signed build manifest is invalid"):
+            expected_surface_identities([tampered], train, current)
+
+        missing = self.expected_build_manifest("macos", current, schema_version=2)
+        missing["artifacts"][0].pop("architectures")
+        missing.pop("expectedBuildId")
+        missing["expectedBuildId"] = hash_parts(
+            "context-panel-surface/v1/expected-build",
+            [canonical_json(missing)],
+        )
+        with self.assertRaisesRegex(InventoryError, "expected signed build artifact is invalid"):
+            expected_surface_identities([missing], train, current)
 
     def test_expected_build_identity_must_match_signed_ledger(self):
         with tempfile.TemporaryDirectory() as temporary:
