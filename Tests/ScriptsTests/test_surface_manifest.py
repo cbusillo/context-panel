@@ -11,6 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -972,6 +973,33 @@ class SurfaceManifestTests(unittest.TestCase):
         )
         self.assertEqual(
             placement_comparison["observationRiskCodes"], ["host-os-divergence"]
+        )
+
+    def test_compare_cli_preserves_schema_canonical_map_order(self):
+        current = copy.deepcopy(self.baseline)
+        current["contractFingerprint"] = "f" * 64
+        self.surfaces(current)["macos.app"]["fingerprints"]["render"] = "a" * 64
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            previous_path = root / "previous.json"
+            current_path = root / "current.json"
+            output_path = root / "comparison.json"
+            previous_path.write_text(json.dumps(self.baseline))
+            current_path.write_text(json.dumps(current))
+            cli_module.run(
+                SimpleNamespace(
+                    command="compare",
+                    previous=previous_path,
+                    current=current_path,
+                    train="beta",
+                    output=output_path,
+                )
+            )
+            comparison = json.loads(output_path.read_text())
+        self.assertEqual(validate_current_comparison(comparison), comparison)
+        self.assertEqual(
+            list(comparison["riskSurfaces"]),
+            ["render-divergence", "contract-divergence"],
         )
 
     def test_toolchain_divergence_records_on_beta_without_runtime_session(self):
