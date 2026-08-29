@@ -13,6 +13,7 @@ from context_panel_comparison_schema import (
     validate_current_comparison,
     validate_legacy_v1_comparison_for_reconstruction,
     validate_legacy_v2_comparison_for_reconstruction,
+    validate_legacy_v3_comparison_for_reconstruction,
 )
 from context_panel_validation.models import Target
 from context_panel_validation.runtime_evidence import (
@@ -402,6 +403,7 @@ def _validate_surface_policy(
     *,
     train: str,
     comparison_surfaces: dict[str, dict[str, Any]],
+    toolchain_changed: bool = False,
 ) -> dict[str, Any]:
     evidence_policy = surface_policy.get("evidencePolicy")
     surfaces = surface_policy.get("surfaces")
@@ -481,6 +483,12 @@ def _validate_surface_policy(
                 and "actual-runtime" in train_minimums[train]
             ):
                 fresh.add("actual-runtime")
+        if (
+            toolchain_changed
+            and train in {"rc", "release"}
+            and "actual-runtime" in capabilities
+        ):
+            fresh.add("actual-runtime")
         fresh_evidence = [
             value for value in EVIDENCE_CLASSES if value in capabilities and value in fresh
         ]
@@ -542,6 +550,8 @@ def _validate_comparison(
             if allow_legacy_reconstruction and comparison.get("schemaVersion") == 1
             else validate_legacy_v2_comparison_for_reconstruction(comparison)
             if allow_legacy_reconstruction and comparison.get("schemaVersion") == 2
+            else validate_legacy_v3_comparison_for_reconstruction(comparison)
+            if allow_legacy_reconstruction and comparison.get("schemaVersion") == 3
             else validate_current_comparison(comparison)
         )
     except ComparisonSchemaError as error:
@@ -556,6 +566,7 @@ def _validate_comparison(
             surface_policy,
             train=train,
             comparison_surfaces=surface_map,
+            toolchain_changed=bool(validated.get("toolchainChanged", False)),
         )
     return surface_map
 
@@ -1792,6 +1803,11 @@ def release_evidence_report_blockers(
                     validated_comparison_surfaces
                     if comparison is not None
                     else {}
+                ),
+                toolchain_changed=(
+                    bool(comparison.get("toolchainChanged", False))
+                    if comparison is not None
+                    else False
                 ),
             )
             if payload.get("surfacePolicyDigest") != _hash_payload(surface_policy):

@@ -10,13 +10,19 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-from context_panel_comparison_schema import derive_runtime_decision
+from context_panel_comparison_schema import (
+    EVIDENCE_CLASSES,
+    derive_risk_fields,
+    derive_runtime_decision,
+    validate_current_comparison,
+)
 from context_panel_release_gate import (
     ReleaseEvidenceError,
     build_release_evidence_lineage,
     evaluate_release_evidence,
     release_evidence_report_blockers,
 )
+from context_panel_release_gate.cli import render_lineage
 from context_panel_validation import ExpectedSurfaceIdentity, RUNTIME_SURFACES
 from context_panel_validation.runtime_evidence import canonical_json, hash_parts
 
@@ -365,9 +371,15 @@ def comparison(
         for surface_id in RUNTIME_SURFACES
     ]
     runtime_state, runtime_state_reasons = derive_runtime_decision(surfaces)
+    risk_codes, risk_surfaces, observation_risk_codes = derive_risk_fields(
+        surfaces,
+        toolchain_delta=False,
+        runtime_capable_surface_ids=set(RUNTIME_SURFACES),
+        requires_placement_review=bool(required["os-composited-placement"]),
+    )
     return {
         "kind": "context-panel-surface-comparison",
-        "schemaVersion": 3,
+        "schemaVersion": 4,
         "train": train,
         "previousManifestId": previous_manifest_id,
         "currentManifestId": current_manifest_id,
@@ -379,6 +391,10 @@ def comparison(
         "requiresPlacementReview": bool(required["os-composited-placement"]),
         "runtimeState": runtime_state,
         "runtimeStateReasons": runtime_state_reasons,
+        "toolchainChanged": False,
+        "riskCodes": risk_codes,
+        "riskSurfaces": risk_surfaces,
+        "observationRiskCodes": observation_risk_codes,
         "surfaces": surfaces,
         "releaseRequiresApprovedRCTarget": True,
     }
@@ -688,11 +704,16 @@ def previous_lineage(
         current_manifest_id=PREVIOUS_MANIFEST,
     )
     if legacy_comparison:
-        comparison_payload.pop("runtimeState")
-        comparison_payload.pop("runtimeStateReasons")
+        if legacy_comparison_version in {1, 2}:
+            comparison_payload.pop("runtimeState")
+            comparison_payload.pop("runtimeStateReasons")
+        comparison_payload.pop("toolchainChanged")
+        comparison_payload.pop("riskCodes")
+        comparison_payload.pop("riskSurfaces")
+        comparison_payload.pop("observationRiskCodes")
         if legacy_comparison_version == 1:
             comparison_payload.pop("kind")
-        elif legacy_comparison_version != 2:
+        elif legacy_comparison_version not in {2, 3}:
             raise ValueError("unsupported legacy comparison version")
         comparison_payload["schemaVersion"] = legacy_comparison_version
     validation_report = report(
@@ -759,6 +780,72 @@ def selected_rc_ledger(surface: str) -> dict[str, Any]:
 
 
 class ReleaseEvidenceGateTests(unittest.TestCase):
+    def test_lineage_serialization_preserves_comparison_map_order(self) -> None:
+        comparison_payload = comparison(
+            "watchos.complication",
+            "os-composited-placement",
+            train="rc",
+        )
+        for surface in comparison_payload["surfaces"]:
+            surface["changes"]["contract"] = True
+            surface["reasonCodes"] = [
+                reason
+                for reason in (
+                    "render-fingerprint-changed"
+                    if surface["surfaceId"] == "watchos.complication"
+                    else None,
+                    "placement-fingerprint-changed"
+                    if surface["surfaceId"] == "watchos.complication"
+                    else None,
+                    "contract-fingerprint-changed",
+                )
+                if reason is not None
+            ]
+        target = next(
+            surface
+            for surface in comparison_payload["surfaces"]
+            if surface["surfaceId"] == "watchos.complication"
+        )
+        target["changes"]["render"] = True
+        target["minimumEvidence"] = list(EVIDENCE_CLASSES)
+        target["freshEvidence"] = list(EVIDENCE_CLASSES)
+        target["requiredEvidence"] = list(EVIDENCE_CLASSES)
+        target["carryForward"] = {
+            evidence_class: {"eligible": False, "conditions": []}
+            for evidence_class in EVIDENCE_CLASSES
+        }
+        comparison_payload["contractChanged"] = True
+        comparison_payload["requiredSurfaces"]["shared-view"] = [
+            "watchos.complication"
+        ]
+        (
+            comparison_payload["runtimeState"],
+            comparison_payload["runtimeStateReasons"],
+        ) = derive_runtime_decision(comparison_payload["surfaces"])
+        (
+            comparison_payload["riskCodes"],
+            comparison_payload["riskSurfaces"],
+            comparison_payload["observationRiskCodes"],
+        ) = derive_risk_fields(
+            comparison_payload["surfaces"],
+            toolchain_delta=False,
+            runtime_capable_surface_ids={"watchos.complication"},
+            requires_placement_review=True,
+        )
+        serialized = render_lineage(
+            {"generation": {"comparison": comparison_payload}}
+        )
+        restored = json.loads(serialized)["generation"]["comparison"]
+        self.assertEqual(validate_current_comparison(restored), restored)
+        self.assertEqual(
+            list(restored["riskSurfaces"]),
+            [
+                "render-divergence",
+                "placement-divergence",
+                "contract-divergence",
+            ],
+        )
+
     @staticmethod
     def evaluate(
         surface: str,
@@ -1237,6 +1324,33 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             "shared-view",
             legacy_comparison=True,
             legacy_comparison_version=2,
+        )
+        raw_comparison = previous["generation"]["comparison"]
+        self.assertEqual(
+            previous["ledger"]["comparisonDigest"],
+            hashlib.sha256(
+                json.dumps(
+                    raw_comparison,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest(),
+        )
+        payload = self.evaluate(
+            surface,
+            "shared-view",
+            eligible=True,
+            previous_ledger=previous,
+        )
+        self.assertNotIn("previous-ledger", " ".join(payload["blockers"]))
+
+    def test_signed_lineage_reconstruction_preserves_legacy_v3_comparison_digest(self) -> None:
+        surface = "watchos.app"
+        previous = previous_lineage(
+            surface,
+            "shared-view",
+            legacy_comparison=True,
+            legacy_comparison_version=3,
         )
         raw_comparison = previous["generation"]["comparison"]
         self.assertEqual(

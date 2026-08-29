@@ -17,7 +17,7 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-from context_panel_comparison_schema import derive_runtime_decision
+from context_panel_comparison_schema import derive_risk_fields, derive_runtime_decision
 from context_panel_validation import (
     ASCEvidence,
     MacEvidence,
@@ -109,7 +109,7 @@ class VisualApprovalTests(unittest.TestCase):
     def write_plan_files(self) -> tuple[Path, Path]:
         comparison = {
             "kind": "context-panel-surface-comparison",
-            "schemaVersion": 3,
+            "schemaVersion": 4,
             "train": "beta",
             "previousManifestId": "c" * 64,
             "currentManifestId": MANIFEST_ID,
@@ -123,6 +123,7 @@ class VisualApprovalTests(unittest.TestCase):
             },
             "requiresRuntimeSession": True,
             "requiresPlacementReview": True,
+            "toolchainChanged": False,
             "surfaces": [
                 {
                     "surfaceId": "watchos.app",
@@ -175,6 +176,20 @@ class VisualApprovalTests(unittest.TestCase):
         }
         comparison["runtimeState"], comparison["runtimeStateReasons"] = (
             derive_runtime_decision(comparison["surfaces"])
+        )
+        (
+            comparison["riskCodes"],
+            comparison["riskSurfaces"],
+            comparison["observationRiskCodes"],
+        ) = derive_risk_fields(
+            comparison["surfaces"],
+            toolchain_delta=comparison["toolchainChanged"],
+            runtime_capable_surface_ids={
+                surface["surfaceId"]
+                for surface in comparison["surfaces"]
+                if "actual-runtime" in surface["carryForward"]
+            },
+            requires_placement_review=comparison["requiresPlacementReview"],
         )
         requirements = {
             "schemaVersion": 1,
@@ -453,6 +468,7 @@ class VisualApprovalTests(unittest.TestCase):
             "os-composited-placement": [],
         }
         comparison["requiresPlacementReview"] = False
+        comparison["observationRiskCodes"] = []
         comparison_path.write_text(json.dumps(comparison))
         requirements = json.loads(requirements_path.read_text())
         requirements["requirements"] = []
@@ -508,6 +524,7 @@ class VisualApprovalTests(unittest.TestCase):
         }
         comparison["requiresRuntimeSession"] = False
         comparison["requiresPlacementReview"] = False
+        comparison["observationRiskCodes"] = []
         comparison["surfaces"] = [
             {
                 "surfaceId": "watchos.app",

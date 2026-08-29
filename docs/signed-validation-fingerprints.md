@@ -123,6 +123,32 @@ scripts/context-panel-surface-manifest.py compare \
   --train rc
 ```
 
+Comparison payloads currently use schema v4. Schema v3 remains frozen in
+`scripts/context_panel_surface_manifest/comparison_schema_v3.py` for archived
+reconstruction, while `scripts/context_panel_comparison_schema.py` owns the
+current v4 wrapper. The v4 root records `toolchainChanged`, canonical
+`riskCodes`, exact `riskSurfaces`, and `observationRiskCodes`; the existing
+per-surface reason and evidence fields remain unchanged.
+
+Toolchain divergence is recorded on beta, RC, and release comparisons. Beta is
+simulator-first and does not gain an actual-runtime session solely because the
+Xcode build or toolchain changed. RC and release comparisons add fresh
+`actual-runtime` evidence for every surface whose manifest advertises that
+capability. A build-number-only change is not a toolchain risk.
+
+The canonical root risk vocabulary is:
+
+- `unmapped-surface`
+- `render-divergence`
+- `runtime-divergence`
+- `placement-divergence`
+- `contract-divergence`
+- `toolchain-divergence`
+
+`observationRiskCodes` contains `host-os-divergence` exactly when placement
+review is required. Host OS compatibility remains owned by the release gate;
+the comparison only records that the observation risk exists.
+
 ## Carry-Forward
 
 Carry-forward is derived, never written back into prior evidence:

@@ -32,8 +32,13 @@ def add_policy_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--policy", type=Path, default=DEFAULT_POLICY_PATH)
 
 
-def write_json(payload: dict[str, Any], output: Path | None) -> None:
-    encoded = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+def write_json(
+    payload: dict[str, Any],
+    output: Path | None,
+    *,
+    sort_keys: bool = True,
+) -> None:
+    encoded = json.dumps(payload, indent=2, sort_keys=sort_keys) + "\n"
     if output is None:
         sys.stdout.write(encoded)
         return
@@ -240,7 +245,11 @@ def run(arguments: argparse.Namespace) -> None:
     if arguments.command == "compare":
         previous = load_json_object(arguments.previous, "previous surface manifest")
         current = load_json_object(arguments.current, "current surface manifest")
-        write_json(compare_manifests(previous, current, arguments.train), arguments.output)
+        write_json(
+            compare_manifests(previous, current, arguments.train),
+            arguments.output,
+            sort_keys=False,
+        )
         return
     if arguments.command == "evidence-template":
         manifest = load_json_object(arguments.manifest, "surface manifest")

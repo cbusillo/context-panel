@@ -545,6 +545,15 @@ class ReplayInventoryTests(unittest.TestCase):
             current_schema_module.derive_runtime_decision(current["surfaces"])
         )
         self.assertIs(adapt_comparison_for_replay(current), current)
+        current_v4 = copy.deepcopy(current)
+        current_v4["schemaVersion"] = 4
+        current_v4.update(
+            toolchainChanged=False,
+            riskCodes=[],
+            riskSurfaces={},
+            observationRiskCodes=[],
+        )
+        self.assertIs(adapt_comparison_for_replay(current_v4), current_v4)
         legacy_ordered = copy.deepcopy(original)
         legacy_ordered["surfaces"][0]["carryForward"] = {
             "actual-runtime": {"eligible": True, "conditions": []},
@@ -555,7 +564,7 @@ class ReplayInventoryTests(unittest.TestCase):
             list(adapted_legacy_ordered["surfaces"][0]["carryForward"]),
             ["actual-runtime", "shared-view"],
         )
-        for unsupported_version in (1.0, 4):
+        for unsupported_version in (1.0, 5):
             unsupported = copy.deepcopy(adapted)
             unsupported["schemaVersion"] = unsupported_version
             with self.assertRaisesRegex(ComparisonAdapterError, "schema is unsupported"):

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sys
+from typing import Any
 
 from context_panel_validation.runtime_evidence import (
     RUNTIME_SURFACES,
@@ -17,6 +18,10 @@ from .core import (
     evaluate_release_evidence,
     load_json_object,
 )
+
+
+def render_lineage(lineage: dict[str, Any]) -> str:
+    return json.dumps(lineage, indent=2) + "\n"
 
 
 DEFAULT_POLICY = Path("Config/ContextPanelReleaseEvidencePolicy.json")
@@ -139,9 +144,7 @@ def run(argv: list[str] | None = None) -> int:
             shadow_evidence=shadow_evidence,
         )
         arguments.lineage_output.parent.mkdir(parents=True, exist_ok=True)
-        arguments.lineage_output.write_text(
-            json.dumps(lineage, indent=2, sort_keys=True) + "\n"
-        )
+        arguments.lineage_output.write_text(render_lineage(lineage))
     if arguments.mode == "enforce" and payload["state"] != "approved":
         return 20
     return 0
