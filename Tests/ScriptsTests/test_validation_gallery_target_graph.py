@@ -8,10 +8,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from context_panel_validation.shared_view_evidence import (
+    COMPANION_GALLERY_PRESENTATIONS,
     FIXTURE_IDS,
     GALLERY_APPEARANCES,
     GALLERY_FAMILIES,
     GALLERY_PRESENTATIONS,
+    MAC_GALLERY_PRESENTATIONS,
     TV_GALLERY_SURFACES,
     TV_PRESENTATIONS,
     WATCH_COMPLICATION_FAMILIES,
@@ -65,6 +67,19 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
             GALLERY_PRESENTATIONS,
             self.swift_enum_raw_values(route_source, "ValidationGalleryPresentation"),
         )
+        self.assertEqual(
+            MAC_GALLERY_PRESENTATIONS,
+            self.swift_array_case_values(MAC_APP_SOURCE.read_text(), "supportedPresentations"),
+        )
+        self.assertEqual(
+            COMPANION_GALLERY_PRESENTATIONS,
+            self.swift_array_case_values(
+                COMPANION_APP_SOURCE.read_text(),
+                "supportedPresentations",
+            ),
+        )
+        self.assertLessEqual(set(MAC_GALLERY_PRESENTATIONS), set(GALLERY_PRESENTATIONS))
+        self.assertLessEqual(set(COMPANION_GALLERY_PRESENTATIONS), set(GALLERY_PRESENTATIONS))
         self.assertEqual(
             WATCH_COMPLICATION_FAMILIES,
             self.swift_enum_raw_values(
@@ -444,6 +459,16 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         self.assertIn("status == .stale ? TVTheme.staleInstrumentColor", tv_app)
         self.assertIn("static let staleInstrumentColor", tv_app)
         self.assertIn(".font(.title3.weight(.semibold))", tv_app)
+
+    @staticmethod
+    def swift_array_case_values(source: str, label: str) -> tuple[str, ...]:
+        matches = re.findall(
+            rf"{re.escape(label)}:\s*\[([^\]]+)\]",
+            source,
+        )
+        if len(matches) != 1:
+            raise AssertionError(f"Swift case array {label} must appear exactly once")
+        return tuple(re.findall(r"\.([A-Za-z][A-Za-z0-9]*)", matches[0]))
 
     @staticmethod
     def swift_enum_raw_values(source: str, enum_name: str) -> tuple[str, ...]:

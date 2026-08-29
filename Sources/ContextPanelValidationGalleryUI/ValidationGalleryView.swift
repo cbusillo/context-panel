@@ -62,6 +62,7 @@ public struct ValidationGalleryView: View {
     private let adapter = ValidationGalleryFixtureAdapter()
     private let supportedPresentations: [ValidationGalleryPresentation]
     private let applicationPreview: ((ValidationGalleryContext) -> AnyView)?
+    private let unsupportedRequestedPresentation: ValidationGalleryPresentation?
 
     @State private var fixtureID: ValidationFixtureID
     @State private var family: ValidationGalleryFamily
@@ -81,6 +82,9 @@ public struct ValidationGalleryView: View {
         let normalizedPresentations = allowedPresentations.isEmpty ? [.widget] : allowedPresentations
         self.supportedPresentations = normalizedPresentations
         self.applicationPreview = applicationPreview
+        self.unsupportedRequestedPresentation = normalizedPresentations.contains(route.presentation)
+            ? nil
+            : route.presentation
         _fixtureID = State(initialValue: route.fixtureID)
         _family = State(initialValue: route.family)
         _appearance = State(initialValue: route.appearance)
@@ -114,6 +118,12 @@ public struct ValidationGalleryView: View {
     public var body: some View {
         VStack(spacing: 0) {
             ValidationSampleDataBoundary()
+            if let unsupportedRequestedPresentation {
+                ValidationUnsupportedPresentationBoundary(
+                    requested: unsupportedRequestedPresentation,
+                    selected: presentation
+                )
+            }
             Divider()
             GeometryReader { geometry in
                 if geometry.size.width >= 700 {
@@ -349,6 +359,25 @@ public struct ValidationGalleryView: View {
             return "This gallery reuses the production widget presentation with synthetic values. It does not prove WidgetKit margins, backgrounds, placement, or the signed extension execution path."
         }
         return "This gallery reuses the production app presentation with synthetic values. It proves shared layout and copy only, not signed runtime identity, CloudKit or App Group access, platform compositing, or hardware lifecycle behavior."
+    }
+}
+
+private struct ValidationUnsupportedPresentationBoundary: View {
+    let requested: ValidationGalleryPresentation
+    let selected: ValidationGalleryPresentation
+
+    var body: some View {
+        Label(
+            "Unsupported requested presentation \(requested.rawValue); showing \(selected.rawValue).",
+            systemImage: "exclamationmark.triangle.fill"
+        )
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.orange)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(Color.orange.opacity(0.12))
+        .accessibilityIdentifier("gallery-unsupported-presentation")
     }
 }
 
