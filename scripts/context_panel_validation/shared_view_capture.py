@@ -700,11 +700,11 @@ def _validate_artifact_root(path: Path) -> Path:
     if not path.is_absolute() or path == Path(path.anchor):
         raise SharedViewCaptureError("capture artifact root is invalid")
     _reject_symlink_ancestors(path, "capture artifact root")
-    resolved = path.resolve(strict=False)
-    repo_root = REPO_ROOT.resolve()
-    if resolved == repo_root or repo_root in resolved.parents:
-        raise SharedViewCaptureError("capture artifact root must be outside the repository")
     try:
+        resolved = path.resolve(strict=False)
+        repo_root = REPO_ROOT.resolve()
+        if resolved == repo_root or repo_root in resolved.parents:
+            raise SharedViewCaptureError("capture artifact root must be outside the repository")
         existing_ancestor = resolved
         while not existing_ancestor.exists():
             existing_ancestor = existing_ancestor.parent
@@ -712,7 +712,7 @@ def _validate_artifact_root(path: Path) -> Path:
             ancestor_mode = ancestor.stat().st_mode
             if ancestor_mode & 0o022 and not ancestor_mode & stat.S_ISVTX:
                 raise SharedViewCaptureError("capture artifact root ancestry is unsafe")
-    except OSError as error:
+    except (OSError, RuntimeError) as error:
         raise SharedViewCaptureError("capture artifact root is unavailable") from error
     return resolved
 
@@ -796,7 +796,13 @@ def _create_run_directories(
             os.chmod(staging_directory, 0o700)
             _fsync_directory(manifest_directory)
         except OSError as error:
-            shutil.rmtree(staging_directory, ignore_errors=True)
+            try:
+                shutil.rmtree(staging_directory)
+                _fsync_directory(manifest_directory)
+                if os.path.lexists(staging_directory):
+                    raise OSError
+            except OSError as rollback_error:
+                raise SharedViewCaptureError("capture run rollback failed") from rollback_error
             raise SharedViewCaptureError("capture run directory is unavailable") from error
         return run_id, staging_directory, run_directory
     raise SharedViewCaptureError("capture run identifier is not unique")
@@ -1110,10 +1116,15 @@ def _matching_simulators(
             if not isinstance(raw_device, dict):
                 return None, f"{error_base}-invalid"
             simulator_id = raw_device.get("udid")
+            name_matches = raw_device.get("name") == simulator_name
+            valid_id = isinstance(simulator_id, str) and bool(
+                SIMULATOR_UDID_PATTERN.fullmatch(simulator_id)
+            )
+            if target_id is None and name_matches and not valid_id:
+                return None, f"{error_base}-invalid"
             if (
-                (simulator_id == target_id if target_id is not None else raw_device.get("name") == simulator_name)
-                and isinstance(simulator_id, str)
-                and SIMULATOR_UDID_PATTERN.fullmatch(simulator_id)
+                (simulator_id == target_id if target_id is not None else name_matches)
+                and valid_id
                 and (
                     not strict_identity
                     or (
@@ -1384,7 +1395,7 @@ def _installed_app_error(runner: Runner, simulator_id: str, profile: CaptureProf
             return "simctl-app-container-invalid"
         installed_identity = _app_metadata(installed_path, profile.name, include_modes=False)
         source_identity = _app_metadata(profile.app_bundle, profile.name, include_modes=False)
-    except (OSError, RuntimeError, SharedViewCaptureError):
+    except (OSError, RuntimeError, ValueError, SharedViewCaptureError):
         return "simctl-app-container-invalid"
     return None if installed_identity == source_identity else "simctl-app-container-mismatch"
 

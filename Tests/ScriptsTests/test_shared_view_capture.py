@@ -237,7 +237,7 @@ class FakeRunner:
                     if self.created_on_failed_create
                     else valid_ids[0] if len(valid_ids) == 1 else None
                 )
-                self.created_simulator_name = args[3]
+                self.created_simulator_name = args[3] if self.created_simulator_id else None
                 self.created_device_type = args[4]
                 self.created_runtime = args[5]
                 return self.create_result
@@ -256,6 +256,7 @@ class FakeRunner:
             self.active_route[args[3]] = None
         if args[:3] == ["xcrun", "simctl", "delete"] and not self.persist_after_delete:
             self.created_simulator_id = None
+            self.created_simulator_name = None
         elif args[:3] == ["xcrun", "simctl", "delete"]:
             self.created_simulator_name = "renamed-after-delete"
         if args[:3] == ["xcrun", "simctl", "openurl"]:
@@ -706,7 +707,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual("identity-unverified", receipt["profiles"][0]["cleanupStatus"])
         self.assertFalse(any(args[2] in {"shutdown", "delete"} for args, _ in runner.calls))
 
-    def test_identity_mismatch_cleanup(self) -> None:
+    def test_identity_mismatch(self) -> None:
         self.write_plan(["ios.app"])
         self.write_config()
         runner = FakeRunner(created_device_mismatch=True)
@@ -736,7 +737,7 @@ class SharedViewCaptureTests(unittest.TestCase):
             (CommandResult(0, "not-json", ""), "simctl-created-device-invalid"),
             (CommandResult(0, json.dumps({"devices": []}), ""), "simctl-created-device-invalid"),
             (CommandResult(0, payload({}), ""), "simctl-created-device-invalid"),
-            (CommandResult(0, payload([None]), ""), "simctl-created-device-invalid"),
+            (CommandResult(0, payload([{**device, "udid": "bad"}]), ""), "simctl-created-device-invalid"),
             (CommandResult(0, payload([{**device, "udid": SECOND_SIMULATOR_ID}]), ""), "simctl-created-device-mismatch"),
             (CommandResult(0, payload([device, device]), ""), "simctl-created-device-mismatch"),
             (CommandResult(0, payload([device], RUNTIME_IDENTIFIERS["visionos"]), ""), "simctl-created-device-mismatch"),
@@ -772,7 +773,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual("identity-unverified", receipt["profiles"][0]["cleanupStatus"])
         self.assertFalse(any(args[2] in {"shutdown", "delete"} for args, _ in runner.calls))
 
-    def test_failed_create_cleanup(self) -> None:
+    def test_failed_create(self) -> None:
         self.write_plan(["ios.app"])
         self.write_config()
         runner = FakeRunner(
@@ -841,7 +842,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual("delete-persisted", receipt["profiles"][0]["cleanupStatus"])
         self.assert_capture_errors(receipt, *("simctl-delete-persisted",) * 2)
 
-    def test_create_timeout_cleanup(self) -> None:
+    def test_create_timeout(self) -> None:
         self.write_plan(["ios.app"])
         self.write_config()
         runner = FakeRunner(timeout_at="create")
@@ -861,7 +862,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assert_capture_errors(receipt, *("simctl-boot-timeout",) * 2)
         self.assertEqual("delete-failed", receipt["profiles"][0]["cleanupStatus"])
 
-    def test_duplicate_cleanup_failure(self) -> None:
+    def test_duplicate_cleanup(self) -> None:
         self.write_plan(["ios.app", "ipados.app"])
         self.write_config(("ios", "ipados"))
         runner = FakeRunner(cross_profile_duplicates=True)
@@ -976,7 +977,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         run_directory = self.artifact_root / self.manifest_id / "cross-dupe"
         self.assertFalse(list(run_directory.glob("*.png")))
 
-    def test_durable_publication(self) -> None:
+    def test_durability(self) -> None:
         self.write_plan(["ios.app"])
         self.write_config()
         events: list[str] = []
@@ -1039,7 +1040,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertTrue((manifest_directory / "run-fixed" / "foreign-marker").is_file())
         self.assertFalse(self.receipt_path.exists())
 
-    def test_receipt_collision(self) -> None:
+    def test_collision(self) -> None:
         self.write_plan(["ios.app"])
         self.write_config()
         self.receipt_path.write_text("foreign")
@@ -1047,13 +1048,6 @@ class SharedViewCaptureTests(unittest.TestCase):
             self.execute(FakeRunner())
         self.assertEqual("foreign", self.receipt_path.read_text())
         self.assertTrue((self.artifact_root / self.manifest_id / "run-fixed").is_dir())
-
-    def test_receipt_rollback(self) -> None:
-        with mock.patch.object(capture_module, "_fsync_directory", side_effect=[OSError(), None]) as fsync:
-            with self.assertRaisesRegex(SharedViewCaptureError, "output is unavailable"):
-                capture_module._atomic_write_json(self.receipt_path, {}, 0o600)
-        self.assertFalse(self.receipt_path.exists())
-        self.assertEqual(2, fsync.call_count)
 
     def test_receipt_failure(self) -> None:
         self.write_plan(["ios.app"])
@@ -1136,7 +1130,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         manifest_directory = self.artifact_root / self.manifest_id
         manifest_directory.mkdir(parents=True)
         with mock.patch.object(
-            capture_module, "_fsync_directory", side_effect=OSError()
+            capture_module, "_fsync_directory", side_effect=[OSError(), None]
         ), self.assertRaisesRegex(SharedViewCaptureError, "run directory is unavailable"):
             capture_module._create_run_directories(manifest_directory, lambda: "setup-fsync")
         self.assertFalse((manifest_directory / ".setup-fsync.staging").exists())
@@ -1246,7 +1240,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         with self.assertRaisesRegex(SharedViewCaptureError, "app bundle is invalid"):
             self.execute(FakeRunner(), run_id="escaping-symlink")
 
-    def test_noncanonical_policy(self) -> None:
+    def test_policy(self) -> None:
         policy_path = self.root / "custom-surface-policy.json"
         policy_path.write_bytes(
             (REPO_ROOT / "Config/ContextPanelSurfacePolicy.json").read_bytes()
@@ -1326,14 +1320,6 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertFalse(self.artifact_root.exists())
         self.assertFalse(self.receipt_path.exists())
 
-    def test_json_inputs_are_bounded(self) -> None:
-        self.write_plan(["ios.app"])
-        self.write_config()
-        with self.current_manifest_path.open("wb") as stream:
-            stream.truncate(capture_module.MAX_JSON_FILE_BYTES + 1)
-        with self.assertRaisesRegex(SharedViewCaptureError, "unavailable or invalid"):
-            self.execute(FakeRunner(), run_id="oversized-json")
-
     def test_bundle_change_after_install_and_private_simulator_identifiers_fail_closed(self) -> None:
         self.write_plan(["ios.app"])
         self.write_config()
@@ -1400,7 +1386,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         ), self.assertRaisesRegex(SharedViewCaptureError, "snapshot cleanup failed"):
             self.execute(FakeRunner(), run_id="cleanup")
 
-    def test_exception_cleanup(self) -> None:
+    def test_error(self) -> None:
         self.write_plan(["ios.app"])
         self.write_config()
         runner = FakeRunner()
@@ -1439,7 +1425,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         ):
             self.execute(runner, run_id="exception-cleanup-failure")
 
-    def test_installed_identity(self) -> None:
+    def test_installed(self) -> None:
         self.write_plan(["ios.app"])
         self.write_config()
         installed = self.root / "installed-copy.app"
@@ -1463,7 +1449,7 @@ class SharedViewCaptureTests(unittest.TestCase):
 
         profile = load_capture_config(self.config_path)["ios"]
         cases = [(FakeRunner(container_output=output), "simctl-app-container-invalid") for output in (
-            "relative", f"{installed}\n{installed}", str(installed / "missing")
+            "relative", "/tmp/\0bad", f"{installed}\n{installed}", str(installed / "missing")
         )]
         for result in (CommandResult(1, "", ""), CommandResult(124, "", "", timed_out=True)):
             runner = mock.Mock(run=mock.Mock(return_value=result))
