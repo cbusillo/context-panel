@@ -264,13 +264,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--matrix",
         type=Path,
         default=DEFAULT_MATRIX_PATH,
-        help="Canonical shared-view matrix JSON",
+        help="Shared-view matrix JSON; its digest is recorded in the receipt",
     )
     capture_shared_view_evidence_parser.add_argument(
         "--surface-policy",
         type=Path,
         default=DEFAULT_SURFACE_POLICY_PATH,
-        help="Canonical Context Panel surface policy JSON",
+        help="Canonical Context Panel surface policy JSON; alternate paths are rejected",
     )
     capture_shared_view_evidence_parser.add_argument(
         "--requirements",

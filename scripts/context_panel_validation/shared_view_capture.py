@@ -11,6 +11,7 @@ import plistlib
 import re
 import shutil
 import stat
+import sys
 import tempfile
 import time
 from typing import Any, Callable
@@ -76,6 +77,9 @@ CAPTURE_SETTLE_SECONDS = 1.0
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 MAX_PNG_FILE_BYTES = 128 * 1024 * 1024
 MAX_JSON_FILE_BYTES = 16 * 1024 * 1024
+MAX_PLIST_FILE_BYTES = 4 * 1024 * 1024
+MAX_BUNDLE_FILE_BYTES = 512 * 1024 * 1024
+MAX_BUNDLE_ENTRIES = 100_000
 MAX_PNG_DIMENSION = 16_384
 MAX_PNG_PIXELS = 100_000_000
 SOURCE_MANIFEST_ROOT_KEYS = set(
@@ -94,11 +98,6 @@ PROFILE_PLATFORM_IDENTIFIERS = {
     "ios": ("iPhoneSimulator", 1),
     "ipados": ("iPhoneSimulator", 2),
     "visionos": ("XRSimulator", 7),
-}
-PROFILE_POLICY_IDENTITIES = {
-    "ios": ("iOS", "iPhone"),
-    "ipados": ("iPadOS", "iPad"),
-    "visionos": ("visionOS", "Vision Pro"),
 }
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 SIMULATOR_UDID_PATTERN = re.compile(
@@ -276,13 +275,20 @@ def _bundle_sha256(path: Path, *, include_modes: bool = True) -> str:
     digest = hashlib.sha256()
     try:
         bundle_root = path.resolve(strict=True)
-        for candidate in sorted(path.rglob("*"), key=lambda item: item.relative_to(path).as_posix()):
+        candidates: list[Path] = []
+        for candidate in path.rglob("*"):
+            if len(candidates) >= MAX_BUNDLE_ENTRIES:
+                raise SharedViewCaptureError("capture app bundle is invalid")
+            candidates.append(candidate)
+        for candidate in sorted(candidates, key=lambda item: item.relative_to(path).as_posix()):
             relative = candidate.relative_to(path).as_posix().encode()
             candidate_stat = candidate.lstat()
             if stat.S_ISDIR(candidate_stat.st_mode):
                 kind, content = b"D", b""
             elif stat.S_ISREG(candidate_stat.st_mode):
-                kind, content = b"F", candidate.read_bytes()
+                if candidate_stat.st_size > MAX_BUNDLE_FILE_BYTES:
+                    raise SharedViewCaptureError("capture app bundle is invalid")
+                kind, content = b"F", None
             elif stat.S_ISLNK(candidate_stat.st_mode):
                 link_target = os.readlink(candidate)
                 if Path(link_target).is_absolute():
@@ -296,7 +302,14 @@ def _bundle_sha256(path: Path, *, include_modes: bool = True) -> str:
             digest.update(kind + len(relative).to_bytes(8, "big") + relative)
             if include_modes:
                 digest.update(stat.S_IMODE(candidate_stat.st_mode).to_bytes(4, "big"))
-            digest.update(len(content).to_bytes(8, "big") + content)
+            content_length = candidate_stat.st_size if content is None else len(content)
+            digest.update(content_length.to_bytes(8, "big"))
+            if content is None:
+                with candidate.open("rb") as stream:
+                    while chunk := stream.read(1024 * 1024):
+                        digest.update(chunk)
+            else:
+                digest.update(content)
     except OSError as error:
         raise SharedViewCaptureError("capture app bundle is unreadable") from error
     return digest.hexdigest()
@@ -456,8 +469,9 @@ def _app_metadata(
     if not info_path.is_file() or info_path.is_symlink():
         raise SharedViewCaptureError("capture app bundle Info.plist is invalid")
     try:
-        with info_path.open("rb") as stream:
-            info = plistlib.load(stream)
+        info = plistlib.loads(
+            _read_bounded_file(info_path, "capture app bundle Info.plist", MAX_PLIST_FILE_BYTES)
+        )
     except (OSError, plistlib.InvalidFileException) as error:
         raise SharedViewCaptureError("capture app bundle Info.plist is invalid") from error
     if not isinstance(info, dict):
@@ -1694,7 +1708,7 @@ def _capture_profile(
         withdrawn_requirement_ids = set(artifact_paths)
         for digest, requirement_id in list(seen_digests.items()):
             if requirement_id in withdrawn_requirement_ids:
-                seen_digests.pop(digest)
+                seen_digests[digest] = None
         artifacts_removed = _remove_profile_artifacts(artifact_paths)
         for requirement_id in artifact_paths:
             published_artifact_paths.pop(requirement_id, None)
@@ -1741,17 +1755,26 @@ def execute_shared_view_capture(
         "surface policy",
         MAX_JSON_FILE_BYTES,
     )
+    matrix_bytes = _read_bounded_file(
+        matrix_path.expanduser().resolve(strict=True),
+        "shared-view matrix",
+        MAX_JSON_FILE_BYTES,
+    )
     try:
         policy = json.loads(policy_bytes)
     except (json.JSONDecodeError, UnicodeDecodeError) as error:
         raise SharedViewCaptureError("surface policy is unavailable or invalid") from error
     if not isinstance(policy, dict):
         raise SharedViewCaptureError("surface policy is unavailable or invalid")
-    with tempfile.NamedTemporaryFile(suffix=".json") as policy_snapshot:
+    with tempfile.NamedTemporaryFile(suffix=".json") as policy_snapshot, tempfile.NamedTemporaryFile(
+        suffix=".json"
+    ) as matrix_snapshot:
         policy_snapshot.write(policy_bytes)
         policy_snapshot.flush()
+        matrix_snapshot.write(matrix_bytes)
+        matrix_snapshot.flush()
         surface_policy = load_surface_policy(Path(policy_snapshot.name))
-    matrix = load_shared_view_matrix(matrix_path, surface_policy)
+        matrix = load_shared_view_matrix(Path(matrix_snapshot.name), surface_policy)
     comparison = _load_json_object(surface_comparison_path, "surface comparison")
     planned_payload = plan_shared_view_evidence(comparison, matrix, surface_policy)
     plan = load_capture_requirements(requirements_path, planned_payload, matrix, surface_policy)
@@ -1813,17 +1836,6 @@ def execute_shared_view_capture(
     active_profile_names = [
         profile_name for profile_name in SUPPORTED_PROFILES if configured_groups[profile_name]
     ]
-    policy_by_surface = {surface.id: surface for surface in surface_policy}
-    if any(
-        (
-            policy_by_surface[requirement.surface].platform,
-            policy_by_surface[requirement.surface].device_class,
-        )
-        != PROFILE_POLICY_IDENTITIES[profile_name]
-        for profile_name in active_profile_names
-        for requirement in configured_groups[profile_name]
-    ):
-        raise SharedViewCaptureError("capture profile does not match surface policy")
     if any(
         profiles[profile_name].manifest_id != plan.current_manifest_id
         or profiles[profile_name].manifest_digest != expected_manifest_digest
@@ -1964,6 +1976,7 @@ def execute_shared_view_capture(
         _atomic_write_json(public_output, receipt, 0o644)
         run_published = True
     finally:
+        failure_in_flight = sys.exc_info()[1]
         if not run_published:
             shutil.rmtree(staging_directory, ignore_errors=True)
             if owns_run_directory:
@@ -1973,7 +1986,13 @@ def execute_shared_view_capture(
                 except OSError:
                     owns_published_path = False
                 if owns_published_path:
-                    shutil.rmtree(run_directory, ignore_errors=True)
+                    try:
+                        shutil.rmtree(run_directory)
+                        _fsync_directory(manifest_directory)
+                    except OSError as error:
+                        raise SharedViewCaptureError(
+                            "capture run rollback failed"
+                        ) from failure_in_flight or error
     statuses = {capture["status"] for capture in captures}
     if statuses == {"captured"}:
         return EXIT_OK, receipt
