@@ -888,6 +888,7 @@ class SharedViewCaptureTests(unittest.TestCase):
             result = original_run(args, timeout=timeout, environment=environment)
             if args[2] == "delete" and not failed_delete:
                 failed_delete = True
+                runner.created_simulator_id = SIMULATOR_ID
                 return CommandResult(1, "", "private delete failure")
             return result
 
@@ -1014,7 +1015,8 @@ class SharedViewCaptureTests(unittest.TestCase):
             fsync_directory(path)
 
         def record_rename(source: Path, destination: Path) -> None:
-            events.append("run-rename")
+            if source.name.endswith(".staging"):
+                events.append("run-rename")
             rename_run(source, destination)
 
         with mock.patch.object(capture_module, "_fsync_file", side_effect=record_file), mock.patch.object(
@@ -1425,7 +1427,7 @@ class SharedViewCaptureTests(unittest.TestCase):
 
     def test_bundle_and_plist_inputs_are_bounded(self) -> None:
         self.write_config()
-        for constant in ("MAX_PLIST_FILE_BYTES", "MAX_BUNDLE_FILE_BYTES", "MAX_BUNDLE_ENTRIES"):
+        for constant in ("MAX_PLIST_FILE_BYTES", "MAX_BUNDLE_FILE_BYTES", "MAX_BUNDLE_TOTAL_BYTES", "MAX_BUNDLE_ENTRIES"):
             with self.subTest(constant=constant), mock.patch.object(
                 capture_module, constant, 1
             ), self.assertRaises(SharedViewCaptureError):
@@ -1490,6 +1492,7 @@ class SharedViewCaptureTests(unittest.TestCase):
             if args[2] == "install":
                 (Path(args[-1]) / "ContextPanelSurfaceManifest.json").unlink()
             if args[2] == "delete":
+                runner.created_simulator_id = SIMULATOR_ID
                 return CommandResult(1, "", "private cleanup failure")
             return result
 

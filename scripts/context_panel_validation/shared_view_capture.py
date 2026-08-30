@@ -78,6 +78,7 @@ PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 MAX_JSON_FILE_BYTES = 16 * 1024 * 1024
 MAX_PLIST_FILE_BYTES = 4 * 1024 * 1024
 MAX_BUNDLE_FILE_BYTES = 512 * 1024 * 1024
+MAX_BUNDLE_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
 MAX_BUNDLE_ENTRIES = 100_000
 SOURCE_MANIFEST_ROOT_KEYS = set(
     "schemaVersion algorithm digestDomain contractFingerprint source toolchain archiveLayouts "
@@ -273,6 +274,7 @@ def _bundle_sha256(path: Path, *, include_modes: bool = True) -> str:
     try:
         bundle_root = path.resolve(strict=True)
         candidates: list[Path] = []
+        total_file_bytes = 0
         for candidate in path.rglob("*"):
             if len(candidates) >= MAX_BUNDLE_ENTRIES:
                 raise SharedViewCaptureError("capture app bundle is invalid")
@@ -283,7 +285,11 @@ def _bundle_sha256(path: Path, *, include_modes: bool = True) -> str:
             if stat.S_ISDIR(candidate_stat.st_mode):
                 kind, content = b"D", b""
             elif stat.S_ISREG(candidate_stat.st_mode):
-                if candidate_stat.st_size > MAX_BUNDLE_FILE_BYTES:
+                total_file_bytes += candidate_stat.st_size
+                if (
+                    candidate_stat.st_size > MAX_BUNDLE_FILE_BYTES
+                    or total_file_bytes > MAX_BUNDLE_TOTAL_BYTES
+                ):
                     raise SharedViewCaptureError("capture app bundle is invalid")
                 kind, content = b"F", None
             elif stat.S_ISLNK(candidate_stat.st_mode):
@@ -307,7 +313,7 @@ def _bundle_sha256(path: Path, *, include_modes: bool = True) -> str:
                         digest.update(chunk)
             else:
                 digest.update(content)
-    except OSError as error:
+    except (OSError, RuntimeError) as error:
         raise SharedViewCaptureError("capture app bundle is unreadable") from error
     return digest.hexdigest()
 
@@ -818,7 +824,7 @@ def _atomic_write_json(path: Path, payload: dict[str, Any], mode: int) -> None:
             stream.flush()
             os.fchmod(stream.fileno(), mode)
             os.fsync(stream.fileno())
-        os.replace(temporary_path, path)
+        _rename_exclusive(temporary_path, path)
         replaced = True
         _fsync_directory(path.parent)
     except OSError as error:
@@ -1242,10 +1248,6 @@ def _cleanup_simulator(
         ["xcrun", "simctl", "delete", cleanup_target],
         SIMCTL_CLEANUP_TIMEOUT,
     )
-    if deleted.timed_out:
-        return "delete-timeout", "simctl-delete-timeout"
-    if deleted.returncode != 0:
-        return "delete-failed", "simctl-delete-failed"
     remaining, verification_error = _matching_simulators(
         runner,
         profile,
@@ -1256,6 +1258,10 @@ def _cleanup_simulator(
     if verification_error is not None or remaining is None:
         return "delete-unverified", verification_error or "simctl-delete-verification-invalid"
     if cleanup_target in remaining:
+        if deleted.timed_out:
+            return "delete-timeout", "simctl-delete-timeout"
+        if deleted.returncode != 0:
+            return "delete-failed", "simctl-delete-failed"
         return "delete-persisted", "simctl-delete-persisted"
     if shutdown.timed_out:
         return "deleted-after-shutdown-timeout", None
