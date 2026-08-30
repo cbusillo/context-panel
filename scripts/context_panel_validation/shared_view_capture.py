@@ -11,6 +11,7 @@ import plistlib
 import re
 import shutil
 import stat
+import sys
 import tempfile
 import time
 from typing import Any, Callable
@@ -19,6 +20,8 @@ import uuid
 import zlib
 
 from context_panel_surface_manifest import SurfacePolicyError, embedded_manifest
+from context_panel_surface_manifest.core import canonical_json as manifest_canonical_json
+from context_panel_surface_manifest.core import hash_parts as manifest_hash_parts
 
 from .models import CommandResult, EXIT_BLOCKED, EXIT_OK, EXIT_UNKNOWN, Runner, iso8601, utc_now
 from .shared_view_evidence import (
@@ -72,6 +75,9 @@ SIMCTL_SCREENSHOT_TIMEOUT = 60
 SIMCTL_CLEANUP_TIMEOUT = 30
 CAPTURE_SETTLE_SECONDS = 1.0
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+MAX_PNG_FILE_BYTES = 128 * 1024 * 1024
+MAX_PNG_DIMENSION = 16_384
+MAX_PNG_PIXELS = 100_000_000
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 SIMULATOR_UDID_PATTERN = re.compile(
     r"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
@@ -220,7 +226,7 @@ def _stream_sha256(path: Path, label: str) -> str:
     return digest.hexdigest()
 
 
-def _bundle_sha256(path: Path) -> str:
+def _bundle_sha256(path: Path, *, include_modes: bool = True) -> str:
     digest = hashlib.sha256()
     try:
         for candidate in sorted(path.rglob("*"), key=lambda item: item.relative_to(path).as_posix()):
@@ -235,7 +241,8 @@ def _bundle_sha256(path: Path) -> str:
             else:
                 raise SharedViewCaptureError("capture app bundle is invalid")
             digest.update(kind + len(relative).to_bytes(8, "big") + relative)
-            digest.update(stat.S_IMODE(candidate_stat.st_mode).to_bytes(4, "big"))
+            if include_modes:
+                digest.update(stat.S_IMODE(candidate_stat.st_mode).to_bytes(4, "big"))
             digest.update(len(content).to_bytes(8, "big") + content)
     except OSError as error:
         raise SharedViewCaptureError("capture app bundle is unreadable") from error
@@ -289,6 +296,21 @@ def _embedded_manifest_metadata(path: Path) -> tuple[str, str, str, frozenset[st
 
 def _expected_embedded_manifest(path: Path) -> dict[str, Any]:
     source_manifest = _load_json_object(path, "current surface manifest")
+    manifest_id = source_manifest.get("manifestId")
+    digest_domain = source_manifest.get("digestDomain")
+    unhashed_manifest = dict(source_manifest)
+    unhashed_manifest.pop("manifestId", None)
+    if (
+        not isinstance(digest_domain, str)
+        or not digest_domain
+        or not isinstance(manifest_id, str)
+        or manifest_hash_parts(
+            f"{digest_domain}/manifest",
+            [manifest_canonical_json(unhashed_manifest)],
+        )
+        != manifest_id
+    ):
+        raise SharedViewCaptureError("current surface manifest identity is invalid")
     try:
         return embedded_manifest(source_manifest)
     except SurfacePolicyError as error:
@@ -607,6 +629,14 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+def _fsync_file(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def _rename_exclusive(source: Path, destination: Path) -> None:
     renamex_np = getattr(ctypes.CDLL(None, use_errno=True), "renamex_np", None)
     if renamex_np is None:
@@ -628,7 +658,11 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
         data = path.read_bytes()
     except OSError as error:
         raise SharedViewCaptureError("captured image is invalid") from error
-    if len(data) < len(PNG_SIGNATURE) or data[:8] != PNG_SIGNATURE:
+    if (
+        len(data) < len(PNG_SIGNATURE)
+        or len(data) > MAX_PNG_FILE_BYTES
+        or data[:8] != PNG_SIGNATURE
+    ):
         raise SharedViewCaptureError("captured image is invalid")
     offset = len(PNG_SIGNATURE)
     chunk_index = 0
@@ -637,6 +671,8 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
     bit_depth = 0
     color_type = 0
     saw_idat = False
+    idat_ended = False
+    saw_plte = False
     saw_iend = False
     compressed_image = bytearray()
     while offset < len(data):
@@ -666,6 +702,9 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
             if (
                 width <= 0
                 or height <= 0
+                or width > MAX_PNG_DIMENSION
+                or height > MAX_PNG_DIMENSION
+                or width * height > MAX_PNG_PIXELS
                 or bit_depth != 8
                 or color_type not in {2, 6}
                 or chunk_data[10:13] != b"\x00\x00\x00"
@@ -673,9 +712,17 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
                 raise SharedViewCaptureError("captured image is invalid")
         elif chunk_type == b"IHDR":
             raise SharedViewCaptureError("captured image is invalid")
+        if chunk_type == b"PLTE":
+            if saw_plte or saw_idat or chunk_length == 0 or chunk_length > 768 or chunk_length % 3:
+                raise SharedViewCaptureError("captured image is invalid")
+            saw_plte = True
         if chunk_type == b"IDAT":
+            if idat_ended:
+                raise SharedViewCaptureError("captured image is invalid")
             saw_idat = True
             compressed_image.extend(chunk_data)
+        elif saw_idat and chunk_type != b"IEND":
+            idat_ended = True
         if chunk_type == b"IEND":
             if chunk_length != 0 or chunk_end != len(data):
                 raise SharedViewCaptureError("captured image is invalid")
@@ -687,12 +734,19 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
     if not saw_idat or not saw_iend or offset != len(data):
         raise SharedViewCaptureError("captured image is invalid")
     channels = 3 if color_type == 2 else 4
+    row_size = 1 + (width * channels)
+    expected_size = height * row_size
     try:
-        image_data = zlib.decompress(bytes(compressed_image))
+        decompressor = zlib.decompressobj()
+        image_data = decompressor.decompress(bytes(compressed_image), expected_size + 1)
     except zlib.error as error:
         raise SharedViewCaptureError("captured image is invalid") from error
-    row_size = 1 + (width * channels)
-    if len(image_data) != height * row_size:
+    if (
+        len(image_data) != expected_size
+        or decompressor.unconsumed_tail
+        or not decompressor.eof
+        or decompressor.unused_data
+    ):
         raise SharedViewCaptureError("captured image is invalid")
     for row_offset in range(0, len(image_data), row_size):
         if image_data[row_offset] > 4:
@@ -831,6 +885,7 @@ def _matching_simulators(
     runner: Runner,
     profile: CaptureProfile,
     simulator_name: str,
+    error_base: str = "simctl-created-device",
 ) -> tuple[set[str] | None, str | None]:
     result = _run(
         runner,
@@ -838,7 +893,7 @@ def _matching_simulators(
         SIMCTL_CATALOG_TIMEOUT,
     )
     if result.returncode != 0 or result.timed_out:
-        return None, _command_error_code(result, "simctl-created-device")
+        return None, _command_error_code(result, error_base)
     try:
         payload = json.loads(result.stdout)
     except json.JSONDecodeError:
@@ -1052,9 +1107,22 @@ def _installed_app_error(runner: Runner, simulator_id: str, profile: CaptureProf
         return "simctl-app-container-invalid"
     try:
         installed_identity = _app_metadata(installed_path)
+        source_identity = _profile_source_identity(profile)
     except SharedViewCaptureError:
         return "simctl-app-container-invalid"
-    return None if installed_identity == _profile_source_identity(profile) else "simctl-app-container-mismatch"
+    installed_runtime_identity = (
+        installed_identity[0],
+        installed_identity[1],
+        _bundle_sha256(installed_path, include_modes=False),
+        *installed_identity[3:],
+    )
+    source_runtime_identity = (
+        source_identity[0],
+        source_identity[1],
+        _bundle_sha256(profile.app_bundle, include_modes=False),
+        *source_identity[3:],
+    )
+    return None if installed_runtime_identity == source_runtime_identity else "simctl-app-container-mismatch"
 
 
 def _capture_profile(
@@ -1065,17 +1133,22 @@ def _capture_profile(
     runner: Runner,
     sleeper: Callable[[float], None],
     now: Callable[[], datetime],
+    cleanup_target_observer: Callable[[str], None] = lambda _: None,
 ) -> ProfileCaptureOutcome:
     results: dict[str, dict[str, object]] = {}
     artifact_paths: dict[str, Path] = {}
     simulator_name = _simulator_name(profile.name, capture_run_id)
     lifecycle_error: str | None = None
-    preexisting_ids, inventory_error = _matching_simulators(runner, profile, simulator_name)
-    if inventory_error is not None or preexisting_ids is None:
+    preexisting_ids, inventory_error = _matching_simulators(
+        runner, profile, simulator_name, "simctl-device-inventory"
+    )
+    if inventory_error is not None:
         return ProfileCaptureOutcome(
-            results=_unknown_results(requirements, inventory_error or "simctl-created-device-invalid", now),
+            results=_unknown_results(requirements, inventory_error, now),
             cleanup_status="not-started",
         )
+    if preexisting_ids is None:
+        raise SharedViewCaptureError("simulator inventory result is invalid")
     if preexisting_ids:
         return ProfileCaptureOutcome(
             results=_unknown_results(requirements, "simctl-create-name-collision", now),
@@ -1114,13 +1187,15 @@ def _capture_profile(
                 lifecycle_error = identity_error
             else:
                 cleanup_target = simulator_id
-    if lifecycle_error is not None and cleanup_target is None and (
-        created.timed_out or created.returncode == 0
-    ):
-        observed_ids, _ = _matching_simulators(runner, profile, simulator_name)
+                cleanup_target_observer(simulator_id)
+    cleanup_inventory_unknown = False
+    if lifecycle_error is not None and cleanup_target is None:
+        observed_ids, observed_error = _matching_simulators(runner, profile, simulator_name)
+        cleanup_inventory_unknown = observed_error is not None
         new_ids = (observed_ids or set()) - preexisting_ids
         if len(new_ids) == 1:
             cleanup_target = next(iter(new_ids))
+            cleanup_target_observer(cleanup_target)
 
     prerequisites = (
         ("boot", SIMCTL_BOOT_TIMEOUT, "simctl-boot"),
@@ -1342,6 +1417,7 @@ def _capture_profile(
                     final_path = artifact_directory / f"{requirement.requirement_id}.png"
                     try:
                         os.chmod(second_path, 0o600)
+                        _fsync_file(second_path)
                         os.replace(second_path, final_path)
                         os.chmod(final_path, 0o600)
                     except OSError:
@@ -1371,7 +1447,8 @@ def _capture_profile(
                 first_path.unlink(missing_ok=True)
 
     if cleanup_target is None:
-        cleanup_status, cleanup_error = "not-created", None
+        cleanup_status = "inventory-unknown" if cleanup_inventory_unknown else "not-created"
+        cleanup_error = None
     else:
         cleanup_status, cleanup_error = _cleanup_simulator(runner, cleanup_target)
     if cleanup_error is not None:
@@ -1493,8 +1570,15 @@ def execute_shared_view_capture(
     )
     ownership_token = uuid.uuid4().hex
     ownership_path = staging_directory / ".capture-owner"
-    ownership_path.write_text(ownership_token)
-    os.chmod(ownership_path, 0o600)
+    ownership_descriptor = os.open(
+        ownership_path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+        0o600,
+    )
+    with os.fdopen(ownership_descriptor, "w") as ownership_stream:
+        ownership_stream.write(ownership_token)
+        ownership_stream.flush()
+        os.fsync(ownership_stream.fileno())
     cleanup_statuses = {profile_name: "not-started" for profile_name in active_profile_names}
     owns_run_directory = False
     run_published = False
@@ -1516,6 +1600,8 @@ def execute_shared_view_capture(
                     capture_results.update(_unknown_results(requirements, profile_error, now))
                 continue
             snapshot_profile = _snapshot_profile(profiles[profile_name], staging_directory)
+            emergency_cleanup_targets: list[str] = []
+            profile_capture_completed = False
             try:
                 outcome = _capture_profile(
                     snapshot_profile,
@@ -1525,10 +1611,15 @@ def execute_shared_view_capture(
                     active_runner,
                     sleeper,
                     now,
+                    emergency_cleanup_targets.append,
                 )
+                profile_capture_completed = True
             finally:
+                exception_in_flight = sys.exc_info()[0] is not None
+                if not profile_capture_completed and emergency_cleanup_targets:
+                    _cleanup_simulator(active_runner, emergency_cleanup_targets[-1])
                 shutil.rmtree(snapshot_profile.app_bundle, ignore_errors=True)
-                if snapshot_profile.app_bundle.exists():
+                if snapshot_profile.app_bundle.exists() and not exception_in_flight:
                     raise SharedViewCaptureError("capture app snapshot cleanup failed")
             cleanup_statuses[profile_name] = outcome.cleanup_status
             capture_results.update(outcome.results)
@@ -1552,10 +1643,10 @@ def execute_shared_view_capture(
         _atomic_write_json(staging_directory / "index.json", receipt, 0o600)
         try:
             _rename_exclusive(staging_directory, run_directory)
+            owns_run_directory = True
             _fsync_directory(manifest_directory)
         except OSError as error:
             raise SharedViewCaptureError("capture run publication failed") from error
-        owns_run_directory = True
         _atomic_write_json(public_output, receipt, 0o644)
         run_published = True
     finally:

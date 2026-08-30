@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import shutil
 import stat
 import sys
 import tempfile
@@ -41,10 +42,11 @@ from context_panel_validation.shared_view_evidence import (
     load_surface_policy,
     plan_shared_view_evidence,
 )
+from context_panel_surface_manifest.core import canonical_json as manifest_canonical_json
+from context_panel_surface_manifest.core import hash_parts as manifest_hash_parts
 from Tests.ScriptsTests.test_shared_view_evidence import comparison_for
 
 
-MANIFEST_ID = "a" * 64
 SIMULATOR_ID = "00000000-0000-0000-0000-000000000001"
 SECOND_SIMULATOR_ID = "00000000-0000-0000-0000-000000000002"
 FIXED_NOW = datetime(2026, 8, 29, 12, 0, tzinfo=timezone.utc)
@@ -156,6 +158,10 @@ class FakeRunner:
         baseline_equal: bool = False,
         duplicate_routes: bool = False,
         created_device_mismatch: bool = False,
+        container_path: Path | None = None,
+        container_output: str | None = None,
+        created_on_failed_create: bool = False,
+        device_list_failure: CommandResult | None = None,
     ) -> None:
         self.calls: list[tuple[list[str], int]] = []
         self.catalog = catalog or simulator_catalog()
@@ -168,6 +174,11 @@ class FakeRunner:
         self.baseline_equal = baseline_equal
         self.duplicate_routes = duplicate_routes
         self.created_device_mismatch = created_device_mismatch
+        self.container_path = container_path
+        self.container_output = container_output
+        self.created_on_failed_create = created_on_failed_create
+        self.device_list_failure = device_list_failure
+        self.device_list_calls = 0
         self.active_route: dict[str, str | None] = {}
         self.route_screenshot_counts: dict[str, int] = {}
         self.baseline_screenshot_count = 0
@@ -188,6 +199,9 @@ class FakeRunner:
         if self.fail_at == verb:
             return CommandResult(1, "", self.private_stderr)
         if args[:5] == ["xcrun", "simctl", "list", "-j", "devices"]:
+            self.device_list_calls += 1
+            if self.device_list_failure is not None:
+                return self.device_list_failure
             device = {
                 "udid": self.created_simulator_id,
                 "name": "mismatched-name" if self.created_device_mismatch else self.created_simulator_name,
@@ -208,7 +222,11 @@ class FakeRunner:
                     for line in self.create_result.stdout.splitlines()
                     if line.strip() in {SIMULATOR_ID, SECOND_SIMULATOR_ID}
                 ]
-                self.created_simulator_id = valid_ids[0] if len(valid_ids) == 1 else None
+                self.created_simulator_id = (
+                    SIMULATOR_ID
+                    if self.created_on_failed_create
+                    else valid_ids[0] if len(valid_ids) == 1 else None
+                )
                 self.created_simulator_name = args[3]
                 self.created_device_type = args[4]
                 self.created_runtime = args[5]
@@ -222,7 +240,8 @@ class FakeRunner:
         if args[:3] == ["xcrun", "simctl", "install"]:
             self.installed_app_bundle = args[-1]
         if args[:3] == ["xcrun", "simctl", "get_app_container"]:
-            return CommandResult(0, f"{self.installed_app_bundle}\n", "")
+            output = self.container_output or str(self.container_path or self.installed_app_bundle)
+            return CommandResult(0, f"{output}\n", "")
         if args[:3] == ["xcrun", "simctl", "terminate"]:
             self.active_route[args[3]] = None
         if args[:3] == ["xcrun", "simctl", "openurl"]:
@@ -300,7 +319,7 @@ class SharedViewCaptureTests(unittest.TestCase):
                 stream,
             )
 
-    def write_surface_manifest(self, manifest_id: str = MANIFEST_ID) -> None:
+    def write_surface_manifest(self, manifest_id: str | None = None) -> None:
         surface_ids = [
             surface["id"]
             for surface in json.loads(
@@ -324,15 +343,20 @@ class SharedViewCaptureTests(unittest.TestCase):
         ]
         source = {
             "schemaVersion": 1,
-            "manifestId": manifest_id,
+            "digestDomain": "context-panel-test-surface-manifest/v1",
             "contractFingerprint": "c" * 64,
             "surfaces": surfaces,
         }
+        source["manifestId"] = manifest_id or manifest_hash_parts(
+            f"{source['digestDomain']}/manifest",
+            [manifest_canonical_json(source)],
+        )
+        self.manifest_id = source["manifestId"]
         self.current_manifest_path.write_text(json.dumps(source))
         embedded = {
             "schemaVersion": 1,
             "kind": "context-panel-surface-build-intent",
-            "manifestId": manifest_id,
+            "manifestId": self.manifest_id,
             "contractFingerprint": source["contractFingerprint"],
             "surfaces": [
                 {key: value for key, value in surface.items() if key != "evidenceCapabilities"}
@@ -353,6 +377,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         comparison = comparison_for(
             {surface: [evidence] if evidence else [] for surface in ordered_surfaces}
         )
+        comparison["currentManifestId"] = self.manifest_id
         matrix = self.matrix if matrix_path is None else load_shared_view_matrix(matrix_path, self.policy)
         payload = plan_shared_view_evidence(comparison, matrix, self.policy)
         self.comparison_path.write_text(json.dumps(comparison))
@@ -475,18 +500,19 @@ class SharedViewCaptureTests(unittest.TestCase):
 
         self.assertEqual("run-one", first["captureRunID"])
         self.assertEqual("run-two", second["captureRunID"])
-        first_directory = self.artifact_root / MANIFEST_ID / "run-one"
-        second_directory = self.artifact_root / MANIFEST_ID / "run-two"
+        first_directory = self.artifact_root / self.manifest_id / "run-one"
+        second_directory = self.artifact_root / self.manifest_id / "run-two"
         self.assertTrue((first_directory / "index.json").is_file())
         self.assertTrue((second_directory / "index.json").is_file())
-        self.assertFalse((self.artifact_root / MANIFEST_ID / ".run-one.staging").exists())
-        self.assertFalse((self.artifact_root / MANIFEST_ID / ".run-two.staging").exists())
-        self.assertFalse((self.artifact_root / MANIFEST_ID / "index.json").exists())
+        self.assertFalse((self.artifact_root / self.manifest_id / ".run-one.staging").exists())
+        self.assertFalse((self.artifact_root / self.manifest_id / ".run-two.staging").exists())
+        self.assertFalse((self.artifact_root / self.manifest_id / "index.json").exists())
         self.assertEqual(first, json.loads((first_directory / "index.json").read_text()))
         self.assertEqual(second, json.loads((second_directory / "index.json").read_text()))
         self.assertEqual(0o700, stat.S_IMODE(self.artifact_root.stat().st_mode))
         self.assertEqual(0o700, stat.S_IMODE(first_directory.stat().st_mode))
         self.assertEqual(0o600, stat.S_IMODE((first_directory / "index.json").stat().st_mode))
+        self.assertEqual(0o600, stat.S_IMODE((first_directory / ".capture-owner").stat().st_mode))
         self.assertEqual(0o600, stat.S_IMODE(next(first_directory.glob("*.png")).stat().st_mode))
         self.assertEqual(0o644, stat.S_IMODE(first_receipt_path.stat().st_mode))
 
@@ -508,7 +534,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual("iOS", ios_profile["runtimePlatform"])
         self.assertEqual("iPhone 17", ios_profile["deviceTypeName"])
         self.assertEqual("iPhone", ios_profile["productFamily"])
-        self.assertEqual(MANIFEST_ID, ios_profile["appManifestID"])
+        self.assertEqual(self.manifest_id, ios_profile["appManifestID"])
         self.assertEqual("deleted", ios_profile["cleanupStatus"])
         self.assertEqual(1, sum(args == ["xcrun", "simctl", "list", "-j"] for args, _ in runner.calls))
         self.assertEqual(6, sum(args[:5] == ["xcrun", "simctl", "list", "-j", "devices"] for args, _ in runner.calls))
@@ -601,6 +627,7 @@ class SharedViewCaptureTests(unittest.TestCase):
             ({"fail_at": "bootstatus"}, "simctl-bootstatus-failed", None),
             ({"fail_at": "install"}, "simctl-install-failed", None),
             ({"fail_at": "get_app_container"}, "simctl-app-container-failed", None),
+            ({"container_output": "relative/path"}, "simctl-app-container-invalid", None),
             ({"fail_at": "ui"}, "simctl-ui-failed", None),
             ({"timeout_at": "ui"}, "simctl-ui-timeout", None),
             ({"fail_at": "io"}, "simctl-baseline-screenshot-failed", "simctl-ui-appearance"),
@@ -711,6 +738,28 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual("not-created", receipt["profiles"][0]["cleanupStatus"])
         self.assertFalse(any(args[2] in {"shutdown", "delete"} for args, _ in runner.calls))
 
+    def test_failed_create_reinventory_cleans_only_newly_observed_udid(self) -> None:
+        self.write_plan(["ios.app"])
+        self.write_config()
+        runner = FakeRunner(
+            create_result=CommandResult(1, "", "private create failure"),
+            created_on_failed_create=True,
+        )
+        exit_code, receipt = self.execute(runner)
+        self.assertEqual(EXIT_UNKNOWN, exit_code)
+        self.assertEqual(["simctl-create-failed"] * 2, [item["errorCode"] for item in receipt["captures"]])
+        self.assertEqual("deleted", receipt["profiles"][0]["cleanupStatus"])
+        self.assertEqual(["xcrun", "simctl", "delete", SIMULATOR_ID], [args for args, _ in runner.calls][-1])
+
+    def test_precreate_inventory_failure_uses_precreate_error_language(self) -> None:
+        self.write_plan(["ios.app"])
+        self.write_config()
+        runner = FakeRunner(device_list_failure=CommandResult(1, "", "private inventory failure"))
+        exit_code, receipt = self.execute(runner)
+        self.assertEqual(EXIT_UNKNOWN, exit_code)
+        self.assertEqual(["simctl-device-inventory-failed"] * 2, [item["errorCode"] for item in receipt["captures"]])
+        self.assertFalse(any(args[2] == "create" for args, _ in runner.calls))
+
     def test_create_timeout_does_not_cleanup_by_name(self) -> None:
         self.write_plan(["ios.app"])
         self.write_config()
@@ -741,7 +790,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual(["unknown", "unknown"], [item["status"] for item in receipt["captures"]])
         self.assertEqual(["simctl-delete-failed"] * 2, [item["errorCode"] for item in receipt["captures"]])
         self.assertEqual("delete-failed", receipt["profiles"][0]["cleanupStatus"])
-        run_directory = self.artifact_root / MANIFEST_ID / "run-fixed"
+        run_directory = self.artifact_root / self.manifest_id / "run-fixed"
         self.assertFalse(list(run_directory.glob("*.png")))
         self.assertTrue((run_directory / "index.json").is_file())
 
@@ -801,7 +850,7 @@ class SharedViewCaptureTests(unittest.TestCase):
                 self.assertEqual(EXIT_UNKNOWN, exit_code)
                 self.assertEqual(["unknown", "unknown"], [item["status"] for item in receipt["captures"]])
                 self.assertEqual([error_code, error_code], [item["errorCode"] for item in receipt["captures"]])
-                self.assertFalse(list((self.artifact_root / MANIFEST_ID / f"scenario-{index}").glob("*.png")))
+                self.assertFalse(list((self.artifact_root / self.manifest_id / f"scenario-{index}").glob("*.png")))
 
     def test_complete_png_crc_truncation_and_idat_validation(self) -> None:
         for index, corruption in enumerate(("crc", "truncated", "idat")):
@@ -821,15 +870,19 @@ class SharedViewCaptureTests(unittest.TestCase):
         valid_idat = zlib.compress(valid_row * 180)
         cases = {
             "bit-depth": png_document((b"IHDR", png_ihdr(bit_depth=16)), (b"IDAT", valid_idat), (b"IEND", b"")),
+            "huge-dimension": png_document((b"IHDR", png_ihdr(width=16_385)), (b"IDAT", zlib.compress(b"\x00")), (b"IEND", b"")),
             "palette": png_document((b"IHDR", png_ihdr(color_type=3)), (b"IDAT", valid_idat), (b"IEND", b"")),
             "interlaced": png_document((b"IHDR", png_ihdr(methods=b"\x00\x00\x01")), (b"IDAT", valid_idat), (b"IEND", b"")),
             "wrong-first": png_document((b"IDAT", valid_idat), (b"IEND", b"")),
             "duplicate-ihdr": png_document((b"IHDR", png_ihdr()), (b"IHDR", png_ihdr()), (b"IDAT", valid_idat), (b"IEND", b"")),
             "unknown-critical": png_document((b"IHDR", png_ihdr()), (b"ABCD", b""), (b"IDAT", valid_idat), (b"IEND", b"")),
+            "late-plte": png_document((b"IHDR", png_ihdr()), (b"IDAT", valid_idat), (b"PLTE", b"\x00\x00\x00"), (b"IEND", b"")),
+            "noncontiguous-idat": png_document((b"IHDR", png_ihdr()), (b"IDAT", valid_idat[:8]), (b"tEXt", b"x"), (b"IDAT", valid_idat[8:]), (b"IEND", b"")),
             "nonempty-iend": png_document((b"IHDR", png_ihdr()), (b"IDAT", valid_idat), (b"IEND", b"x")),
             "trailing": png_document((b"IHDR", png_ihdr()), (b"IDAT", valid_idat), (b"IEND", b""), (b"tEXt", b"x")),
             "missing-idat": png_document((b"IHDR", png_ihdr()), (b"IEND", b"")),
             "wrong-size": png_document((b"IHDR", png_ihdr()), (b"IDAT", zlib.compress(b"\x00")), (b"IEND", b"")),
+            "declared-small-expansion": png_document((b"IHDR", png_ihdr(width=1, height=1)), (b"IDAT", zlib.compress(b"x" * 1_000_000)), (b"IEND", b"")),
             "bad-filter": png_document((b"IHDR", png_ihdr()), (b"IDAT", zlib.compress((b"\x05" + valid_row[1:]) * 180)), (b"IEND", b"")),
         }
         for name, content in cases.items():
@@ -837,6 +890,66 @@ class SharedViewCaptureTests(unittest.TestCase):
             path.write_bytes(content)
             with self.subTest(name=name), self.assertRaisesRegex(SharedViewCaptureError, "captured image is invalid"):
                 _png_snapshot(path)
+
+    def test_png_and_run_publication_durability_order(self) -> None:
+        self.write_plan(["ios.app"])
+        self.write_config()
+        events: list[tuple[str, Path, Path | None]] = []
+        original_fsync_file = capture_module._fsync_file
+        original_fsync_directory = capture_module._fsync_directory
+        original_replace = os.replace
+        original_rename_exclusive = capture_module._rename_exclusive
+
+        def record_fsync_file(path: Path) -> None:
+            events.append(("fsync-file", path, None))
+            original_fsync_file(path)
+
+        def record_replace(source: Path | str, destination: Path | str) -> None:
+            source_path = Path(source)
+            destination_path = Path(destination)
+            if destination_path.suffix == ".png":
+                events.append(("replace-png", source_path, destination_path))
+            original_replace(source, destination)
+
+        def record_fsync_directory(path: Path) -> None:
+            events.append(("fsync-directory", path, None))
+            original_fsync_directory(path)
+
+        def record_rename_exclusive(source: Path, destination: Path) -> None:
+            events.append(("rename-run", source, destination))
+            original_rename_exclusive(source, destination)
+
+        with (
+            mock.patch.object(capture_module, "_fsync_file", side_effect=record_fsync_file),
+            mock.patch.object(os, "replace", side_effect=record_replace),
+            mock.patch.object(capture_module, "_fsync_directory", side_effect=record_fsync_directory),
+            mock.patch.object(capture_module, "_rename_exclusive", side_effect=record_rename_exclusive),
+        ):
+            exit_code, _ = self.execute(FakeRunner(), run_id="durability-order")
+
+        self.assertEqual(EXIT_OK, exit_code)
+        png_replacements = [event for event in events if event[0] == "replace-png"]
+        self.assertEqual(2, len(png_replacements))
+        for replacement in png_replacements:
+            replacement_index = events.index(replacement)
+            self.assertEqual(("fsync-file", replacement[1], None), events[replacement_index - 1])
+
+        staging_directory = self.artifact_root / self.manifest_id / ".durability-order.staging"
+        manifest_directory = self.artifact_root / self.manifest_id
+        staging_fsync_index = max(
+            index
+            for index, event in enumerate(events)
+            if event == ("fsync-directory", staging_directory, None)
+        )
+        rename_index = next(index for index, event in enumerate(events) if event[0] == "rename-run")
+        manifest_fsync_index = next(
+            index
+            for index, event in enumerate(events)
+            if event == ("fsync-directory", manifest_directory, None) and index > rename_index
+        )
+        self.assertLess(events.index(png_replacements[-1]), staging_fsync_index)
+        self.assertLess(staging_fsync_index, rename_index)
+        self.assertLess(rename_index, manifest_fsync_index)
 
     def test_atomic_run_publication_failure_preserves_foreign_run(self) -> None:
         self.write_plan(["ios.app"])
@@ -854,7 +967,7 @@ class SharedViewCaptureTests(unittest.TestCase):
             with self.assertRaisesRegex(SharedViewCaptureError, "publication failed"):
                 self.execute(FakeRunner())
 
-        manifest_directory = self.artifact_root / MANIFEST_ID
+        manifest_directory = self.artifact_root / self.manifest_id
         self.assertFalse((manifest_directory / ".run-fixed.staging").exists())
         self.assertTrue((manifest_directory / "run-fixed" / "foreign-marker").is_file())
         self.assertFalse(self.receipt_path.exists())
@@ -870,6 +983,58 @@ class SharedViewCaptureTests(unittest.TestCase):
             capture_module._rename_exclusive(source, destination)
         self.assertTrue(source.is_dir())
         self.assertEqual("foreign", marker.read_text())
+
+    def test_post_rename_failures_remove_only_the_owned_run(self) -> None:
+        self.write_plan(["ios.app"])
+        self.write_config()
+        original_atomic_write = capture_module._atomic_write_json
+
+        def fail_public_receipt(path, payload, mode):
+            if path == self.receipt_path:
+                raise SharedViewCaptureError("public receipt failed")
+            original_atomic_write(path, payload, mode)
+
+        with mock.patch.object(capture_module, "_atomic_write_json", side_effect=fail_public_receipt):
+            with self.assertRaisesRegex(SharedViewCaptureError, "public receipt failed"):
+                self.execute(FakeRunner(), run_id="owned-public-failure")
+        self.assertFalse((self.artifact_root / self.manifest_id / "owned-public-failure").exists())
+
+        foreign_receipt = self.root / "foreign-public-failure.json"
+        foreign_run = self.artifact_root / self.manifest_id / "foreign-public-failure"
+
+        def swap_foreign_before_failure(path, payload, mode):
+            if path == foreign_receipt:
+                shutil.rmtree(foreign_run)
+                foreign_run.mkdir()
+                (foreign_run / ".capture-owner").write_text("foreign-owner")
+                raise SharedViewCaptureError("public receipt failed")
+            original_atomic_write(path, payload, mode)
+
+        with mock.patch.object(capture_module, "_atomic_write_json", side_effect=swap_foreign_before_failure):
+            with self.assertRaisesRegex(SharedViewCaptureError, "public receipt failed"):
+                self.execute(
+                    FakeRunner(),
+                    run_id="foreign-public-failure",
+                    receipt_path=foreign_receipt,
+                )
+        self.assertEqual("foreign-owner", (foreign_run / ".capture-owner").read_text())
+
+        manifest_directory = self.artifact_root / self.manifest_id
+        original_fsync = capture_module._fsync_directory
+
+        def fail_manifest_fsync(path):
+            if path == manifest_directory:
+                raise OSError("manifest fsync failed")
+            original_fsync(path)
+
+        with mock.patch.object(capture_module, "_fsync_directory", side_effect=fail_manifest_fsync):
+            with self.assertRaisesRegex(SharedViewCaptureError, "publication failed"):
+                self.execute(
+                    FakeRunner(),
+                    run_id="manifest-fsync-failure",
+                    receipt_path=self.root / "manifest-fsync-failure.json",
+                )
+        self.assertFalse((manifest_directory / "manifest-fsync-failure").exists())
 
     def test_artifact_publish_cleanup_and_run_id_guards_fail_closed(self) -> None:
         self.write_plan(["ios.app"])
@@ -907,7 +1072,7 @@ class SharedViewCaptureTests(unittest.TestCase):
 
         with self.assertRaisesRegex(SharedViewCaptureError, "identifier is invalid"):
             self.execute(FakeRunner(), run_id="invalid/id")
-        manifest_directory = self.artifact_root / MANIFEST_ID
+        manifest_directory = self.artifact_root / self.manifest_id
         collision = manifest_directory / "collision"
         collision.mkdir(mode=0o700)
         with self.assertRaisesRegex(SharedViewCaptureError, "not unique"):
@@ -960,8 +1125,7 @@ class SharedViewCaptureTests(unittest.TestCase):
             self.execute(runner)
 
         self.write_surface_manifest("f" * 64)
-
-        with self.assertRaisesRegex(SharedViewCaptureError, "does not match comparison"):
+        with self.assertRaisesRegex(SharedViewCaptureError, "manifest identity is invalid"):
             self.execute(runner)
 
         self.assertEqual([], runner.calls)
@@ -993,6 +1157,45 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.config_path.write_text(json.dumps(config))
         with self.assertRaisesRegex(SharedViewCaptureError, "simulator identifier is invalid"):
             self.execute(FakeRunner(), run_id="private-identifier")
+
+    def test_exception_after_create_cleans_verified_udid_without_masking_root_cause(self) -> None:
+        self.write_plan(["ios.app"])
+        self.write_config()
+        runner = FakeRunner()
+        original_run = runner.run
+
+        def remove_manifest_after_install(args, *, timeout, environment=None):
+            result = original_run(args, timeout=timeout, environment=environment)
+            if args[2] == "install":
+                (Path(args[-1]) / "ContextPanelSurfaceManifest.json").unlink()
+            return result
+
+        runner.run = remove_manifest_after_install
+        with self.assertRaisesRegex(SharedViewCaptureError, "surface manifest is invalid"):
+            self.execute(runner, run_id="exception-cleanup")
+        self.assertIn(["xcrun", "simctl", "delete", SIMULATOR_ID], [args for args, _ in runner.calls])
+
+    def test_installed_container_comparison_ignores_modes_but_rejects_content_drift(self) -> None:
+        self.write_plan(["ios.app"])
+        self.write_config()
+        installed = self.root / "installed-copy.app"
+        shutil.copytree(self.app, installed)
+        os.chmod(installed / "ContextPanel", 0o755)
+        exit_code, _ = self.execute(
+            FakeRunner(container_path=installed),
+            run_id="mode-only-container",
+            receipt_path=self.root / "mode-only-container.json",
+        )
+        self.assertEqual(EXIT_OK, exit_code)
+
+        (installed / "unexpected-file").write_text("drift")
+        exit_code, receipt = self.execute(
+            FakeRunner(container_path=installed),
+            run_id="drifted-container",
+            receipt_path=self.root / "drifted-container.json",
+        )
+        self.assertEqual(EXIT_UNKNOWN, exit_code)
+        self.assertEqual(["simctl-app-container-mismatch"] * 2, [item["errorCode"] for item in receipt["captures"]])
 
     def test_nondefault_accessibility_fails_closed_before_capture(self) -> None:
         ios = next(surface for surface in self.matrix.surfaces if surface.id == "ios.app")
@@ -1130,7 +1333,7 @@ class SharedViewCaptureTests(unittest.TestCase):
             "schemaVersion": 1,
             "kind": CAPTURE_RECEIPT_KIND,
             "captureRunID": "run-fixed",
-            "currentManifestID": MANIFEST_ID,
+            "currentManifestID": self.manifest_id,
             "requirementsDigest": "c" * 64,
             "matrixDigest": "b" * 64,
             "pixelDiffPolicy": "advisory-only",
