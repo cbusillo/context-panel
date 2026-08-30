@@ -1,6 +1,7 @@
 import contextlib
 from concurrent.futures import ThreadPoolExecutor
 import copy
+from dataclasses import replace
 from datetime import datetime, timezone
 import hashlib
 import io
@@ -29,6 +30,7 @@ from context_panel_validation.shared_view_capture import (
     REQUIREMENTS_DIGEST_DOMAIN,
     SharedViewCaptureError,
     execute_shared_view_capture,
+    load_capture_requirements,
 )
 from context_panel_validation.shared_view_evidence import (
     canonical_json_hash,
@@ -223,8 +225,10 @@ class FakeRunner:
         create_result: CommandResult | None = None,
         corrupt_png: str | None = None,
         unstable: bool = False,
+        baseline_unstable: bool = False,
         baseline_equal: bool = False,
         duplicate_routes: bool = False,
+        created_device_mismatch: bool = False,
     ) -> None:
         self.calls: list[tuple[list[str], int]] = []
         self.catalog = catalog or simulator_catalog()
@@ -233,11 +237,18 @@ class FakeRunner:
         self.create_result = create_result
         self.corrupt_png = corrupt_png
         self.unstable = unstable
+        self.baseline_unstable = baseline_unstable
         self.baseline_equal = baseline_equal
         self.duplicate_routes = duplicate_routes
+        self.created_device_mismatch = created_device_mismatch
         self.active_route: dict[str, str | None] = {}
         self.route_screenshot_counts: dict[str, int] = {}
+        self.baseline_screenshot_count = 0
         self.screenshot_destinations_absent: list[bool] = []
+        self.created_simulator_id: str | None = None
+        self.created_simulator_name: str | None = None
+        self.created_device_type: str | None = None
+        self.created_runtime: str | None = None
         self.private_stderr = f"private /tmp/capture-secret {SIMULATOR_ID}"
 
     def run(self, args, *, timeout, environment=None) -> CommandResult:
@@ -248,12 +259,37 @@ class FakeRunner:
             return CommandResult(124, "", self.private_stderr, timed_out=True)
         if self.fail_at == verb:
             return CommandResult(1, "", self.private_stderr)
-        if args[:4] == ["xcrun", "simctl", "list", "-j"]:
+        if args[:5] == ["xcrun", "simctl", "list", "-j", "devices"]:
+            device = {
+                "udid": self.created_simulator_id,
+                "name": "mismatched-name" if self.created_device_mismatch else self.created_simulator_name,
+                "deviceTypeIdentifier": self.created_device_type,
+                "isAvailable": True,
+            }
+            return CommandResult(
+                0,
+                json.dumps({"devices": {self.created_runtime: [device]}}),
+                "",
+            )
+        if args == ["xcrun", "simctl", "list", "-j"]:
             return CommandResult(0, json.dumps(self.catalog), "")
         if args[:3] == ["xcrun", "simctl", "create"]:
             if self.create_result is not None:
+                valid_ids = [
+                    line.strip()
+                    for line in self.create_result.stdout.splitlines()
+                    if line.strip() in {SIMULATOR_ID, SECOND_SIMULATOR_ID}
+                ]
+                self.created_simulator_id = valid_ids[0] if len(valid_ids) == 1 else None
+                self.created_simulator_name = args[3]
+                self.created_device_type = args[4]
+                self.created_runtime = args[5]
                 return self.create_result
             self.active_route[SIMULATOR_ID] = None
+            self.created_simulator_id = SIMULATOR_ID
+            self.created_simulator_name = args[3]
+            self.created_device_type = args[4]
+            self.created_runtime = args[5]
             return CommandResult(0, SIMULATOR_ID + "\n", "")
         if args[:3] == ["xcrun", "simctl", "terminate"]:
             self.active_route[args[3]] = None
@@ -276,7 +312,13 @@ class FakeRunner:
 
     def _image_for(self, route: str | None) -> bytes:
         baseline_color = (0x11, 0x22, 0x33, 0xFF)
-        if route is None or self.baseline_equal:
+        if route is None:
+            count = self.baseline_screenshot_count
+            self.baseline_screenshot_count += 1
+            if self.baseline_unstable and count % 2 == 1:
+                baseline_color = (0x12, 0x22, 0x33, 0xFF)
+            return png_bytes(color=baseline_color)
+        if self.baseline_equal:
             return png_bytes(color=baseline_color)
         if self.duplicate_routes:
             color = (0x44, 0x55, 0x66, 0xFF)
@@ -298,6 +340,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.app.mkdir()
         (self.app / "ContextPanel").write_bytes(b"signed companion executable")
         self.write_info_plist("ContextPanel")
+        self.write_surface_manifest()
         self.matrix = load_shared_view_matrix()
         self.policy = load_surface_policy()
         self.comparison_path = self.root / "comparison.json"
@@ -321,6 +364,17 @@ class SharedViewCaptureTests(unittest.TestCase):
                 },
                 stream,
             )
+
+    def write_surface_manifest(self, manifest_id: str = MANIFEST_ID) -> None:
+        (self.app / "ContextPanelSurfaceManifest.json").write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "kind": "context-panel-surface-build-intent",
+                    "manifestId": manifest_id,
+                }
+            )
+        )
 
     def write_plan(
         self,
@@ -385,58 +439,38 @@ class SharedViewCaptureTests(unittest.TestCase):
         exit_code, receipt = self.execute(runner)
 
         self.assertEqual(EXIT_OK, exit_code)
-        self.assertEqual([1.0, 1.0, 1.0, 1.0], self.sleeps)
+        self.assertEqual([1.0] * 8, self.sleeps)
         commands = [args for args, _ in runner.calls]
-        normalized = [
-            args[:5] + ["<temporary-png>"]
-            if args[:3] == ["xcrun", "simctl", "io"]
-            else args
-            for args in commands
-        ]
         requirements = payload["requirements"]
         self.assertEqual(
             [
-                ["xcrun", "simctl", "list", "-j"],
-                [
-                    "xcrun",
-                    "simctl",
-                    "create",
-                    "ContextPanelSharedView-ios-run-fixed",
-                    DEVICE_TYPE_IDENTIFIERS["ios"],
-                    RUNTIME_IDENTIFIERS["ios"],
-                ],
-                ["xcrun", "simctl", "boot", SIMULATOR_ID],
-                ["xcrun", "simctl", "bootstatus", SIMULATOR_ID, "-b"],
-                ["xcrun", "simctl", "install", SIMULATOR_ID, str(self.app)],
-                ["xcrun", "simctl", "ui", SIMULATOR_ID, "appearance", "light"],
-                ["xcrun", "simctl", "io", SIMULATOR_ID, "screenshot", "<temporary-png>"],
-                [
-                    "xcrun",
-                    "simctl",
-                    "openurl",
-                    SIMULATOR_ID,
-                    "contextpanelcompanion://validation-gallery?fixture=healthy&family=systemMedium&appearance=light&presentation=overview",
-                ],
-                ["xcrun", "simctl", "io", SIMULATOR_ID, "screenshot", "<temporary-png>"],
-                ["xcrun", "simctl", "io", SIMULATOR_ID, "screenshot", "<temporary-png>"],
-                ["xcrun", "simctl", "terminate", SIMULATOR_ID, "com.shinycomputers.contextpanel"],
-                ["xcrun", "simctl", "ui", SIMULATOR_ID, "appearance", "dark"],
-                ["xcrun", "simctl", "io", SIMULATOR_ID, "screenshot", "<temporary-png>"],
-                [
-                    "xcrun",
-                    "simctl",
-                    "openurl",
-                    SIMULATOR_ID,
-                    "contextpanelcompanion://validation-gallery?fixture=dense-accounts&family=systemMedium&appearance=dark&presentation=overview",
-                ],
-                ["xcrun", "simctl", "io", SIMULATOR_ID, "screenshot", "<temporary-png>"],
-                ["xcrun", "simctl", "io", SIMULATOR_ID, "screenshot", "<temporary-png>"],
-                ["xcrun", "simctl", "shutdown", SIMULATOR_ID],
-                ["xcrun", "simctl", "delete", SIMULATOR_ID],
+                "list", "create", "list", "boot", "bootstatus", "install",
+                "ui", "io", "io", "openurl", "io", "io", "terminate",
+                "ui", "io", "io", "openurl", "io", "io", "shutdown", "delete",
             ],
-            normalized,
+            [args[2] for args in commands],
         )
-        self.assertEqual([True] * 6, runner.screenshot_destinations_absent)
+        simulator_name = "ContextPanelSharedView-ios-run-fixed"
+        self.assertEqual(
+            ["xcrun", "simctl", "create", simulator_name, DEVICE_TYPE_IDENTIFIERS["ios"], RUNTIME_IDENTIFIERS["ios"]],
+            commands[1],
+        )
+        self.assertEqual(["xcrun", "simctl", "list", "-j", "devices", simulator_name], commands[2])
+        self.assertEqual(
+            [
+                ["xcrun", "simctl", "ui", SIMULATOR_ID, "appearance", "light"],
+                ["xcrun", "simctl", "ui", SIMULATOR_ID, "appearance", "dark"],
+            ],
+            [args for args in commands if args[2] == "ui"],
+        )
+        self.assertEqual(
+            [
+                "contextpanelcompanion://validation-gallery?fixture=healthy&family=systemMedium&appearance=light&presentation=overview",
+                "contextpanelcompanion://validation-gallery?fixture=dense-accounts&family=systemMedium&appearance=dark&presentation=overview",
+            ],
+            [args[-1] for args in commands if args[2] == "openurl"],
+        )
+        self.assertEqual([True] * 8, runner.screenshot_destinations_absent)
         self.assertEqual(["captured", "captured"], [item["status"] for item in receipt["captures"]])
         self.assertEqual(
             ["simctl-ui-appearance+gallery-route"] * 2,
@@ -508,8 +542,10 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual("iOS", ios_profile["runtimePlatform"])
         self.assertEqual("iPhone 17", ios_profile["deviceTypeName"])
         self.assertEqual("iPhone", ios_profile["productFamily"])
+        self.assertEqual(MANIFEST_ID, ios_profile["appManifestID"])
         self.assertEqual("deleted", ios_profile["cleanupStatus"])
-        self.assertEqual(1, sum(args[:4] == ["xcrun", "simctl", "list", "-j"] for args, _ in runner.calls))
+        self.assertEqual(1, sum(args == ["xcrun", "simctl", "list", "-j"] for args, _ in runner.calls))
+        self.assertEqual(3, sum(args[:5] == ["xcrun", "simctl", "list", "-j", "devices"] for args, _ in runner.calls))
         serialized = json.dumps(receipt)
         self.assertNotIn(str(self.app), serialized)
         self.assertNotIn(SIMULATOR_ID, serialized)
@@ -530,6 +566,10 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual(EXIT_BLOCKED, exit_code)
         self.assertEqual(["blocked", "blocked"], [item["status"] for item in receipt["captures"]])
         self.assertEqual(["simctl-profile-mismatch"] * 2, [item["errorCode"] for item in receipt["captures"]])
+        self.assertEqual(
+            ["simctl-profile-validation"] * 2,
+            [item["hostMechanism"] for item in receipt["captures"]],
+        )
         self.assertEqual("tvOS", receipt["profiles"][0]["runtimePlatform"])
         self.assertEqual("not-started", receipt["profiles"][0]["cleanupStatus"])
         self.assertEqual([["xcrun", "simctl", "list", "-j"]], [args for args, _ in runner.calls])
@@ -552,7 +592,7 @@ class SharedViewCaptureTests(unittest.TestCase):
                 self.assertEqual(["unknown", "unknown"], [item["status"] for item in receipt["captures"]])
                 self.assertEqual([error_code, error_code], [item["errorCode"] for item in receipt["captures"]])
 
-    def test_adaptive_appearance_uses_route_without_simctl_ui(self) -> None:
+    def test_adaptive_appearance_resets_simulator_to_automatic(self) -> None:
         matrix_payload = json.loads((REPO_ROOT / "Config/ContextPanelSharedViewMatrix.json").read_text())
         ios_surface = next(surface for surface in matrix_payload["surfaces"] if surface["id"] == "ios.app")
         ios_surface["cells"][0]["appearance"] = "adaptive"
@@ -566,9 +606,17 @@ class SharedViewCaptureTests(unittest.TestCase):
 
         self.assertEqual(EXIT_OK, exit_code)
         ui_commands = [args for args, _ in runner.calls if args[:3] == ["xcrun", "simctl", "ui"]]
-        self.assertEqual([["xcrun", "simctl", "ui", SIMULATOR_ID, "appearance", "dark"]], ui_commands)
-        self.assertEqual("gallery-route", receipt["captures"][0]["appearanceMechanism"])
-        self.assertEqual("simctl-ui-appearance+gallery-route", receipt["captures"][1]["appearanceMechanism"])
+        self.assertEqual(
+            [
+                ["xcrun", "simctl", "ui", SIMULATOR_ID, "appearance", "automatic"],
+                ["xcrun", "simctl", "ui", SIMULATOR_ID, "appearance", "dark"],
+            ],
+            ui_commands,
+        )
+        self.assertEqual(
+            ["simctl-ui-appearance+gallery-route"] * 2,
+            [item["appearanceMechanism"] for item in receipt["captures"]],
+        )
 
     def test_timeout_codes_are_distinct_and_appearance_is_null_before_application(self) -> None:
         self.write_plan(["ios.app"])
@@ -582,7 +630,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual([None, None], [item["appearanceMechanism"] for item in receipt["captures"]])
         self.assertIn(["xcrun", "simctl", "delete", SIMULATOR_ID], [args for args, _ in runner.calls])
 
-    def test_successful_multiline_create_uses_last_valid_udid_for_cleanup(self) -> None:
+    def test_ambiguous_multiline_create_rejects_udids_and_cleans_by_name(self) -> None:
         self.write_plan(["ios.app"])
         self.write_config()
         runner = FakeRunner(
@@ -595,12 +643,24 @@ class SharedViewCaptureTests(unittest.TestCase):
 
         exit_code, receipt = self.execute(runner)
 
-        self.assertEqual(EXIT_OK, exit_code)
-        self.assertEqual(["captured", "captured"], [item["status"] for item in receipt["captures"]])
-        self.assertEqual(
-            ["xcrun", "simctl", "delete", SECOND_SIMULATOR_ID],
-            [args for args, _ in runner.calls][-1],
-        )
+        simulator_name = "ContextPanelSharedView-ios-run-fixed"
+        self.assertEqual(EXIT_UNKNOWN, exit_code)
+        self.assertEqual(["simctl-create-invalid-udid"] * 2, [item["errorCode"] for item in receipt["captures"]])
+        self.assertEqual(["xcrun", "simctl", "delete", simulator_name], [args for args, _ in runner.calls][-1])
+        self.assertFalse(any(args[:5] == ["xcrun", "simctl", "list", "-j", "devices"] for args, _ in runner.calls))
+
+    def test_created_simulator_identity_mismatch_blocks_boot_and_cleans_by_name(self) -> None:
+        self.write_plan(["ios.app"])
+        self.write_config()
+        runner = FakeRunner(created_device_mismatch=True)
+
+        exit_code, receipt = self.execute(runner)
+
+        simulator_name = "ContextPanelSharedView-ios-run-fixed"
+        self.assertEqual(EXIT_UNKNOWN, exit_code)
+        self.assertEqual(["simctl-created-device-mismatch"] * 2, [item["errorCode"] for item in receipt["captures"]])
+        self.assertFalse(any(args[2] == "boot" for args, _ in runner.calls))
+        self.assertEqual(["xcrun", "simctl", "delete", simulator_name], [args for args, _ in runner.calls][-1])
 
     def test_invalid_create_output_cleans_up_by_unique_name(self) -> None:
         self.write_plan(["ios.app"])
@@ -655,6 +715,17 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertFalse(list(run_directory.glob("*.png")))
         self.assertTrue((run_directory / "index.json").is_file())
 
+    def test_terminate_failure_is_best_effort_and_later_cell_still_captures(self) -> None:
+        self.write_plan(["ios.app"])
+        self.write_config()
+        runner = FakeRunner(fail_at="terminate")
+
+        exit_code, receipt = self.execute(runner)
+
+        self.assertEqual(EXIT_OK, exit_code)
+        self.assertEqual(["captured", "captured"], [item["status"] for item in receipt["captures"]])
+        self.assertTrue(any(args[2] == "terminate" for args, _ in runner.calls))
+
     def test_comparison_truncation_and_empty_no_work_are_rejected_before_side_effects(self) -> None:
         payload = self.write_plan(["ios.app"])
         self.write_config()
@@ -682,6 +753,7 @@ class SharedViewCaptureTests(unittest.TestCase):
     def test_unstable_baseline_and_duplicate_digests_are_unknown(self) -> None:
         scenarios = (
             (FakeRunner(unstable=True), "capture-unstable"),
+            (FakeRunner(baseline_unstable=True), "baseline-unstable"),
             (FakeRunner(baseline_equal=True), "route-baseline-unchanged"),
             (FakeRunner(duplicate_routes=True), "duplicate-artifact-digest"),
         )
@@ -733,6 +805,58 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertFalse((manifest_directory / "run-fixed").exists())
         self.assertFalse(self.receipt_path.exists())
 
+    def test_private_artifact_directories_are_created_securely_without_rewriting_existing_root(self) -> None:
+        self.write_plan(["ios.app"])
+        self.write_config()
+        self.artifact_root = self.root / "new-parent" / "private-artifacts"
+
+        exit_code, _ = self.execute(FakeRunner())
+
+        self.assertEqual(EXIT_OK, exit_code)
+        self.assertEqual(0o700, stat.S_IMODE((self.root / "new-parent").stat().st_mode))
+        self.assertEqual(0o700, stat.S_IMODE(self.artifact_root.stat().st_mode))
+
+        existing_root = self.root / "existing-shared-root"
+        existing_root.mkdir(mode=0o755)
+        os.chmod(existing_root, 0o755)
+        self.artifact_root = existing_root
+        runner = FakeRunner()
+        with self.assertRaisesRegex(SharedViewCaptureError, "permissions are invalid"):
+            self.execute(
+                runner,
+                run_id="permissions-fail",
+                receipt_path=self.root / "permissions-fail.json",
+            )
+        self.assertEqual(0o755, stat.S_IMODE(existing_root.stat().st_mode))
+        self.assertEqual([], runner.calls)
+
+    def test_capture_app_manifest_must_match_current_comparison(self) -> None:
+        self.write_plan(["ios.app"])
+        self.write_surface_manifest("f" * 64)
+        self.write_config()
+        runner = FakeRunner()
+
+        with self.assertRaisesRegex(SharedViewCaptureError, "does not match comparison"):
+            self.execute(runner)
+
+        self.assertEqual([], runner.calls)
+        self.assertFalse(self.artifact_root.exists())
+        self.assertFalse(self.receipt_path.exists())
+
+    def test_nondefault_accessibility_fails_closed_before_capture(self) -> None:
+        ios = next(surface for surface in self.matrix.surfaces if surface.id == "ios.app")
+        modified = replace(ios, cells=(replace(ios.cells[0], accessibility="xxxl"), *ios.cells[1:]))
+        modified_matrix = replace(
+            self.matrix,
+            surfaces=tuple(modified if surface.id == "ios.app" else surface for surface in self.matrix.surfaces),
+        )
+        comparison = comparison_for({"ios.app": ["shared-view"]})
+        payload = plan_shared_view_evidence(comparison, modified_matrix, self.policy)
+        self.requirements_path.write_text(json.dumps(payload))
+
+        with self.assertRaisesRegex(SharedViewCaptureError, "accessibility context is unsupported"):
+            load_capture_requirements(self.requirements_path, payload, modified_matrix, self.policy)
+
     def test_executable_escape_symlink_and_read_errors_fail_before_catalog(self) -> None:
         self.write_plan(["ios.app"])
         outside = self.root / "outside-executable"
@@ -760,6 +884,27 @@ class SharedViewCaptureTests(unittest.TestCase):
         finally:
             os.chmod(executable, 0o644)
         self.assertEqual([], runner.calls)
+
+    def test_public_bundle_version_metadata_is_bounded_and_numeric(self) -> None:
+        self.write_plan(["ios.app"])
+        self.write_config()
+        with (self.app / "Info.plist").open("wb") as stream:
+            plistlib.dump(
+                {
+                    "CFBundleIdentifier": "com.shinycomputers.contextpanel",
+                    "CFBundleExecutable": "ContextPanel",
+                    "CFBundleShortVersionString": "/private/secret",
+                    "CFBundleVersion": "456",
+                },
+                stream,
+            )
+        runner = FakeRunner()
+
+        with self.assertRaisesRegex(SharedViewCaptureError, "version metadata"):
+            self.execute(runner)
+
+        self.assertEqual([], runner.calls)
+        self.assertFalse(self.receipt_path.exists())
 
     def test_bool_schema_versions_are_rejected(self) -> None:
         payload = self.write_plan(["ios.app"])

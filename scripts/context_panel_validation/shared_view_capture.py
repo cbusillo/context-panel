@@ -72,6 +72,7 @@ SIMULATOR_UDID_PATTERN = re.compile(
     r"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
 )
 CAPTURE_RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,63}$")
+BUNDLE_VERSION_PATTERN = re.compile(r"^[0-9]+(?:\.[0-9]+){0,2}$")
 
 
 class SharedViewCaptureError(SharedViewEvidenceError):
@@ -86,6 +87,7 @@ class CaptureProfile:
     app_bundle: Path
     bundle_identifier: str
     executable_sha256: str
+    manifest_id: str
     version: str
     build: str
 
@@ -104,6 +106,7 @@ class CaptureProfile:
             "productFamily": metadata.product_family if metadata is not None else None,
             "appBundleIdentifier": self.bundle_identifier,
             "appExecutableSHA256": self.executable_sha256,
+            "appManifestID": self.manifest_id,
             "appVersion": self.version,
             "appBuild": self.build,
             "cleanupStatus": cleanup_status,
@@ -199,7 +202,25 @@ def _stream_sha256(path: Path, label: str) -> str:
     return digest.hexdigest()
 
 
-def _app_metadata(path: Path) -> tuple[str, str, str, str]:
+def _embedded_manifest_id(path: Path) -> str:
+    resources = path / "Contents" / "Resources" if (path / "Contents").is_dir() else path
+    manifest_path = resources / "ContextPanelSurfaceManifest.json"
+    if not manifest_path.is_file() or manifest_path.is_symlink():
+        raise SharedViewCaptureError("capture app surface manifest is invalid")
+    try:
+        payload = json.loads(manifest_path.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise SharedViewCaptureError("capture app surface manifest is invalid") from error
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schemaVersion") != 1
+        or payload.get("kind") != "context-panel-surface-build-intent"
+    ):
+        raise SharedViewCaptureError("capture app surface manifest is invalid")
+    return _require_sha256(payload.get("manifestId"), "capture app surface manifest identifier")
+
+
+def _app_metadata(path: Path) -> tuple[str, str, str, str, str]:
     info_path = path / "Info.plist"
     if not info_path.is_file() or info_path.is_symlink():
         raise SharedViewCaptureError("capture app bundle Info.plist is invalid")
@@ -223,6 +244,13 @@ def _app_metadata(path: Path) -> tuple[str, str, str, str]:
         raise SharedViewCaptureError("capture app executable is invalid")
     version = _require_string(info.get("CFBundleShortVersionString"), "capture app version")
     build = _require_string(info.get("CFBundleVersion"), "capture app build")
+    if (
+        len(version) > 64
+        or len(build) > 64
+        or not BUNDLE_VERSION_PATTERN.fullmatch(version)
+        or not BUNDLE_VERSION_PATTERN.fullmatch(build)
+    ):
+        raise SharedViewCaptureError("capture app version metadata is invalid")
     executable = path / executable_name
     try:
         executable_stat = executable.lstat()
@@ -238,6 +266,7 @@ def _app_metadata(path: Path) -> tuple[str, str, str, str]:
     return (
         bundle_identifier,
         _stream_sha256(executable, "capture app executable"),
+        _embedded_manifest_id(path),
         version,
         build,
     )
@@ -273,7 +302,7 @@ def load_capture_config(path: Path) -> dict[str, CaptureProfile]:
         )
         if app_bundle.suffix != ".app":
             raise SharedViewCaptureError("capture app bundle is invalid")
-        bundle_identifier, executable_sha256, version, build = _app_metadata(app_bundle)
+        bundle_identifier, executable_sha256, manifest_id, version, build = _app_metadata(app_bundle)
         profiles[name] = CaptureProfile(
             name=name,
             runtime_identifier=_require_string(
@@ -285,6 +314,7 @@ def load_capture_config(path: Path) -> dict[str, CaptureProfile]:
             app_bundle=app_bundle,
             bundle_identifier=bundle_identifier,
             executable_sha256=executable_sha256,
+            manifest_id=manifest_id,
             version=version,
             build=build,
         )
@@ -338,6 +368,10 @@ def load_capture_requirements(
             raise SharedViewCaptureError("shared-view capture requirement is invalid")
         requirement_id = _require_string(raw_requirement.get("id"), "shared-view capture requirement identifier")
         policy_surface, cell = expected[requirement_id]
+        if cell.accessibility != "default":
+            raise SharedViewCaptureError(
+                "shared-view capture accessibility context is unsupported"
+            )
         requirements.append(
             CaptureRequirement(
                 requirement_id=requirement_id,
@@ -387,10 +421,28 @@ def _validate_output_path(path: Path) -> Path:
 
 
 def _prepare_private_directory(path: Path) -> None:
-    path.mkdir(parents=True, exist_ok=True, mode=0o700)
-    if path.is_symlink() or not path.is_dir():
+    missing: list[Path] = []
+    candidate = path
+    while not candidate.exists():
+        missing.append(candidate)
+        candidate = candidate.parent
+    if candidate.is_symlink() or not candidate.is_dir():
         raise SharedViewCaptureError("capture artifact root is invalid")
-    os.chmod(path, 0o700)
+    for directory in reversed(missing):
+        try:
+            directory.mkdir(mode=0o700)
+        except FileExistsError:
+            pass
+        except OSError as error:
+            raise SharedViewCaptureError("capture artifact root is unavailable") from error
+        if directory.is_symlink() or not directory.is_dir():
+            raise SharedViewCaptureError("capture artifact root is invalid")
+    try:
+        mode = stat.S_IMODE(path.stat().st_mode)
+    except OSError as error:
+        raise SharedViewCaptureError("capture artifact root is unavailable") from error
+    if mode != 0o700:
+        raise SharedViewCaptureError("capture artifact root permissions are invalid")
 
 
 def _create_run_directories(
@@ -430,7 +482,6 @@ def _atomic_write_json(path: Path, payload: dict[str, Any], mode: int) -> None:
             os.fsync(stream.fileno())
         os.chmod(temporary_path, mode)
         os.replace(temporary_path, path)
-        os.chmod(path, mode)
     except OSError as error:
         raise SharedViewCaptureError("capture output is unavailable") from error
     finally:
@@ -588,13 +639,14 @@ def _blocked_results(
     requirements: tuple[CaptureRequirement, ...],
     error_code: str,
     now: Callable[[], datetime],
+    host_mechanism: str = "unconfigured-profile",
 ) -> dict[str, dict[str, object]]:
     return {
         requirement.requirement_id: _result(
             requirement,
             status="blocked",
             captured_at=now(),
-            host_mechanism="unconfigured-profile",
+            host_mechanism=host_mechanism,
             appearance_mechanism=None,
             error_code=error_code,
         )
@@ -621,12 +673,55 @@ def _mark_result_unknown(
 
 
 def _created_simulator_id(result: CommandResult) -> str | None:
-    simulator_id: str | None = None
-    for line in result.stdout.splitlines():
-        candidate = line.strip()
-        if SIMULATOR_UDID_PATTERN.fullmatch(candidate):
-            simulator_id = candidate
-    return simulator_id
+    simulator_ids = [
+        line.strip()
+        for line in result.stdout.splitlines()
+        if SIMULATOR_UDID_PATTERN.fullmatch(line.strip())
+    ]
+    return simulator_ids[0] if len(simulator_ids) == 1 else None
+
+
+def _verify_created_simulator(
+    runner: Runner,
+    profile: CaptureProfile,
+    simulator_name: str,
+    simulator_id: str,
+) -> str | None:
+    result = _run(
+        runner,
+        ["xcrun", "simctl", "list", "-j", "devices", simulator_name],
+        SIMCTL_CATALOG_TIMEOUT,
+    )
+    if result.returncode != 0 or result.timed_out:
+        return _command_error_code(result, "simctl-created-device")
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return "simctl-created-device-invalid"
+    if not isinstance(payload, dict) or not isinstance(payload.get("devices"), dict):
+        return "simctl-created-device-invalid"
+    matches: list[dict[str, object]] = []
+    for runtime_identifier, raw_devices in payload["devices"].items():
+        if not isinstance(runtime_identifier, str) or not isinstance(raw_devices, list):
+            return "simctl-created-device-invalid"
+        for raw_device in raw_devices:
+            if not isinstance(raw_device, dict):
+                return "simctl-created-device-invalid"
+            if raw_device.get("udid") == simulator_id:
+                candidate = dict(raw_device)
+                candidate["runtimeIdentifier"] = runtime_identifier
+                matches.append(candidate)
+    if len(matches) != 1:
+        return "simctl-created-device-mismatch"
+    match = matches[0]
+    if (
+        match.get("name") != simulator_name
+        or match.get("runtimeIdentifier") != profile.runtime_identifier
+        or match.get("deviceTypeIdentifier") != profile.device_type_identifier
+        or match.get("isAvailable") is not True
+    ):
+        return "simctl-created-device-mismatch"
+    return None
 
 
 def _simulator_catalog(
@@ -806,9 +901,21 @@ def _capture_profile(
         lifecycle_error = _command_error_code(created, "simctl-create")
     else:
         simulator_id = _created_simulator_id(created)
-        cleanup_target = simulator_id or simulator_name
         if simulator_id is None:
             lifecycle_error = "simctl-create-invalid-udid"
+            cleanup_target = simulator_name
+        else:
+            identity_error = _verify_created_simulator(
+                runner,
+                profile,
+                simulator_name,
+                simulator_id,
+            )
+            if identity_error is not None:
+                lifecycle_error = identity_error
+                cleanup_target = simulator_name
+            else:
+                cleanup_target = simulator_id
 
     prerequisites = (
         ("boot", SIMCTL_BOOT_TIMEOUT, "simctl-boot"),
@@ -835,58 +942,94 @@ def _capture_profile(
         for index, requirement in enumerate(requirements):
             appearance_mechanism: str | None = None
             if index > 0:
-                terminated = _run(
+                _run(
                     runner,
                     ["xcrun", "simctl", "terminate", simulator_id, profile.bundle_identifier],
                     SIMCTL_TERMINATE_TIMEOUT,
                 )
-                if terminated.returncode != 0 or terminated.timed_out:
-                    results[requirement.requirement_id] = _result(
-                        requirement,
-                        status="unknown",
-                        captured_at=now(),
-                        host_mechanism="simctl-gallery",
-                        appearance_mechanism=None,
-                        error_code=_command_error_code(terminated, "simctl-terminate"),
-                    )
-                    continue
-            if requirement.appearance in {"light", "dark"}:
-                appearance = _run(
-                    runner,
-                    ["xcrun", "simctl", "ui", simulator_id, "appearance", requirement.appearance],
-                    SIMCTL_UI_TIMEOUT,
+            simulator_appearance = (
+                requirement.appearance
+                if requirement.appearance in {"light", "dark"}
+                else "automatic"
+            )
+            appearance = _run(
+                runner,
+                ["xcrun", "simctl", "ui", simulator_id, "appearance", simulator_appearance],
+                SIMCTL_UI_TIMEOUT,
+            )
+            if appearance.returncode != 0 or appearance.timed_out:
+                results[requirement.requirement_id] = _result(
+                    requirement,
+                    status="unknown",
+                    captured_at=now(),
+                    host_mechanism="simctl-gallery",
+                    appearance_mechanism=None,
+                    error_code=_command_error_code(appearance, "simctl-ui"),
                 )
-                if appearance.returncode != 0 or appearance.timed_out:
-                    results[requirement.requirement_id] = _result(
-                        requirement,
-                        status="unknown",
-                        captured_at=now(),
-                        host_mechanism="simctl-gallery",
-                        appearance_mechanism=None,
-                        error_code=_command_error_code(appearance, "simctl-ui"),
-                    )
-                    continue
-                appearance_mechanism = "simctl-ui-appearance"
-            route_baseline, route_baseline_path, route_baseline_error = _take_screenshot(
+                continue
+            appearance_mechanism = "simctl-ui-appearance"
+            sleeper(CAPTURE_SETTLE_SECONDS)
+            first_baseline, first_baseline_path, first_baseline_error = _take_screenshot(
                 runner,
                 simulator_id,
                 artifact_directory,
-                f".{requirement.requirement_id}.baseline.",
+                f".{requirement.requirement_id}.baseline.first.",
                 "simctl-baseline-screenshot",
                 "simulator-baseline-image-invalid",
             )
-            if route_baseline_path is not None:
-                route_baseline_path.unlink(missing_ok=True)
-            if route_baseline_error is not None or route_baseline is None:
+            if (
+                first_baseline_error is not None
+                or first_baseline is None
+                or first_baseline_path is None
+            ):
                 results[requirement.requirement_id] = _result(
                     requirement,
                     status="unknown",
                     captured_at=now(),
                     host_mechanism="simctl-gallery",
                     appearance_mechanism=appearance_mechanism,
-                    error_code=route_baseline_error,
+                    error_code=first_baseline_error,
                 )
                 continue
+            try:
+                sleeper(CAPTURE_SETTLE_SECONDS)
+                route_baseline, route_baseline_path, route_baseline_error = _take_screenshot(
+                    runner,
+                    simulator_id,
+                    artifact_directory,
+                    f".{requirement.requirement_id}.baseline.second.",
+                    "simctl-baseline-screenshot",
+                    "simulator-baseline-image-invalid",
+                )
+                if (
+                    route_baseline_error is not None
+                    or route_baseline is None
+                    or route_baseline_path is None
+                ):
+                    results[requirement.requirement_id] = _result(
+                        requirement,
+                        status="unknown",
+                        captured_at=now(),
+                        host_mechanism="simctl-gallery",
+                        appearance_mechanism=appearance_mechanism,
+                        error_code=route_baseline_error,
+                    )
+                    continue
+                try:
+                    if first_baseline.digest != route_baseline.digest:
+                        results[requirement.requirement_id] = _result(
+                            requirement,
+                            status="unknown",
+                            captured_at=now(),
+                            host_mechanism="simctl-gallery",
+                            appearance_mechanism=appearance_mechanism,
+                            error_code="baseline-unstable",
+                        )
+                        continue
+                finally:
+                    route_baseline_path.unlink(missing_ok=True)
+            finally:
+                first_baseline_path.unlink(missing_ok=True)
             opened = _run(
                 runner,
                 ["xcrun", "simctl", "openurl", simulator_id, _capture_url(requirement)],
@@ -902,11 +1045,7 @@ def _capture_profile(
                     error_code=_command_error_code(opened, "simctl-openurl"),
                 )
                 continue
-            appearance_mechanism = (
-                "gallery-route"
-                if requirement.appearance == "adaptive"
-                else "simctl-ui-appearance+gallery-route"
-            )
+            appearance_mechanism = "simctl-ui-appearance+gallery-route"
             sleeper(CAPTURE_SETTLE_SECONDS)
             first_snapshot, first_path, first_error = _take_screenshot(
                 runner,
@@ -1094,6 +1233,12 @@ def execute_shared_view_capture(
     active_profile_names = [
         profile_name for profile_name in SUPPORTED_PROFILES if configured_groups[profile_name]
     ]
+    if any(
+        profiles[profile_name].manifest_id != plan.current_manifest_id
+        for profile_name in active_profile_names
+    ):
+        raise SharedViewCaptureError("capture app surface manifest does not match comparison")
+    _prepare_private_directory(private_root)
     catalog_metadata: dict[str, SimulatorProfileMetadata | None] = {
         profile_name: None for profile_name in active_profile_names
     }
@@ -1112,7 +1257,6 @@ def execute_shared_view_capture(
                 if profile_error is not None:
                     profile_errors[profile_name] = profile_error
 
-    _prepare_private_directory(private_root)
     manifest_directory = private_root / plan.current_manifest_id
     _prepare_private_directory(manifest_directory)
     capture_run_id, staging_directory, run_directory = _create_run_directories(
@@ -1127,7 +1271,14 @@ def execute_shared_view_capture(
             profile_error = profile_errors.get(profile_name)
             if profile_error is not None:
                 if profile_error.startswith("simctl-profile-"):
-                    capture_results.update(_blocked_results(requirements, profile_error, now))
+                    capture_results.update(
+                        _blocked_results(
+                            requirements,
+                            profile_error,
+                            now,
+                            host_mechanism="simctl-profile-validation",
+                        )
+                    )
                 else:
                     capture_results.update(_unknown_results(requirements, profile_error, now))
                 continue

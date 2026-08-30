@@ -78,21 +78,9 @@ exactly `schemaVersion`, `kind`, and `profiles`; `kind` is
 `ipados`, and `visionos`, and every profile has exactly
 `runtimeIdentifier`, `deviceTypeIdentifier`, and `appBundle`. The app bundle
 must be an absolute, existing, non-symlink `.app` whose bundle identifier is
-`com.shinycomputers.contextpanel`.
-
-```json
-{
-  "schemaVersion": 1,
-  "kind": "context-panel-shared-view-capture-config",
-  "profiles": {
-    "ios": {
-      "runtimeIdentifier": "com.apple.CoreSimulator.SimRuntime.iOS-<runtime>",
-      "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-<model>",
-      "appBundle": "/absolute/private/Context Panel.app"
-    }
-  }
-}
-```
+`com.shinycomputers.contextpanel`. Its version/build metadata must be bounded
+numeric components, and its embedded `ContextPanelSurfaceManifest.json` must
+carry the exact `currentManifestID` from the comparison.
 
 Run the executor with an explicit absolute private artifact root outside the
 repository:
@@ -116,15 +104,13 @@ directory is atomically renamed only after every PNG and the complete run
 `index.json` are ready. PNG files and `index.json` use `0600`, while each private
 directory uses `0700` and the public receipt uses `0644`.
 
-Before creating a simulator, one `xcrun simctl list -j` catalog read validates
-the configured runtime and device profile. Each profile uses a unique run-scoped
-simulator name. For every cell, the executor captures a post-appearance,
-pre-route baseline, applies the gallery route fresh, captures two valid and
-decodable PNGs separated by a settle, and
-publishes only stable images that differ from the baseline and every other
-requirement in that profile. Light and dark use both `simctl ui appearance` and
-the route; adaptive appearance uses the route only. After the first cell, every
-cell requires a successful app termination before its fresh route.
+The executor validates each configured simulator profile, accepts exactly one
+create-result UDID, then verifies its run-scoped name, runtime, device type, and
+availability before boot. Each cell resets appearance, requires two stable
+pre-route baselines, then two stable decodable routed PNGs that differ from the
+baseline and other profile cells. Adaptive resets to automatic appearance.
+Termination between cells is best-effort so one failed launch cannot poison the
+next independent capture.
 
 Simulator deletion is fail-closed. The executor records only sanitized cleanup
 status, removes profile artifacts when deletion fails, and marks those captures
@@ -136,8 +122,9 @@ paths, simulator UDIDs, command stderr, host data, or operator identity.
 as `unsupported-host-mechanism`; they are not silently skipped. Missing iOS,
 iPadOS, or visionOS profile configuration is likewise an explicit blocked
 result. Command or capture faults are `unknown`. A zero exit status means every
-required capture was produced; this remains advisory-only evidence, not an
-approval or pixel pass/fail decision.
+required capture was produced. The receipt is an artifact-collection receipt
+only: no coordinator consumes it as an approval, runtime claim, placement claim,
+or pixel pass/fail decision.
 
 ## Fixture Isolation
 

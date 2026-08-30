@@ -129,12 +129,15 @@ scripts/context-panel-validation.py capture-shared-view-evidence \
 This path supports only throwaway `ios`, `ipados`, and `visionos` simulators
 with an installed prebuilt companion app and `contextpanelcompanion` gallery
 links. It recomputes the planner output from the supplied comparison, rejects
-truncated or empty work, and records a deterministic requirements digest. Each
+truncated or empty work, requires the app's embedded surface manifest to match
+the comparison's current manifest, and records a deterministic requirements digest. Each
 capture run is isolated at
 `<artifact-root>/<currentManifestID>/<captureRunID>/`; a hidden staging sibling
 is atomically renamed before the public receipt is written, so only a complete
 run index and artifact set are published. It writes no coordinator/session/runtime,
 approval, or visual-review state and never approves or rejects evidence.
+The receipt is only a build-bound artifact-collection receipt; it is not
+admissible as an approval, signed-runtime claim, or placement claim.
 `macos`, `watchos`, and `tvos` requirements are returned as explicit
 `unsupported-host-mechanism` blocks; unavailable configured profiles are also
 blocked, and command, stability, PNG-validation, baseline, duplicate-digest, or
