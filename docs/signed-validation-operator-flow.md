@@ -112,6 +112,26 @@ session, inspect a runtime, launch a simulator, or capture private artifacts.
 Comparisons with fresh placement evidence are rejected because this stage emits
 shared-view requirements only; placement planning remains a later stage.
 
+For supported simulator companion galleries, run the private executor after
+planning. It requires the same schema-v5 comparison, the canonical current
+source manifest, and the exact planned requirements:
+
+```sh
+scripts/context-panel-validation.py capture-shared-view-evidence \
+  --surface-comparison <comparison.json> \
+  --current-manifest <current-surface-manifest.json> \
+  --requirements <visual-review-requirements.json> \
+  --capture-config <private-capture-config.json> \
+  --artifact-root <absolute-private-artifact-root> \
+  --output <absolute-shared-view-capture-receipt.json>
+```
+
+The executor uses only throwaway iOS, iPadOS, and visionOS simulators, installs
+a private immutable app snapshot, verifies the installed container, and emits a
+sanitized build-bound receipt. It writes no coordinator, runtime, approval, or
+visual-review state. Unsupported hosts and missing profiles remain explicit;
+capture or cleanup uncertainty never becomes success.
+
 The requirements file uses schema v1 and stores bounded public context:
 
 - stable requirement ID and evidence class

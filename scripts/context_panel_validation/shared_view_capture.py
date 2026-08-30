@@ -75,6 +75,9 @@ SIMCTL_SCREENSHOT_TIMEOUT = 60
 SIMCTL_CLEANUP_TIMEOUT = 30
 CAPTURE_SETTLE_SECONDS = 1.0
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+MAX_PNG_FILE_BYTES = 128 * 1024 * 1024
+MAX_PNG_DIMENSION = 16_384
+MAX_PNG_PIXELS = 100_000_000
 MAX_JSON_FILE_BYTES = 16 * 1024 * 1024
 MAX_PLIST_FILE_BYTES = 4 * 1024 * 1024
 MAX_BUNDLE_FILE_BYTES = 512 * 1024 * 1024
@@ -885,13 +888,29 @@ def _rename_exclusive(source: Path, destination: Path) -> None:
 
 
 def _png_snapshot(path: Path) -> PNGSnapshot:
+    descriptor = -1
     try:
-        if path.is_symlink():
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        image_stat = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(image_stat.st_mode)
+            or image_stat.st_size < len(PNG_SIGNATURE)
+            or image_stat.st_size > MAX_PNG_FILE_BYTES
+        ):
             raise SharedViewCaptureError("captured image is invalid")
-        data = path.read_bytes()
+        with os.fdopen(descriptor, "rb") as stream:
+            descriptor = -1
+            data = stream.read(MAX_PNG_FILE_BYTES + 1)
     except OSError as error:
         raise SharedViewCaptureError("captured image is invalid") from error
-    if len(data) < len(PNG_SIGNATURE) or data[:8] != PNG_SIGNATURE:
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    if (
+        len(data) != image_stat.st_size
+        or len(data) > MAX_PNG_FILE_BYTES
+        or data[:8] != PNG_SIGNATURE
+    ):
         raise SharedViewCaptureError("captured image is invalid")
     offset = len(PNG_SIGNATURE)
     chunk_index = 0
@@ -900,6 +919,8 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
     bit_depth = 0
     color_type = 0
     saw_idat = False
+    idat_ended = False
+    saw_plte = False
     saw_iend = False
     compressed_image = bytearray()
     while offset < len(data):
@@ -917,6 +938,15 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
         actual_crc = zlib.crc32(chunk_data, zlib.crc32(chunk_type)) & 0xFFFFFFFF
         if actual_crc != expected_crc:
             raise SharedViewCaptureError("captured image is invalid")
+        if any(
+            not (ord("A") <= byte <= ord("Z") or ord("a") <= byte <= ord("z"))
+            for byte in chunk_type
+        ) or chunk_type[2] & 0x20:
+            raise SharedViewCaptureError("captured image is invalid")
+        if chunk_type[0] & 0x20 == 0 and chunk_type not in {
+            b"IHDR", b"PLTE", b"IDAT", b"IEND"
+        }:
+            raise SharedViewCaptureError("captured image is invalid")
         if chunk_index == 0:
             if chunk_type != b"IHDR" or chunk_length != 13:
                 raise SharedViewCaptureError("captured image is invalid")
@@ -927,6 +957,9 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
             if (
                 width <= 0
                 or height <= 0
+                or width > MAX_PNG_DIMENSION
+                or height > MAX_PNG_DIMENSION
+                or width * height > MAX_PNG_PIXELS
                 or bit_depth != 8
                 or color_type not in {2, 6}
                 or chunk_data[10:13] != b"\x00\x00\x00"
@@ -934,9 +967,17 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
                 raise SharedViewCaptureError("captured image is invalid")
         elif chunk_type == b"IHDR":
             raise SharedViewCaptureError("captured image is invalid")
+        if chunk_type == b"PLTE":
+            if saw_plte or saw_idat or chunk_length == 0 or chunk_length > 768 or chunk_length % 3:
+                raise SharedViewCaptureError("captured image is invalid")
+            saw_plte = True
         if chunk_type == b"IDAT":
+            if idat_ended:
+                raise SharedViewCaptureError("captured image is invalid")
             saw_idat = True
             compressed_image.extend(chunk_data)
+        elif saw_idat and chunk_type != b"IEND":
+            idat_ended = True
         if chunk_type == b"IEND":
             if chunk_length != 0 or chunk_end != len(data):
                 raise SharedViewCaptureError("captured image is invalid")
@@ -948,12 +989,19 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
     if not saw_idat or not saw_iend or offset != len(data):
         raise SharedViewCaptureError("captured image is invalid")
     channels = 3 if color_type == 2 else 4
+    row_size = 1 + (width * channels)
+    expected_size = height * row_size
     try:
-        image_data = zlib.decompress(bytes(compressed_image))
+        decompressor = zlib.decompressobj()
+        image_data = decompressor.decompress(bytes(compressed_image), expected_size + 1)
     except zlib.error as error:
         raise SharedViewCaptureError("captured image is invalid") from error
-    row_size = 1 + (width * channels)
-    if len(image_data) != height * row_size:
+    if (
+        len(image_data) != expected_size
+        or decompressor.unconsumed_tail
+        or not decompressor.eof
+        or decompressor.unused_data
+    ):
         raise SharedViewCaptureError("captured image is invalid")
     for row_offset in range(0, len(image_data), row_size):
         if image_data[row_offset] > 4:
