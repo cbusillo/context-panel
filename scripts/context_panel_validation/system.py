@@ -19,12 +19,12 @@ from .models import (
     Target,
     classify_install,
 )
-from .session import SessionStateStore
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CANONICAL_APP = Path("/Applications/Context Panel.app")
 CANONICAL_INFO_PLIST = CANONICAL_APP / "Contents/Info.plist"
+MACOS_APP_LAUNCH_TIMEOUT_SECONDS = 15
 
 
 class SubprocessRunner:
@@ -160,6 +160,14 @@ def collect_mac_evidence(runner: Runner, target: Target) -> MacEvidence:
         app_cloudkit,
         refresh_agent_cloudkit,
         reason,
+    )
+
+
+def launch_canonical_mac_app(runner: Runner) -> CommandResult:
+    return runner.run(
+        ["/usr/bin/open", "-g", str(CANONICAL_APP)],
+        timeout=MACOS_APP_LAUNCH_TIMEOUT_SECONDS,
+        environment=os.environ.copy(),
     )
 
 

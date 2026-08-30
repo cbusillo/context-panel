@@ -251,7 +251,9 @@ scripts/context-panel-validation.py advance-automation \
   --build-number <coordinated-build-number>
 ```
 
-`advance-automation` shares the exact `sync`, `status`, `export`, and runtime
+`advance-automation` first performs the bounded canonical Mac launch attempt
+documented in the operator flow when its strict Production/not-running
+preconditions are met, then shares the exact `sync`, `status`, `export`, and runtime
 reconciliation path used by `sync-runtime-evidence`; it does not add a second
 relay implementation. It is limited to an active coordinator session and
 records one public schema-v1 attempt result: `succeeded`, `failed`,
@@ -262,8 +264,10 @@ It avoids a second relay after runtime evidence is already proven or during a
 conservative cooldown for the same receipt-window state. After the cooldown, an
 active window may sync again to collect newly relayed receipts. A changed or
 expired window may advance immediately, and an unsupported adapter is retried
-after cooldown rather than latched permanently. The session allows at most 64
-attempts. `status` and `final-report` expose the public automation summary
+after cooldown rather than latched permanently. The runtime receipt bucket
+allows at most 64 attempts. The schema-v1 sidecar has a total budget of 96:
+64 receipt syncs, 16 bounded Mac launches, and 16 reserved shared-view captures.
+`status` and `final-report` expose the public automation summary
 without performing a sync. Failed or unsupported attempts never mark runtime
 evidence as satisfied.
 

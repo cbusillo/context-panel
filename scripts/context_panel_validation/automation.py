@@ -9,7 +9,7 @@ import json
 import os
 from typing import Iterator
 
-from .models import Target, iso8601
+from .models import MacEvidence, Target, iso8601
 from .session import (
     CoordinatorSessionState,
     CoordinatorSessionStateError,
@@ -21,21 +21,45 @@ from .session import (
 
 
 AUTOMATION_SCHEMA_VERSION = 1
-MAXIMUM_AUTOMATION_ATTEMPT_COUNT = 64
+AUTOMATION_KIND_LIMITS = {
+    "runtime.receipt.sync": 64,
+    "macos.app.launch": 16,
+    "shared-view.capture": 16,
+}
+MAXIMUM_AUTOMATION_ATTEMPT_COUNT = sum(AUTOMATION_KIND_LIMITS.values())
 AUTOMATION_COOLDOWN = timedelta(minutes=5)
-AUTOMATION_KINDS = {"runtime.receipt.sync"}
+AUTOMATION_KINDS = set(AUTOMATION_KIND_LIMITS)
 AUTOMATION_RESULTS = {"succeeded", "failed", "unsupported", "skipped-precondition"}
 ATTEMPT_REASONS = {
-    "succeeded": {"runtime-receipts-reconciled"},
-    "failed": {
-        "runtime-evidence-superseded",
-        "runtime-reconciliation-failed",
-        "runtime-sync-degraded",
+    "runtime.receipt.sync": {
+        "succeeded": {"runtime-receipts-reconciled"},
+        "failed": {
+            "runtime-evidence-superseded",
+            "runtime-reconciliation-failed",
+            "runtime-sync-degraded",
+        },
+        "unsupported": {"runtime-sync-unavailable"},
+        "skipped-precondition": {
+            "runtime-evidence-complete",
+            "runtime-evidence-unavailable",
+        },
     },
-    "unsupported": {"runtime-sync-unavailable"},
-    "skipped-precondition": {
-        "runtime-evidence-complete",
-        "runtime-evidence-unavailable",
+    "macos.app.launch": {
+        "succeeded": {"macos-app-launch-verified"},
+        "failed": {
+            "macos-app-launch-command-failed",
+            "macos-app-launch-unverified",
+        },
+        "unsupported": {"macos-app-launch-unavailable"},
+        "skipped-precondition": {
+            "macos-app-launch-precondition-not-met",
+        },
+    },
+    "shared-view.capture": {
+        "succeeded": {"shared-view-capture-recorded"},
+        "failed": {"shared-view-capture-failed"},
+        "unsupported": {"shared-view-capture-unavailable"},
+        "skipped-precondition": {"shared-view-capture-not-enabled"},
     },
 }
 RUNTIME_REPORT_STATES = {"unavailable", "unknown", "waiting", "proven", "superseded"}
@@ -227,13 +251,17 @@ class AutomationAttempt:
             not is_sha256(attempt.id)
             or attempt.kind not in AUTOMATION_KINDS
             or attempt.result not in AUTOMATION_RESULTS
-            or attempt.reason_code not in ATTEMPT_REASONS[attempt.result]
+            or attempt.reason_code not in ATTEMPT_REASONS[attempt.kind][attempt.result]
             or started_at is None
             or finished_at is None
             or started_at > finished_at
             or not is_sha256(attempt.receipt_window_digest)
             or attempt.summary.evidence_satisfied
-            != (attempt.result == "succeeded" and attempt.summary.runtime_evidence_is_proven())
+            != (
+                attempt.kind == "runtime.receipt.sync"
+                and attempt.result == "succeeded"
+                and attempt.summary.runtime_evidence_is_proven()
+            )
         ):
             raise AutomationError("automation attempt is invalid")
         return attempt
@@ -308,6 +336,10 @@ class AutomationState:
             or isinstance(state.revision, bool)
             or state.revision < 1
             or len(state.attempts) > MAXIMUM_AUTOMATION_ATTEMPT_COUNT
+            or any(
+                len(attempts_for_kind(state, kind)) > limit
+                for kind, limit in AUTOMATION_KIND_LIMITS.items()
+            )
             or state.revision != len(state.attempts) + 1
             or len({attempt.id for attempt in state.attempts}) != len(state.attempts)
         ):
@@ -418,6 +450,30 @@ def runtime_report_digest(runtime_report: dict[str, object] | None) -> str:
     return sha256_digest("context-panel-validation/automation/receipt-window/v1", public_window)
 
 
+def macos_app_window_digest(mac: MacEvidence) -> str:
+    return sha256_digest(
+        "context-panel-validation/automation/macos-app-window/v1",
+        {
+            "observedVersion": mac.observed_version,
+            "observedBuild": mac.observed_build,
+            "installState": mac.install_state,
+            "appCloudKit": mac.app_cloudkit,
+            "refreshAgentCloudKit": mac.refresh_agent_cloudkit,
+        },
+    )
+
+
+def attempts_for_kind(
+    state: AutomationState | None,
+    kind: str,
+) -> tuple[AutomationAttempt, ...]:
+    if kind not in AUTOMATION_KINDS:
+        raise AutomationError("automation kind is invalid")
+    if state is None:
+        return ()
+    return tuple(attempt for attempt in state.attempts if attempt.kind == kind)
+
+
 def make_attempt(
     state: AutomationState,
     *,
@@ -426,15 +482,27 @@ def make_attempt(
     started_at: datetime,
     finished_at: datetime,
     runtime_report: dict[str, object] | None,
+    kind: str = "runtime.receipt.sync",
+    receipt_window_digest: str | None = None,
 ) -> AutomationAttempt:
-    if result not in AUTOMATION_RESULTS or reason_code not in ATTEMPT_REASONS[result]:
+    if (
+        kind not in AUTOMATION_KINDS
+        or result not in AUTOMATION_RESULTS
+        or reason_code not in ATTEMPT_REASONS[kind][result]
+    ):
         raise AutomationError("automation attempt is invalid")
     started_at_text = iso8601(normalize_utc(started_at))
     finished_at_text = iso8601(max(normalize_utc(finished_at), normalize_utc(started_at)))
-    window_digest = runtime_report_digest(runtime_report)
+    window_digest = (
+        runtime_report_digest(runtime_report)
+        if receipt_window_digest is None
+        else receipt_window_digest
+    )
+    if not is_sha256(window_digest):
+        raise AutomationError("automation attempt is invalid")
     attempt_id = automation_attempt_id(
         state.coordinator_session_digest,
-        kind="runtime.receipt.sync",
+        kind=kind,
         started_at=started_at_text,
         finished_at=finished_at_text,
         receipt_window_digest=window_digest,
@@ -442,11 +510,11 @@ def make_attempt(
         reason_code=reason_code,
     )
     summary = build_automation_summary(runtime_report)
-    if result != "succeeded" and summary.evidence_satisfied:
+    if (kind != "runtime.receipt.sync" or result != "succeeded") and summary.evidence_satisfied:
         summary = replace(summary, evidence_satisfied=False)
     return AutomationAttempt(
         id=attempt_id,
-        kind="runtime.receipt.sync",
+        kind=kind,
         result=result,
         reason_code=reason_code,
         started_at=started_at_text,
@@ -456,25 +524,41 @@ def make_attempt(
     )
 
 
-def build_automation_report(state: AutomationState | None) -> dict[str, object]:
-    if state is None:
-        return {
-            "schemaVersion": 1,
-            "state": "not-started",
-            "attemptCount": 0,
-            "remainingAttemptCount": MAXIMUM_AUTOMATION_ATTEMPT_COUNT,
-            "evidenceSatisfied": False,
-            "lastAttempt": None,
-        }
-    last_attempt = state.attempts[-1] if state.attempts else None
-    report_state = last_attempt.result if last_attempt is not None else "not-started"
+def _build_kind_report(
+    attempts: tuple[AutomationAttempt, ...],
+    *,
+    kind: str,
+) -> dict[str, object]:
+    last_attempt = attempts[-1] if attempts else None
     return {
-        "schemaVersion": 1,
-        "state": report_state,
-        "attemptCount": len(state.attempts),
-        "remainingAttemptCount": MAXIMUM_AUTOMATION_ATTEMPT_COUNT - len(state.attempts),
+        "kind": kind,
+        "state": last_attempt.result if last_attempt is not None else "not-started",
+        "attemptCount": len(attempts),
+        "remainingAttemptCount": AUTOMATION_KIND_LIMITS[kind] - len(attempts),
         "evidenceSatisfied": last_attempt.summary.evidence_satisfied if last_attempt else False,
         "lastAttempt": last_attempt.to_dict() if last_attempt else None,
+    }
+
+
+def build_automation_report(state: AutomationState | None) -> dict[str, object]:
+    reports = {
+        kind: _build_kind_report(attempts_for_kind(state, kind), kind=kind)
+        for kind in AUTOMATION_KIND_LIMITS
+    }
+    runtime = reports["runtime.receipt.sync"]
+    total_attempt_count = sum(
+        len(attempts_for_kind(state, kind)) for kind in AUTOMATION_KIND_LIMITS
+    )
+    return {
+        "schemaVersion": 1,
+        "state": runtime["state"],
+        "attemptCount": runtime["attemptCount"],
+        "remainingAttemptCount": runtime["remainingAttemptCount"],
+        "evidenceSatisfied": runtime["evidenceSatisfied"],
+        "lastAttempt": runtime["lastAttempt"],
+        "totalAttemptCount": total_attempt_count,
+        "remainingTotalAttemptCount": MAXIMUM_AUTOMATION_ATTEMPT_COUNT - total_attempt_count,
+        "kindReports": reports,
     }
 
 
@@ -528,8 +612,6 @@ class AutomationStore:
             path = self.session_store.automation_path(session.id)
             state = self.load(current) if path.is_file() else new_automation_state(current, now)
             assert state is not None
-            if len(state.attempts) >= MAXIMUM_AUTOMATION_ATTEMPT_COUNT:
-                raise AutomationError("automation attempt limit was reached")
             AutomationAttempt.from_dict(attempt.to_dict())
             expected_attempt_id = automation_attempt_id(
                 state.coordinator_session_digest,
@@ -544,6 +626,13 @@ class AutomationStore:
                 raise AutomationError("automation attempt does not match its coordinator session")
             if any(existing.id == attempt.id for existing in state.attempts):
                 return state
+            if len(state.attempts) >= MAXIMUM_AUTOMATION_ATTEMPT_COUNT:
+                raise AutomationError("automation attempt limit was reached")
+            if (
+                len(attempts_for_kind(state, attempt.kind))
+                >= AUTOMATION_KIND_LIMITS[attempt.kind]
+            ):
+                raise AutomationError("automation kind attempt limit was reached")
             started_at = parse_iso8601(attempt.started_at)
             finished_at = parse_iso8601(attempt.finished_at)
             state_updated_at = parse_iso8601(state.updated_at)

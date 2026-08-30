@@ -10,7 +10,11 @@ import re
 import tempfile
 from typing import Any, cast
 
-from .automation import MAXIMUM_AUTOMATION_ATTEMPT_COUNT
+from .automation import (
+    AUTOMATION_KINDS,
+    build_automation_report,
+    macos_app_window_digest,
+)
 from .models import (
     EXIT_READY,
     EXIT_UNKNOWN,
@@ -67,6 +71,7 @@ ACTION_KINDS = {
     "visual-review",
 }
 REASON_CODES = {
+    "automation-attempt-required",
     "device-access-required",
     "device-not-found",
     "mac-app-not-running",
@@ -1045,6 +1050,65 @@ def _runtime_recovery_candidate(
     return None
 
 
+def _apply_macos_launch_automation(
+    candidates: dict[str, OperatorActionCandidate],
+    report: ValidationReport,
+) -> None:
+    mac_action = candidates.get("macos.app.open")
+    if mac_action is None or report.automation is None:
+        return
+    automation = report.automation or {}
+    kind_reports = automation.get("kindReports")
+    launch_report = (
+        kind_reports.get("macos.app.launch")
+        if isinstance(kind_reports, dict)
+        else None
+    )
+    last_attempt = (
+        launch_report.get("lastAttempt")
+        if isinstance(launch_report, dict)
+        else None
+    )
+    current_window = (
+        isinstance(last_attempt, dict)
+        and last_attempt.get("receiptWindowDigest") == macos_app_window_digest(report.mac)
+    )
+    terminal = (
+        isinstance(last_attempt, dict)
+        and last_attempt.get("result")
+        in {"succeeded", "failed", "unsupported", "skipped-precondition"}
+    )
+    exhausted = (
+        isinstance(launch_report, dict)
+        and launch_report.get("remainingAttemptCount") == 0
+    ) or automation.get("remainingTotalAttemptCount") == 0
+    if current_window and terminal:
+        return
+    if exhausted:
+        return
+
+    candidates.pop("macos.app.open", None)
+    candidates["coordinator.macos-app-launch-automation"] = OperatorActionCandidate(
+        action_id="coordinator.macos-app-launch-automation",
+        device="Coordinator",
+        surfaces=mac_action.surfaces,
+        reason_code="automation-attempt-required",
+        action_kind="status-follow-up",
+        estimate_minutes=1,
+        instruction="Run the bounded coordinator automation once, then rerun status.",
+        notification_kind=None,
+        recovery_steps=(
+            "Keep the canonical installed app and current placements unchanged.",
+            "Run one bounded automation advancement.",
+            "Rerun status to collect the re-observed runtime state.",
+        ),
+        simulation_insufficiency=SimulationInsufficiency(
+            "signed-runtime-observation-required",
+            "The canonical signed Mac runtime must be observed after the bounded launch attempt.",
+        ),
+    )
+
+
 def build_operator_candidates(
     report: ValidationReport,
     session: CoordinatorSessionState,
@@ -1071,6 +1135,7 @@ def build_operator_candidates(
         candidate.action_id: candidate
         for candidate in (_base_action_candidate(action) for action in report.actions)
     }
+    _apply_macos_launch_automation(candidates, report)
     _, _, scoped_device_labels = report_scope(session.requested_surfaces)
     for device in report.devices:
         if not device_is_in_scope(device, scoped_device_labels) or device.condition != "not_found":
@@ -1491,42 +1556,72 @@ def apply_operator_flow_to_report(
 def project_automation_report(automation: object) -> dict[str, Any]:
     if not isinstance(automation, dict):
         raise OperatorFlowError("automation report is invalid")
-    last_attempt = automation.get("lastAttempt")
-    if last_attempt is not None and not isinstance(last_attempt, dict):
-        raise OperatorFlowError("automation report is invalid")
-    summary = last_attempt.get("summary") if last_attempt is not None else None
-    if last_attempt is not None and not isinstance(summary, dict):
-        raise OperatorFlowError("automation report is invalid")
-    try:
-        projected_last_attempt = (
-            {
-                "id": last_attempt["id"],
-                "kind": last_attempt["kind"],
-                "result": last_attempt["result"],
-                "reasonCode": last_attempt["reasonCode"],
-                "startedAt": last_attempt["startedAt"],
-                "finishedAt": last_attempt["finishedAt"],
-                "receiptWindowDigest": last_attempt["receiptWindowDigest"],
-                "summary": {
-                    "runtimeEvidenceState": summary["runtimeEvidenceState"],
-                    "requestedSurfaceCount": summary["requestedSurfaceCount"],
-                    "provenSurfaceCount": summary["provenSurfaceCount"],
-                    "receiptCount": summary["receiptCount"],
-                    "diagnosticCount": summary["diagnosticCount"],
-                    "evidenceSatisfied": summary["evidenceSatisfied"],
-                },
-            }
-            if last_attempt is not None and summary is not None
-            else None
-        )
+
+    def project_attempt(attempt: object) -> dict[str, Any] | None:
+        if attempt is None:
+            return None
+        if not isinstance(attempt, dict) or not isinstance(attempt.get("summary"), dict):
+            raise OperatorFlowError("automation report is invalid")
+        summary = attempt["summary"]
         return {
+            "id": attempt["id"],
+            "kind": attempt["kind"],
+            "result": attempt["result"],
+            "reasonCode": attempt["reasonCode"],
+            "startedAt": attempt["startedAt"],
+            "finishedAt": attempt["finishedAt"],
+            "receiptWindowDigest": attempt["receiptWindowDigest"],
+            "summary": {
+                "runtimeEvidenceState": summary["runtimeEvidenceState"],
+                "requestedSurfaceCount": summary["requestedSurfaceCount"],
+                "provenSurfaceCount": summary["provenSurfaceCount"],
+                "receiptCount": summary["receiptCount"],
+                "diagnosticCount": summary["diagnosticCount"],
+                "evidenceSatisfied": summary["evidenceSatisfied"],
+            },
+        }
+
+    try:
+        kind_reports = automation["kindReports"]
+        if not isinstance(kind_reports, dict) or set(kind_reports) != AUTOMATION_KINDS:
+            raise OperatorFlowError("automation report is invalid")
+        projected_kind_reports = {}
+        for kind in sorted(AUTOMATION_KINDS):
+            report = kind_reports[kind]
+            if not isinstance(report, dict):
+                raise OperatorFlowError("automation report is invalid")
+            projected_kind_reports[kind] = {
+                "kind": report["kind"],
+                "state": report["state"],
+                "attemptCount": report["attemptCount"],
+                "remainingAttemptCount": report["remainingAttemptCount"],
+                "evidenceSatisfied": report["evidenceSatisfied"],
+                "lastAttempt": project_attempt(report["lastAttempt"]),
+            }
+        projected = {
             "schemaVersion": automation["schemaVersion"],
             "state": automation["state"],
             "attemptCount": automation["attemptCount"],
             "remainingAttemptCount": automation["remainingAttemptCount"],
             "evidenceSatisfied": automation["evidenceSatisfied"],
-            "lastAttempt": projected_last_attempt,
+            "lastAttempt": project_attempt(automation["lastAttempt"]),
+            "totalAttemptCount": automation["totalAttemptCount"],
+            "remainingTotalAttemptCount": automation["remainingTotalAttemptCount"],
+            "kindReports": projected_kind_reports,
         }
+        runtime = projected_kind_reports["runtime.receipt.sync"]
+        if any(
+            projected[key] != runtime[key]
+            for key in (
+                "state",
+                "attemptCount",
+                "remainingAttemptCount",
+                "evidenceSatisfied",
+                "lastAttempt",
+            )
+        ):
+            raise OperatorFlowError("automation report is invalid")
+        return projected
     except (KeyError, TypeError) as error:
         raise OperatorFlowError("automation report is invalid") from error
 
@@ -1569,15 +1664,7 @@ def build_final_report_payload(report: ValidationReport) -> dict[str, Any]:
         "requirements": [],
     }
     automation = project_automation_report(
-        report.automation
-        or {
-            "schemaVersion": 1,
-            "state": "not-started",
-            "attemptCount": 0,
-            "remainingAttemptCount": MAXIMUM_AUTOMATION_ATTEMPT_COUNT,
-            "evidenceSatisfied": False,
-            "lastAttempt": None,
-        }
+        report.automation or build_automation_report(None)
     )
     if any(not isinstance(surface, str) for surface in requested_surfaces):
         raise OperatorFlowError("operator action contract is invalid")

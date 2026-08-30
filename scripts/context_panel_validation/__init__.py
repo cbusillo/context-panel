@@ -47,12 +47,15 @@ from .runtime_evidence import (
 )
 from .automation import (
     AUTOMATION_COOLDOWN,
+    AUTOMATION_KIND_LIMITS,
     MAXIMUM_AUTOMATION_ATTEMPT_COUNT,
     AutomationAttempt,
     AutomationError,
     AutomationState,
     AutomationStore,
+    attempts_for_kind,
     build_automation_report,
+    macos_app_window_digest,
     make_attempt,
     new_automation_state,
 )
@@ -92,6 +95,7 @@ from .system import (
     SubprocessRunner,
     collect_device_evidence,
     collect_mac_evidence,
+    launch_canonical_mac_app,
     parse_key_values,
 )
 
@@ -102,6 +106,7 @@ __all__ = [
     "ACTION_KINDS",
     "ASC_PLATFORMS",
     "AUTOMATION_COOLDOWN",
+    "AUTOMATION_KIND_LIMITS",
     "ASCEvidence",
     "ASCPlatformEvidence",
     "CommandResult",
@@ -157,6 +162,7 @@ __all__ = [
     "apply_operator_flow_to_report",
     "apply_runtime_evidence_to_report",
     "apply_visual_approvals_to_report",
+    "attempts_for_kind",
     "build_report",
     "build_automation_report",
     "build_final_report_payload",
@@ -173,6 +179,8 @@ __all__ = [
     "parse_iso8601",
     "query_asc_with_client",
     "load_expected_surface_identities",
+    "launch_canonical_mac_app",
+    "macos_app_window_digest",
     "make_attempt",
     "new_automation_state",
     "load_visual_review_plan",
