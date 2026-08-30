@@ -60,71 +60,9 @@ visual-review requirements contract; placement planning remains a later stage.
 Each fixture contract ID is a deterministic hash over the versioned matrix
 domain, complete matrix digest, relevant surface-policy contract, and canonical
 cell contract. `pixelDiffPolicy` is explicitly
-`advisory-only`: neither planning nor capture compares pixels or makes automated
-approval decisions.
-
-## Private Simulator Capture
-
-Stage 2b can capture the supported companion gallery routes for `ios.app`,
-`ios.widget`, `ipados.app`, `ipados.widget`, `visionos.app`, and
-`visionos.widget`. It is deliberately limited to throwaway simulators and an
-already-built companion `.app`; it never builds, starts a coordinator session,
-records a visual approval, reads runtime receipts, or exercises physical
-devices.
-
-Create a private schema-v1 config outside the repository. Its root keys are
-exactly `schemaVersion`, `kind`, and `profiles`; `kind` is
-`context-panel-shared-view-capture-config`. `profiles` may contain only `ios`,
-`ipados`, and `visionos`, and every profile has exactly
-`runtimeIdentifier`, `deviceTypeIdentifier`, and `appBundle`. The app bundle
-must be an absolute, existing, non-symlink `.app` whose bundle identifier is
-`com.shinycomputers.contextpanel`. Its version/build metadata must be bounded
-numeric components, and its embedded `ContextPanelSurfaceManifest.json` must
-carry the exact `currentManifestID` from the comparison.
-
-Run the executor with an explicit absolute private artifact root outside the
-repository:
-
-```sh
-scripts/context-panel-validation.py capture-shared-view-evidence \
-  --surface-comparison <comparison.json> \
-  --requirements <visual-review-requirements.json> \
-  --capture-config <private-capture-config.json> \
-  --artifact-root <absolute-private-artifact-root> \
-  --output <shared-view-capture-receipt.json> \
-  --json
-```
-
-The executor recomputes the canonical planner output from the exact schema-v5
-comparison and requires the supplied requirements file to match it exactly.
-Empty plans are rejected. The receipt records a deterministic
-`requirementsDigest` and a unique `captureRunID`. Each run writes only beneath
-`<artifact-root>/<currentManifestID>/<captureRunID>/`; a hidden sibling staging
-directory is atomically renamed only after every PNG and the complete run
-`index.json` are ready. PNG files and `index.json` use `0600`, while each private
-directory uses `0700` and the public receipt uses `0644`.
-
-The executor validates each configured simulator profile, accepts exactly one
-create-result UDID, then verifies its run-scoped name, runtime, device type, and
-availability before boot. Each cell resets appearance, requires two stable
-pre-route baselines, then two stable decodable routed PNGs that differ from the
-baseline and other profile cells. Adaptive resets to automatic appearance.
-Termination between cells is best-effort so one failed launch cannot poison the
-next independent capture.
-
-Simulator deletion is fail-closed. The executor records only sanitized cleanup
-status, removes profile artifacts when deletion fails, and marks those captures
-unknown. The receipt carries hashes, dimensions, public runtime/device names and
-identifiers, product family, app identity, and bounded status codes—never bundle
-paths, simulator UDIDs, command stderr, host data, or operator identity.
-
-`macos`, `watchos`, and `tvos` shared-view requirements are recorded explicitly
-as `unsupported-host-mechanism`; they are not silently skipped. Missing iOS,
-iPadOS, or visionOS profile configuration is likewise an explicit blocked
-result. Command or capture faults are `unknown`. A zero exit status means every
-required capture was produced. The receipt is an artifact-collection receipt
-only: no coordinator consumes it as an approval, runtime claim, placement claim,
-or pixel pass/fail decision.
+`advisory-only`: Stage 1 does not compare pixels or make automated approval
+decisions. Private simulator capture, artifact handling, and any later capture
+or approval integration remain a Stage 2 boundary.
 
 ## Fixture Isolation
 

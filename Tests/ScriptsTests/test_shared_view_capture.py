@@ -21,7 +21,6 @@ import zlib
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-from context_panel_comparison_schema import derive_risk_fields, derive_runtime_decision
 import context_panel_validation.cli as cli_module
 from context_panel_validation.models import CommandResult, EXIT_BLOCKED, EXIT_OK, EXIT_UNKNOWN
 from context_panel_validation.shared_view_capture import (
@@ -38,6 +37,7 @@ from context_panel_validation.shared_view_evidence import (
     load_surface_policy,
     plan_shared_view_evidence,
 )
+from Tests.ScriptsTests.test_shared_view_evidence import comparison_for
 
 
 MANIFEST_ID = "a" * 64
@@ -92,85 +92,6 @@ def invalid_idat_png_bytes(width: int = 320, height: int = 180) -> bytes:
         + png_chunk(b"IDAT", b"not-zlib-data")
         + png_chunk(b"IEND", b"")
     )
-
-
-def comparison_for(surface_evidence: dict[str, list[str]]) -> dict[str, Any]:
-    surfaces: list[dict[str, Any]] = []
-    for surface_id, fresh_evidence in surface_evidence.items():
-        surfaces.append(
-            {
-                "surfaceId": surface_id,
-                "artifactId": surface_id,
-                "reasonCodes": ["exact-build-changed"],
-                "changes": {
-                    "render": False,
-                    "runtime": False,
-                    "placement": False,
-                    "contract": False,
-                    "exactBuild": True,
-                },
-                "minimumEvidence": [],
-                "freshEvidence": fresh_evidence,
-                "requiredEvidence": fresh_evidence,
-                "carryForward": {
-                    evidence_class: {"eligible": False, "conditions": []}
-                    for evidence_class in fresh_evidence
-                },
-            }
-        )
-    required_surfaces = {
-        evidence_class: [
-            surface_id
-            for surface_id, evidence in surface_evidence.items()
-            if evidence_class in evidence
-        ]
-        for evidence_class in (
-            "shared-view",
-            "actual-runtime",
-            "os-composited-placement",
-        )
-    }
-    runtime_state, runtime_state_reasons = derive_runtime_decision(surfaces)
-    risk_codes, risk_surfaces, observation_risk_codes = derive_risk_fields(
-        surfaces,
-        toolchain_delta=False,
-        runtime_capable_surface_ids={
-            surface["surfaceId"]
-            for surface in surfaces
-            if "actual-runtime" in surface["carryForward"]
-        },
-        requires_placement_review=bool(required_surfaces["os-composited-placement"]),
-    )
-    return {
-        "kind": "context-panel-surface-comparison",
-        "schemaVersion": 5,
-        "train": "beta",
-        "previousManifestId": "b" * 64,
-        "currentManifestId": MANIFEST_ID,
-        "contractChanged": False,
-        "exactBuildSame": False,
-        "removedSurfaces": [],
-        "requiredSurfaces": required_surfaces,
-        "requiresRuntimeSession": bool(required_surfaces["actual-runtime"]),
-        "requiresPlacementReview": bool(required_surfaces["os-composited-placement"]),
-        "toolchainChanged": False,
-        "artifactEvidence": {
-            "previousState": "complete",
-            "currentState": "complete",
-            "previousExpectedBuildIds": ["b" * 64],
-            "currentExpectedBuildIds": ["c" * 64],
-        },
-        "artifactRiskCodes": [],
-        "artifactRiskSurfaces": {},
-        "escalationState": "resolved",
-        "surfaces": surfaces,
-        "releaseRequiresApprovedRCTarget": True,
-        "runtimeState": runtime_state,
-        "runtimeStateReasons": runtime_state_reasons,
-        "riskCodes": risk_codes,
-        "riskSurfaces": risk_surfaces,
-        "observationRiskCodes": observation_risk_codes,
-    }
 
 
 def simulator_catalog() -> dict[str, Any]:
@@ -366,12 +287,33 @@ class SharedViewCaptureTests(unittest.TestCase):
             )
 
     def write_surface_manifest(self, manifest_id: str = MANIFEST_ID) -> None:
+        surface_ids = [
+            surface["id"]
+            for surface in json.loads(
+                (REPO_ROOT / "Config/ContextPanelSharedViewMatrix.json").read_text()
+            )["surfaces"]
+        ]
         (self.app / "ContextPanelSurfaceManifest.json").write_text(
             json.dumps(
                 {
                     "schemaVersion": 1,
                     "kind": "context-panel-surface-build-intent",
                     "manifestId": manifest_id,
+                    "contractFingerprint": "c" * 64,
+                    "surfaces": [
+                        {
+                            "id": surface_id,
+                            "artifactId": surface_id,
+                            "bundleIdentifier": f"com.example.{surface_id}",
+                            "fingerprints": {
+                                "render": "1" * 64,
+                                "runtime": "2" * 64,
+                                "placement": "3" * 64,
+                                "combined": "4" * 64,
+                            },
+                        }
+                        for surface_id in surface_ids
+                    ],
                 }
             )
         )
@@ -700,6 +642,14 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual(["xcrun", "simctl", "shutdown", simulator_name], [args for args, _ in runner.calls][-2])
         self.assertEqual(["xcrun", "simctl", "delete", simulator_name], [args for args, _ in runner.calls][-1])
 
+    def test_cleanup_failure_preserves_the_capture_root_cause(self) -> None:
+        self.write_plan(["ios.app"])
+        self.write_config()
+        exit_code, receipt = self.execute(FakeRunner(timeout_at="create", fail_at="delete"))
+        self.assertEqual(EXIT_UNKNOWN, exit_code)
+        self.assertEqual(["simctl-create-timeout"] * 2, [item["errorCode"] for item in receipt["captures"]])
+        self.assertEqual("delete-failed", receipt["profiles"][0]["cleanupStatus"])
+
     def test_delete_failure_removes_artifacts_and_marks_profile_unknown(self) -> None:
         self.write_plan(["ios.app"])
         self.write_config()
@@ -786,13 +736,15 @@ class SharedViewCaptureTests(unittest.TestCase):
                 self.assertEqual(EXIT_UNKNOWN, exit_code)
                 self.assertEqual("captured-image-invalid", receipt["captures"][0]["errorCode"])
 
-    def test_atomic_run_publication_failure_leaves_no_run_or_receipt(self) -> None:
+    def test_atomic_run_publication_failure_preserves_foreign_run(self) -> None:
         self.write_plan(["ios.app"])
         self.write_config()
         original_replace = os.replace
 
         def fail_run_publication(source: Path | str, destination: Path | str) -> None:
             if Path(source).name == ".run-fixed.staging":
+                Path(destination).mkdir()
+                (Path(destination) / "foreign-marker").write_text("owned elsewhere")
                 raise OSError("publication failed")
             original_replace(source, destination)
 
@@ -802,7 +754,7 @@ class SharedViewCaptureTests(unittest.TestCase):
 
         manifest_directory = self.artifact_root / MANIFEST_ID
         self.assertFalse((manifest_directory / ".run-fixed.staging").exists())
-        self.assertFalse((manifest_directory / "run-fixed").exists())
+        self.assertTrue((manifest_directory / "run-fixed" / "foreign-marker").is_file())
         self.assertFalse(self.receipt_path.exists())
 
     def test_private_artifact_directories_are_created_securely_without_rewriting_existing_root(self) -> None:
@@ -832,9 +784,17 @@ class SharedViewCaptureTests(unittest.TestCase):
 
     def test_capture_app_manifest_must_match_current_comparison(self) -> None:
         self.write_plan(["ios.app"])
-        self.write_surface_manifest("f" * 64)
         self.write_config()
         runner = FakeRunner()
+
+        manifest_path = self.app / "ContextPanelSurfaceManifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest.pop("contractFingerprint")
+        manifest_path.write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(SharedViewCaptureError, "surface manifest is invalid"):
+            self.execute(runner)
+
+        self.write_surface_manifest("f" * 64)
 
         with self.assertRaisesRegex(SharedViewCaptureError, "does not match comparison"):
             self.execute(runner)
@@ -842,6 +802,32 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual([], runner.calls)
         self.assertFalse(self.artifact_root.exists())
         self.assertFalse(self.receipt_path.exists())
+
+    def test_bundle_change_after_install_and_private_simulator_identifiers_fail_closed(self) -> None:
+        self.write_plan(["ios.app"])
+        self.write_config()
+        runner = FakeRunner()
+        original_run = runner.run
+
+        def mutate_after_install(args, *, timeout, environment=None):
+            result = original_run(args, timeout=timeout, environment=environment)
+            if args[2] == "install":
+                (self.app / "ContextPanel").write_bytes(b"changed during install")
+            return result
+
+        runner.run = mutate_after_install
+        exit_code, receipt = self.execute(runner)
+        self.assertEqual(EXIT_UNKNOWN, exit_code)
+        self.assertEqual(["capture-app-bundle-changed"] * 2, [item["errorCode"] for item in receipt["captures"]])
+
+        self.write_info_plist("ContextPanel")
+        self.write_surface_manifest()
+        self.write_config()
+        config = json.loads(self.config_path.read_text())
+        config["profiles"]["ios"]["runtimeIdentifier"] = "/private/runtime"
+        self.config_path.write_text(json.dumps(config))
+        with self.assertRaisesRegex(SharedViewCaptureError, "simulator identifier is invalid"):
+            self.execute(FakeRunner(), run_id="private-identifier")
 
     def test_nondefault_accessibility_fails_closed_before_capture(self) -> None:
         ios = next(surface for surface in self.matrix.surfaces if surface.id == "ios.app")

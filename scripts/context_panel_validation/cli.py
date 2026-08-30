@@ -288,7 +288,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--output",
         required=True,
         type=Path,
-        help="Atomic public capture receipt JSON destination",
+        help="Absolute atomic public capture receipt JSON destination",
     )
     capture_shared_view_evidence_parser.add_argument(
         "--json", action="store_true", help="Emit the public receipt as stable JSON"

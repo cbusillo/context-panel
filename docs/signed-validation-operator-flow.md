@@ -110,38 +110,7 @@ the capture step must not try to drive it. Pixel policy is `advisory-only`. The
 command is read-only with respect to coordinator state: it does not start a
 session, inspect a runtime, launch a simulator, or capture private artifacts.
 Comparisons with fresh placement evidence are rejected because this stage emits
-shared-view requirements only; placement planning remains a later stage. Private
-capture is a separate Stage 2b executor and never mutates coordinator state.
-
-For supported simulator-only companion gallery evidence, run the private capture
-executor after planning. It consumes the schema-v1 requirements file and the
-canonical matrix/policy contracts, but does not require a coordinator session:
-
-```sh
-scripts/context-panel-validation.py capture-shared-view-evidence \
-  --surface-comparison <comparison.json> \
-  --requirements <visual-review-requirements.json> \
-  --capture-config <private-capture-config.json> \
-  --artifact-root <absolute-private-artifact-root> \
-  --output <shared-view-capture-receipt.json>
-```
-
-This path supports only throwaway `ios`, `ipados`, and `visionos` simulators
-with an installed prebuilt companion app and `contextpanelcompanion` gallery
-links. It recomputes the planner output from the supplied comparison, rejects
-truncated or empty work, requires the app's embedded surface manifest to match
-the comparison's current manifest, and records a deterministic requirements digest. Each
-capture run is isolated at
-`<artifact-root>/<currentManifestID>/<captureRunID>/`; a hidden staging sibling
-is atomically renamed before the public receipt is written, so only a complete
-run index and artifact set are published. It writes no coordinator/session/runtime,
-approval, or visual-review state and never approves or rejects evidence.
-The receipt is only a build-bound artifact-collection receipt; it is not
-admissible as an approval, signed-runtime claim, or placement claim.
-`macos`, `watchos`, and `tvos` requirements are returned as explicit
-`unsupported-host-mechanism` blocks; unavailable configured profiles are also
-blocked, and command, stability, PNG-validation, baseline, duplicate-digest, or
-cleanup failures remain unknown.
+shared-view requirements only; placement planning remains a later stage.
 
 The requirements file uses schema v1 and stores bounded public context:
 
