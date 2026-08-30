@@ -1294,6 +1294,81 @@ class OperatorFlowTests(unittest.TestCase):
         self.assertIn("macos.app.open", after_success_ids)
         self.assertNotIn("coordinator.macos-app-launch-automation", after_success_ids)
 
+    def test_shared_view_capture_automation_precedes_human_review(self):
+        surfaces = ("ios.app",)
+        session = self.session(surfaces)
+        manifest_id = "9" * 64
+        requirement_id = "shared-view.requirement"
+        report = replace(
+            self.report(surfaces),
+            visual_approvals={
+                "requirements": [
+                    {
+                        "id": requirement_id,
+                        "evidenceClass": "shared-view",
+                        "manifestID": manifest_id,
+                        "surface": "ios.app",
+                        "device": "iPhone",
+                    }
+                ],
+                "reviewBatches": [
+                    {
+                        "actionID": "review.iphone.shared-view",
+                        "device": "iPhone",
+                        "estimateMinutes": 2,
+                        "instruction": "Review the captured shared-view presentation.",
+                        "evidenceClass": "shared-view",
+                        "requirementIDs": [requirement_id],
+                        "surfaces": ["ios.app"],
+                        "runtimeSurfaces": [],
+                        "requiresRuntime": False,
+                    }
+                ],
+            },
+            automation=context_panel_validation.build_automation_report(None),
+        )
+        flow_store = context_panel_validation.OperatorFlowStore(self.store)
+
+        _, before = flow_store.reconcile(session, report, None, NOW)
+        before_ids = {
+            action["id"]
+            for group in before["groups"]
+            for action in group["actions"]
+        }
+        self.assertIn("coordinator.shared-view-capture-automation", before_ids)
+        self.assertNotIn("review.iphone.shared-view", before_ids)
+
+        window_digest = context_panel_validation.shared_view_capture_window_digest(
+            manifest_id,
+            [requirement_id],
+        )
+        automation_state = context_panel_validation.AutomationStore(self.store).record(
+            session,
+            context_panel_validation.make_attempt(
+                context_panel_validation.new_automation_state(session, NOW),
+                kind="shared-view.capture",
+                result="unsupported",
+                reason_code="shared-view-capture-unavailable",
+                started_at=NOW,
+                finished_at=NOW,
+                receipt_window_digest=window_digest,
+                runtime_report=None,
+            ),
+            NOW,
+        )
+        report = replace(
+            report,
+            automation=context_panel_validation.build_automation_report(automation_state),
+        )
+        _, after = flow_store.reconcile(session, report, None, NOW + timedelta(seconds=1))
+        after_ids = {
+            action["id"]
+            for group in after["groups"]
+            for action in group["actions"]
+        }
+        self.assertIn("review.iphone.shared-view", after_ids)
+        self.assertNotIn("coordinator.shared-view-capture-automation", after_ids)
+
     def test_candidate_sources_emit_complete_public_action_contracts(self):
         surfaces = ("macos.app", "ios.app", "visionos.app", "watchos.app")
         session = self.session(surfaces)

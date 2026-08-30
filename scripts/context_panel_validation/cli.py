@@ -55,6 +55,7 @@ from .automation import (
     make_attempt,
     new_automation_state,
     runtime_report_digest,
+    shared_view_capture_window_digest,
 )
 from .shared_view_evidence import (
     DEFAULT_MATRIX_PATH,
@@ -204,6 +205,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     add_target_arguments(advance_automation)
     add_expected_build_arguments(advance_automation)
+    for option, destination in (
+        ("--surface-comparison", "surface_comparison"),
+        ("--current-manifest", "current_manifest"),
+        ("--requirements", "requirements"),
+        ("--capture-config", "capture_config"),
+        ("--artifact-root", "artifact_root"),
+        ("--capture-output", "capture_output"),
+    ):
+        advance_automation.add_argument(option, dest=destination, type=Path)
     defer_action = subparsers.add_parser(
         "defer-action",
         help="Temporarily defer one outstanding operator action without satisfying evidence",
@@ -332,6 +342,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--json", action="store_true", help="Emit the public receipt as stable JSON"
     )
     args = parser.parse_args(argv)
+    if args.command == "advance-automation":
+        capture_inputs = (
+            args.surface_comparison,
+            args.current_manifest,
+            args.requirements,
+            args.capture_config,
+            args.artifact_root,
+            args.capture_output,
+        )
+        if any(value is not None for value in capture_inputs) and not all(
+            value is not None for value in capture_inputs
+        ):
+            parser.error("shared-view capture automation inputs must be supplied together")
     if args.command not in {"plan-shared-view-evidence", "capture-shared-view-evidence"}:
         if not VERSION_PATTERN.fullmatch(args.version):
             parser.error("--version must contain numeric dot-separated components")
@@ -660,6 +683,20 @@ def emit_automation_payload(
                     f"Mac launch automation {launch_state}: {launch_attempt_count} of "
                     f"{AUTOMATION_KIND_LIMITS['macos.app.launch']} attempts recorded."
                 )
+        capture_report = (
+            kind_reports.get("shared-view.capture")
+            if isinstance(kind_reports, dict)
+            else None
+        )
+        if isinstance(capture_report, dict):
+            capture_state = capture_report.get("state")
+            capture_attempt_count = capture_report.get("attemptCount")
+            if isinstance(capture_state, str) and isinstance(capture_attempt_count, int):
+                print(
+                    f"Shared-view capture automation {capture_state}: "
+                    f"{capture_attempt_count} of "
+                    f"{AUTOMATION_KIND_LIMITS['shared-view.capture']} attempts recorded."
+                )
 
 
 def _advance_macos_app_launch(
@@ -767,6 +804,190 @@ def _combine_automation_exit(runtime_exit: int, launch_failed: bool) -> int:
     return EXIT_UNKNOWN if launch_failed else runtime_exit
 
 
+def _shared_view_capture_window(
+    store: SessionStateStore,
+    session: CoordinatorSessionState,
+) -> str | None:
+    visual_state = VisualApprovalStore(store).load(session)
+    if visual_state is None:
+        return None
+    requirements = tuple(
+        requirement
+        for requirement in visual_state.requirements
+        if requirement.evidence_class == "shared-view"
+    )
+    if not requirements:
+        return None
+    manifest_ids = {requirement.manifest_id for requirement in requirements}
+    if len(manifest_ids) != 1:
+        raise AutomationError("shared-view capture requirements are invalid")
+    manifest_id = next(iter(manifest_ids))
+    return shared_view_capture_window_digest(
+        manifest_id,
+        [requirement.id for requirement in requirements],
+    )
+
+
+def _advance_shared_view_capture(
+    args: argparse.Namespace,
+    store: SessionStateStore,
+    session: CoordinatorSessionState,
+    automation_state: AutomationState | None,
+    now: datetime,
+) -> tuple[AutomationState | None, int]:
+    if session.lifecycle != "active":
+        return automation_state, (
+            EXIT_BLOCKED if session.lifecycle in {"blocked", "superseded"} else EXIT_UNKNOWN
+        )
+    window_digest = _shared_view_capture_window(store, session)
+    if window_digest is None:
+        return automation_state, 0
+    all_capture_attempts = attempts_for_kind(automation_state, "shared-view.capture")
+    last_capture_attempt = all_capture_attempts[-1] if all_capture_attempts else None
+    capture_inputs = (
+        getattr(args, "surface_comparison", None),
+        getattr(args, "current_manifest", None),
+        getattr(args, "requirements", None),
+        getattr(args, "capture_config", None),
+        getattr(args, "artifact_root", None),
+        getattr(args, "capture_output", None),
+    )
+    inputs_available = all(value is not None for value in capture_inputs)
+    current_window_attempts = tuple(
+        attempt
+        for attempt in all_capture_attempts
+        if attempt.receipt_window_digest == window_digest
+    )
+    executed_window_attempts = tuple(
+        attempt
+        for attempt in current_window_attempts
+        if attempt.reason_code != "shared-view-capture-unavailable"
+    )
+    if last_capture_attempt is not None and last_capture_attempt.receipt_window_digest == window_digest:
+        if last_capture_attempt.result == "succeeded":
+            return automation_state, 0
+        if last_capture_attempt.reason_code == "shared-view-capture-host-unsupported":
+            return automation_state, 0
+        if last_capture_attempt.result == "unsupported":
+            if not inputs_available:
+                return automation_state, 0
+        elif last_capture_attempt.result == "failed":
+            if len(executed_window_attempts) >= 2:
+                return automation_state, EXIT_UNKNOWN
+            finished_at = parse_iso8601(last_capture_attempt.finished_at)
+            assert finished_at is not None
+            if now < finished_at + AUTOMATION_COOLDOWN:
+                return automation_state, EXIT_UNKNOWN
+    if automation_state is not None and (
+        len(attempts_for_kind(automation_state, "shared-view.capture"))
+        >= AUTOMATION_KIND_LIMITS["shared-view.capture"]
+        or len(automation_state.attempts) >= MAXIMUM_AUTOMATION_ATTEMPT_COUNT
+    ):
+        return automation_state, EXIT_UNKNOWN
+
+    if not inputs_available:
+        if executed_window_attempts and executed_window_attempts[-1].result == "failed":
+            return automation_state, EXIT_UNKNOWN
+        result, reason_code, capture_exit = (
+            "unsupported",
+            "shared-view-capture-unavailable",
+            0,
+        )
+    else:
+        try:
+            capture_exit, receipt = execute_shared_view_capture(
+                *cast(tuple[Path, Path, Path, Path, Path, Path], capture_inputs),
+            )
+            captures = receipt.get("captures")
+            manifest_id = receipt.get("currentManifestID")
+            if not isinstance(captures, list) or not isinstance(manifest_id, str):
+                raise SharedViewCaptureError("shared-view capture receipt is invalid")
+            captured_requirement_ids = [
+                item.get("requirementID")
+                for item in captures
+                if isinstance(item, dict) and isinstance(item.get("requirementID"), str)
+            ]
+            if (
+                len(captured_requirement_ids) != len(captures)
+                or shared_view_capture_window_digest(manifest_id, captured_requirement_ids)
+                != window_digest
+            ):
+                raise SharedViewCaptureError("shared-view capture receipt does not match the session")
+            if capture_exit == 0:
+                result, reason_code = "succeeded", "shared-view-capture-recorded"
+            elif capture_exit == EXIT_BLOCKED:
+                error_codes = {
+                    item.get("errorCode")
+                    for item in captures
+                    if isinstance(item, dict) and item.get("status") != "captured"
+                }
+                if error_codes and error_codes <= {"unsupported-host-mechanism"}:
+                    result, reason_code, capture_exit = (
+                        "unsupported",
+                        "shared-view-capture-host-unsupported",
+                        0,
+                    )
+                else:
+                    result, reason_code, capture_exit = (
+                        "failed",
+                        "shared-view-capture-failed",
+                        EXIT_UNKNOWN,
+                    )
+            else:
+                result, reason_code = "failed", "shared-view-capture-failed"
+                capture_exit = EXIT_UNKNOWN
+        except (SharedViewEvidenceError, OSError):
+            result, reason_code, capture_exit = (
+                "failed",
+                "shared-view-capture-failed",
+                EXIT_UNKNOWN,
+            )
+
+    attempt = make_attempt(
+        automation_state or new_automation_state(session, now),
+        kind="shared-view.capture",
+        result=result,
+        reason_code=reason_code,
+        started_at=now,
+        finished_at=utc_now(),
+        receipt_window_digest=window_digest,
+        runtime_report=None,
+    )
+    return AutomationStore(store).record(session, attempt, now), capture_exit
+
+
+def _worst_automation_exit(*exit_codes: int) -> int:
+    if EXIT_BLOCKED in exit_codes:
+        return EXIT_BLOCKED
+    if EXIT_UNKNOWN in exit_codes:
+        return EXIT_UNKNOWN
+    return max(exit_codes)
+
+
+def _finish_automation(
+    args: argparse.Namespace,
+    store: SessionStateStore,
+    session: CoordinatorSessionState,
+    automation_state: AutomationState | None,
+    runtime_report: dict[str, object] | None,
+    runtime_exit: int,
+    launch_failed: bool,
+    now: datetime,
+) -> int:
+    automation_state, capture_exit = _advance_shared_view_capture(
+        args,
+        store,
+        session,
+        automation_state,
+        now,
+    )
+    emit_automation_payload(args, session, runtime_report, automation_state)
+    return _worst_automation_exit(
+        _combine_automation_exit(runtime_exit, launch_failed),
+        capture_exit,
+    )
+
+
 def _run_advance_automation_locked(
     args: argparse.Namespace,
     store: SessionStateStore,
@@ -806,8 +1027,10 @@ def _run_advance_automation_locked(
         and last_attempt.summary.evidence_satisfied
         and last_attempt.receipt_window_digest == window_digest
     ):
-        emit_automation_payload(args, session, runtime_report, automation_state)
-        return _combine_automation_exit(current_runtime_exit, launch_failed)
+        return _finish_automation(
+            args, store, session, automation_state, runtime_report,
+            current_runtime_exit, launch_failed, now,
+        )
     if (
         last_attempt is not None
         and last_attempt.receipt_window_digest == window_digest
@@ -815,24 +1038,30 @@ def _run_advance_automation_locked(
         and runtime_report["state"] == "proven"
         and current_runtime_exit == 0
     ):
-        emit_automation_payload(args, session, runtime_report, automation_state)
-        return _combine_automation_exit(0, launch_failed)
+        return _finish_automation(
+            args, store, session, automation_state, runtime_report,
+            0, launch_failed, now,
+        )
     if len(runtime_attempts) >= AUTOMATION_KIND_LIMITS["runtime.receipt.sync"]:
-        emit_automation_payload(args, session, runtime_report, automation_state)
         runtime_exit = (
             current_runtime_exit
             if runtime_report and runtime_report["state"] == "proven"
             else EXIT_UNKNOWN
         )
-        return _combine_automation_exit(runtime_exit, launch_failed)
+        return _finish_automation(
+            args, store, session, automation_state, runtime_report,
+            runtime_exit, launch_failed, now,
+        )
     if last_attempt is not None:
         finished_at = parse_iso8601(last_attempt.finished_at)
         assert finished_at is not None
         same_window = last_attempt.receipt_window_digest == window_digest
         cooldown_active = now < finished_at + AUTOMATION_COOLDOWN
         if same_window and cooldown_active:
-            emit_automation_payload(args, session, runtime_report, automation_state)
-            return _combine_automation_exit(current_runtime_exit, launch_failed)
+            return _finish_automation(
+                args, store, session, automation_state, runtime_report,
+                current_runtime_exit, launch_failed, now,
+            )
 
     started_at = now
     if (
@@ -849,10 +1078,10 @@ def _run_advance_automation_locked(
             runtime_report=runtime_report,
         )
         automation_state = automation_store.record(session, attempt, now)
-        emit_automation_payload(args, session, runtime_report, automation_state)
-        return _combine_automation_exit(
+        return _finish_automation(
+            args, store, session, automation_state, runtime_report,
             runtime_sync_exit_code(runtime_state, runtime_report, False),
-            launch_failed,
+            launch_failed, now,
         )
     try:
         session, runtime_state, runtime_report, superseded = sync_and_reconcile_runtime_evidence(
@@ -871,8 +1100,10 @@ def _run_advance_automation_locked(
             runtime_report=runtime_report,
         )
         automation_state = automation_store.record(session, attempt, now)
-        emit_automation_payload(args, session, runtime_report, automation_state)
-        return _combine_automation_exit(EXIT_UNKNOWN, launch_failed)
+        return _finish_automation(
+            args, store, session, automation_state, runtime_report,
+            EXIT_UNKNOWN, launch_failed, now,
+        )
     diagnostics = set(runtime_state.last_observation.diagnostics) if runtime_state.last_observation else set()
     if superseded:
         result, reason_code = "failed", "runtime-evidence-superseded"
@@ -891,10 +1122,10 @@ def _run_advance_automation_locked(
         runtime_report=runtime_report,
     )
     automation_state = automation_store.record(session, attempt, now)
-    emit_automation_payload(args, session, runtime_report, automation_state)
-    return _combine_automation_exit(
+    return _finish_automation(
+        args, store, session, automation_state, runtime_report,
         runtime_sync_exit_code(runtime_state, runtime_report, superseded),
-        launch_failed,
+        launch_failed, now,
     )
 
 

@@ -14,6 +14,7 @@ from .automation import (
     AUTOMATION_KINDS,
     build_automation_report,
     macos_app_window_digest,
+    shared_view_capture_window_digest,
 )
 from .models import (
     EXIT_READY,
@@ -1109,6 +1110,94 @@ def _apply_macos_launch_automation(
     )
 
 
+def _apply_shared_view_capture_automation(
+    candidates: dict[str, OperatorActionCandidate],
+    report: ValidationReport,
+) -> None:
+    visual_approvals = report.visual_approvals or {}
+    shared_action_ids = {
+        batch.get("actionID")
+        for batch in visual_approvals.get("reviewBatches") or []
+        if isinstance(batch, dict)
+        and batch.get("evidenceClass") == "shared-view"
+        and isinstance(batch.get("actionID"), str)
+    }
+    shared_candidates = tuple(
+        candidates[action_id]
+        for action_id in sorted(shared_action_ids)
+        if action_id in candidates
+    )
+    if not shared_candidates or report.automation is None:
+        return
+    requirements = tuple(
+        item
+        for item in visual_approvals.get("requirements") or []
+        if isinstance(item, dict) and item.get("evidenceClass") == "shared-view"
+    )
+    manifest_values = [item.get("manifestID") for item in requirements]
+    if any(not isinstance(value, str) for value in manifest_values):
+        raise OperatorFlowError("shared-view automation requirements are invalid")
+    manifest_ids = set(manifest_values)
+    requirement_ids = [
+        item.get("id")
+        for item in requirements
+        if isinstance(item.get("id"), str)
+    ]
+    if len(manifest_ids) != 1 or len(requirement_ids) != len(requirements):
+        raise OperatorFlowError("shared-view automation requirements are invalid")
+    window_digest = shared_view_capture_window_digest(
+        next(iter(manifest_ids)),
+        requirement_ids,
+    )
+    automation = report.automation
+    kind_reports = automation.get("kindReports")
+    capture_report = (
+        kind_reports.get("shared-view.capture")
+        if isinstance(kind_reports, dict)
+        else None
+    )
+    last_attempt = (
+        capture_report.get("lastAttempt")
+        if isinstance(capture_report, dict)
+        else None
+    )
+    terminal_current = (
+        isinstance(last_attempt, dict)
+        and last_attempt.get("receiptWindowDigest") == window_digest
+        and last_attempt.get("result")
+        in {"succeeded", "failed", "unsupported", "skipped-precondition"}
+    )
+    exhausted = (
+        isinstance(capture_report, dict)
+        and capture_report.get("remainingAttemptCount") == 0
+    ) or automation.get("remainingTotalAttemptCount") == 0
+    if terminal_current or exhausted:
+        return
+
+    surfaces = tuple(sorted({surface for item in shared_candidates for surface in item.surfaces}))
+    for candidate in shared_candidates:
+        candidates.pop(candidate.action_id, None)
+    candidates["coordinator.shared-view-capture-automation"] = OperatorActionCandidate(
+        action_id="coordinator.shared-view-capture-automation",
+        device="Coordinator",
+        surfaces=surfaces,
+        reason_code="automation-attempt-required",
+        action_kind="status-follow-up",
+        estimate_minutes=2,
+        instruction="Run the bounded coordinator automation once, then rerun status.",
+        notification_kind=None,
+        recovery_steps=(
+            "Keep the signed artifacts and visual review requirements unchanged.",
+            "Provide the private capture inputs when available and run one bounded advancement.",
+            "Rerun status before beginning human visual review.",
+        ),
+        simulation_insufficiency=SimulationInsufficiency(
+            "visual-presentation-review-required",
+            "Fresh shared-view artifacts must be captured before the human presentation review.",
+        ),
+    )
+
+
 def build_operator_candidates(
     report: ValidationReport,
     session: CoordinatorSessionState,
@@ -1331,6 +1420,7 @@ def build_operator_candidates(
                 "The signed surface must be reviewed in its actual presentation context.",
             ),
         )
+    _apply_shared_view_capture_automation(candidates, report)
     if report.state == "blocked" and not any(
         candidate.notification_kind == "blockedDecisionRequired"
         for candidate in candidates.values()

@@ -58,7 +58,10 @@ ATTEMPT_REASONS = {
     "shared-view.capture": {
         "succeeded": {"shared-view-capture-recorded"},
         "failed": {"shared-view-capture-failed"},
-        "unsupported": {"shared-view-capture-unavailable"},
+        "unsupported": {
+            "shared-view-capture-unavailable",
+            "shared-view-capture-host-unsupported",
+        },
         "skipped-precondition": {"shared-view-capture-not-enabled"},
     },
 }
@@ -459,6 +462,19 @@ def macos_app_window_digest(mac: MacEvidence) -> str:
             "installState": mac.install_state,
             "appCloudKit": mac.app_cloudkit,
             "refreshAgentCloudKit": mac.refresh_agent_cloudkit,
+        },
+    )
+
+
+def shared_view_capture_window_digest(
+    current_manifest_id: str,
+    requirement_ids: tuple[str, ...] | list[str],
+) -> str:
+    return sha256_digest(
+        "context-panel-validation/automation/shared-view-capture-window/v1",
+        {
+            "currentManifestID": current_manifest_id,
+            "requirementIDs": sorted(requirement_ids),
         },
     )
 

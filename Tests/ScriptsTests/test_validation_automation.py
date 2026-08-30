@@ -366,6 +366,10 @@ class ValidationAutomationTests(unittest.TestCase):
             events.append("sync")
             return runtime_observation()
 
+        def capture(*args: object, **_kwargs: object):
+            events.append("capture")
+            return args[3], 0
+
         runner.run.side_effect = launch
         with (
             mock.patch.dict(os.environ, {"CONTEXT_PANEL_VALIDATION_STATE_ROOT": str(store.root)}),
@@ -384,13 +388,18 @@ class ValidationAutomationTests(unittest.TestCase):
                 "sync_and_collect",
                 side_effect=sync,
             ),
+            mock.patch.object(
+                cli_module,
+                "_advance_shared_view_capture",
+                side_effect=capture,
+            ),
             mock.patch.object(cli_module, "utc_now", return_value=NOW),
             contextlib.redirect_stdout(io.StringIO()),
         ):
             exit_code = cli_module.run_advance_automation(args)
 
         self.assertEqual(exit_code, 0)
-        self.assertEqual(events, ["launch", "sync"])
+        self.assertEqual(events, ["launch", "sync", "capture"])
         cli_module.time.sleep.assert_called_once_with(1.0)
         runner.run.assert_called_once()
         self.assertEqual(
@@ -545,6 +554,350 @@ class ValidationAutomationTests(unittest.TestCase):
             launch_attempts[0].reason_code,
             "macos-app-launch-precondition-not-met",
         )
+
+    def test_shared_view_capture_records_public_attempt(self) -> None:
+        temporary, store, session = self.fixture()
+        self.addCleanup(temporary.cleanup)
+        manifest_id = "9" * 64
+        requirement_ids = ["shared-view.requirement"]
+        window_digest = cli_module.shared_view_capture_window_digest(
+            manifest_id,
+            requirement_ids,
+        )
+        args = argparse.Namespace(
+            surface_comparison=Path("comparison.json"),
+            current_manifest=Path("manifest.json"),
+            requirements=Path("requirements.json"),
+            capture_config=Path("capture.json"),
+            artifact_root=Path("/private/artifacts"),
+            capture_output=Path("/private/receipt.json"),
+        )
+        receipt = {
+            "currentManifestID": manifest_id,
+            "captures": [{"requirementID": requirement_ids[0]}],
+        }
+        with (
+            mock.patch.object(
+                cli_module,
+                "_shared_view_capture_window",
+                return_value=window_digest,
+            ),
+            mock.patch.object(
+                cli_module,
+                "execute_shared_view_capture",
+                return_value=(0, receipt),
+            ) as capture,
+            mock.patch.object(cli_module, "utc_now", return_value=NOW),
+        ):
+            state, exit_code = cli_module._advance_shared_view_capture(
+                args,
+                store,
+                session,
+                None,
+                NOW,
+            )
+
+        self.assertEqual(exit_code, 0)
+        capture.assert_called_once()
+        self.assertIsNotNone(state)
+        assert state is not None
+        attempt = state.attempts[-1]
+        self.assertEqual(attempt.kind, "shared-view.capture")
+        self.assertEqual(attempt.result, "succeeded")
+        serialized = json.dumps(state.to_dict())
+        self.assertNotIn("/private/artifacts", serialized)
+        self.assertNotIn("/private/receipt.json", serialized)
+
+    def test_shared_view_capture_missing_inputs_records_unsupported(self) -> None:
+        temporary, store, session = self.fixture()
+        self.addCleanup(temporary.cleanup)
+        manifest_id = "7" * 64
+        requirement_id = "shared-view.requirement"
+        window_digest = cli_module.shared_view_capture_window_digest(
+            manifest_id,
+            [requirement_id],
+        )
+        args = argparse.Namespace(
+            surface_comparison=None,
+            current_manifest=None,
+            requirements=None,
+            capture_config=None,
+            artifact_root=None,
+            capture_output=None,
+        )
+        missing_args = args
+        with (
+            mock.patch.object(
+                cli_module,
+                "_shared_view_capture_window",
+                return_value=window_digest,
+            ),
+            mock.patch.object(cli_module, "utc_now", return_value=NOW),
+        ):
+            state, exit_code = cli_module._advance_shared_view_capture(
+                args,
+                store,
+                session,
+                None,
+                NOW,
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertIsNotNone(state)
+        assert state is not None
+        attempt = state.attempts[-1]
+        self.assertEqual(attempt.result, "unsupported")
+        self.assertEqual(attempt.reason_code, "shared-view-capture-unavailable")
+
+        args = argparse.Namespace(
+            surface_comparison=Path("comparison.json"),
+            current_manifest=Path("manifest.json"),
+            requirements=Path("requirements.json"),
+            capture_config=Path("capture.json"),
+            artifact_root=Path("/private/artifacts"),
+            capture_output=Path("/private/receipt.json"),
+        )
+        receipt = {
+            "currentManifestID": manifest_id,
+            "captures": [
+                {
+                    "requirementID": requirement_id,
+                    "status": "blocked",
+                    "errorCode": "unsupported-host-mechanism",
+                }
+            ],
+        }
+        with (
+            mock.patch.object(
+                cli_module,
+                "_shared_view_capture_window",
+                return_value=window_digest,
+            ),
+            mock.patch.object(
+                cli_module,
+                "execute_shared_view_capture",
+                side_effect=[(30, receipt), (0, receipt)],
+            ) as capture,
+            mock.patch.object(
+                cli_module,
+                "utc_now",
+                return_value=NOW + timedelta(minutes=1),
+            ),
+        ):
+            state, exit_code = cli_module._advance_shared_view_capture(
+                args,
+                store,
+                session,
+                state,
+                NOW + timedelta(minutes=1),
+            )
+            state, cooldown_exit = cli_module._advance_shared_view_capture(
+                args,
+                store,
+                session,
+                state,
+                NOW + timedelta(minutes=2),
+            )
+            state, missing_after_failure_exit = cli_module._advance_shared_view_capture(
+                missing_args,
+                store,
+                session,
+                state,
+                NOW + timedelta(minutes=7),
+            )
+            state, recovered_exit = cli_module._advance_shared_view_capture(
+                args,
+                store,
+                session,
+                state,
+                NOW + timedelta(minutes=7),
+            )
+
+        self.assertEqual(exit_code, 30)
+        self.assertEqual(cooldown_exit, 30)
+        self.assertEqual(missing_after_failure_exit, 30)
+        self.assertEqual(recovered_exit, 0)
+        self.assertEqual(capture.call_count, 2)
+        self.assertIsNotNone(state)
+        assert state is not None
+        capture_attempts = [
+            item for item in state.attempts if item.kind == "shared-view.capture"
+        ]
+        self.assertEqual(
+            [item.result for item in capture_attempts],
+            ["unsupported", "failed", "succeeded"],
+        )
+
+    def test_shared_view_capture_blocked_host_is_non_degrading_unsupported(self) -> None:
+        temporary, store, session = self.fixture()
+        self.addCleanup(temporary.cleanup)
+        manifest_id = "6" * 64
+        requirement_id = "shared-view.requirement"
+        window_digest = cli_module.shared_view_capture_window_digest(
+            manifest_id,
+            [requirement_id],
+        )
+        args = argparse.Namespace(
+            surface_comparison=Path("comparison.json"),
+            current_manifest=Path("manifest.json"),
+            requirements=Path("requirements.json"),
+            capture_config=Path("capture.json"),
+            artifact_root=Path("/private/artifacts"),
+            capture_output=Path("/private/receipt.json"),
+        )
+        receipt = {
+            "currentManifestID": manifest_id,
+            "captures": [
+                {
+                    "requirementID": requirement_id,
+                    "status": "blocked",
+                    "errorCode": "unsupported-host-mechanism",
+                }
+            ],
+        }
+        with (
+            mock.patch.object(
+                cli_module,
+                "_shared_view_capture_window",
+                return_value=window_digest,
+            ),
+            mock.patch.object(
+                cli_module,
+                "execute_shared_view_capture",
+                return_value=(20, receipt),
+            ),
+        ):
+            state, exit_code = cli_module._advance_shared_view_capture(
+                args,
+                store,
+                session,
+                None,
+                NOW,
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertIsNotNone(state)
+        assert state is not None
+        self.assertEqual(state.attempts[-1].result, "unsupported")
+        self.assertEqual(
+            state.attempts[-1].reason_code,
+            "shared-view-capture-host-unsupported",
+        )
+
+    def test_shared_view_capture_recoverable_block_is_failed(self) -> None:
+        temporary, store, session = self.fixture()
+        self.addCleanup(temporary.cleanup)
+        manifest_id = "4" * 64
+        requirement_id = "shared-view.requirement"
+        window_digest = cli_module.shared_view_capture_window_digest(
+            manifest_id,
+            [requirement_id],
+        )
+        args = argparse.Namespace(
+            surface_comparison=Path("comparison.json"),
+            current_manifest=Path("manifest.json"),
+            requirements=Path("requirements.json"),
+            capture_config=Path("capture.json"),
+            artifact_root=Path("/private/artifacts"),
+            capture_output=Path("/private/receipt.json"),
+        )
+        receipt = {
+            "currentManifestID": manifest_id,
+            "captures": [
+                {
+                    "requirementID": requirement_id,
+                    "status": "blocked",
+                    "errorCode": "profile-not-configured",
+                }
+            ],
+        }
+        with (
+            mock.patch.object(
+                cli_module,
+                "_shared_view_capture_window",
+                return_value=window_digest,
+            ),
+            mock.patch.object(
+                cli_module,
+                "execute_shared_view_capture",
+                return_value=(20, receipt),
+            ),
+        ):
+            state, exit_code = cli_module._advance_shared_view_capture(
+                args,
+                store,
+                session,
+                None,
+                NOW,
+            )
+
+        self.assertEqual(exit_code, 30)
+        self.assertIsNotNone(state)
+        assert state is not None
+        self.assertEqual(state.attempts[-1].result, "failed")
+        self.assertEqual(state.attempts[-1].reason_code, "shared-view-capture-failed")
+
+    def test_shared_view_capture_rejects_mismatched_receipt(self) -> None:
+        temporary, store, session = self.fixture()
+        self.addCleanup(temporary.cleanup)
+        manifest_id = "5" * 64
+        window_digest = cli_module.shared_view_capture_window_digest(
+            manifest_id,
+            ["expected.requirement"],
+        )
+        args = argparse.Namespace(
+            surface_comparison=Path("comparison.json"),
+            current_manifest=Path("manifest.json"),
+            requirements=Path("requirements.json"),
+            capture_config=Path("capture.json"),
+            artifact_root=Path("/private/artifacts"),
+            capture_output=Path("/private/receipt.json"),
+        )
+        receipt = {
+            "currentManifestID": manifest_id,
+            "captures": [{"requirementID": "wrong.requirement"}],
+        }
+        with (
+            mock.patch.object(
+                cli_module,
+                "_shared_view_capture_window",
+                return_value=window_digest,
+            ),
+            mock.patch.object(
+                cli_module,
+                "execute_shared_view_capture",
+                return_value=(0, receipt),
+            ),
+        ):
+            state, exit_code = cli_module._advance_shared_view_capture(
+                args,
+                store,
+                session,
+                None,
+                NOW,
+            )
+
+        self.assertEqual(exit_code, 30)
+        self.assertIsNotNone(state)
+        assert state is not None
+        self.assertEqual(state.attempts[-1].result, "failed")
+
+    def test_advance_rejects_partial_capture_inputs(self) -> None:
+        with (
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaises(SystemExit),
+        ):
+            cli_module.parse_args(
+                [
+                    "advance-automation",
+                    "--version",
+                    TARGET.version,
+                    "--build-number",
+                    TARGET.build_number,
+                    "--capture-config",
+                    "capture.json",
+                ]
+            )
 
     def test_advance_syncs_once_then_repeats_idempotently_without_second_sync(self) -> None:
         temporary, store, session = self.fixture()

@@ -16,7 +16,14 @@ surface has the exact current Production identity and the app is verified not
 running, then performs the existing signed-host runtime-receipt
 relay/reconciliation sequence. The launch uses `/usr/bin/open -g` only; it does
 not install, reset, activate a URL, change placements, or touch a companion
-device. Shared-view capture remains non-executing in this slice.
+device. When shared-view requirements exist, the command then attempts the
+existing bounded simulator capture executor after receipt synchronization. The
+private comparison, manifest, requirements, capture config, artifact root, and
+receipt output are supplied only to that invocation and are never persisted in
+coordinator state. Missing inputs are recorded as an unsupported terminal
+attempt so the human review can proceed honestly rather than looping. That
+unsupported fallback is visible in the automation report but does not degrade
+an otherwise healthy `advance-automation` exit code.
 
 The command records a schema-v1 public automation sidecar bound by digests to
 the coordinator session, target, and requested surfaces. It persists only fixed
@@ -38,7 +45,11 @@ the cooldown, an active receipt window may sync again so newly relayed receipts
 can be collected; an unsupported adapter is also retried rather than latched
 permanently. A changed or expired receipt window may advance immediately.
 The schema-v1 sidecar supports three closed kinds: `runtime.receipt.sync`,
-`macos.app.launch`, and reserved `shared-view.capture`. The total budget is 96
+`macos.app.launch`, and `shared-view.capture`. Shared-view review actions are
+replaced by one Coordinator capture follow-up until a terminal attempt exists
+for the current manifest and requirement set. A successful capture never makes
+the visual judgment; it only ensures fresh artifacts exist before the human
+review. The total budget is 96
 attempts, partitioned as 64 receipt, 16 launch, and 16 capture attempts. No
 launch command path, arguments, output, or process details are persisted. Closed
 and superseded sessions never advance automation.

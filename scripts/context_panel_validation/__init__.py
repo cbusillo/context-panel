@@ -58,6 +58,7 @@ from .automation import (
     macos_app_window_digest,
     make_attempt,
     new_automation_state,
+    shared_view_capture_window_digest,
 )
 from .operator_flow import (
     ACTION_KINDS,
@@ -188,5 +189,6 @@ __all__ = [
     "refresh_session_state",
     "render_text",
     "render_final_report",
+    "shared_view_capture_window_digest",
     "transition_session_state",
 ]

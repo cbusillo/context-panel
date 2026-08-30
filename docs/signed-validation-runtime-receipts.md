@@ -266,7 +266,10 @@ active window may sync again to collect newly relayed receipts. A changed or
 expired window may advance immediately, and an unsupported adapter is retried
 after cooldown rather than latched permanently. The runtime receipt bucket
 allows at most 64 attempts. The schema-v1 sidecar has a total budget of 96:
-64 receipt syncs, 16 bounded Mac launches, and 16 reserved shared-view captures.
+64 receipt syncs, 16 bounded Mac launches, and 16 shared-view captures. Capture
+runs after receipt reconciliation and only when the full private input set is
+provided; otherwise one public unsupported attempt records that the machine
+step could not run before the human review.
 `status` and `final-report` expose the public automation summary
 without performing a sync. Failed or unsupported attempts never mark runtime
 evidence as satisfied.
