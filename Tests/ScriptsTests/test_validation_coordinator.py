@@ -860,7 +860,9 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(unscoped.state, "blocked")
         self.assertEqual(mac_only.state, "complete_for_slice")
         self.assertFalse(mac_only.actions)
-        self.assertEqual(mac_only.devices, devices)
+        self.assertFalse(mac_only.devices)
+        self.assertFalse(mac_only.to_dict()["evidence"]["devices"])
+        self.assertNotIn("Apple Watch", context_panel_validation.render_text(mac_only))
         self.assertEqual(len(mac_only.asc.platforms), len(context_panel_validation.ASC_PLATFORMS))
 
     def test_watch_scope_ignores_out_of_scope_mac_failure(self):
@@ -1999,7 +2001,7 @@ class CLITests(unittest.TestCase):
             self.assertEqual(payload["summary"]["state"], "complete_for_slice")
             self.assertFalse(payload["actions"])
             self.assertEqual(payload["session"]["requestedSurfaces"], ["macos.app"])
-            self.assertEqual(payload["evidence"]["devices"][0]["platform"], "watchOS")
+            self.assertFalse(payload["evidence"]["devices"])
 
     def test_status_reports_paused_session_without_ready_actions(self):
         target = Target("1.0.53", "202607301200")

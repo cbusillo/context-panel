@@ -535,6 +535,11 @@ def report(
             "state": "approved" if requirements else "not-evaluated-by-coordinator",
             "requirements": requirements,
         },
+        "operatorFlow": {
+            "schemaVersion": 1,
+            "totalDurationMinutes": 0,
+            "groups": [],
+        },
         "blockers": [],
     }
 
@@ -2455,6 +2460,67 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             validation_report=different_report,
         )
         self.assertIn("release evidence does not match the exact validation report", blockers)
+
+    def test_report_validator_rejects_malformed_operator_action_contract(self) -> None:
+        surface = "watchos.app"
+        validation_report = report(surface, visual_class="shared-view")
+        validation_report["operatorFlow"] = {
+            "schemaVersion": 1,
+            "totalDurationMinutes": 2,
+            "groups": [
+                {
+                    "device": "Apple Watch",
+                    "durationMinutes": 2,
+                    "actions": [
+                        {
+                            "id": "review.apple-watch",
+                            "instruction": "Review the signed Watch app.",
+                            "notificationKind": "readyForHumanReview",
+                            "recoverySteps": ["Record the decision."],
+                            "surfaces": [surface],
+                            "reasonCode": "unknown-reason",
+                            "actionKind": "visual-review",
+                            "durationMinutes": 2,
+                            "simulationInsufficiency": {
+                                "code": "visual-presentation-review-required",
+                                "explanation": "The signed surface requires visual review.",
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+
+        with self.assertRaisesRegex(ReleaseEvidenceError, "operator actions"):
+            self.evaluate(
+                surface,
+                "shared-view",
+                validation_report=validation_report,
+            )
+
+    def test_report_validator_rejects_missing_operator_flow(self) -> None:
+        surface = "watchos.app"
+        validation_report = report(surface, visual_class="shared-view")
+        del validation_report["operatorFlow"]
+
+        with self.assertRaisesRegex(ReleaseEvidenceError, "operator actions"):
+            self.evaluate(
+                surface,
+                "shared-view",
+                validation_report=validation_report,
+            )
+
+    def test_report_validator_rejects_non_string_operator_surface_scope(self) -> None:
+        surface = "watchos.app"
+        validation_report = report(surface, visual_class="shared-view")
+        validation_report["session"]["requestedSurfaces"] = [surface, 1]
+
+        with self.assertRaisesRegex(ReleaseEvidenceError, "operator actions"):
+            self.evaluate(
+                surface,
+                "shared-view",
+                validation_report=validation_report,
+            )
 
     def test_report_validator_rejects_shadow_report_in_enforcement(self) -> None:
         surface = "watchos.app"

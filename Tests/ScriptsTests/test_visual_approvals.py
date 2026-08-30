@@ -591,6 +591,43 @@ class VisualApprovalTests(unittest.TestCase):
         self.assertEqual(session.requested_surfaces, ())
         self.assertEqual(report["state"], "pending")
         self.assertEqual(report["reviewBatches"][0]["device"], "Apple Watch")
+        batch = report["reviewBatches"][0]
+        requirements = {
+            item["id"]: item["surface"] for item in report["requirements"]
+        }
+        self.assertEqual(
+            batch["surfaces"],
+            sorted({requirements[requirement_id] for requirement_id in batch["requirementIDs"]}),
+        )
+
+    def test_large_ready_review_is_split_into_bounded_batches(self) -> None:
+        _, state = self.configured_state()
+        shared = next(
+            item for item in state.requirements if item.evidence_class == "shared-view"
+        )
+        requirements = tuple(
+            replace(shared, id=f"watch.app.shared.batch-{index:02d}")
+            for index in range(31)
+        )
+
+        report = build_visual_approval_report(
+            replace(state, requirements=requirements),
+            None,
+        )
+
+        self.assertEqual(len(report["reviewBatches"]), 2)
+        self.assertEqual(
+            [batch["actionID"] for batch in report["reviewBatches"]],
+            ["review.apple-watch.part-1", "review.apple-watch.part-2"],
+        )
+        self.assertEqual(
+            [batch["estimateMinutes"] for batch in report["reviewBatches"]],
+            [60, 2],
+        )
+        self.assertEqual(
+            sum(len(batch["requirementIDs"]) for batch in report["reviewBatches"]),
+            31,
+        )
 
     def test_state_round_trips_and_contains_no_private_paths(self) -> None:
         _, state = self.configured_state()

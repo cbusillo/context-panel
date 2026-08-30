@@ -21,6 +21,10 @@ from context_panel_comparison_schema import (
 )
 from context_panel_expected_build import ExpectedBuildSchemaError
 from context_panel_validation.models import Target
+from context_panel_validation.operator_flow import (
+    OperatorFlowError,
+    validate_operator_flow_actions,
+)
 from context_panel_validation.runtime_evidence import (
     ExpectedSurfaceIdentity,
     RuntimeEvidenceError,
@@ -785,6 +789,32 @@ def _validate_report(report: dict[str, Any], current_manifest_id: str) -> Target
     session = report.get("session")
     if not isinstance(summary, dict) or not isinstance(session, dict):
         raise ReleaseEvidenceError("validation report is invalid")
+    operator_flow = report.get("operatorFlow")
+    visual_approvals = report.get("visualApprovals")
+    if not isinstance(operator_flow, dict) or not isinstance(visual_approvals, dict):
+        raise ReleaseEvidenceError("validation report operator actions are invalid")
+    requested_surfaces = session.get("requestedSurfaces")
+    requirements = visual_approvals.get("requirements")
+    if (
+        not isinstance(requested_surfaces, list)
+        or any(not isinstance(surface, str) for surface in requested_surfaces)
+        or not isinstance(requirements, list)
+    ):
+        raise ReleaseEvidenceError("validation report operator actions are invalid")
+    allowed_action_surfaces = sorted(
+        {
+            *requested_surfaces,
+            *(
+                item.get("surface")
+                for item in requirements
+                if isinstance(item, dict) and isinstance(item.get("surface"), str)
+            ),
+        }
+    )
+    try:
+        validate_operator_flow_actions(operator_flow, allowed_action_surfaces)
+    except OperatorFlowError as error:
+        raise ReleaseEvidenceError("validation report operator actions are invalid") from error
     if summary.get("exitCode") != 0:
         raise ReleaseEvidenceError("validation report is blocked")
     blockers = report.get("blockers")

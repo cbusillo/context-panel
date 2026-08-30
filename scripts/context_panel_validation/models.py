@@ -99,6 +99,11 @@ class OperatorAction:
     instruction: str
     id: str | None = None
     notification_kind: str | None = None
+    surfaces: tuple[str, ...] = ()
+    reason_code: str | None = None
+    action_kind: str | None = None
+    duration_minutes: int | None = None
+    simulation_insufficiency: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -182,6 +187,11 @@ class ValidationReport:
                     "estimate": item.estimate,
                     "instruction": item.instruction,
                     "notificationKind": item.notification_kind,
+                    "surfaces": list(item.surfaces),
+                    "reasonCode": item.reason_code,
+                    "actionKind": item.action_kind,
+                    "durationMinutes": item.duration_minutes,
+                    "simulationInsufficiency": item.simulation_insufficiency,
                 }
                 for item in self.actions
             ],
@@ -378,6 +388,20 @@ def build_report(
     )
 
     actions: list[OperatorAction] = []
+    mac_surfaces = tuple(
+        sorted(
+            surface
+            for surface in requested_surfaces or ("macos.app",)
+            if surface.startswith("macos.")
+        )
+    )
+    watch_surfaces = tuple(
+        sorted(
+            surface
+            for surface in requested_surfaces or ("watchos.app",)
+            if surface.startswith("watchos.")
+        )
+    )
     if (
         mac.baseline_state == "identity_verified_app_not_running"
         and mac.install_state == "current"
@@ -387,7 +411,19 @@ def build_report(
         and not machine_waiting
     ):
         actions.append(
-            OperatorAction("Mac", "about 1 minute", "Open the canonical Mac app once, then rerun status.")
+            OperatorAction(
+                "Mac",
+                "about 1 minute",
+                "Open the canonical Mac app once, then rerun status.",
+                surfaces=mac_surfaces,
+                reason_code="mac-app-not-running",
+                action_kind="status-follow-up",
+                duration_minutes=1,
+                simulation_insufficiency={
+                    "code": "signed-runtime-observation-required",
+                    "explanation": "The canonical signed Mac app must be opened once to observe its runtime state.",
+                },
+            )
         )
     watch_current = any(
         item.platform == "watchOS" and item.install_state == "current"
@@ -409,6 +445,14 @@ def build_report(
                     f"scripts/context-panel-validation.py record-watch-restart "
                     f"--version {target.version} --build-number {target.build_number}."
                 ),
+                surfaces=watch_surfaces,
+                reason_code="watch-restart-required",
+                action_kind="manual-recovery",
+                duration_minutes=3,
+                simulation_insufficiency={
+                    "code": "operator-attestation-required",
+                    "explanation": "Only the operator can attest that the physical Watch restarted with placements intact.",
+                },
             )
         )
 
@@ -447,7 +491,7 @@ def build_report(
 
     current_count, known_count, unknown_count = install_counts(
         mac,
-        devices,
+        scoped_devices,
         requested_surfaces,
     )
     if known_count:
@@ -469,7 +513,7 @@ def build_report(
         exit_code,
         asc,
         mac,
-        devices,
+        scoped_devices,
         tuple(actions),
         watch_restart_recorded_at,
         (

@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import re
 import tempfile
-from typing import Any
+from typing import Any, cast
 
 from .models import (
     EXIT_READY,
@@ -59,12 +59,42 @@ RESIDUAL_RISKS = (
     "runtime-unproven",
 )
 WAIT_CONDITIONS = {"locked", "asleep", "not_reachable", "unavailable"}
+ACTION_KINDS = {
+    "manual-recovery",
+    "operator-decision",
+    "status-follow-up",
+    "visual-review",
+}
+REASON_CODES = {
+    "device-access-required",
+    "device-not-found",
+    "mac-app-not-running",
+    "runtime-session-diagnostic",
+    "runtime-surface-diagnostic",
+    "validation-blocked",
+    "visual-review-required",
+    "watch-restart-required",
+}
+SIMULATION_INSUFFICIENCY_CODES = {
+    "operator-attestation-required",
+    "physical-device-interaction-required",
+    "signed-runtime-observation-required",
+    "visual-presentation-review-required",
+}
 ACTION_ID_PATTERN = re.compile(r"^[a-z0-9]+(?:[.-][a-z0-9]+)*$")
 OWNER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 DEVICE_PATTERN = re.compile(
     r"^(?:Mac|Coordinator|iPhone(?: [1-9][0-9]*)?|iPad(?: [1-9][0-9]*)?|"
     r"Vision Pro(?: [1-9][0-9]*)?|Apple Watch(?: [1-9][0-9]*)?|"
     r"Apple TV(?: [1-9][0-9]*)?)$"
+)
+PRIVATE_ACTION_TEXT_PATTERN = re.compile(
+    r"(?:/Users/|/private/|/tmp/|\b(?:xcrun|devicectl)\b|"
+    r"--device(?:=|\s)|\b(?:udid|serial|device-id)\s*=|"
+    r"\b[0-9A-F]{8}-[0-9A-F-]{16,}\b|"
+    r"\b(?=[A-Z0-9]{10,}\b)(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]+\b|"
+    r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b)",
+    re.IGNORECASE,
 )
 DEVICE_ORDER = {
     "Mac": 0,
@@ -114,6 +144,44 @@ def _device_key(device: str) -> str:
 def _device_sort_key(device: str) -> tuple[int, str]:
     base = next((name for name in DEVICE_ORDER if device == name or device.startswith(f"{name} ")), device)
     return DEVICE_ORDER.get(base, 99), device
+
+
+def _is_public_action_text(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and PRIVATE_ACTION_TEXT_PATTERN.search(value) is None
+    )
+
+
+def _surfaces_for_device(
+    requested_surfaces: tuple[str, ...],
+    device: str,
+) -> tuple[str, ...]:
+    prefixes = {
+        "Mac": {"macos"},
+        "iPhone": {"ios"},
+        "iPad": {"ipados"},
+        "Vision Pro": {"visionos"},
+        "Apple Watch": {"watchos"},
+        "Apple TV": {"tvos"},
+        "Coordinator": {surface.split(".", 1)[0] for surface in requested_surfaces},
+    }
+    base_device = next(
+        (name for name in DEVICE_ORDER if device == name or device.startswith(f"{name} ")),
+        device,
+    )
+    return tuple(
+        surface
+        for surface in requested_surfaces
+        if surface.split(".", 1)[0] in prefixes.get(base_device, set())
+    )
+
+
+@dataclass(frozen=True)
+class SimulationInsufficiency:
+    code: str
+    explanation: str
 
 
 @dataclass(frozen=True)
@@ -422,10 +490,129 @@ def validate_operator_flow_state(state: OperatorFlowState) -> None:
 class OperatorActionCandidate:
     action_id: str
     device: str
+    surfaces: tuple[str, ...]
+    reason_code: str
+    action_kind: str
     estimate_minutes: int
     instruction: str
     notification_kind: str | None
     recovery_steps: tuple[str, ...]
+    simulation_insufficiency: SimulationInsufficiency
+
+
+def _validate_candidate(
+    candidate: OperatorActionCandidate,
+    requested_surfaces: tuple[str, ...],
+) -> None:
+    _validate_action_id(candidate.action_id)
+    _validate_device(candidate.device)
+    if (
+        candidate.surfaces != tuple(sorted(set(candidate.surfaces)))
+        or not candidate.surfaces
+        or any(surface not in requested_surfaces for surface in candidate.surfaces)
+        or candidate.reason_code not in REASON_CODES
+        or candidate.action_kind not in ACTION_KINDS
+        or not isinstance(candidate.estimate_minutes, int)
+        or isinstance(candidate.estimate_minutes, bool)
+        or not 1 <= candidate.estimate_minutes <= 60
+        or not _is_public_action_text(candidate.instruction)
+        or not candidate.recovery_steps
+        or any(not _is_public_action_text(step) for step in candidate.recovery_steps)
+        or candidate.simulation_insufficiency.code not in SIMULATION_INSUFFICIENCY_CODES
+        or not _is_public_action_text(candidate.simulation_insufficiency.explanation)
+    ):
+        raise OperatorFlowError("operator action contract is invalid")
+    if (
+        candidate.notification_kind is not None
+        and candidate.notification_kind not in NOTIFICATION_KINDS
+    ):
+        raise OperatorFlowError("operator action contract is invalid")
+
+
+def validate_operator_candidates(
+    candidates: tuple[OperatorActionCandidate, ...],
+    requested_surfaces: tuple[str, ...],
+) -> None:
+    if len({candidate.action_id for candidate in candidates}) != len(candidates):
+        raise OperatorFlowError("operator action contract is invalid")
+    for candidate in candidates:
+        _validate_candidate(candidate, requested_surfaces)
+
+
+def validate_operator_flow_actions(
+    operator_flow: object,
+    allowed_surfaces: object,
+) -> None:
+    if not isinstance(operator_flow, dict) or not isinstance(allowed_surfaces, list):
+        raise OperatorFlowError("operator action contract is invalid")
+    groups = operator_flow.get("groups")
+    total_duration_minutes = operator_flow.get("totalDurationMinutes")
+    if (
+        operator_flow.get("schemaVersion") != 1
+        or any(not isinstance(surface, str) for surface in allowed_surfaces)
+        or allowed_surfaces != sorted(set(allowed_surfaces))
+        or not isinstance(groups, list)
+        or not isinstance(total_duration_minutes, int)
+        or isinstance(total_duration_minutes, bool)
+    ):
+        raise OperatorFlowError("operator action contract is invalid")
+    normalized_allowed_surfaces = tuple(cast(list[str], allowed_surfaces))
+    normalized_groups = cast(list[object], groups)
+    candidates: list[OperatorActionCandidate] = []
+    total_duration = 0
+    for group in normalized_groups:
+        if (
+            not isinstance(group, dict)
+            or not isinstance(group.get("actions"), list)
+            or not isinstance(group.get("durationMinutes"), int)
+            or isinstance(group.get("durationMinutes"), bool)
+        ):
+            raise OperatorFlowError("operator action contract is invalid")
+        device = group.get("device")
+        group_duration = 0
+        for action in group["actions"]:
+            if not isinstance(action, dict):
+                raise OperatorFlowError("operator action contract is invalid")
+            insufficiency = action.get("simulationInsufficiency")
+            if not isinstance(insufficiency, dict) or set(insufficiency) != {
+                "code",
+                "explanation",
+            }:
+                raise OperatorFlowError("operator action contract is invalid")
+            surfaces = action.get("surfaces")
+            recovery_steps = action.get("recoverySteps")
+            duration_minutes = action.get("durationMinutes")
+            if (
+                not isinstance(surfaces, list)
+                or not isinstance(recovery_steps, list)
+                or not isinstance(duration_minutes, int)
+                or isinstance(duration_minutes, bool)
+            ):
+                raise OperatorFlowError("operator action contract is invalid")
+            candidates.append(
+                OperatorActionCandidate(
+                    action_id=action.get("id"),
+                    device=device,
+                    surfaces=tuple(surfaces),
+                    reason_code=action.get("reasonCode"),
+                    action_kind=action.get("actionKind"),
+                    estimate_minutes=duration_minutes,
+                    instruction=action.get("instruction"),
+                    notification_kind=action.get("notificationKind"),
+                    recovery_steps=tuple(recovery_steps),
+                    simulation_insufficiency=SimulationInsufficiency(
+                        code=insufficiency.get("code"),
+                        explanation=insufficiency.get("explanation"),
+                    ),
+                )
+            )
+            group_duration += duration_minutes
+        if group["durationMinutes"] != group_duration:
+            raise OperatorFlowError("operator action contract is invalid")
+        total_duration += group_duration
+    if total_duration_minutes != total_duration:
+        raise OperatorFlowError("operator action contract is invalid")
+    validate_operator_candidates(tuple(candidates), normalized_allowed_surfaces)
 
 
 def _new_state(session: CoordinatorSessionState, now: datetime) -> OperatorFlowState:
@@ -747,44 +934,50 @@ def _active_deferral(
 
 
 def _base_action_candidate(action: OperatorAction) -> OperatorActionCandidate:
+    insufficiency = action.simulation_insufficiency
+    if not isinstance(insufficiency, dict) or set(insufficiency) != {"code", "explanation"}:
+        raise OperatorFlowError("operator action contract is invalid")
+    action_id = action.id or f"device.{_device_key(action.device)}.action"
+    notification_kind = action.notification_kind
+    recovery_steps = (
+        "Complete the requested non-destructive action, then rerun status.",
+    )
     if action.device == "Apple Watch" and "Restart the Watch" in action.instruction:
-        return OperatorActionCandidate(
-            action_id="watchos.restart",
-            device=action.device,
-            estimate_minutes=3,
-            instruction=action.instruction,
-            notification_kind="restartRequired",
-            recovery_steps=(
-                "Confirm the exact Watch build is still installed.",
-                "Restart once with the existing complication placements intact.",
-                "Record the restart attestation, then resume receipt collection.",
-            ),
+        action_id = "watchos.restart"
+        notification_kind = "restartRequired"
+        recovery_steps = (
+            "Confirm the exact Watch build is still installed.",
+            "Restart once with the existing complication placements intact.",
+            "Record the restart attestation, then resume receipt collection.",
         )
-    if action.device == "Mac" and "Open the canonical Mac app" in action.instruction:
-        return OperatorActionCandidate(
-            action_id="macos.app.open",
-            device=action.device,
-            estimate_minutes=1,
-            instruction=action.instruction,
-            notification_kind=None,
-            recovery_steps=(
-                "Open the canonical signed app once.",
-                "Preserve the installed app, local data, and widget placements.",
-                "Rerun coordinator status.",
-            ),
+    elif action.device == "Mac" and "Open the canonical Mac app" in action.instruction:
+        action_id = "macos.app.open"
+        recovery_steps = (
+            "Open the canonical signed app once.",
+            "Preserve the installed app, local data, and widget placements.",
+            "Rerun coordinator status.",
         )
     return OperatorActionCandidate(
-        action_id=f"device.{_device_key(action.device)}.action",
+        action_id=action_id,
         device=action.device,
-        estimate_minutes=1,
+        surfaces=action.surfaces,
+        reason_code=action.reason_code,
+        action_kind=action.action_kind,
+        estimate_minutes=action.duration_minutes,
         instruction=action.instruction,
-        notification_kind=None,
-        recovery_steps=("Complete the requested non-destructive action, then rerun status.",),
+        notification_kind=notification_kind,
+        recovery_steps=recovery_steps,
+        simulation_insufficiency=SimulationInsufficiency(**insufficiency),
     )
 
 
-def _runtime_recovery_candidate(surface: dict[str, Any]) -> OperatorActionCandidate | None:
+def _runtime_recovery_candidate(
+    surface: dict[str, Any],
+    requested_surfaces: tuple[str, ...],
+) -> OperatorActionCandidate | None:
     surface_name = str(surface.get("surface") or "")
+    if surface_name not in requested_surfaces:
+        return None
     reason = str(surface.get("reason") or "")
     prefix = surface_name.split(".", 1)[0]
     device = SURFACE_DEVICE.get(prefix, "Coordinator")
@@ -799,6 +992,9 @@ def _runtime_recovery_candidate(surface: dict[str, Any]) -> OperatorActionCandid
         return OperatorActionCandidate(
             action_id=f"{surface_name}.recover",
             device=device,
+            surfaces=(surface_name,),
+            reason_code="runtime-surface-diagnostic",
+            action_kind="manual-recovery",
             estimate_minutes=5 if prefix in {"watchos", "visionos"} else 3,
             instruction=host_instruction,
             notification_kind="blockedDecisionRequired",
@@ -806,6 +1002,10 @@ def _runtime_recovery_candidate(surface: dict[str, Any]) -> OperatorActionCandid
                 "Preserve the installed app and current surface placement.",
                 "Open the signed host app once and allow the normal extension refresh path to run.",
                 "Start a fresh bounded receipt window only if the prior window expired.",
+            ),
+            simulation_insufficiency=SimulationInsufficiency(
+                "signed-runtime-observation-required",
+                "The signed host must refresh the affected surface before runtime evidence can be collected.",
             ),
         )
     if reason in {
@@ -825,6 +1025,9 @@ def _runtime_recovery_candidate(surface: dict[str, Any]) -> OperatorActionCandid
         return OperatorActionCandidate(
             action_id=f"{surface_name}.diagnose",
             device=device,
+            surfaces=(surface_name,),
+            reason_code="runtime-surface-diagnostic",
+            action_kind="operator-decision",
             estimate_minutes=5,
             instruction=instruction,
             notification_kind="blockedDecisionRequired",
@@ -832,6 +1035,10 @@ def _runtime_recovery_candidate(surface: dict[str, Any]) -> OperatorActionCandid
                 "Keep the exact signed target installed.",
                 "Preserve app data and existing surface placements.",
                 "Re-establish only the bounded receipt session or expected manifest contract.",
+            ),
+            simulation_insufficiency=SimulationInsufficiency(
+                "signed-runtime-observation-required",
+                "The exact signed runtime and its bounded receipt contract cannot be reproduced by a simulation.",
             ),
         )
     return None
@@ -846,6 +1053,19 @@ def build_operator_candidates(
 ) -> tuple[OperatorActionCandidate, ...]:
     if session.lifecycle != "active":
         return ()
+    visual_approvals = report.visual_approvals or {}
+    allowed_surfaces = tuple(
+        sorted(
+            {
+                *session.requested_surfaces,
+                *(
+                    item.get("surface")
+                    for item in visual_approvals.get("requirements") or []
+                    if isinstance(item, dict) and isinstance(item.get("surface"), str)
+                ),
+            }
+        )
+    )
     candidates: dict[str, OperatorActionCandidate] = {
         candidate.action_id: candidate
         for candidate in (_base_action_candidate(action) for action in report.actions)
@@ -858,6 +1078,9 @@ def build_operator_candidates(
         candidates[action_id] = OperatorActionCandidate(
             action_id=action_id,
             device=device.label,
+            surfaces=_surfaces_for_device(session.requested_surfaces, device.label),
+            reason_code="device-not-found",
+            action_kind="manual-recovery",
             estimate_minutes=3,
             instruction=f"Make a physical {device.label} available for this scoped validation session.",
             notification_kind="blockedDecisionRequired",
@@ -865,6 +1088,10 @@ def build_operator_candidates(
                 "Use the existing signed installation when the device is available.",
                 "Preserve app data and current placements.",
                 "Rerun status after the physical device appears in CoreDevice.",
+            ),
+            simulation_insufficiency=SimulationInsufficiency(
+                "physical-device-interaction-required",
+                "A physical device is required for this scoped validation session.",
             ),
         )
     for wait in state.waits:
@@ -875,6 +1102,9 @@ def build_operator_candidates(
             candidates[wait.action_id] = OperatorActionCandidate(
                 action_id=wait.action_id,
                 device=wait.device,
+                surfaces=_surfaces_for_device(session.requested_surfaces, wait.device),
+                reason_code="device-access-required",
+                action_kind="manual-recovery",
                 estimate_minutes=2,
                 instruction=(
                     f"Unlock or wake {wait.device} once, then rerun status. "
@@ -886,11 +1116,18 @@ def build_operator_candidates(
                     "Preserve the installed app and current placements.",
                     "Rerun status; normal waiting resumes automatically if evidence is still propagating.",
                 ),
+                simulation_insufficiency=SimulationInsufficiency(
+                    "physical-device-interaction-required",
+                    "Only an operator can unlock or wake the physical device once.",
+                ),
             )
         elif wait.condition in {"not_reachable", "unavailable"} and elapsed >= UNREACHABLE_ESCALATION:
             candidates[wait.action_id] = OperatorActionCandidate(
                 action_id=wait.action_id,
                 device=wait.device,
+                surfaces=_surfaces_for_device(session.requested_surfaces, wait.device),
+                reason_code="device-access-required",
+                action_kind="manual-recovery",
                 estimate_minutes=3,
                 instruction=f"Restore normal reachability for {wait.device}, then rerun status.",
                 notification_kind="blockedDecisionRequired",
@@ -898,6 +1135,10 @@ def build_operator_candidates(
                     "Check normal power, pairing, and network reachability.",
                     "Preserve the installed app, data, and current placements.",
                     "Rerun status after the device is reachable.",
+                ),
+                simulation_insufficiency=SimulationInsufficiency(
+                    "physical-device-interaction-required",
+                    "Only the physical device can establish its normal reachability state.",
                 ),
             )
     if runtime_evidence is not None:
@@ -907,7 +1148,7 @@ def build_operator_candidates(
                 "unknown",
             }:
                 continue
-            candidate = _runtime_recovery_candidate(surface)
+            candidate = _runtime_recovery_candidate(surface, session.requested_surfaces)
             if candidate is not None:
                 candidates[candidate.action_id] = candidate
         runtime_diagnostics = {
@@ -922,6 +1163,9 @@ def build_operator_candidates(
             candidates["coordinator.runtime-diagnostic"] = OperatorActionCandidate(
                 action_id="coordinator.runtime-diagnostic",
                 device="Coordinator",
+                surfaces=allowed_surfaces,
+                reason_code="runtime-session-diagnostic",
+                action_kind="operator-decision",
                 estimate_minutes=5,
                 instruction="Review the bounded runtime-session diagnostic before relying on the latest status.",
                 notification_kind="blockedDecisionRequired",
@@ -930,8 +1174,16 @@ def build_operator_candidates(
                     "Rerun read-only status or the existing signed-host sync contract.",
                     "Escalate only the reported session, export, or relay diagnostic.",
                 ),
+                simulation_insufficiency=SimulationInsufficiency(
+                    "signed-runtime-observation-required",
+                    "The bounded signed runtime session is required to resolve its diagnostic.",
+                ),
             )
-    visual_approvals = report.visual_approvals or {}
+    requirements_by_id = {
+        item.get("id"): item
+        for item in visual_approvals.get("requirements") or []
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
     for batch in visual_approvals.get("reviewBatches") or []:
         if not isinstance(batch, dict):
             raise OperatorFlowError("visual review batch is invalid")
@@ -940,6 +1192,7 @@ def build_operator_candidates(
         estimate_minutes = batch.get("estimateMinutes")
         instruction = batch.get("instruction")
         requirement_ids = batch.get("requirementIDs")
+        surfaces = batch.get("surfaces")
         requires_runtime = batch.get("requiresRuntime")
         if (
             not isinstance(estimate_minutes, int)
@@ -950,7 +1203,23 @@ def build_operator_candidates(
             or not isinstance(requirement_ids, list)
             or not requirement_ids
             or any(not isinstance(item, str) for item in requirement_ids)
+            or len(requirement_ids) != len(set(requirement_ids))
+            or not isinstance(surfaces, list)
+            or not surfaces
+            or any(not isinstance(surface, str) for surface in surfaces)
             or not isinstance(requires_runtime, bool)
+        ):
+            raise OperatorFlowError("visual review batch is invalid")
+        requirements = [requirements_by_id.get(requirement_id) for requirement_id in requirement_ids]
+        if any(
+            not isinstance(item, dict) or not isinstance(item.get("surface"), str)
+            for item in requirements
+        ):
+            raise OperatorFlowError("visual review batch is invalid")
+        expected_surfaces = tuple(sorted({item["surface"] for item in requirements}))
+        if (
+            any(item.get("device") != device for item in requirements)
+            or tuple(surfaces) != expected_surfaces
         ):
             raise OperatorFlowError("visual review batch is invalid")
         if requires_runtime and (
@@ -960,6 +1229,9 @@ def build_operator_candidates(
         candidates[action_id] = OperatorActionCandidate(
             action_id=action_id,
             device=device,
+            surfaces=expected_surfaces,
+            reason_code="visual-review-required",
+            action_kind="visual-review",
             estimate_minutes=estimate_minutes,
             instruction=instruction,
             notification_kind="readyForHumanReview",
@@ -967,6 +1239,10 @@ def build_operator_candidates(
                 "Open the signed validation gallery or real placed surface named by status.",
                 "Preserve the exact installed build and existing placements.",
                 "Record approve or reject for every listed requirement ID.",
+            ),
+            simulation_insufficiency=SimulationInsufficiency(
+                "visual-presentation-review-required",
+                "The signed surface must be reviewed in its actual presentation context.",
             ),
         )
     if report.state == "blocked" and not any(
@@ -976,6 +1252,9 @@ def build_operator_candidates(
         candidates["coordinator.blocked-decision"] = OperatorActionCandidate(
             action_id="coordinator.blocked-decision",
             device="Coordinator",
+            surfaces=allowed_surfaces,
+            reason_code="validation-blocked",
+            action_kind="operator-decision",
             estimate_minutes=5,
             instruction="Review the exact-build blocker before deciding whether to stop or replace the session.",
             notification_kind="blockedDecisionRequired",
@@ -984,13 +1263,19 @@ def build_operator_candidates(
                 "Preserve all collected evidence and signed runtimes.",
                 "Replace the session only when the newer target is intentional.",
             ),
+            simulation_insufficiency=SimulationInsufficiency(
+                "operator-attestation-required",
+                "The exact-build blocker requires an operator decision about the active session.",
+            ),
         )
-    return tuple(
+    result = tuple(
         sorted(
             candidates.values(),
             key=lambda item: (*_device_sort_key(item.device), item.action_id),
         )
     )
+    validate_operator_candidates(result, allowed_surfaces)
+    return result
 
 
 def build_operator_flow_report(
@@ -1018,6 +1303,14 @@ def build_operator_flow_report(
                 "estimate": _estimate(candidate.estimate_minutes),
                 "instruction": candidate.instruction,
                 "notificationKind": candidate.notification_kind,
+                "surfaces": list(candidate.surfaces),
+                "reasonCode": candidate.reason_code,
+                "actionKind": candidate.action_kind,
+                "durationMinutes": candidate.estimate_minutes,
+                "simulationInsufficiency": {
+                    "code": candidate.simulation_insufficiency.code,
+                    "explanation": candidate.simulation_insufficiency.explanation,
+                },
                 "recoverySteps": list(candidate.recovery_steps),
                 "deferral": (
                     {
@@ -1046,6 +1339,7 @@ def build_operator_flow_report(
             {
                 "device": device,
                 "estimate": _estimate(total_minutes),
+                "durationMinutes": total_minutes,
                 "actions": actions,
             }
         )
@@ -1100,6 +1394,7 @@ def build_operator_flow_report(
         "machineWaiting": flow_state == "waiting",
         "readyActionCount": len(ready_ids),
         "deferredActionCount": len(deferred_ids),
+        "totalDurationMinutes": sum(group["durationMinutes"] for group in groups),
         "groups": groups,
         "notificationDecisions": current_decisions,
         "deferrals": deferrals,
@@ -1130,6 +1425,11 @@ def apply_operator_flow_to_report(
                     instruction=action["instruction"],
                     id=action["id"],
                     notification_kind=action["notificationKind"],
+                    surfaces=tuple(action["surfaces"]),
+                    reason_code=action["reasonCode"],
+                    action_kind=action["actionKind"],
+                    duration_minutes=action["durationMinutes"],
+                    simulation_insufficiency=action["simulationInsufficiency"],
                 )
             )
     state = report.state
@@ -1186,7 +1486,9 @@ def build_final_report_payload(report: ValidationReport) -> dict[str, Any]:
         ],
     }
     operator_flow = report.operator_flow or {
+        "schemaVersion": 1,
         "state": "not-collected",
+        "totalDurationMinutes": 0,
         "groups": [],
         "notificationDecisions": [],
         "deferrals": [],
@@ -1202,6 +1504,19 @@ def build_final_report_payload(report: ValidationReport) -> dict[str, Any]:
         "machineWaitingCount": 0,
         "requirements": [],
     }
+    if any(not isinstance(surface, str) for surface in requested_surfaces):
+        raise OperatorFlowError("operator action contract is invalid")
+    allowed_action_surfaces = sorted(
+        {
+            *requested_surfaces,
+            *(
+                item.get("surface")
+                for item in visual_approvals.get("requirements") or []
+                if isinstance(item, dict) and isinstance(item.get("surface"), str)
+            ),
+        }
+    )
+    validate_operator_flow_actions(operator_flow, allowed_action_surfaces)
     watch_required = any(
         str(surface).startswith("watchos.")
         for surface in session.get("requestedSurfaces", [])

@@ -39,6 +39,7 @@ VISUAL_APPROVAL_SCHEMA_VERSION = 1
 VISUAL_REVIEW_CLASSES = ("shared-view", "os-composited-placement")
 VISUAL_DECISIONS = ("approved", "rejected")
 MAXIMUM_REQUIREMENT_COUNT = 128
+MAXIMUM_REQUIREMENTS_PER_REVIEW_BATCH = 30
 MAXIMUM_DECISION_COUNT = 512
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 REQUIREMENT_ID_PATTERN = re.compile(r"^[a-z0-9]+(?:[.-][a-z0-9]+)*$")
@@ -965,27 +966,40 @@ def build_visual_approval_report(
     review_batches = []
     for device in sorted(ready_by_device):
         items = ready_by_device[device]
-        shared_count = sum(item["evidenceClass"] == "shared-view" for item in items)
-        placement_count = sum(
-            item["evidenceClass"] == "os-composited-placement" for item in items
-        )
-        parts = []
-        if shared_count:
-            parts.append(f"{shared_count} shared-view check{'s' if shared_count != 1 else ''}")
-        if placement_count:
-            parts.append(f"{placement_count} placement glance{'s' if placement_count != 1 else ''}")
-        review_batches.append(
-            {
-                "actionID": f"review.{_device_key(device)}",
-                "device": device,
-                "requirementIDs": [item["id"] for item in items],
-                "requiresRuntime": bool(placement_count),
-                "instruction": (
-                    f"Review {', '.join(parts)} on {device}, then record each decision by requirement ID."
-                ),
-                "estimateMinutes": max(2, len(items) * 2),
-            }
-        )
+        chunks = [
+            items[index : index + MAXIMUM_REQUIREMENTS_PER_REVIEW_BATCH]
+            for index in range(0, len(items), MAXIMUM_REQUIREMENTS_PER_REVIEW_BATCH)
+        ]
+        for index, chunk in enumerate(chunks, start=1):
+            shared_count = sum(item["evidenceClass"] == "shared-view" for item in chunk)
+            placement_count = sum(
+                item["evidenceClass"] == "os-composited-placement" for item in chunk
+            )
+            parts = []
+            if shared_count:
+                parts.append(
+                    f"{shared_count} shared-view check{'s' if shared_count != 1 else ''}"
+                )
+            if placement_count:
+                parts.append(
+                    f"{placement_count} placement glance{'s' if placement_count != 1 else ''}"
+                )
+            action_id = f"review.{_device_key(device)}"
+            if len(chunks) > 1:
+                action_id = f"{action_id}.part-{index}"
+            review_batches.append(
+                {
+                    "actionID": action_id,
+                    "device": device,
+                    "requirementIDs": [item["id"] for item in chunk],
+                    "surfaces": sorted({str(item["surface"]) for item in chunk}),
+                    "requiresRuntime": bool(placement_count),
+                    "instruction": (
+                        f"Review {', '.join(parts)} on {device}, then record each decision by requirement ID."
+                    ),
+                    "estimateMinutes": max(2, len(chunk) * 2),
+                }
+            )
     states = {str(item["state"]) for item in requirements}
     if not requirements:
         overall_state = "not-required"

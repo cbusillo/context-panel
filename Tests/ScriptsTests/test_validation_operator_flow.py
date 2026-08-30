@@ -1,5 +1,6 @@
 import importlib.util
 import contextlib
+import copy
 import io
 import json
 import os
@@ -117,6 +118,30 @@ def runtime_report(surface_states):
         "diagnostics": [],
         "surfaces": surfaces,
     }
+
+
+def operator_action(
+    *,
+    action_id,
+    device_name,
+    surfaces,
+    duration_minutes=1,
+    reason_code="device-access-required",
+):
+    return context_panel_validation.OperatorAction(
+        device=device_name,
+        estimate=f"about {duration_minutes} minutes",
+        instruction="Complete the bounded validation action, then rerun status.",
+        id=action_id,
+        surfaces=tuple(surfaces),
+        reason_code=reason_code,
+        action_kind="status-follow-up",
+        duration_minutes=duration_minutes,
+        simulation_insufficiency={
+            "code": "physical-device-interaction-required",
+            "explanation": "The exact validation device requires an operator action.",
+        },
+    )
 
 
 class OperatorFlowTests(unittest.TestCase):
@@ -611,7 +636,10 @@ class OperatorFlowTests(unittest.TestCase):
         surfaces = ("macos.app",)
         session = self.session(surfaces)
         runtime = runtime_report((("macos.app", "proven", "exact-build-runtime-receipt"),))
-        private_note = "/Users/private/secret.p8 device=00008101 account@example.com asc-id-123"
+        private_note = (
+            "/Users/private/secret.p8 device=00008101 account@example.com "
+            "asc-id-123 xcrun devicectl device info --device 00008101"
+        )
         report = context_panel_validation.build_report(
             TARGET,
             valid_asc(),
@@ -647,6 +675,8 @@ class OperatorFlowTests(unittest.TestCase):
             "00008101",
             "account@example.com",
             "asc-id-123",
+            "xcrun devicectl",
+            "--device 00008101",
             session.id,
         ):
             self.assertNotIn(private_value, serialized)
@@ -845,11 +875,24 @@ class OperatorFlowTests(unittest.TestCase):
             ),
             visual_approvals={
                 "state": "pending",
+                "requirementCount": 1,
+                "approvedCount": 0,
+                "rejectedCount": 0,
+                "readyReviewCount": 1,
+                "machineWaitingCount": 0,
+                "requirements": [
+                    {
+                        "id": "watch.complication.placement.corner",
+                        "surface": "watchos.complication",
+                        "device": "Apple Watch",
+                    }
+                ],
                 "reviewBatches": [
                     {
                         "actionID": "review.apple-watch",
                         "device": "Apple Watch",
                         "requirementIDs": ["watch.complication.placement.corner"],
+                        "surfaces": ["watchos.complication"],
                         "requiresRuntime": True,
                         "instruction": "Review one placement glance on Apple Watch.",
                         "estimateMinutes": 2,
@@ -884,11 +927,19 @@ class OperatorFlowTests(unittest.TestCase):
             ),
             visual_approvals={
                 "state": "waiting",
+                "requirements": [
+                    {
+                        "id": "watch.complication.placement.corner",
+                        "surface": "watchos.complication",
+                        "device": "Apple Watch",
+                    }
+                ],
                 "reviewBatches": [
                     {
                         "actionID": "review.apple-watch",
                         "device": "Apple Watch",
                         "requirementIDs": ["watch.complication.placement.corner"],
+                        "surfaces": ["watchos.complication"],
                         "requiresRuntime": True,
                         "instruction": "Review one placement glance on Apple Watch.",
                         "estimateMinutes": 2,
@@ -909,6 +960,366 @@ class OperatorFlowTests(unittest.TestCase):
 
         self.assertFalse(flow["groups"])
         self.assertEqual(flow["readyActionCount"], 0)
+
+    def test_shared_view_only_action_uses_visual_scope_without_runtime_surfaces(self):
+        session = self.session(())
+        report = replace(
+            self.report(()),
+            visual_approvals={
+                "state": "pending",
+                "requirementCount": 1,
+                "approvedCount": 0,
+                "rejectedCount": 0,
+                "readyReviewCount": 1,
+                "machineWaitingCount": 0,
+                "requirements": [
+                    {
+                        "id": "watch.app.shared.dark",
+                        "evidenceClass": "shared-view",
+                        "surface": "watchos.app",
+                        "device": "Apple Watch",
+                        "state": "ready",
+                        "reason": "review-ready",
+                    }
+                ],
+                "reviewBatches": [
+                    {
+                        "actionID": "review.apple-watch",
+                        "device": "Apple Watch",
+                        "requirementIDs": ["watch.app.shared.dark"],
+                        "surfaces": ["watchos.app"],
+                        "requiresRuntime": False,
+                        "instruction": "Review the signed Watch app.",
+                        "estimateMinutes": 2,
+                    }
+                ],
+            },
+        )
+
+        _, flow = context_panel_validation.OperatorFlowStore(self.store).reconcile(
+            session,
+            report,
+            None,
+            NOW,
+        )
+        applied = context_panel_validation.apply_operator_flow_to_report(report, flow)
+        payload = context_panel_validation.build_final_report_payload(
+            replace(applied, session=session.public_dict())
+        )
+
+        self.assertEqual(flow["groups"][0]["actions"][0]["surfaces"], ["watchos.app"])
+        self.assertEqual(payload["operatorFlow"]["totalDurationMinutes"], 2)
+
+        blocked_report = replace(report, state="blocked")
+        _, blocked_flow = context_panel_validation.OperatorFlowStore(self.store).reconcile(
+            session,
+            blocked_report,
+            None,
+            NOW,
+        )
+        blocked_action = next(
+            action
+            for group in blocked_flow["groups"]
+            for action in group["actions"]
+            if action["id"] == "coordinator.blocked-decision"
+        )
+        self.assertEqual(blocked_action["surfaces"], ["watchos.app"])
+
+        diagnostic_runtime = runtime_report(())
+        diagnostic_runtime["diagnostics"] = ["relay-export-unavailable"]
+        _, diagnostic_flow = context_panel_validation.OperatorFlowStore(self.store).reconcile(
+            session,
+            report,
+            diagnostic_runtime,
+            NOW,
+        )
+        diagnostic_action = next(
+            action
+            for group in diagnostic_flow["groups"]
+            for action in group["actions"]
+            if action["id"] == "coordinator.runtime-diagnostic"
+        )
+        self.assertEqual(diagnostic_action["surfaces"], ["watchos.app"])
+
+    def test_base_actions_preserve_non_destructive_recovery_steps(self):
+        surfaces = ("macos.app", "watchos.app")
+        session = self.session(surfaces)
+        report = self.report(
+            surfaces,
+            mac=proven_mac(running=False),
+            devices=(device("Apple Watch", "watchOS"),),
+        )
+
+        _, flow = context_panel_validation.OperatorFlowStore(self.store).reconcile(
+            session,
+            report,
+            None,
+            NOW,
+        )
+        actions = {
+            action["id"]: action
+            for group in flow["groups"]
+            for action in group["actions"]
+        }
+
+        self.assertIn("widget placements", " ".join(actions["macos.app.open"]["recoverySteps"]))
+        self.assertIn(
+            "complication placements intact",
+            " ".join(actions["watchos.restart"]["recoverySteps"]),
+        )
+
+    def test_candidate_sources_emit_complete_public_action_contracts(self):
+        surfaces = ("macos.app", "ios.app", "visionos.app", "watchos.app")
+        session = self.session(surfaces)
+        flow_store = context_panel_validation.OperatorFlowStore(self.store)
+        seen_action_ids = set()
+
+        def reconcile(report, runtime, now):
+            _, flow = flow_store.reconcile(session, report, runtime, now)
+            for group in flow["groups"]:
+                for action in group["actions"]:
+                    seen_action_ids.add(action["id"])
+                    self.assertEqual(
+                        set(action["simulationInsufficiency"]),
+                        {"code", "explanation"},
+                    )
+                    self.assertTrue(action["simulationInsufficiency"]["explanation"])
+                    self.assertTrue(action["surfaces"])
+                    self.assertTrue(set(action["surfaces"]).issubset(surfaces))
+                    self.assertIn(action["reasonCode"], context_panel_validation.REASON_CODES)
+                    self.assertIn(action["actionKind"], context_panel_validation.ACTION_KINDS)
+                    self.assertGreaterEqual(action["durationMinutes"], 1)
+                    self.assertLessEqual(action["durationMinutes"], 60)
+
+        reconcile(
+            self.report(
+                surfaces,
+                mac=proven_mac(running=False),
+                devices=(device("Apple Watch", "watchOS"),),
+            ),
+            None,
+            NOW,
+        )
+        reconcile(
+            self.report(surfaces, devices=(device("iPhone", "iOS", condition="not_found"),)),
+            None,
+            NOW,
+        )
+        locked = self.report(surfaces, devices=(device("iPhone", "iOS", condition="locked"),))
+        reconcile(locked, None, NOW)
+        reconcile(locked, None, NOW + timedelta(minutes=15))
+        unavailable = self.report(
+            surfaces,
+            devices=(device("iPhone", "iOS", condition="unavailable"),),
+        )
+        reconcile(unavailable, None, NOW)
+        reconcile(unavailable, None, NOW + timedelta(minutes=30))
+        reconcile(
+            self.report(surfaces),
+            runtime_report(
+                (("visionos.app", "diagnostic", "app-current-extension-stale-or-silent"),)
+            ),
+            NOW,
+        )
+        diagnostic_runtime = runtime_report((("macos.app", "proven", "receipt"),))
+        diagnostic_runtime["diagnostics"] = ["export-timeout"]
+        reconcile(self.report(surfaces), diagnostic_runtime, NOW)
+        reconcile(
+            replace(
+                self.report(surfaces),
+                visual_approvals={
+                    "state": "pending",
+                    "requirements": [
+                        {
+                            "id": "watch.app.shared.dark",
+                            "surface": "watchos.app",
+                            "device": "Apple Watch",
+                        }
+                    ],
+                    "reviewBatches": [
+                        {
+                            "actionID": "review.apple-watch",
+                            "device": "Apple Watch",
+                            "requirementIDs": ["watch.app.shared.dark"],
+                            "surfaces": ["watchos.app"],
+                            "requiresRuntime": False,
+                            "instruction": "Review the signed Watch app.",
+                            "estimateMinutes": 2,
+                        }
+                    ],
+                },
+            ),
+            None,
+            NOW,
+        )
+        reconcile(self.report(surfaces, mac=proven_mac(install_state="superseded")), None, NOW)
+
+        self.assertTrue(
+            {
+                "macos.app.open",
+                "watchos.restart",
+                "device.iphone.connect",
+                "device.iphone.access",
+                "visionos.app.recover",
+                "coordinator.runtime-diagnostic",
+                "review.apple-watch",
+                "coordinator.blocked-decision",
+            }.issubset(seen_action_ids)
+        )
+
+    def test_invalid_contract_rejects_before_operator_sidecar_write(self):
+        surfaces = ("macos.app",)
+        session = self.session(surfaces)
+        flow_store = context_panel_validation.OperatorFlowStore(self.store)
+        valid = operator_action(
+            action_id="macos.contract",
+            device_name="Mac",
+            surfaces=surfaces,
+        )
+        invalid_actions = (
+            replace(valid, simulation_insufficiency=None),
+            replace(valid, reason_code="unknown-reason"),
+            replace(valid, surfaces=()),
+            replace(valid, surfaces=("watchos.app",)),
+            replace(valid, duration_minutes=0),
+            replace(
+                valid,
+                instruction="Run xcrun devicectl with --device 00008101, then rerun status.",
+            ),
+            replace(
+                valid,
+                instruction="Contact account@example.com before continuing.",
+            ),
+            replace(
+                valid,
+                instruction="Use physical device serial C39ABC123456 before continuing.",
+            ),
+        )
+
+        for action in invalid_actions:
+            with self.subTest(action=action):
+                report = replace(self.report(surfaces), actions=(action,))
+                with self.assertRaisesRegex(
+                    context_panel_validation.OperatorFlowError,
+                    "operator action contract",
+                ):
+                    flow_store.reconcile(session, report, None, NOW)
+                self.assertFalse(self.store.operator_flow_path(session.id).exists())
+
+        malformed_visual = replace(
+            self.report(surfaces),
+            visual_approvals={
+                "state": "pending",
+                "requirements": [
+                    {
+                        "id": "mac.app.shared.dark",
+                        "surface": "macos.app",
+                        "device": "Mac",
+                    }
+                ],
+                "reviewBatches": [
+                    {
+                        "actionID": "review.mac",
+                        "device": "Mac",
+                        "requirementIDs": ["mac.app.shared.dark"],
+                        "surfaces": ["watchos.app"],
+                        "requiresRuntime": False,
+                        "instruction": "Review the signed Mac app.",
+                        "estimateMinutes": 2,
+                    }
+                ],
+            },
+        )
+        with self.assertRaisesRegex(context_panel_validation.OperatorFlowError, "visual review batch"):
+            flow_store.reconcile(session, malformed_visual, None, NOW)
+        self.assertFalse(self.store.operator_flow_path(session.id).exists())
+
+    def test_operator_action_contract_reports_aggregate_budget_and_bounds_each_action(self):
+        surfaces = ("macos.app",)
+        session = self.session(surfaces)
+        flow_store = context_panel_validation.OperatorFlowStore(self.store)
+        report = replace(
+            self.report(surfaces),
+            actions=(
+                operator_action(
+                    action_id="macos.first",
+                    device_name="Mac",
+                    surfaces=surfaces,
+                    duration_minutes=16,
+                ),
+                operator_action(
+                    action_id="macos.second",
+                    device_name="Mac",
+                    surfaces=surfaces,
+                    duration_minutes=16,
+                ),
+            ),
+        )
+        _, flow = flow_store.reconcile(session, report, None, NOW)
+        self.assertEqual(flow["groups"][0]["durationMinutes"], 32)
+        self.assertEqual(flow["totalDurationMinutes"], 32)
+
+        other_root = self.root / "over-budget"
+        other_store = context_panel_validation.SessionStateStore(
+            root=other_root,
+            legacy_root=other_root / "Legacy",
+        )
+        other_session, _ = other_store.start_session(
+            TARGET,
+            surfaces,
+            NOW,
+            timedelta(hours=2),
+            timedelta(days=1),
+        )
+        invalid_report = replace(
+            self.report(surfaces),
+            actions=(
+                operator_action(
+                    action_id="macos.over-budget",
+                    device_name="Mac",
+                    surfaces=surfaces,
+                    duration_minutes=61,
+                ),
+            ),
+        )
+        with self.assertRaisesRegex(
+            context_panel_validation.OperatorFlowError,
+            "operator action contract",
+        ):
+            context_panel_validation.OperatorFlowStore(other_store).reconcile(
+                other_session,
+                invalid_report,
+                None,
+                NOW,
+            )
+        self.assertFalse(other_store.operator_flow_path(other_session.id).exists())
+
+    def test_final_report_rejects_hand_edited_action_contract(self):
+        surfaces = ("watchos.app",)
+        session = self.session(surfaces)
+        report = replace(
+            self.report(
+                surfaces,
+                devices=(device("Apple Watch", "watchOS"),),
+            ),
+            session=session.public_dict(),
+        )
+        _, flow = context_panel_validation.OperatorFlowStore(self.store).reconcile(
+            session,
+            report,
+            None,
+            NOW,
+        )
+        malformed = copy.deepcopy(flow)
+        malformed["groups"][0]["actions"][0]["reasonCode"] = "unknown-reason"
+
+        with self.assertRaisesRegex(
+            context_panel_validation.OperatorFlowError,
+            "operator action contract",
+        ):
+            context_panel_validation.build_final_report_payload(
+                replace(report, operator_flow=malformed)
+            )
 
 
 if __name__ == "__main__":

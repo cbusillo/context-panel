@@ -14,6 +14,28 @@ Vision Pro, Apple Watch, Apple TV, or Coordinator. Each action has a stable ID,
 plain instruction, honest time estimate, bounded recovery sequence, and optional
 notification decision.
 
+Every queued action also carries a fail-closed machine-readable contract:
+
+- `surfaces`: the exact non-empty subset of requested surfaces affected by the
+  action
+- `reasonCode`: a closed-vocabulary explanation of why the action is requested
+- `actionKind`: a closed-vocabulary classification of the work
+- `durationMinutes`: an integer from 1 through 60
+- `simulationInsufficiency`: a closed-vocabulary code plus a public explanation
+  of why simulator or machine evidence cannot complete the action
+
+The coordinator rejects missing or unknown contract fields before writing the
+operator-flow sidecar or notification decisions. Every action is bounded to 60
+minutes, large visual-review sets are split into bounded batches, and each device
+group plus the complete queue reports its exact aggregate `durationMinutes`.
+The final-report builder and release-evidence gate revalidate the same contract
+and aggregates, so stale or hand-edited action data cannot bypass the planning
+budget.
+
+Status output omits device classes outside the requested surface scope. An
+unchanged or unrelated device is therefore neither a blocker nor an implied
+next action.
+
 Passive machine waits stay quiet:
 
 - Apple processing or TestFlight assignment
@@ -68,7 +90,9 @@ they do not alter evidence or mark a surface complete.
 machine prerequisites are ready. Shared-view requirements bind to exact render
 and fixture/gallery contract identity. Placement requirements remain silent
 until the same surface has a matching current runtime receipt; the queue batches
-ready requirements by public device class.
+ready requirements by public device class. Each batch names only the surfaces
+referenced by its requirement IDs; it never expands to every surface on the
+device.
 
 ## Visual Review Ledger
 
