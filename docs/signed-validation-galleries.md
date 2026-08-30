@@ -64,6 +64,54 @@ cell contract. `pixelDiffPolicy` is explicitly
 decisions. Private simulator capture, artifact handling, and any later capture
 or approval integration remain a Stage 2 boundary.
 
+## Private Simulator Capture
+
+`capture-shared-view-evidence` captures only `ios`, `ipados`, and `visionos`
+app/widget gallery requirements on throwaway simulators. It never builds,
+starts a coordinator session, records a visual decision, reads runtime receipts,
+or claims runtime or placement evidence.
+
+The private schema-v1 config contains only `ios`, `ipados`, or `visionos`
+profiles with `runtimeIdentifier`, `deviceTypeIdentifier`, and an absolute
+non-symlink `appBundle`. The bundle must use the Context Panel identifier,
+bounded numeric version/build values, and the exact embedded manifest derived
+from the supplied canonical current source manifest.
+
+```sh
+scripts/context-panel-validation.py capture-shared-view-evidence \
+  --surface-comparison <comparison.json> \
+  --current-manifest <current-surface-manifest.json> \
+  --requirements <visual-review-requirements.json> \
+  --capture-config <private-capture-config.json> \
+  --artifact-root <absolute-private-artifact-root> \
+  --output <absolute-shared-view-capture-receipt.json> \
+  --json
+```
+
+The executor recomputes the planner output, requires exact requirements, source
+manifest, embedded manifest, and captured-surface identity, then copies the app
+to a private run-scoped snapshot. It hashes paths, file types, modes, and bytes,
+installs only that snapshot, and verifies the installed simulator container
+against the same identity before capture.
+
+Each simulator name is unique. A pre-create inventory blocks collisions; any
+uncertain create result is cleaned only by a newly observed, profile-matching
+UDID. The executor never deletes by simulator name. Each cell resets appearance,
+requires two stable pre-route baselines, then two stable decodable routed PNGs
+that differ from the baseline and other cells. Termination between cells is
+best-effort so one failed launch cannot poison the next cell.
+
+Runs stage under a hidden `0700` directory. PNGs, the ownership marker, and the
+private index use `0600`. Publication uses an exclusive no-replace directory
+rename and parent-directory fsync before the `0644` public receipt is written.
+Cleanup removes only a run whose private ownership token still matches.
+
+Mac, Watch, and Apple TV remain explicit `unsupported-host-mechanism` results;
+missing profiles are blocked and command, image, stability, identity, cleanup,
+or publication faults are unknown. A zero exit means every requested capture
+was collected. The receipt remains an artifact-collection record only and is
+not an approval, runtime claim, placement claim, or pixel gate.
+
 ## Fixture Isolation
 
 `ContextPanelValidationFixtures` is a Foundation-only target. It contains fixed

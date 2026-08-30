@@ -255,6 +255,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Validated current schema-v5 surface-manifest comparison",
     )
     capture_shared_view_evidence_parser.add_argument(
+        "--current-manifest",
+        required=True,
+        type=Path,
+        help="Canonical current source surface manifest",
+    )
+    capture_shared_view_evidence_parser.add_argument(
         "--matrix",
         type=Path,
         default=DEFAULT_MATRIX_PATH,
@@ -731,6 +737,7 @@ def run_export_visual_reviews(args: argparse.Namespace) -> int:
 def run_capture_shared_view_evidence(args: argparse.Namespace) -> int:
     exit_code, receipt = execute_shared_view_capture(
         args.surface_comparison,
+        args.current_manifest,
         args.requirements,
         args.capture_config,
         args.artifact_root,
