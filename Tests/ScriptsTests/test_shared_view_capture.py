@@ -158,6 +158,7 @@ class FakeRunner:
         duplicate_routes: bool = False,
         cross_profile_duplicates: bool = False,
         created_device_mismatch: bool = False,
+        created_device_available: bool = True,
         container_path: Path | None = None,
         container_output: str | None = None,
         created_on_failed_create: bool = False,
@@ -177,6 +178,7 @@ class FakeRunner:
         self.duplicate_routes = duplicate_routes
         self.cross_profile_duplicates = cross_profile_duplicates
         self.created_device_mismatch = created_device_mismatch
+        self.created_device_available = created_device_available
         self.container_path = container_path
         self.container_output = container_output
         self.created_on_failed_create = created_on_failed_create
@@ -214,7 +216,7 @@ class FakeRunner:
                 "udid": self.created_simulator_id,
                 "name": "mismatched-name" if self.created_device_mismatch else self.created_simulator_name,
                 "deviceTypeIdentifier": self.created_device_type,
-                "isAvailable": True,
+                "isAvailable": self.created_device_available,
             }
             return CommandResult(
                 0,
@@ -834,8 +836,18 @@ class SharedViewCaptureTests(unittest.TestCase):
         )
         self.assertEqual("inventory-unknown", receipt["profiles"][0]["cleanupStatus"])
 
+        persisted = FakeRunner(persist_after_delete=True)
+        persisted_run = persisted.run
+
+        def become_unavailable_after_delete(args, *, timeout, environment=None):
+            result = persisted_run(args, timeout=timeout, environment=environment)
+            if args[2] == "delete":
+                persisted.created_device_available = False
+            return result
+
+        persisted.run = become_unavailable_after_delete
         exit_code, receipt = self.execute(
-            FakeRunner(persist_after_delete=True),
+            persisted,
             run_id="delete-persisted",
             receipt_path=self.root / "delete-persisted.json",
         )

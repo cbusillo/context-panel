@@ -1069,6 +1069,7 @@ def _matching_simulators(
     profile: CaptureProfile,
     simulator_name: str,
     error_base: str = "simctl-created-device",
+    strict_identity: bool = True,
 ) -> tuple[set[str] | None, str | None]:
     result = _run(
         runner,
@@ -1093,11 +1094,17 @@ def _matching_simulators(
             simulator_id = raw_device.get("udid")
             if (
                 raw_device.get("name") == simulator_name
-                and runtime_identifier == profile.runtime_identifier
-                and raw_device.get("deviceTypeIdentifier") == profile.device_type_identifier
-                and raw_device.get("isAvailable") is True
                 and isinstance(simulator_id, str)
                 and SIMULATOR_UDID_PATTERN.fullmatch(simulator_id)
+                and (
+                    not strict_identity
+                    or (
+                        runtime_identifier == profile.runtime_identifier
+                        and raw_device.get("deviceTypeIdentifier")
+                        == profile.device_type_identifier
+                        and raw_device.get("isAvailable") is True
+                    )
+                )
             ):
                 if simulator_id in matches:
                     return None, f"{error_base}-mismatch"
@@ -1244,6 +1251,7 @@ def _cleanup_simulator(
         profile,
         simulator_name,
         "simctl-delete-verification",
+        strict_identity=False,
     )
     if verification_error is not None or remaining is None:
         return "delete-unverified", verification_error or "simctl-delete-verification-invalid"
@@ -1338,7 +1346,11 @@ def _capture_profile(
     simulator_name = _simulator_name(profile.name, capture_run_id)
     lifecycle_error: str | None = None
     preexisting_ids, inventory_error = _matching_simulators(
-        runner, profile, simulator_name, "simctl-device-inventory"
+        runner,
+        profile,
+        simulator_name,
+        "simctl-device-inventory",
+        strict_identity=False,
     )
     if inventory_error is not None:
         return ProfileCaptureOutcome(
@@ -1366,15 +1378,12 @@ def _capture_profile(
     )
     simulator_id: str | None = None
     cleanup_target: str | None = None
-    creation_identity_uncertain = False
     if created.timed_out or created.returncode != 0:
         lifecycle_error = _command_error_code(created, "simctl-create")
-        creation_identity_uncertain = True
     else:
         simulator_id = _created_simulator_id(created)
         if simulator_id is None:
             lifecycle_error = "simctl-create-invalid-udid"
-            creation_identity_uncertain = True
         else:
             identity_error = _verify_created_simulator(
                 runner,
@@ -1384,7 +1393,6 @@ def _capture_profile(
             )
             if identity_error is not None:
                 lifecycle_error = identity_error
-                creation_identity_uncertain = True
             else:
                 cleanup_target = simulator_id
                 cleanup_target_observer(simulator_id)
@@ -1665,8 +1673,6 @@ def _capture_profile(
     if cleanup_target is None:
         if cleanup_inventory_unknown:
             cleanup_status = "inventory-unknown"
-        elif creation_identity_uncertain:
-            cleanup_status = "identity-unverified"
         else:
             cleanup_status = "identity-unverified"
         cleanup_error = None
