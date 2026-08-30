@@ -707,11 +707,12 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.write_config()
         for index, (runner_options, error_code, mechanism) in enumerate(cases):
             with self.subTest(error_code=error_code):
-                _, receipt = self.execute(
+                exit_code, receipt = self.execute(
                     FakeRunner(**runner_options),
                     run_id=f"command-failure-{index}",
                     receipt_path=self.root / f"command-failure-{index}.json",
                 )
+                self.assertEqual(EXIT_UNKNOWN, exit_code)
                 self.assertEqual(error_code, receipt["captures"][0]["errorCode"])
                 self.assertEqual(mechanism, receipt["captures"][0]["appearanceMechanism"])
 
@@ -1008,11 +1009,12 @@ class SharedViewCaptureTests(unittest.TestCase):
             with self.subTest(corruption=corruption):
                 self.write_plan(["ios.app"])
                 self.write_config()
-                _, receipt = self.execute(
+                exit_code, receipt = self.execute(
                     FakeRunner(corrupt_png=corruption),
                     run_id=f"corrupt-{index}",
                     receipt_path=self.root / f"corrupt-{index}.json",
                 )
+                self.assertEqual(EXIT_UNKNOWN, exit_code)
                 self.assertEqual("captured-image-invalid", receipt["captures"][0]["errorCode"])
 
     def test_png_validator_rejects_structural_and_bomb_inputs(self) -> None:
@@ -1020,6 +1022,17 @@ class SharedViewCaptureTests(unittest.TestCase):
         valid_idat = zlib.compress(valid_row * 180)
         document = png_document
         header = png_ihdr
+        realistic = self.root / "realistic.png"
+        realistic.write_bytes(document(
+            (b"IHDR", header()), (b"sRGB", b"\0"), (b"pHYs", b"\0" * 9),
+            (b"IDAT", valid_idat[:8]), (b"IDAT", valid_idat[8:]), (b"IEND", b""),
+        ))
+        minimal = self.root / "minimal.png"
+        minimal.write_bytes(png_bytes())
+        realistic_snapshot = _png_snapshot(realistic)
+        minimal_snapshot = _png_snapshot(minimal)
+        self.assertEqual(minimal_snapshot.pixel_digest, realistic_snapshot.pixel_digest)
+        self.assertNotEqual(minimal_snapshot.artifact_digest, realistic_snapshot.artifact_digest)
         cases = {
             "bit-depth": document((b"IHDR", header(bit_depth=16)), (b"IDAT", valid_idat), (b"IEND", b"")),
             "huge-dimension": document((b"IHDR", header(width=16_385)), (b"IDAT", zlib.compress(b"\x00")), (b"IEND", b"")),
@@ -1044,6 +1057,7 @@ class SharedViewCaptureTests(unittest.TestCase):
             "unused-zlib": document((b"IHDR", header()), (b"IDAT", valid_idat + zlib.compress(b"x")), (b"IEND", b"")),
             "declared-small-expansion": document((b"IHDR", header(width=1, height=1)), (b"IDAT", zlib.compress(b"x" * 1_000_000)), (b"IEND", b"")),
             "bad-filter": document((b"IHDR", header()), (b"IDAT", zlib.compress((b"\x05" + valid_row[1:]) * 180)), (b"IEND", b"")),
+            "too-many-chunks": document((b"IHDR", header()), *((b"tEXt", b"") for _ in range(capture_module.MAX_PNG_CHUNKS)), (b"IDAT", valid_idat), (b"IEND", b"")),
         }
         for name, content in cases.items():
             path = self.root / f"invalid-{name}.png"
@@ -1054,9 +1068,13 @@ class SharedViewCaptureTests(unittest.TestCase):
         oversized = self.root / "oversized.png"
         with oversized.open("wb") as stream:
             stream.truncate(capture_module.MAX_PNG_FILE_BYTES + 1)
+        target = self.root / "target.png"
+        target.write_bytes(png_bytes())
         symlink = self.root / "symlink.png"
-        symlink.symlink_to(self.root / "target.png")
-        for path in (oversized, self.root, symlink):
+        symlink.symlink_to(target)
+        fifo = self.root / "fifo.png"
+        os.mkfifo(fifo)
+        for path in (oversized, self.root, symlink, fifo):
             with self.subTest(path=path), self.assertRaisesRegex(SharedViewCaptureError, "captured image is invalid"):
                 _png_snapshot(path)
 

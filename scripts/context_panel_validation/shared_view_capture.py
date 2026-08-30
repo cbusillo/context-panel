@@ -75,9 +75,10 @@ SIMCTL_SCREENSHOT_TIMEOUT = 60
 SIMCTL_CLEANUP_TIMEOUT = 30
 CAPTURE_SETTLE_SECONDS = 1.0
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
-MAX_PNG_FILE_BYTES = 128 * 1024 * 1024
-MAX_PNG_DIMENSION = 16_384
-MAX_PNG_PIXELS = 100_000_000
+MAX_PNG_FILE_BYTES = 64 * 1024 * 1024
+MAX_PNG_DIMENSION = 8_192
+MAX_PNG_PIXELS = 33_554_432
+MAX_PNG_CHUNKS = 4_096
 MAX_JSON_FILE_BYTES = 16 * 1024 * 1024
 MAX_PLIST_FILE_BYTES = 4 * 1024 * 1024
 MAX_BUNDLE_FILE_BYTES = 512 * 1024 * 1024
@@ -189,8 +190,9 @@ class CapturePlan:
 
 @dataclass(frozen=True)
 class PNGSnapshot:
-    content: bytes
-    digest: str
+    byte_count: int
+    artifact_digest: str
+    pixel_digest: str
     width: int
     height: int
 
@@ -890,7 +892,10 @@ def _rename_exclusive(source: Path, destination: Path) -> None:
 def _png_snapshot(path: Path) -> PNGSnapshot:
     descriptor = -1
     try:
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
+        )
         image_stat = os.fstat(descriptor)
         if (
             not stat.S_ISREG(image_stat.st_mode)
@@ -924,6 +929,8 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
     saw_iend = False
     compressed_image = bytearray()
     while offset < len(data):
+        if chunk_index >= MAX_PNG_CHUNKS:
+            raise SharedViewCaptureError("captured image is invalid")
         if len(data) - offset < 12:
             raise SharedViewCaptureError("captured image is invalid")
         chunk_length = int.from_bytes(data[offset : offset + 4], "big")
@@ -993,7 +1000,7 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
     expected_size = height * row_size
     try:
         decompressor = zlib.decompressobj()
-        image_data = decompressor.decompress(bytes(compressed_image), expected_size + 1)
+        image_data = decompressor.decompress(compressed_image, expected_size + 1)
     except zlib.error as error:
         raise SharedViewCaptureError("captured image is invalid") from error
     if (
@@ -1003,12 +1010,35 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
         or decompressor.unused_data
     ):
         raise SharedViewCaptureError("captured image is invalid")
+    prior_row = bytearray(width * channels)
+    pixel_hasher = hashlib.sha256()
+    pixel_hasher.update(width.to_bytes(4, "big") + height.to_bytes(4, "big") + bytes((color_type,)))
     for row_offset in range(0, len(image_data), row_size):
-        if image_data[row_offset] > 4:
+        filter_type = image_data[row_offset]
+        if filter_type > 4:
             raise SharedViewCaptureError("captured image is invalid")
+        row = bytearray(image_data[row_offset + 1 : row_offset + row_size])
+        for index, value in enumerate(row):
+            left = row[index - channels] if index >= channels else 0
+            above = prior_row[index]
+            upper_left = prior_row[index - channels] if index >= channels else 0
+            if filter_type == 1:
+                row[index] = (value + left) & 0xFF
+            elif filter_type == 2:
+                row[index] = (value + above) & 0xFF
+            elif filter_type == 3:
+                row[index] = (value + ((left + above) // 2)) & 0xFF
+            elif filter_type == 4:
+                estimate = left + above - upper_left
+                distances = (abs(estimate - left), abs(estimate - above), abs(estimate - upper_left))
+                predictor = (left, above, upper_left)[distances.index(min(distances))]
+                row[index] = (value + predictor) & 0xFF
+        pixel_hasher.update(row)
+        prior_row = row
     return PNGSnapshot(
-        content=data,
-        digest=hashlib.sha256(data).hexdigest(),
+        byte_count=len(data),
+        artifact_digest=hashlib.sha256(data).hexdigest(),
+        pixel_digest=pixel_hasher.hexdigest(),
         width=width,
         height=height,
     )
@@ -1049,8 +1079,8 @@ def _result(
         "cellID": requirement.cell_id,
         "fixtureContractID": requirement.fixture_contract_id,
         "status": status,
-        "artifactDigest": snapshot.digest if snapshot is not None else None,
-        "artifactBytes": len(snapshot.content) if snapshot is not None else None,
+        "artifactDigest": snapshot.artifact_digest if snapshot is not None else None,
+        "artifactBytes": snapshot.byte_count if snapshot is not None else None,
         "pixelWidth": snapshot.width if snapshot is not None else None,
         "pixelHeight": snapshot.height if snapshot is not None else None,
         "hostMechanism": host_mechanism,
@@ -1289,7 +1319,7 @@ def _take_screenshot(
         return None, None, _command_error_code(result, command_base)
     try:
         snapshot = _png_snapshot(temporary_path)
-    except SharedViewCaptureError:
+    except (SharedViewCaptureError, MemoryError):
         temporary_path.unlink(missing_ok=True)
         return None, None, invalid_error_code
     return snapshot, temporary_path, None
@@ -1638,7 +1668,7 @@ def _capture_profile(
                     )
                     continue
                 try:
-                    if first_baseline.digest != route_baseline.digest:
+                    if first_baseline.pixel_digest != route_baseline.pixel_digest:
                         results[requirement.requirement_id] = _result(
                             requirement,
                             status="unknown",
@@ -1708,7 +1738,7 @@ def _capture_profile(
                     )
                     continue
                 try:
-                    if first_snapshot.digest != second_snapshot.digest:
+                    if first_snapshot.pixel_digest != second_snapshot.pixel_digest:
                         results[requirement.requirement_id] = _result(
                             requirement,
                             status="unknown",
@@ -1718,7 +1748,7 @@ def _capture_profile(
                             error_code="capture-unstable",
                         )
                         continue
-                    if second_snapshot.digest == route_baseline.digest:
+                    if second_snapshot.pixel_digest == route_baseline.pixel_digest:
                         results[requirement.requirement_id] = _result(
                             requirement,
                             status="unknown",
@@ -1728,8 +1758,8 @@ def _capture_profile(
                             error_code="route-baseline-unchanged",
                         )
                         continue
-                    duplicate_owner = seen_digests.get(second_snapshot.digest)
-                    if second_snapshot.digest in seen_digests:
+                    duplicate_owner = seen_digests.get(second_snapshot.pixel_digest)
+                    if second_snapshot.pixel_digest in seen_digests:
                         if duplicate_owner is not None:
                             prior_path = artifact_paths.pop(duplicate_owner, None)
                             if prior_path is None:
@@ -1752,7 +1782,7 @@ def _capture_profile(
                                 "duplicate-artifact-digest",
                                 now(),
                             )
-                        seen_digests[second_snapshot.digest] = None
+                        seen_digests[second_snapshot.pixel_digest] = None
                         results[requirement.requirement_id] = _result(
                             requirement,
                             status="unknown",
@@ -1770,7 +1800,7 @@ def _capture_profile(
                         os.chmod(final_path, 0o600)
                     except OSError:
                         final_path.unlink(missing_ok=True)
-                        seen_digests[second_snapshot.digest] = None
+                        seen_digests[second_snapshot.pixel_digest] = None
                         results[requirement.requirement_id] = _result(
                             requirement,
                             status="unknown",
@@ -1780,7 +1810,7 @@ def _capture_profile(
                             error_code="artifact-publish-failed",
                         )
                         continue
-                    seen_digests[second_snapshot.digest] = requirement.requirement_id
+                    seen_digests[second_snapshot.pixel_digest] = requirement.requirement_id
                     artifact_paths[requirement.requirement_id] = final_path
                     published_artifact_paths[requirement.requirement_id] = final_path
                     results[requirement.requirement_id] = _result(

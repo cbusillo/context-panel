@@ -115,6 +115,9 @@ directory entries are also fsynced into their parents. Existing private roots
 must be owned by the invoking user. PNG validation opens a bounded regular file
 without following symlinks, validates chunk structure and CRCs, bounds decoded
 dimensions and pixel count, and rejects oversized or trailing compressed data.
+Accepted captures are non-interlaced 8-bit RGB or RGBA PNGs with only recognized
+critical chunks; palette, higher-bit-depth, unknown-critical, and vendor-specific
+critical encodings are reported as `captured-image-invalid`.
 Cleanup removes only a run whose private ownership token still matches, and a
 failed emergency simulator cleanup is surfaced without exposing command output.
 
