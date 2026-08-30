@@ -1215,6 +1215,85 @@ class OperatorFlowTests(unittest.TestCase):
             " ".join(actions["watchos.restart"]["recoverySteps"]),
         )
 
+    def test_macos_launch_automation_precedes_human_open_action(self):
+        surfaces = ("macos.app",)
+        session = self.session(surfaces)
+        report = replace(
+            self.report(surfaces, mac=proven_mac(running=False)),
+            automation=context_panel_validation.build_automation_report(None),
+        )
+        flow_store = context_panel_validation.OperatorFlowStore(self.store)
+
+        _, before = flow_store.reconcile(session, report, None, NOW)
+        before_ids = {
+            action["id"]
+            for group in before["groups"]
+            for action in group["actions"]
+        }
+        self.assertIn("coordinator.macos-app-launch-automation", before_ids)
+        self.assertNotIn("macos.app.open", before_ids)
+
+        automation_store = context_panel_validation.AutomationStore(self.store)
+        automation_state = automation_store.record(
+            session,
+            context_panel_validation.make_attempt(
+                context_panel_validation.new_automation_state(session, NOW),
+                kind="macos.app.launch",
+                result="failed",
+                reason_code="macos-app-launch-command-failed",
+                started_at=NOW,
+                finished_at=NOW,
+                receipt_window_digest=context_panel_validation.macos_app_window_digest(report.mac),
+                runtime_report=None,
+            ),
+            NOW,
+        )
+        report = replace(
+            report,
+            automation=context_panel_validation.build_automation_report(automation_state),
+        )
+
+        _, after = flow_store.reconcile(session, report, None, NOW + timedelta(seconds=1))
+        after_ids = {
+            action["id"]
+            for group in after["groups"]
+            for action in group["actions"]
+        }
+        self.assertIn("macos.app.open", after_ids)
+        self.assertNotIn("coordinator.macos-app-launch-automation", after_ids)
+
+        automation_state = automation_store.record(
+            session,
+            context_panel_validation.make_attempt(
+                automation_state,
+                kind="macos.app.launch",
+                result="succeeded",
+                reason_code="macos-app-launch-verified",
+                started_at=NOW + timedelta(seconds=2),
+                finished_at=NOW + timedelta(seconds=2),
+                receipt_window_digest=context_panel_validation.macos_app_window_digest(report.mac),
+                runtime_report=None,
+            ),
+            NOW + timedelta(seconds=2),
+        )
+        report = replace(
+            report,
+            automation=context_panel_validation.build_automation_report(automation_state),
+        )
+        _, after_success = flow_store.reconcile(
+            session,
+            report,
+            None,
+            NOW + timedelta(seconds=3),
+        )
+        after_success_ids = {
+            action["id"]
+            for group in after_success["groups"]
+            for action in group["actions"]
+        }
+        self.assertIn("macos.app.open", after_success_ids)
+        self.assertNotIn("coordinator.macos-app-launch-automation", after_success_ids)
+
     def test_candidate_sources_emit_complete_public_action_contracts(self):
         surfaces = ("macos.app", "ios.app", "visionos.app", "watchos.app")
         session = self.session(surfaces)

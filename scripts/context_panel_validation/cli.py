@@ -6,7 +6,8 @@ import hashlib
 import json
 import re
 import sys
-from datetime import timedelta
+import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import cast
 
@@ -43,11 +44,14 @@ from .runtime_evidence import (
 )
 from .automation import (
     AUTOMATION_COOLDOWN,
+    AUTOMATION_KIND_LIMITS,
     MAXIMUM_AUTOMATION_ATTEMPT_COUNT,
     AutomationError,
     AutomationState,
     AutomationStore,
+    attempts_for_kind,
     build_automation_report,
+    macos_app_window_digest,
     make_attempt,
     new_automation_state,
     runtime_report_digest,
@@ -77,7 +81,12 @@ from .session import (
     apply_session_state_to_report,
     parse_iso8601,
 )
-from .system import SubprocessRunner, collect_device_evidence, collect_mac_evidence
+from .system import (
+    SubprocessRunner,
+    collect_device_evidence,
+    collect_mac_evidence,
+    launch_canonical_mac_app,
+)
 from .visual_approvals import (
     VISUAL_DECISIONS,
     VisualApprovalError,
@@ -86,6 +95,10 @@ from .visual_approvals import (
     build_visual_approval_report,
     load_visual_review_plan,
 )
+
+
+MACOS_LAUNCH_VERIFY_ATTEMPTS = 3
+MACOS_LAUNCH_VERIFY_DELAY_SECONDS = 1.0
 
 
 VERSION_PATTERN = re.compile(r"^[0-9]+(?:\.[0-9]+)*$")
@@ -393,6 +406,11 @@ def collect_validation_report(args: argparse.Namespace):
             )
     report = apply_session_state_to_report(report, session)
     if session is not None:
+        automation_state = AutomationStore(store).load(session)
+        report = replace(
+            report,
+            automation=build_automation_report(automation_state),
+        )
         _, operator_flow = OperatorFlowStore(store).reconcile(
             session,
             report,
@@ -400,10 +418,6 @@ def collect_validation_report(args: argparse.Namespace):
             generated_at,
         )
         report = apply_operator_flow_to_report(report, operator_flow)
-        report = replace(
-            report,
-            automation=build_automation_report(AutomationStore(store).load(session)),
-        )
     return report
 
 
@@ -630,8 +644,127 @@ def emit_automation_payload(
             raise AutomationError("automation report is invalid")
         print(
             f"Automation {automation_state_name}: {attempt_count} of "
-            f"{MAXIMUM_AUTOMATION_ATTEMPT_COUNT} bounded attempts recorded."
+            f"{AUTOMATION_KIND_LIMITS['runtime.receipt.sync']} receipt attempts recorded."
         )
+        kind_reports = automation_report.get("kindReports")
+        launch_report = (
+            kind_reports.get("macos.app.launch")
+            if isinstance(kind_reports, dict)
+            else None
+        )
+        if isinstance(launch_report, dict):
+            launch_state = launch_report.get("state")
+            launch_attempt_count = launch_report.get("attemptCount")
+            if isinstance(launch_state, str) and isinstance(launch_attempt_count, int):
+                print(
+                    f"Mac launch automation {launch_state}: {launch_attempt_count} of "
+                    f"{AUTOMATION_KIND_LIMITS['macos.app.launch']} attempts recorded."
+                )
+
+
+def _advance_macos_app_launch(
+    store: SessionStateStore,
+    session: CoordinatorSessionState,
+    automation_state: AutomationState | None,
+    runner: SubprocessRunner,
+    now: datetime,
+) -> tuple[AutomationState | None, bool]:
+    if not any(surface.startswith("macos.") for surface in session.requested_surfaces):
+        return automation_state, False
+
+    observed_mac = collect_mac_evidence(runner, session.target)
+    window_digest = macos_app_window_digest(observed_mac)
+    launch_identity_ready = (
+        observed_mac.install_state == "current"
+        and observed_mac.app_cloudkit == "Production"
+        and observed_mac.refresh_agent_cloudkit == "Production"
+    )
+    if not launch_identity_ready:
+        return automation_state, False
+    if (
+        observed_mac.baseline_state == "proven"
+        and observed_mac.app_process_state == "running"
+    ):
+        return automation_state, False
+
+    launch_attempts = tuple(
+        attempt
+        for attempt in attempts_for_kind(automation_state, "macos.app.launch")
+        if attempt.receipt_window_digest == window_digest
+    )
+    if len(launch_attempts) >= 2:
+        return automation_state, launch_attempts[-1].result != "succeeded"
+    if launch_attempts:
+        finished_at = parse_iso8601(launch_attempts[-1].finished_at)
+        assert finished_at is not None
+        if now < finished_at + AUTOMATION_COOLDOWN:
+            return automation_state, launch_attempts[-1].result != "succeeded"
+
+    if automation_state is not None and (
+        len(attempts_for_kind(automation_state, "macos.app.launch"))
+        >= AUTOMATION_KIND_LIMITS["macos.app.launch"]
+        or len(automation_state.attempts) >= MAXIMUM_AUTOMATION_ATTEMPT_COUNT
+    ):
+        return automation_state, True
+
+    if not (
+        observed_mac.baseline_state == "identity_verified_app_not_running"
+        and observed_mac.app_process_state == "not_running"
+    ):
+        attempt = make_attempt(
+            automation_state or new_automation_state(session, now),
+            kind="macos.app.launch",
+            result="skipped-precondition",
+            reason_code="macos-app-launch-precondition-not-met",
+            started_at=now,
+            finished_at=utc_now(),
+            receipt_window_digest=window_digest,
+            runtime_report=None,
+        )
+        return AutomationStore(store).record(session, attempt, now), True
+
+    launch_result = launch_canonical_mac_app(runner)
+    post_launch_mac = observed_mac
+    if launch_result.returncode == 0 and not launch_result.timed_out:
+        post_launch_mac = collect_mac_evidence(runner, session.target)
+        for _ in range(MACOS_LAUNCH_VERIFY_ATTEMPTS - 1):
+            if (
+                post_launch_mac.baseline_state == "proven"
+                and post_launch_mac.app_process_state == "running"
+            ):
+                break
+            time.sleep(MACOS_LAUNCH_VERIFY_DELAY_SECONDS)
+            post_launch_mac = collect_mac_evidence(runner, session.target)
+    if launch_result.returncode == 127:
+        result, reason_code = "unsupported", "macos-app-launch-unavailable"
+    elif launch_result.returncode != 0 or launch_result.timed_out:
+        result, reason_code = "failed", "macos-app-launch-command-failed"
+    elif (
+        post_launch_mac.baseline_state == "proven"
+        and post_launch_mac.app_process_state == "running"
+    ):
+        result, reason_code = "succeeded", "macos-app-launch-verified"
+    else:
+        result, reason_code = "failed", "macos-app-launch-unverified"
+
+    attempt = make_attempt(
+        automation_state or new_automation_state(session, now),
+        kind="macos.app.launch",
+        result=result,
+        reason_code=reason_code,
+        started_at=now,
+        finished_at=utc_now(),
+        receipt_window_digest=window_digest,
+        runtime_report=None,
+    )
+    updated_state = AutomationStore(store).record(session, attempt, now)
+    return updated_state, result != "succeeded"
+
+
+def _combine_automation_exit(runtime_exit: int, launch_failed: bool) -> int:
+    if runtime_exit == EXIT_BLOCKED:
+        return runtime_exit
+    return EXIT_UNKNOWN if launch_failed else runtime_exit
 
 
 def _run_advance_automation_locked(
@@ -650,7 +783,17 @@ def _run_advance_automation_locked(
         emit_automation_payload(args, session, runtime_report, automation_state)
         return EXIT_BLOCKED if session.lifecycle in {"blocked", "superseded"} else EXIT_UNKNOWN
 
-    last_attempt = automation_state.attempts[-1] if automation_state and automation_state.attempts else None
+    runner = SubprocessRunner()
+    automation_state, launch_failed = _advance_macos_app_launch(
+        store,
+        session,
+        automation_state,
+        runner,
+        now,
+    )
+
+    runtime_attempts = attempts_for_kind(automation_state, "runtime.receipt.sync")
+    last_attempt = runtime_attempts[-1] if runtime_attempts else None
     window_digest = runtime_report_digest(runtime_report)
     current_runtime_exit = (
         runtime_sync_exit_code(runtime_state, runtime_report, False)
@@ -664,7 +807,7 @@ def _run_advance_automation_locked(
         and last_attempt.receipt_window_digest == window_digest
     ):
         emit_automation_payload(args, session, runtime_report, automation_state)
-        return current_runtime_exit
+        return _combine_automation_exit(current_runtime_exit, launch_failed)
     if (
         last_attempt is not None
         and last_attempt.receipt_window_digest == window_digest
@@ -673,10 +816,15 @@ def _run_advance_automation_locked(
         and current_runtime_exit == 0
     ):
         emit_automation_payload(args, session, runtime_report, automation_state)
-        return 0
-    if automation_state is not None and len(automation_state.attempts) >= MAXIMUM_AUTOMATION_ATTEMPT_COUNT:
+        return _combine_automation_exit(0, launch_failed)
+    if len(runtime_attempts) >= AUTOMATION_KIND_LIMITS["runtime.receipt.sync"]:
         emit_automation_payload(args, session, runtime_report, automation_state)
-        return current_runtime_exit if runtime_report and runtime_report["state"] == "proven" else EXIT_UNKNOWN
+        runtime_exit = (
+            current_runtime_exit
+            if runtime_report and runtime_report["state"] == "proven"
+            else EXIT_UNKNOWN
+        )
+        return _combine_automation_exit(runtime_exit, launch_failed)
     if last_attempt is not None:
         finished_at = parse_iso8601(last_attempt.finished_at)
         assert finished_at is not None
@@ -684,7 +832,7 @@ def _run_advance_automation_locked(
         cooldown_active = now < finished_at + AUTOMATION_COOLDOWN
         if same_window and cooldown_active:
             emit_automation_payload(args, session, runtime_report, automation_state)
-            return current_runtime_exit
+            return _combine_automation_exit(current_runtime_exit, launch_failed)
 
     started_at = now
     if (
@@ -702,7 +850,10 @@ def _run_advance_automation_locked(
         )
         automation_state = automation_store.record(session, attempt, now)
         emit_automation_payload(args, session, runtime_report, automation_state)
-        return runtime_sync_exit_code(runtime_state, runtime_report, False)
+        return _combine_automation_exit(
+            runtime_sync_exit_code(runtime_state, runtime_report, False),
+            launch_failed,
+        )
     try:
         session, runtime_state, runtime_report, superseded = sync_and_reconcile_runtime_evidence(
             store,
@@ -721,7 +872,7 @@ def _run_advance_automation_locked(
         )
         automation_state = automation_store.record(session, attempt, now)
         emit_automation_payload(args, session, runtime_report, automation_state)
-        return EXIT_UNKNOWN
+        return _combine_automation_exit(EXIT_UNKNOWN, launch_failed)
     diagnostics = set(runtime_state.last_observation.diagnostics) if runtime_state.last_observation else set()
     if superseded:
         result, reason_code = "failed", "runtime-evidence-superseded"
@@ -741,7 +892,10 @@ def _run_advance_automation_locked(
     )
     automation_state = automation_store.record(session, attempt, now)
     emit_automation_payload(args, session, runtime_report, automation_state)
-    return runtime_sync_exit_code(runtime_state, runtime_report, superseded)
+    return _combine_automation_exit(
+        runtime_sync_exit_code(runtime_state, runtime_report, superseded),
+        launch_failed,
+    )
 
 
 def run_advance_automation(args: argparse.Namespace) -> int:

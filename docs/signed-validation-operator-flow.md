@@ -10,11 +10,13 @@ widget, complication, and Top Shelf placements.
 ## Automation Boundary
 
 `advance-automation` is the sole state-changing coordinator automation command
-in this slice. It can run only for an active coordinator session and only
-performs the existing signed-host runtime-receipt relay/reconciliation sequence.
-It does not change action ordering or suppression, launch a Mac app, open a
-companion host, capture shared-view evidence, record a visual decision, or make
-an OS-composited placement judgment.
+in this slice. It can run only for an active coordinator session. It first makes
+one bounded attempt to launch the canonical Mac app when a requested macOS
+surface has the exact current Production identity and the app is verified not
+running, then performs the existing signed-host runtime-receipt
+relay/reconciliation sequence. The launch uses `/usr/bin/open -g` only; it does
+not install, reset, activate a URL, change placements, or touch a companion
+device. Shared-view capture remains non-executing in this slice.
 
 The command records a schema-v1 public automation sidecar bound by digests to
 the coordinator session, target, and requested surfaces. It persists only fixed
@@ -24,13 +26,22 @@ paths, or runtime receipt payloads. Sidecars use the coordinator lock, atomic
 mode-`0600` writes, and the same retention cleanup as their parent session.
 
 `status` and `final-report` include the bounded public automation report but do
-not invoke this command or trigger the signed-host relay. Already-proven runtime
+not invoke this command, launch the app, or trigger the signed-host relay. A
+pending supported Mac launch is shown as a Coordinator follow-up before the
+manual Mac-open action. After a current-window launch attempt fails or is
+unsupported, the original human action is shown unchanged; a verified launch
+removes it through ordinary status recollection. Launch attempts use the same
+five-minute cooldown and stop after two attempts for one unchanged Mac state,
+preventing relaunch loops. Already-proven runtime
 evidence or the explicit cooldown makes repeated advancement idempotent. After
 the cooldown, an active receipt window may sync again so newly relayed receipts
 can be collected; an unsupported adapter is also retried rather than latched
-permanently. A changed or expired receipt window may advance immediately. The
-session allows at most 64 attempts. Closed and superseded sessions never advance
-automation.
+permanently. A changed or expired receipt window may advance immediately.
+The schema-v1 sidecar supports three closed kinds: `runtime.receipt.sync`,
+`macos.app.launch`, and reserved `shared-view.capture`. The total budget is 96
+attempts, partitioned as 64 receipt, 16 launch, and 16 capture attempts. No
+launch command path, arguments, output, or process details are persisted. Closed
+and superseded sessions never advance automation.
 
 ## Queue Policy
 

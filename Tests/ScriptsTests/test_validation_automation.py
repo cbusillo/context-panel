@@ -20,9 +20,11 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 from context_panel_validation import (
     AutomationError,
     AutomationStore,
+    CommandResult,
     CoordinatorSessionState,
     CoordinatorSessionStateError,
     ExpectedSurfaceIdentity,
+    MacEvidence,
     RuntimeEvidenceStore,
     RuntimeSessionObservation,
     SessionStateStore,
@@ -128,7 +130,47 @@ def expected_identity() -> ExpectedSurfaceIdentity:
     )
 
 
+def mac_evidence(
+    *,
+    baseline_state: str = "identity_verified_app_not_running",
+    process_state: str = "not_running",
+) -> MacEvidence:
+    return MacEvidence(
+        TARGET.version,
+        TARGET.build_number,
+        "current",
+        baseline_state,
+        process_state,
+        "TestFlight",
+        "Production",
+        "Production",
+        None,
+    )
+
+
 class ValidationAutomationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        patcher = mock.patch.object(
+            cli_module,
+            "collect_mac_evidence",
+            return_value=MacEvidence(
+                None,
+                None,
+                "not_installed",
+                "install_missing",
+                "not_running",
+                "unknown",
+                "unknown",
+                "unknown",
+                "canonical app is not installed",
+            ),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        sleep_patcher = mock.patch.object(cli_module.time, "sleep")
+        sleep_patcher.start()
+        self.addCleanup(sleep_patcher.stop)
+
     @staticmethod
     def fixture(*, attach_runtime: bool = True) -> tuple[
         tempfile.TemporaryDirectory[str],
@@ -264,6 +306,245 @@ class ValidationAutomationTests(unittest.TestCase):
         self.assertFalse(attempt.summary.evidence_satisfied)
         self.assertFalse(build_automation_report(state)["evidenceSatisfied"])
         self.assertEqual(AutomationStore(store).load(session), state)
+
+    def test_runtime_report_remains_top_level_with_per_kind_reports(self) -> None:
+        temporary, store, session = self.fixture()
+        self.addCleanup(temporary.cleanup)
+        automation_store = AutomationStore(store)
+        state = automation_store.record(
+            session,
+            make_attempt(
+                new_automation_state(session, NOW),
+                result="failed",
+                reason_code="runtime-sync-degraded",
+                started_at=NOW,
+                finished_at=NOW,
+                runtime_report=None,
+            ),
+            NOW,
+        )
+        state = automation_store.record(
+            session,
+            make_attempt(
+                state,
+                kind="macos.app.launch",
+                result="failed",
+                reason_code="macos-app-launch-command-failed",
+                started_at=NOW + timedelta(seconds=1),
+                finished_at=NOW + timedelta(seconds=1),
+                receipt_window_digest="b" * 64,
+                runtime_report=None,
+            ),
+            NOW + timedelta(seconds=1),
+        )
+
+        report = build_automation_report(state)
+
+        self.assertEqual(report["attemptCount"], 1)
+        self.assertEqual(report["lastAttempt"]["kind"], "runtime.receipt.sync")
+        self.assertEqual(report["totalAttemptCount"], 2)
+        self.assertEqual(report["kindReports"]["macos.app.launch"]["attemptCount"], 1)
+        self.assertEqual(report["kindReports"]["shared-view.capture"]["attemptCount"], 0)
+
+    def test_macos_launch_precedes_receipt_sync_and_records_success(self) -> None:
+        temporary, store, session = self.fixture()
+        self.addCleanup(temporary.cleanup)
+        args = argparse.Namespace(
+            version=TARGET.version,
+            build_number=TARGET.build_number,
+            expected_build_manifests=[],
+            json=True,
+        )
+        events: list[str] = []
+        runner = mock.Mock()
+
+        def launch(*_args: object, **_kwargs: object) -> CommandResult:
+            events.append("launch")
+            return CommandResult(0, "", "")
+
+        def sync(*_args: object, **_kwargs: object) -> RuntimeSessionObservation:
+            events.append("sync")
+            return runtime_observation()
+
+        runner.run.side_effect = launch
+        with (
+            mock.patch.dict(os.environ, {"CONTEXT_PANEL_VALIDATION_STATE_ROOT": str(store.root)}),
+            mock.patch.object(cli_module, "SubprocessRunner", return_value=runner),
+            mock.patch.object(
+                cli_module,
+                "collect_mac_evidence",
+                side_effect=[
+                    mac_evidence(),
+                    mac_evidence(),
+                    mac_evidence(baseline_state="proven", process_state="running"),
+                ],
+            ),
+            mock.patch.object(
+                cli_module.RuntimeSessionAdapter,
+                "sync_and_collect",
+                side_effect=sync,
+            ),
+            mock.patch.object(cli_module, "utc_now", return_value=NOW),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            exit_code = cli_module.run_advance_automation(args)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(events, ["launch", "sync"])
+        cli_module.time.sleep.assert_called_once_with(1.0)
+        runner.run.assert_called_once()
+        self.assertEqual(
+            runner.run.call_args.args[0],
+            ["/usr/bin/open", "-g", "/Applications/Context Panel.app"],
+        )
+        state = AutomationStore(store).load(session)
+        self.assertIsNotNone(state)
+        assert state is not None
+        launch_attempts = [
+            attempt for attempt in state.attempts if attempt.kind == "macos.app.launch"
+        ]
+        self.assertEqual(len(launch_attempts), 1)
+        self.assertEqual(launch_attempts[0].result, "succeeded")
+        self.assertEqual(launch_attempts[0].reason_code, "macos-app-launch-verified")
+
+    def test_macos_launch_failure_cools_down_and_stops_after_two_attempts(self) -> None:
+        temporary, store, session = self.fixture()
+        self.addCleanup(temporary.cleanup)
+        args = argparse.Namespace(
+            version=TARGET.version,
+            build_number=TARGET.build_number,
+            expected_build_manifests=[],
+            json=True,
+        )
+        runner = mock.Mock()
+        runner.run.return_value = CommandResult(1, "private stdout", "private stderr")
+        exits = []
+        with (
+            mock.patch.dict(os.environ, {"CONTEXT_PANEL_VALIDATION_STATE_ROOT": str(store.root)}),
+            mock.patch.object(cli_module, "SubprocessRunner", return_value=runner),
+            mock.patch.object(
+                cli_module,
+                "collect_mac_evidence",
+                return_value=mac_evidence(),
+            ) as collect_mac,
+            mock.patch.object(
+                cli_module.RuntimeSessionAdapter,
+                "sync_and_collect",
+                return_value=runtime_observation(),
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            for offset in (0, 1, 6, 12):
+                with mock.patch.object(
+                    cli_module,
+                    "utc_now",
+                    return_value=NOW + timedelta(minutes=offset),
+                ):
+                    exits.append(cli_module.run_advance_automation(args))
+
+        self.assertEqual(exits, [30, 30, 30, 30])
+        self.assertEqual(runner.run.call_count, 2)
+        self.assertEqual(collect_mac.call_count, 4)
+        state = AutomationStore(store).load(session)
+        self.assertIsNotNone(state)
+        assert state is not None
+        launch_attempts = [
+            attempt for attempt in state.attempts if attempt.kind == "macos.app.launch"
+        ]
+        self.assertEqual(len(launch_attempts), 2)
+        serialized = json.dumps(state.to_dict())
+        self.assertNotIn("private stdout", serialized)
+        self.assertNotIn("private stderr", serialized)
+        self.assertNotIn("/Applications/Context Panel.app", serialized)
+
+    def test_running_mac_clears_prior_launch_failures(self) -> None:
+        temporary, store, session = self.fixture()
+        self.addCleanup(temporary.cleanup)
+        automation_store = AutomationStore(store)
+        state = new_automation_state(session, NOW)
+        window_digest = cli_module.macos_app_window_digest(mac_evidence())
+        for offset in (0, 6):
+            state = automation_store.record(
+                session,
+                make_attempt(
+                    state,
+                    kind="macos.app.launch",
+                    result="failed",
+                    reason_code="macos-app-launch-command-failed",
+                    started_at=NOW + timedelta(minutes=offset),
+                    finished_at=NOW + timedelta(minutes=offset),
+                    receipt_window_digest=window_digest,
+                    runtime_report=None,
+                ),
+                NOW + timedelta(minutes=offset),
+            )
+        args = argparse.Namespace(
+            version=TARGET.version,
+            build_number=TARGET.build_number,
+            expected_build_manifests=[],
+            json=True,
+        )
+        runner = mock.Mock()
+        with (
+            mock.patch.dict(os.environ, {"CONTEXT_PANEL_VALIDATION_STATE_ROOT": str(store.root)}),
+            mock.patch.object(cli_module, "SubprocessRunner", return_value=runner),
+            mock.patch.object(
+                cli_module,
+                "collect_mac_evidence",
+                return_value=mac_evidence(baseline_state="proven", process_state="running"),
+            ),
+            mock.patch.object(
+                cli_module.RuntimeSessionAdapter,
+                "sync_and_collect",
+                return_value=runtime_observation(observed_at=NOW + timedelta(minutes=12)),
+            ),
+            mock.patch.object(cli_module, "utc_now", return_value=NOW + timedelta(minutes=12)),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            exit_code = cli_module.run_advance_automation(args)
+
+        self.assertEqual(exit_code, 0)
+        runner.run.assert_not_called()
+
+    def test_macos_launch_transient_precondition_records_manual_fallback(self) -> None:
+        temporary, store, session = self.fixture()
+        self.addCleanup(temporary.cleanup)
+        args = argparse.Namespace(
+            version=TARGET.version,
+            build_number=TARGET.build_number,
+            expected_build_manifests=[],
+            json=True,
+        )
+        transient = mac_evidence(baseline_state="unknown", process_state="unknown")
+        runner = mock.Mock()
+        with (
+            mock.patch.dict(os.environ, {"CONTEXT_PANEL_VALIDATION_STATE_ROOT": str(store.root)}),
+            mock.patch.object(cli_module, "SubprocessRunner", return_value=runner),
+            mock.patch.object(cli_module, "collect_mac_evidence", return_value=transient),
+            mock.patch.object(
+                cli_module.RuntimeSessionAdapter,
+                "sync_and_collect",
+                return_value=runtime_observation(),
+            ),
+            mock.patch.object(cli_module, "utc_now", return_value=NOW),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            exit_code = cli_module.run_advance_automation(args)
+
+        self.assertEqual(exit_code, 30)
+        runner.run.assert_not_called()
+        state = AutomationStore(store).load(session)
+        self.assertIsNotNone(state)
+        assert state is not None
+        launch_attempts = [
+            attempt for attempt in state.attempts if attempt.kind == "macos.app.launch"
+        ]
+        self.assertEqual(len(launch_attempts), 1)
+        self.assertEqual(launch_attempts[0].result, "skipped-precondition")
+        self.assertEqual(
+            launch_attempts[0].reason_code,
+            "macos-app-launch-precondition-not-met",
+        )
 
     def test_advance_syncs_once_then_repeats_idempotently_without_second_sync(self) -> None:
         temporary, store, session = self.fixture()
@@ -519,10 +800,18 @@ class ValidationAutomationTests(unittest.TestCase):
         summary = last_attempt["summary"]
         assert isinstance(summary, dict)
         summary["rawReceipts"] = ["secret"]
+        kind_reports = report["kindReports"]
+        assert isinstance(kind_reports, dict)
+        runtime_kind = kind_reports["runtime.receipt.sync"]
+        assert isinstance(runtime_kind, dict)
+        runtime_kind["privateCommand"] = ["secret"]
 
         projected = operator_flow_module.project_automation_report(report)
 
         self.assertNotIn("privatePath", projected)
+        projected_kinds = projected["kindReports"]
+        assert isinstance(projected_kinds, dict)
+        self.assertNotIn("privateCommand", projected_kinds["runtime.receipt.sync"])
         projected_attempt = projected["lastAttempt"]
         assert isinstance(projected_attempt, dict)
         self.assertNotIn("privateArgv", projected_attempt)
