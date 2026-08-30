@@ -315,6 +315,8 @@ class SharedViewCaptureTests(unittest.TestCase):
                     "CFBundleExecutable": executable,
                     "CFBundleShortVersionString": "1.2.3",
                     "CFBundleVersion": "456",
+                    "CFBundleSupportedPlatforms": ["iPhoneSimulator", "XRSimulator"],
+                    "UIDeviceFamily": [1, 2, 7],
                 },
                 stream,
             )
@@ -332,6 +334,16 @@ class SharedViewCaptureTests(unittest.TestCase):
                 "artifactId": surface_id,
                 "bundleIdentifier": f"com.example.{surface_id}",
                 "evidenceCapabilities": ["shared-view"],
+                "expectedArtifact": {
+                    "artifactId": surface_id,
+                    "bundleIdentifier": f"com.example.{surface_id}",
+                    "marketingVersion": "1.2.3",
+                    "buildNumber": "456",
+                    "sourceCommit": "a" * 40,
+                    "configuration": "Debug",
+                    "xcodeBuild": "17A1",
+                    "treeState": "clean",
+                },
                 "fingerprints": {
                     "render": "1" * 64,
                     "runtime": "2" * 64,
@@ -341,10 +353,33 @@ class SharedViewCaptureTests(unittest.TestCase):
             }
             for surface_id in surface_ids
         ]
+        policy_path = REPO_ROOT / "Config/ContextPanelSurfacePolicy.json"
+        policy = json.loads(policy_path.read_text())
         source = {
             "schemaVersion": 1,
-            "digestDomain": "context-panel-test-surface-manifest/v1",
+            "algorithm": policy["algorithm"],
+            "digestDomain": policy["digestDomain"],
             "contractFingerprint": "c" * 64,
+            "source": {
+                "marketingVersion": "1.2.3",
+                "buildNumber": "456",
+                "commit": "a" * 40,
+                "configuration": "Debug",
+                "xcodeBuild": "17A1",
+                "treeState": "clean",
+                "policySha256": hashlib.sha256(policy_path.read_bytes()).hexdigest(),
+                "projectSourceSha256": "d" * 64,
+            },
+            "toolchain": policy["toolchain"],
+            "archiveLayouts": policy["archiveLayouts"],
+            "evidencePolicy": policy["evidencePolicy"],
+            "artifactEvidenceContract": {
+                "schemaVersion": 2,
+                "integrity": "test-contract",
+                "requiredFields": ["bundleIdentifier"],
+            },
+            "files": {"project.yml": "e" * 64},
+            "ignoredInputs": policy["inventory"].get("ignoredInputs", []),
             "surfaces": surfaces,
         }
         source["manifestId"] = manifest_id or manifest_hash_parts(
@@ -359,7 +394,11 @@ class SharedViewCaptureTests(unittest.TestCase):
             "manifestId": self.manifest_id,
             "contractFingerprint": source["contractFingerprint"],
             "surfaces": [
-                {key: value for key, value in surface.items() if key != "evidenceCapabilities"}
+                {
+                    key: value
+                    for key, value in surface.items()
+                    if key not in {"evidenceCapabilities", "expectedArtifact"}
+                }
                 for surface in sorted(surfaces, key=lambda item: item["id"])
             ],
         }
@@ -876,6 +915,8 @@ class SharedViewCaptureTests(unittest.TestCase):
             "wrong-first": png_document((b"IDAT", valid_idat), (b"IEND", b"")),
             "duplicate-ihdr": png_document((b"IHDR", png_ihdr()), (b"IHDR", png_ihdr()), (b"IDAT", valid_idat), (b"IEND", b"")),
             "unknown-critical": png_document((b"IHDR", png_ihdr()), (b"ABCD", b""), (b"IDAT", valid_idat), (b"IEND", b"")),
+            "nonalphabetic-chunk": png_document((b"IHDR", png_ihdr()), (b"ab1D", b""), (b"IDAT", valid_idat), (b"IEND", b"")),
+            "reserved-bit": png_document((b"IHDR", png_ihdr()), (b"abct", b""), (b"IDAT", valid_idat), (b"IEND", b"")),
             "late-plte": png_document((b"IHDR", png_ihdr()), (b"IDAT", valid_idat), (b"PLTE", b"\x00\x00\x00"), (b"IEND", b"")),
             "noncontiguous-idat": png_document((b"IHDR", png_ihdr()), (b"IDAT", valid_idat[:8]), (b"tEXt", b"x"), (b"IDAT", valid_idat[8:]), (b"IEND", b"")),
             "nonempty-iend": png_document((b"IHDR", png_ihdr()), (b"IDAT", valid_idat), (b"IEND", b"x")),
@@ -890,6 +931,14 @@ class SharedViewCaptureTests(unittest.TestCase):
             path.write_bytes(content)
             with self.subTest(name=name), self.assertRaisesRegex(SharedViewCaptureError, "captured image is invalid"):
                 _png_snapshot(path)
+
+        oversized = self.root / "oversized.png"
+        with oversized.open("wb") as stream:
+            stream.truncate(capture_module.MAX_PNG_FILE_BYTES + 1)
+        with self.assertRaisesRegex(SharedViewCaptureError, "captured image is invalid"):
+            _png_snapshot(oversized)
+        with self.assertRaisesRegex(SharedViewCaptureError, "captured image is invalid"):
+            _png_snapshot(self.root)
 
     def test_png_and_run_publication_durability_order(self) -> None:
         self.write_plan(["ios.app"])
@@ -1023,7 +1072,9 @@ class SharedViewCaptureTests(unittest.TestCase):
         original_fsync = capture_module._fsync_directory
 
         def fail_manifest_fsync(path):
-            if path == manifest_directory:
+            if path == manifest_directory and (
+                manifest_directory / "manifest-fsync-failure"
+            ).exists():
                 raise OSError("manifest fsync failed")
             original_fsync(path)
 
@@ -1080,6 +1131,42 @@ class SharedViewCaptureTests(unittest.TestCase):
                 FakeRunner(), run_id="collision", receipt_path=self.root / "collision.json"
             )
 
+    def test_run_setup_failures_remove_owned_staging_directory(self) -> None:
+        self.write_plan(["ios.app"])
+        self.write_config()
+        manifest_directory = self.artifact_root / self.manifest_id
+        original_fsync = capture_module._fsync_directory
+
+        def fail_staging_parent_fsync(path: Path) -> None:
+            if path == manifest_directory and (manifest_directory / ".setup-fsync.staging").exists():
+                raise OSError("staging parent fsync failed")
+            original_fsync(path)
+
+        with mock.patch.object(
+            capture_module,
+            "_fsync_directory",
+            side_effect=fail_staging_parent_fsync,
+        ):
+            with self.assertRaisesRegex(SharedViewCaptureError, "run directory is unavailable"):
+                self.execute(FakeRunner(), run_id="setup-fsync")
+        self.assertFalse((manifest_directory / ".setup-fsync.staging").exists())
+
+        original_open = os.open
+
+        def fail_owner_open(path, flags, mode=0o777, **kwargs):
+            if Path(path).name == ".capture-owner":
+                raise OSError("ownership marker failed")
+            return original_open(path, flags, mode, **kwargs)
+
+        with mock.patch.object(os, "open", side_effect=fail_owner_open):
+            with self.assertRaisesRegex(SharedViewCaptureError, "ownership marker is unavailable"):
+                self.execute(
+                    FakeRunner(),
+                    run_id="setup-owner",
+                    receipt_path=self.root / "setup-owner.json",
+                )
+        self.assertFalse((manifest_directory / ".setup-owner.staging").exists())
+
     def test_private_artifact_directories_are_created_securely_without_rewriting_existing_root(self) -> None:
         self.write_plan(["ios.app"])
         self.write_config()
@@ -1103,6 +1190,94 @@ class SharedViewCaptureTests(unittest.TestCase):
                 receipt_path=self.root / "permissions-fail.json",
             )
         self.assertEqual(0o755, stat.S_IMODE(existing_root.stat().st_mode))
+        self.assertEqual([], runner.calls)
+
+        self.artifact_root = self.root / "wrong-owner-root"
+        with mock.patch.object(os, "geteuid", return_value=os.geteuid() + 1):
+            with self.assertRaisesRegex(SharedViewCaptureError, "permissions are invalid"):
+                self.execute(
+                    FakeRunner(),
+                    run_id="owner-fail",
+                    receipt_path=self.root / "owner-fail.json",
+                )
+
+    def test_created_artifact_and_output_directories_fsync_their_parents(self) -> None:
+        self.write_plan(["ios.app"])
+        self.write_config()
+        artifact_parent = self.root / "artifact-parent"
+        self.artifact_root = artifact_parent / "private"
+        output_parent = self.root / "output-parent" / "nested"
+        fsynced: list[Path] = []
+        original_fsync = capture_module._fsync_directory
+
+        def record_fsync(path: Path) -> None:
+            fsynced.append(path)
+            original_fsync(path)
+
+        with mock.patch.object(capture_module, "_fsync_directory", side_effect=record_fsync):
+            exit_code, _ = self.execute(
+                FakeRunner(),
+                run_id="directory-durability",
+                receipt_path=output_parent / "receipt.json",
+            )
+
+        self.assertEqual(EXIT_OK, exit_code)
+        self.assertIn(self.root, fsynced)
+        self.assertIn(artifact_parent, fsynced)
+        self.assertIn(self.root / "output-parent", fsynced)
+        self.assertIn(output_parent, fsynced)
+
+    def test_capture_paths_must_not_overlap_app_bundle(self) -> None:
+        self.write_plan(["ios.app"])
+        self.write_config()
+        runner = FakeRunner()
+        self.artifact_root = self.app / "capture-artifacts"
+        with self.assertRaisesRegex(SharedViewCaptureError, "overlap an app bundle"):
+            self.execute(runner, run_id="artifact-overlap")
+        self.assertEqual([], runner.calls)
+
+        self.artifact_root = self.root / "private-artifacts-overlap"
+        with self.assertRaisesRegex(SharedViewCaptureError, "overlap an app bundle"):
+            self.execute(
+                runner,
+                run_id="output-overlap",
+                receipt_path=self.app / "capture-receipt.json",
+            )
+        self.assertEqual([], runner.calls)
+
+    def test_manifest_domain_app_version_and_platform_metadata_are_bound(self) -> None:
+        self.write_plan(["ios.app"])
+        self.write_config()
+        runner = FakeRunner()
+        source = json.loads(self.current_manifest_path.read_text())
+        source["digestDomain"] = "attacker-controlled/v1"
+        unhashed_source = {key: value for key, value in source.items() if key != "manifestId"}
+        source["manifestId"] = manifest_hash_parts(
+            f"{source['digestDomain']}/manifest",
+            [manifest_canonical_json(unhashed_source)],
+        )
+        self.current_manifest_path.write_text(json.dumps(source))
+        with self.assertRaisesRegex(SharedViewCaptureError, "current surface manifest is invalid"):
+            self.execute(runner, run_id="manifest-domain")
+
+        self.write_surface_manifest()
+        self.write_info_plist("ContextPanel")
+        with (self.app / "Info.plist").open("rb") as stream:
+            info = plistlib.load(stream)
+        info["CFBundleShortVersionString"] = "1.2.4"
+        with (self.app / "Info.plist").open("wb") as stream:
+            plistlib.dump(info, stream)
+        with self.assertRaisesRegex(SharedViewCaptureError, "version does not match"):
+            self.execute(runner, run_id="version-mismatch")
+
+        self.write_info_plist("ContextPanel")
+        with (self.app / "Info.plist").open("rb") as stream:
+            info = plistlib.load(stream)
+        info["CFBundleSupportedPlatforms"] = ["XRSimulator"]
+        with (self.app / "Info.plist").open("wb") as stream:
+            plistlib.dump(info, stream)
+        with self.assertRaisesRegex(SharedViewCaptureError, "platform metadata is invalid"):
+            self.execute(runner, run_id="platform-mismatch")
         self.assertEqual([], runner.calls)
 
     def test_capture_app_manifest_must_match_current_comparison(self) -> None:
@@ -1174,6 +1349,27 @@ class SharedViewCaptureTests(unittest.TestCase):
         with self.assertRaisesRegex(SharedViewCaptureError, "surface manifest is invalid"):
             self.execute(runner, run_id="exception-cleanup")
         self.assertIn(["xcrun", "simctl", "delete", SIMULATOR_ID], [args for args, _ in runner.calls])
+
+    def test_exception_reports_failed_emergency_simulator_cleanup(self) -> None:
+        self.write_plan(["ios.app"])
+        self.write_config()
+        runner = FakeRunner()
+        original_run = runner.run
+
+        def fail_after_create_and_delete(args, *, timeout, environment=None):
+            result = original_run(args, timeout=timeout, environment=environment)
+            if args[2] == "install":
+                (Path(args[-1]) / "ContextPanelSurfaceManifest.json").unlink()
+            if args[2] == "delete":
+                return CommandResult(1, "", "private cleanup failure")
+            return result
+
+        runner.run = fail_after_create_and_delete
+        with self.assertRaisesRegex(
+            SharedViewCaptureError,
+            "emergency simulator cleanup did not complete: simctl-delete-failed",
+        ):
+            self.execute(runner, run_id="exception-cleanup-failure")
 
     def test_installed_container_comparison_ignores_modes_but_rejects_content_drift(self) -> None:
         self.write_plan(["ios.app"])
