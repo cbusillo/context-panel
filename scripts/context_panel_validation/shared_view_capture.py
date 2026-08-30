@@ -1014,7 +1014,7 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
         raise SharedViewCaptureError("captured image is invalid")
     prior_row = bytearray(width * channels)
     pixel_hasher = hashlib.sha256()
-    pixel_hasher.update(width.to_bytes(4, "big") + height.to_bytes(4, "big") + bytes((color_type,)))
+    pixel_hasher.update(b"context-panel/png-rgba8/v1\0" + width.to_bytes(4, "big") + height.to_bytes(4, "big"))
     for row_offset in range(0, len(image_data), row_size):
         filter_type = image_data[row_offset]
         if filter_type > 4:
@@ -1035,7 +1035,16 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
                 distances = (abs(estimate - left), abs(estimate - above), abs(estimate - upper_left))
                 predictor = (left, above, upper_left)[distances.index(min(distances))]
                 row[index] = (value + predictor) & 0xFF
-        pixel_hasher.update(row)
+        if channels == 3:
+            rgba_row = bytearray(width * 4)
+            for pixel_index in range(width):
+                source_index = pixel_index * 3
+                destination_index = pixel_index * 4
+                rgba_row[destination_index : destination_index + 3] = row[source_index : source_index + 3]
+                rgba_row[destination_index + 3] = 0xFF
+            pixel_hasher.update(rgba_row)
+        else:
+            pixel_hasher.update(row)
         prior_row = row
     return PNGSnapshot(
         byte_count=len(data),

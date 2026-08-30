@@ -1033,6 +1033,13 @@ class SharedViewCaptureTests(unittest.TestCase):
         minimal_snapshot = _png_snapshot(minimal)
         self.assertEqual(minimal_snapshot.pixel_digest, realistic_snapshot.pixel_digest)
         self.assertNotEqual(minimal_snapshot.artifact_digest, realistic_snapshot.artifact_digest)
+        rgb = self.root / "rgb.png"
+        rgb.write_bytes(document(
+            (b"IHDR", header(color_type=2)),
+            (b"IDAT", zlib.compress((b"\0" + b"\x22\x66\xaa" * 320) * 180)),
+            (b"IEND", b""),
+        ))
+        self.assertEqual(minimal_snapshot.pixel_digest, _png_snapshot(rgb).pixel_digest)
 
         rows = (bytes(range(8)), bytes(range(8, 16)))
         filter_digests = set()
@@ -1067,7 +1074,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         cases = {
             "bit-depth": document((b"IHDR", header(bit_depth=16)), (b"IDAT", valid_idat), (b"IEND", b"")),
             "huge-dimension": document((b"IHDR", header(width=16_385)), (b"IDAT", zlib.compress(b"\x00")), (b"IEND", b"")),
-            "huge-pixels": document((b"IHDR", header(width=10_001, height=10_001)), (b"IDAT", zlib.compress(b"\x00")), (b"IEND", b"")),
+            "huge-pixels": document((b"IHDR", header(width=8_192, height=4_097)), (b"IDAT", zlib.compress(b"\x00")), (b"IEND", b"")),
             "palette": document((b"IHDR", header(color_type=3)), (b"IDAT", valid_idat), (b"IEND", b"")),
             "interlaced": document((b"IHDR", header(methods=b"\x00\x00\x01")), (b"IDAT", valid_idat), (b"IEND", b"")),
             "wrong-first": document((b"IDAT", valid_idat), (b"IEND", b"")),
@@ -1075,7 +1082,7 @@ class SharedViewCaptureTests(unittest.TestCase):
             "unknown-critical": document((b"IHDR", header()), (b"ABCD", b""), (b"IDAT", valid_idat), (b"IEND", b"")),
             "nonalphabetic-chunk": document((b"IHDR", header()), (b"ab1D", b""), (b"IDAT", valid_idat), (b"IEND", b"")),
             "reserved-bit": document((b"IHDR", header()), (b"abct", b""), (b"IDAT", valid_idat), (b"IEND", b"")),
-            "transparency": document((b"IHDR", header(color_type=2)), (b"tRNS", b"\0" * 6), (b"IDAT", valid_idat), (b"IEND", b"")),
+            "transparency": document((b"IHDR", header(color_type=2)), (b"tRNS", b"\0" * 6), (b"IDAT", zlib.compress((b"\0" + b"\x22\x66\xaa" * 320) * 180)), (b"IEND", b"")),
             "empty-plte": document((b"IHDR", header()), (b"PLTE", b""), (b"IDAT", valid_idat), (b"IEND", b"")),
             "large-plte": document((b"IHDR", header()), (b"PLTE", b"x" * 771), (b"IDAT", valid_idat), (b"IEND", b"")),
             "duplicate-plte": document((b"IHDR", header()), (b"PLTE", b"\0\0\0"), (b"PLTE", b"\0\0\0"), (b"IDAT", valid_idat), (b"IEND", b"")),
