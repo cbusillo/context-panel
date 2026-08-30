@@ -783,6 +783,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         runner = FakeRunner(
             create_result=CommandResult(1, "", "private create failure"),
             created_on_failed_create=True,
+            created_device_available=False,
         )
         exit_code, receipt = self.execute(runner)
         self.assertEqual(EXIT_UNKNOWN, exit_code)

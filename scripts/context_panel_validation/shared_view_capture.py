@@ -1398,7 +1398,9 @@ def _capture_profile(
                 cleanup_target_observer(simulator_id)
     cleanup_inventory_unknown = False
     if lifecycle_error is not None and cleanup_target is None:
-        observed_ids, observed_error = _matching_simulators(runner, profile, simulator_name)
+        observed_ids, observed_error = _matching_simulators(
+            runner, profile, simulator_name, strict_identity=False
+        )
         cleanup_inventory_unknown = observed_error is not None
         new_ids = (observed_ids or set()) - preexisting_ids
         if len(new_ids) == 1:
