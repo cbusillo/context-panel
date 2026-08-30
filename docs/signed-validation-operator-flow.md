@@ -9,10 +9,13 @@ widget, complication, and Top Shelf placements.
 
 ## Queue Policy
 
-`status` groups ready actions by the public device class: Mac, iPhone, iPad,
-Vision Pro, Apple Watch, Apple TV, or Coordinator. Each action has a stable ID,
-plain instruction, honest time estimate, bounded recovery sequence, and optional
-notification decision.
+`status` groups ready visual-review actions by public device class *and*
+evidence class: `shared-view` or `os-composited-placement`. Mac, iPhone, iPad,
+Vision Pro, Apple Watch, Apple TV, and Coordinator remain the only public
+device labels. Each action has a stable class-specific ID, plain instruction,
+honest time estimate, bounded recovery sequence, and optional notification
+decision. A `.part-N` suffix appears only when a device-and-class batch exceeds
+the bounded review size.
 
 Every queued action also carries a fail-closed machine-readable contract:
 
@@ -21,6 +24,11 @@ Every queued action also carries a fail-closed machine-readable contract:
 - `reasonCode`: a closed-vocabulary explanation of why the action is requested
 - `actionKind`: a closed-vocabulary classification of the work
 - `durationMinutes`: an integer from 1 through 60
+- `evidenceClass`: exactly one of `shared-view` or
+  `os-composited-placement` for a visual-review batch
+- `requiresRuntime` and `runtimeSurfaces`: class-consistent runtime scope;
+  shared-view batches use `false` and `[]`, while placement batches use `true`
+  and the exact batch surfaces
 - `simulationInsufficiency`: a closed-vocabulary code plus a public explanation
   of why simulator or machine evidence cannot complete the action
 
@@ -88,11 +96,13 @@ not create duplicate decisions. Active deferrals suppress the current decision;
 they do not alter evidence or mark a surface complete.
 `readyForHumanReview` is emitted only for explicit visual requirements whose
 machine prerequisites are ready. Shared-view requirements bind to exact render
-and fixture/gallery contract identity. Placement requirements remain silent
-until the same surface has a matching current runtime receipt; the queue batches
-ready requirements by public device class. Each batch names only the surfaces
-referenced by its requirement IDs; it never expands to every surface on the
-device.
+and fixture/gallery contract identity and remain ready even when an unrelated
+placement requirement on the same device is waiting. Placement requirements
+remain silent until every exact `runtimeSurface` in their batch is independently
+`proven`; the coordinator does not use an overall runtime state or proof for a
+different surface as a substitute. Each batch contains one evidence class and
+names only the exact requirement IDs and surfaces it covers; it never expands to
+every surface on the device.
 
 ## Visual Review Ledger
 

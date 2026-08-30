@@ -883,16 +883,19 @@ class OperatorFlowTests(unittest.TestCase):
                 "requirements": [
                     {
                         "id": "watch.complication.placement.corner",
+                        "evidenceClass": "os-composited-placement",
                         "surface": "watchos.complication",
                         "device": "Apple Watch",
                     }
                 ],
                 "reviewBatches": [
                     {
-                        "actionID": "review.apple-watch",
+                        "actionID": "review.apple-watch.os-composited-placement",
                         "device": "Apple Watch",
+                        "evidenceClass": "os-composited-placement",
                         "requirementIDs": ["watch.complication.placement.corner"],
                         "surfaces": ["watchos.complication"],
+                        "runtimeSurfaces": ["watchos.complication"],
                         "requiresRuntime": True,
                         "instruction": "Review one placement glance on Apple Watch.",
                         "estimateMinutes": 2,
@@ -912,7 +915,7 @@ class OperatorFlowTests(unittest.TestCase):
         )
 
         action = flow["groups"][0]["actions"][0]
-        self.assertEqual(action["id"], "review.apple-watch")
+        self.assertEqual(action["id"], "review.apple-watch.os-composited-placement")
         self.assertEqual(action["notificationKind"], "readyForHumanReview")
         self.assertEqual(flow["readyActionCount"], 1)
 
@@ -930,16 +933,19 @@ class OperatorFlowTests(unittest.TestCase):
                 "requirements": [
                     {
                         "id": "watch.complication.placement.corner",
+                        "evidenceClass": "os-composited-placement",
                         "surface": "watchos.complication",
                         "device": "Apple Watch",
                     }
                 ],
                 "reviewBatches": [
                     {
-                        "actionID": "review.apple-watch",
+                        "actionID": "review.apple-watch.os-composited-placement",
                         "device": "Apple Watch",
+                        "evidenceClass": "os-composited-placement",
                         "requirementIDs": ["watch.complication.placement.corner"],
                         "surfaces": ["watchos.complication"],
+                        "runtimeSurfaces": ["watchos.complication"],
                         "requiresRuntime": True,
                         "instruction": "Review one placement glance on Apple Watch.",
                         "estimateMinutes": 2,
@@ -960,6 +966,145 @@ class OperatorFlowTests(unittest.TestCase):
 
         self.assertFalse(flow["groups"])
         self.assertEqual(flow["readyActionCount"], 0)
+
+    def test_placement_review_requires_exact_proven_runtime_surfaces_only(self):
+        surfaces = ("watchos.complication",)
+        session = self.session(surfaces)
+        report = replace(
+            self.report(
+                surfaces,
+                devices=(device("Apple Watch", "watchOS"),),
+                restart="2026-08-02T03:00:00Z",
+            ),
+            visual_approvals={
+                "state": "pending",
+                "requirements": [
+                    {
+                        "id": "watch.complication.placement.corner",
+                        "evidenceClass": "os-composited-placement",
+                        "surface": "watchos.complication",
+                        "device": "Apple Watch",
+                    }
+                ],
+                "reviewBatches": [
+                    {
+                        "actionID": "review.apple-watch.os-composited-placement",
+                        "device": "Apple Watch",
+                        "evidenceClass": "os-composited-placement",
+                        "requirementIDs": ["watch.complication.placement.corner"],
+                        "surfaces": ["watchos.complication"],
+                        "runtimeSurfaces": ["watchos.complication"],
+                        "requiresRuntime": True,
+                        "instruction": "Review one placement glance on Apple Watch.",
+                        "estimateMinutes": 2,
+                    }
+                ],
+            },
+        )
+        flow_store = context_panel_validation.OperatorFlowStore(self.store)
+
+        _, flow = flow_store.reconcile(
+            session,
+            report,
+            runtime_report(
+                (
+                    ("watchos.complication", "proven", "exact-build-runtime-receipt"),
+                    ("watchos.app", "waiting", "unrelated-receipt-propagation"),
+                )
+            ),
+            NOW,
+        )
+        action_ids = {
+            action["id"] for group in flow["groups"] for action in group["actions"]
+        }
+        self.assertIn("review.apple-watch.os-composited-placement", action_ids)
+
+        for runtime in (
+            runtime_report((("watchos.app", "proven", "wrong-surface"),)),
+            runtime_report(
+                (
+                    ("watchos.complication", "waiting", "receipt-propagation"),
+                    ("watchos.app", "proven", "unrelated-runtime-proof"),
+                )
+            ),
+            runtime_report(
+                (
+                    (
+                        "watchos.complication",
+                        "proven",
+                        "exact-build-runtime-receipt",
+                    ),
+                    ("watchos.app", "superseded", "newer-host-build"),
+                )
+            ),
+        ):
+            with self.subTest(runtime=runtime):
+                _, withheld = flow_store.reconcile(session, report, runtime, NOW)
+                self.assertNotIn(
+                    "review.apple-watch.os-composited-placement",
+                    {
+                        action["id"]
+                        for group in withheld["groups"]
+                        for action in group["actions"]
+                    },
+                )
+
+    def test_stale_device_only_review_deferral_does_not_suppress_class_scoped_action(self):
+        session = self.session(())
+        visual_approvals = {
+            "state": "pending",
+            "requirements": [
+                {
+                    "id": "watch.app.shared.dark",
+                    "evidenceClass": "shared-view",
+                    "surface": "watchos.app",
+                    "device": "Apple Watch",
+                }
+            ],
+            "reviewBatches": [
+                {
+                    "actionID": "review.apple-watch.shared-view",
+                    "device": "Apple Watch",
+                    "evidenceClass": "shared-view",
+                    "requirementIDs": ["watch.app.shared.dark"],
+                    "surfaces": ["watchos.app"],
+                    "runtimeSurfaces": [],
+                    "requiresRuntime": False,
+                    "instruction": "Review the signed Watch app.",
+                    "estimateMinutes": 2,
+                }
+            ],
+        }
+        report = replace(self.report(()), visual_approvals=visual_approvals)
+        old_visual_approvals = copy.deepcopy(visual_approvals)
+        old_visual_approvals["reviewBatches"][0]["actionID"] = "review.apple-watch"
+        flow_store = context_panel_validation.OperatorFlowStore(self.store)
+
+        flow_store.reconcile(
+            session,
+            replace(report, visual_approvals=old_visual_approvals),
+            None,
+            NOW,
+        )
+        flow_store.defer_action(
+            session,
+            "review.apple-watch",
+            "operator",
+            "operator-unavailable",
+            "review-pending",
+            NOW,
+            timedelta(hours=1),
+        )
+        _, flow = flow_store.reconcile(session, report, None, NOW)
+
+        action = next(
+            action
+            for group in flow["groups"]
+            for action in group["actions"]
+            if action["id"] == "review.apple-watch.shared-view"
+        )
+        self.assertEqual(action["state"], "ready")
+        self.assertIsNone(action["deferral"])
 
     def test_shared_view_only_action_uses_visual_scope_without_runtime_surfaces(self):
         session = self.session(())
@@ -984,10 +1129,12 @@ class OperatorFlowTests(unittest.TestCase):
                 ],
                 "reviewBatches": [
                     {
-                        "actionID": "review.apple-watch",
+                        "actionID": "review.apple-watch.shared-view",
                         "device": "Apple Watch",
+                        "evidenceClass": "shared-view",
                         "requirementIDs": ["watch.app.shared.dark"],
                         "surfaces": ["watchos.app"],
+                        "runtimeSurfaces": [],
                         "requiresRuntime": False,
                         "instruction": "Review the signed Watch app.",
                         "estimateMinutes": 2,
@@ -1132,16 +1279,19 @@ class OperatorFlowTests(unittest.TestCase):
                     "requirements": [
                         {
                             "id": "watch.app.shared.dark",
+                            "evidenceClass": "shared-view",
                             "surface": "watchos.app",
                             "device": "Apple Watch",
                         }
                     ],
                     "reviewBatches": [
                         {
-                            "actionID": "review.apple-watch",
+                            "actionID": "review.apple-watch.shared-view",
                             "device": "Apple Watch",
+                            "evidenceClass": "shared-view",
                             "requirementIDs": ["watch.app.shared.dark"],
                             "surfaces": ["watchos.app"],
+                            "runtimeSurfaces": [],
                             "requiresRuntime": False,
                             "instruction": "Review the signed Watch app.",
                             "estimateMinutes": 2,
@@ -1162,7 +1312,7 @@ class OperatorFlowTests(unittest.TestCase):
                 "device.iphone.access",
                 "visionos.app.recover",
                 "coordinator.runtime-diagnostic",
-                "review.apple-watch",
+                "review.apple-watch.shared-view",
                 "coordinator.blocked-decision",
             }.issubset(seen_action_ids)
         )
@@ -1206,23 +1356,26 @@ class OperatorFlowTests(unittest.TestCase):
                     flow_store.reconcile(session, report, None, NOW)
                 self.assertFalse(self.store.operator_flow_path(session.id).exists())
 
-        malformed_visual = replace(
+        valid_visual = replace(
             self.report(surfaces),
             visual_approvals={
                 "state": "pending",
                 "requirements": [
                     {
                         "id": "mac.app.shared.dark",
+                        "evidenceClass": "shared-view",
                         "surface": "macos.app",
                         "device": "Mac",
                     }
                 ],
                 "reviewBatches": [
                     {
-                        "actionID": "review.mac",
+                        "actionID": "review.mac.shared-view",
                         "device": "Mac",
+                        "evidenceClass": "shared-view",
                         "requirementIDs": ["mac.app.shared.dark"],
-                        "surfaces": ["watchos.app"],
+                        "surfaces": ["macos.app"],
+                        "runtimeSurfaces": [],
                         "requiresRuntime": False,
                         "instruction": "Review the signed Mac app.",
                         "estimateMinutes": 2,
@@ -1230,9 +1383,22 @@ class OperatorFlowTests(unittest.TestCase):
                 ],
             },
         )
-        with self.assertRaisesRegex(context_panel_validation.OperatorFlowError, "visual review batch"):
-            flow_store.reconcile(session, malformed_visual, None, NOW)
-        self.assertFalse(self.store.operator_flow_path(session.id).exists())
+        malformed_batches = (
+            {"evidenceClass": "actual-runtime"},
+            {"runtimeSurfaces": ["macos.app"]},
+            {"requiresRuntime": True},
+            {"surfaces": ["watchos.app"]},
+        )
+        for update in malformed_batches:
+            with self.subTest(update=update):
+                malformed_visual = copy.deepcopy(valid_visual)
+                malformed_visual.visual_approvals["reviewBatches"][0].update(update)
+                with self.assertRaisesRegex(
+                    context_panel_validation.OperatorFlowError,
+                    "visual review batch",
+                ):
+                    flow_store.reconcile(session, malformed_visual, None, NOW)
+                self.assertFalse(self.store.operator_flow_path(session.id).exists())
 
     def test_operator_action_contract_reports_aggregate_budget_and_bounds_each_action(self):
         surfaces = ("macos.app",)

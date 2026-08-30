@@ -1191,8 +1191,10 @@ def build_operator_candidates(
         device = _validate_device(batch.get("device"))
         estimate_minutes = batch.get("estimateMinutes")
         instruction = batch.get("instruction")
+        evidence_class = batch.get("evidenceClass")
         requirement_ids = batch.get("requirementIDs")
         surfaces = batch.get("surfaces")
+        runtime_surfaces = batch.get("runtimeSurfaces")
         requires_runtime = batch.get("requiresRuntime")
         if (
             not isinstance(estimate_minutes, int)
@@ -1207,23 +1209,41 @@ def build_operator_candidates(
             or not isinstance(surfaces, list)
             or not surfaces
             or any(not isinstance(surface, str) for surface in surfaces)
+            or not isinstance(runtime_surfaces, list)
+            or any(not isinstance(surface, str) for surface in runtime_surfaces)
             or not isinstance(requires_runtime, bool)
+            or evidence_class not in {"shared-view", "os-composited-placement"}
         ):
             raise OperatorFlowError("visual review batch is invalid")
         requirements = [requirements_by_id.get(requirement_id) for requirement_id in requirement_ids]
         if any(
-            not isinstance(item, dict) or not isinstance(item.get("surface"), str)
+            not isinstance(item, dict)
+            or not isinstance(item.get("surface"), str)
+            or item.get("evidenceClass") != evidence_class
             for item in requirements
         ):
             raise OperatorFlowError("visual review batch is invalid")
         expected_surfaces = tuple(sorted({item["surface"] for item in requirements}))
+        expected_runtime_surfaces = (
+            expected_surfaces if evidence_class == "os-composited-placement" else ()
+        )
         if (
             any(item.get("device") != device for item in requirements)
             or tuple(surfaces) != expected_surfaces
+            or tuple(runtime_surfaces) != expected_runtime_surfaces
+            or requires_runtime != (evidence_class == "os-composited-placement")
         ):
             raise OperatorFlowError("visual review batch is invalid")
+        proven_runtime_surfaces = {
+            item.get("surface")
+            for item in (runtime_evidence or {}).get("surfaces") or []
+            if isinstance(item, dict)
+            and isinstance(item.get("surface"), str)
+            and item.get("state") == "proven"
+        }
         if requires_runtime and (
-            runtime_evidence is None or runtime_evidence.get("state") != "proven"
+            (runtime_evidence or {}).get("state") == "superseded"
+            or not set(expected_runtime_surfaces).issubset(proven_runtime_surfaces)
         ):
             continue
         candidates[action_id] = OperatorActionCandidate(

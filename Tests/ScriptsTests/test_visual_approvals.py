@@ -11,6 +11,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest import mock
 
 
@@ -618,7 +619,10 @@ class VisualApprovalTests(unittest.TestCase):
         self.assertEqual(len(report["reviewBatches"]), 2)
         self.assertEqual(
             [batch["actionID"] for batch in report["reviewBatches"]],
-            ["review.apple-watch.part-1", "review.apple-watch.part-2"],
+            [
+                "review.apple-watch.shared-view.part-1",
+                "review.apple-watch.shared-view.part-2",
+            ],
         )
         self.assertEqual(
             [batch["estimateMinutes"] for batch in report["reviewBatches"]],
@@ -718,15 +722,96 @@ class VisualApprovalTests(unittest.TestCase):
         self.assertEqual(decision.runtime_receipt_id, sha("receipt"))
         self.assertEqual(placement["state"], "approved")
 
-    def test_machine_waiting_suppresses_same_device_review_batch(self) -> None:
+    def test_shared_view_batch_stays_ready_while_placement_waits_on_same_device(self) -> None:
         _, state = self.configured_state()
 
         report = build_visual_approval_report(state, None)
 
-        self.assertEqual(report["state"], "waiting")
+        self.assertEqual(report["state"], "pending")
         self.assertEqual(report["readyReviewCount"], 2)
         self.assertEqual(report["machineWaitingCount"], 1)
-        self.assertFalse(report["reviewBatches"])
+        self.assertEqual(len(report["reviewBatches"]), 1)
+        batch = report["reviewBatches"][0]
+        self.assertEqual(batch["actionID"], "review.apple-watch.shared-view")
+        self.assertEqual(batch["evidenceClass"], "shared-view")
+        self.assertFalse(batch["requiresRuntime"])
+        self.assertEqual(batch["runtimeSurfaces"], [])
+
+    def test_ready_batches_partition_by_evidence_class_and_chunk_with_stable_ids(self) -> None:
+        session, state = self.configured_state()
+        shared = next(
+            item for item in state.requirements if item.evidence_class == "shared-view"
+        )
+        placement = next(
+            item
+            for item in state.requirements
+            if item.evidence_class == "os-composited-placement"
+        )
+        requirements = (
+            *(replace(shared, id=f"watch.app.shared.partition-{index:02d}") for index in range(31)),
+            *(
+                replace(placement, id=f"watch.complication.placement.partition-{index:02d}")
+                for index in range(31)
+            ),
+        )
+
+        report = build_visual_approval_report(
+            replace(state, requirements=requirements),
+            runtime_state(session.id, self.placement_identity),
+        )
+
+        self.assertEqual(len(report["reviewBatches"]), 4)
+        batches_by_class: dict[str, list[dict[str, Any]]] = {}
+        requirement_classes = {
+            item["id"]: item["evidenceClass"] for item in report["requirements"]
+        }
+        for batch in report["reviewBatches"]:
+            batches_by_class.setdefault(batch["evidenceClass"], []).append(batch)
+            self.assertTrue(batch["actionID"].startswith("review.apple-watch."))
+            self.assertTrue(batch["actionID"].endswith((".part-1", ".part-2")))
+            self.assertLessEqual(len(batch["requirementIDs"]), 30)
+            self.assertEqual(
+                {requirement_classes[item] for item in batch["requirementIDs"]},
+                {batch["evidenceClass"]},
+            )
+            self.assertEqual(
+                batch["surfaces"],
+                sorted(
+                    {
+                        next(
+                            item["surface"]
+                            for item in report["requirements"]
+                            if item["id"] == requirement_id
+                        )
+                        for requirement_id in batch["requirementIDs"]
+                    }
+                ),
+            )
+        self.assertEqual(
+            [item["actionID"] for item in batches_by_class["shared-view"]],
+            [
+                "review.apple-watch.shared-view.part-1",
+                "review.apple-watch.shared-view.part-2",
+            ],
+        )
+        self.assertEqual(
+            [item["actionID"] for item in batches_by_class["os-composited-placement"]],
+            [
+                "review.apple-watch.os-composited-placement.part-1",
+                "review.apple-watch.os-composited-placement.part-2",
+            ],
+        )
+        self.assertEqual(
+            [item["runtimeSurfaces"] for item in batches_by_class["shared-view"]],
+            [[], []],
+        )
+        self.assertTrue(
+            all(
+                item["requiresRuntime"]
+                and item["runtimeSurfaces"] == item["surfaces"]
+                for item in batches_by_class["os-composited-placement"]
+            )
+        )
 
     def test_missing_recorded_runtime_receipt_invalidates_placement_green(self) -> None:
         session, _ = self.configured_state()
@@ -896,7 +981,7 @@ class VisualApprovalTests(unittest.TestCase):
             mock.patch.object(cli_module, "utc_now", return_value=NOW + timedelta(minutes=2)),
             contextlib.redirect_stdout(io.StringIO()) as export_output,
         ):
-            self.assertEqual(cli_module.run_export_visual_reviews(export_args), 30)
+            self.assertEqual(cli_module.run_export_visual_reviews(export_args), 10)
         exported = json.loads(export_output.getvalue())
         serialized = json.dumps(exported, sort_keys=True)
 
