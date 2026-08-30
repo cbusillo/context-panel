@@ -110,8 +110,7 @@ the capture step must not try to drive it. Pixel policy is `advisory-only`. The
 command is read-only with respect to coordinator state: it does not start a
 session, inspect a runtime, launch a simulator, or capture private artifacts.
 Comparisons with fresh placement evidence are rejected because this stage emits
-shared-view requirements only; placement planning remains a later stage. Private
-capture and any pixel-comparison implementation are deferred to Stage 2.
+shared-view requirements only; placement planning remains a later stage.
 
 The requirements file uses schema v1 and stores bounded public context:
 

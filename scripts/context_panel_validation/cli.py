@@ -7,6 +7,7 @@ import re
 import sys
 from datetime import timedelta
 from pathlib import Path
+from typing import cast
 
 from .asc import DEFAULT_ASC_ENV_FILE, collect_asc_evidence
 from .models import (
@@ -48,6 +49,7 @@ from .shared_view_evidence import (
     plan_shared_view_evidence,
     write_requirements_payload,
 )
+from .shared_view_capture import SharedViewCaptureError, execute_shared_view_capture
 from .session import (
     ACTIVE_SESSION_LIFECYCLES,
     DEFAULT_DURATION_HOURS,
@@ -242,8 +244,57 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     plan_shared_view_evidence_parser.add_argument(
         "--json", action="store_true", help="Emit the planned payload as stable JSON"
     )
+    capture_shared_view_evidence_parser = subparsers.add_parser(
+        "capture-shared-view-evidence",
+        help="Capture private simulator gallery evidence without coordinator state",
+    )
+    capture_shared_view_evidence_parser.add_argument(
+        "--surface-comparison",
+        required=True,
+        type=Path,
+        help="Validated current schema-v5 surface-manifest comparison",
+    )
+    capture_shared_view_evidence_parser.add_argument(
+        "--matrix",
+        type=Path,
+        default=DEFAULT_MATRIX_PATH,
+        help="Canonical shared-view matrix JSON",
+    )
+    capture_shared_view_evidence_parser.add_argument(
+        "--surface-policy",
+        type=Path,
+        default=DEFAULT_SURFACE_POLICY_PATH,
+        help="Canonical Context Panel surface policy JSON",
+    )
+    capture_shared_view_evidence_parser.add_argument(
+        "--requirements",
+        required=True,
+        type=Path,
+        help="Schema-v1 shared-view requirements JSON",
+    )
+    capture_shared_view_evidence_parser.add_argument(
+        "--capture-config",
+        required=True,
+        type=Path,
+        help="Private schema-v1 simulator capture config JSON",
+    )
+    capture_shared_view_evidence_parser.add_argument(
+        "--artifact-root",
+        required=True,
+        type=Path,
+        help="Absolute private artifact directory outside the repository",
+    )
+    capture_shared_view_evidence_parser.add_argument(
+        "--output",
+        required=True,
+        type=Path,
+        help="Absolute atomic public capture receipt JSON destination",
+    )
+    capture_shared_view_evidence_parser.add_argument(
+        "--json", action="store_true", help="Emit the public receipt as stable JSON"
+    )
     args = parser.parse_args(argv)
-    if args.command != "plan-shared-view-evidence":
+    if args.command not in {"plan-shared-view-evidence", "capture-shared-view-evidence"}:
         if not VERSION_PATTERN.fullmatch(args.version):
             parser.error("--version must contain numeric dot-separated components")
         if not BUILD_PATTERN.fullmatch(args.build_number):
@@ -359,7 +410,7 @@ def run_plan_shared_view_evidence(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
-        requirements = payload["requirements"]
+        requirements = cast(list[dict[str, object]], payload["requirements"])
         surfaces = {item["surface"] for item in requirements}
         print(
             f"Planned {len(requirements)} shared-view requirements across "
@@ -405,7 +456,6 @@ def run_start_session(args: argparse.Namespace) -> int:
         )
     visual_requirements = None
     current_manifest_id = None
-    all_identities = ()
     if comparison_path is not None and requirements_path is not None:
         all_identities = load_expected_surface_identities(
             getattr(args, "expected_build_manifests", None) or [],
@@ -678,6 +728,27 @@ def run_export_visual_reviews(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_capture_shared_view_evidence(args: argparse.Namespace) -> int:
+    exit_code, receipt = execute_shared_view_capture(
+        args.surface_comparison,
+        args.requirements,
+        args.capture_config,
+        args.artifact_root,
+        args.output,
+        matrix_path=args.matrix,
+        surface_policy_path=args.surface_policy,
+    )
+    if args.json:
+        print(json.dumps(receipt, indent=2, sort_keys=True))
+    else:
+        captures = cast(list[dict[str, object]], receipt["captures"])
+        print(
+            f"Shared-view capture recorded {sum(item['status'] == 'captured' for item in captures)} "
+            f"of {len(captures)} required captures."
+        )
+    return exit_code
+
+
 def run_record_watch_restart(args: argparse.Namespace) -> int:
     target = Target(args.version, args.build_number)
     devices = collect_device_evidence(SubprocessRunner(), target)
@@ -730,6 +801,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_final_report(args)
         if args.command == "plan-shared-view-evidence":
             return run_plan_shared_view_evidence(args)
+        if args.command == "capture-shared-view-evidence":
+            return run_capture_shared_view_evidence(args)
         if args.command == "record-watch-restart":
             return run_record_watch_restart(args)
         if args.command == "start-session":
@@ -757,7 +830,7 @@ def main(argv: list[str] | None = None) -> int:
     except CoordinatorSessionConflictError as error:
         print(str(error), file=sys.stderr)
         return EXIT_BLOCKED
-    except (CoordinatorSessionError, SharedViewEvidenceError) as error:
+    except (CoordinatorSessionError, SharedViewCaptureError, SharedViewEvidenceError) as error:
         print(str(error), file=sys.stderr)
         return EXIT_UNKNOWN
     except Exception:
