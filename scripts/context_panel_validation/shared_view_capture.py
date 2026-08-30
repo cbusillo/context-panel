@@ -117,6 +117,11 @@ PROFILE_PLATFORM_IDENTIFIERS = {
     "ipados": ("iPhoneSimulator", 2),
     "visionos": ("XRSimulator", 7),
 }
+PROFILE_POLICY_IDENTITIES = {
+    "ios": ("iOS", "iPhone"),
+    "ipados": ("iPadOS", "iPad"),
+    "visionos": ("visionOS", "Vision Pro"),
+}
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 SIMULATOR_UDID_PATTERN = re.compile(
     r"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
@@ -268,6 +273,7 @@ def _stream_sha256(path: Path, label: str) -> str:
 def _bundle_sha256(path: Path, *, include_modes: bool = True) -> str:
     digest = hashlib.sha256()
     try:
+        bundle_root = path.resolve(strict=True)
         for candidate in sorted(path.rglob("*"), key=lambda item: item.relative_to(path).as_posix()):
             relative = candidate.relative_to(path).as_posix().encode()
             candidate_stat = candidate.lstat()
@@ -276,7 +282,13 @@ def _bundle_sha256(path: Path, *, include_modes: bool = True) -> str:
             elif stat.S_ISREG(candidate_stat.st_mode):
                 kind, content = b"F", candidate.read_bytes()
             elif stat.S_ISLNK(candidate_stat.st_mode):
-                kind, content = b"L", os.readlink(candidate).encode()
+                link_target = os.readlink(candidate)
+                if Path(link_target).is_absolute():
+                    raise SharedViewCaptureError("capture app bundle is invalid")
+                resolved_target = (candidate.parent / link_target).resolve(strict=True)
+                if resolved_target != bundle_root and bundle_root not in resolved_target.parents:
+                    raise SharedViewCaptureError("capture app bundle is invalid")
+                kind, content = b"L", link_target.encode()
             else:
                 raise SharedViewCaptureError("capture app bundle is invalid")
             digest.update(kind + len(relative).to_bytes(8, "big") + relative)
@@ -333,16 +345,19 @@ def _embedded_manifest_metadata(path: Path) -> tuple[str, str, str, frozenset[st
     )
 
 
-def _expected_embedded_manifest(path: Path) -> tuple[dict[str, Any], str, str]:
+def _expected_embedded_manifest(
+    path: Path,
+    policy_path: Path,
+) -> tuple[dict[str, Any], str, str]:
     source_manifest = _load_json_object(path, "current surface manifest")
     manifest_id = source_manifest.get("manifestId")
     digest_domain = source_manifest.get("digestDomain")
-    policy_path = REPO_ROOT / "Config/ContextPanelSurfacePolicy.json"
     policy = _load_json_object(policy_path, "surface policy")
     source = source_manifest.get("source")
     raw_surfaces = source_manifest.get("surfaces")
     if (
         set(source_manifest) != SOURCE_MANIFEST_ROOT_KEYS
+        or type(source_manifest.get("schemaVersion")) is not int
         or source_manifest.get("schemaVersion") != 1
         or source_manifest.get("algorithm") != policy.get("algorithm")
         or digest_domain != policy.get("digestDomain")
@@ -689,6 +704,7 @@ def _reject_capture_path_overlap(
     artifact_root: Path,
     output_path: Path,
     profiles: dict[str, CaptureProfile],
+    input_paths: tuple[Path, ...],
 ) -> None:
     if _paths_overlap(artifact_root, output_path):
         raise SharedViewCaptureError("capture artifact and output paths overlap")
@@ -697,6 +713,10 @@ def _reject_capture_path_overlap(
             output_path, profile.app_bundle
         ):
             raise SharedViewCaptureError("capture paths overlap an app bundle")
+    for input_path in input_paths:
+        resolved_input = input_path.expanduser().resolve(strict=True)
+        if _paths_overlap(artifact_root, resolved_input) or output_path == resolved_input:
+            raise SharedViewCaptureError("capture output paths overlap a capture input")
 
 
 def _prepare_private_directory(path: Path) -> None:
@@ -792,20 +812,20 @@ def _atomic_write_json(path: Path, payload: dict[str, Any], mode: int) -> None:
             temporary_path.unlink()
 
 
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
+def _fsync_path(path: Path, flags: int) -> None:
+    descriptor = os.open(path, flags)
     try:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def _fsync_directory(path: Path) -> None:
+    _fsync_path(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
 
 
 def _fsync_file(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    _fsync_path(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
 
 
 def _rename_exclusive(source: Path, destination: Path) -> None:
@@ -1321,6 +1341,9 @@ def _capture_profile(
     runner: Runner,
     sleeper: Callable[[float], None],
     now: Callable[[], datetime],
+    seen_digests: dict[str, str | None],
+    prior_results: dict[str, dict[str, object]],
+    published_artifact_paths: dict[str, Path],
     cleanup_target_observer: Callable[[str], None] = lambda _: None,
 ) -> ProfileCaptureOutcome:
     results: dict[str, dict[str, object]] = {}
@@ -1356,9 +1379,7 @@ def _capture_profile(
     )
     simulator_id: str | None = None
     cleanup_target: str | None = None
-    if created.timed_out:
-        lifecycle_error = _command_error_code(created, "simctl-create")
-    elif created.returncode != 0:
+    if created.timed_out or created.returncode != 0:
         lifecycle_error = _command_error_code(created, "simctl-create")
     else:
         simulator_id = _created_simulator_id(created)
@@ -1415,7 +1436,6 @@ def _capture_profile(
     if lifecycle_error is not None:
         results = _unknown_results(requirements, lifecycle_error, now)
     elif simulator_id is not None:
-        seen_digests: dict[str, str | None] = {}
         for index, requirement in enumerate(requirements):
             appearance_mechanism: str | None = None
             if index > 0:
@@ -1587,10 +1607,23 @@ def _capture_profile(
                     if second_snapshot.digest in seen_digests:
                         if duplicate_owner is not None:
                             prior_path = artifact_paths.pop(duplicate_owner, None)
+                            if prior_path is None:
+                                prior_path = published_artifact_paths.pop(
+                                    duplicate_owner, None
+                                )
+                            else:
+                                published_artifact_paths.pop(duplicate_owner, None)
                             if prior_path is not None:
                                 prior_path.unlink(missing_ok=True)
+                            prior_result = results.get(duplicate_owner) or prior_results.get(
+                                duplicate_owner
+                            )
+                            if prior_result is None:
+                                raise SharedViewCaptureError(
+                                    "captured artifact ownership is invalid"
+                                )
                             _mark_result_unknown(
-                                results[duplicate_owner],
+                                prior_result,
                                 "duplicate-artifact-digest",
                                 now(),
                             )
@@ -1623,6 +1656,7 @@ def _capture_profile(
                         continue
                     seen_digests[second_snapshot.digest] = requirement.requirement_id
                     artifact_paths[requirement.requirement_id] = final_path
+                    published_artifact_paths[requirement.requirement_id] = final_path
                     results[requirement.requirement_id] = _result(
                         requirement,
                         status="captured",
@@ -1643,6 +1677,8 @@ def _capture_profile(
         cleanup_status, cleanup_error = _cleanup_simulator(runner, cleanup_target)
     if cleanup_error is not None:
         artifacts_removed = _remove_profile_artifacts(artifact_paths)
+        for requirement_id in artifact_paths:
+            published_artifact_paths.pop(requirement_id, None)
         final_error = cleanup_error if artifacts_removed else "artifact-cleanup-failed"
         if not artifacts_removed:
             cleanup_status = "artifact-cleanup-failed"
@@ -1684,7 +1720,8 @@ def execute_shared_view_capture(
     planned_payload = plan_shared_view_evidence(comparison, matrix, surface_policy)
     plan = load_capture_requirements(requirements_path, planned_payload, matrix, surface_policy)
     expected_manifest, expected_version, expected_build = _expected_embedded_manifest(
-        current_manifest_path
+        current_manifest_path,
+        surface_policy_path,
     )
     expected_manifest_id = _require_sha256(
         expected_manifest.get("manifestId"), "current surface manifest identifier"
@@ -1697,7 +1734,19 @@ def execute_shared_view_capture(
     profiles = load_capture_config(config_path)
     private_root = _validate_artifact_root(artifact_root)
     public_output = _validate_output_path(output_path)
-    _reject_capture_path_overlap(private_root, public_output, profiles)
+    _reject_capture_path_overlap(
+        private_root,
+        public_output,
+        profiles,
+        (
+            surface_comparison_path,
+            current_manifest_path,
+            requirements_path,
+            config_path,
+            matrix_path,
+            surface_policy_path,
+        ),
+    )
     active_runner = runner or SubprocessRunner()
     configured_groups: dict[str, list[CaptureRequirement]] = {profile: [] for profile in SUPPORTED_PROFILES}
     capture_results: dict[str, dict[str, object]] = {}
@@ -1727,6 +1776,17 @@ def execute_shared_view_capture(
     active_profile_names = [
         profile_name for profile_name in SUPPORTED_PROFILES if configured_groups[profile_name]
     ]
+    policy_by_surface = {surface.id: surface for surface in surface_policy}
+    if any(
+        (
+            policy_by_surface[requirement.surface].platform,
+            policy_by_surface[requirement.surface].device_class,
+        )
+        != PROFILE_POLICY_IDENTITIES[profile_name]
+        for profile_name in active_profile_names
+        for requirement in configured_groups[profile_name]
+    ):
+        raise SharedViewCaptureError("capture profile does not match surface policy")
     if any(
         profiles[profile_name].manifest_id != plan.current_manifest_id
         or profiles[profile_name].manifest_digest != expected_manifest_digest
@@ -1772,6 +1832,8 @@ def execute_shared_view_capture(
     ownership_token = uuid.uuid4().hex
     ownership_path = staging_directory / ".capture-owner"
     cleanup_statuses = {profile_name: "not-started" for profile_name in active_profile_names}
+    seen_digests: dict[str, str | None] = {}
+    published_artifact_paths: dict[str, Path] = {}
     owns_run_directory = False
     run_published = False
     try:
@@ -1815,6 +1877,9 @@ def execute_shared_view_capture(
                     active_runner,
                     sleeper,
                     now,
+                    seen_digests,
+                    capture_results,
+                    published_artifact_paths,
                     emergency_cleanup_targets.append,
                 )
                 profile_capture_completed = True

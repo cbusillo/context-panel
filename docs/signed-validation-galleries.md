@@ -96,7 +96,8 @@ The executor recomputes the planner output, requires exact requirements, source
 manifest, embedded manifest, and captured-surface identity, then copies the app
 to a private run-scoped snapshot. It hashes paths, file types, modes, and bytes,
 installs only that snapshot, and verifies the installed simulator container
-against the same identity before capture. Artifact and receipt paths must be
+against the same identity except for installation-induced file-mode changes
+before capture. Artifact and receipt paths must be
 disjoint from every input app bundle so snapshot creation cannot recursively
 copy or mutate capture-owned output.
 

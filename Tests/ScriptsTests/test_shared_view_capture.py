@@ -157,6 +157,7 @@ class FakeRunner:
         baseline_unstable: bool = False,
         baseline_equal: bool = False,
         duplicate_routes: bool = False,
+        cross_profile_duplicates: bool = False,
         created_device_mismatch: bool = False,
         container_path: Path | None = None,
         container_output: str | None = None,
@@ -173,6 +174,7 @@ class FakeRunner:
         self.baseline_unstable = baseline_unstable
         self.baseline_equal = baseline_equal
         self.duplicate_routes = duplicate_routes
+        self.cross_profile_duplicates = cross_profile_duplicates
         self.created_device_mismatch = created_device_mismatch
         self.container_path = container_path
         self.container_output = container_output
@@ -273,10 +275,17 @@ class FakeRunner:
             return png_bytes(color=baseline_color)
         if self.baseline_equal:
             return png_bytes(color=baseline_color)
-        if self.duplicate_routes:
+        if self.cross_profile_duplicates:
+            color = (
+                (0x44, 0x55, 0x66, 0xFF)
+                if "appearance=light" in route
+                else (0x77, 0x88, 0x99, 0xFF)
+            )
+        elif self.duplicate_routes:
             color = (0x44, 0x55, 0x66, 0xFF)
         else:
-            digest = hashlib.sha256(route.encode()).digest()
+            route_identity = route + f"|{self.created_device_type}"
+            digest = hashlib.sha256(route_identity.encode()).digest()
             color = (digest[0], digest[1], digest[2], 0xFF)
         count = self.route_screenshot_counts.get(route, 0)
         self.route_screenshot_counts[route] = count + 1
@@ -321,7 +330,12 @@ class SharedViewCaptureTests(unittest.TestCase):
                 stream,
             )
 
-    def write_surface_manifest(self, manifest_id: str | None = None) -> None:
+    def write_surface_manifest(
+        self,
+        manifest_id: str | None = None,
+        *,
+        policy_path: Path | None = None,
+    ) -> None:
         surface_ids = [
             surface["id"]
             for surface in json.loads(
@@ -353,7 +367,7 @@ class SharedViewCaptureTests(unittest.TestCase):
             }
             for surface_id in surface_ids
         ]
-        policy_path = REPO_ROOT / "Config/ContextPanelSurfacePolicy.json"
+        policy_path = policy_path or REPO_ROOT / "Config/ContextPanelSurfacePolicy.json"
         policy = json.loads(policy_path.read_text())
         source = {
             "schemaVersion": 1,
@@ -443,6 +457,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         run_id: str = "run-fixed",
         matrix_path: Path | None = None,
         receipt_path: Path | None = None,
+        surface_policy_path: Path | None = None,
     ) -> tuple[int, dict[str, Any]]:
         return cast(
             tuple[int, dict[str, Any]],
@@ -458,6 +473,8 @@ class SharedViewCaptureTests(unittest.TestCase):
             now=lambda: FIXED_NOW,
             run_id_factory=lambda: run_id,
             matrix_path=matrix_path or REPO_ROOT / "Config/ContextPanelSharedViewMatrix.json",
+            surface_policy_path=surface_policy_path
+            or REPO_ROOT / "Config/ContextPanelSurfacePolicy.json",
             ),
         )
 
@@ -891,6 +908,24 @@ class SharedViewCaptureTests(unittest.TestCase):
                 self.assertEqual([error_code, error_code], [item["errorCode"] for item in receipt["captures"]])
                 self.assertFalse(list((self.artifact_root / self.manifest_id / f"scenario-{index}").glob("*.png")))
 
+    def test_duplicate_artifact_digests_are_rejected_across_profiles(self) -> None:
+        self.write_plan(["ios.app", "ipados.app"])
+        self.write_config(("ios", "ipados"))
+
+        exit_code, receipt = self.execute(
+            FakeRunner(cross_profile_duplicates=True),
+            run_id="cross-profile-duplicates",
+            receipt_path=self.root / "cross-profile-duplicates.json",
+        )
+
+        self.assertEqual(EXIT_UNKNOWN, exit_code)
+        self.assertEqual(
+            ["duplicate-artifact-digest"] * 4,
+            [item["errorCode"] for item in receipt["captures"]],
+        )
+        run_directory = self.artifact_root / self.manifest_id / "cross-profile-duplicates"
+        self.assertFalse(list(run_directory.glob("*.png")))
+
     def test_complete_png_crc_truncation_and_idat_validation(self) -> None:
         for index, corruption in enumerate(("crc", "truncated", "idat")):
             with self.subTest(corruption=corruption):
@@ -1245,6 +1280,49 @@ class SharedViewCaptureTests(unittest.TestCase):
             )
         self.assertEqual([], runner.calls)
 
+        with self.assertRaisesRegex(SharedViewCaptureError, "overlap a capture input"):
+            self.execute(
+                runner,
+                run_id="input-overwrite",
+                receipt_path=self.current_manifest_path,
+            )
+        self.assertEqual([], runner.calls)
+
+    def test_capture_app_bundle_rejects_escaping_symlinks(self) -> None:
+        self.write_plan(["ios.app"])
+        self.write_config()
+        outside = self.root / "outside-resource"
+        outside.write_text("mutable external content")
+        (self.app / "ExternalResource").symlink_to(outside)
+
+        with self.assertRaisesRegex(SharedViewCaptureError, "app bundle is invalid"):
+            self.execute(FakeRunner(), run_id="escaping-symlink")
+
+    def test_selected_surface_policy_is_bound_to_manifest_and_profile(self) -> None:
+        policy_path = self.root / "custom-surface-policy.json"
+        policy = json.loads(
+            (REPO_ROOT / "Config/ContextPanelSurfacePolicy.json").read_text()
+        )
+        for surface in policy["surfaces"]:
+            if surface["id"] in {"ios.app", "ios.widget"}:
+                surface["deviceClass"] = "iPad"
+        policy_path.write_text(json.dumps(policy))
+        self.policy = load_surface_policy(policy_path)
+        self.matrix = load_shared_view_matrix(
+            REPO_ROOT / "Config/ContextPanelSharedViewMatrix.json",
+            self.policy,
+        )
+        self.write_surface_manifest(policy_path=policy_path)
+        self.write_plan(["ios.app"])
+        self.write_config()
+
+        with self.assertRaisesRegex(SharedViewCaptureError, "does not match surface policy"):
+            self.execute(
+                FakeRunner(),
+                run_id="custom-policy",
+                surface_policy_path=policy_path,
+            )
+
     def test_manifest_domain_app_version_and_platform_metadata_are_bound(self) -> None:
         self.write_plan(["ios.app"])
         self.write_config()
@@ -1259,6 +1337,18 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.current_manifest_path.write_text(json.dumps(source))
         with self.assertRaisesRegex(SharedViewCaptureError, "current surface manifest is invalid"):
             self.execute(runner, run_id="manifest-domain")
+
+        self.write_surface_manifest()
+        source = json.loads(self.current_manifest_path.read_text())
+        source["schemaVersion"] = True
+        unhashed_source = {key: value for key, value in source.items() if key != "manifestId"}
+        source["manifestId"] = manifest_hash_parts(
+            f"{source['digestDomain']}/manifest",
+            [manifest_canonical_json(unhashed_source)],
+        )
+        self.current_manifest_path.write_text(json.dumps(source))
+        with self.assertRaisesRegex(SharedViewCaptureError, "current surface manifest is invalid"):
+            self.execute(runner, run_id="manifest-schema-bool")
 
         self.write_surface_manifest()
         self.write_info_plist("ContextPanel")
