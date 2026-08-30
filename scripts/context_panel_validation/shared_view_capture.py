@@ -75,43 +75,21 @@ SIMCTL_CLEANUP_TIMEOUT = 30
 CAPTURE_SETTLE_SECONDS = 1.0
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 MAX_PNG_FILE_BYTES = 128 * 1024 * 1024
+MAX_JSON_FILE_BYTES = 16 * 1024 * 1024
 MAX_PNG_DIMENSION = 16_384
 MAX_PNG_PIXELS = 100_000_000
-SOURCE_MANIFEST_ROOT_KEYS = {
-    "schemaVersion",
-    "algorithm",
-    "digestDomain",
-    "contractFingerprint",
-    "source",
-    "toolchain",
-    "archiveLayouts",
-    "evidencePolicy",
-    "artifactEvidenceContract",
-    "files",
-    "ignoredInputs",
-    "surfaces",
-    "manifestId",
-}
-SOURCE_IDENTITY_KEYS = {
-    "marketingVersion",
-    "buildNumber",
-    "commit",
-    "configuration",
-    "xcodeBuild",
-    "treeState",
-    "policySha256",
-    "projectSourceSha256",
-}
-EXPECTED_ARTIFACT_KEYS = {
-    "artifactId",
-    "bundleIdentifier",
-    "marketingVersion",
-    "buildNumber",
-    "sourceCommit",
-    "configuration",
-    "xcodeBuild",
-    "treeState",
-}
+SOURCE_MANIFEST_ROOT_KEYS = set(
+    "schemaVersion algorithm digestDomain contractFingerprint source toolchain archiveLayouts "
+    "evidencePolicy artifactEvidenceContract files ignoredInputs surfaces manifestId".split()
+)
+SOURCE_IDENTITY_KEYS = set(
+    "marketingVersion buildNumber commit configuration xcodeBuild treeState policySha256 "
+    "projectSourceSha256".split()
+)
+EXPECTED_ARTIFACT_KEYS = set(
+    "artifactId bundleIdentifier marketingVersion buildNumber sourceCommit configuration "
+    "xcodeBuild treeState".split()
+)
 PROFILE_PLATFORM_IDENTIFIERS = {
     "ios": ("iPhoneSimulator", 1),
     "ipados": ("iPhoneSimulator", 2),
@@ -224,13 +202,37 @@ class ProfileCaptureOutcome:
 
 
 def _load_json_object(path: Path, label: str) -> dict[str, Any]:
+    data = _read_bounded_file(path, label, MAX_JSON_FILE_BYTES)
     try:
-        payload = json.loads(path.expanduser().read_text())
-    except (OSError, json.JSONDecodeError) as error:
+        payload = json.loads(data)
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
         raise SharedViewCaptureError(f"{label} is unavailable or invalid") from error
     if not isinstance(payload, dict):
         raise SharedViewCaptureError(f"{label} is invalid")
     return payload
+
+
+def _read_bounded_file(path: Path, label: str, maximum_bytes: int) -> bytes:
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            path.expanduser(),
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+        )
+        file_stat = os.fstat(descriptor)
+        if not stat.S_ISREG(file_stat.st_mode) or not 0 < file_stat.st_size <= maximum_bytes:
+            raise SharedViewCaptureError(f"{label} is unavailable or invalid")
+        with os.fdopen(descriptor, "rb") as stream:
+            descriptor = -1
+            data = stream.read(maximum_bytes + 1)
+    except OSError as error:
+        raise SharedViewCaptureError(f"{label} is unavailable or invalid") from error
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    if len(data) != file_stat.st_size:
+        raise SharedViewCaptureError(f"{label} is unavailable or invalid")
+    return data
 
 
 def _require_string(value: object, label: str) -> str:
@@ -305,10 +307,7 @@ def _embedded_manifest_metadata(path: Path) -> tuple[str, str, str, frozenset[st
     manifest_path = resources / "ContextPanelSurfaceManifest.json"
     if not manifest_path.is_file() or manifest_path.is_symlink():
         raise SharedViewCaptureError("capture app surface manifest is invalid")
-    try:
-        payload = json.loads(manifest_path.read_text())
-    except (OSError, json.JSONDecodeError) as error:
-        raise SharedViewCaptureError("capture app surface manifest is invalid") from error
+    payload = _load_json_object(manifest_path, "capture app surface manifest")
     if not isinstance(payload, dict) or set(payload) != {
         "schemaVersion", "kind", "manifestId", "contractFingerprint", "surfaces"
     } or payload.get("schemaVersion") != 1 or payload.get("kind") != "context-panel-surface-build-intent":
@@ -347,12 +346,12 @@ def _embedded_manifest_metadata(path: Path) -> tuple[str, str, str, frozenset[st
 
 def _expected_embedded_manifest(
     path: Path,
-    policy_path: Path,
+    policy: dict[str, Any],
+    policy_sha256: str,
 ) -> tuple[dict[str, Any], str, str]:
     source_manifest = _load_json_object(path, "current surface manifest")
     manifest_id = source_manifest.get("manifestId")
     digest_domain = source_manifest.get("digestDomain")
-    policy = _load_json_object(policy_path, "surface policy")
     source = source_manifest.get("source")
     raw_surfaces = source_manifest.get("surfaces")
     if (
@@ -369,7 +368,7 @@ def _expected_embedded_manifest(
         or not isinstance(source, dict)
         or set(source) != SOURCE_IDENTITY_KEYS
         or source.get("treeState") not in {"clean", "dirty", "unknown"}
-        or source.get("policySha256") != _stream_sha256(policy_path, "surface policy")
+        or source.get("policySha256") != policy_sha256
         or not SHA256_PATTERN.fullmatch(str(source.get("projectSourceSha256") or ""))
         or not isinstance(source_manifest.get("toolchain"), dict)
         or not isinstance(source_manifest.get("archiveLayouts"), dict)
@@ -686,6 +685,13 @@ def _validate_artifact_root(path: Path) -> Path:
     repo_root = REPO_ROOT.resolve()
     if resolved == repo_root or repo_root in resolved.parents:
         raise SharedViewCaptureError("capture artifact root must be outside the repository")
+    existing_ancestor = resolved
+    while not existing_ancestor.exists():
+        existing_ancestor = existing_ancestor.parent
+    for ancestor in (existing_ancestor, *existing_ancestor.parents):
+        ancestor_mode = ancestor.stat().st_mode
+        if ancestor_mode & 0o022 and not ancestor_mode & stat.S_ISVTX:
+            raise SharedViewCaptureError("capture artifact root ancestry is unsafe")
     return resolved
 
 
@@ -798,8 +804,8 @@ def _atomic_write_json(path: Path, payload: dict[str, Any], mode: int) -> None:
             json.dump(payload, stream, indent=2, sort_keys=True)
             stream.write("\n")
             stream.flush()
+            os.fchmod(stream.fileno(), mode)
             os.fsync(stream.fileno())
-        os.chmod(temporary_path, mode)
         os.replace(temporary_path, path)
         replaced = True
         _fsync_directory(path.parent)
@@ -1105,16 +1111,16 @@ def _matching_simulators(
     try:
         payload = json.loads(result.stdout)
     except json.JSONDecodeError:
-        return None, "simctl-created-device-invalid"
+        return None, f"{error_base}-invalid"
     if not isinstance(payload, dict) or not isinstance(payload.get("devices"), dict):
-        return None, "simctl-created-device-invalid"
+        return None, f"{error_base}-invalid"
     matches: set[str] = set()
     for runtime_identifier, raw_devices in payload["devices"].items():
         if not isinstance(runtime_identifier, str) or not isinstance(raw_devices, list):
-            return None, "simctl-created-device-invalid"
+            return None, f"{error_base}-invalid"
         for raw_device in raw_devices:
             if not isinstance(raw_device, dict):
-                return None, "simctl-created-device-invalid"
+                return None, f"{error_base}-invalid"
             simulator_id = raw_device.get("udid")
             if (
                 raw_device.get("name") == simulator_name
@@ -1125,7 +1131,7 @@ def _matching_simulators(
                 and SIMULATOR_UDID_PATTERN.fullmatch(simulator_id)
             ):
                 if simulator_id in matches:
-                    return None, "simctl-created-device-mismatch"
+                    return None, f"{error_base}-mismatch"
                 matches.add(simulator_id)
     return matches, None
 
@@ -1379,12 +1385,15 @@ def _capture_profile(
     )
     simulator_id: str | None = None
     cleanup_target: str | None = None
+    creation_identity_uncertain = False
     if created.timed_out or created.returncode != 0:
         lifecycle_error = _command_error_code(created, "simctl-create")
+        creation_identity_uncertain = True
     else:
         simulator_id = _created_simulator_id(created)
         if simulator_id is None:
             lifecycle_error = "simctl-create-invalid-udid"
+            creation_identity_uncertain = True
         else:
             identity_error = _verify_created_simulator(
                 runner,
@@ -1394,6 +1403,7 @@ def _capture_profile(
             )
             if identity_error is not None:
                 lifecycle_error = identity_error
+                creation_identity_uncertain = True
             else:
                 cleanup_target = simulator_id
                 cleanup_target_observer(simulator_id)
@@ -1671,11 +1681,20 @@ def _capture_profile(
                 first_path.unlink(missing_ok=True)
 
     if cleanup_target is None:
-        cleanup_status = "inventory-unknown" if cleanup_inventory_unknown else "not-created"
+        if cleanup_inventory_unknown:
+            cleanup_status = "inventory-unknown"
+        elif creation_identity_uncertain:
+            cleanup_status = "identity-unverified"
+        else:
+            cleanup_status = "not-created"
         cleanup_error = None
     else:
         cleanup_status, cleanup_error = _cleanup_simulator(runner, cleanup_target)
     if cleanup_error is not None:
+        withdrawn_requirement_ids = set(artifact_paths)
+        for digest, requirement_id in list(seen_digests.items()):
+            if requirement_id in withdrawn_requirement_ids:
+                seen_digests.pop(digest)
         artifacts_removed = _remove_profile_artifacts(artifact_paths)
         for requirement_id in artifact_paths:
             published_artifact_paths.pop(requirement_id, None)
@@ -1714,14 +1733,32 @@ def execute_shared_view_capture(
     matrix_path: Path = DEFAULT_MATRIX_PATH,
     surface_policy_path: Path = DEFAULT_SURFACE_POLICY_PATH,
 ) -> tuple[int, dict[str, object]]:
-    surface_policy = load_surface_policy(surface_policy_path)
+    canonical_policy_path = DEFAULT_SURFACE_POLICY_PATH.resolve()
+    if surface_policy_path.expanduser().resolve(strict=True) != canonical_policy_path:
+        raise SharedViewCaptureError("capture requires the canonical surface policy")
+    policy_bytes = _read_bounded_file(
+        canonical_policy_path,
+        "surface policy",
+        MAX_JSON_FILE_BYTES,
+    )
+    try:
+        policy = json.loads(policy_bytes)
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise SharedViewCaptureError("surface policy is unavailable or invalid") from error
+    if not isinstance(policy, dict):
+        raise SharedViewCaptureError("surface policy is unavailable or invalid")
+    with tempfile.NamedTemporaryFile(suffix=".json") as policy_snapshot:
+        policy_snapshot.write(policy_bytes)
+        policy_snapshot.flush()
+        surface_policy = load_surface_policy(Path(policy_snapshot.name))
     matrix = load_shared_view_matrix(matrix_path, surface_policy)
     comparison = _load_json_object(surface_comparison_path, "surface comparison")
     planned_payload = plan_shared_view_evidence(comparison, matrix, surface_policy)
     plan = load_capture_requirements(requirements_path, planned_payload, matrix, surface_policy)
     expected_manifest, expected_version, expected_build = _expected_embedded_manifest(
         current_manifest_path,
-        surface_policy_path,
+        policy,
+        hashlib.sha256(policy_bytes).hexdigest(),
     )
     expected_manifest_id = _require_sha256(
         expected_manifest.get("manifestId"), "current surface manifest identifier"
@@ -1744,7 +1781,7 @@ def execute_shared_view_capture(
             requirements_path,
             config_path,
             matrix_path,
-            surface_policy_path,
+            canonical_policy_path,
         ),
     )
     active_runner = runner or SubprocessRunner()
