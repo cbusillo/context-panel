@@ -250,6 +250,16 @@ member of a multi-architecture archive's UUID set. Matching app receipts do not
 stand in for widget, complication, or Top Shelf receipts from their own process
 boundaries.
 
+The operator queue applies that proof per placement batch, not as one global
+runtime switch. An `os-composited-placement` review action is withheld unless
+every exact `runtimeSurface` named by that action has a coordinator runtime
+summary entry with `state: proven`. Proof for a different surface, or an
+otherwise degraded global runtime summary caused by an unrelated surface, does
+not change that result. A global `superseded` state remains a fail-closed
+exception because a required host may already have moved beyond the coordinated
+build. `shared-view` batches have no runtime surfaces and are not blocked by
+runtime evidence outside their own render and fixture contracts.
+
 The coordinator persists only an additive schema-v1 summary sidecar keyed by
 its session ID. It retains expected public build identity, receipt IDs and
 ordering fields, exact-match digests, closed outcomes, and diagnostic codes. It

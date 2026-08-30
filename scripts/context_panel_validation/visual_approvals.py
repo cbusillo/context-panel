@@ -956,46 +956,39 @@ def build_visual_approval_report(
                 ),
             }
         )
-    waiting_devices = {
-        item["device"] for item in requirements if item["state"] == "waiting"
-    }
-    ready_by_device: dict[str, list[dict[str, Any]]] = {}
+    ready_by_device_and_class: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for item in requirements:
-        if item["state"] == "ready" and item["device"] not in waiting_devices:
-            ready_by_device.setdefault(str(item["device"]), []).append(item)
+        if item["state"] == "ready":
+            key = (str(item["device"]), str(item["evidenceClass"]))
+            ready_by_device_and_class.setdefault(key, []).append(item)
     review_batches = []
-    for device in sorted(ready_by_device):
-        items = ready_by_device[device]
+    for device, evidence_class in sorted(ready_by_device_and_class):
+        items = ready_by_device_and_class[(device, evidence_class)]
         chunks = [
             items[index : index + MAXIMUM_REQUIREMENTS_PER_REVIEW_BATCH]
             for index in range(0, len(items), MAXIMUM_REQUIREMENTS_PER_REVIEW_BATCH)
         ]
         for index, chunk in enumerate(chunks, start=1):
-            shared_count = sum(item["evidenceClass"] == "shared-view" for item in chunk)
-            placement_count = sum(
-                item["evidenceClass"] == "os-composited-placement" for item in chunk
+            review_label = (
+                "shared-view check" if evidence_class == "shared-view" else "placement glance"
             )
-            parts = []
-            if shared_count:
-                parts.append(
-                    f"{shared_count} shared-view check{'s' if shared_count != 1 else ''}"
-                )
-            if placement_count:
-                parts.append(
-                    f"{placement_count} placement glance{'s' if placement_count != 1 else ''}"
-                )
-            action_id = f"review.{_device_key(device)}"
+            action_id = f"review.{_device_key(device)}.{evidence_class}"
             if len(chunks) > 1:
                 action_id = f"{action_id}.part-{index}"
+            surfaces = sorted({str(item["surface"]) for item in chunk})
+            requires_runtime = evidence_class == "os-composited-placement"
             review_batches.append(
                 {
                     "actionID": action_id,
                     "device": device,
+                    "evidenceClass": evidence_class,
                     "requirementIDs": [item["id"] for item in chunk],
-                    "surfaces": sorted({str(item["surface"]) for item in chunk}),
-                    "requiresRuntime": bool(placement_count),
+                    "surfaces": surfaces,
+                    "runtimeSurfaces": surfaces if requires_runtime else [],
+                    "requiresRuntime": requires_runtime,
                     "instruction": (
-                        f"Review {', '.join(parts)} on {device}, then record each decision by requirement ID."
+                        f"Review {len(chunk)} {review_label}{'s' if len(chunk) != 1 else ''} "
+                        f"on {device}, then record each decision by requirement ID."
                     ),
                     "estimateMinutes": max(2, len(chunk) * 2),
                 }
