@@ -10,6 +10,7 @@ import re
 import tempfile
 from typing import Any, cast
 
+from .automation import MAXIMUM_AUTOMATION_ATTEMPT_COUNT
 from .models import (
     EXIT_READY,
     EXIT_UNKNOWN,
@@ -1487,6 +1488,49 @@ def apply_operator_flow_to_report(
     )
 
 
+def project_automation_report(automation: object) -> dict[str, Any]:
+    if not isinstance(automation, dict):
+        raise OperatorFlowError("automation report is invalid")
+    last_attempt = automation.get("lastAttempt")
+    if last_attempt is not None and not isinstance(last_attempt, dict):
+        raise OperatorFlowError("automation report is invalid")
+    summary = last_attempt.get("summary") if last_attempt is not None else None
+    if last_attempt is not None and not isinstance(summary, dict):
+        raise OperatorFlowError("automation report is invalid")
+    try:
+        projected_last_attempt = (
+            {
+                "id": last_attempt["id"],
+                "kind": last_attempt["kind"],
+                "result": last_attempt["result"],
+                "reasonCode": last_attempt["reasonCode"],
+                "startedAt": last_attempt["startedAt"],
+                "finishedAt": last_attempt["finishedAt"],
+                "receiptWindowDigest": last_attempt["receiptWindowDigest"],
+                "summary": {
+                    "runtimeEvidenceState": summary["runtimeEvidenceState"],
+                    "requestedSurfaceCount": summary["requestedSurfaceCount"],
+                    "provenSurfaceCount": summary["provenSurfaceCount"],
+                    "receiptCount": summary["receiptCount"],
+                    "diagnosticCount": summary["diagnosticCount"],
+                    "evidenceSatisfied": summary["evidenceSatisfied"],
+                },
+            }
+            if last_attempt is not None and summary is not None
+            else None
+        )
+        return {
+            "schemaVersion": automation["schemaVersion"],
+            "state": automation["state"],
+            "attemptCount": automation["attemptCount"],
+            "remainingAttemptCount": automation["remainingAttemptCount"],
+            "evidenceSatisfied": automation["evidenceSatisfied"],
+            "lastAttempt": projected_last_attempt,
+        }
+    except (KeyError, TypeError) as error:
+        raise OperatorFlowError("automation report is invalid") from error
+
+
 def build_final_report_payload(report: ValidationReport) -> dict[str, Any]:
     session = report.session or {}
     requested_surfaces = list(session.get("requestedSurfaces", []))
@@ -1524,6 +1568,17 @@ def build_final_report_payload(report: ValidationReport) -> dict[str, Any]:
         "machineWaitingCount": 0,
         "requirements": [],
     }
+    automation = project_automation_report(
+        report.automation
+        or {
+            "schemaVersion": 1,
+            "state": "not-started",
+            "attemptCount": 0,
+            "remainingAttemptCount": MAXIMUM_AUTOMATION_ATTEMPT_COUNT,
+            "evidenceSatisfied": False,
+            "lastAttempt": None,
+        }
+    )
     if any(not isinstance(surface, str) for surface in requested_surfaces):
         raise OperatorFlowError("operator action contract is invalid")
     allowed_action_surfaces = sorted(
@@ -1651,6 +1706,7 @@ def build_final_report_payload(report: ValidationReport) -> dict[str, Any]:
                 for item in visual_approvals.get("requirements") or []
             ],
         },
+        "automation": automation,
         "operatorFlow": operator_flow,
         "carryForwardLineage": {
             "state": "not-evaluated",
@@ -1691,6 +1747,11 @@ def render_final_report(report: ValidationReport) -> str:
         ),
         f"- Watch restart attestation: `{obtained['watchRestartAttestation']}`",
         f"- Visual approval: `{obtained['visualApproval']}`",
+        (
+            "- Receipt-sync automation: "
+            f"`{payload['automation']['state']}` · "
+            f"`{payload['automation']['attemptCount']}` attempts"
+        ),
     ]
     runtime_diagnostics = obtained["exactBuildRuntimeReceipts"]["diagnostics"]
     if runtime_diagnostics:

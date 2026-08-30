@@ -243,6 +243,30 @@ uses only runtime-session `status` and `export`, so a read-only status check doe
 not perform CloudKit relay work. The adapter has no CloudKit client and never
 reads raw receipt queues.
 
+For a bounded coordinator-managed invocation of that same sequence, use:
+
+```sh
+scripts/context-panel-validation.py advance-automation \
+  --version <marketing-version> \
+  --build-number <coordinated-build-number>
+```
+
+`advance-automation` shares the exact `sync`, `status`, `export`, and runtime
+reconciliation path used by `sync-runtime-evidence`; it does not add a second
+relay implementation. It is limited to an active coordinator session and
+records one public schema-v1 attempt result: `succeeded`, `failed`,
+`unsupported`, or `skipped-precondition`. The bounded sidecar includes only
+fixed reason codes, ISO timestamps, counts, booleans, and SHA-256 digests.
+
+It avoids a second relay after runtime evidence is already proven or during a
+conservative cooldown for the same receipt-window state. After the cooldown, an
+active window may sync again to collect newly relayed receipts. A changed or
+expired window may advance immediately, and an unsupported adapter is retried
+after cooldown rather than latched permanently. The session allows at most 64
+attempts. `status` and `final-report` expose the public automation summary
+without performing a sync. Failed or unsupported attempts never mark runtime
+evidence as satisfied.
+
 For proof, every actual identity field must match the sealed archive evidence:
 version/build, source manifest and contract, surface fingerprints, bundle and
 artifact, and the UUID of the loaded executable slice. A loaded UUID may be one
