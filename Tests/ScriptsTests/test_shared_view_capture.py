@@ -30,6 +30,7 @@ from context_panel_validation.shared_view_capture import (
     CAPTURE_RECEIPT_KIND,
     REQUIREMENTS_DIGEST_DOMAIN,
     SharedViewCaptureError,
+    _png_snapshot,
     _verify_created_simulator,
     execute_shared_view_capture,
     load_capture_config,
@@ -689,6 +690,32 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual([None, None], [item["appearanceMechanism"] for item in receipt["captures"]])
         self.assertIn(["xcrun", "simctl", "delete", SIMULATOR_ID], [args for args, _ in runner.calls])
 
+    def test_mid_cell_failures_preserve_exact_mechanism_progress(self) -> None:
+        cases = (
+            ({"fail_at": "bootstatus"}, "simctl-bootstatus-failed", None),
+            ({"fail_at": "install"}, "simctl-install-failed", None),
+            ({"fail_at": "get_app_container"}, "simctl-app-container-failed", None),
+            ({"container_output": "relative/path"}, "simctl-app-container-invalid", None),
+            ({"fail_at": "ui"}, "simctl-ui-failed", None),
+            ({"timeout_at": "ui"}, "simctl-ui-timeout", None),
+            ({"fail_at": "io"}, "simctl-baseline-screenshot-failed", "simctl-ui-appearance"),
+            ({"corrupt_png": "baseline"}, "simulator-baseline-image-invalid", "simctl-ui-appearance"),
+            ({"fail_at": "openurl"}, "simctl-openurl-failed", "simctl-ui-appearance"),
+            ({"timeout_at": "openurl"}, "simctl-openurl-timeout", "simctl-ui-appearance"),
+        )
+        self.write_plan(["ios.app"])
+        self.write_config()
+        for index, (runner_options, error_code, mechanism) in enumerate(cases):
+            with self.subTest(error_code=error_code):
+                exit_code, receipt = self.execute(
+                    FakeRunner(**runner_options),
+                    run_id=f"command-failure-{index}",
+                    receipt_path=self.root / f"command-failure-{index}.json",
+                )
+                self.assertEqual(EXIT_UNKNOWN, exit_code)
+                self.assertEqual(error_code, receipt["captures"][0]["errorCode"])
+                self.assertEqual(mechanism, receipt["captures"][0]["appearanceMechanism"])
+
     def test_ambig(self) -> None:
         self.write_plan(["ios.app"])
         self.write_config()
@@ -976,6 +1003,119 @@ class SharedViewCaptureTests(unittest.TestCase):
         )
         run_directory = self.artifact_root / self.manifest_id / "cross-dupe"
         self.assertFalse(list(run_directory.glob("*.png")))
+
+    def test_complete_png_crc_truncation_and_idat_validation(self) -> None:
+        for index, corruption in enumerate(("crc", "truncated", "idat")):
+            with self.subTest(corruption=corruption):
+                self.write_plan(["ios.app"])
+                self.write_config()
+                exit_code, receipt = self.execute(
+                    FakeRunner(corrupt_png=corruption),
+                    run_id=f"corrupt-{index}",
+                    receipt_path=self.root / f"corrupt-{index}.json",
+                )
+                self.assertEqual(EXIT_UNKNOWN, exit_code)
+                self.assertEqual("captured-image-invalid", receipt["captures"][0]["errorCode"])
+
+    def test_png_validator_rejects_structural_and_bomb_inputs(self) -> None:
+        valid_row = b"\x00" + (b"\x22\x66\xaa\xff" * 320)
+        valid_idat = zlib.compress(valid_row * 180)
+        document = png_document
+        header = png_ihdr
+        realistic = self.root / "realistic.png"
+        realistic.write_bytes(document(
+            (b"IHDR", header()), (b"sRGB", b"\0"), (b"pHYs", b"\0" * 9),
+            (b"IDAT", valid_idat[:8]), (b"IDAT", valid_idat[8:]), (b"IEND", b""),
+        ))
+        minimal = self.root / "minimal.png"
+        minimal.write_bytes(png_bytes())
+        realistic_snapshot = _png_snapshot(realistic)
+        minimal_snapshot = _png_snapshot(minimal)
+        self.assertEqual(minimal_snapshot.pixel_digest, realistic_snapshot.pixel_digest)
+        self.assertNotEqual(minimal_snapshot.artifact_digest, realistic_snapshot.artifact_digest)
+        rgb = self.root / "rgb.png"
+        rgb.write_bytes(document(
+            (b"IHDR", header(color_type=2)),
+            (b"IDAT", zlib.compress((b"\0" + b"\x22\x66\xaa" * 320) * 180)),
+            (b"IEND", b""),
+        ))
+        self.assertEqual(minimal_snapshot.pixel_digest, _png_snapshot(rgb).pixel_digest)
+
+        rows = (bytes(range(8)), bytes(range(8, 16)))
+        filter_digests = set()
+        for filter_type in range(5):
+            previous = bytes(8)
+            filtered_rows = []
+            for row in rows:
+                encoded = bytearray()
+                for index, value in enumerate(row):
+                    left = row[index - 4] if index >= 4 else 0
+                    above = previous[index]
+                    upper_left = previous[index - 4] if index >= 4 else 0
+                    if filter_type == 1:
+                        predictor = left
+                    elif filter_type == 2:
+                        predictor = above
+                    elif filter_type == 3:
+                        predictor = (left + above) // 2
+                    elif filter_type == 4:
+                        estimate = left + above - upper_left
+                        choices = (left, above, upper_left)
+                        predictor = min(choices, key=lambda choice: (abs(estimate - choice), choices.index(choice)))
+                    else:
+                        predictor = 0
+                    encoded.append((value - predictor) & 0xFF)
+                filtered_rows.append(bytes((filter_type,)) + encoded)
+                previous = row
+            path = self.root / f"filter-{filter_type}.png"
+            path.write_bytes(document((b"IHDR", header(width=2, height=2)), (b"IDAT", zlib.compress(b"".join(filtered_rows))), (b"IEND", b"")))
+            filter_digests.add(_png_snapshot(path).pixel_digest)
+        self.assertEqual(1, len(filter_digests))
+        cases = {
+            "bit-depth": document((b"IHDR", header(bit_depth=16)), (b"IDAT", valid_idat), (b"IEND", b"")),
+            "huge-dimension": document((b"IHDR", header(width=16_385)), (b"IDAT", zlib.compress(b"\x00")), (b"IEND", b"")),
+            "huge-pixels": document((b"IHDR", header(width=8_192, height=4_097)), (b"IDAT", zlib.compress(b"\x00")), (b"IEND", b"")),
+            "palette": document((b"IHDR", header(color_type=3)), (b"IDAT", valid_idat), (b"IEND", b"")),
+            "interlaced": document((b"IHDR", header(methods=b"\x00\x00\x01")), (b"IDAT", valid_idat), (b"IEND", b"")),
+            "wrong-first": document((b"IDAT", valid_idat), (b"IEND", b"")),
+            "duplicate-ihdr": document((b"IHDR", header()), (b"IHDR", header()), (b"IDAT", valid_idat), (b"IEND", b"")),
+            "unknown-critical": document((b"IHDR", header()), (b"ABCD", b""), (b"IDAT", valid_idat), (b"IEND", b"")),
+            "nonalphabetic-chunk": document((b"IHDR", header()), (b"ab1D", b""), (b"IDAT", valid_idat), (b"IEND", b"")),
+            "reserved-bit": document((b"IHDR", header()), (b"abct", b""), (b"IDAT", valid_idat), (b"IEND", b"")),
+            "transparency": document((b"IHDR", header(color_type=2)), (b"tRNS", b"\0" * 6), (b"IDAT", zlib.compress((b"\0" + b"\x22\x66\xaa" * 320) * 180)), (b"IEND", b"")),
+            "empty-plte": document((b"IHDR", header()), (b"PLTE", b""), (b"IDAT", valid_idat), (b"IEND", b"")),
+            "large-plte": document((b"IHDR", header()), (b"PLTE", b"x" * 771), (b"IDAT", valid_idat), (b"IEND", b"")),
+            "duplicate-plte": document((b"IHDR", header()), (b"PLTE", b"\0\0\0"), (b"PLTE", b"\0\0\0"), (b"IDAT", valid_idat), (b"IEND", b"")),
+            "late-plte": document((b"IHDR", header()), (b"IDAT", valid_idat), (b"PLTE", b"\0\0\0"), (b"IEND", b"")),
+            "noncontiguous-idat": document((b"IHDR", header()), (b"IDAT", valid_idat[:8]), (b"tEXt", b"x"), (b"IDAT", valid_idat[8:]), (b"IEND", b"")),
+            "nonempty-iend": document((b"IHDR", header()), (b"IDAT", valid_idat), (b"IEND", b"x")),
+            "trailing": document((b"IHDR", header()), (b"IDAT", valid_idat), (b"IEND", b""), (b"tEXt", b"x")),
+            "missing-idat": document((b"IHDR", header()), (b"IEND", b"")),
+            "wrong-size": document((b"IHDR", header()), (b"IDAT", zlib.compress(b"\x00")), (b"IEND", b"")),
+            "truncated-zlib": document((b"IHDR", header()), (b"IDAT", valid_idat[:-1]), (b"IEND", b"")),
+            "unused-zlib": document((b"IHDR", header()), (b"IDAT", valid_idat + zlib.compress(b"x")), (b"IEND", b"")),
+            "declared-small-expansion": document((b"IHDR", header(width=1, height=1)), (b"IDAT", zlib.compress(b"x" * 1_000_000)), (b"IEND", b"")),
+            "bad-filter": document((b"IHDR", header()), (b"IDAT", zlib.compress((b"\x05" + valid_row[1:]) * 180)), (b"IEND", b"")),
+            "too-many-chunks": document((b"IHDR", header()), *((b"tEXt", b"") for _ in range(capture_module.MAX_PNG_CHUNKS)), (b"IDAT", valid_idat), (b"IEND", b"")),
+        }
+        for name, content in cases.items():
+            path = self.root / f"invalid-{name}.png"
+            path.write_bytes(content)
+            with self.subTest(name=name), self.assertRaisesRegex(SharedViewCaptureError, "captured image is invalid"):
+                _png_snapshot(path)
+
+        oversized = self.root / "oversized.png"
+        with oversized.open("wb") as stream:
+            stream.truncate(capture_module.MAX_PNG_FILE_BYTES + 1)
+        target = self.root / "target.png"
+        target.write_bytes(png_bytes())
+        symlink = self.root / "symlink.png"
+        symlink.symlink_to(target)
+        fifo = self.root / "fifo.png"
+        os.mkfifo(fifo)
+        for path in (oversized, self.root, symlink, fifo):
+            with self.subTest(path=path), self.assertRaisesRegex(SharedViewCaptureError, "captured image is invalid"):
+                _png_snapshot(path)
 
     def test_durability(self) -> None:
         self.write_plan(["ios.app"])
