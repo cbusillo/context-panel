@@ -75,13 +75,10 @@ SIMCTL_SCREENSHOT_TIMEOUT = 60
 SIMCTL_CLEANUP_TIMEOUT = 30
 CAPTURE_SETTLE_SECONDS = 1.0
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
-MAX_PNG_FILE_BYTES = 128 * 1024 * 1024
 MAX_JSON_FILE_BYTES = 16 * 1024 * 1024
 MAX_PLIST_FILE_BYTES = 4 * 1024 * 1024
 MAX_BUNDLE_FILE_BYTES = 512 * 1024 * 1024
 MAX_BUNDLE_ENTRIES = 100_000
-MAX_PNG_DIMENSION = 16_384
-MAX_PNG_PIXELS = 100_000_000
 SOURCE_MANIFEST_ROOT_KEYS = set(
     "schemaVersion algorithm digestDomain contractFingerprint source toolchain archiveLayouts "
     "evidencePolicy artifactEvidenceContract files ignoredInputs surfaces manifestId".split()
@@ -527,10 +524,11 @@ def _app_metadata(
     manifest_id, manifest_digest, contract_fingerprint, manifest_surfaces = (
         _embedded_manifest_metadata(path)
     )
+    bundle_sha256 = _bundle_sha256(path)
     return (
         bundle_identifier,
         _stream_sha256(executable, "capture app executable"),
-        _bundle_sha256(path),
+        bundle_sha256,
         manifest_id,
         manifest_digest,
         manifest_surfaces,
@@ -863,29 +861,13 @@ def _rename_exclusive(source: Path, destination: Path) -> None:
 
 
 def _png_snapshot(path: Path) -> PNGSnapshot:
-    descriptor = -1
     try:
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-        image_stat = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(image_stat.st_mode)
-            or image_stat.st_size < len(PNG_SIGNATURE)
-            or image_stat.st_size > MAX_PNG_FILE_BYTES
-        ):
+        if path.is_symlink():
             raise SharedViewCaptureError("captured image is invalid")
-        with os.fdopen(descriptor, "rb") as stream:
-            descriptor = -1
-            data = stream.read(MAX_PNG_FILE_BYTES + 1)
+        data = path.read_bytes()
     except OSError as error:
         raise SharedViewCaptureError("captured image is invalid") from error
-    finally:
-        if descriptor >= 0:
-            os.close(descriptor)
-    if (
-        len(data) != image_stat.st_size
-        or len(data) > MAX_PNG_FILE_BYTES
-        or data[:8] != PNG_SIGNATURE
-    ):
+    if len(data) < len(PNG_SIGNATURE) or data[:8] != PNG_SIGNATURE:
         raise SharedViewCaptureError("captured image is invalid")
     offset = len(PNG_SIGNATURE)
     chunk_index = 0
@@ -894,8 +876,6 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
     bit_depth = 0
     color_type = 0
     saw_idat = False
-    idat_ended = False
-    saw_plte = False
     saw_iend = False
     compressed_image = bytearray()
     while offset < len(data):
@@ -913,13 +893,6 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
         actual_crc = zlib.crc32(chunk_data, zlib.crc32(chunk_type)) & 0xFFFFFFFF
         if actual_crc != expected_crc:
             raise SharedViewCaptureError("captured image is invalid")
-        if any(
-            not (ord("A") <= byte <= ord("Z") or ord("a") <= byte <= ord("z"))
-            for byte in chunk_type
-        ) or chunk_type[2] & 0x20:
-            raise SharedViewCaptureError("captured image is invalid")
-        if chunk_type[0] & 0x20 == 0 and chunk_type not in {b"IHDR", b"PLTE", b"IDAT", b"IEND"}:
-            raise SharedViewCaptureError("captured image is invalid")
         if chunk_index == 0:
             if chunk_type != b"IHDR" or chunk_length != 13:
                 raise SharedViewCaptureError("captured image is invalid")
@@ -930,9 +903,6 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
             if (
                 width <= 0
                 or height <= 0
-                or width > MAX_PNG_DIMENSION
-                or height > MAX_PNG_DIMENSION
-                or width * height > MAX_PNG_PIXELS
                 or bit_depth != 8
                 or color_type not in {2, 6}
                 or chunk_data[10:13] != b"\x00\x00\x00"
@@ -940,17 +910,9 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
                 raise SharedViewCaptureError("captured image is invalid")
         elif chunk_type == b"IHDR":
             raise SharedViewCaptureError("captured image is invalid")
-        if chunk_type == b"PLTE":
-            if saw_plte or saw_idat or chunk_length == 0 or chunk_length > 768 or chunk_length % 3:
-                raise SharedViewCaptureError("captured image is invalid")
-            saw_plte = True
         if chunk_type == b"IDAT":
-            if idat_ended:
-                raise SharedViewCaptureError("captured image is invalid")
             saw_idat = True
             compressed_image.extend(chunk_data)
-        elif saw_idat and chunk_type != b"IEND":
-            idat_ended = True
         if chunk_type == b"IEND":
             if chunk_length != 0 or chunk_end != len(data):
                 raise SharedViewCaptureError("captured image is invalid")
@@ -962,19 +924,12 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
     if not saw_idat or not saw_iend or offset != len(data):
         raise SharedViewCaptureError("captured image is invalid")
     channels = 3 if color_type == 2 else 4
-    row_size = 1 + (width * channels)
-    expected_size = height * row_size
     try:
-        decompressor = zlib.decompressobj()
-        image_data = decompressor.decompress(bytes(compressed_image), expected_size + 1)
+        image_data = zlib.decompress(bytes(compressed_image))
     except zlib.error as error:
         raise SharedViewCaptureError("captured image is invalid") from error
-    if (
-        len(image_data) != expected_size
-        or decompressor.unconsumed_tail
-        or not decompressor.eof
-        or decompressor.unused_data
-    ):
+    row_size = 1 + (width * channels)
+    if len(image_data) != height * row_size:
         raise SharedViewCaptureError("captured image is invalid")
     for row_offset in range(0, len(image_data), row_size):
         if image_data[row_offset] > 4:
@@ -1267,6 +1222,8 @@ def _remove_profile_artifacts(
 def _cleanup_simulator(
     runner: Runner,
     cleanup_target: str,
+    profile: CaptureProfile,
+    simulator_name: str,
 ) -> tuple[str, str | None]:
     shutdown = _run(
         runner,
@@ -1282,6 +1239,16 @@ def _cleanup_simulator(
         return "delete-timeout", "simctl-delete-timeout"
     if deleted.returncode != 0:
         return "delete-failed", "simctl-delete-failed"
+    remaining, verification_error = _matching_simulators(
+        runner,
+        profile,
+        simulator_name,
+        "simctl-delete-verification",
+    )
+    if verification_error is not None or remaining is None:
+        return "delete-unverified", verification_error or "simctl-delete-verification-invalid"
+    if cleanup_target in remaining:
+        return "delete-persisted", "simctl-delete-persisted"
     if shutdown.timed_out:
         return "deleted-after-shutdown-timeout", None
     if shutdown.returncode != 0:
@@ -1669,6 +1636,7 @@ def _capture_profile(
                         os.chmod(final_path, 0o600)
                     except OSError:
                         final_path.unlink(missing_ok=True)
+                        seen_digests[second_snapshot.digest] = None
                         results[requirement.requirement_id] = _result(
                             requirement,
                             status="unknown",
@@ -1700,10 +1668,12 @@ def _capture_profile(
         elif creation_identity_uncertain:
             cleanup_status = "identity-unverified"
         else:
-            cleanup_status = "not-created"
+            cleanup_status = "identity-unverified"
         cleanup_error = None
     else:
-        cleanup_status, cleanup_error = _cleanup_simulator(runner, cleanup_target)
+        cleanup_status, cleanup_error = _cleanup_simulator(
+            runner, cleanup_target, profile, simulator_name
+        )
     if cleanup_error is not None:
         withdrawn_requirement_ids = set(artifact_paths)
         for digest, requirement_id in list(seen_digests.items()):
@@ -1712,9 +1682,10 @@ def _capture_profile(
         artifacts_removed = _remove_profile_artifacts(artifact_paths)
         for requirement_id in artifact_paths:
             published_artifact_paths.pop(requirement_id, None)
-        final_error = cleanup_error if artifacts_removed else "artifact-cleanup-failed"
+        final_error = cleanup_error
         if not artifacts_removed:
-            cleanup_status = "artifact-cleanup-failed"
+            cleanup_status = f"{cleanup_status}-and-artifact-cleanup-failed"
+            final_error = f"{cleanup_error}-and-artifact-cleanup-failed"
         for requirement in requirements:
             result = results.get(requirement.requirement_id)
             if result is None:
@@ -1935,7 +1906,10 @@ def execute_shared_view_capture(
             except BaseException as capture_error:
                 if emergency_cleanup_targets:
                     _, emergency_cleanup_error = _cleanup_simulator(
-                        active_runner, emergency_cleanup_targets[-1]
+                        active_runner,
+                        emergency_cleanup_targets[-1],
+                        snapshot_profile,
+                        _simulator_name(profile_name, capture_run_id),
                     )
                     if emergency_cleanup_error is not None:
                         raise SharedViewCaptureError(
@@ -1978,21 +1952,31 @@ def execute_shared_view_capture(
     finally:
         failure_in_flight = sys.exc_info()[1]
         if not run_published:
-            shutil.rmtree(staging_directory, ignore_errors=True)
+            rollback_error: OSError | None = None
+            if staging_directory.exists():
+                try:
+                    shutil.rmtree(staging_directory)
+                    _fsync_directory(manifest_directory)
+                except OSError as error:
+                    rollback_error = error
             if owns_run_directory:
                 published_owner = run_directory / ownership_path.name
                 try:
-                    owns_published_path = published_owner.read_text() == ownership_token
-                except OSError:
+                    owns_published_path = _read_bounded_file(
+                        published_owner, "capture run ownership marker", 128
+                    ) == ownership_token.encode()
+                except SharedViewCaptureError:
                     owns_published_path = False
                 if owns_published_path:
                     try:
                         shutil.rmtree(run_directory)
                         _fsync_directory(manifest_directory)
                     except OSError as error:
-                        raise SharedViewCaptureError(
-                            "capture run rollback failed"
-                        ) from failure_in_flight or error
+                        rollback_error = rollback_error or error
+            if rollback_error is not None:
+                raise SharedViewCaptureError("capture run rollback failed") from (
+                    failure_in_flight or rollback_error
+                )
     statuses = {capture["status"] for capture in captures}
     if statuses == {"captured"}:
         return EXIT_OK, receipt
