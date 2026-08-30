@@ -625,6 +625,7 @@ class ValidationAutomationTests(unittest.TestCase):
             artifact_root=None,
             capture_output=None,
         )
+        missing_args = args
         with (
             mock.patch.object(
                 cli_module,
@@ -697,6 +698,13 @@ class ValidationAutomationTests(unittest.TestCase):
                 state,
                 NOW + timedelta(minutes=2),
             )
+            state, missing_after_failure_exit = cli_module._advance_shared_view_capture(
+                missing_args,
+                store,
+                session,
+                state,
+                NOW + timedelta(minutes=7),
+            )
             state, recovered_exit = cli_module._advance_shared_view_capture(
                 args,
                 store,
@@ -707,6 +715,7 @@ class ValidationAutomationTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 30)
         self.assertEqual(cooldown_exit, 30)
+        self.assertEqual(missing_after_failure_exit, 30)
         self.assertEqual(recovered_exit, 0)
         self.assertEqual(capture.call_count, 2)
         self.assertIsNotNone(state)

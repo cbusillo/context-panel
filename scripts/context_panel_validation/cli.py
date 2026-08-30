@@ -886,6 +886,8 @@ def _advance_shared_view_capture(
         return automation_state, EXIT_UNKNOWN
 
     if not inputs_available:
+        if executed_window_attempts and executed_window_attempts[-1].result == "failed":
+            return automation_state, EXIT_UNKNOWN
         result, reason_code, capture_exit = (
             "unsupported",
             "shared-view-capture-unavailable",
