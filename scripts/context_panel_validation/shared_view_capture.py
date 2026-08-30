@@ -313,7 +313,7 @@ def _bundle_sha256(path: Path, *, include_modes: bool = True) -> str:
                         digest.update(chunk)
             else:
                 digest.update(content)
-    except (OSError, RuntimeError) as error:
+    except (OSError, RuntimeError, ValueError) as error:
         raise SharedViewCaptureError("capture app bundle is unreadable") from error
     return digest.hexdigest()
 
