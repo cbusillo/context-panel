@@ -124,6 +124,7 @@ class ValidationReport:
     runtime_evidence: dict[str, Any] | None = None
     operator_flow: dict[str, Any] | None = None
     visual_approvals: dict[str, Any] | None = None
+    automation: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         needs_human_action = bool(self.actions) or bool(
@@ -205,6 +206,8 @@ class ValidationReport:
             payload["operatorFlow"] = self.operator_flow
         if self.visual_approvals is not None:
             payload["evidence"]["visualApprovals"] = self.visual_approvals
+        if self.automation is not None:
+            payload["evidence"]["automation"] = self.automation
         return payload
 
 
@@ -563,6 +566,12 @@ def render_text(report: ValidationReport) -> str:
             f"{report.runtime_evidence['requestedSurfaceCount']} exact-build runtime surfaces proven"
         )
     lines.append(f"{asc_summary(report.asc)} · {mac_summary} · {runtime_summary}")
+    if report.automation is not None:
+        lines.append(
+            "Receipt-sync automation: "
+            f"{report.automation['state']} · "
+            f"{report.automation['attemptCount']} attempts recorded"
+        )
     lines.extend(["", "DEVICE         OBSERVED BUILD                 APP          CONDITION       NOTE"])
     lines.append(
         f"{'Mac':14} {observed_build(report.mac.observed_version, report.mac.observed_build)[:30]:30} "

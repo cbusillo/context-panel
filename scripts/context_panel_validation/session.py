@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 import re
 import tempfile
-from typing import Any, Iterator
+from typing import Iterator
 import uuid
 
 from .models import (
@@ -628,6 +628,10 @@ class SessionStateStore:
     def visual_approval_directory(self) -> Path:
         return self.root / "Visual Approvals"
 
+    @property
+    def automation_directory(self) -> Path:
+        return self.root / "Automation"
+
     def path(self, target: Target) -> Path:
         validate_target(target)
         return self.sessions_directory / f"{target.version}-{target.build_number}.json"
@@ -656,6 +660,13 @@ class SessionStateStore:
         except (AttributeError, TypeError, ValueError) as error:
             raise CoordinatorSessionStateError("coordinator session identifier is invalid") from error
         return self.visual_approval_directory / f"{normalized_id}.json"
+
+    def automation_path(self, session_id: str) -> Path:
+        try:
+            normalized_id = str(uuid.UUID(session_id)).lower()
+        except (AttributeError, TypeError, ValueError) as error:
+            raise CoordinatorSessionStateError("coordinator session identifier is invalid") from error
+        return self.automation_directory / f"{normalized_id}.json"
 
     @contextmanager
     def lock(self) -> Iterator[None]:
@@ -686,6 +697,11 @@ class SessionStateStore:
             or (
                 self.visual_approval_directory.exists()
                 and not self.visual_approval_directory.is_dir()
+            )
+            or self.automation_directory.is_symlink()
+            or (
+                self.automation_directory.exists()
+                and not self.automation_directory.is_dir()
             )
         ):
             raise CoordinatorSessionStateError("coordinator session root is invalid")
@@ -908,6 +924,7 @@ class SessionStateStore:
                     self.runtime_evidence_path(refreshed.id).unlink(missing_ok=True)
                     self.operator_flow_path(refreshed.id).unlink(missing_ok=True)
                     self.visual_approval_path(refreshed.id).unlink(missing_ok=True)
+                    self.automation_path(refreshed.id).unlink(missing_ok=True)
 
     def _load_path(
         self,

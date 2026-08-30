@@ -7,6 +7,31 @@ never makes the visual judgment itself. Those boundaries keep the queue read-onl
 to signed runtimes, App Store Connect, CloudKit schema, user data, and existing
 widget, complication, and Top Shelf placements.
 
+## Automation Boundary
+
+`advance-automation` is the sole state-changing coordinator automation command
+in this slice. It can run only for an active coordinator session and only
+performs the existing signed-host runtime-receipt relay/reconciliation sequence.
+It does not change action ordering or suppression, launch a Mac app, open a
+companion host, capture shared-view evidence, record a visual decision, or make
+an OS-composited placement judgment.
+
+The command records a schema-v1 public automation sidecar bound by digests to
+the coordinator session, target, and requested surfaces. It persists only fixed
+result/reason vocabularies, timestamps, counts, booleans, and SHA-256 digests.
+It never stores device identifiers, account data, raw tool output, arguments,
+paths, or runtime receipt payloads. Sidecars use the coordinator lock, atomic
+mode-`0600` writes, and the same retention cleanup as their parent session.
+
+`status` and `final-report` include the bounded public automation report but do
+not invoke this command or trigger the signed-host relay. Already-proven runtime
+evidence or the explicit cooldown makes repeated advancement idempotent. After
+the cooldown, an active receipt window may sync again so newly relayed receipts
+can be collected; an unsupported adapter is also retried rather than latched
+permanently. A changed or expired receipt window may advance immediately. The
+session allows at most 64 attempts. Closed and superseded sessions never advance
+automation.
+
 ## Queue Policy
 
 `status` groups ready visual-review actions by public device class *and*

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import hashlib
 import json
 import re
@@ -40,6 +41,17 @@ from .runtime_evidence import (
     build_runtime_evidence_report,
     load_expected_surface_identities,
 )
+from .automation import (
+    AUTOMATION_COOLDOWN,
+    MAXIMUM_AUTOMATION_ATTEMPT_COUNT,
+    AutomationError,
+    AutomationState,
+    AutomationStore,
+    build_automation_report,
+    make_attempt,
+    new_automation_state,
+    runtime_report_digest,
+)
 from .shared_view_evidence import (
     DEFAULT_MATRIX_PATH,
     DEFAULT_SURFACE_POLICY_PATH,
@@ -63,6 +75,7 @@ from .session import (
     CoordinatorSessionState,
     SessionStateStore,
     apply_session_state_to_report,
+    parse_iso8601,
 )
 from .system import SubprocessRunner, collect_device_evidence, collect_mac_evidence
 from .visual_approvals import (
@@ -172,6 +185,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     add_target_arguments(sync_runtime)
     add_expected_build_arguments(sync_runtime)
+    advance_automation = subparsers.add_parser(
+        "advance-automation",
+        help="Advance the bounded runtime-receipt sync automation only",
+    )
+    add_target_arguments(advance_automation)
+    add_expected_build_arguments(advance_automation)
     defer_action = subparsers.add_parser(
         "defer-action",
         help="Temporarily defer one outstanding operator action without satisfying evidence",
@@ -381,6 +400,10 @@ def collect_validation_report(args: argparse.Namespace):
             generated_at,
         )
         report = apply_operator_flow_to_report(report, operator_flow)
+        report = replace(
+            report,
+            automation=build_automation_report(AutomationStore(store).load(session)),
+        )
     return report
 
 
@@ -514,19 +537,16 @@ def run_start_session(args: argparse.Namespace) -> int:
     return 0
 
 
-def run_sync_runtime_evidence(args: argparse.Namespace) -> int:
-    target = Target(args.version, args.build_number)
-    now = utc_now()
-    store = SessionStateStore()
-    session = store.load(target, now=now)
-    if session is None:
-        raise RuntimeEvidenceError("signed validation session does not exist")
-    if session.lifecycle not in ACTIVE_SESSION_LIFECYCLES:
-        raise RuntimeEvidenceError("runtime evidence cannot be synced for a closed session")
+def sync_and_reconcile_runtime_evidence(
+    store: SessionStateStore,
+    session: CoordinatorSessionState,
+    expected_build_manifests: list[Path],
+    now,
+):
     runtime_store = RuntimeEvidenceStore(store)
     identities = load_expected_surface_identities(
-        getattr(args, "expected_build_manifests", None) or [],
-        target,
+        expected_build_manifests,
+        session.target,
         session.requested_surfaces,
     )
     runtime_state = runtime_store.attach_expected(session, identities, now)
@@ -536,12 +556,42 @@ def run_sync_runtime_evidence(args: argparse.Namespace) -> int:
     runtime_state, superseded = runtime_store.reconcile(session, observation)
     if superseded:
         session = store.transition(
-            target,
+            session.target,
             "superseded",
             now,
             "newer-build-observed",
         )
     runtime_report = build_runtime_evidence_report(runtime_state, now)
+    return session, runtime_state, runtime_report, superseded
+
+
+def runtime_sync_exit_code(runtime_state, runtime_report: dict[str, object], superseded: bool) -> int:
+    if superseded:
+        return EXIT_BLOCKED
+    if (
+        runtime_report["state"] == "unknown"
+        or runtime_state.last_observation is None
+        or runtime_state.last_observation.result != "healthy"
+    ):
+        return EXIT_UNKNOWN
+    return 0
+
+
+def run_sync_runtime_evidence(args: argparse.Namespace) -> int:
+    target = Target(args.version, args.build_number)
+    now = utc_now()
+    store = SessionStateStore()
+    session = store.load(target, now=now)
+    if session is None:
+        raise RuntimeEvidenceError("signed validation session does not exist")
+    if session.lifecycle not in ACTIVE_SESSION_LIFECYCLES:
+        raise RuntimeEvidenceError("runtime evidence cannot be synced for a closed session")
+    session, runtime_state, runtime_report, superseded = sync_and_reconcile_runtime_evidence(
+        store,
+        session,
+        getattr(args, "expected_build_manifests", None) or [],
+        now,
+    )
     payload = {
         "schemaVersion": 1,
         "session": session.public_dict(),
@@ -555,15 +605,158 @@ def run_sync_runtime_evidence(args: argparse.Namespace) -> int:
             f"{runtime_report['provenSurfaceCount']} of "
             f"{runtime_report['requestedSurfaceCount']} surfaces proven."
         )
-    if superseded:
-        return EXIT_BLOCKED
+    return runtime_sync_exit_code(runtime_state, runtime_report, superseded)
+
+
+def emit_automation_payload(
+    args: argparse.Namespace,
+    session: CoordinatorSessionState,
+    runtime_report: dict[str, object] | None,
+    automation_state: AutomationState | None,
+) -> None:
+    automation_report = build_automation_report(automation_state)
+    payload = {
+        "schemaVersion": 1,
+        "session": session.public_dict(),
+        "runtimeEvidence": runtime_report,
+        "automation": automation_report,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        automation_state_name = automation_report.get("state")
+        attempt_count = automation_report.get("attemptCount")
+        if not isinstance(automation_state_name, str) or not isinstance(attempt_count, int):
+            raise AutomationError("automation report is invalid")
+        print(
+            f"Automation {automation_state_name}: {attempt_count} of "
+            f"{MAXIMUM_AUTOMATION_ATTEMPT_COUNT} bounded attempts recorded."
+        )
+
+
+def _run_advance_automation_locked(
+    args: argparse.Namespace,
+    store: SessionStateStore,
+    session: CoordinatorSessionState,
+    now,
+) -> int:
+    automation_store = AutomationStore(store)
+    automation_state = automation_store.load(session)
+    runtime_state = RuntimeEvidenceStore(store).load(session)
+    runtime_report = (
+        build_runtime_evidence_report(runtime_state, now) if runtime_state is not None else None
+    )
+    if session.lifecycle != "active":
+        emit_automation_payload(args, session, runtime_report, automation_state)
+        return EXIT_BLOCKED if session.lifecycle in {"blocked", "superseded"} else EXIT_UNKNOWN
+
+    last_attempt = automation_state.attempts[-1] if automation_state and automation_state.attempts else None
+    window_digest = runtime_report_digest(runtime_report)
+    current_runtime_exit = (
+        runtime_sync_exit_code(runtime_state, runtime_report, False)
+        if runtime_state is not None and runtime_report is not None
+        else EXIT_UNKNOWN
+    )
     if (
-        runtime_report["state"] == "unknown"
-        or runtime_state.last_observation is None
-        or runtime_state.last_observation.result != "healthy"
+        last_attempt is not None
+        and last_attempt.result == "succeeded"
+        and last_attempt.summary.evidence_satisfied
+        and last_attempt.receipt_window_digest == window_digest
     ):
+        emit_automation_payload(args, session, runtime_report, automation_state)
+        return current_runtime_exit
+    if (
+        last_attempt is not None
+        and last_attempt.receipt_window_digest == window_digest
+        and runtime_report is not None
+        and runtime_report["state"] == "proven"
+        and current_runtime_exit == 0
+    ):
+        emit_automation_payload(args, session, runtime_report, automation_state)
+        return 0
+    if automation_state is not None and len(automation_state.attempts) >= MAXIMUM_AUTOMATION_ATTEMPT_COUNT:
+        emit_automation_payload(args, session, runtime_report, automation_state)
+        return current_runtime_exit if runtime_report and runtime_report["state"] == "proven" else EXIT_UNKNOWN
+    if last_attempt is not None:
+        finished_at = parse_iso8601(last_attempt.finished_at)
+        assert finished_at is not None
+        same_window = last_attempt.receipt_window_digest == window_digest
+        cooldown_active = now < finished_at + AUTOMATION_COOLDOWN
+        if same_window and cooldown_active:
+            emit_automation_payload(args, session, runtime_report, automation_state)
+            return current_runtime_exit
+
+    started_at = now
+    if (
+        runtime_report is not None
+        and runtime_report["state"] == "proven"
+        and current_runtime_exit == 0
+    ):
+        attempt = make_attempt(
+            automation_state or new_automation_state(session, now),
+            result="skipped-precondition",
+            reason_code="runtime-evidence-complete",
+            started_at=started_at,
+            finished_at=utc_now(),
+            runtime_report=runtime_report,
+        )
+        automation_state = automation_store.record(session, attempt, now)
+        emit_automation_payload(args, session, runtime_report, automation_state)
+        return runtime_sync_exit_code(runtime_state, runtime_report, False)
+    try:
+        session, runtime_state, runtime_report, superseded = sync_and_reconcile_runtime_evidence(
+            store,
+            session,
+            getattr(args, "expected_build_manifests", None) or [],
+            now,
+        )
+    except RuntimeEvidenceError:
+        attempt = make_attempt(
+            automation_state or new_automation_state(session, now),
+            result="failed",
+            reason_code="runtime-reconciliation-failed",
+            started_at=started_at,
+            finished_at=utc_now(),
+            runtime_report=runtime_report,
+        )
+        automation_state = automation_store.record(session, attempt, now)
+        emit_automation_payload(args, session, runtime_report, automation_state)
         return EXIT_UNKNOWN
-    return 0
+    diagnostics = set(runtime_state.last_observation.diagnostics) if runtime_state.last_observation else set()
+    if superseded:
+        result, reason_code = "failed", "runtime-evidence-superseded"
+    elif {"sync-unavailable", "status-unavailable", "export-unavailable"} & diagnostics:
+        result, reason_code = "unsupported", "runtime-sync-unavailable"
+    elif runtime_state.last_observation is None or runtime_state.last_observation.result != "healthy":
+        result, reason_code = "failed", "runtime-sync-degraded"
+    else:
+        result, reason_code = "succeeded", "runtime-receipts-reconciled"
+    attempt = make_attempt(
+        automation_state or new_automation_state(session, now),
+        result=result,
+        reason_code=reason_code,
+        started_at=started_at,
+        finished_at=utc_now(),
+        runtime_report=runtime_report,
+    )
+    automation_state = automation_store.record(session, attempt, now)
+    emit_automation_payload(args, session, runtime_report, automation_state)
+    return runtime_sync_exit_code(runtime_state, runtime_report, superseded)
+
+
+def run_advance_automation(args: argparse.Namespace) -> int:
+    target = Target(args.version, args.build_number)
+    store = SessionStateStore()
+    initial_session = store.load(target, now=utc_now())
+    if initial_session is None:
+        raise RuntimeEvidenceError("signed validation session does not exist")
+    automation_store = AutomationStore(store)
+    with automation_store.advance_lock():
+        now = utc_now()
+        session = store.load(target, now=now)
+        if session is None or session.id != initial_session.id:
+            raise RuntimeEvidenceError("signed validation session changed during automation")
+        return _run_advance_automation_locked(args, store, session, now)
 
 
 def run_pause_session(args: argparse.Namespace) -> int:
@@ -822,6 +1015,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_stop_session(args)
         if args.command == "sync-runtime-evidence":
             return run_sync_runtime_evidence(args)
+        if args.command == "advance-automation":
+            return run_advance_automation(args)
         if args.command == "defer-action":
             return run_defer_action(args)
         if args.command == "clear-deferral":

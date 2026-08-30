@@ -64,6 +64,7 @@
       "Tests/ScriptsTests/test_submit_app_store_review.py",
       "Tests/ScriptsTests/test_upload_app_store_screenshots.py",
       "Tests/ScriptsTests/test_validation_coordinator.py",
+      "Tests/ScriptsTests/test_validation_automation.py",
       "Tests/ScriptsTests/test_validation_operator_flow.py",
       "Tests/ScriptsTests/test_visual_approvals.py"
     ],
