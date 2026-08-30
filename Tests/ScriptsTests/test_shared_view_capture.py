@@ -1033,6 +1033,37 @@ class SharedViewCaptureTests(unittest.TestCase):
         minimal_snapshot = _png_snapshot(minimal)
         self.assertEqual(minimal_snapshot.pixel_digest, realistic_snapshot.pixel_digest)
         self.assertNotEqual(minimal_snapshot.artifact_digest, realistic_snapshot.artifact_digest)
+
+        rows = (bytes(range(8)), bytes(range(8, 16)))
+        filter_digests = set()
+        for filter_type in range(5):
+            previous = bytes(8)
+            filtered_rows = []
+            for row in rows:
+                encoded = bytearray()
+                for index, value in enumerate(row):
+                    left = row[index - 4] if index >= 4 else 0
+                    above = previous[index]
+                    upper_left = previous[index - 4] if index >= 4 else 0
+                    if filter_type == 1:
+                        predictor = left
+                    elif filter_type == 2:
+                        predictor = above
+                    elif filter_type == 3:
+                        predictor = (left + above) // 2
+                    elif filter_type == 4:
+                        estimate = left + above - upper_left
+                        choices = (left, above, upper_left)
+                        predictor = min(choices, key=lambda choice: (abs(estimate - choice), choices.index(choice)))
+                    else:
+                        predictor = 0
+                    encoded.append((value - predictor) & 0xFF)
+                filtered_rows.append(bytes((filter_type,)) + encoded)
+                previous = row
+            path = self.root / f"filter-{filter_type}.png"
+            path.write_bytes(document((b"IHDR", header(width=2, height=2)), (b"IDAT", zlib.compress(b"".join(filtered_rows))), (b"IEND", b"")))
+            filter_digests.add(_png_snapshot(path).pixel_digest)
+        self.assertEqual(1, len(filter_digests))
         cases = {
             "bit-depth": document((b"IHDR", header(bit_depth=16)), (b"IDAT", valid_idat), (b"IEND", b"")),
             "huge-dimension": document((b"IHDR", header(width=16_385)), (b"IDAT", zlib.compress(b"\x00")), (b"IEND", b"")),
@@ -1044,6 +1075,7 @@ class SharedViewCaptureTests(unittest.TestCase):
             "unknown-critical": document((b"IHDR", header()), (b"ABCD", b""), (b"IDAT", valid_idat), (b"IEND", b"")),
             "nonalphabetic-chunk": document((b"IHDR", header()), (b"ab1D", b""), (b"IDAT", valid_idat), (b"IEND", b"")),
             "reserved-bit": document((b"IHDR", header()), (b"abct", b""), (b"IDAT", valid_idat), (b"IEND", b"")),
+            "transparency": document((b"IHDR", header(color_type=2)), (b"tRNS", b"\0" * 6), (b"IDAT", valid_idat), (b"IEND", b"")),
             "empty-plte": document((b"IHDR", header()), (b"PLTE", b""), (b"IDAT", valid_idat), (b"IEND", b"")),
             "large-plte": document((b"IHDR", header()), (b"PLTE", b"x" * 771), (b"IDAT", valid_idat), (b"IEND", b"")),
             "duplicate-plte": document((b"IHDR", header()), (b"PLTE", b"\0\0\0"), (b"PLTE", b"\0\0\0"), (b"IDAT", valid_idat), (b"IEND", b"")),

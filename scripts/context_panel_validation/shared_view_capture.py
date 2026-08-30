@@ -954,6 +954,8 @@ def _png_snapshot(path: Path) -> PNGSnapshot:
             b"IHDR", b"PLTE", b"IDAT", b"IEND"
         }:
             raise SharedViewCaptureError("captured image is invalid")
+        if chunk_type == b"tRNS":
+            raise SharedViewCaptureError("captured image is invalid")
         if chunk_index == 0:
             if chunk_type != b"IHDR" or chunk_length != 13:
                 raise SharedViewCaptureError("captured image is invalid")
