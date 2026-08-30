@@ -313,6 +313,8 @@ def _bundle_sha256(path: Path, *, include_modes: bool = True) -> str:
                         digest.update(chunk)
             else:
                 digest.update(content)
+    except SharedViewCaptureError:
+        raise
     except (OSError, RuntimeError, ValueError) as error:
         raise SharedViewCaptureError("capture app bundle is unreadable") from error
     return digest.hexdigest()
@@ -712,7 +714,9 @@ def _validate_artifact_root(path: Path) -> Path:
             ancestor_mode = ancestor.stat().st_mode
             if ancestor_mode & 0o022 and not ancestor_mode & stat.S_ISVTX:
                 raise SharedViewCaptureError("capture artifact root ancestry is unsafe")
-    except (OSError, RuntimeError) as error:
+    except SharedViewCaptureError:
+        raise
+    except (OSError, RuntimeError, ValueError) as error:
         raise SharedViewCaptureError("capture artifact root is unavailable") from error
     return resolved
 

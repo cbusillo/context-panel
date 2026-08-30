@@ -689,7 +689,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual([None, None], [item["appearanceMechanism"] for item in receipt["captures"]])
         self.assertIn(["xcrun", "simctl", "delete", SIMULATOR_ID], [args for args, _ in runner.calls])
 
-    def test_ambiguous_create_cleanup(self) -> None:
+    def test_ambig(self) -> None:
         self.write_plan(["ios.app"])
         self.write_config()
         runner = FakeRunner(
@@ -719,7 +719,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertFalse(any(args[2] == "boot" for args, _ in runner.calls))
         self.assertFalse(any(args[2] in {"shutdown", "delete"} for args, _ in runner.calls))
 
-    def test_identity_validation(self) -> None:
+    def test_ids(self) -> None:
         self.write_config()
         profile = load_capture_config(self.config_path)["ios"]
         name = "ContextPanelSharedView-ios-run-fixed"
@@ -787,7 +787,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual("deleted", receipt["profiles"][0]["cleanupStatus"])
         self.assertIn(["xcrun", "simctl", "delete", SIMULATOR_ID], [args for args, _ in runner.calls])
 
-    def test_precreate_inventory(self) -> None:
+    def test_pre(self) -> None:
         self.write_plan(["ios.app"])
         self.write_config()
         runner = FakeRunner(device_list_failure=CommandResult(1, "", "private inventory failure"))
@@ -805,7 +805,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual(EXIT_UNKNOWN, exit_code)
         self.assert_capture_errors(receipt, *("simctl-device-inventory-invalid",) * 2)
 
-    def test_inventory_statuses(self) -> None:
+    def test_statuses(self) -> None:
         self.write_plan(["ios.app"])
         self.write_config()
         collision = FakeRunner()
@@ -1049,7 +1049,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.assertEqual("foreign", self.receipt_path.read_text())
         self.assertTrue((self.artifact_root / self.manifest_id / "run-fixed").is_dir())
 
-    def test_receipt_failure(self) -> None:
+    def test_receipt(self) -> None:
         self.write_plan(["ios.app"])
         self.write_config()
         original_atomic_write = capture_module._atomic_write_json
@@ -1230,7 +1230,7 @@ class SharedViewCaptureTests(unittest.TestCase):
             )
         self.assertEqual([], runner.calls)
 
-    def test_bundle_symlink_escape(self) -> None:
+    def test_symlink(self) -> None:
         self.write_plan(["ios.app"])
         self.write_config()
         outside = self.root / "outside-resource"
@@ -1255,7 +1255,7 @@ class SharedViewCaptureTests(unittest.TestCase):
                 surface_policy_path=policy_path,
             )
 
-    def test_app_identity(self) -> None:
+    def test_identity(self) -> None:
         self.write_plan(["ios.app"])
         self.write_config()
         runner = FakeRunner()
@@ -1353,7 +1353,7 @@ class SharedViewCaptureTests(unittest.TestCase):
                 capture_module, constant, 1
             ), self.assertRaises(SharedViewCaptureError):
                 load_capture_config(self.config_path)
-    def test_snapshot_failures(self) -> None:
+    def test_snapshot(self) -> None:
         self.write_plan(["ios.app"])
         self.write_config()
         with mock.patch.object(shutil, "copytree", side_effect=OSError("copy failed")):
@@ -1403,7 +1403,7 @@ class SharedViewCaptureTests(unittest.TestCase):
             self.execute(runner, run_id="exception-cleanup")
         self.assertIn(["xcrun", "simctl", "delete", SIMULATOR_ID], [args for args, _ in runner.calls])
 
-    def test_cleanup_failure(self) -> None:
+    def test_cleanup(self) -> None:
         self.write_plan(["ios.app"])
         self.write_config()
         runner = FakeRunner()
