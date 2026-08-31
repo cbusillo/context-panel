@@ -22,6 +22,10 @@ name: Release
         required: false
         default: true
         type: boolean
+      cloudkit_schema_receipt_base64:
+        description: Sealed short-lived Production CloudKit schema receipt.
+        required: false
+        type: string
   workflow_dispatch:
     inputs:
       version:
@@ -42,6 +46,10 @@ name: Release
         required: true
         default: true
         type: boolean
+      cloudkit_schema_receipt_base64:
+        description: Sealed short-lived Production CloudKit schema receipt.
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -341,6 +349,21 @@ jobs:
             ${{ steps.package.outputs.zip_path }}
             ${{ steps.package.outputs.metadata_path }}
           if-no-files-found: error
+
+      - name: Verify Production CloudKit Schema Receipt
+        if: ${{ inputs.create_github_release }}
+        shell: bash
+        env:
+          CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64: >-
+            ${{ inputs.cloudkit_schema_receipt_base64 }}
+          CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY: >-
+            ${{ secrets.CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY }}
+        run: |
+          python3 scripts/cloudkit-schema-receipt.py verify \
+            --receipt-base64-env CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64 \
+            --environment production \
+            --container-id iCloud.com.shinycomputers.contextpanel \
+            --source-commit "${GITHUB_SHA}"
 
       - name: Publish GitHub Release
         if: ${{ inputs.create_github_release }}

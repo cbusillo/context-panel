@@ -114,6 +114,10 @@ name: Submit App Store Review
         description: Base64 signed shadow-train comparison evidence.
         required: false
         type: string
+      cloudkit_schema_receipt_base64:
+        description: Sealed short-lived Production CloudKit schema receipt.
+        required: false
+        type: string
   workflow_dispatch:
     inputs:
       version:
@@ -237,6 +241,10 @@ name: Submit App Store Review
         type: string
       release_evidence_shadow_evidence_base64:
         description: Base64 signed shadow-train comparison evidence.
+        required: false
+        type: string
+      cloudkit_schema_receipt_base64:
+        description: Sealed short-lived Production CloudKit schema receipt.
         required: false
         type: string
 
@@ -369,6 +377,21 @@ jobs:
             .build/release-evidence-host-os.json
           decode_optional_json "${INPUT_RELEASE_EVIDENCE_SHADOW_EVIDENCE_BASE64}" \
             .build/release-evidence-shadow.json
+
+      - name: Verify Production CloudKit Schema Receipt
+        if: ${{ !inputs.dry_run && !inputs.cancel_review_only }}
+        shell: bash
+        env:
+          CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64: >-
+            ${{ inputs.cloudkit_schema_receipt_base64 }}
+          CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY: >-
+            ${{ secrets.CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY }}
+        run: |
+          python3 scripts/cloudkit-schema-receipt.py verify \
+            --receipt-base64-env CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64 \
+            --environment production \
+            --container-id iCloud.com.shinycomputers.contextpanel \
+            --source-commit "${GITHUB_SHA}"
 
       - name: Submit Review
         shell: bash

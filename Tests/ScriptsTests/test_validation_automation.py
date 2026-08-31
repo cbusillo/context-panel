@@ -894,6 +894,8 @@ class ValidationAutomationTests(unittest.TestCase):
                     TARGET.version,
                     "--build-number",
                     TARGET.build_number,
+                    "--cloudkit-schema-receipt",
+                    "cloudkit-schema-receipt.json",
                     "--capture-config",
                     "capture.json",
                 ]
@@ -1003,6 +1005,42 @@ class ValidationAutomationTests(unittest.TestCase):
         recovered_sync.assert_called_once()
         self.assertEqual(payload["automation"]["attemptCount"], 2)
         self.assertEqual(payload["automation"]["lastAttempt"]["result"], "succeeded")
+
+    def test_invalid_sync_invocation_records_failed_attempt(self) -> None:
+        temporary, store, _ = self.fixture()
+        self.addCleanup(temporary.cleanup)
+        args = argparse.Namespace(
+            version=TARGET.version,
+            build_number=TARGET.build_number,
+            expected_build_manifests=[],
+            cloudkit_schema_receipt=Path("cloudkit-schema-receipt.json"),
+            json=True,
+        )
+        invalid = runtime_observation(
+            healthy=False,
+            diagnostics=("sync-invalid",),
+        )
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"CONTEXT_PANEL_VALIDATION_STATE_ROOT": str(store.root)},
+            ),
+            mock.patch.object(
+                cli_module.RuntimeSessionAdapter,
+                "sync_and_collect",
+                return_value=invalid,
+            ),
+            mock.patch.object(cli_module, "utc_now", return_value=NOW),
+            contextlib.redirect_stdout(io.StringIO()) as output,
+        ):
+            self.assertEqual(cli_module.run_advance_automation(args), 30)
+            payload = json.loads(output.getvalue())
+
+        self.assertEqual(payload["automation"]["lastAttempt"]["result"], "failed")
+        self.assertEqual(
+            payload["automation"]["lastAttempt"]["reasonCode"],
+            "runtime-sync-degraded",
+        )
 
     def test_stale_prelock_attempt_ids_append_without_losing_reconciled_work(self) -> None:
         temporary, store, session = self.fixture()

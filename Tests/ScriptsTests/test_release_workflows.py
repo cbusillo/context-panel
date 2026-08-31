@@ -12,6 +12,7 @@ import tempfile
 import textwrap
 import time
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -245,6 +246,12 @@ def assert_lines_in_order(document: str, *expected_lines: str) -> None:
 class ReleaseWorkflowTests(unittest.TestCase):
     def read(self, relative_path: str) -> str:
         return (REPO_ROOT / relative_path).read_text()
+
+    def cloudkit_schema_receipt_module(self):
+        return load_script_module(
+            "context_panel_cloudkit_schema_receipt",
+            "scripts/cloudkit-schema-receipt.py",
+        )
 
     def github_release_fixture(self, root: Path):
         publisher = load_script_module(
@@ -1017,6 +1024,10 @@ exit 42
         management_token: str | None = None,
         require_token: bool = False,
         checked_in_schema: str | None = None,
+        receipt_output: Path | None = None,
+        receipt_key: str | None = None,
+        source_commit: str = "a" * 40,
+        fail_export: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -1033,6 +1044,9 @@ exit 42
 set -euo pipefail
 if [[ "${1:-}" != "cktool" || "${2:-}" != "export-schema" ]]; then
   echo "unexpected fake xcrun invocation: $*" >&2
+  exit 42
+fi
+if [[ "${FAKE_CKTOOL_FAIL:-}" == "1" ]]; then
   exit 42
 fi
 output_file=""
@@ -1072,6 +1086,18 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             if require_token:
                 env["FAKE_REQUIRE_TOKEN"] = "1"
                 env["FAKE_EXPECTED_TOKEN"] = management_token or ""
+            if receipt_key is not None:
+                env["CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY"] = receipt_key
+            if fail_export:
+                env["FAKE_CKTOOL_FAIL"] = "1"
+            receipt_args: list[str] = []
+            if receipt_output is not None:
+                receipt_args = [
+                    "--receipt-output",
+                    str(receipt_output),
+                    "--source-commit",
+                    source_commit,
+                ]
             return subprocess.run(
                 [
                     "/bin/bash",
@@ -1080,7 +1106,8 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                     "--environment",
                     "production",
                 ]
-                + checked_in_schema_args,
+                + checked_in_schema_args
+                + receipt_args,
                 cwd=REPO_ROOT,
                 env=env,
                 text=True,
@@ -1119,6 +1146,87 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 self.assertIn("environment: release", secret_job)
                 job_header = secret_job.split("\n    steps:", maxsplit=1)[0]
                 self.assertNotIn("${{ secrets.", job_header)
+
+    def test_live_release_mutations_verify_production_cloudkit_schema_receipt(self):
+        workflows = (
+            (
+                ".github/workflows/release.yml",
+                "macos",
+                "if: ${{ inputs.create_github_release }}",
+                "      - name: Publish GitHub Release",
+            ),
+            (
+                ".github/workflows/app-store-connect-upload.yml",
+                "upload",
+                "if: ${{ inputs.upload }}",
+                "      - name: Archive and Upload",
+            ),
+            (
+                ".github/workflows/app-store-connect-companion-upload.yml",
+                "upload",
+                "if: ${{ inputs.upload }}",
+                "      - name: Archive and Upload",
+            ),
+            (
+                ".github/workflows/testflight-beta-distribution.yml",
+                "distribute",
+                "if: ${{ !inputs.dry_run }}",
+                "      - name: Distribute Beta",
+            ),
+            (
+                ".github/workflows/submit-app-store-review.yml",
+                "submit",
+                "if: ${{ !inputs.dry_run && !inputs.cancel_review_only }}",
+                "      - name: Submit Review",
+            ),
+        )
+
+        for workflow_path, job_name, condition, mutation_step in workflows:
+            with self.subTest(workflow=workflow_path):
+                workflow = self.read(workflow_path)
+                job = workflow_job(workflow, job_name)
+                guard = workflow_job(workflow, "guard")
+                self.assertIn("cloudkit_schema_receipt_base64:", workflow)
+                self.assertIn("environment: release", job)
+                self.assertIn(
+                    "      - name: Verify Production CloudKit Schema Receipt",
+                    job,
+                )
+                self.assertIn(condition, job)
+                self.assertIn(
+                    "secrets.CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY",
+                    job,
+                )
+                self.assertIn(
+                    "--receipt-base64-env CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64",
+                    job,
+                )
+                self.assertLess(
+                    job.index("Verify Production CloudKit Schema Receipt"),
+                    job.index(mutation_step),
+                )
+                self.assertNotIn("CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY", guard)
+
+    def test_ship_requires_and_forwards_schema_receipt_for_live_channels(self):
+        workflow = self.read(".github/workflows/ship.yml")
+        validate = workflow_job(workflow, "validate")
+
+        self.assertIn("INPUT_CLOUDKIT_SCHEMA_RECEIPT_BASE64", validate)
+        self.assertIn(
+            "live publication, upload, and TestFlight channels require a Production CloudKit schema receipt",
+            validate,
+        )
+        for job_name in (
+            "github-release",
+            "app-store-upload",
+            "companion-app-store-upload",
+            "testflight-beta",
+        ):
+            with self.subTest(job=job_name):
+                self.assertIn(
+                    "cloudkit_schema_receipt_base64: ${{ inputs.cloudkit_schema_receipt_base64 }}",
+                    workflow_job(workflow, job_name),
+                )
 
     def test_release_workflow_only_runs_from_explicit_main_dispatches(self):
         workflow = self.read(".github/workflows/release.yml")
@@ -2408,10 +2516,258 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("RuntimeReceipt", script)
         self.assertIn("iCloud.com.shinycomputers.contextpanel", script)
         self.assertIn("CloudKit Production Schema Gate", release_docs)
-        self.assertIn("scripts/validate-cloudkit-companion-schema.sh --live --environment production", release_docs)
+        self.assertIn("--receipt-output .build/cloudkit-production-schema-receipt.json", release_docs)
+        self.assertIn("cloudkit_schema_receipt_base64", release_docs)
+        self.assertIn("CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY", release_docs)
         self.assertIn("CloudKit Console's **Deploy Schema Changes** action", release_docs)
         self.assertIn("never use `cktool reset-schema`", release_docs)
         self.assertIn("CompanionSyncDocumentV2", release_docs)
+
+    def test_cloudkit_schema_receipt_round_trip_binds_contract_and_source(self):
+        receipt_module = self.cloudkit_schema_receipt_module()
+        key = b"cloudkit-schema-receipt-test-key-32-bytes"
+        source_commit = "a" * 40
+        now = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
+
+        receipt = receipt_module.issue_receipt(
+            environment="production",
+            container_identifier="iCloud.com.shinycomputers.contextpanel",
+            schema_path=REPO_ROOT / "CloudKit/companion-sync.schema.json",
+            cktool_schema_path=REPO_ROOT / "CloudKit/companion-sync.schema.ckdb",
+            source_commit=source_commit,
+            ttl_seconds=3600,
+            key=key,
+            now=now,
+        )
+
+        receipt_module.verify_receipt(
+            receipt,
+            environment="production",
+            container_identifier="iCloud.com.shinycomputers.contextpanel",
+            schema_path=REPO_ROOT / "CloudKit/companion-sync.schema.json",
+            cktool_schema_path=REPO_ROOT / "CloudKit/companion-sync.schema.ckdb",
+            source_commit=source_commit,
+            key=key,
+            now=now + timedelta(minutes=1),
+        )
+        serialized = json.dumps(receipt)
+        self.assertNotIn(key.decode(), serialized)
+        self.assertNotIn("recordName", serialized)
+        self.assertEqual(receipt["environment"], "production")
+        self.assertEqual(
+            receipt["containerIdentifier"],
+            "iCloud.com.shinycomputers.contextpanel",
+        )
+        self.assertEqual(receipt["sourceCommit"], source_commit)
+        self.assertRegex(str(receipt["contractDigest"]), r"^sha256:[0-9a-f]{64}$")
+
+    def test_cloudkit_schema_receipt_rejects_tampering_and_identity_drift(self):
+        receipt_module = self.cloudkit_schema_receipt_module()
+        key = b"cloudkit-schema-receipt-test-key-32-bytes"
+        source_commit = "a" * 40
+        now = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
+        receipt = receipt_module.issue_receipt(
+            environment="production",
+            container_identifier="iCloud.com.shinycomputers.contextpanel",
+            schema_path=REPO_ROOT / "CloudKit/companion-sync.schema.json",
+            cktool_schema_path=REPO_ROOT / "CloudKit/companion-sync.schema.ckdb",
+            source_commit=source_commit,
+            ttl_seconds=3600,
+            key=key,
+            now=now,
+        )
+
+        tampered = dict(receipt)
+        tampered["seal"] = "hmac-sha256:" + "0" * 64
+        with self.assertRaisesRegex(receipt_module.ReceiptError, "seal is invalid"):
+            receipt_module.verify_receipt(
+                tampered,
+                environment="production",
+                container_identifier="iCloud.com.shinycomputers.contextpanel",
+                schema_path=REPO_ROOT / "CloudKit/companion-sync.schema.json",
+                cktool_schema_path=REPO_ROOT / "CloudKit/companion-sync.schema.ckdb",
+                source_commit=source_commit,
+                key=key,
+                now=now,
+            )
+        with self.assertRaisesRegex(receipt_module.ReceiptError, "source commit"):
+            receipt_module.verify_receipt(
+                receipt,
+                environment="production",
+                container_identifier="iCloud.com.shinycomputers.contextpanel",
+                schema_path=REPO_ROOT / "CloudKit/companion-sync.schema.json",
+                cktool_schema_path=REPO_ROOT / "CloudKit/companion-sync.schema.ckdb",
+                source_commit="b" * 40,
+                key=key,
+                now=now,
+            )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            changed_contract = Path(temp_dir) / "companion-sync.schema.ckdb"
+            changed_contract.write_text(
+                self.read("CloudKit/companion-sync.schema.ckdb") + "\n// drift\n"
+            )
+            with self.assertRaisesRegex(receipt_module.ReceiptError, "contract digest"):
+                receipt_module.verify_receipt(
+                    receipt,
+                    environment="production",
+                    container_identifier="iCloud.com.shinycomputers.contextpanel",
+                    schema_path=REPO_ROOT / "CloudKit/companion-sync.schema.json",
+                    cktool_schema_path=changed_contract,
+                    source_commit=source_commit,
+                    key=key,
+                    now=now,
+                )
+
+    def test_cloudkit_schema_receipt_rejects_stale_future_and_unknown_fields(self):
+        receipt_module = self.cloudkit_schema_receipt_module()
+        key = b"cloudkit-schema-receipt-test-key-32-bytes"
+        source_commit = "a" * 40
+        now = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
+        receipt = receipt_module.issue_receipt(
+            environment="production",
+            container_identifier="iCloud.com.shinycomputers.contextpanel",
+            schema_path=REPO_ROOT / "CloudKit/companion-sync.schema.json",
+            cktool_schema_path=REPO_ROOT / "CloudKit/companion-sync.schema.ckdb",
+            source_commit=source_commit,
+            ttl_seconds=300,
+            key=key,
+            now=now,
+        )
+        verification = {
+            "environment": "production",
+            "container_identifier": "iCloud.com.shinycomputers.contextpanel",
+            "schema_path": REPO_ROOT / "CloudKit/companion-sync.schema.json",
+            "cktool_schema_path": REPO_ROOT / "CloudKit/companion-sync.schema.ckdb",
+            "source_commit": source_commit,
+            "key": key,
+        }
+
+        with self.assertRaisesRegex(receipt_module.ReceiptError, "expired"):
+            receipt_module.verify_receipt(
+                receipt,
+                **verification,
+                now=now + timedelta(minutes=5),
+            )
+        future = receipt_module.issue_receipt(
+            **verification,
+            ttl_seconds=300,
+            now=now + timedelta(minutes=6),
+        )
+        with self.assertRaisesRegex(receipt_module.ReceiptError, "in the future"):
+            receipt_module.verify_receipt(future, **verification, now=now)
+        unknown = dict(receipt)
+        unknown["unexpected"] = True
+        with self.assertRaisesRegex(receipt_module.ReceiptError, "fields"):
+            receipt_module.verify_receipt(unknown, **verification, now=now)
+        missing = dict(receipt)
+        del missing["contractDigest"]
+        with self.assertRaisesRegex(receipt_module.ReceiptError, "fields"):
+            receipt_module.verify_receipt(missing, **verification, now=now)
+
+    def test_cloudkit_schema_receipt_cli_rejects_missing_and_invalid_base64(self):
+        environment = os.environ.copy()
+        environment["CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY"] = (
+            "cloudkit-schema-receipt-test-key-32-bytes"
+        )
+        command = [
+            "python3",
+            str(REPO_ROOT / "scripts/cloudkit-schema-receipt.py"),
+            "verify",
+            "--receipt-base64-env",
+            "TEST_SCHEMA_RECEIPT_BASE64",
+            "--source-commit",
+            "a" * 40,
+        ]
+
+        missing = subprocess.run(
+            command,
+            cwd=REPO_ROOT,
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        environment["TEST_SCHEMA_RECEIPT_BASE64"] = "not base64!"
+        invalid = subprocess.run(
+            command,
+            cwd=REPO_ROOT,
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(missing.returncode, 1)
+        self.assertIn("receipt input is required", missing.stderr)
+        self.assertEqual(invalid.returncode, 1)
+        self.assertIn("receipt base64 is invalid", invalid.stderr)
+
+    def test_cloudkit_schema_receipt_accepts_wrapped_base64_transport(self):
+        receipt_module = self.cloudkit_schema_receipt_module()
+        key = b"cloudkit-schema-receipt-test-key-32-bytes"
+        source_commit = "a" * 40
+        receipt = receipt_module.issue_receipt(
+            environment="production",
+            container_identifier="iCloud.com.shinycomputers.contextpanel",
+            schema_path=REPO_ROOT / "CloudKit/companion-sync.schema.json",
+            cktool_schema_path=REPO_ROOT / "CloudKit/companion-sync.schema.ckdb",
+            source_commit=source_commit,
+            ttl_seconds=3600,
+            key=key,
+        )
+        encoded = base64.b64encode(json.dumps(receipt).encode()).decode()
+        wrapped = "\r\n".join(
+            encoded[index : index + 32] for index in range(0, len(encoded), 32)
+        )
+        environment = os.environ.copy()
+        environment["CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY"] = key.decode()
+        environment["TEST_SCHEMA_RECEIPT_BASE64"] = wrapped
+
+        result = subprocess.run(
+            [
+                "python3",
+                str(REPO_ROOT / "scripts/cloudkit-schema-receipt.py"),
+                "verify",
+                "--receipt-base64-env",
+                "TEST_SCHEMA_RECEIPT_BASE64",
+                "--source-commit",
+                source_commit,
+            ],
+            cwd=REPO_ROOT,
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_live_cloudkit_schema_gate_issues_receipt_and_fails_closed(self):
+        key = "cloudkit-schema-receipt-test-key-32-bytes"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            receipt_path = Path(temp_dir) / "schema-receipt.json"
+            success = self.run_cloudkit_schema_validator_with_fake_cktool(
+                self.read("CloudKit/companion-sync.schema.ckdb"),
+                receipt_output=receipt_path,
+                receipt_key=key,
+            )
+            receipt = json.loads(receipt_path.read_text())
+
+            self.assertEqual(success.returncode, 0, success.stdout)
+            self.assertEqual(receipt["sourceCommit"], "a" * 40)
+            self.assertNotIn(key, receipt_path.read_text())
+
+            failed_receipt_path = Path(temp_dir) / "failed-receipt.json"
+            failure = self.run_cloudkit_schema_validator_with_fake_cktool(
+                self.read("CloudKit/companion-sync.schema.ckdb"),
+                receipt_output=failed_receipt_path,
+                receipt_key=key,
+                fail_export=True,
+            )
+
+            self.assertEqual(failure.returncode, 1, failure.stdout)
+            self.assertIn("live schema validation failed", failure.stdout)
+            self.assertFalse(failed_receipt_path.exists())
 
     def test_cloudkit_companion_schema_validator_accepts_ckdb_export(self):
         result = self.run_cloudkit_schema_validator_with_fake_cktool(

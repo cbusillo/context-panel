@@ -193,12 +193,19 @@ acceptable.
   Store Connect object IDs into public repo docs, issues, PRs, or agent
   summaries.
 - CloudKit live Production schema validation uses Apple's `cktool`, not the App
-  Store Connect API credentials. Before companion TestFlight or App Store Review
-  submission, run the live schema gate documented in `docs/release.md` under
-  "CloudKit Production Schema Gate." The local operator machine should have a
-  CloudKit management token saved by `xcrun cktool save-token --type management
-  --method keychain --force`, or a `CLOUDKIT_MANAGEMENT_TOKEN` provided only to
-  the command process. Never commit, print, or summarize the token value.
+  Store Connect API credentials. Before GitHub Release publication, companion
+  TestFlight or App Store Review submission, App Store build upload, or signed
+  runtime-receipt relay, run the live schema gate documented in `docs/release.md`
+  under "CloudKit Production Schema Gate" and issue a fresh sealed receipt bound
+  to the exact source commit. Release workflows and
+  `context-panel-runtime-session.py sync` must verify that receipt before
+  mutation. The local operator machine should have a CloudKit management token
+  saved by `xcrun cktool save-token` with
+  `--type management --method keychain --force`, or a
+  `CLOUDKIT_MANAGEMENT_TOKEN` provided only to
+  the command process. Keep the separate
+  `CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY` in operator Keychain and the GitHub
+  `release` environment; never commit, print, or summarize either secret value.
 - Physical companion dogfood installs should clean stale Context Panel
   development provisioning profiles from the target device while preserving the
   profile embedded in the newly installed build and preserving App

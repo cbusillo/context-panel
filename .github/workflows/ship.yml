@@ -71,6 +71,10 @@ name: Ship
         required: true
         default: true
         type: boolean
+      cloudkit_schema_receipt_base64:
+        description: Sealed short-lived Production CloudKit schema receipt.
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -127,6 +131,8 @@ jobs:
           INPUT_TESTFLIGHT_BETA_SOURCE: ${{ inputs.testflight_beta_source }}
           INPUT_TESTFLIGHT_BETA_GROUPS: ${{ inputs.testflight_beta_groups }}
           INPUT_INCLUDE_INTERNAL_TESTFLIGHT_GROUPS: ${{ inputs.include_internal_testflight_groups }}
+          INPUT_CLOUDKIT_SCHEMA_RECEIPT_BASE64: >-
+            ${{ inputs.cloudkit_schema_receipt_base64 }}
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_STORE_CONNECT_API_KEY_P8_BASE64: >-
@@ -175,6 +181,15 @@ jobs:
                 exit 2
               ;;
             esac
+          fi
+          if [[ "${github_release_selected}" == "true" || \
+            "${app_store_channel}" == "upload" || \
+            "${companion_app_store_channel}" == "upload" || \
+            "${testflight_beta_selected}" == "true" ]]; then
+            if [[ -z "${INPUT_CLOUDKIT_SCHEMA_RECEIPT_BASE64}" ]]; then
+              echo "live publication, upload, and TestFlight channels require a Production CloudKit schema receipt" >&2
+              exit 1
+            fi
           fi
           preflight_app_store_version() {
             local platform="$1"
@@ -241,6 +256,7 @@ jobs:
       build_number: ${{ needs.validate.outputs.build_number }}
       create_github_release: true
       notarize: ${{ inputs.notarize_github_release }}
+      cloudkit_schema_receipt_base64: ${{ inputs.cloudkit_schema_receipt_base64 }}
     secrets: inherit
 
   app-store-upload:
@@ -252,6 +268,7 @@ jobs:
       version: ${{ inputs.version }}
       build_number: ${{ needs.validate.outputs.build_number }}
       upload: ${{ inputs.app_store_channel == 'upload' }}
+      cloudkit_schema_receipt_base64: ${{ inputs.cloudkit_schema_receipt_base64 }}
     secrets: inherit
 
   companion-app-store-upload:
@@ -264,6 +281,7 @@ jobs:
       build_number: ${{ needs.validate.outputs.build_number }}
       platform: ${{ inputs.companion_platform }}
       upload: ${{ inputs.companion_app_store_channel == 'upload' }}
+      cloudkit_schema_receipt_base64: ${{ inputs.cloudkit_schema_receipt_base64 }}
     secrets: inherit
 
   testflight-beta:
@@ -294,6 +312,7 @@ jobs:
       beta_groups: ${{ inputs.testflight_beta_groups }}
       include_internal_beta_groups: ${{ inputs.include_internal_testflight_groups }}
       dry_run: false
+      cloudkit_schema_receipt_base64: ${{ inputs.cloudkit_schema_receipt_base64 }}
     secrets: inherit
 
   summary:

@@ -172,13 +172,20 @@ Publish or clear the current session, upload pending Mac receipts, and extract
 current-session receipts through the canonical signed refresh agent with:
 
 ```sh
-scripts/context-panel-runtime-session.py sync
+scripts/context-panel-runtime-session.py sync \
+  --cloudkit-schema-receipt .build/cloudkit-production-schema-receipt.json
 ```
 
-The helper itself never receives CloudKit credentials or entitlements. It asks
-the installed signed refresh agent to use its existing Production CloudKit and
-App Group authority, validates the agent's closed result contract, and reports a
-degraded result without printing raw CloudKit errors.
+Before invoking the agent, the helper verifies the fresh HMAC-sealed Production
+schema receipt against the checked-in CloudKit contract and the current
+repository `HEAD`; the caller cannot override that expected commit. The key
+comes from `CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY`; the receipt and key are
+not passed to the signed agent. The helper itself never receives CloudKit
+credentials or entitlements. It asks the installed signed refresh agent to use
+its existing Production CloudKit and App Group authority, validates the agent's
+closed result contract, and reports a degraded result without printing raw
+CloudKit errors. See the CloudKit Production Schema Gate in
+[Release](release.md) for receipt issuance and operator Keychain setup.
 
 Companion, Watch, tvOS, widget, complication, and Top Shelf writers require the
 signed companion App Group and fail closed when that shared container is
@@ -234,7 +241,8 @@ scripts/context-panel-validation.py start-session \
 
 scripts/context-panel-validation.py sync-runtime-evidence \
   --version <marketing-version> \
-  --build-number <coordinated-build-number>
+  --build-number <coordinated-build-number> \
+  --cloudkit-schema-receipt .build/cloudkit-production-schema-receipt.json
 ```
 
 `sync-runtime-evidence` invokes the existing signed-host `sync`, validated
@@ -248,7 +256,8 @@ For a bounded coordinator-managed invocation of that same sequence, use:
 ```sh
 scripts/context-panel-validation.py advance-automation \
   --version <marketing-version> \
-  --build-number <coordinated-build-number>
+  --build-number <coordinated-build-number> \
+  --cloudkit-schema-receipt .build/cloudkit-production-schema-receipt.json
 ```
 
 `advance-automation` first performs the bounded canonical Mac launch attempt
@@ -318,7 +327,8 @@ Close collection without deleting queued receipts with:
 
 ```sh
 scripts/context-panel-runtime-session.py stop
-scripts/context-panel-runtime-session.py sync
+scripts/context-panel-runtime-session.py sync \
+  --cloudkit-schema-receipt .build/cloudkit-production-schema-receipt.json
 ```
 
 The second command writes a compare-and-swap remote tombstone for the closed

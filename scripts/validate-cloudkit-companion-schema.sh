@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 environment="production"
 schema_path="CloudKit/companion-sync.schema.json"
 cktool_schema_path="CloudKit/companion-sync.schema.ckdb"
 team_id="${APPLE_TEAM_ID:-MM5YXC7T6E}"
 container_id="iCloud.com.shinycomputers.contextpanel"
 live="false"
+receipt_output=""
+receipt_ttl_seconds="21600"
+source_commit=""
 
 usage() {
 	cat <<'USAGE'
@@ -22,6 +26,10 @@ Options:
   --schema PATH        Checked-in schema contract. Default: CloudKit/companion-sync.schema.json
   --cktool-schema PATH Checked-in cktool import schema. Default: CloudKit/companion-sync.schema.ckdb
   --live               Export and validate the live schema with xcrun cktool.
+  --receipt-output PATH Write a sealed short-lived receipt after successful live validation.
+  --receipt-ttl-seconds N
+                       Receipt validity in seconds. Default: 21600 (6 hours)
+  --source-commit SHA  Full source commit bound to the receipt. Default: GITHUB_SHA or HEAD
   -h, --help           Show this help.
 
 Live validation requires a cktool token provided through cktool save-token,
@@ -55,6 +63,18 @@ while [[ $# -gt 0 ]]; do
 		live="true"
 		shift
 		;;
+	--receipt-output)
+		receipt_output="${2:?--receipt-output requires a value}"
+		shift 2
+		;;
+	--receipt-ttl-seconds)
+		receipt_ttl_seconds="${2:?--receipt-ttl-seconds requires a value}"
+		shift 2
+		;;
+	--source-commit)
+		source_commit="${2:?--source-commit requires a value}"
+		shift 2
+		;;
 	-h | --help)
 		usage
 		exit 0
@@ -75,6 +95,15 @@ require_command() {
 }
 
 require_command jq
+
+if [[ -n "$receipt_output" && "$live" != "true" ]]; then
+	echo "--receipt-output requires --live" >&2
+	exit 2
+fi
+if [[ -n "$receipt_output" && "$environment" != "production" ]]; then
+	echo "CloudKit schema receipts require --environment production" >&2
+	exit 2
+fi
 
 if [[ ! -f "$schema_path" ]]; then
 	echo "CloudKit companion schema contract not found: $schema_path" >&2
@@ -511,11 +540,37 @@ if [[ -n "${CLOUDKIT_MANAGEMENT_TOKEN:-}" ]]; then
 fi
 
 if ! xcrun "${cktool_export_args[@]}" >/dev/null 2>&1; then
-	echo "CloudKit live schema validation skipped: cktool export-schema failed for $container_id/$environment." >&2
+	if [[ -n "$receipt_output" ]]; then
+		echo "CloudKit live schema validation failed: cktool export-schema failed for $container_id/$environment." >&2
+	else
+		echo "CloudKit live schema validation skipped: cktool export-schema failed for $container_id/$environment." >&2
+	fi
 	echo "Run xcrun cktool save-token or set CLOUDKIT_MANAGEMENT_TOKEN, then rerun with --live." >&2
+	if [[ -n "$receipt_output" ]]; then
+		exit 1
+	fi
 	exit 77
 fi
 
 validate_ckdb_schema "$live_schema" "live CloudKit $environment"
+
+if [[ -n "$receipt_output" ]]; then
+	require_command python3
+	if [[ -z "$source_commit" ]]; then
+		source_commit="${GITHUB_SHA:-}"
+	fi
+	if [[ -z "$source_commit" ]]; then
+		require_command git
+		source_commit="$(git -C "$repo_root" rev-parse HEAD)"
+	fi
+	python3 "$repo_root/scripts/cloudkit-schema-receipt.py" issue \
+		--environment "$environment" \
+		--container-id "$container_id" \
+		--schema "$schema_path" \
+		--cktool-schema "$cktool_schema_path" \
+		--source-commit "$source_commit" \
+		--ttl-seconds "$receipt_ttl_seconds" \
+		--output "$receipt_output"
+fi
 
 echo "CloudKit live schema contains private-only companion sync and runtime receipt contracts with required query and range indexes in $environment."

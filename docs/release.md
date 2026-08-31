@@ -619,15 +619,81 @@ xcrun cktool save-token --type management --method keychain --force
 xcrun cktool get-teams
 ```
 
-Then validate the live Production schema:
+Then validate the live Production schema and issue a six-hour sealed receipt
+bound to the exact source commit:
 
 ```sh
-scripts/validate-cloudkit-companion-schema.sh --live --environment production
+export CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY="$(
+  security find-generic-password \
+    -a "$USER" \
+    -s com.shinycomputers.contextpanel.cloudkit-schema-receipt \
+    -w
+)"
+source_commit="$(git rev-parse HEAD)"
+scripts/validate-cloudkit-companion-schema.sh \
+  --live \
+  --environment production \
+  --source-commit "$source_commit" \
+  --receipt-output .build/cloudkit-production-schema-receipt.json
+```
+
+The receipt contains only its schema identity, Production environment, fixed
+container identifier, checked-in JSON/ckdb contract digest, exact source commit,
+validation and expiry times, and an HMAC-SHA256 seal. It contains no CloudKit
+management token, HMAC key, record name, account identifier, or live object ID.
+It expires after six hours by default and cannot be reused for another commit or
+changed schema contract.
+
+Encode the receipt as one line for the
+`cloudkit_schema_receipt_base64` workflow input:
+
+```sh
+base64 < .build/cloudkit-production-schema-receipt.json | tr -d '\r\n'
+```
+
+GitHub Release publication verifies the receipt while artifact-only builds
+remain available without it. Mac and companion upload workflows verify the
+receipt only for upload mode; export-only remains non-mutating. TestFlight
+distribution verifies it unless `dry_run` is enabled. App Store Review verifies
+it for every live prepare, build-attachment, or submission operation; dry runs
+and cancel-only operations remain available without a receipt. The `Ship`
+workflow requires and forwards the same input whenever any publication, upload,
+or TestFlight channel is selected.
+
+The local signed runtime-receipt relay verifies the receipt before invoking the
+canonical refresh agent:
+
+```sh
+scripts/context-panel-runtime-session.py sync \
+  --cloudkit-schema-receipt .build/cloudkit-production-schema-receipt.json
+```
+
+The relay receives the receipt and HMAC key only for local verification. It does
+not pass either value to the signed agent. The signed agent continues to use its
+own Production CloudKit entitlement and account authority.
+
+One-time operator setup must put the same high-entropy HMAC key in local
+Keychain and the protected GitHub `release` environment without printing it:
+
+```sh
+receipt_key="$(openssl rand -base64 48)"
+printf '%s\n%s\n' "$receipt_key" "$receipt_key" \
+  | security add-generic-password \
+  -U \
+  -a "$USER" \
+  -s com.shinycomputers.contextpanel.cloudkit-schema-receipt \
+  -w
+printf '%s' "$receipt_key" \
+  | gh secret set CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY \
+      --env release \
+      --repo cbusillo/context-panel
+unset receipt_key
 ```
 
 If Keychain storage is unavailable, provide the token only to the command
 process with `CLOUDKIT_MANAGEMENT_TOKEN`; do not write the token into tracked
 files, shell history, GitHub issues, PRs, agent summaries, or release notes.
+Apply the same handling to `CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY`.
 
 If the live gate reports a missing runtime record type or index, re-export both
 environments and require Production and Development to contain no unrelated
@@ -1062,7 +1128,8 @@ relay through the existing signed host and reconcile the sanitized export:
 ```sh
 scripts/context-panel-validation.py sync-runtime-evidence \
   --version <marketing-version> \
-  --build-number <coordinated-build-number>
+  --build-number <coordinated-build-number> \
+  --cloudkit-schema-receipt .build/cloudkit-production-schema-receipt.json
 ```
 
 This explicit command invokes the existing runtime-session `sync`, `status`,
