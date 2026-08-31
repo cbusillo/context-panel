@@ -76,6 +76,7 @@ class ReplayInventoryTests(unittest.TestCase):
         session_expires_at: str = "2026-08-27T12:30:00Z",
         observed_at: str = "2026-08-27T12:05:00Z",
         retention_expires_at: str = "2026-08-28T12:05:00Z",
+        process_sequence: int = 1,
         executable_uuids: list[str] | None = None,
         fingerprints: dict[str, str] | None = None,
         manifest_id: str = "b" * 64,
@@ -106,7 +107,7 @@ class ReplayInventoryTests(unittest.TestCase):
             "observedAt": observed_at,
             "retentionExpiresAt": retention_expires_at,
             "processInstanceID": process_instance_id,
-            "processSequence": 1,
+            "processSequence": process_sequence,
             "buildIdentity": {
                 "surface": surface,
                 "platform": platform,
@@ -145,7 +146,7 @@ class ReplayInventoryTests(unittest.TestCase):
                 fingerprints["combined"],
                 ",".join(executable_uuids),
                 process_instance_id,
-                "1",
+                str(process_sequence),
                 payload["trigger"],
                 payload["presentationMode"],
                 payload["selectedSource"],
@@ -933,6 +934,7 @@ class ReplayInventoryTests(unittest.TestCase):
             ("receiptTTLSeconds", 59, "receipt TTL"),
             ("maximumReceiptCount", 513, "maximum receipt count"),
             ("maximumReceiptCount", 128.0, "maximum receipt count"),
+            ("enabledSurfaces", [[]], "runtime session is invalid"),
             ("expectedManifestID", "f" * 64, "runtime session is invalid"),
         )
         for field, value, error in cases:
@@ -947,6 +949,59 @@ class ReplayInventoryTests(unittest.TestCase):
                 self.write_json(session_path, session)
                 with self.assertRaisesRegex(InventoryError, error):
                     seal_inventory(policy, roots)
+
+    def test_retained_receipts_cannot_exceed_session_maximum(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            policy, roots = self.fixture(root, retain_receipt=True)
+            receipt_dir = root / "archive/train/receipts"
+            for path in receipt_dir.glob("*.json"):
+                path.unlink()
+            receipts = [
+                self.receipt_payload(
+                    observed_at=f"2026-08-27T12:05:{index:02d}Z",
+                    retention_expires_at=f"2026-08-28T12:05:{index:02d}Z",
+                    process_sequence=index + 1,
+                )
+                for index in range(2)
+            ]
+            for receipt in receipts:
+                self.write_json(receipt_dir / f"{receipt['id']}.json", receipt)
+            session_path = root / "archive/train/runtime-session.json"
+            session = json.loads(session_path.read_text())
+            session["maximumReceiptCount"] = 1
+            self.write_json(session_path, session)
+            self.rewrite_report_chain(
+                root,
+                lambda report: report["runtimeSurfaces"][0].update(
+                    {"receiptIDs": [receipt["id"] for receipt in receipts]}
+                ),
+            )
+
+            with self.assertRaisesRegex(InventoryError, "receipt count exceeds"):
+                seal_inventory(policy, roots)
+
+    def test_missing_receipt_bodies_cannot_bypass_session_maximum(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            policy, roots = self.fixture(root, retain_receipt=True)
+            receipt_dir = root / "archive/train/receipts"
+            for path in receipt_dir.glob("*.json"):
+                path.unlink()
+            receipt_ids = ["6" * 64, "7" * 64]
+            session_path = root / "archive/train/runtime-session.json"
+            session = json.loads(session_path.read_text())
+            session["maximumReceiptCount"] = 1
+            self.write_json(session_path, session)
+            self.rewrite_report_chain(
+                root,
+                lambda report: report["runtimeSurfaces"][0].update(
+                    {"receiptIDs": receipt_ids}
+                ),
+            )
+
+            with self.assertRaisesRegex(InventoryError, "receipt count exceeds"):
+                seal_inventory(policy, roots)
 
     def test_retained_session_without_receipt_bodies_seals_and_checks(self):
         with tempfile.TemporaryDirectory() as temporary:

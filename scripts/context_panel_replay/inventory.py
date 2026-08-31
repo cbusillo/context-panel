@@ -729,6 +729,7 @@ def _validate_retained_session(
         or session.get("expectedManifestID") != current.get("manifestId")
         or not isinstance(enabled_surfaces, list)
         or not enabled_surfaces
+        or any(not isinstance(value, str) for value in enabled_surfaces)
         or enabled_surfaces != sorted(set(enabled_surfaces))
         or any(value not in SURFACE_PLATFORMS for value in enabled_surfaces)
     ):
@@ -1107,6 +1108,8 @@ def _receipt_entry(
                 {"member": receipt_id, "rawDigest": retained[receipt_id]}
             )
             total_size += receipt_path.stat().st_size
+    if session is not None and len(referenced_ids) > session["maximumReceiptCount"]:
+        raise InventoryError("runtime receipt count exceeds session maximum")
     retained_ids = set(retained)
     if not retained_ids <= referenced_ids:
         raise InventoryError("retained runtime receipts are outside the final report")
