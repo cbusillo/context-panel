@@ -2,9 +2,6 @@
 name: Release
 
 "on":
-  push:
-    tags:
-      - "v*"
   workflow_call:
     inputs:
       version:
@@ -47,7 +44,7 @@ name: Release
         type: boolean
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: >-
@@ -56,24 +53,34 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  guard:
+    name: Validate Trusted Release Source
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Validate Release Source and Inputs
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_BUILD_NUMBER: ${{ inputs.build_number }}
+        shell: bash
+        run: |
+          scripts/release-workflow-guard.sh \
+            --version "${INPUT_VERSION}" \
+            --build-number "${INPUT_BUILD_NUMBER}"
+
   macos:
     name: Build macOS App
+    needs: guard
     runs-on: macos-26
-
-    env:
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-      APPLE_NOTARY_KEYCHAIN_PROFILE: ${{ secrets.APPLE_NOTARY_KEYCHAIN_PROFILE }}
-      APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
-      APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-      APP_STORE_CONNECT_API_KEY_P8_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8_BASE64 }}
-      MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
-      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-      MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
-      MACOS_APP_PROVISIONING_PROFILE_BASE64: ${{ secrets.MACOS_APP_PROVISIONING_PROFILE_BASE64 }}
-      MACOS_WIDGET_PROVISIONING_PROFILE_BASE64: ${{ secrets.MACOS_WIDGET_PROVISIONING_PROFILE_BASE64 }}
-      MACOS_REFRESH_AGENT_PROVISIONING_PROFILE_BASE64: ${{ secrets.MACOS_REFRESH_AGENT_PROVISIONING_PROFILE_BASE64 }}
+    environment: release
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
@@ -94,13 +101,12 @@ jobs:
       - name: Resolve Version
         id: version
         shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            version="${GITHUB_REF_NAME#v}"
-            tag="${GITHUB_REF_NAME}"
-          elif [[ -n "${{ inputs.version }}" ]]; then
-            version="${{ inputs.version }}"
+          if [[ -n "${INPUT_VERSION}" ]]; then
+            version="${INPUT_VERSION}"
             tag="v${version}"
           else
             version="$(date -u +%Y.%m.%d)-${GITHUB_SHA::7}"
@@ -112,9 +118,11 @@ jobs:
       - name: Resolve Build Number
         id: build
         shell: bash
+        env:
+          INPUT_BUILD_NUMBER: ${{ inputs.build_number }}
         run: |
           set -euo pipefail
-          build_number="${{ inputs.build_number }}"
+          build_number="${INPUT_BUILD_NUMBER}"
           if [[ -z "${build_number}" ]]; then
             build_number="$(date -u +%Y%m%d%H%M)"
           fi
@@ -122,12 +130,11 @@ jobs:
 
       - name: Validate Release Configuration
         shell: bash
+        env:
+          INPUT_CREATE_GITHUB_RELEASE: ${{ inputs.create_github_release }}
         run: |
           set -euo pipefail
-          publish_requested="${{ inputs.create_github_release }}"
-          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
-            publish_requested="true"
-          fi
+          publish_requested="${INPUT_CREATE_GITHUB_RELEASE}"
           if [[ "${publish_requested}" == "true" ]]; then
             echo "Release publication requested."
           fi
@@ -135,6 +142,16 @@ jobs:
       - name: Import Apple Signing Assets
         id: signing
         shell: bash
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+          MACOS_APP_PROVISIONING_PROFILE_BASE64: >-
+            ${{ secrets.MACOS_APP_PROVISIONING_PROFILE_BASE64 }}
+          MACOS_WIDGET_PROVISIONING_PROFILE_BASE64: >-
+            ${{ secrets.MACOS_WIDGET_PROVISIONING_PROFILE_BASE64 }}
+          MACOS_REFRESH_AGENT_PROVISIONING_PROFILE_BASE64: >-
+            ${{ secrets.MACOS_REFRESH_AGENT_PROVISIONING_PROFILE_BASE64 }}
         run: |
           set -euo pipefail
           identity="-"
@@ -214,27 +231,42 @@ jobs:
       - name: Build Release Artifact
         id: package
         shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD_NUMBER: ${{ steps.build.outputs.build_number }}
+          TAG: ${{ steps.version.outputs.tag }}
+          SIGNING_IDENTITY: ${{ steps.signing.outputs.identity }}
+          APP_PROFILE: ${{ steps.signing.outputs.app_profile }}
+          WIDGET_PROFILE: ${{ steps.signing.outputs.widget_profile }}
+          REFRESH_AGENT_PROFILE: ${{ steps.signing.outputs.refresh_agent_profile }}
+          INPUT_CREATE_GITHUB_RELEASE: ${{ inputs.create_github_release }}
+          INPUT_NOTARIZE: ${{ inputs.notarize }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_NOTARY_KEYCHAIN_PROFILE: ${{ secrets.APPLE_NOTARY_KEYCHAIN_PROFILE }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY_P8_BASE64: >-
+            ${{ secrets.APP_STORE_CONNECT_API_KEY_P8_BASE64 }}
         run: |
           set -euo pipefail
           args=(
-            --version "${{ steps.version.outputs.version }}"
-            --build-number "${{ steps.build.outputs.build_number }}"
+            --version "${VERSION}"
+            --build-number "${BUILD_NUMBER}"
             --output dist
-            --identity "${{ steps.signing.outputs.identity }}"
+            --identity "${SIGNING_IDENTITY}"
           )
-          if [[ -n "${{ steps.signing.outputs.app_profile }}" ]]; then
-            args+=(--app-provisioning-profile "${{ steps.signing.outputs.app_profile }}")
+          if [[ -n "${APP_PROFILE}" ]]; then
+            args+=(--app-provisioning-profile "${APP_PROFILE}")
           fi
-          if [[ -n "${{ steps.signing.outputs.widget_profile }}" ]]; then
-            args+=(--widget-provisioning-profile "${{ steps.signing.outputs.widget_profile }}")
+          if [[ -n "${WIDGET_PROFILE}" ]]; then
+            args+=(--widget-provisioning-profile "${WIDGET_PROFILE}")
           fi
-          if [[ -n "${{ steps.signing.outputs.refresh_agent_profile }}" ]]; then
-            args+=(--refresh-agent-provisioning-profile "${{ steps.signing.outputs.refresh_agent_profile }}")
+          if [[ -n "${REFRESH_AGENT_PROFILE}" ]]; then
+            args+=(--refresh-agent-provisioning-profile "${REFRESH_AGENT_PROFILE}")
           fi
-          notarize_requested="${{ inputs.notarize }}"
-          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
-            notarize_requested="true"
-          fi
+          notarize_requested="${INPUT_NOTARIZE}"
           if [[ "${notarize_requested}" == "true" ]]; then
             has_notary_credentials="false"
             if [[ -n "${APPLE_NOTARY_KEYCHAIN_PROFILE:-}" ]]; then
@@ -268,19 +300,19 @@ jobs:
           fi
 
           scripts/package-native-macos-app.sh "${args[@]}"
-          zip_path="dist/ContextPanel-${{ steps.version.outputs.version }}-macOS.zip"
+          zip_path="dist/ContextPanel-${VERSION}-macOS.zip"
           echo "zip_path=${zip_path}" >>"${GITHUB_OUTPUT}"
           echo "metadata_path=dist/release-metadata.json" >>"${GITHUB_OUTPUT}"
           {
             echo "### GitHub Release Artifact"
             echo
-            echo "- Version: ${{ steps.version.outputs.version }}"
-            echo "- Build number: ${{ steps.build.outputs.build_number }}"
-            echo "- Tag: ${{ steps.version.outputs.tag }}"
+            echo "- Version: ${VERSION}"
+            echo "- Build number: ${BUILD_NUMBER}"
+            echo "- Tag: ${TAG}"
             echo "- Commit: ${GITHUB_SHA}"
             echo "- Zip: ${zip_path}"
             echo "- Metadata: dist/release-metadata.json"
-            echo "- Create GitHub Release: ${{ inputs.create_github_release }}"
+            echo "- Create GitHub Release: ${INPUT_CREATE_GITHUB_RELEASE}"
             echo "- Notarization requested: ${notarize_requested}"
           } >>"${GITHUB_STEP_SUMMARY}"
 
@@ -294,7 +326,7 @@ jobs:
           if-no-files-found: error
 
       - name: Create GitHub Release
-        if: ${{ github.ref_type == 'tag' || inputs.create_github_release }}
+        if: ${{ inputs.create_github_release }}
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}

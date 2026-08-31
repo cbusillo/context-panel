@@ -1,6 +1,6 @@
 # macOS And Companion Release Path
 
-Last verified: 2026-08-10.
+Last verified: 2026-08-31.
 
 Context Panel's normal beta release path is the GitHub Actions `Ship` workflow.
 It coordinates selected release channels from one commit and one marketing
@@ -23,6 +23,22 @@ the platform-specific signed device smoke gate described below.
 App Store Review submission is intentionally separate from `Ship`. Run it only
 after the TestFlight build has been validated and the App Store release decision
 is explicit.
+
+All secret-bearing release jobs use the protected GitHub environment named
+`release`. That environment accepts only protected branches, and `main` is the
+only protected branch. Dispatch `Ship` and every lower-level release workflow
+from `main`; task branches, arbitrary refs, and tags are rejected before signing
+or App Store Connect credentials are available. A separate secretless guard job
+also validates the protected ref, checked-out commit, main ancestry, version,
+and build number before each secret-bearing job starts. Repository-level release
+secrets remain usable by environment-gated jobs; move them to environment
+secrets only through an explicit credential-rotation operation.
+
+GitHub approves environment deployments per job. A multi-channel `Ship` run can
+therefore pause separately for release intent validation, GitHub packaging,
+App Store uploads, and TestFlight distribution. Approve only the channel jobs
+expected for that run; a later pause is another explicit credential boundary,
+not a hung workflow.
 
 The lower-level workflows remain callable for recovery and validation:
 
@@ -120,9 +136,11 @@ Review` workflow separately after TestFlight validation.
 
 ## CI Release
 
-The `Release` workflow runs on `v*` tags and can also be started manually from
-GitHub Actions. It builds the native `ContextPanel` Xcode scheme, not the
-SwiftPM wrapper, so the artifact includes `ContextPanelWidgetExtension.appex`.
+The `Release` workflow is started manually from GitHub Actions or called by
+`Ship`, always from protected `main`. It builds the native `ContextPanel` Xcode
+scheme, not the SwiftPM wrapper, so the artifact includes
+`ContextPanelWidgetExtension.appex`. Creating a tag does not trigger the
+workflow; this keeps secret-bearing execution bound to the protected branch.
 
 Manual dispatch accepts:
 
@@ -133,9 +151,8 @@ Manual dispatch accepts:
   default is true for friend-installable GitHub releases.
 
 The workflow always uploads the generated zip and `release-metadata.json` as a
-workflow artifact. When `create_github_release` is true, or when the workflow is
-triggered by a tag, it also creates or updates a GitHub Release with those
-assets.
+workflow artifact. When `create_github_release` is true, it also creates or
+updates a GitHub Release with those assets.
 
 Required local command parity:
 

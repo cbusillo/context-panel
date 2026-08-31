@@ -62,32 +62,35 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  guard:
+    name: Validate Trusted Release Source
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Validate Release Source and Inputs
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_BUILD_NUMBER: ${{ inputs.build_number }}
+        shell: bash
+        run: |
+          scripts/release-workflow-guard.sh \
+            --version "${INPUT_VERSION}" \
+            --build-number "${INPUT_BUILD_NUMBER}"
+
   upload:
     name: Upload Companion App
+    needs: guard
     runs-on: macos-26
+    environment: release
     outputs:
       build_number: ${{ steps.build.outputs.build_number }}
       app_store_platform: ${{ steps.platform.outputs.app_store_platform }}
-
-    env:
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
-      APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-      APP_STORE_CONNECT_API_KEY_P8_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8_BASE64 }}
-      MACOS_APP_STORE_DISTRIBUTION_CERTIFICATE_P12: ${{ secrets.MACOS_APP_STORE_DISTRIBUTION_CERTIFICATE_P12 }}
-      MACOS_APP_STORE_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_APP_STORE_CERTIFICATE_PASSWORD }}
-      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-      MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
-      COMPANION_APP_STORE_APP_PROVISIONING_PROFILE_BASE64: ${{ secrets.COMPANION_APP_STORE_APP_PROVISIONING_PROFILE_BASE64 }}
-      COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64: ${{ secrets.COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64 }}
-      COMPANION_APP_STORE_WATCH_PROVISIONING_PROFILE_BASE64: >-
-        ${{ secrets.COMPANION_APP_STORE_WATCH_PROVISIONING_PROFILE_BASE64 }}
-      COMPANION_APP_STORE_WATCH_WIDGET_PROVISIONING_PROFILE_BASE64: >-
-        ${{ secrets.COMPANION_APP_STORE_WATCH_WIDGET_PROVISIONING_PROFILE_BASE64 }}
-      COMPANION_APP_STORE_TV_PROVISIONING_PROFILE_BASE64: >-
-        ${{ secrets.COMPANION_APP_STORE_TV_PROVISIONING_PROFILE_BASE64 }}
-      COMPANION_APP_STORE_TV_TOP_SHELF_PROVISIONING_PROFILE_BASE64: >-
-        ${{ secrets.COMPANION_APP_STORE_TV_TOP_SHELF_PROVISIONING_PROFILE_BASE64 }}
 
     steps:
       - name: Checkout
@@ -108,9 +111,11 @@ jobs:
       - name: Resolve Platform
         id: platform
         shell: bash
+        env:
+          INPUT_PLATFORM: ${{ inputs.platform }}
         run: |
           set -euo pipefail
-          platform="${{ inputs.platform }}"
+          platform="${INPUT_PLATFORM}"
           if [[ -z "${platform}" ]]; then
             platform="ios"
           fi
@@ -135,9 +140,11 @@ jobs:
       - name: Resolve Build Number
         id: build
         shell: bash
+        env:
+          INPUT_BUILD_NUMBER: ${{ inputs.build_number }}
         run: |
           set -euo pipefail
-          build_number="${{ inputs.build_number }}"
+          build_number="${INPUT_BUILD_NUMBER}"
           if [[ -z "${build_number}" ]]; then
             build_number="$(date -u +%Y%m%d%H%M)"
           fi
@@ -145,6 +152,13 @@ jobs:
 
       - name: Import Signing Assets
         shell: bash
+        env:
+          MACOS_APP_STORE_DISTRIBUTION_CERTIFICATE_P12: >-
+            ${{ secrets.MACOS_APP_STORE_DISTRIBUTION_CERTIFICATE_P12 }}
+          MACOS_APP_STORE_CERTIFICATE_PASSWORD: >-
+            ${{ secrets.MACOS_APP_STORE_CERTIFICATE_PASSWORD }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
         run: |
           set -euo pipefail
           keychain_password="${MACOS_KEYCHAIN_PASSWORD:-$(uuidgen)}"
@@ -178,10 +192,24 @@ jobs:
 
       - name: Write Provisioning Profiles
         shell: bash
+        env:
+          PLATFORM: ${{ steps.platform.outputs.platform }}
+          COMPANION_APP_STORE_APP_PROVISIONING_PROFILE_BASE64: >-
+            ${{ secrets.COMPANION_APP_STORE_APP_PROVISIONING_PROFILE_BASE64 }}
+          COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64: >-
+            ${{ secrets.COMPANION_APP_STORE_WIDGET_PROVISIONING_PROFILE_BASE64 }}
+          COMPANION_APP_STORE_WATCH_PROVISIONING_PROFILE_BASE64: >-
+            ${{ secrets.COMPANION_APP_STORE_WATCH_PROVISIONING_PROFILE_BASE64 }}
+          COMPANION_APP_STORE_WATCH_WIDGET_PROVISIONING_PROFILE_BASE64: >-
+            ${{ secrets.COMPANION_APP_STORE_WATCH_WIDGET_PROVISIONING_PROFILE_BASE64 }}
+          COMPANION_APP_STORE_TV_PROVISIONING_PROFILE_BASE64: >-
+            ${{ secrets.COMPANION_APP_STORE_TV_PROVISIONING_PROFILE_BASE64 }}
+          COMPANION_APP_STORE_TV_TOP_SHELF_PROVISIONING_PROFILE_BASE64: >-
+            ${{ secrets.COMPANION_APP_STORE_TV_TOP_SHELF_PROVISIONING_PROFILE_BASE64 }}
         run: |
           set -euo pipefail
           mkdir -p .build/provisioning-appstore
-          platform="${{ steps.platform.outputs.platform }}"
+          platform="${PLATFORM}"
           if [[ "${platform}" == "tvos" ]]; then
             if [[ -z "${COMPANION_APP_STORE_TV_PROVISIONING_PROFILE_BASE64:-}" || \
               -z "${COMPANION_APP_STORE_TV_TOP_SHELF_PROVISIONING_PROFILE_BASE64:-}" ]]; then
@@ -224,26 +252,41 @@ jobs:
 
       - name: Archive and Upload
         shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_UPLOAD: ${{ inputs.upload }}
+          PLATFORM: ${{ steps.platform.outputs.platform }}
+          APP_STORE_PLATFORM: ${{ steps.platform.outputs.app_store_platform }}
+          BUILD_NUMBER: ${{ steps.build.outputs.build_number }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY_P8_BASE64: >-
+            ${{ secrets.APP_STORE_CONNECT_API_KEY_P8_BASE64 }}
         run: |
           set -euo pipefail
           args=(
-            --platform "${{ steps.platform.outputs.platform }}"
-            --version "${{ inputs.version }}"
-            --build-number "${{ steps.build.outputs.build_number }}"
+            --platform "${PLATFORM}"
+            --version "${INPUT_VERSION}"
+            --build-number "${BUILD_NUMBER}"
           )
-          if [[ "${{ inputs.upload }}" != "true" ]]; then
+          if [[ "${INPUT_UPLOAD}" != "true" ]]; then
             args+=(--export-only)
           fi
           scripts/upload-app-store-connect-companion-app.sh "${args[@]}"
           {
             echo "### App Store Connect Companion Build Upload"
             echo
-            echo "- Version: ${{ inputs.version }}"
-            echo "- Build number: ${{ steps.build.outputs.build_number }}"
+            echo "- Version: ${INPUT_VERSION}"
+            echo "- Build number: ${BUILD_NUMBER}"
             echo "- Commit: ${GITHUB_SHA}"
-            echo "- Platform: ${{ steps.platform.outputs.platform }}"
-            echo "- App Store Connect platform: ${{ steps.platform.outputs.app_store_platform }}"
-            echo "- Mode: ${{ inputs.upload == true && 'upload' || 'export-only' }}"
+            echo "- Platform: ${PLATFORM}"
+            echo "- App Store Connect platform: ${APP_STORE_PLATFORM}"
+            if [[ "${INPUT_UPLOAD}" == "true" ]]; then
+              echo "- Mode: upload"
+            else
+              echo "- Mode: export-only"
+            fi
             echo "- Result: succeeded"
           } >>"${GITHUB_STEP_SUMMARY}"
 

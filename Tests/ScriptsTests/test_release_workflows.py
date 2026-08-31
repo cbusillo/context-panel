@@ -62,6 +62,23 @@ def workflow_step_run(workflow: str, job_name: str, step_name: str) -> str:
     return textwrap.dedent("\n".join(lines[matches[0] + 1 :]))
 
 
+def workflow_run_blocks(workflow: str) -> tuple[str, ...]:
+    lines = workflow.splitlines()
+    blocks: list[str] = []
+    for index, line in enumerate(lines):
+        if line.strip() not in {"run: |", "run: |-", "run: >", "run: >-"}:
+            continue
+        indent = len(line) - len(line.lstrip())
+        block_lines: list[str] = []
+        for candidate in lines[index + 1 :]:
+            candidate_indent = len(candidate) - len(candidate.lstrip())
+            if candidate.strip() and candidate_indent <= indent:
+                break
+            block_lines.append(candidate)
+        blocks.append(textwrap.dedent("\n".join(block_lines)))
+    return tuple(blocks)
+
+
 def workflow_job_needs(job: str) -> tuple[str, ...]:
     lines = job.splitlines()
     matches = [index for index, line in enumerate(lines) if line.startswith("    needs:")]
@@ -895,6 +912,197 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             workflow_job(workflow, "github-release"),
         )
 
+    def test_release_workflows_guard_secrets_with_protected_environment(self):
+        workflows = {
+            ".github/workflows/release.yml": "macos",
+            ".github/workflows/ship.yml": "validate",
+            ".github/workflows/app-store-connect-upload.yml": "upload",
+            ".github/workflows/app-store-connect-companion-upload.yml": "upload",
+            ".github/workflows/testflight-beta-distribution.yml": "distribute",
+            ".github/workflows/submit-app-store-review.yml": "submit",
+            ".github/workflows/upload-app-store-screenshots.yml": "upload",
+        }
+
+        for workflow_path, secret_job_name in workflows.items():
+            with self.subTest(workflow=workflow_path):
+                workflow = self.read(workflow_path)
+                guard_job = workflow_job(workflow, "guard")
+                secret_job = workflow_job(workflow, secret_job_name)
+                self.assertIn("fetch-depth: 0", guard_job)
+                self.assertIn("scripts/release-workflow-guard.sh", guard_job)
+                self.assertEqual(workflow_job_needs(secret_job), ("guard",))
+                self.assertIn("environment: release", secret_job)
+                job_header = secret_job.split("\n    steps:", maxsplit=1)[0]
+                self.assertNotIn("${{ secrets.", job_header)
+
+    def test_release_workflow_only_runs_from_explicit_main_dispatches(self):
+        workflow = self.read(".github/workflows/release.yml")
+
+        self.assertNotIn("push:", workflow)
+        self.assertIn("workflow_call:", workflow)
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("contents: read", workflow_job(workflow, "guard"))
+        self.assertIn("contents: write", workflow_job(workflow, "macos"))
+
+    def test_release_workflow_shell_blocks_do_not_expand_actions_expressions(self):
+        workflow_paths = (
+            ".github/workflows/release.yml",
+            ".github/workflows/ship.yml",
+            ".github/workflows/app-store-connect-upload.yml",
+            ".github/workflows/app-store-connect-companion-upload.yml",
+            ".github/workflows/testflight-beta-distribution.yml",
+            ".github/workflows/submit-app-store-review.yml",
+            ".github/workflows/upload-app-store-screenshots.yml",
+        )
+
+        for workflow_path in workflow_paths:
+            with self.subTest(workflow=workflow_path):
+                for run_block in workflow_run_blocks(self.read(workflow_path)):
+                    self.assertNotIn("${{", run_block)
+
+    def test_release_workflow_guard_rejects_untrusted_inputs_and_refs(self):
+        guard = REPO_ROOT / "scripts/release-workflow-guard.sh"
+        base_environment = os.environ.copy()
+        base_environment.update(
+            {
+                "GITHUB_REF": "refs/heads/main",
+                "GITHUB_REF_TYPE": "branch",
+                "GITHUB_REF_NAME": "main",
+                "GITHUB_REF_PROTECTED": "true",
+                "GITHUB_SHA": "unused-for-early-validation",
+            }
+        )
+
+        hostile_version = subprocess.run(
+            [str(guard), "--version", "1.2.3; echo injected"],
+            cwd=REPO_ROOT,
+            env=base_environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        self.assertEqual(hostile_version.returncode, 2)
+        self.assertIn("release version must contain", hostile_version.stdout)
+
+        untrusted_ref_environment = base_environment | {
+            "GITHUB_REF": "refs/heads/feature",
+            "GITHUB_REF_NAME": "feature",
+        }
+        untrusted_ref = subprocess.run(
+            [str(guard), "--version", "1.2.3", "--build-number", "42"],
+            cwd=REPO_ROOT,
+            env=untrusted_ref_environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        self.assertEqual(untrusted_ref.returncode, 1)
+        self.assertIn("must run from refs/heads/main", untrusted_ref.stdout)
+
+        unprotected_environment = base_environment | {"GITHUB_REF_PROTECTED": "false"}
+        unprotected_ref = subprocess.run(
+            [str(guard), "--version", "1.2.3", "--build-number", "42"],
+            cwd=REPO_ROOT,
+            env=unprotected_environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        self.assertEqual(unprotected_ref.returncode, 1)
+        self.assertIn("require a protected main branch", unprotected_ref.stdout)
+
+    def test_release_workflow_guard_accepts_only_main_lineage(self):
+        guard_source = self.read("scripts/release-workflow-guard.sh")
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            origin = root / "origin.git"
+            checkout = root / "checkout"
+            subprocess.run(["git", "init", "--bare", str(origin)], check=True)
+            subprocess.run(["git", "clone", str(origin), str(checkout)], check=True)
+            subprocess.run(
+                ["git", "config", "user.email", "tests@context-panel.invalid"],
+                cwd=checkout,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "Context Panel Tests"],
+                cwd=checkout,
+                check=True,
+            )
+            (checkout / "README.md").write_text("trusted\n")
+            subprocess.run(["git", "add", "README.md"], cwd=checkout, check=True)
+            subprocess.run(["git", "commit", "-m", "trusted"], cwd=checkout, check=True)
+            subprocess.run(["git", "branch", "-M", "main"], cwd=checkout, check=True)
+            subprocess.run(["git", "push", "-u", "origin", "main"], cwd=checkout, check=True)
+            trusted_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=checkout,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+            ).stdout.strip()
+            guard = checkout / "release-workflow-guard.sh"
+            guard.write_text(guard_source)
+            guard.chmod(0o755)
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "GITHUB_REF": "refs/heads/main",
+                    "GITHUB_REF_TYPE": "branch",
+                    "GITHUB_REF_NAME": "main",
+                    "GITHUB_REF_PROTECTED": "true",
+                    "GITHUB_SHA": trusted_sha,
+                }
+            )
+
+            trusted = subprocess.run(
+                [str(guard), "--version", "1.2.3", "--build-number", "42"],
+                cwd=checkout,
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(trusted.returncode, 0, trusted.stdout)
+
+            optional_inputs = subprocess.run(
+                [str(guard), "--version", "", "--build-number", ""],
+                cwd=checkout,
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(optional_inputs.returncode, 0, optional_inputs.stdout)
+
+            subprocess.run(["git", "switch", "-c", "untrusted"], cwd=checkout, check=True)
+            (checkout / "README.md").write_text("untrusted\n")
+            subprocess.run(["git", "commit", "-am", "untrusted"], cwd=checkout, check=True)
+            untrusted_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=checkout,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+            ).stdout.strip()
+            environment["GITHUB_SHA"] = untrusted_sha
+            untrusted = subprocess.run(
+                [str(guard), "--version", "1.2.3", "--build-number", "42"],
+                cwd=checkout,
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(untrusted.returncode, 1)
+            self.assertIn("outside origin/main", untrusted.stdout)
+
     def test_ship_release_channels_depend_on_validation(self):
         workflow = self.read(".github/workflows/ship.yml")
 
@@ -942,7 +1150,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         workflow = self.read(".github/workflows/ship.yml")
         validate_run = workflow_step_run(workflow, "validate", "Validate Inputs")
         companion_case_match = re.search(
-            r'case\s+"\$\{\{\s*inputs\.companion_platform\s*\}\}"\s+in(?P<body>.*?)\besac\b',
+            r'case\s+"\$\{INPUT_COMPANION_PLATFORM\}"\s+in(?P<body>.*?)\besac\b',
             validate_run,
             re.DOTALL,
         )
@@ -957,7 +1165,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertRegex(
             re.sub(r"\s+", " ", validate_run),
             r'if \[\[ "\$\{companion_app_store_channel\}" == "upload" \]\]; then '
-            r'case "\$\{\{ inputs\.companion_platform \}\}" in',
+            r'case "\$\{INPUT_COMPANION_PLATFORM\}" in',
         )
         mappings = dict(
             re.findall(
@@ -1370,7 +1578,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         package_script = self.read("scripts/package-native-macos-app.sh")
 
         self.assertIn("build_number:", workflow)
-        self.assertIn('--build-number "${{ steps.build.outputs.build_number }}"', workflow)
+        self.assertIn('--build-number "${BUILD_NUMBER}"', workflow)
         self.assertIn('MARKETING_VERSION="$version"', package_script)
         self.assertIn('CURRENT_PROJECT_VERSION="$build_number"', package_script)
 
