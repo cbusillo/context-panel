@@ -316,6 +316,23 @@ jobs:
             echo "- Notarization requested: ${notarize_requested}"
           } >>"${GITHUB_STEP_SUMMARY}"
 
+      - name: Seal GitHub Release Metadata
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD_NUMBER: ${{ steps.build.outputs.build_number }}
+          ZIP_PATH: ${{ steps.package.outputs.zip_path }}
+          METADATA_PATH: ${{ steps.package.outputs.metadata_path }}
+        shell: bash
+        run: |
+          python3 scripts/seal-github-release-metadata.py \
+            --metadata "${METADATA_PATH}" \
+            --tag "${TAG}" \
+            --source-commit "${GITHUB_SHA}" \
+            --version "${VERSION}" \
+            --build-number "${BUILD_NUMBER}" \
+            --asset "${ZIP_PATH}"
+
       - name: Upload Workflow Artifact
         uses: actions/upload-artifact@v7
         with:
@@ -325,12 +342,13 @@ jobs:
             ${{ steps.package.outputs.metadata_path }}
           if-no-files-found: error
 
-      - name: Create GitHub Release
+      - name: Publish GitHub Release
         if: ${{ inputs.create_github_release }}
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
+          BUILD_NUMBER: ${{ steps.build.outputs.build_number }}
           ZIP_PATH: ${{ steps.package.outputs.zip_path }}
           METADATA_PATH: ${{ steps.package.outputs.metadata_path }}
         shell: bash
@@ -340,8 +358,16 @@ jobs:
           {
             echo "Context Panel ${VERSION}"
             echo
-            notarized="$(sed -n 's/^  "notarized": \(.*\)$/\1/p' "${METADATA_PATH}" | tr -d ',')"
-            signing_identity="$(sed -n 's/^  "signingIdentity": "\(.*\)",$/\1/p' "${METADATA_PATH}")"
+            metadata_values="$(python3 - "${METADATA_PATH}" <<'PY'
+          import json
+          import sys
+
+          metadata = json.load(open(sys.argv[1], encoding="utf-8"))
+          notarized = "true" if metadata.get("notarized") is True else "false"
+          print(f"{notarized}\t{metadata.get('signingIdentity', '-')}")
+          PY
+            )"
+            IFS=$'\t' read -r notarized signing_identity <<<"${metadata_values}"
             if [[ "${notarized}" == "true" ]]; then
               echo "This build is signed and notarized."
             elif [[ "${signing_identity}" != "-" ]]; then
@@ -351,12 +377,12 @@ jobs:
             fi
           } >"${notes}"
 
-          if gh release view "${TAG}" >/dev/null 2>&1; then
-            gh release upload "${TAG}" "${ZIP_PATH}" "${METADATA_PATH}" --clobber
-            gh release edit "${TAG}" --title "Context Panel ${VERSION}" --notes-file "${notes}"
-          else
-            gh release create "${TAG}" "${ZIP_PATH}" "${METADATA_PATH}" \
-              --target "${GITHUB_SHA}" \
-              --title "Context Panel ${VERSION}" \
-              --notes-file "${notes}"
-          fi
+          python3 scripts/publish-github-release.py \
+            --tag "${TAG}" \
+            --source-commit "${GITHUB_SHA}" \
+            --version "${VERSION}" \
+            --build-number "${BUILD_NUMBER}" \
+            --title "Context Panel ${VERSION}" \
+            --notes-file "${notes}" \
+            --metadata "${METADATA_PATH}" \
+            --asset "${ZIP_PATH}"

@@ -28,5 +28,7 @@ Expected GitHub settings:
   branches restricted to protected branches only. Because `main` is the only
   protected branch, secret-bearing release jobs cannot run from tags or task
   branches.
+- Immutable Releases: enabled so newly published GitHub Releases lock their tag,
+  title, notes, and assets after publication.
 
 Implementation work should happen on focused branches with pull requests.

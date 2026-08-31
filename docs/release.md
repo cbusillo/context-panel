@@ -151,8 +151,30 @@ Manual dispatch accepts:
   default is true for friend-installable GitHub releases.
 
 The workflow always uploads the generated zip and `release-metadata.json` as a
-workflow artifact. When `create_github_release` is true, it also creates or
-updates a GitHub Release with those assets.
+workflow artifact. Before upload, it seals the metadata with the tag, exact
+source commit, version, build number, and SHA-256 plus byte size of the zip.
+When `create_github_release` is true, publication uses a draft-first transaction:
+
+1. An existing tag must resolve to the exact build commit. A missing tag is
+   created for that commit with the draft release.
+2. The draft release notes receive a machine-readable identity record covering
+   the zip and sealed metadata asset names, sizes, and SHA-256 digests.
+3. Existing same-name assets are downloaded and compared byte-for-byte. Matching
+   draft assets are reused. With an exact identity marker, corrupt or incomplete
+   draft assets are deleted and re-uploaded; unexpected assets and identity
+   drift fail closed.
+4. Missing assets are uploaded without `--clobber`, downloaded again, and
+   verified before the draft is published.
+
+An interrupted upload therefore remains a draft. Rerunning the same commit and
+bytes resumes or returns an idempotent success; a published release with changed
+identity or bytes is never rewritten by the workflow. Repository-level GitHub
+Immutable Releases are enabled, so future releases become platform-immutable
+after the draft is published; draft assets may still be deleted and re-uploaded
+when remote verification proves an interrupted or corrupt transfer. Signing and
+notarization can produce different bytes on a fresh rebuild; if a retry reports
+draft identity drift, inspect the retained draft and delete it explicitly before
+starting an intentional replacement build.
 
 Required local command parity:
 
