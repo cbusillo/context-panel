@@ -7,6 +7,15 @@ public enum CodexRateLimitReachedType: String, Codable, Equatable, Sendable {
     case workspaceOwnerUsageLimitReached = "workspace_owner_usage_limit_reached"
     case workspaceMemberUsageLimitReached = "workspace_member_usage_limit_reached"
     case unknown
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        guard let rawValue = try? container.decode(String.self) else {
+            self = .unknown
+            return
+        }
+        self = Self(rawValue: rawValue) ?? .unknown
+    }
 }
 
 public struct CodexRateLimitWindow: Codable, Equatable, Sendable {
@@ -867,6 +876,14 @@ private struct CodexReachedType: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case kind = "type"
+    }
+
+    init(from decoder: Decoder) throws {
+        guard let container = try? decoder.container(keyedBy: CodingKeys.self) else {
+            kind = .unknown
+            return
+        }
+        kind = (try? container.decodeIfPresent(CodexRateLimitReachedType.self, forKey: .kind)) ?? .unknown
     }
 
     var normalizedKind: CodexRateLimitReachedType {

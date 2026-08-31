@@ -87,6 +87,14 @@ examples:
 - `reset Sat 4:12 PM (2d 21h)`
 - `pace unknown`
 
+## OpenAI Usage Compatibility
+
+The OpenAI usage parser treats an unrecognized `rate_limit_reached_type.type`
+value as unknown without discarding otherwise valid limits or credits. If the
+outer field is absent or null, it remains absent; any malformed present field,
+including an object with a missing, null, or malformed nested type, degrades to
+the explicit unknown state.
+
 ## OpenAI Reset Credits
 
 The verified OpenAI Codex read contract exposes an account-level summary under

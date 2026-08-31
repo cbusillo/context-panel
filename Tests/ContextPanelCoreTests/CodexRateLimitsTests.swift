@@ -95,6 +95,68 @@ import Testing
     #expect(snapshots[0].secondary == nil)
 }
 
+@Test func codexRateLimitReachedTypeDecodesKnownAndUnknownStrings() throws {
+    let cases: [(String, CodexRateLimitReachedType)] = [
+        ("rate_limit_reached", .rateLimitReached),
+        ("workspace_owner_credits_depleted", .workspaceOwnerCreditsDepleted),
+        ("workspace_member_credits_depleted", .workspaceMemberCreditsDepleted),
+        ("workspace_owner_usage_limit_reached", .workspaceOwnerUsageLimitReached),
+        ("workspace_member_usage_limit_reached", .workspaceMemberUsageLimitReached),
+        ("future_provider_value", .unknown),
+    ]
+
+    for (rawValue, expected) in cases {
+        let decoded = try JSONDecoder().decode(
+            CodexRateLimitReachedType.self,
+            from: Data("\"\(rawValue)\"".utf8)
+        )
+        #expect(decoded == expected)
+    }
+}
+
+@Test func codexUsagePayloadParserPreservesUsageForUnknownReachedType() throws {
+    let snapshots = try CodexUsagePayloadParser.snapshots(
+        from: Data(codexUsagePayload(rateLimitReachedType: #"{"type":"future_provider_value"}"#).utf8)
+    )
+
+    #expect(snapshots.count == 2)
+    #expect(snapshots[0].primary?.windowMinutes == 300)
+    #expect(snapshots[0].secondary?.windowMinutes == 10080)
+    #expect(snapshots[0].credits == CodexCreditsSnapshot(hasCredits: true, unlimited: false, balance: "0"))
+    #expect(snapshots[0].rateLimitReachedType == .unknown)
+    #expect(snapshots[1].id == "codex_bengalfox")
+    #expect(snapshots[1].primary?.usedPercent == 1)
+}
+
+@Test func codexUsagePayloadParserDegradesMalformedReachedTypeToUnknown() throws {
+    for reachedType in [
+        #"{}"#,
+        #"{"type":null}"#,
+        #"{"type":42}"#,
+        #""rate_limit_reached""#,
+        "42",
+        "[]",
+    ] {
+        let snapshots = try CodexUsagePayloadParser.snapshots(
+            from: Data(codexUsagePayload(rateLimitReachedType: reachedType).utf8)
+        )
+
+        #expect(snapshots.count == 2)
+        #expect(snapshots[0].rateLimitReachedType == .unknown)
+        #expect(snapshots[0].primary?.usedPercent == 45)
+    }
+}
+
+@Test func codexUsagePayloadParserKeepsAbsentOrNullReachedTypeNil() throws {
+    let absent = try CodexUsagePayloadParser.snapshots(from: Data(codexUsagePayload().utf8))
+    let explicitNull = try CodexUsagePayloadParser.snapshots(
+        from: Data(codexUsagePayload(rateLimitReachedType: "null").utf8)
+    )
+
+    #expect(absent[0].rateLimitReachedType == nil)
+    #expect(explicitNull[0].rateLimitReachedType == nil)
+}
+
 @Test func codexResetCreditCountUsesAuthoritativeAvailableCountAndClampsAtZero() {
     let applicable = Data(#"{"rate_limit_reset_credits":{"available_count":5,"applicable_available_count":2}}"#.utf8)
     let zeroApplicable = Data(#"{"rate_limit_reset_credits":{"available_count":5,"applicable_available_count":0}}"#.utf8)
@@ -341,6 +403,48 @@ private func codexUsagePayloadWithAdditionalLimits(_ limits: [(name: String, fea
       "additional_rate_limits": [
         \(additional)
       ]
+    }
+    """
+}
+
+private func codexUsagePayload(rateLimitReachedType: String? = nil) -> String {
+    let reachedTypeProperty = rateLimitReachedType.map {
+        ",\n      \"rate_limit_reached_type\": \($0)"
+    } ?? ""
+
+    return """
+    {
+      "plan_type": "pro",
+      "rate_limit": {
+        "primary_window": {
+          "used_percent": 45,
+          "limit_window_seconds": 18000,
+          "reset_at": 1788393600
+        },
+        "secondary_window": {
+          "used_percent": 36,
+          "limit_window_seconds": 604800,
+          "reset_at": 1788998400
+        }
+      },
+      "credits": {
+        "has_credits": true,
+        "unlimited": false,
+        "balance": "0"
+      },
+      "additional_rate_limits": [
+        {
+          "limit_name": "GPT-5.3-Codex-Spark",
+          "metered_feature": "codex_bengalfox",
+          "rate_limit": {
+            "primary_window": {
+              "used_percent": 1,
+              "limit_window_seconds": 18000,
+              "reset_at": 1788400000
+            }
+          }
+        }
+      ]\(reachedTypeProperty)
     }
     """
 }
