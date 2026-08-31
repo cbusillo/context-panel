@@ -72,6 +72,7 @@
       "Tests/ContextPanelCoreTests/AccountConfigurationStoreTests.swift",
       "Tests/ContextPanelCoreTests/CodexRateLimitsTests.swift",
       "Tests/ContextPanelCoreTests/CompanionAppearanceSettingsTests.swift",
+      "Tests/ContextPanelCoreTests/CompanionCloudKitUserScopeTests.swift",
       "Tests/ContextPanelCoreTests/CompanionCloudKitSubscriptionTests.swift",
       "Tests/ContextPanelCoreTests/CompanionLayoutPolicyTests.swift",
       "Tests/ContextPanelCoreTests/CompanionRefreshSettingsTests.swift",

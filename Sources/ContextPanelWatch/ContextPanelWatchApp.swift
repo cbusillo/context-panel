@@ -56,6 +56,11 @@ private struct WatchRootView: View {
                     model.reload()
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(
+                for: Notification.Name("CKAccountChangedNotification")
+            )) { _ in
+                model.handleCloudKitAccountChange()
+            }
         }
     }
 }
@@ -115,6 +120,7 @@ struct WatchUsageContent: View {
 @MainActor
 @Observable
 private final class WatchSyncModel {
+    private let cache: WatchCompanionCache
     private let companionLoader: WatchCompanionLoader
     private let runtimeReceiptRecorder: RuntimeReceiptRecorder
     private let runtimeReceiptRelay: RuntimeReceiptRelayCoordinator?
@@ -135,6 +141,7 @@ private final class WatchSyncModel {
         runtimeReceiptRelay: RuntimeReceiptRelayCoordinator? = nil
     ) {
         let cache = WatchCompanionCache()
+        self.cache = cache
         let remoteStore = CompanionCloudKitSyncStoreFactory.make()
         let presentationStore = CompanionCloudKitSyncStoreFactory.makePresentationPreferences()
         self.runtimeReceiptRecorder = runtimeReceiptRecorder ?? .appGroupRequired(
@@ -151,6 +158,7 @@ private final class WatchSyncModel {
         )
         companionLoader = WatchCompanionLoader(
             cache: cache,
+            resolveUserScopeResolution: { await remoteStore.currentUserScopeResolution() },
             loadDocument: { now in await remoteStore.load(now: now) },
             loadPresentation: { await presentationStore.load() }
         )
@@ -209,6 +217,17 @@ private final class WatchSyncModel {
                 WidgetCenter.shared.reloadTimelines(ofKind: ContextPanelWatchWidgetIdentity.kind)
             }
         }
+    }
+
+    func handleCloudKitAccountChange() {
+        _ = cache.invalidateUserScope()
+        result = CompanionSyncLoadResult(document: nil, status: .unknown)
+        displayResult = result
+        snapshot = WidgetSnapshot.fromCompanionSync(result)
+        displayPreferences = .defaultPreferences
+        lastSyncErrorMessage = nil
+        WidgetCenter.shared.reloadAllTimelines()
+        reload()
     }
 
     private func recordRuntimeReceipt(

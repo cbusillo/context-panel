@@ -134,16 +134,13 @@ struct ContextPanelWatchWidgetProvider: TimelineProvider {
 }
 
 private enum WatchWidgetLoadQueue {
-    private static let queue = DispatchQueue(
-        label: "com.shinycomputers.contextpanel.watch-widget-load",
-        qos: .utility
-    )
     private static let cache = WatchCompanionCache()
     private static let loader: WatchCompanionLoader = {
         let remoteStore = CompanionCloudKitSyncStoreFactory.make()
         let presentationStore = CompanionCloudKitSyncStoreFactory.makePresentationPreferences()
         return WatchCompanionLoader(
             cache: cache,
+            resolveUserScopeResolution: { await remoteStore.currentUserScopeResolution() },
             loadDocument: { now in await remoteStore.load(now: now) },
             loadPresentation: { await presentationStore.load() }
         )
@@ -151,10 +148,11 @@ private enum WatchWidgetLoadQueue {
 
     static func loadSnapshot(date: Date, completion: @escaping (ContextPanelWatchWidgetSelection) -> Void) {
         let completion = WatchWidgetCompletion(completion)
-        queue.async {
+        Task.detached(priority: .utility) {
+            let loaded = await loader.load(now: date)
             completion.call(entry(
                 date: date,
-                loaded: cache.load(now: date),
+                loaded: loaded,
                 stalenessPolicy: stalenessPolicy
             ))
         }

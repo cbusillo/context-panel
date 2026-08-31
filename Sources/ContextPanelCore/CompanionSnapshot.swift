@@ -52,6 +52,7 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
     public let observedBurnRates: [String: ObservedBurnRate]
     public let fastModeForecastSettings: FastModeForecastSettings
     public let accountRetentionStates: [CompanionAccountRetentionState]?
+    public let cloudKitUserScope: CompanionCloudKitUserScope?
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion
@@ -60,6 +61,7 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         case observedBurnRates
         case fastModeForecastSettings
         case accountRetentionStates
+        case cloudKitUserScope
     }
 
     public init(
@@ -67,7 +69,8 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         widgetDisplayPreferences: WidgetDisplayPreferences = .defaultPreferences,
         observedBurnRates: [String: ObservedBurnRate] = [:],
         fastModeForecastSettings: FastModeForecastSettings = .defaultSettings,
-        accountRetentionStates: [CompanionAccountRetentionState]? = nil
+        accountRetentionStates: [CompanionAccountRetentionState]? = nil,
+        cloudKitUserScope: CompanionCloudKitUserScope? = nil
     ) {
         schemaVersion = Self.schemaVersion
         self.snapshot = snapshot
@@ -75,6 +78,7 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         self.observedBurnRates = observedBurnRates
         self.fastModeForecastSettings = fastModeForecastSettings
         self.accountRetentionStates = accountRetentionStates
+        self.cloudKitUserScope = cloudKitUserScope
     }
 
     public init(
@@ -83,14 +87,16 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         widgetDisplayPreferences: WidgetDisplayPreferences = .defaultPreferences,
         observedBurnRates: [String: ObservedBurnRate] = [:],
         fastModeForecastSettings: FastModeForecastSettings = .defaultSettings,
-        accountRetentionStates: [CompanionAccountRetentionState]? = nil
+        accountRetentionStates: [CompanionAccountRetentionState]? = nil,
+        cloudKitUserScope: CompanionCloudKitUserScope? = nil
     ) {
         self.init(
             snapshot: CompanionSnapshot(storedSnapshot: storedSnapshot, publishedAt: publishedAt),
             widgetDisplayPreferences: widgetDisplayPreferences,
             observedBurnRates: observedBurnRates,
             fastModeForecastSettings: fastModeForecastSettings,
-            accountRetentionStates: accountRetentionStates
+            accountRetentionStates: accountRetentionStates,
+            cloudKitUserScope: cloudKitUserScope
         )
     }
 
@@ -107,6 +113,21 @@ public struct CompanionSyncDocument: Codable, Equatable, Sendable {
         accountRetentionStates = try container.decodeIfPresent(
             [CompanionAccountRetentionState].self,
             forKey: .accountRetentionStates
+        )
+        cloudKitUserScope = try container.decodeIfPresent(
+            CompanionCloudKitUserScope.self,
+            forKey: .cloudKitUserScope
+        )
+    }
+
+    public func bound(to scope: CompanionCloudKitUserScope) -> CompanionSyncDocument {
+        CompanionSyncDocument(
+            snapshot: snapshot,
+            widgetDisplayPreferences: widgetDisplayPreferences,
+            observedBurnRates: observedBurnRates,
+            fastModeForecastSettings: fastModeForecastSettings,
+            accountRetentionStates: accountRetentionStates,
+            cloudKitUserScope: scope
         )
     }
 }
@@ -282,6 +303,12 @@ public enum CompanionSyncConditionalSaveResult: Equatable, Sendable {
     case keptCurrent(CompanionSyncLoadResult)
 }
 
+public enum CompanionSyncScopedConditionalSaveResult: Equatable, Sendable {
+    case saved(CompanionSyncSaveResult)
+    case keptCurrent(CompanionSyncLoadResult)
+    case scopeConflict
+}
+
 public enum CompanionSyncConditionalRemoveResult: Equatable, Sendable {
     case removed
     case keptCurrent(CompanionSyncLoadResult)
@@ -433,6 +460,24 @@ public struct CompanionSyncStore: Sendable {
         )
     }
 
+    public func load(
+        expectedUserScope: CompanionCloudKitUserScope,
+        policy: SnapshotStoreStalenessPolicy,
+        now: Date = Date()
+    ) -> CompanionSyncLoadResult {
+        let result = load(policy: policy, now: now)
+        guard let document = result.document else { return result }
+        guard document.cloudKitUserScope == expectedUserScope else {
+            return purgeForeignDocument(
+                document,
+                expectedUserScope: expectedUserScope,
+                policy: policy,
+                now: now
+            )
+        }
+        return result
+    }
+
     public func saveResult(_ document: CompanionSyncDocument) -> CompanionSyncSaveResult {
         do {
             try save(document)
@@ -465,6 +510,29 @@ public struct CompanionSyncStore: Sendable {
         }
     }
 
+    public func saveResult(
+        _ document: CompanionSyncDocument,
+        expectedUserScope: CompanionCloudKitUserScope,
+        policy: SnapshotStoreStalenessPolicy,
+        now: Date = Date(),
+        unlessKeepingCurrent shouldKeepCurrent: @escaping @Sendable (CompanionSyncLoadResult) -> Bool
+    ) -> CompanionSyncScopedConditionalSaveResult {
+        guard document.cloudKitUserScope == expectedUserScope else { return .scopeConflict }
+        do {
+            let retainedDocument = document.mergingForRemotePublish(existing: nil, now: now)
+            let data = try Self.makeEncoder().encode(retainedDocument)
+            return try coordinatedScopedWrite(
+                data: data,
+                expectedUserScope: expectedUserScope,
+                policy: policy,
+                now: now,
+                unlessKeepingCurrent: shouldKeepCurrent
+            )
+        } catch {
+            return .saved(Self.failedSaveResult(for: documentURL, error: error))
+        }
+    }
+
     public func removeIfCurrent(
         _ expectedDocument: CompanionSyncDocument?,
         policy: SnapshotStoreStalenessPolicy,
@@ -482,6 +550,52 @@ public struct CompanionSyncStore: Sendable {
                 operation: "remove",
                 error: error
             ))
+        }
+    }
+
+    public func remove() throws {
+        var removalError: Error?
+        var coordinatorError: NSError?
+        NSFileCoordinator(filePresenter: nil).coordinate(
+            writingItemAt: documentURL,
+            options: .forDeleting,
+            error: &coordinatorError
+        ) { coordinatedURL in
+            do {
+                guard FileManager.default.fileExists(atPath: coordinatedURL.path) else { return }
+                try FileManager.default.removeItem(at: coordinatedURL)
+            } catch {
+                removalError = error
+            }
+        }
+        if let removalError { throw removalError }
+        if let coordinatorError { throw coordinatorError }
+    }
+
+    private func purgeForeignDocument(
+        _ document: CompanionSyncDocument,
+        expectedUserScope: CompanionCloudKitUserScope,
+        policy: SnapshotStoreStalenessPolicy,
+        now: Date
+    ) -> CompanionSyncLoadResult {
+        switch removeIfCurrent(document, policy: policy, now: now) {
+        case .removed:
+            return CompanionSyncLoadResult(document: nil, status: .unknown)
+        case let .keptCurrent(currentResult):
+            guard currentResult.document?.cloudKitUserScope == expectedUserScope else {
+                return CompanionSyncLoadResult(
+                    document: nil,
+                    status: .failure,
+                    errorMessage: "Context Panel could not clear usage from another CloudKit account."
+                )
+            }
+            return currentResult
+        case let .failed(errorMessage):
+            return CompanionSyncLoadResult(
+                document: nil,
+                status: .failure,
+                errorMessage: errorMessage
+            )
         }
     }
 
@@ -635,6 +749,62 @@ public struct CompanionSyncStore: Sendable {
         if let writeError { throw writeError }
         if let coordinatorError { throw coordinatorError }
         return keptCurrentResult
+    }
+
+    private func coordinatedScopedWrite(
+        data: Data,
+        expectedUserScope: CompanionCloudKitUserScope,
+        policy: SnapshotStoreStalenessPolicy,
+        now: Date,
+        unlessKeepingCurrent shouldKeepCurrent: @escaping @Sendable (CompanionSyncLoadResult) -> Bool
+    ) throws -> CompanionSyncScopedConditionalSaveResult {
+        var result: CompanionSyncScopedConditionalSaveResult?
+        var writeError: Error?
+        var coordinatorError: NSError?
+        NSFileCoordinator(filePresenter: nil).coordinate(
+            writingItemAt: documentURL,
+            options: .forReplacing,
+            error: &coordinatorError
+        ) { coordinatedURL in
+            do {
+                let currentFileExists = FileManager.default.fileExists(atPath: coordinatedURL.path)
+                let rawDocument = currentFileExists
+                    ? try? Self.decodeDocument(from: Data(contentsOf: coordinatedURL))
+                    : nil
+                if let rawDocument,
+                   rawDocument.cloudKitUserScope != expectedUserScope {
+                    result = .scopeConflict
+                    return
+                }
+                let currentResult = Self.loadResult(at: coordinatedURL, policy: policy, now: now)
+                if shouldKeepCurrent(currentResult) {
+                    if let retainedDocument = currentResult.document,
+                       rawDocument != retainedDocument {
+                        try Self.replaceDocument(
+                            at: coordinatedURL,
+                            with: Self.makeEncoder().encode(retainedDocument)
+                        )
+                    }
+                    result = .keptCurrent(currentResult)
+                    return
+                }
+                try FileManager.default.createDirectory(
+                    at: coordinatedURL.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try Self.replaceDocument(at: coordinatedURL, with: data)
+                result = .saved(Self.successfulSaveResult(for: documentURL))
+            } catch {
+                writeError = error
+            }
+        }
+
+        if let writeError { throw writeError }
+        if let coordinatorError { throw coordinatorError }
+        guard let result else {
+            throw SnapshotStoreError.corruptStore("Scoped companion sync write did not complete.")
+        }
+        return result
     }
 
     private func coordinatedRemove(

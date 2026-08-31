@@ -85,19 +85,22 @@ public struct CompanionRemoteSyncOutcome: Equatable, Sendable {
     public let succeeded: Bool
     public let missingRecord: Bool
     public let errorMessage: String?
+    public let cloudKitUserScope: CompanionCloudKitUserScope?
 
     public init(
         storeRole: String = CompanionRemoteSync.cloudKitStoreRole,
         isAvailable: Bool = true,
         succeeded: Bool,
         missingRecord: Bool = false,
-        errorMessage: String? = nil
+        errorMessage: String? = nil,
+        cloudKitUserScope: CompanionCloudKitUserScope? = nil
     ) {
         self.storeRole = ConnectorRedactor.redact(storeRole)
         self.isAvailable = isAvailable
         self.succeeded = succeeded
         self.missingRecord = missingRecord
         self.errorMessage = errorMessage.map(ConnectorRedactor.safeErrorDescription)
+        self.cloudKitUserScope = cloudKitUserScope
     }
 
     public var storeOutcome: CompanionSyncStoreOutcome {
@@ -120,11 +123,23 @@ public struct CompanionRemoteSyncLoadResult: Equatable, Sendable {
     }
 }
 
+public enum CompanionRemoteUserScopeResolution: Equatable, Sendable {
+    case resolved(CompanionCloudKitUserScope)
+    case unavailable
+    case transientFailure
+
+    public var userScope: CompanionCloudKitUserScope? {
+        guard case let .resolved(userScope) = self else { return nil }
+        return userScope
+    }
+}
+
 public struct CompanionRemoteSyncStore: Sendable {
     public let storeRole: String
     private let saveDocument: @Sendable (CompanionSyncDocument) async -> CompanionRemoteSyncOutcome
     private let loadDocument: @Sendable (Date) async -> CompanionRemoteSyncLoadResult
     private let registerForUpdates: @Sendable () async -> CompanionRemoteSyncOutcome
+    private let resolveUserScopeResolution: @Sendable () async -> CompanionRemoteUserScopeResolution
 
     public init(
         storeRole: String = CompanionRemoteSync.cloudKitStoreRole,
@@ -132,12 +147,33 @@ public struct CompanionRemoteSyncStore: Sendable {
         loadDocument: @escaping @Sendable (Date) async -> CompanionRemoteSyncLoadResult,
         registerForUpdates: @escaping @Sendable () async -> CompanionRemoteSyncOutcome = {
             CompanionRemoteSyncOutcome(succeeded: true)
-        }
+        },
+        resolveUserScope: @escaping @Sendable () async -> CompanionCloudKitUserScope? = { nil }
     ) {
         self.storeRole = ConnectorRedactor.redact(storeRole)
         self.saveDocument = saveDocument
         self.loadDocument = loadDocument
         self.registerForUpdates = registerForUpdates
+        resolveUserScopeResolution = {
+            guard let userScope = await resolveUserScope() else { return .unavailable }
+            return .resolved(userScope)
+        }
+    }
+
+    public init(
+        storeRole: String = CompanionRemoteSync.cloudKitStoreRole,
+        saveDocument: @escaping @Sendable (CompanionSyncDocument) async -> CompanionRemoteSyncOutcome,
+        loadDocument: @escaping @Sendable (Date) async -> CompanionRemoteSyncLoadResult,
+        registerForUpdates: @escaping @Sendable () async -> CompanionRemoteSyncOutcome = {
+            CompanionRemoteSyncOutcome(succeeded: true)
+        },
+        resolveUserScopeResolution: @escaping @Sendable () async -> CompanionRemoteUserScopeResolution
+    ) {
+        self.storeRole = ConnectorRedactor.redact(storeRole)
+        self.saveDocument = saveDocument
+        self.loadDocument = loadDocument
+        self.registerForUpdates = registerForUpdates
+        self.resolveUserScopeResolution = resolveUserScopeResolution
     }
 
     public func save(_ document: CompanionSyncDocument) async -> CompanionRemoteSyncOutcome {
@@ -151,6 +187,14 @@ public struct CompanionRemoteSyncStore: Sendable {
     public func registerSubscription() async -> CompanionRemoteSyncOutcome {
         await registerForUpdates()
     }
+
+    public func currentUserScope() async -> CompanionCloudKitUserScope? {
+        await resolveUserScopeResolution().userScope
+    }
+
+    public func currentUserScopeResolution() async -> CompanionRemoteUserScopeResolution {
+        await resolveUserScopeResolution()
+    }
 }
 
 public struct CompanionPresentationDocument: Codable, Equatable, Sendable {
@@ -159,14 +203,25 @@ public struct CompanionPresentationDocument: Codable, Equatable, Sendable {
     public let schemaVersion: Int
     public let updatedAt: Date
     public let widgetDisplayPreferences: WidgetDisplayPreferences
+    public let cloudKitUserScope: CompanionCloudKitUserScope?
 
     public init(
         updatedAt: Date = Date(),
-        widgetDisplayPreferences: WidgetDisplayPreferences
+        widgetDisplayPreferences: WidgetDisplayPreferences,
+        cloudKitUserScope: CompanionCloudKitUserScope? = nil
     ) {
         schemaVersion = Self.schemaVersion
         self.updatedAt = updatedAt
         self.widgetDisplayPreferences = widgetDisplayPreferences
+        self.cloudKitUserScope = cloudKitUserScope
+    }
+
+    public func bound(to scope: CompanionCloudKitUserScope) -> CompanionPresentationDocument {
+        CompanionPresentationDocument(
+            updatedAt: updatedAt,
+            widgetDisplayPreferences: widgetDisplayPreferences,
+            cloudKitUserScope: scope
+        )
     }
 }
 
@@ -187,15 +242,18 @@ public struct CompanionPresentationRemoteStore: Sendable {
     public let storeRole: String
     private let saveDocument: @Sendable (CompanionPresentationDocument) async -> CompanionRemoteSyncOutcome
     private let loadDocument: @Sendable () async -> CompanionPresentationRemoteLoadResult
+    private let resolveUserScope: @Sendable () async -> CompanionCloudKitUserScope?
 
     public init(
         storeRole: String = CompanionRemoteSync.cloudKitPresentationStoreRole,
         saveDocument: @escaping @Sendable (CompanionPresentationDocument) async -> CompanionRemoteSyncOutcome,
-        loadDocument: @escaping @Sendable () async -> CompanionPresentationRemoteLoadResult
+        loadDocument: @escaping @Sendable () async -> CompanionPresentationRemoteLoadResult,
+        resolveUserScope: @escaping @Sendable () async -> CompanionCloudKitUserScope? = { nil }
     ) {
         self.storeRole = ConnectorRedactor.redact(storeRole)
         self.saveDocument = saveDocument
         self.loadDocument = loadDocument
+        self.resolveUserScope = resolveUserScope
     }
 
     public func save(_ document: CompanionPresentationDocument) async -> CompanionRemoteSyncOutcome {
@@ -204,6 +262,10 @@ public struct CompanionPresentationRemoteStore: Sendable {
 
     public func load() async -> CompanionPresentationRemoteLoadResult {
         await loadDocument()
+    }
+
+    public func currentUserScope() async -> CompanionCloudKitUserScope? {
+        await resolveUserScope()
     }
 }
 

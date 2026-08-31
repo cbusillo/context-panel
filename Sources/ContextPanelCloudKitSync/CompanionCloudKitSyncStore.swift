@@ -24,7 +24,8 @@ public enum CompanionCloudKitSyncStoreFactory {
         return CompanionPresentationRemoteStore(
             storeRole: CompanionRemoteSync.cloudKitPresentationStoreRole,
             saveDocument: { document in await client.savePresentation(document) },
-            loadDocument: { await client.loadPresentation() }
+            loadDocument: { await client.loadPresentation() },
+            resolveUserScope: { await client.currentUserScope() }
         )
     }
 
@@ -44,7 +45,8 @@ public enum CompanionCloudKitSyncStoreFactory {
             storeRole: storeRole,
             saveDocument: { document in await client.save(document, now: Date()) },
             loadDocument: { now in await client.load(now: now) },
-            registerForUpdates: { await client.registerSubscription() }
+            registerForUpdates: { await client.registerSubscription() },
+            resolveUserScopeResolution: { await client.currentUserScopeResolution() }
         )
     }
 }
@@ -107,10 +109,16 @@ struct CompanionCloudKitRecordBuilder {
     func makeRecord(
         incomingDocument: CompanionSyncDocument,
         existingRecord: CKRecord?,
-        now: Date
+        now: Date,
+        userScope: CompanionCloudKitUserScope
     ) throws -> (record: CKRecord, payload: Data, document: CompanionSyncDocument) {
-        let existingDocument = try existingRecord.map(decodeDocument(from:))
-        let document = incomingDocument.mergingForRemotePublish(
+        let existingDocument = try existingRecord
+            .map(decodeDocument(from:))
+            .map { try scopedDocument($0, userScope: userScope) }
+        let document = try scopedDocument(
+            incomingDocument,
+            userScope: userScope
+        ).mergingForRemotePublish(
             existing: existingDocument,
             now: now
         )
@@ -134,6 +142,19 @@ struct CompanionCloudKitRecordBuilder {
             throw SnapshotStoreError.corruptStore("CloudKit companion sync record is missing payload data.")
         }
         return try CompanionSyncPayloadCodec.decode(payload)
+    }
+
+    private func scopedDocument(
+        _ document: CompanionSyncDocument,
+        userScope: CompanionCloudKitUserScope
+    ) throws -> CompanionSyncDocument {
+        if let existingScope = document.cloudKitUserScope,
+           existingScope != userScope {
+            throw SnapshotStoreError.corruptStore(
+                "CloudKit companion sync document belongs to another user scope."
+            )
+        }
+        return document.bound(to: userScope)
     }
 }
 
@@ -171,15 +192,58 @@ private actor CompanionCloudKitClient {
         self.storeRole = storeRole
     }
 
+    func currentUserScopeResolution() async -> CompanionRemoteUserScopeResolution {
+        let accountStatus: CKAccountStatus
+        do {
+            accountStatus = try await container.accountStatus()
+        } catch {
+            return .transientFailure
+        }
+        switch accountStatus {
+        case .available:
+            do {
+                let recordID = try await container.userRecordID()
+                return .resolved(CompanionCloudKitUserScope.derive(
+                    containerIdentifier: container.containerIdentifier ?? ContextPanelLocations.iCloudContainerID,
+                    userRecordName: recordID.recordName
+                ))
+            } catch {
+                return .transientFailure
+            }
+        case .noAccount:
+            return .unavailable
+        case .couldNotDetermine, .restricted, .temporarilyUnavailable:
+            return .transientFailure
+        @unknown default:
+            return .transientFailure
+        }
+    }
+
+    func currentUserScope() async -> CompanionCloudKitUserScope? {
+        await currentUserScopeResolution().userScope
+    }
+
     func save(
         _ document: CompanionSyncDocument,
         now: Date
     ) async -> CompanionRemoteSyncOutcome {
+        guard let userScope = await currentUserScope() else {
+            return CompanionRemoteSyncOutcome(
+                storeRole: storeRole,
+                isAvailable: false,
+                succeeded: false,
+                errorMessage: "CloudKit account identity is unavailable."
+            )
+        }
         let authoritativeSave: (record: CKRecord, payload: Data, document: CompanionSyncDocument)
         do {
-            let legacyDocuments = try await loadDocuments(recordNames: legacyRecordNames)
+            let incomingDocument = try scopedDocument(document, userScope: userScope)
+            let legacyDocuments = try await loadDocuments(
+                recordNames: legacyRecordNames,
+                userScope: userScope
+            )
             guard let migrationDocument = CompanionCloudKitDocumentSet.merged(
-                legacyDocuments + [document],
+                legacyDocuments + [incomingDocument],
                 now: now
             ) else {
                 throw SnapshotStoreError.corruptStore("CloudKit companion sync migration produced no document.")
@@ -187,15 +251,18 @@ private actor CompanionCloudKitClient {
             authoritativeSave = try await saveMergedRecord(
                 migrationDocument,
                 recordName: recordName,
-                now: now
+                now: now,
+                userScope: userScope
             )
             try verifyPublishedRecord(authoritativeSave.record, expectedPayload: authoritativeSave.payload)
+            try await verifyCurrentUserScope(userScope)
         } catch {
             return CompanionRemoteSyncOutcome(
                 storeRole: storeRole,
                 isAvailable: isCloudKitAvailable(error),
                 succeeded: false,
-                errorMessage: diagnosticMessage(operation: "authoritative publish", error: error)
+                errorMessage: diagnosticMessage(operation: "authoritative publish", error: error),
+                cloudKitUserScope: userScope
             )
         }
 
@@ -204,32 +271,59 @@ private actor CompanionCloudKitClient {
                 let wakeSave = try await saveMergedRecord(
                     authoritativeSave.document,
                     recordName: legacyRecordName,
-                    now: now
+                    now: now,
+                    userScope: userScope
                 )
                 try verifyPublishedRecord(wakeSave.record, expectedPayload: wakeSave.payload)
             }
+            try await verifyCurrentUserScope(userScope)
         } catch {
             return CompanionRemoteSyncOutcome(
                 storeRole: storeRole,
                 isAvailable: isCloudKitAvailable(error),
                 succeeded: false,
-                errorMessage: diagnosticMessage(operation: "wake mirror publish", error: error)
+                errorMessage: diagnosticMessage(operation: "wake mirror publish", error: error),
+                cloudKitUserScope: userScope
             )
         }
 
-        return CompanionRemoteSyncOutcome(storeRole: storeRole, succeeded: true)
+        return CompanionRemoteSyncOutcome(
+            storeRole: storeRole,
+            succeeded: true,
+            cloudKitUserScope: userScope
+        )
     }
 
     func load(now: Date) async -> CompanionRemoteSyncLoadResult {
+        guard let userScope = await currentUserScope() else {
+            return CompanionRemoteSyncLoadResult(
+                result: CompanionSyncLoadResult(
+                    document: nil,
+                    status: .unknown,
+                    errorMessage: "CloudKit account identity is unavailable."
+                ),
+                outcome: CompanionRemoteSyncOutcome(
+                    storeRole: storeRole,
+                    isAvailable: false,
+                    succeeded: false,
+                    errorMessage: "CloudKit account identity is unavailable."
+                )
+            )
+        }
         do {
-            let documents = try await loadDocuments(recordNames: [recordName] + legacyRecordNames)
+            let documents = try await loadDocuments(
+                recordNames: [recordName] + legacyRecordNames,
+                userScope: userScope
+            )
+            try await verifyCurrentUserScope(userScope)
             guard let document = CompanionCloudKitDocumentSet.merged(documents, now: now) else {
                 return CompanionRemoteSyncLoadResult(
                     result: CompanionSyncLoadResult(document: nil, status: .unknown),
                     outcome: CompanionRemoteSyncOutcome(
                         storeRole: storeRole,
                         succeeded: true,
-                        missingRecord: true
+                        missingRecord: true,
+                        cloudKitUserScope: userScope
                     )
                 )
             }
@@ -251,7 +345,11 @@ private actor CompanionCloudKitClient {
             )
             return CompanionRemoteSyncLoadResult(
                 result: result,
-                outcome: CompanionRemoteSyncOutcome(storeRole: storeRole, succeeded: true)
+                outcome: CompanionRemoteSyncOutcome(
+                    storeRole: storeRole,
+                    succeeded: true,
+                    cloudKitUserScope: userScope
+                )
             )
         } catch {
             return CompanionRemoteSyncLoadResult(
@@ -264,18 +362,28 @@ private actor CompanionCloudKitClient {
                     storeRole: storeRole,
                     isAvailable: isCloudKitAvailable(error),
                     succeeded: false,
-                    errorMessage: diagnosticMessage(operation: "load", error: error)
+                    errorMessage: diagnosticMessage(operation: "load", error: error),
+                    cloudKitUserScope: userScope
                 )
             )
         }
     }
 
     func savePresentation(_ document: CompanionPresentationDocument) async -> CompanionRemoteSyncOutcome {
+        guard let userScope = await currentUserScope() else {
+            return CompanionRemoteSyncOutcome(
+                storeRole: storeRole,
+                isAvailable: false,
+                succeeded: false,
+                errorMessage: "CloudKit account identity is unavailable."
+            )
+        }
         let payload: Data
 
         do {
-            payload = try CompanionPresentationPayloadCodec.encode(document)
-            let record = makePresentationRecord(document: document, payload: payload)
+            let scopedDocument = try scopedPresentationDocument(document, userScope: userScope)
+            payload = try CompanionPresentationPayloadCodec.encode(scopedDocument)
+            let record = makePresentationRecord(document: scopedDocument, payload: payload)
             let saveResult = try await privateDatabase.modifyRecords(
                 saving: [record],
                 deleting: [],
@@ -287,25 +395,50 @@ private actor CompanionCloudKitClient {
             }
             let savedRecord = try savedRecordResult.get()
             try verifyPublishedPresentationRecord(savedRecord, expectedPayload: payload)
+            try await verifyCurrentUserScope(userScope)
         } catch {
             return CompanionRemoteSyncOutcome(
                 storeRole: storeRole,
                 isAvailable: isCloudKitAvailable(error),
                 succeeded: false,
-                errorMessage: diagnosticMessage(operation: "presentation publish", error: error)
+                errorMessage: diagnosticMessage(operation: "presentation publish", error: error),
+                cloudKitUserScope: userScope
             )
         }
 
-        return CompanionRemoteSyncOutcome(storeRole: storeRole, succeeded: true)
+        return CompanionRemoteSyncOutcome(
+            storeRole: storeRole,
+            succeeded: true,
+            cloudKitUserScope: userScope
+        )
     }
 
     func loadPresentation() async -> CompanionPresentationRemoteLoadResult {
+        guard let userScope = await currentUserScope() else {
+            return CompanionPresentationRemoteLoadResult(
+                document: nil,
+                outcome: CompanionRemoteSyncOutcome(
+                    storeRole: storeRole,
+                    isAvailable: false,
+                    succeeded: false,
+                    errorMessage: "CloudKit account identity is unavailable."
+                )
+            )
+        }
         do {
             let record = try await privateDatabase.record(for: recordID)
-            let document = try decodePresentationDocument(from: record)
+            let document = try scopedPresentationDocument(
+                decodePresentationDocument(from: record),
+                userScope: userScope
+            )
+            try await verifyCurrentUserScope(userScope)
             return CompanionPresentationRemoteLoadResult(
                 document: document,
-                outcome: CompanionRemoteSyncOutcome(storeRole: storeRole, succeeded: true)
+                outcome: CompanionRemoteSyncOutcome(
+                    storeRole: storeRole,
+                    succeeded: true,
+                    cloudKitUserScope: userScope
+                )
             )
         } catch let error as CKError where error.code == .unknownItem {
             return CompanionPresentationRemoteLoadResult(
@@ -313,7 +446,8 @@ private actor CompanionCloudKitClient {
                 outcome: CompanionRemoteSyncOutcome(
                     storeRole: storeRole,
                     succeeded: true,
-                    missingRecord: true
+                    missingRecord: true,
+                    cloudKitUserScope: userScope
                 )
             )
         } catch {
@@ -323,13 +457,22 @@ private actor CompanionCloudKitClient {
                     storeRole: storeRole,
                     isAvailable: isCloudKitAvailable(error),
                     succeeded: false,
-                    errorMessage: diagnosticMessage(operation: "presentation load", error: error)
+                    errorMessage: diagnosticMessage(operation: "presentation load", error: error),
+                    cloudKitUserScope: userScope
                 )
             )
         }
     }
 
     func registerSubscription() async -> CompanionRemoteSyncOutcome {
+        guard let userScope = await currentUserScope() else {
+            return CompanionRemoteSyncOutcome(
+                storeRole: storeRole,
+                isAvailable: false,
+                succeeded: false,
+                errorMessage: "CloudKit account identity is unavailable."
+            )
+        }
         do {
             let database = privateDatabase
             let registrar = CompanionCloudKitSubscriptionRegistrar(
@@ -354,13 +497,19 @@ private actor CompanionCloudKitClient {
                 retiredSubscriptionIDs: CompanionRemoteSync.cloudKitRetiredSubscriptionIDs
             )
             try await registrar.register()
-            return CompanionRemoteSyncOutcome(storeRole: storeRole, succeeded: true)
+            try await verifyCurrentUserScope(userScope)
+            return CompanionRemoteSyncOutcome(
+                storeRole: storeRole,
+                succeeded: true,
+                cloudKitUserScope: userScope
+            )
         } catch {
             return CompanionRemoteSyncOutcome(
                 storeRole: storeRole,
                 isAvailable: isCloudKitAvailable(error),
                 succeeded: false,
-                errorMessage: diagnosticMessage(operation: "subscribe", error: error)
+                errorMessage: diagnosticMessage(operation: "subscribe", error: error),
+                cloudKitUserScope: userScope
             )
         }
     }
@@ -376,7 +525,8 @@ private actor CompanionCloudKitClient {
     private func saveMergedRecord(
         _ incomingDocument: CompanionSyncDocument,
         recordName targetRecordName: String,
-        now: Date
+        now: Date,
+        userScope: CompanionCloudKitUserScope
     ) async throws -> (record: CKRecord, payload: Data, document: CompanionSyncDocument) {
         let targetRecordID = CKRecord.ID(recordName: targetRecordName)
         var currentRecord = try await loadRecord(recordName: targetRecordName)
@@ -386,7 +536,8 @@ private actor CompanionCloudKitClient {
             let pendingSave = try recordBuilder.makeRecord(
                 incomingDocument: incomingDocument,
                 existingRecord: currentRecord,
-                now: now
+                now: now,
+                userScope: userScope
             )
 
             do {
@@ -412,11 +563,17 @@ private actor CompanionCloudKitClient {
         throw SnapshotStoreError.corruptStore("CloudKit companion sync publish exhausted conflict retries.")
     }
 
-    private func loadDocuments(recordNames: [String]) async throws -> [CompanionSyncDocument] {
+    private func loadDocuments(
+        recordNames: [String],
+        userScope: CompanionCloudKitUserScope
+    ) async throws -> [CompanionSyncDocument] {
         var documents: [CompanionSyncDocument] = []
         for recordName in recordNames {
             guard let record = try await loadRecord(recordName: recordName) else { continue }
-            documents.append(try decodeDocument(from: record))
+            documents.append(try scopedDocument(
+                decodeDocument(from: record),
+                userScope: userScope
+            ))
         }
         return documents
     }
@@ -469,6 +626,42 @@ private actor CompanionCloudKitClient {
             throw SnapshotStoreError.corruptStore("CloudKit companion presentation record is missing payload data.")
         }
         return try CompanionPresentationPayloadCodec.decode(payload)
+    }
+
+    private func scopedDocument(
+        _ document: CompanionSyncDocument,
+        userScope: CompanionCloudKitUserScope
+    ) throws -> CompanionSyncDocument {
+        if let existingScope = document.cloudKitUserScope,
+           existingScope != userScope {
+            throw SnapshotStoreError.corruptStore(
+                "CloudKit companion sync document belongs to another user scope."
+            )
+        }
+        return document.bound(to: userScope)
+    }
+
+    private func scopedPresentationDocument(
+        _ document: CompanionPresentationDocument,
+        userScope: CompanionCloudKitUserScope
+    ) throws -> CompanionPresentationDocument {
+        if let existingScope = document.cloudKitUserScope,
+           existingScope != userScope {
+            throw SnapshotStoreError.corruptStore(
+                "CloudKit companion presentation document belongs to another user scope."
+            )
+        }
+        return document.bound(to: userScope)
+    }
+
+    private func verifyCurrentUserScope(
+        _ expectedScope: CompanionCloudKitUserScope
+    ) async throws {
+        guard await currentUserScope() == expectedScope else {
+            throw SnapshotStoreError.corruptStore(
+                "CloudKit account changed during companion synchronization."
+            )
+        }
     }
 
     private func verifyPublishedRecord(_ record: CKRecord, expectedPayload: Data) throws {

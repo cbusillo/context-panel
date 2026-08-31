@@ -24,13 +24,11 @@ public enum TVCloudKitNotificationPolicy {
         currentUserRecordName: String?
     ) -> Bool {
         guard metadata.subscriptionID == expectedSubscriptionID else { return false }
-        if let containerIdentifier = metadata.containerIdentifier,
-           containerIdentifier != expectedContainerIdentifier {
-            return false
+        guard metadata.containerIdentifier == expectedContainerIdentifier else { return false }
+        guard let currentUserRecordName else { return false }
+        guard let subscriptionOwnerRecordName = metadata.subscriptionOwnerRecordName else {
+            return true
         }
-        if let subscriptionOwnerRecordName = metadata.subscriptionOwnerRecordName {
-            return subscriptionOwnerRecordName == currentUserRecordName
-        }
-        return true
+        return subscriptionOwnerRecordName == currentUserRecordName
     }
 }

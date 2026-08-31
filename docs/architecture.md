@@ -230,21 +230,29 @@ cannot keep an old healthy presentation indefinitely when the system delays the
 next extension refresh.
 
 `CompanionSnapshot` is the transport-neutral projection for Apple companion
-clients such as iPhone, iPad, visionOS, watchOS, and tvOS. It is constructed from a
-stored local snapshot but intentionally omits raw account IDs, configured account
-IDs, local notes, auth paths, provider error strings, webhook secrets, tokens,
-and raw provider responses. Companion sync transports must publish this safe
-projection or a stricter descendant, not `StoredUsageSnapshot`.
+clients such as iPhone, iPad, visionOS, watchOS, and tvOS. It is constructed
+from a stored local snapshot but intentionally omits raw account IDs, configured
+account IDs, local notes, auth paths, provider error strings, webhook secrets,
+tokens, and raw provider responses. Companion sync transports must publish this
+safe projection or a stricter descendant, not `StoredUsageSnapshot`.
 
 CloudKit is the remote companion transport. Companion apps load the
 Mac-published CloudKit record when available and mirror the sanitized companion
-document into their local App Group store. Companion WidgetKit timelines also
-read the CloudKit record directly, bounded by a five-second deadline, select the
+document into their local App Group store. Every usage document, presentation
+document, local mirror, receipt, and device cache is bound to a domain-separated
+SHA-256 scope derived from the CloudKit container identifier and current private
+user record. The raw CloudKit record name is never persisted. A client resolves
+that identity before reading cached usage, re-resolves it after remote work, and
+rejects any result, fallback, merge, or write whose scope is missing or
+different. Legacy unscoped local data is deleted rather than attributed to the
+current user. Companion WidgetKit timelines also read the CloudKit record
+directly, bounded by a five-second deadline, select the
 freshest remote or local document, and preserve the selected remote document in
 the App Group mirror. This keeps a cold widget correct without requiring a
 foreground companion-app launch; app push and foreground hydration remain
-optimizations. Snapshot previews and CloudKit failures use the existing local
-mirror as the last-good fallback. An authoritative missing-record response
+optimizations. Snapshot previews do not read usage before identity resolution,
+and CloudKit failures use only a same-scope local mirror as the last-good
+fallback. An authoritative missing-record response
 conditionally removes only the mirror observed before the remote load, so a
 concurrent newer mirror is preserved. The legacy iCloud Drive companion document
 is no longer part of the default companion runtime load path; recovery should
@@ -259,8 +267,9 @@ bounded manifest-bound session as a compare-and-swap `active` or `cleared`
 document, and the App Group keeps a per-session journal through each receipt
 retention horizon,
 and each `RuntimeReceipt` record uses the deterministic
-`runtime-receipt-<receipt-hash>` name plus the existing redacted receipt payload. These
-record types do not share `CompanionSyncDocument` names or subscriptions.
+`runtime-receipt-<receipt-hash>` name plus the existing redacted receipt
+payload. These record types do not share `CompanionSyncDocument` names or
+subscriptions.
 Extensions remain local-only receipt writers; the macOS app/refresh agent,
 companion app, Watch app, and tvOS app mirror sessions and drain the App Group
 queue they share with their extensions. Upload acknowledgement, retry deadlines,
@@ -275,14 +284,18 @@ The watchOS app and complication each read the same sanitized Production
 CloudKit records directly. Both processes also use the same Watch-device App
 Group cache for the latest document and effective display preferences, so a
 successful refresh by either process becomes the other's last-good value when
-CloudKit is delayed or unavailable. This App Group is local to the Watch; using
+CloudKit is delayed or unavailable for the same resolved user. Snapshot requests
+that cannot resolve CloudKit identity return an unknown placeholder instead of
+reading saved usage. This App Group is local to the Watch; using
 the same identifier on iPhone does not move files between devices. Reads,
 read-merge-writes, and removals are coordinated across processes, and each
-target's former process-local cache is merged into the shared cache once before
-being retired. Successful Watch CloudKit reads merge with the shared cache per
-account observation rather than choosing a whole document by its envelope
-timestamp. Direct CloudKit remains the cold-start and repair path when the shared
-cache is empty or damaged. Opening the Watch app invalidates the complication
+target's former process-local or pre-scope cache is purged because it cannot be
+attributed safely. Successful Watch CloudKit reads merge with the shared cache
+per account observation rather than choosing a whole document by its envelope
+timestamp, but only after exact scope validation; a late writer cannot relabel
+or overwrite a cache from another user. Direct CloudKit remains the cold-start
+and repair path when the shared cache is empty or damaged. Opening the Watch app
+invalidates the complication
 timeline whenever it has a usable document, and the timeline includes a future
 stale transition. The watch app list follows the synced saved main-limit
 visibility and order instead of promoting auxiliary provider buckets.
@@ -351,17 +364,22 @@ an available capacity lane and renders the missing lane as a compact supporting
 row. Full Detail shows safe account labels and exact capacity; Hide Account Names
 keeps the same per-account percentage, status, and reset rows with provider-scoped
 anonymous labels reused across windows. Distinct model sublimits remain separate
-without exposing account identity. Lane summaries and metric rows are static focus targets so Siri Remote
-navigation can scroll long detail screens without implying an action. The
-approved three-provider overview remains a separate stable surface.
+without exposing account identity. Lane summaries and metric rows are static
+focus targets so Siri Remote navigation can scroll long detail screens without
+implying an action. The approved three-provider overview remains a separate
+stable surface.
 
 Top Shelf is a separate TVServices extension with no provider or CloudKit
 network authority. The containing tvOS app projects its current snapshot and
 device-local presentation mode into a purpose-built, privacy-filtered document
 under `Library/Caches` in the existing companion App Group, then asks the system
-to reload Top Shelf. Keeping this derived document inside the app-group Library
-domain preserves current-user access on physical tvOS while avoiding backup of
-ephemeral runway data. The extension reads that document immediately and
+to reload Top Shelf. The app also writes the current non-reversible CloudKit user
+scope to a fixed state file that the extension can validate without a CloudKit
+entitlement. Missing or mismatched scope removes the prior Top Shelf document
+and generated images instead of presenting another user's runway. Keeping this
+derived document inside the app-group Library domain preserves current-user
+access on physical tvOS while avoiding backup of ephemeral runway data. The
+extension reads that document immediately and
 generates provider cards in the same App Group cache so the Home Screen can read
 the returned image URLs; missing and stale documents remain
 explicit rather than blocking the shelf on network work. The extension presents
@@ -375,8 +393,10 @@ refresh or visible freshness labels. Both the app and extension run as the
 current Apple TV user so CloudKit, preferences, and the shared Top Shelf cache
 remain isolated when household profiles change. The app accepts only the known
 CloudKit subscription, rejects notifications owned by a different current user,
-and accepts a missing container field only because CloudKit may prune that
-nullable payload metadata. Fresh Top Shelf items expire at the shared snapshot
+and rejects missing container metadata. A private-database push may omit owner
+metadata, so that case is treated only as a wake signal after current identity
+has resolved; the background loader then derives and re-verifies the scope before
+any cache access or publication. Fresh Top Shelf items expire at the shared snapshot
 freshness deadline so system-cached cards cannot continue presenting current
 copy after their source becomes stale. Background completion uses an unstructured
 deadline so a non-cooperative network request cannot hold the system callback

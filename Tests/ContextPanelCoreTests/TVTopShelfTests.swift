@@ -462,17 +462,49 @@ import Testing
     let selectedNewer = selection.select(
         snapshot: newerSnapshot,
         preferences: .defaultPreferences,
-        version: TVCompanionSyncVersion(document: newerDocument)
+        version: TVCompanionSyncVersion(document: newerDocument),
+        cloudKitUserScope: tvTestUserScope
     )
     let selectedAfterOlderCompletion = selection.select(
         snapshot: olderSnapshot,
         preferences: .defaultPreferences,
-        version: TVCompanionSyncVersion(document: olderDocument)
+        version: TVCompanionSyncVersion(document: olderDocument),
+        cloudKitUserScope: tvTestUserScope
     )
 
     #expect(selectedNewer.snapshot == newerSnapshot)
     #expect(selectedAfterOlderCompletion.snapshot == newerSnapshot)
     #expect(selectedAfterOlderCompletion.version == TVCompanionSyncVersion(document: newerDocument))
+}
+
+@Test func tvSystemSurfaceContentSelectionResetsWhenCloudKitUserChanges() {
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let olderSnapshot = makeTopShelfSnapshot(now: now)
+    let newerSnapshot = makeRecoveredTopShelfSnapshot(now: now.addingTimeInterval(60))
+    let otherScope = CompanionCloudKitUserScope.derive(
+        containerIdentifier: ContextPanelLocations.iCloudContainerID,
+        userRecordName: "tv-other-user"
+    )
+    var selection = TVSystemSurfaceContentSelection()
+
+    _ = selection.select(
+        snapshot: newerSnapshot,
+        preferences: .defaultPreferences,
+        version: TVCompanionSyncVersion(
+            generatedAt: now.addingTimeInterval(60),
+            publishedAt: now.addingTimeInterval(60)
+        ),
+        cloudKitUserScope: tvTestUserScope
+    )
+    let selected = selection.select(
+        snapshot: olderSnapshot,
+        preferences: .defaultPreferences,
+        version: TVCompanionSyncVersion(generatedAt: now, publishedAt: now),
+        cloudKitUserScope: otherScope
+    )
+
+    #expect(selected.snapshot == olderSnapshot)
+    #expect(selected.cloudKitUserScope == otherScope)
 }
 
 @Test func tvSyncReceiptStoreNeverRegressesToAnOlderDocumentOrReceiptTime() throws {
@@ -491,9 +523,21 @@ import Testing
     )
     let newerReceivedAt = generatedAt.addingTimeInterval(120)
 
-    try store.save(document: newerDocument, receivedAt: newerReceivedAt)
-    try store.save(document: olderDocument, receivedAt: generatedAt.addingTimeInterval(180))
-    try store.save(document: newerDocument, receivedAt: generatedAt.addingTimeInterval(90))
+    try store.save(
+        document: newerDocument,
+        receivedAt: newerReceivedAt,
+        cloudKitUserScope: tvTestUserScope
+    )
+    try store.save(
+        document: olderDocument,
+        receivedAt: generatedAt.addingTimeInterval(180),
+        cloudKitUserScope: tvTestUserScope
+    )
+    try store.save(
+        document: newerDocument,
+        receivedAt: generatedAt.addingTimeInterval(90),
+        cloudKitUserScope: tvTestUserScope
+    )
 
     #expect(store.load(matching: olderDocument) == nil)
     #expect(store.load(matching: newerDocument)?.receivedAt == newerReceivedAt)
@@ -512,11 +556,13 @@ import Testing
     let startingVersion = TVCompanionSyncVersion(document: startingDocument)
     let laterReceipt = TVSyncReceipt(
         document: startingDocument,
-        receivedAt: startedAt.addingTimeInterval(5)
+        receivedAt: startedAt.addingTimeInterval(5),
+        cloudKitUserScope: tvTestUserScope
     )
     let earlierReceipt = TVSyncReceipt(
         document: startingDocument,
-        receivedAt: startedAt.addingTimeInterval(-5)
+        receivedAt: startedAt.addingTimeInterval(-5),
+        cloudKitUserScope: tvTestUserScope
     )
 
     #expect(TVCompanionSyncAttemptPolicy.cacheSupersedesAttempt(
@@ -608,16 +654,70 @@ import Testing
     let documentURL = directory.appending(path: "top-shelf.json")
     let store = TVTopShelfDocumentStore(documentURL: documentURL)
     let now = Date(timeIntervalSince1970: 1_750_000_000)
-    let document = TVTopShelfDocument(snapshot: makeTopShelfSnapshot(now: now), mode: .projectOnly, now: now)
+    let document = TVTopShelfDocument(
+        snapshot: makeTopShelfSnapshot(now: now),
+        mode: .projectOnly,
+        cloudKitUserScope: tvTestUserScope,
+        now: now
+    )
 
     try store.save(document)
-    #expect(store.load() == document)
+    #expect(store.load(expectedScope: tvTestUserScope) == document)
 
     let data = try Data(contentsOf: documentURL)
     var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
     object["schemaVersion"] = TVTopShelfDocument.schemaVersion + 1
     try JSONSerialization.data(withJSONObject: object).write(to: documentURL, options: .atomic)
-    #expect(store.load() == nil)
+    #expect(store.load(expectedScope: tvTestUserScope) == nil)
+}
+
+@Test func tvTopShelfDocumentStoreRejectsAndPurgesAnotherUsersDocument() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-tv-top-shelf-scope-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let documentURL = directory.appending(path: "top-shelf.json")
+    let imageDirectoryURL = directory.appending(path: "Top Shelf", directoryHint: .isDirectory)
+    let store = TVTopShelfDocumentStore(
+        documentURL: documentURL,
+        imageDirectoryURL: imageDirectoryURL
+    )
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let document = TVTopShelfDocument(
+        snapshot: makeTopShelfSnapshot(now: now),
+        mode: .countsOnly,
+        cloudKitUserScope: tvTestUserScope,
+        now: now
+    )
+    let otherScope = CompanionCloudKitUserScope.derive(
+        containerIdentifier: ContextPanelLocations.iCloudContainerID,
+        userRecordName: "tv-other-user"
+    )
+
+    try store.save(document)
+    try FileManager.default.createDirectory(at: imageDirectoryURL, withIntermediateDirectories: true)
+    try Data("foreign-image".utf8).write(to: imageDirectoryURL.appending(path: "foreign.png"))
+    #expect(store.load(expectedScope: otherScope) == nil)
+    #expect(!FileManager.default.fileExists(atPath: documentURL.path))
+    #expect(!FileManager.default.fileExists(atPath: imageDirectoryURL.path))
+}
+
+@Test func tvTopShelfDocumentStorePurgesUndecodableDocumentAndImages() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-tv-top-shelf-corrupt-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let documentURL = directory.appending(path: "top-shelf.json")
+    let imageDirectoryURL = directory.appending(path: "Top Shelf", directoryHint: .isDirectory)
+    let store = TVTopShelfDocumentStore(
+        documentURL: documentURL,
+        imageDirectoryURL: imageDirectoryURL
+    )
+    try FileManager.default.createDirectory(at: imageDirectoryURL, withIntermediateDirectories: true)
+    try Data("not-json".utf8).write(to: documentURL, options: .atomic)
+    try Data("stale-image".utf8).write(to: imageDirectoryURL.appending(path: "stale.png"))
+
+    #expect(store.load(expectedScope: tvTestUserScope) == nil)
+    #expect(!FileManager.default.fileExists(atPath: documentURL.path))
+    #expect(!FileManager.default.fileExists(atPath: imageDirectoryURL.path))
 }
 
 @Test func tvTopShelfSharedLocationsUseTheCompanionAppGroupContainer() {
@@ -627,6 +727,7 @@ import Testing
     #expect(locations.rootDirectory.path == "/group/Library/Caches/Context Panel/TV")
     #expect(locations.documentURL.path == "/group/Library/Caches/Context Panel/TV/top-shelf.json")
     #expect(locations.imageDirectoryURL.path == "/group/Library/Caches/Context Panel/TV/Top Shelf")
+    #expect(locations.cloudKitUserScopeStateURL.path == "/group/Library/Caches/Context Panel/TV/cloudkit-user-scope.json")
 }
 
 @Test func tvAsyncDeadlineReturnsWithoutWaitingForANonCooperativeOperation() async {
@@ -668,7 +769,7 @@ import Testing
         containerIdentifier: nil,
         subscriptionOwnerRecordName: "current-user"
     )
-    #expect(TVCloudKitNotificationPolicy.accepts(
+    #expect(!TVCloudKitNotificationPolicy.accepts(
         prunedContainer,
         expectedSubscriptionID: expectedSubscriptionID,
         expectedContainerIdentifier: expectedContainerIdentifier,
@@ -681,6 +782,12 @@ import Testing
         subscriptionOwnerRecordName: nil
     )
     #expect(TVCloudKitNotificationPolicy.accepts(
+        missingOwner,
+        expectedSubscriptionID: expectedSubscriptionID,
+        expectedContainerIdentifier: expectedContainerIdentifier,
+        currentUserRecordName: "current-user"
+    ))
+    #expect(!TVCloudKitNotificationPolicy.accepts(
         missingOwner,
         expectedSubscriptionID: expectedSubscriptionID,
         expectedContainerIdentifier: expectedContainerIdentifier,
@@ -873,8 +980,13 @@ private func makeTVCompanionDocument(
         limits: [],
         providerStatuses: [],
         promptCacheSummaries: []
-    ))
+    )).bound(to: tvTestUserScope)
 }
+
+private let tvTestUserScope = CompanionCloudKitUserScope.derive(
+    containerIdentifier: ContextPanelLocations.iCloudContainerID,
+    userRecordName: "tv-test-user"
+)
 
 private func mutatedTopShelfDocument(
     _ document: TVTopShelfDocument,

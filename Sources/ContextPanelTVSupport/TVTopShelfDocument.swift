@@ -51,7 +51,7 @@ public struct TVTopShelfCard: Codable, Equatable, Identifiable, Sendable {
 }
 
 public struct TVTopShelfDocument: Codable, Equatable, Sendable {
-    public static let schemaVersion = 1
+    public static let schemaVersion = 2
 
     public let schemaVersion: Int
     public let generatedAt: Date
@@ -59,11 +59,13 @@ public struct TVTopShelfDocument: Codable, Equatable, Sendable {
     public let snapshotState: WidgetSnapshotState
     public let presentationMode: TVPresentationMode
     public let cards: [TVTopShelfCard]
+    public let cloudKitUserScope: CompanionCloudKitUserScope?
 
     public init(
         snapshot: WidgetSnapshot,
         preferences: WidgetDisplayPreferences = .defaultPreferences,
         mode: TVPresentationMode,
+        cloudKitUserScope: CompanionCloudKitUserScope? = nil,
         now: Date = Date()
     ) {
         let presentation = TVRunwayPresentation(
@@ -77,6 +79,7 @@ public struct TVTopShelfDocument: Codable, Equatable, Sendable {
         renderedAt = now
         snapshotState = presentation.state
         presentationMode = mode
+        self.cloudKitUserScope = cloudKitUserScope
         cards = presentation.sections.isEmpty
             ? [Self.setupCard(presentation: presentation)]
             : presentation.sections.map { Self.card(section: $0, mode: mode) }
@@ -372,27 +375,53 @@ private extension TVPresentationMode {
 
 public struct TVTopShelfDocumentStore: Sendable {
     public let documentURL: URL
+    public let imageDirectoryURL: URL?
 
-    public init(documentURL: URL) {
+    public init(documentURL: URL, imageDirectoryURL: URL? = nil) {
         self.documentURL = documentURL
+        self.imageDirectoryURL = imageDirectoryURL
     }
 
-    public func load() -> TVTopShelfDocument? {
+    public func load(expectedScope: CompanionCloudKitUserScope) -> TVTopShelfDocument? {
         guard let data = try? Data(contentsOf: documentURL) else { return nil }
         guard let document = try? Self.makeDecoder().decode(TVTopShelfDocument.self, from: data) else {
+            purgePublishedContent()
             return nil
         }
-        guard document.schemaVersion == TVTopShelfDocument.schemaVersion else { return nil }
+        guard document.schemaVersion == TVTopShelfDocument.schemaVersion,
+              document.cloudKitUserScope == expectedScope
+        else {
+            purgePublishedContent()
+            return nil
+        }
         return document
     }
 
     public func save(_ document: TVTopShelfDocument) throws {
+        guard document.cloudKitUserScope != nil else {
+            throw SnapshotStoreError.corruptStore(
+                "Top Shelf document is missing its CloudKit account scope."
+            )
+        }
         try FileManager.default.createDirectory(
             at: documentURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
         let data = try Self.makeEncoder().encode(document)
         try data.write(to: documentURL, options: .atomic)
+    }
+
+    public func remove() throws {
+        guard FileManager.default.fileExists(atPath: documentURL.path) else { return }
+        try FileManager.default.removeItem(at: documentURL)
+    }
+
+    private func purgePublishedContent(fileManager: FileManager = .default) {
+        try? remove()
+        guard let imageDirectoryURL,
+              fileManager.fileExists(atPath: imageDirectoryURL.path)
+        else { return }
+        try? fileManager.removeItem(at: imageDirectoryURL)
     }
 
     private static func makeEncoder() -> JSONEncoder {
@@ -426,6 +455,19 @@ public struct TVTopShelfSharedLocations: Equatable, Sendable {
 
     public var imageDirectoryURL: URL {
         rootDirectory.appending(path: "Top Shelf", directoryHint: .isDirectory)
+    }
+
+    public var cloudKitUserScopeStateURL: URL {
+        rootDirectory.appending(path: "cloudkit-user-scope.json")
+    }
+
+    public func purgePublishedContent(fileManager: FileManager = .default) throws {
+        if fileManager.fileExists(atPath: documentURL.path) {
+            try fileManager.removeItem(at: documentURL)
+        }
+        if fileManager.fileExists(atPath: imageDirectoryURL.path) {
+            try fileManager.removeItem(at: imageDirectoryURL)
+        }
     }
 
     public static func live(

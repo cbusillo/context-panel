@@ -2,18 +2,24 @@ import ContextPanelCore
 import Foundation
 
 public struct TVSyncReceipt: Codable, Equatable, Sendable {
-    public static let schemaVersion = 1
+    public static let schemaVersion = 2
 
     public let schemaVersion: Int
     public let receivedAt: Date
     public let generatedAt: Date
     public let publishedAt: Date
+    public let cloudKitUserScope: CompanionCloudKitUserScope
 
-    public init(document: CompanionSyncDocument, receivedAt: Date) {
+    public init(
+        document: CompanionSyncDocument,
+        receivedAt: Date,
+        cloudKitUserScope: CompanionCloudKitUserScope
+    ) {
         schemaVersion = Self.schemaVersion
         self.receivedAt = receivedAt
         generatedAt = document.snapshot.generatedAt
         publishedAt = document.snapshot.publishedAt
+        self.cloudKitUserScope = cloudKitUserScope
     }
 
     public var version: TVCompanionSyncVersion {
@@ -22,6 +28,7 @@ public struct TVSyncReceipt: Codable, Equatable, Sendable {
 
     public func matches(_ document: CompanionSyncDocument) -> Bool {
         version == TVCompanionSyncVersion(document: document)
+            && document.cloudKitUserScope == cloudKitUserScope
     }
 
     public func shouldKeepCurrent(replacingWith incomingReceipt: TVSyncReceipt) -> Bool {
@@ -44,8 +51,21 @@ public struct TVSyncReceiptStore: Sendable {
         return receipt.matches(document) ? receipt : nil
     }
 
-    public func save(document: CompanionSyncDocument, receivedAt: Date) throws {
-        let receipt = TVSyncReceipt(document: document, receivedAt: receivedAt)
+    public func save(
+        document: CompanionSyncDocument,
+        receivedAt: Date,
+        cloudKitUserScope: CompanionCloudKitUserScope
+    ) throws {
+        guard document.cloudKitUserScope == cloudKitUserScope else {
+            throw SnapshotStoreError.corruptStore(
+                "tvOS sync receipt belongs to another CloudKit account scope."
+            )
+        }
+        let receipt = TVSyncReceipt(
+            document: document,
+            receivedAt: receivedAt,
+            cloudKitUserScope: cloudKitUserScope
+        )
         let data = try JSONEncoder().encode(receipt)
         var writeError: Error?
         var coordinatorError: NSError?
@@ -71,6 +91,33 @@ public struct TVSyncReceiptStore: Sendable {
         }
 
         if let writeError { throw writeError }
+        if let coordinatorError { throw coordinatorError }
+    }
+
+    public func remove() throws {
+        guard FileManager.default.fileExists(atPath: receiptURL.path) else { return }
+        try FileManager.default.removeItem(at: receiptURL)
+    }
+
+    public func removeIfCurrent(_ expectedReceipt: TVSyncReceipt?) throws {
+        var removalError: Error?
+        var coordinatorError: NSError?
+        NSFileCoordinator(filePresenter: nil).coordinate(
+            writingItemAt: receiptURL,
+            options: .forDeleting,
+            error: &coordinatorError
+        ) { coordinatedURL in
+            do {
+                let currentFileExists = FileManager.default.fileExists(atPath: coordinatedURL.path)
+                guard currentFileExists else { return }
+                guard let currentReceipt = Self.loadReceipt(at: coordinatedURL) else { return }
+                guard currentReceipt == expectedReceipt else { return }
+                try FileManager.default.removeItem(at: coordinatedURL)
+            } catch {
+                removalError = error
+            }
+        }
+        if let removalError { throw removalError }
         if let coordinatorError { throw coordinatorError }
     }
 

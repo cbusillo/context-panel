@@ -58,6 +58,7 @@ private struct TVRootView: View {
             snapshot: model.snapshot,
             preferences: model.displayPreferences,
             version: model.displayVersion,
+            cloudKitUserScope: model.cloudKitUserScope,
             mode: presentationMode
         )
     }
@@ -115,6 +116,11 @@ private struct TVRootView: View {
                 for: .contextPanelTVBackgroundSyncDidUpdateCache
             )) { _ in
                 model.adoptCachedSnapshot()
+            }
+            .onReceive(NotificationCenter.default.publisher(
+                for: .contextPanelTVCloudKitAccountDidChange
+            )) { _ in
+                model.handleCloudKitAccountChange()
             }
             .navigationDestination(for: String.self) { providerRawValue in
                 if providerRawValue == tvValidationGalleryNavigationValue {
@@ -290,6 +296,7 @@ private struct TVSystemSurfacePublication: Equatable, Sendable {
     let snapshot: WidgetSnapshot
     let preferences: WidgetDisplayPreferences
     let version: TVCompanionSyncVersion?
+    let cloudKitUserScope: CompanionCloudKitUserScope?
     let mode: TVPresentationMode
 }
 
@@ -304,6 +311,7 @@ private final class TVSyncModel {
     private let remoteStore: CompanionRemoteSyncStore
     private let cacheStore: CompanionSyncStore
     private let receiptStore: TVSyncReceiptStore
+    private let scopeStateStore: CompanionCloudKitUserScopeStateStore
     private let injectedRuntimeReceiptRecorder: RuntimeReceiptRecorder?
     private var runtimeReceiptRelay: RuntimeReceiptRelayCoordinator?
     private let runtimeReceiptRelayProvider: TVRuntimeReceiptRelayProvider
@@ -319,6 +327,7 @@ private final class TVSyncModel {
     private(set) var syncNoticeMessage: String?
     private(set) var systemSurfaceNoticeMessage: String?
     private(set) var lastReceivedAt: Date?
+    private(set) var cloudKitUserScope: CompanionCloudKitUserScope?
     private(set) var isLoading = false
 
     var displayPreferences: WidgetDisplayPreferences {
@@ -348,6 +357,9 @@ private final class TVSyncModel {
             receiptURL: localCacheLocations.receiptURL
         )
         receiptStore = localReceiptStore
+        scopeStateStore = CompanionCloudKitUserScopeStateStore(
+            stateURL: localCacheLocations.cloudKitUserScopeStateURL
+        )
 
         #if DEBUG
         forcesRemoteFailure = TVPreviewFixtures.forcesRemoteFailure
@@ -361,6 +373,10 @@ private final class TVSyncModel {
             result = fixtureResult
             displayResult = fixtureResult
             lastReceivedAt = fixtureResult.transportMetadata?.receivedAt
+            cloudKitUserScope = CompanionCloudKitUserScope.derive(
+                containerIdentifier: ContextPanelLocations.iCloudContainerID,
+                userRecordName: "tv-preview-fixture"
+            )
             syncNoticeMessage = fixtureResult.transportMetadata?.deliveryStatus == .failed
                 ? Self.cloudUnavailableMessage
                 : nil
@@ -374,13 +390,13 @@ private final class TVSyncModel {
         #endif
 
         usesPreviewFixture = false
-        let cachedResult = cacheStore.load(policy: Self.stalenessPolicy, now: now)
-        result = cachedResult
-        displayResult = cachedResult
-        lastReceivedAt = cachedResult.document
-            .flatMap { localReceiptStore.load(matching: $0)?.receivedAt }
+        let emptyResult = CompanionSyncLoadResult(document: nil, status: .unknown)
+        result = emptyResult
+        displayResult = emptyResult
+        lastReceivedAt = nil
+        cloudKitUserScope = nil
         snapshot = WidgetSnapshot.fromCompanionSync(
-            cachedResult,
+            emptyResult,
             now: now,
             stalenessPolicy: Self.stalenessPolicy
         )
@@ -399,19 +415,74 @@ private final class TVSyncModel {
         let shouldForceRemoteFailure = forcesRemoteFailure
 
         reloadTask = Task { [weak self, remoteStore, cacheStore, receiptStore, runtimeReceiptRelay] in
+            guard let self else { return }
             defer {
-                if let self {
-                    isLoading = false
-                    reloadTask = nil
-                }
+                isLoading = false
+                reloadTask = nil
             }
 
             async let sessionRelayResult = runtimeReceiptRelay?.synchronizeSession(now: startedAt)
+            let initialScopeResolution = await remoteStore.currentUserScopeResolution()
+            guard case let .resolved(userScope) = initialScopeResolution else {
+                _ = await sessionRelayResult
+                if initialScopeResolution == .unavailable {
+                    await self.invalidateIdentity(
+                        message: "CloudKit account identity is unavailable."
+                    )
+                } else {
+                    syncNoticeMessage = Self.cloudUnavailableMessage
+                    result = CompanionSyncLoadResult(
+                        document: result.document,
+                        status: result.document == nil ? .failure : .stale,
+                        errorMessage: "CloudKit account identity is temporarily unavailable."
+                    )
+                }
+                return
+            }
+            guard await self.activateScope(userScope, now: startedAt) else {
+                _ = await sessionRelayResult
+                await self.invalidateIdentity(
+                    message: "Context Panel could not update its CloudKit account scope."
+                )
+                return
+            }
+            let cachedAtStart = cacheStore.load(
+                expectedUserScope: userScope,
+                policy: Self.stalenessPolicy,
+                now: startedAt
+            )
+            let receiptAtStart = cachedAtStart.document.flatMap(receiptStore.load(matching:))
+            if cachedAtStart.document != nil {
+                result = cachedAtStart
+                displayResult = cachedAtStart
+                lastReceivedAt = cachedAtStart.document
+                    .flatMap { receiptStore.load(matching: $0)?.receivedAt }
+                snapshot = WidgetSnapshot.fromCompanionSync(
+                    cachedAtStart,
+                    now: startedAt,
+                    stalenessPolicy: Self.stalenessPolicy
+                )
+            }
             let remoteLoad = shouldForceRemoteFailure
-                ? Self.forcedRemoteFailureLoadResult()
+                ? Self.forcedRemoteFailureLoadResult(userScope: userScope)
                 : await remoteStore.load(now: startedAt)
-            guard !Task.isCancelled, let self else { return }
+            guard !Task.isCancelled else { return }
             _ = await sessionRelayResult
+            let finalScopeResolution = await remoteStore.currentUserScopeResolution()
+            guard finalScopeResolution == .resolved(userScope),
+                  Self.remoteLoadMatchesScope(remoteLoad, expectedScope: userScope)
+            else {
+                if finalScopeResolution == .unavailable
+                    || (finalScopeResolution.userScope != nil && finalScopeResolution.userScope != userScope)
+                {
+                    await self.invalidateIdentity(
+                        message: "CloudKit account changed while refreshing Apple TV usage."
+                    )
+                } else {
+                    syncNoticeMessage = Self.cloudUnavailableMessage
+                }
+                return
+            }
             let completedAt = Date()
             let loaded = remoteLoad.result
             result = loaded
@@ -439,7 +510,8 @@ private final class TVSyncModel {
                             do {
                                 try receiptStore.save(
                                     document: currentDocument,
-                                    receivedAt: completedAt
+                                    receivedAt: completedAt,
+                                    cloudKitUserScope: userScope
                                 )
                             } catch {
                                 persistenceNoticeMessage = Self.syncReceiptUnavailableMessage
@@ -451,7 +523,11 @@ private final class TVSyncModel {
                 case let .saved(saveResult):
                     if saveResult.succeeded {
                         do {
-                            try receiptStore.save(document: document, receivedAt: completedAt)
+                            try receiptStore.save(
+                                document: document,
+                                receivedAt: completedAt,
+                                cloudKitUserScope: userScope
+                            )
                         } catch {
                             persistenceNoticeMessage = Self.syncReceiptUnavailableMessage
                         }
@@ -462,8 +538,48 @@ private final class TVSyncModel {
                         ?? completedAt
                     displayResult = loaded
                 }
+            } else if remoteLoad.outcome.succeeded,
+                      remoteLoad.outcome.missingRecord {
+                switch cacheStore.removeIfCurrent(
+                    cachedAtStart.document,
+                    policy: Self.stalenessPolicy,
+                    now: completedAt
+                ) {
+                case .removed:
+                    try? receiptStore.removeIfCurrent(receiptAtStart)
+                    displayResult = loaded
+                    lastReceivedAt = nil
+                case let .keptCurrent(currentResult):
+                    guard let currentDocument = currentResult.document,
+                          currentDocument.cloudKitUserScope == userScope
+                    else {
+                        _ = cacheStore.removeIfCurrent(
+                            currentResult.document,
+                            policy: Self.stalenessPolicy,
+                            now: completedAt
+                        )
+                        displayResult = loaded
+                        lastReceivedAt = nil
+                        break
+                    }
+                    result = currentResult
+                    displayResult = currentResult
+                    lastReceivedAt = receiptStore.load(matching: currentDocument)?.receivedAt
+                case let .failed(errorMessage):
+                    displayResult = CompanionSyncLoadResult(
+                        document: cachedAtStart.document,
+                        status: cachedAtStart.document == nil ? .failure : .stale,
+                        errorMessage: errorMessage,
+                        transportMetadata: cachedAtStart.transportMetadata,
+                        transportStatuses: loaded.transportStatuses
+                    )
+                }
             } else {
-                let cached = cacheStore.load(policy: Self.stalenessPolicy, now: completedAt)
+                let cached = cacheStore.load(
+                    expectedUserScope: userScope,
+                    policy: Self.stalenessPolicy,
+                    now: completedAt
+                )
                 if let cachedDocument = cached.document {
                     let receipt = receiptStore.load(matching: cachedDocument)
                     lastReceivedAt = receipt?.receivedAt ?? lastReceivedAt
@@ -503,21 +619,53 @@ private final class TVSyncModel {
 
     func adoptCachedSnapshot(now: Date = Date()) {
         guard !usesPreviewFixture else { return }
-        let cachedResult = cacheStore.load(policy: Self.stalenessPolicy, now: now)
-        guard let document = cachedResult.document else { return }
+        Task { [weak self, remoteStore, cacheStore, receiptStore] in
+            guard let self else { return }
+            let scopeResolution = await remoteStore.currentUserScopeResolution()
+            guard case let .resolved(userScope) = scopeResolution else {
+                if scopeResolution == .unavailable {
+                    await self.invalidateIdentity(
+                        message: "CloudKit account identity is unavailable."
+                    )
+                }
+                return
+            }
+            guard await activateScope(userScope, now: now) else {
+                await self.invalidateIdentity(
+                    message: "Context Panel could not update its CloudKit account scope."
+                )
+                return
+            }
+            let cachedResult = cacheStore.load(
+                expectedUserScope: userScope,
+                policy: Self.stalenessPolicy,
+                now: now
+            )
+            guard let document = cachedResult.document else { return }
 
-        result = cachedResult
-        displayResult = cachedResult
-        lastReceivedAt = receiptStore.load(matching: document)?.receivedAt
-        syncNoticeMessage = nil
-        snapshot = WidgetSnapshot.fromCompanionSync(
-            cachedResult,
-            now: now,
-            stalenessPolicy: Self.stalenessPolicy
-        )
+            result = cachedResult
+            displayResult = cachedResult
+            lastReceivedAt = receiptStore.load(matching: document)?.receivedAt
+            syncNoticeMessage = nil
+            snapshot = WidgetSnapshot.fromCompanionSync(
+                cachedResult,
+                now: now,
+                stalenessPolicy: Self.stalenessPolicy
+            )
+        }
+    }
+
+    func handleCloudKitAccountChange() {
+        guard !usesPreviewFixture else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            await invalidateIdentity(message: "CloudKit account changed.")
+            reload()
+        }
     }
 
     func publishSystemSurfaces(_ publication: TVSystemSurfacePublication) {
+        guard publication.cloudKitUserScope != nil else { return }
         pendingSystemSurfacePublication = publication
         guard systemSurfaceTask == nil else { return }
 
@@ -530,7 +678,8 @@ private final class TVSyncModel {
                 let update = await TVSystemSurfaceCoordinator.shared.update(
                     snapshot: publication.snapshot,
                     preferences: publication.preferences,
-                    version: publication.version
+                    version: publication.version,
+                    cloudKitUserScope: publication.cloudKitUserScope!
                 )
                 guard !Task.isCancelled else { return }
                 systemSurfaceNoticeMessage = update.noticeMessage
@@ -601,7 +750,57 @@ private final class TVSyncModel {
     private static let syncReceiptUnavailableMessage =
         "Runway saved for offline use, but its sync time could not be recorded."
 
-    private static func forcedRemoteFailureLoadResult() -> CompanionRemoteSyncLoadResult {
+    private func activateScope(
+        _ userScope: CompanionCloudKitUserScope,
+        now: Date
+    ) async -> Bool {
+        if scopeStateStore.load() != userScope {
+            try? cacheStore.remove()
+            try? receiptStore.remove()
+            await TVSystemSurfaceCoordinator.shared.invalidateUserScope()
+            result = CompanionSyncLoadResult(document: nil, status: .unknown)
+            displayResult = result
+            lastReceivedAt = nil
+            snapshot = WidgetSnapshot.fromCompanionSync(result, now: now)
+        }
+        do {
+            try scopeStateStore.save(userScope, updatedAt: now)
+            cloudKitUserScope = userScope
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func invalidateIdentity(message: String) async {
+        try? scopeStateStore.clear()
+        try? cacheStore.remove()
+        try? receiptStore.remove()
+        await TVSystemSurfaceCoordinator.shared.invalidateUserScope()
+        cloudKitUserScope = nil
+        result = CompanionSyncLoadResult(
+            document: nil,
+            status: .failure,
+            errorMessage: message
+        )
+        displayResult = result
+        syncNoticeMessage = message
+        lastReceivedAt = nil
+        snapshot = WidgetSnapshot.fromCompanionSync(result)
+    }
+
+    private static func remoteLoadMatchesScope(
+        _ remoteLoad: CompanionRemoteSyncLoadResult,
+        expectedScope: CompanionCloudKitUserScope
+    ) -> Bool {
+        guard remoteLoad.outcome.cloudKitUserScope == expectedScope else { return false }
+        guard let document = remoteLoad.result.document else { return true }
+        return document.cloudKitUserScope == expectedScope
+    }
+
+    private static func forcedRemoteFailureLoadResult(
+        userScope: CompanionCloudKitUserScope
+    ) -> CompanionRemoteSyncLoadResult {
         let message = "Mac updates are unavailable."
         return CompanionRemoteSyncLoadResult(
             result: CompanionSyncLoadResult(
@@ -621,7 +820,8 @@ private final class TVSyncModel {
             outcome: CompanionRemoteSyncOutcome(
                 isAvailable: false,
                 succeeded: false,
-                errorMessage: message
+                errorMessage: message,
+                cloudKitUserScope: userScope
             )
         )
     }

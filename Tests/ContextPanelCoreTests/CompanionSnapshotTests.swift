@@ -909,7 +909,7 @@ import Testing
     let document = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now),
         publishedAt: now
-    )
+    ).bound(to: companionTestUserScope)
 
     let presentation = CompanionSyncPresentation(
         result: CompanionSyncLoadResult(
@@ -1059,7 +1059,7 @@ import Testing
     let document = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now),
         publishedAt: now
-    )
+    ).bound(to: companionTestUserScope)
 
     let presentation = CompanionSyncPresentation(
         result: CompanionSyncLoadResult(
@@ -1350,11 +1350,12 @@ import Testing
     let document = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now),
         publishedAt: now
-    )
+    ).bound(to: companionTestUserScope)
     try CompanionSyncStore(documentURL: localURL).save(document)
 
     let result = CompanionSyncLoader.load(
         localMirrorURL: localURL,
+        expectedUserScope: companionTestUserScope,
         now: now
     )
 
@@ -1372,7 +1373,7 @@ import Testing
     let document = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now),
         publishedAt: now
-    )
+    ).bound(to: companionTestUserScope)
     try CompanionSyncStore(documentURL: localURL).save(document)
     let diagnosticsStore = RefreshDiagnosticsStateStore(
         stateURL: root.appending(path: "refresh-diagnostics-state.json")
@@ -1380,6 +1381,7 @@ import Testing
 
     let result = CompanionSyncLoader.load(
         localMirrorURL: localURL,
+        expectedUserScope: companionTestUserScope,
         remoteLoad: nil,
         mirrorLoadedDocument: false,
         diagnosticsStore: diagnosticsStore,
@@ -1408,7 +1410,7 @@ import Testing
     let staleDocument = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: staleGeneratedAt),
         publishedAt: staleGeneratedAt
-    )
+    ).bound(to: companionTestUserScope)
     try CompanionSyncStore(documentURL: localURL).save(staleDocument)
     let originalModifiedAt = Date(timeIntervalSince1970: 1_000)
     try FileManager.default.setAttributes(
@@ -1418,6 +1420,7 @@ import Testing
 
     let result = CompanionSyncLoader.loadWidgetMirror(
         localMirrorURL: localURL,
+        expectedUserScope: companionTestUserScope,
         now: now
     )
     let modifiedAt = try #require(
@@ -1437,7 +1440,7 @@ import Testing
     let document = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now),
         publishedAt: now
-    )
+    ).bound(to: companionTestUserScope)
     try CompanionSyncStore(documentURL: localURL).save(document)
     let originalModifiedAt = Date(timeIntervalSince1970: 1_000)
     try FileManager.default.setAttributes(
@@ -1447,6 +1450,7 @@ import Testing
 
     let result = CompanionSyncLoader.loadWidgetMirror(
         localMirrorURL: localURL,
+        expectedUserScope: companionTestUserScope,
         now: now
     )
     let modifiedAt = try #require(
@@ -1467,15 +1471,15 @@ import Testing
     let staleDocument = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: staleGeneratedAt),
         publishedAt: staleGeneratedAt
-    )
+    ).bound(to: companionTestUserScope)
     let cloudKitDocument = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now),
         publishedAt: now
-    )
+    ).bound(to: companionTestUserScope)
     let newerLocalDocument = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now.addingTimeInterval(60)),
         publishedAt: now.addingTimeInterval(60)
-    )
+    ).bound(to: companionTestUserScope)
     try CompanionSyncStore(documentURL: localURL).save(staleDocument)
     let diagnosticsStore = RefreshDiagnosticsStateStore(
         stateURL: root.appending(path: "refresh-diagnostics-state.json")
@@ -1483,9 +1487,13 @@ import Testing
 
     let result = CompanionSyncLoader.load(
         localMirrorURL: localURL,
+        expectedUserScope: companionTestUserScope,
         remoteLoad: CompanionRemoteSyncLoadResult(
             result: CompanionSyncLoadResult(document: cloudKitDocument, status: .healthy),
-            outcome: CompanionRemoteSyncOutcome(succeeded: true)
+            outcome: CompanionRemoteSyncOutcome(
+                succeeded: true,
+                cloudKitUserScope: companionTestUserScope
+            )
         ),
         diagnosticsStore: diagnosticsStore,
         beforeMirrorLoadedDocument: {
@@ -1520,14 +1528,18 @@ import Testing
     let document = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now),
         publishedAt: now
-    )
+    ).bound(to: companionTestUserScope)
     try Data().write(to: blockedFile)
 
     let result = CompanionSyncLoader.load(
         localMirrorURL: localURL,
+        expectedUserScope: companionTestUserScope,
         remoteLoad: CompanionRemoteSyncLoadResult(
             result: CompanionSyncLoadResult(document: document, status: .healthy),
-            outcome: CompanionRemoteSyncOutcome(succeeded: true)
+            outcome: CompanionRemoteSyncOutcome(
+                succeeded: true,
+                cloudKitUserScope: companionTestUserScope
+            )
         ),
         now: now
     )
@@ -1542,9 +1554,14 @@ import Testing
 
     let appLoad = CompanionSyncLoader.load(
         localMirrorURL: nil,
+        expectedUserScope: companionTestUserScope,
         now: now
     )
-    let widgetLoad = CompanionSyncLoader.loadWidgetMirror(localMirrorURL: nil, now: now)
+    let widgetLoad = CompanionSyncLoader.loadWidgetMirror(
+        localMirrorURL: nil,
+        expectedUserScope: companionTestUserScope,
+        now: now
+    )
 
     #expect(appLoad.document == nil)
     #expect(appLoad.status == .failure)
@@ -2278,6 +2295,7 @@ import Testing
 
     let result = CompanionSyncLoader.load(
         localMirrorURL: localURL,
+        expectedUserScope: companionTestUserScope,
         remoteLoad: nil,
         mirrorLoadedDocument: false,
         now: now
@@ -2296,7 +2314,7 @@ import Testing
     let remoteDocument = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now),
         publishedAt: now
-    )
+    ).bound(to: companionTestUserScope)
     let remoteStore = companionRemoteStore { _ in
         CompanionRemoteSyncLoadResult(
             result: CompanionSyncLoadResult(document: remoteDocument, status: .healthy),
@@ -2326,11 +2344,11 @@ import Testing
     let staleDocument = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: staleGeneratedAt),
         publishedAt: staleGeneratedAt
-    )
+    ).bound(to: companionTestUserScope)
     let remoteDocument = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now),
         publishedAt: now
-    )
+    ).bound(to: companionTestUserScope)
     try CompanionSyncStore(documentURL: localURL).save(staleDocument)
     let remoteStore = companionRemoteStore { _ in
         CompanionRemoteSyncLoadResult(
@@ -2359,7 +2377,7 @@ import Testing
     let savedDocument = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now),
         publishedAt: now
-    )
+    ).bound(to: companionTestUserScope)
     try CompanionSyncStore(documentURL: localURL).save(savedDocument)
     let remoteStore = companionRemoteStore { _ in
         CompanionRemoteSyncLoadResult(
@@ -2405,7 +2423,7 @@ import Testing
     let savedDocument = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now),
         publishedAt: now
-    )
+    ).bound(to: companionTestUserScope)
     try CompanionSyncStore(documentURL: localURL).save(savedDocument)
     let remoteStore = companionRemoteStore { _ in
         CompanionRemoteSyncLoadResult(
@@ -2438,7 +2456,7 @@ import Testing
     let savedDocument = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now),
         publishedAt: now
-    )
+    ).bound(to: companionTestUserScope)
     try CompanionSyncStore(documentURL: localURL).save(savedDocument)
     let remoteStore = companionRemoteStore { _ in
         CompanionRemoteSyncLoadResult(
@@ -2477,11 +2495,11 @@ import Testing
     let originalDocument = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now.addingTimeInterval(-60)),
         publishedAt: now.addingTimeInterval(-60)
-    )
+    ).bound(to: companionTestUserScope)
     let concurrentDocument = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now),
         publishedAt: now
-    )
+    ).bound(to: companionTestUserScope)
     try localStore.save(originalDocument)
     let remoteStore = companionRemoteStore { _ in
         _ = localStore.saveResult(concurrentDocument)
@@ -2515,7 +2533,7 @@ import Testing
     let concurrentDocument = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now),
         publishedAt: now
-    )
+    ).bound(to: companionTestUserScope)
     let remoteStore = companionRemoteStore { _ in
         _ = localStore.saveResult(concurrentDocument)
         return CompanionRemoteSyncLoadResult(
@@ -2539,6 +2557,39 @@ import Testing
     #expect(localStore.load().document == concurrentDocument)
 }
 
+@Test func companionWidgetTimelinePurgesForeignMirrorWrittenWhileMissingRecordLoads() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 4_340.5)
+    let localURL = root.appending(path: "local-companion.json")
+    let localStore = CompanionSyncStore(documentURL: localURL)
+    let foreignDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    ).bound(to: companionOtherUserScope)
+    let remoteStore = companionRemoteStore { _ in
+        _ = localStore.saveResult(foreignDocument)
+        return CompanionRemoteSyncLoadResult(
+            result: CompanionSyncLoadResult(document: nil, status: .unknown),
+            outcome: CompanionRemoteSyncOutcome(
+                succeeded: true,
+                missingRecord: true
+            )
+        )
+    }
+
+    let result = await CompanionSyncLoader.loadWidgetTimeline(
+        localMirrorURL: localURL,
+        remoteStore: remoteStore,
+        timeout: .seconds(1),
+        now: now
+    )
+
+    #expect(result.document == nil)
+    #expect(result.transportStatuses.first?.missingRecord == true)
+    #expect(localStore.load().document == nil)
+}
+
 @Test func companionWidgetTimelinePreservesFutureSchemaMirrorWrittenDuringMissingRecordLoad() async throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -2547,7 +2598,7 @@ import Testing
     let concurrentDocument = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now),
         publishedAt: now
-    )
+    ).bound(to: companionTestUserScope)
     let encoded = try JSONEncoder.contextPanelCompanionEncoder.encode(concurrentDocument)
     var futureSchemaJSON = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
     futureSchemaJSON["schemaVersion"] = CompanionSyncDocument.schemaVersion + 1
@@ -2588,7 +2639,7 @@ import Testing
     let savedDocument = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now),
         publishedAt: now
-    )
+    ).bound(to: companionTestUserScope)
     try CompanionSyncStore(documentURL: localURL).save(savedDocument)
     let remoteStore = companionRemoteStore { _ in
         try? await Task.sleep(for: .seconds(30))
@@ -2612,6 +2663,56 @@ import Testing
     #expect(result.errorMessage == "Context Panel widget timed out while refreshing usage.")
 }
 
+@Test func companionWidgetTimelineWithholdsButPreservesCacheWhenIdentityResolutionTimesOut() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 4_342.5)
+    let localURL = root.appending(path: "local-companion.json")
+    let scopeStateURL = root.appending(path: "cloudkit-user-scope.json")
+    let savedDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    ).bound(to: companionTestUserScope)
+    let localStore = CompanionSyncStore(documentURL: localURL)
+    try localStore.save(savedDocument)
+    let persistedDocument = try #require(
+        localStore.load(
+            expectedUserScope: companionTestUserScope,
+            policy: SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.companionProviderMaximumAge),
+            now: now
+        ).document
+    )
+    try CompanionCloudKitUserScopeStateStore(stateURL: scopeStateURL).save(companionTestUserScope)
+    let blocker = CompanionIdentityBlocker()
+    let remoteStore = CompanionRemoteSyncStore(
+        saveDocument: { _ in CompanionRemoteSyncOutcome(succeeded: true) },
+        loadDocument: { _ in
+            CompanionRemoteSyncLoadResult(
+                result: CompanionSyncLoadResult(document: nil, status: .unknown),
+                outcome: CompanionRemoteSyncOutcome(succeeded: true)
+            )
+        },
+        resolveUserScope: {
+            _ = await blocker.wait()
+            return companionTestUserScope
+        }
+    )
+
+    let result = await CompanionSyncLoader.loadWidgetTimeline(
+        localMirrorURL: localURL,
+        scopeStateURL: scopeStateURL,
+        remoteStore: remoteStore,
+        timeout: .milliseconds(20),
+        now: now
+    )
+
+    #expect(result.document == persistedDocument)
+    #expect(result.status == .stale)
+    #expect(localStore.load().document == persistedDocument)
+    #expect(CompanionCloudKitUserScopeStateStore(stateURL: scopeStateURL).load() == companionTestUserScope)
+    await blocker.resume(returning: 1)
+}
+
 @Test func companionLoaderMirrorsFreshRemoteCloudKitDocument() throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -2620,14 +2721,18 @@ import Testing
     let remoteDocument = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now),
         publishedAt: now.addingTimeInterval(1)
-    )
+    ).bound(to: companionTestUserScope)
     let remoteLoad = CompanionRemoteSyncLoadResult(
         result: CompanionSyncLoadResult(document: remoteDocument, status: .healthy),
-        outcome: CompanionRemoteSyncOutcome(succeeded: true)
+        outcome: CompanionRemoteSyncOutcome(
+            succeeded: true,
+            cloudKitUserScope: companionTestUserScope
+        )
     )
 
     let result = CompanionSyncLoader.load(
         localMirrorURL: localURL,
+        expectedUserScope: companionTestUserScope,
         remoteLoad: remoteLoad,
         now: now
     )
@@ -2648,7 +2753,7 @@ import Testing
     let localDocument = CompanionSyncDocument(
         storedSnapshot: storedSnapshot,
         publishedAt: now
-    )
+    ).bound(to: companionTestUserScope)
     let observedBurnRate = ObservedBurnRate(
         limitID: "openai:weekly",
         unitsPerHour: 12,
@@ -2659,14 +2764,18 @@ import Testing
         storedSnapshot: storedSnapshot,
         publishedAt: now,
         observedBurnRates: [observedBurnRate.limitID: observedBurnRate]
-    )
+    ).bound(to: companionTestUserScope)
     try CompanionSyncStore(documentURL: localURL).save(localDocument)
 
     let result = CompanionSyncLoader.load(
         localMirrorURL: localURL,
+        expectedUserScope: companionTestUserScope,
         remoteLoad: CompanionRemoteSyncLoadResult(
             result: CompanionSyncLoadResult(document: remoteDocument, status: .healthy),
-            outcome: CompanionRemoteSyncOutcome(succeeded: true)
+            outcome: CompanionRemoteSyncOutcome(
+                succeeded: true,
+                cloudKitUserScope: companionTestUserScope
+            )
         ),
         now: now
     )
@@ -2688,13 +2797,17 @@ import Testing
     let remoteDocument = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now),
         publishedAt: now.addingTimeInterval(1)
-    )
+    ).bound(to: companionTestUserScope)
 
     let result = CompanionSyncLoader.load(
         localMirrorURL: localURL,
+        expectedUserScope: companionTestUserScope,
         remoteLoad: CompanionRemoteSyncLoadResult(
             result: CompanionSyncLoadResult(document: remoteDocument, status: .healthy),
-            outcome: CompanionRemoteSyncOutcome(succeeded: true)
+            outcome: CompanionRemoteSyncOutcome(
+                succeeded: true,
+                cloudKitUserScope: companionTestUserScope
+            )
         ),
         diagnosticsStore: diagnosticsStore,
         now: now
@@ -2723,15 +2836,19 @@ import Testing
     let document = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now),
         publishedAt: now.addingTimeInterval(60)
-    )
+    ).bound(to: companionTestUserScope)
     try CompanionSyncStore(documentURL: localURL).save(document)
     let receivedAt = now.addingTimeInterval(90)
 
     let result = CompanionSyncLoader.load(
         localMirrorURL: localURL,
+        expectedUserScope: companionTestUserScope,
         remoteLoad: CompanionRemoteSyncLoadResult(
             result: CompanionSyncLoadResult(document: document, status: .healthy),
-            outcome: CompanionRemoteSyncOutcome(succeeded: true)
+            outcome: CompanionRemoteSyncOutcome(
+                succeeded: true,
+                cloudKitUserScope: companionTestUserScope
+            )
         ),
         diagnosticsStore: diagnosticsStore,
         now: receivedAt
@@ -2753,18 +2870,22 @@ import Testing
     let localDocument = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now),
         publishedAt: now.addingTimeInterval(2)
-    )
+    ).bound(to: companionTestUserScope)
     let olderRemoteDocument = CompanionSyncDocument(
         storedSnapshot: companionStoredSnapshot(generatedAt: now.addingTimeInterval(-60)),
         publishedAt: now.addingTimeInterval(-30)
-    )
+    ).bound(to: companionTestUserScope)
     try CompanionSyncStore(documentURL: localURL).save(localDocument)
 
     let result = CompanionSyncLoader.load(
         localMirrorURL: localURL,
+        expectedUserScope: companionTestUserScope,
         remoteLoad: CompanionRemoteSyncLoadResult(
             result: CompanionSyncLoadResult(document: olderRemoteDocument, status: .healthy),
-            outcome: CompanionRemoteSyncOutcome(succeeded: true)
+            outcome: CompanionRemoteSyncOutcome(
+                succeeded: true,
+                cloudKitUserScope: companionTestUserScope
+            )
         ),
         now: now
     )
@@ -3085,6 +3206,158 @@ private func companionStoredSnapshot(
     )
 }
 
+@Test func companionWidgetTimelineNeverFallsBackToAnotherUsersCache() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 4_500)
+    let localURL = root.appending(path: "local-companion.json")
+    let userADocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    ).bound(to: companionTestUserScope)
+    try CompanionSyncStore(documentURL: localURL).save(userADocument)
+    let remoteStore = CompanionRemoteSyncStore(
+        saveDocument: { _ in
+            CompanionRemoteSyncOutcome(
+                succeeded: true,
+                cloudKitUserScope: companionOtherUserScope
+            )
+        },
+        loadDocument: { _ in
+            CompanionRemoteSyncLoadResult(
+                result: CompanionSyncLoadResult(document: nil, status: .unknown),
+                outcome: CompanionRemoteSyncOutcome(
+                    succeeded: true,
+                    missingRecord: true,
+                    cloudKitUserScope: companionOtherUserScope
+                )
+            )
+        },
+        resolveUserScope: { companionOtherUserScope }
+    )
+
+    let result = await CompanionSyncLoader.loadWidgetTimeline(
+        localMirrorURL: localURL,
+        remoteStore: remoteStore,
+        timeout: .seconds(1),
+        now: now
+    )
+
+    #expect(result.document == nil)
+    #expect(!FileManager.default.fileExists(atPath: localURL.path))
+}
+
+@Test func companionWidgetTimelineDiscardsRemoteResultWhenAccountChangesDuringLoad() async {
+    let now = Date(timeIntervalSince1970: 4_501)
+    let resolver = CompanionScopeSequenceResolver(
+        scopes: [companionTestUserScope, companionOtherUserScope]
+    )
+    let document = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    ).bound(to: companionTestUserScope)
+    let remoteStore = CompanionRemoteSyncStore(
+        saveDocument: { _ in
+            CompanionRemoteSyncOutcome(
+                succeeded: true,
+                cloudKitUserScope: companionTestUserScope
+            )
+        },
+        loadDocument: { _ in
+            CompanionRemoteSyncLoadResult(
+                result: CompanionSyncLoadResult(document: document, status: .healthy),
+                outcome: CompanionRemoteSyncOutcome(
+                    succeeded: true,
+                    cloudKitUserScope: companionTestUserScope
+                )
+            )
+        },
+        resolveUserScope: { await resolver.resolve() }
+    )
+
+    let result = await CompanionSyncLoader.loadWidgetTimeline(
+        localMirrorURL: nil,
+        remoteStore: remoteStore,
+        timeout: .seconds(1),
+        now: now
+    )
+
+    #expect(result.document == nil)
+    #expect(result.status == .failure)
+    #expect(result.errorMessage?.contains("account changed") == true)
+}
+
+@Test func companionMirrorSavePreservesConcurrentForeignScope() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 4_502)
+    let localURL = root.appending(path: "local-companion.json")
+    let userADocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    ).bound(to: companionTestUserScope)
+    let userBDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now.addingTimeInterval(60)),
+        publishedAt: now.addingTimeInterval(60)
+    ).bound(to: companionOtherUserScope)
+
+    let result = CompanionSyncLoader.load(
+        localMirrorURL: localURL,
+        expectedUserScope: companionTestUserScope,
+        remoteLoad: CompanionRemoteSyncLoadResult(
+            result: CompanionSyncLoadResult(document: userADocument, status: .healthy),
+            outcome: CompanionRemoteSyncOutcome(
+                succeeded: true,
+                cloudKitUserScope: companionTestUserScope
+            )
+        ),
+        beforeMirrorLoadedDocument: {
+            try? CompanionSyncStore(documentURL: localURL).save(userBDocument)
+        },
+        now: now
+    )
+
+    #expect(result.document == nil)
+    #expect(result.status == .failure)
+    #expect(CompanionSyncStore(documentURL: localURL).load().document == userBDocument)
+}
+
+@Test func companionMirrorReplacesUndecodableCacheWithScopedRemote() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 4_503)
+    let localURL = root.appending(path: "local-companion.json")
+    let remoteDocument = CompanionSyncDocument(
+        storedSnapshot: companionStoredSnapshot(generatedAt: now),
+        publishedAt: now
+    ).bound(to: companionTestUserScope)
+    let encoded = try JSONEncoder.contextPanelCompanionEncoder.encode(remoteDocument)
+    var futureSchemaJSON = try #require(
+        JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+    )
+    futureSchemaJSON["schemaVersion"] = CompanionSyncDocument.schemaVersion + 1
+    try JSONSerialization.data(withJSONObject: futureSchemaJSON).write(
+        to: localURL,
+        options: .atomic
+    )
+
+    let result = CompanionSyncLoader.load(
+        localMirrorURL: localURL,
+        expectedUserScope: companionTestUserScope,
+        remoteLoad: CompanionRemoteSyncLoadResult(
+            result: CompanionSyncLoadResult(document: remoteDocument, status: .healthy),
+            outcome: CompanionRemoteSyncOutcome(
+                succeeded: true,
+                cloudKitUserScope: companionTestUserScope
+            )
+        ),
+        now: now
+    )
+
+    #expect(result.document == remoteDocument)
+    #expect(CompanionSyncStore(documentURL: localURL).load().document == remoteDocument)
+}
+
 private func companionUsageLimit(status: UsageStatus, accountID: String) -> UsageLimit {
     UsageLimit(
         provider: .openAI,
@@ -3104,9 +3377,84 @@ private func companionRemoteStore(
     loadDocument: @escaping @Sendable (Date) async -> CompanionRemoteSyncLoadResult
 ) -> CompanionRemoteSyncStore {
     CompanionRemoteSyncStore(
-        saveDocument: { _ in CompanionRemoteSyncOutcome(succeeded: true) },
-        loadDocument: loadDocument
+        saveDocument: { _ in
+            CompanionRemoteSyncOutcome(
+                succeeded: true,
+                cloudKitUserScope: companionTestUserScope
+            )
+        },
+        loadDocument: { now in
+            let loaded = await loadDocument(now)
+            return CompanionRemoteSyncLoadResult(
+                result: CompanionSyncLoadResult(
+                    document: loaded.result.document?.bound(to: companionTestUserScope),
+                    status: loaded.result.status,
+                    errorMessage: loaded.result.errorMessage,
+                    transportMetadata: loaded.result.transportMetadata,
+                    transportStatuses: loaded.result.transportStatuses
+                ),
+                outcome: CompanionRemoteSyncOutcome(
+                    storeRole: loaded.outcome.storeRole,
+                    isAvailable: loaded.outcome.isAvailable,
+                    succeeded: loaded.outcome.succeeded,
+                    missingRecord: loaded.outcome.missingRecord,
+                    errorMessage: loaded.outcome.errorMessage,
+                    cloudKitUserScope: companionTestUserScope
+                )
+            )
+        },
+        resolveUserScope: { companionTestUserScope }
     )
+}
+
+private let companionTestUserScope = CompanionCloudKitUserScope.derive(
+    containerIdentifier: ContextPanelLocations.iCloudContainerID,
+    userRecordName: "companion-test-user"
+)
+
+private let companionOtherUserScope = CompanionCloudKitUserScope.derive(
+    containerIdentifier: ContextPanelLocations.iCloudContainerID,
+    userRecordName: "companion-other-user"
+)
+
+private actor CompanionScopeSequenceResolver {
+    private var scopes: [CompanionCloudKitUserScope]
+    private var lastScope: CompanionCloudKitUserScope?
+
+    init(scopes: [CompanionCloudKitUserScope]) {
+        self.scopes = scopes
+    }
+
+    func resolve() -> CompanionCloudKitUserScope? {
+        guard !scopes.isEmpty else { return lastScope }
+        let scope = scopes.removeFirst()
+        lastScope = scope
+        return scope
+    }
+}
+
+private actor CompanionIdentityBlocker {
+    private var continuation: CheckedContinuation<Int, Never>?
+    private var bufferedValue: Int?
+
+    func wait() async -> Int {
+        if let bufferedValue {
+            self.bufferedValue = nil
+            return bufferedValue
+        }
+        return await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func resume(returning value: Int) {
+        guard let continuation else {
+            bufferedValue = value
+            return
+        }
+        self.continuation = nil
+        continuation.resume(returning: value)
+    }
 }
 
 private func temporaryDirectory() throws -> URL {

@@ -19,6 +19,10 @@ public struct TVLocalCacheLocations: Equatable, Sendable {
         rootDirectory.appending(path: "tv-sync-receipt.json")
     }
 
+    public var cloudKitUserScopeStateURL: URL {
+        rootDirectory.appending(path: "cloudkit-user-scope.json")
+    }
+
     public var providerAlertStateURL: URL {
         rootDirectory.appending(path: "provider-alert-state.json")
     }
@@ -58,15 +62,18 @@ public struct TVSystemSurfaceContent: Equatable, Sendable {
     public let snapshot: WidgetSnapshot
     public let preferences: WidgetDisplayPreferences
     public let version: TVCompanionSyncVersion?
+    public let cloudKitUserScope: CompanionCloudKitUserScope
 
     public init(
         snapshot: WidgetSnapshot,
         preferences: WidgetDisplayPreferences,
-        version: TVCompanionSyncVersion?
+        version: TVCompanionSyncVersion?,
+        cloudKitUserScope: CompanionCloudKitUserScope
     ) {
         self.snapshot = snapshot
         self.preferences = preferences
         self.version = version
+        self.cloudKitUserScope = cloudKitUserScope
     }
 }
 
@@ -78,12 +85,17 @@ public struct TVSystemSurfaceContentSelection: Sendable {
     public mutating func select(
         snapshot: WidgetSnapshot,
         preferences: WidgetDisplayPreferences,
-        version: TVCompanionSyncVersion?
+        version: TVCompanionSyncVersion?,
+        cloudKitUserScope: CompanionCloudKitUserScope
     ) -> TVSystemSurfaceContent {
+        if latestContent?.cloudKitUserScope != cloudKitUserScope {
+            latestContent = nil
+        }
         let incomingContent = TVSystemSurfaceContent(
             snapshot: snapshot,
             preferences: preferences,
-            version: version
+            version: version,
+            cloudKitUserScope: cloudKitUserScope
         )
         guard let latestContent else {
             self.latestContent = incomingContent
@@ -100,6 +112,10 @@ public struct TVSystemSurfaceContentSelection: Sendable {
             return incomingContent
         }
     }
+
+    public mutating func reset() {
+        latestContent = nil
+    }
 }
 
 public enum TVCompanionSyncCachePolicy {
@@ -107,7 +123,9 @@ public enum TVCompanionSyncCachePolicy {
         _ currentResult: CompanionSyncLoadResult,
         replacingWith incomingDocument: CompanionSyncDocument
     ) -> Bool {
-        guard let currentDocument = currentResult.document else { return false }
+        guard let currentDocument = currentResult.document,
+              currentDocument.cloudKitUserScope == incomingDocument.cloudKitUserScope
+        else { return false }
         return TVCompanionSyncVersion(document: currentDocument)
             >= TVCompanionSyncVersion(document: incomingDocument)
     }

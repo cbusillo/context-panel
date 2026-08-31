@@ -58,6 +58,7 @@ public struct WatchCompanionCacheLoadResult: Equatable, Sendable {
 enum WatchCompanionCacheSaveOutcome: Equatable, Sendable {
     case saved(WatchCompanionCacheLoadResult)
     case keptCurrent(WatchCompanionCacheLoadResult)
+    case scopeConflict
     case failed
 }
 
@@ -100,13 +101,22 @@ public final class WatchCompanionCache: @unchecked Sendable {
         self.source = source
     }
 
-    public func load(now: Date = Date()) -> WatchCompanionCacheLoadResult {
+    public func load(
+        expectedScope: CompanionCloudKitUserScope,
+        now: Date = Date()
+    ) -> WatchCompanionCacheLoadResult {
         Self.fileLock.lock()
         defer { Self.fileLock.unlock() }
 
         do {
-            try migrateLegacyPayloadIfAvailable()
+            try migrateLegacyPayloadIfAvailable(expectedScope: expectedScope)
             if let payload = try Self.coordinatedLoadPayload(at: cacheURL) {
+                guard payload.cloudKitUserScope == expectedScope,
+                      payload.document.cloudKitUserScope == expectedScope
+                else {
+                    try Self.coordinatedRemove(at: cacheURL)
+                    return Self.emptyLoadResult()
+                }
                 return Self.loadResult(from: payload, now: now, source: source)
             }
             return Self.emptyLoadResult()
@@ -115,14 +125,7 @@ public final class WatchCompanionCache: @unchecked Sendable {
             watchCompanionCacheLogger.error(
                 "Watch companion cache read failed: domain=\(error.domain, privacy: .public) code=\(error.code)"
             )
-            return WatchCompanionCacheLoadResult(
-                result: CompanionSyncLoadResult(
-                    document: nil,
-                    status: .failure,
-                    errorMessage: "Context Panel Watch could not read saved usage."
-                ),
-                displayPreferences: nil
-            )
+            return Self.emptyLoadResult()
         }
     }
 
@@ -130,19 +133,21 @@ public final class WatchCompanionCache: @unchecked Sendable {
     public func save(
         document: CompanionSyncDocument,
         displayPreferences: WidgetDisplayPreferences,
+        userScope: CompanionCloudKitUserScope,
         displayPreferencesUpdatedAt: Date? = nil,
         now: Date = Date()
     ) -> Bool {
         switch saveSelectingNewest(
             document: document,
             displayPreferences: displayPreferences,
+            userScope: userScope,
             displayPreferencesUpdatedAt: displayPreferencesUpdatedAt
                 ?? document.snapshot.generatedAt,
             now: now
         ) {
         case .saved, .keptCurrent:
             true
-        case .failed:
+        case .scopeConflict, .failed:
             false
         }
     }
@@ -150,20 +155,25 @@ public final class WatchCompanionCache: @unchecked Sendable {
     func saveSelectingNewest(
         document: CompanionSyncDocument,
         displayPreferences: WidgetDisplayPreferences,
+        userScope: CompanionCloudKitUserScope,
         displayPreferencesUpdatedAt: Date?,
         now: Date
     ) -> WatchCompanionCacheSaveOutcome {
+        guard document.cloudKitUserScope == userScope else { return .scopeConflict }
         Self.fileLock.lock()
         defer { Self.fileLock.unlock() }
         do {
             let outcome = try Self.coordinatedWriteSelectingNewest(
                 document: document,
                 displayPreferences: displayPreferences,
+                userScope: userScope,
                 displayPreferencesUpdatedAt: displayPreferencesUpdatedAt,
                 cachedAt: now,
                 to: cacheURL
             )
             switch outcome {
+            case .scopeConflict:
+                return .scopeConflict
             case .saved(let payload):
                 return .saved(Self.loadResult(from: payload, now: now, source: source))
             case .keptCurrent(let payload):
@@ -197,6 +207,11 @@ public final class WatchCompanionCache: @unchecked Sendable {
         }
     }
 
+    @discardableResult
+    public func invalidateUserScope() -> Bool {
+        remove()
+    }
+
     func removeIfCurrent(
         _ expected: WatchCompanionCacheLoadResult,
         now: Date
@@ -226,7 +241,9 @@ public final class WatchCompanionCache: @unchecked Sendable {
         }
     }
 
-    private func migrateLegacyPayloadIfAvailable() throws {
+    private func migrateLegacyPayloadIfAvailable(
+        expectedScope: CompanionCloudKitUserScope
+    ) throws {
         guard let legacyCacheURL else { return }
         let legacyPayload: Payload?
         do {
@@ -234,15 +251,23 @@ public final class WatchCompanionCache: @unchecked Sendable {
         } catch {
             let error = error as NSError
             watchCompanionCacheLogger.error(
-                "Watch companion legacy cache migration skipped: domain=\(error.domain, privacy: .public) code=\(error.code)"
+                "Watch companion legacy cache purge required: domain=\(error.domain, privacy: .public) code=\(error.code)"
             )
+            try Self.coordinatedRemove(at: legacyCacheURL)
             return
         }
-        guard let legacyPayload else { return }
+        guard let legacyPayload,
+              legacyPayload.cloudKitUserScope == expectedScope,
+              legacyPayload.document.cloudKitUserScope == expectedScope
+        else {
+            try Self.coordinatedRemove(at: legacyCacheURL)
+            return
+        }
 
         _ = try Self.coordinatedWriteSelectingNewest(
             document: legacyPayload.document,
             displayPreferences: legacyPayload.displayPreferences,
+            userScope: expectedScope,
             displayPreferencesUpdatedAt: legacyPayload.displayPreferencesUpdatedAt,
             cachedAt: legacyPayload.cachedAt,
             to: cacheURL
@@ -310,6 +335,7 @@ public final class WatchCompanionCache: @unchecked Sendable {
     private static func coordinatedWriteSelectingNewest(
         document: CompanionSyncDocument,
         displayPreferences: WidgetDisplayPreferences,
+        userScope: CompanionCloudKitUserScope,
         displayPreferencesUpdatedAt: Date?,
         cachedAt: Date,
         to url: URL
@@ -330,17 +356,27 @@ public final class WatchCompanionCache: @unchecked Sendable {
                 let current = FileManager.default.fileExists(atPath: coordinatedURL.path)
                     ? try? decodePayload(from: Data(contentsOf: coordinatedURL))
                     : nil
+                let scopedCurrent = current.flatMap { payload in
+                    payload.cloudKitUserScope == userScope
+                        && payload.document.cloudKitUserScope == userScope
+                        ? payload
+                        : nil
+                }
+                if current != nil, scopedCurrent == nil {
+                    outcome = .scopeConflict
+                    return
+                }
                 let selectedDocument = document.mergingForRemotePublish(
-                    existing: current?.document,
+                    existing: scopedCurrent?.document,
                     now: cachedAt
                 )
                 let selectedPreferences = preferredDisplayPreferences(
                     candidate: displayPreferences,
                     candidateUpdatedAt: displayPreferencesUpdatedAt,
                     candidateCachedAt: cachedAt,
-                    current: current
+                    current: scopedCurrent
                 )
-                if let current,
+                if let current = scopedCurrent,
                    selectedDocument == current.document,
                    selectedPreferences.preferences == current.displayPreferences,
                    selectedPreferences.updatedAt == current.displayPreferencesUpdatedAt {
@@ -350,8 +386,9 @@ public final class WatchCompanionCache: @unchecked Sendable {
                 let candidate = Payload(
                     document: selectedDocument,
                     displayPreferences: selectedPreferences.preferences,
+                    cloudKitUserScope: userScope,
                     displayPreferencesUpdatedAt: selectedPreferences.updatedAt,
-                    cachedAt: max(cachedAt, current?.cachedAt ?? cachedAt)
+                    cachedAt: max(cachedAt, scopedCurrent?.cachedAt ?? cachedAt)
                 )
                 try makeEncoder().encode(candidate).write(to: coordinatedURL, options: .atomic)
                 outcome = .saved(candidate)
@@ -488,9 +525,10 @@ public final class WatchCompanionCache: @unchecked Sendable {
 
     private static func decodePayload(from data: Data) throws -> Payload {
         let payload = try makeDecoder().decode(Payload.self, from: data)
-        guard Payload.supportedSchemaVersions.contains(payload.schemaVersion),
+        guard payload.schemaVersion == Payload.schemaVersion,
               payload.document.schemaVersion == CompanionSyncDocument.schemaVersion,
-              payload.document.snapshot.schemaVersion == CompanionSnapshot.schemaVersion
+              payload.document.snapshot.schemaVersion == CompanionSnapshot.schemaVersion,
+              payload.document.cloudKitUserScope == payload.cloudKitUserScope
         else {
             throw CacheError.unsupportedSchema
         }
@@ -511,19 +549,20 @@ public final class WatchCompanionCache: @unchecked Sendable {
     }
 
     private struct Payload: Codable, Equatable, Sendable {
-        static let schemaVersion = 2
-        static let supportedSchemaVersions = 1 ... schemaVersion
+        static let schemaVersion = 3
 
         let schemaVersion: Int
         let revision: UUID?
         let document: CompanionSyncDocument
         let displayPreferences: WidgetDisplayPreferences
+        let cloudKitUserScope: CompanionCloudKitUserScope
         let displayPreferencesUpdatedAt: Date?
         let cachedAt: Date
 
         init(
             document: CompanionSyncDocument,
             displayPreferences: WidgetDisplayPreferences,
+            cloudKitUserScope: CompanionCloudKitUserScope,
             displayPreferencesUpdatedAt: Date?,
             cachedAt: Date
         ) {
@@ -531,6 +570,7 @@ public final class WatchCompanionCache: @unchecked Sendable {
             revision = UUID()
             self.document = document
             self.displayPreferences = displayPreferences
+            self.cloudKitUserScope = cloudKitUserScope
             self.displayPreferencesUpdatedAt = displayPreferencesUpdatedAt
             self.cachedAt = cachedAt
         }
@@ -540,6 +580,7 @@ public final class WatchCompanionCache: @unchecked Sendable {
             case revision
             case document
             case displayPreferences
+            case cloudKitUserScope
             case displayPreferencesUpdatedAt
             case cachedAt
         }
@@ -552,6 +593,10 @@ public final class WatchCompanionCache: @unchecked Sendable {
             displayPreferences = try container.decode(
                 WidgetDisplayPreferences.self,
                 forKey: .displayPreferences
+            )
+            cloudKitUserScope = try container.decode(
+                CompanionCloudKitUserScope.self,
+                forKey: .cloudKitUserScope
             )
             displayPreferencesUpdatedAt = try container.decodeIfPresent(
                 Date.self,
@@ -574,6 +619,7 @@ public final class WatchCompanionCache: @unchecked Sendable {
     private enum PayloadWriteOutcome {
         case saved(Payload)
         case keptCurrent(Payload)
+        case scopeConflict
     }
 
     private enum PayloadRemoveOutcome {

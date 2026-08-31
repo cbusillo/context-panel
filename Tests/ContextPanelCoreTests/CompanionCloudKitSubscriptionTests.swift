@@ -161,7 +161,8 @@ import Testing
     let pendingSave = try CompanionCloudKitRecordBuilder(recordID: recordID).makeRecord(
         incomingDocument: incomingDocument,
         existingRecord: record,
-        now: incomingDate
+        now: incomingDate,
+        userScope: cloudKitUserScope
     )
     let mergedDocument = try CompanionSyncPayloadCodec.decode(pendingSave.payload)
 
@@ -183,7 +184,8 @@ import Testing
     let pendingSave = try CompanionCloudKitRecordBuilder(recordID: recordID).makeRecord(
         incomingDocument: document,
         existingRecord: nil,
-        now: generatedAt
+        now: generatedAt,
+        userScope: cloudKitUserScope
     )
     let mirroredDocument = try CompanionSyncPayloadCodec.decode(pendingSave.payload)
 
@@ -229,7 +231,8 @@ import Testing
     let pendingSave = try CompanionCloudKitRecordBuilder(recordID: recordID).makeRecord(
         incomingDocument: incomingDocument,
         existingRecord: record,
-        now: now
+        now: now,
+        userScope: cloudKitUserScope
     )
     let mergedMirrors = CompanionCloudKitDocumentSet.merged(
         [managedDocument, managedDocument],
@@ -247,6 +250,11 @@ import Testing
 private enum CompanionCloudKitSubscriptionTestError: Error {
     case failed
 }
+
+private let cloudKitUserScope = CompanionCloudKitUserScope.derive(
+    containerIdentifier: ContextPanelLocations.iCloudContainerID,
+    userRecordName: "test-user"
+)
 
 private func cloudKitDocument(
     generatedAt: Date,
