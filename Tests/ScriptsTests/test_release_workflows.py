@@ -1,21 +1,124 @@
-import unittest
-from pathlib import Path
 import base64
-import subprocess
-import re
-import tempfile
-import os
-import json
-import shlex
 import hashlib
+import importlib.util
+import json
+import os
+import re
+import shlex
 import shutil
+import subprocess
+import sys
+import tempfile
 import textwrap
 import time
-
+import unittest
+from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_SIGNING_CERTIFICATE = b"context-panel-fixture-signing-certificate"
 FIXTURE_SIGNING_FINGERPRINT = hashlib.sha1(FIXTURE_SIGNING_CERTIFICATE).hexdigest().upper()
+
+
+def load_script_module(module_name: str, relative_path: str):
+    spec = importlib.util.spec_from_file_location(module_name, REPO_ROOT / relative_path)
+    if spec is None or spec.loader is None:
+        raise AssertionError(f"could not load script module: {relative_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+class FakeGitHubReleaseClient:
+    def __init__(self) -> None:
+        self.tags: dict[str, str] = {}
+        self.release: dict[str, object] | None = None
+        self.asset_bytes: dict[int, bytes] = {}
+        self.create_count = 0
+        self.upload_count = 0
+        self.publish_count = 0
+        self.fail_upload_name = ""
+        self.corrupt_upload_name = ""
+        self.next_asset_id = 1
+
+    def resolve_tag(self, tag: str) -> str | None:
+        return self.tags.get(tag)
+
+    def get_release(self, tag: str) -> dict[str, object] | None:
+        if self.release is None or self.release.get("tag_name") != tag:
+            return None
+        raw_assets = self.release.get("assets", [])
+        if not isinstance(raw_assets, list):
+            raise TypeError("release assets are malformed")
+        return {
+            **self.release,
+            "assets": [dict(asset) for asset in raw_assets],
+        }
+
+    def create_draft(
+        self,
+        tag: str,
+        commit: str,
+        title: str,
+        notes: str,
+        *,
+        tag_exists: bool,
+    ) -> None:
+        self.create_count += 1
+        if tag_exists and tag not in self.tags:
+            raise AssertionError("tag existence contract was violated")
+        self.release = {
+            "tag_name": tag,
+            "name": title,
+            "body": notes,
+            "draft": True,
+            "target_commitish": commit,
+            "assets": [],
+        }
+
+    def upload_asset(self, tag: str, path: Path) -> None:
+        if path.name == self.fail_upload_name:
+            raise RuntimeError(f"simulated upload failure: {path.name}")
+        if self.release is None or self.release.get("tag_name") != tag:
+            raise AssertionError("release does not exist")
+        assets = self.release["assets"]
+        assert isinstance(assets, list)
+        asset_id = self.next_asset_id
+        self.next_asset_id += 1
+        content = path.read_bytes()
+        if path.name == self.corrupt_upload_name:
+            content += b"corrupted"
+        assets.append(
+            {
+                "id": asset_id,
+                "name": path.name,
+                "size": len(content),
+                "state": "uploaded",
+            }
+        )
+        self.asset_bytes[asset_id] = content
+        self.upload_count += 1
+
+    def download_asset(self, asset_id: int) -> bytes:
+        return self.asset_bytes[asset_id]
+
+    def delete_asset(self, asset_id: int) -> None:
+        if self.release is None:
+            raise AssertionError("release does not exist")
+        assets = self.release["assets"]
+        assert isinstance(assets, list)
+        self.release["assets"] = [asset for asset in assets if asset["id"] != asset_id]
+        self.asset_bytes.pop(asset_id, None)
+
+    def publish_draft(self, tag: str) -> None:
+        if self.release is None or self.release.get("tag_name") != tag:
+            raise AssertionError("release does not exist")
+        target = self.release.get("target_commitish")
+        if not isinstance(target, str):
+            raise AssertionError("release target is missing")
+        self.tags.setdefault(tag, target)
+        self.release["draft"] = False
+        self.publish_count += 1
 
 
 def indented_block(document: str, header: str, indent: int) -> str:
@@ -142,6 +245,88 @@ def assert_lines_in_order(document: str, *expected_lines: str) -> None:
 class ReleaseWorkflowTests(unittest.TestCase):
     def read(self, relative_path: str) -> str:
         return (REPO_ROOT / relative_path).read_text()
+
+    def github_release_fixture(self, root: Path):
+        publisher = load_script_module(
+            "context_panel_publish_github_release",
+            "scripts/publish-github-release.py",
+        )
+        sealer = load_script_module(
+            "context_panel_seal_github_release_metadata",
+            "scripts/seal-github-release-metadata.py",
+        )
+        tag = "v1.2.3"
+        version = "1.2.3"
+        build_number = "42"
+        source_commit = "a" * 40
+        zip_path = root / "ContextPanel-1.2.3-macOS.zip"
+        metadata_path = root / "release-metadata.json"
+        zip_path.write_bytes(b"signed release zip")
+        metadata_path.write_text(
+            json.dumps(
+                {
+                    "version": version,
+                    "buildNumber": build_number,
+                    "signingIdentity": "-",
+                    "notarized": False,
+                }
+            )
+            + "\n"
+        )
+        sealer.seal_metadata(
+            metadata_path,
+            tag=tag,
+            source_commit=source_commit,
+            version=version,
+            build_number=build_number,
+            asset_paths=[zip_path],
+        )
+        identity = publisher.build_release_identity(
+            tag=tag,
+            source_commit=source_commit,
+            version=version,
+            build_number=build_number,
+            metadata_path=metadata_path,
+            asset_paths=[zip_path],
+        )
+        return publisher, identity, zip_path, metadata_path
+
+    def seed_fake_release(
+        self,
+        client: FakeGitHubReleaseClient,
+        publisher,
+        identity,
+        *,
+        draft: bool,
+        marker_identity=None,
+        content_overrides: dict[str, bytes] | None = None,
+    ) -> None:
+        if not draft:
+            client.tags[identity.tag] = identity.source_commit
+        client.release = {
+            "tag_name": identity.tag,
+            "name": f"Context Panel {identity.version}",
+            "body": publisher.render_notes("release notes", marker_identity or identity),
+            "draft": draft,
+            "target_commitish": identity.source_commit,
+            "assets": [],
+        }
+        overrides = content_overrides or {}
+        assets = client.release["assets"]
+        assert isinstance(assets, list)
+        for asset in identity.assets:
+            asset_id = client.next_asset_id
+            client.next_asset_id += 1
+            content = overrides.get(asset.name, asset.path.read_bytes())
+            assets.append(
+                {
+                    "id": asset_id,
+                    "name": asset.name,
+                    "size": len(content),
+                    "state": "uploaded",
+                }
+            )
+            client.asset_bytes[asset_id] = content
 
     def expected_checkout_cache_key(self, checkout_root: Path) -> str:
         physical_root = str(checkout_root.resolve())
@@ -1103,6 +1288,254 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             self.assertEqual(untrusted.returncode, 1)
             self.assertIn("outside origin/main", untrusted.stdout)
 
+    def test_release_metadata_seal_records_source_and_payload_digest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _, identity, zip_path, metadata_path = self.github_release_fixture(root)
+            metadata = json.loads(metadata_path.read_text())
+
+            self.assertEqual(
+                metadata["releaseIdentity"],
+                {
+                    "schemaVersion": 1,
+                    "tag": identity.tag,
+                    "sourceCommit": identity.source_commit,
+                    "version": identity.version,
+                    "buildNumber": identity.build_number,
+                    "assets": [
+                        {
+                            "name": zip_path.name,
+                            "sha256": hashlib.sha256(zip_path.read_bytes()).hexdigest(),
+                            "size": zip_path.stat().st_size,
+                        }
+                    ],
+                },
+            )
+
+    def test_github_release_publication_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            publisher, identity, _, _ = self.github_release_fixture(Path(directory))
+            client = FakeGitHubReleaseClient()
+
+            first_result = publisher.publish_release(
+                client,
+                identity,
+                title=f"Context Panel {identity.version}",
+                notes="release notes",
+            )
+            self.assertEqual(first_result, "published")
+            self.assertEqual(client.create_count, 1)
+            self.assertEqual(client.upload_count, 2)
+            self.assertEqual(client.publish_count, 1)
+            self.assertIsNotNone(client.release)
+            assert client.release is not None
+            self.assertIs(client.release["draft"], False)
+
+            second_result = publisher.publish_release(
+                client,
+                identity,
+                title=f"Context Panel {identity.version}",
+                notes="changed human notes do not rewrite identity",
+            )
+            self.assertEqual(second_result, "already-published")
+            self.assertEqual(client.create_count, 1)
+            self.assertEqual(client.upload_count, 2)
+            self.assertEqual(client.publish_count, 1)
+
+    def test_github_release_publication_rejects_mismatched_tag(self):
+        with tempfile.TemporaryDirectory() as directory:
+            publisher, identity, _, _ = self.github_release_fixture(Path(directory))
+            client = FakeGitHubReleaseClient()
+            client.tags[identity.tag] = "b" * 40
+
+            with self.assertRaisesRegex(
+                publisher.PublicationError,
+                "resolves to",
+            ):
+                publisher.publish_release(
+                    client,
+                    identity,
+                    title=f"Context Panel {identity.version}",
+                    notes="release notes",
+                )
+            self.assertIsNone(client.release)
+
+    def test_github_release_publication_rejects_mismatched_build_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            publisher, identity, _, _ = self.github_release_fixture(Path(directory))
+            client = FakeGitHubReleaseClient()
+            mismatched_identity = publisher.ReleaseIdentity(
+                tag=identity.tag,
+                source_commit=identity.source_commit,
+                version=identity.version,
+                build_number="43",
+                assets=identity.assets,
+            )
+            self.seed_fake_release(
+                client,
+                publisher,
+                identity,
+                draft=False,
+                marker_identity=mismatched_identity,
+            )
+
+            with self.assertRaisesRegex(
+                publisher.PublicationError,
+                "identity does not match",
+            ):
+                publisher.publish_release(
+                    client,
+                    identity,
+                    title=f"Context Panel {identity.version}",
+                    notes="release notes",
+                )
+
+    def test_github_release_publication_rejects_changed_asset_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            publisher, identity, zip_path, _ = self.github_release_fixture(Path(directory))
+            client = FakeGitHubReleaseClient()
+            self.seed_fake_release(
+                client,
+                publisher,
+                identity,
+                draft=False,
+                content_overrides={zip_path.name: b"different release bytes"},
+            )
+
+            with self.assertRaisesRegex(
+                publisher.PublicationError,
+                "asset bytes do not match",
+            ):
+                publisher.publish_release(
+                    client,
+                    identity,
+                    title=f"Context Panel {identity.version}",
+                    notes="release notes",
+                )
+
+    def test_github_release_partial_upload_stays_draft_until_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            publisher, identity, _, metadata_path = self.github_release_fixture(
+                Path(directory)
+            )
+            client = FakeGitHubReleaseClient()
+            client.fail_upload_name = metadata_path.name
+
+            with self.assertRaisesRegex(RuntimeError, "simulated upload failure"):
+                publisher.publish_release(
+                    client,
+                    identity,
+                    title=f"Context Panel {identity.version}",
+                    notes="release notes",
+                )
+            self.assertIsNotNone(client.release)
+            assert client.release is not None
+            self.assertIs(client.release["draft"], True)
+            self.assertEqual(client.publish_count, 0)
+            self.assertEqual(client.upload_count, 1)
+
+            client.fail_upload_name = ""
+            result = publisher.publish_release(
+                client,
+                identity,
+                title=f"Context Panel {identity.version}",
+                notes="release notes",
+            )
+            self.assertEqual(result, "published")
+            self.assertIs(client.release["draft"], False)
+            self.assertEqual(client.upload_count, 2)
+            self.assertEqual(client.publish_count, 1)
+
+    def test_github_release_remote_verification_failure_keeps_draft(self):
+        with tempfile.TemporaryDirectory() as directory:
+            publisher, identity, zip_path, _ = self.github_release_fixture(
+                Path(directory)
+            )
+            client = FakeGitHubReleaseClient()
+            client.corrupt_upload_name = zip_path.name
+
+            with self.assertRaisesRegex(
+                publisher.PublicationError,
+                "asset bytes do not match",
+            ):
+                publisher.publish_release(
+                    client,
+                    identity,
+                    title=f"Context Panel {identity.version}",
+                    notes="release notes",
+                )
+            self.assertIsNotNone(client.release)
+            assert client.release is not None
+            self.assertIs(client.release["draft"], True)
+            self.assertEqual(client.publish_count, 0)
+
+            client.corrupt_upload_name = ""
+            result = publisher.publish_release(
+                client,
+                identity,
+                title=f"Context Panel {identity.version}",
+                notes="release notes",
+            )
+            self.assertEqual(result, "published")
+            self.assertIs(client.release["draft"], False)
+            self.assertEqual(client.publish_count, 1)
+
+    def test_github_release_draft_lookup_falls_back_to_release_listing(self):
+        publisher = load_script_module(
+            "context_panel_publish_github_release_draft_lookup",
+            "scripts/publish-github-release.py",
+        )
+        draft = {
+            "tag_name": "v1.2.3",
+            "draft": True,
+            "target_commitish": "a" * 40,
+            "body": "draft",
+            "assets": [],
+        }
+
+        class DraftLookupClient(publisher.GitHubCLIClient):
+            def _api_json(self, endpoint, *, allow_not_found=False):
+                return None
+
+            def _api_pages(self, endpoint):
+                return [draft]
+
+        client = DraftLookupClient("cbusillo/context-panel")
+        self.assertEqual(client.get_release("v1.2.3"), draft)
+
+    def test_github_release_rejects_tagless_published_release(self):
+        with tempfile.TemporaryDirectory() as directory:
+            publisher, identity, _, _ = self.github_release_fixture(Path(directory))
+            client = FakeGitHubReleaseClient()
+            self.seed_fake_release(
+                client,
+                publisher,
+                identity,
+                draft=False,
+            )
+            client.tags.clear()
+
+            with self.assertRaisesRegex(
+                publisher.PublicationError,
+                "published GitHub Release has no matching tag",
+            ):
+                publisher.publish_release(
+                    client,
+                    identity,
+                    title=f"Context Panel {identity.version}",
+                    notes="release notes",
+                )
+
+    def test_release_workflow_uses_verified_draft_publication(self):
+        workflow = self.read(".github/workflows/release.yml")
+
+        self.assertIn("scripts/seal-github-release-metadata.py", workflow)
+        self.assertIn("scripts/publish-github-release.py", workflow)
+        self.assertIn("--source-commit \"${GITHUB_SHA}\"", workflow)
+        self.assertNotIn("--clobber", workflow)
+        self.assertNotIn("gh release upload", workflow)
+        self.assertNotIn("gh release edit", workflow)
+
     def test_ship_release_channels_depend_on_validation(self):
         workflow = self.read(".github/workflows/ship.yml")
 
@@ -1155,6 +1588,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             re.DOTALL,
         )
         self.assertIsNotNone(companion_case_match)
+        assert companion_case_match is not None
         companion_case = companion_case_match.group("body")
 
         self.assertRegex(
