@@ -23,5 +23,10 @@ Expected GitHub settings:
   `errors` or security alerts at `high_or_higher`.
 - Code quality gate on `main`: enabled for `errors`.
 - Force pushes and branch deletion: blocked for `main`.
+- Release environment: active environment named `release` with a required
+  repository-owner review, administrator bypass disabled, and deployment
+  branches restricted to protected branches only. Because `main` is the only
+  protected branch, secret-bearing release jobs cannot run from tags or task
+  branches.
 
 Implementation work should happen on focused branches with pull requests.
