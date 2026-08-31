@@ -122,6 +122,15 @@ def add_expected_build_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_cloudkit_schema_receipt_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--cloudkit-schema-receipt",
+        type=Path,
+        required=True,
+        help="Fresh sealed Production CloudKit schema receipt JSON",
+    )
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Report read-only signed validation evidence.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -199,12 +208,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     add_target_arguments(sync_runtime)
     add_expected_build_arguments(sync_runtime)
+    add_cloudkit_schema_receipt_argument(sync_runtime)
     advance_automation = subparsers.add_parser(
         "advance-automation",
         help="Advance the bounded runtime-receipt sync automation only",
     )
     add_target_arguments(advance_automation)
     add_expected_build_arguments(advance_automation)
+    add_cloudkit_schema_receipt_argument(advance_automation)
     for option, destination in (
         ("--surface-comparison", "surface_comparison"),
         ("--current-manifest", "current_manifest"),
@@ -578,6 +589,7 @@ def sync_and_reconcile_runtime_evidence(
     store: SessionStateStore,
     session: CoordinatorSessionState,
     expected_build_manifests: list[Path],
+    cloudkit_schema_receipt: Path | None,
     now,
 ):
     runtime_store = RuntimeEvidenceStore(store)
@@ -589,7 +601,10 @@ def sync_and_reconcile_runtime_evidence(
     runtime_state = runtime_store.attach_expected(session, identities, now)
     if runtime_state is None:
         raise RuntimeEvidenceError("runtime expected build evidence is unavailable")
-    observation = RuntimeSessionAdapter(SubprocessRunner()).sync_and_collect(now)
+    observation = RuntimeSessionAdapter(
+        SubprocessRunner(),
+        cloudkit_schema_receipt=cloudkit_schema_receipt,
+    ).sync_and_collect(now)
     runtime_state, superseded = runtime_store.reconcile(session, observation)
     if superseded:
         session = store.transition(
@@ -627,6 +642,7 @@ def run_sync_runtime_evidence(args: argparse.Namespace) -> int:
         store,
         session,
         getattr(args, "expected_build_manifests", None) or [],
+        getattr(args, "cloudkit_schema_receipt", None),
         now,
     )
     payload = {
@@ -1088,6 +1104,7 @@ def _run_advance_automation_locked(
             store,
             session,
             getattr(args, "expected_build_manifests", None) or [],
+            getattr(args, "cloudkit_schema_receipt", None),
             now,
         )
     except RuntimeEvidenceError:

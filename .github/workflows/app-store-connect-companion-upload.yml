@@ -22,6 +22,10 @@ name: App Store Connect Companion Build Upload
         required: false
         default: true
         type: boolean
+      cloudkit_schema_receipt_base64:
+        description: Sealed short-lived Production CloudKit schema receipt.
+        required: false
+        type: string
     outputs:
       build_number:
         description: Resolved CFBundleVersion build number.
@@ -53,6 +57,10 @@ name: App Store Connect Companion Build Upload
         required: true
         default: true
         type: boolean
+      cloudkit_schema_receipt_base64:
+        description: Sealed short-lived Production CloudKit schema receipt.
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -249,6 +257,21 @@ jobs:
               | base64 -D \
                 > .build/provisioning-appstore/ContextPanelWatchWidgetExtension.provisionprofile
           fi
+
+      - name: Verify Production CloudKit Schema Receipt
+        if: ${{ inputs.upload }}
+        shell: bash
+        env:
+          CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64: >-
+            ${{ inputs.cloudkit_schema_receipt_base64 }}
+          CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY: >-
+            ${{ secrets.CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY }}
+        run: |
+          python3 scripts/cloudkit-schema-receipt.py verify \
+            --receipt-base64-env CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_BASE64 \
+            --environment production \
+            --container-id iCloud.com.shinycomputers.contextpanel \
+            --source-commit "${GITHUB_SHA}"
 
       - name: Archive and Upload
         shell: bash

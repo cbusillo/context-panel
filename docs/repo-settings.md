@@ -28,6 +28,11 @@ Expected GitHub settings:
   branches restricted to protected branches only. Because `main` is the only
   protected branch, secret-bearing release jobs cannot run from tags or task
   branches.
+- Release environment secret:
+  `CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY`, containing at least 32 bytes of
+  high-entropy key material shared with the operator Keychain entry used to seal
+  Production CloudKit schema receipts. Do not store the value in repository
+  files or repository-level secrets.
 - Immutable Releases: enabled so newly published GitHub Releases lock their tag,
   title, notes, and assets after publication.
 

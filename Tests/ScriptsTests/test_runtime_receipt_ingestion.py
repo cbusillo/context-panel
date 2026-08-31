@@ -609,14 +609,52 @@ class RuntimeReceiptIngestionTests(unittest.TestCase):
 
         state, _ = runtime_store.reconcile(
             session,
-            RuntimeSessionAdapter(runner).sync_and_collect(NOW),
+            RuntimeSessionAdapter(
+                runner,
+                cloudkit_schema_receipt=Path("cloudkit-schema-receipt.json"),
+            ).sync_and_collect(NOW),
         )
 
-        self.assertEqual([command[-1] for command in runner.commands[:2]], ["sync", "status"])
+        self.assertEqual(
+            runner.commands[0][-2:],
+            ["--cloudkit-schema-receipt", "cloudkit-schema-receipt.json"],
+        )
+        self.assertEqual(runner.commands[1][-1], "status")
         persisted = store.runtime_evidence_path(session.id).read_text()
         self.assertNotIn("/Users/example", persisted)
         self.assertNotIn("token-secret", persisted)
         self.assertTrue(state.last_observation.sync_healthy)
+
+    def test_explicit_sync_requires_production_schema_receipt(self):
+        runner = QueueRunner([])
+
+        with self.assertRaisesRegex(
+            RuntimeEvidenceError,
+            "Production CloudKit schema receipt is required",
+        ):
+            RuntimeSessionAdapter(runner).sync_and_collect(NOW)
+
+        self.assertEqual(runner.commands, [])
+
+    def test_sync_usage_error_is_invalid_instead_of_unavailable(self):
+        surfaces = ("macos.app",)
+        status = runtime_status(surfaces)
+        export = runtime_export(status, [runtime_receipt("macos.app", status)])
+        runner = QueueRunner(
+            [
+                CommandResult(2, "", "usage error"),
+                CommandResult(0, json.dumps(status), ""),
+                CommandResult(0, json.dumps(export), ""),
+            ]
+        )
+
+        observation = RuntimeSessionAdapter(
+            runner,
+            cloudkit_schema_receipt=Path("cloudkit-schema-receipt.json"),
+        ).sync_and_collect(NOW)
+
+        self.assertIn("sync-invalid", observation.diagnostics)
+        self.assertNotIn("sync-unavailable", observation.diagnostics)
 
     def test_exact_matching_rejects_each_wrong_identity_field(self):
         surfaces = ("macos.app",)

@@ -4,21 +4,27 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
 import fcntl
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import struct
 import subprocess
+import sys
 import tempfile
 import uuid
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 
 APP_GROUP_ID = "MM5YXC7T6E.group.com.shinycomputers.contextpanel"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_CLOUDKIT_SCHEMA_RECEIPT_TOOL = REPO_ROOT / "scripts/cloudkit-schema-receipt.py"
+CLOUDKIT_SCHEMA_RECEIPT_KEY_ENVIRONMENT_VARIABLE = (
+    "CONTEXT_PANEL_CLOUDKIT_SCHEMA_RECEIPT_KEY"
+)
 DEFAULT_VALIDATION_ROOT = (
     Path.home()
     / "Library"
@@ -49,6 +55,7 @@ DEFAULT_MAC_SURFACES = (
     "macos.refresh-agent",
 )
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 SURFACE_PLATFORMS = {
     "macos.app": "macOS",
     "macos.widget": "macOS",
@@ -185,6 +192,7 @@ def parse_arguments() -> argparse.Namespace:
         help="Ask the canonical signed refresh agent to relay the session and receipts.",
     )
     sync.add_argument("--agent", type=Path, default=DEFAULT_REFRESH_AGENT)
+    sync.add_argument("--cloudkit-schema-receipt", type=Path, required=True)
 
     export = subparsers.add_parser(
         "export",
@@ -941,8 +949,47 @@ def sync_runtime_receipts(arguments: argparse.Namespace) -> None:
     if not arguments.agent.is_file() or not os.access(arguments.agent, os.X_OK):
         raise SystemExit("canonical signed refresh agent is unavailable")
     try:
+        source_commit_result = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise SystemExit("repository source commit is unavailable") from error
+    source_commit = source_commit_result.stdout.strip().lower()
+    if source_commit_result.returncode != 0 or not COMMIT_PATTERN.fullmatch(source_commit):
+        raise SystemExit("repository source commit is unavailable")
+    receipt_verification = subprocess.run(
+        [
+            sys.executable,
+            str(DEFAULT_CLOUDKIT_SCHEMA_RECEIPT_TOOL),
+            "verify",
+            "--receipt",
+            str(arguments.cloudkit_schema_receipt),
+            "--environment",
+            "production",
+            "--container-id",
+            "iCloud.com.shinycomputers.contextpanel",
+            "--source-commit",
+            source_commit,
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if receipt_verification.returncode != 0:
+        message = receipt_verification.stderr.strip().splitlines()
+        detail = message[-1] if message else "receipt verification did not complete"
+        raise SystemExit(f"runtime receipt relay blocked: {detail}")
+    agent_environment = os.environ.copy()
+    agent_environment.pop(CLOUDKIT_SCHEMA_RECEIPT_KEY_ENVIRONMENT_VARIABLE, None)
+    try:
         completed = subprocess.run(
             [str(arguments.agent), "--sync-runtime-receipts"],
+            env=agent_environment,
             capture_output=True,
             text=True,
             check=False,

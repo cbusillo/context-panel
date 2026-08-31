@@ -1006,9 +1006,15 @@ def expected_surface_identities_from_payloads(
 
 
 class RuntimeSessionAdapter:
-    def __init__(self, runner: Runner, script: Path = RUNTIME_SESSION_SCRIPT):
+    def __init__(
+        self,
+        runner: Runner,
+        script: Path = RUNTIME_SESSION_SCRIPT,
+        cloudkit_schema_receipt: Path | None = None,
+    ):
         self.runner = runner
         self.script = script
+        self.cloudkit_schema_receipt = cloudkit_schema_receipt
 
     def collect(self, now: datetime) -> RuntimeSessionObservation:
         return self._collect(now, sync=False)
@@ -1020,13 +1026,25 @@ class RuntimeSessionAdapter:
         diagnostics: set[str] = set()
         sync_payload: dict[str, object] | None = None
         if sync:
+            if self.cloudkit_schema_receipt is None:
+                raise RuntimeEvidenceError(
+                    "Production CloudKit schema receipt is required for runtime sync"
+                )
             sync_result = self.runner.run(
-                [sys.executable, str(self.script), "sync"],
+                [
+                    sys.executable,
+                    str(self.script),
+                    "sync",
+                    "--cloudkit-schema-receipt",
+                    str(self.cloudkit_schema_receipt),
+                ],
                 timeout=130,
             )
             parsed_sync = self._parse_json_object(sync_result.stdout)
             if sync_result.timed_out:
                 diagnostics.add("sync-timeout")
+            elif sync_result.returncode == 2:
+                diagnostics.add("sync-invalid")
             elif parsed_sync is None or not self._valid_sync_payload(parsed_sync):
                 diagnostics.add("sync-unavailable" if sync_result.returncode else "sync-invalid")
             else:
