@@ -22,6 +22,12 @@ private func reloadContextPanelCompanionWidgetTimeline() {
     WidgetCenter.shared.reloadTimelines(ofKind: ContextPanelCompanionWidgetIdentity.kind)
 }
 
+private extension Notification.Name {
+    static let contextPanelCompanionCloudKitAccountDidChange = Notification.Name(
+        "ContextPanelCompanionCloudKitAccountDidChange"
+    )
+}
+
 private struct CompanionWidgetRenderSignature: Equatable {
     let state: WidgetSnapshotState
     let generatedAt: Date
@@ -117,12 +123,14 @@ struct ContextPanelCompanionApp: App {
 
 private final class CompanionAppDelegate: NSObject, UIApplicationDelegate {
     private let remoteStore = CompanionCloudKitSyncStoreFactory.make()
+    private var accountChangeObserver: NSObjectProtocol?
 
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         application.registerForRemoteNotifications()
+        registerCloudKitAccountChangeObserver()
         Task { [remoteStore] in
             _ = await remoteStore.registerSubscription()
         }
@@ -158,6 +166,28 @@ private final class CompanionAppDelegate: NSObject, UIApplicationDelegate {
                     completionHandler(.noData)
                 }
             }
+        }
+    }
+
+    private func registerCloudKitAccountChangeObserver() {
+        guard accountChangeObserver == nil else { return }
+        accountChangeObserver = NotificationCenter.default.addObserver(
+            forName: Notification.Name("CKAccountChangedNotification"),
+            object: nil,
+            queue: .main
+        ) { _ in
+            let localMirrorURL = ContextPanelLocations.companionAppGroupSyncDocumentURL()
+            if let stateURL = ContextPanelLocations.companionCloudKitUserScopeStateURL() {
+                try? CompanionCloudKitUserScopeStateStore(stateURL: stateURL).clear()
+            }
+            if let localMirrorURL {
+                try? CompanionSyncStore(documentURL: localMirrorURL).remove()
+            }
+            reloadContextPanelCompanionWidgetTimeline()
+            NotificationCenter.default.post(
+                name: .contextPanelCompanionCloudKitAccountDidChange,
+                object: nil
+            )
         }
     }
 }
@@ -272,6 +302,11 @@ private struct CompanionRootView: View {
                 if newPhase == .active {
                     model.reload()
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(
+                for: .contextPanelCompanionCloudKitAccountDidChange
+            )) { _ in
+                model.handleCloudKitAccountChange()
             }
             .onOpenURL { url in
                 if let route = ValidationGalleryRoute(url: url) {
@@ -750,7 +785,11 @@ private final class CompanionSyncModel {
             return
         }
         needsReloadAfterCurrentTask = false
-        reloadTask = Task { [weak self] in
+        let remoteStore = remoteStore
+        let presentationPreferencesRemoteStore = presentationPreferencesRemoteStore
+        let displayPreferencesStore = displayPreferencesStore
+        let runtimeReceiptRelay = runtimeReceiptRelay
+        reloadTask = Task { [weak self, remoteStore, presentationPreferencesRemoteStore, displayPreferencesStore, runtimeReceiptRelay] in
             defer {
                 if let self {
                     reloadTask = nil
@@ -759,24 +798,23 @@ private final class CompanionSyncModel {
                     }
                 }
             }
-            let remoteStore = self?.remoteStore
-            let presentationPreferencesRemoteStore = self?.presentationPreferencesRemoteStore
-            let displayPreferencesStore = self?.displayPreferencesStore
-            let runtimeReceiptRelay = self?.runtimeReceiptRelay
             async let sessionRelayResult = runtimeReceiptRelay?.synchronizeSession(now: now)
-            let (loaded, presentationDocument, localDisplayPreferences) = await Task.detached(priority: .userInitiated) {
-                let localDisplayPreferences = displayPreferencesStore?.loadIfAvailable()
-                async let loaded = CompanionSyncLoader.load(remoteStore: remoteStore, now: now)
-                async let presentationDocument = presentationPreferencesRemoteStore?.load().document
-                return (
-                    await loaded,
-                    await presentationDocument,
-                    localDisplayPreferences
-                )
-            }.value
+            let localDisplayPreferences = displayPreferencesStore?.loadIfAvailable()
+            async let loadedResult = CompanionSyncLoader.load(remoteStore: remoteStore, now: now)
+            async let presentationResult = presentationPreferencesRemoteStore?.load()
+            let (loaded, presentationLoad) = await (loadedResult, presentationResult)
             guard !Task.isCancelled else { return }
             guard let self else { return }
             _ = await sessionRelayResult
+            let presentationDocument: CompanionPresentationDocument?
+            if let document = presentationLoad?.document,
+               let usageScope = loaded.document?.cloudKitUserScope,
+               presentationLoad?.outcome.cloudKitUserScope == usageScope,
+               document.cloudKitUserScope == usageScope {
+                presentationDocument = document
+            } else {
+                presentationDocument = nil
+            }
             let effectiveDisplayPreferences = WidgetDisplayPreferences.companionEffectivePreferences(
                 localOverride: localDisplayPreferences,
                 synced: presentationDocument?.widgetDisplayPreferences ?? loaded.document?.widgetDisplayPreferences
@@ -815,6 +853,14 @@ private final class CompanionSyncModel {
             )
             lastWidgetRenderSignature = loadedSignature
         }
+    }
+
+    func handleCloudKitAccountChange() {
+        result = CompanionSyncLoadResult(document: nil, status: .unknown)
+        snapshot = WidgetSnapshot.fromCompanionSync(result)
+        lastWidgetRenderSignature = nil
+        reloadWidgetTimelineIfNeeded(force: true)
+        reload()
     }
 
     private func recordRuntimeReceipt(

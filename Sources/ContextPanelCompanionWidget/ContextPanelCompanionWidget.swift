@@ -124,18 +124,18 @@ struct ContextPanelCompanionTimelineProvider: TimelineProvider {
 }
 
 private enum CompanionWidgetLoadQueue {
-    private static let queue = DispatchQueue(
-        label: "com.shinycomputers.contextpanel.companion-widget-load",
-        qos: .utility
-    )
     private static let remoteStore = CompanionCloudKitSyncStoreFactory.make()
 
     static func load(date: Date, completion: @escaping (ContextPanelCompanionWidgetSelection) -> Void) {
         let completion = CompanionWidgetCompletion(completion)
-        queue.async {
+        Task.detached(priority: .utility) {
+            let result = await CompanionSyncLoader.loadWidgetTimeline(
+                remoteStore: remoteStore,
+                now: date
+            )
             completion.call(entry(
                 date: date,
-                result: CompanionSyncLoader.loadWidgetMirror(now: date),
+                result: result,
                 stalenessPolicy: SnapshotStoreStalenessPolicy.appDefault(
                     maximumAge: SnapshotFreshness.companionProviderMaximumAge
                 )

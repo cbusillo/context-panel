@@ -163,11 +163,12 @@ import Testing
     let loaded = cache.load()
 
     #expect(loaded.result.document == nil)
-    #expect(loaded.result.status == .failure)
+    #expect(loaded.result.status == .unknown)
     #expect(loaded.displayPreferences == nil)
+    #expect(FileManager.default.fileExists(atPath: cacheURL.path))
 }
 
-@Test func watchCompanionCacheMigratesLegacyPayloadIntoSharedCache() throws {
+@Test func watchCompanionCachePurgesLegacyPayloadInsteadOfAttributingIt() throws {
     let root = try watchCacheTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
     let sharedURL = root.appending(path: "shared.json")
@@ -189,14 +190,13 @@ import Testing
 
     let loaded = cache.load()
 
-    #expect(loaded.result.document == document)
-    #expect(loaded.result.transportMetadata?.source == .appGroup)
-    #expect(loaded.displayPreferences == preferences)
-    #expect(FileManager.default.fileExists(atPath: sharedURL.path))
-    #expect(!FileManager.default.fileExists(atPath: legacyURL.path))
+    #expect(loaded.result.document == nil)
+    #expect(loaded.displayPreferences == nil)
+    #expect(!FileManager.default.fileExists(atPath: sharedURL.path))
+    #expect(waitForWatchCacheFileRemoval(legacyURL))
 }
 
-@Test func watchCompanionCacheMergesLegacyPayloadIntoExistingSharedCache() throws {
+@Test func watchCompanionCachePurgesLegacyPayloadBesideExistingScopedCache() throws {
     let root = try watchCacheTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
     let sharedURL = root.appending(path: "shared.json")
@@ -232,12 +232,12 @@ import Testing
     let loaded = convergedCache.load()
     let accountNames = Set(try #require(loaded.result.document).snapshot.limits.map(\.accountName))
 
-    #expect(accountNames == ["Shared", "Legacy"])
+    #expect(accountNames == ["Shared"])
     #expect(loaded.result.transportMetadata?.source == .appGroup)
-    #expect(!FileManager.default.fileExists(atPath: legacyURL.path))
+    #expect(waitForWatchCacheFileRemoval(legacyURL))
 }
 
-@Test func watchCompanionCacheMergesAppAndWidgetLegacySeeds() throws {
+@Test func watchCompanionCachePurgesAppAndWidgetLegacySeeds() throws {
     let root = try watchCacheTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
     let sharedURL = root.appending(path: "shared.json")
@@ -274,16 +274,16 @@ import Testing
         source: .appGroup
     )
 
-    #expect(appCache.load().result.document != nil)
+    #expect(appCache.load().result.document == nil)
     let loaded = widgetCache.load()
-    let accountNames = Set(try #require(loaded.result.document).snapshot.limits.map(\.accountName))
 
-    #expect(accountNames == ["App", "Widget"])
-    #expect(!FileManager.default.fileExists(atPath: appLegacyURL.path))
-    #expect(!FileManager.default.fileExists(atPath: widgetLegacyURL.path))
+    #expect(loaded.result.document == nil)
+    #expect(!FileManager.default.fileExists(atPath: sharedURL.path))
+    #expect(waitForWatchCacheFileRemoval(appLegacyURL))
+    #expect(waitForWatchCacheFileRemoval(widgetLegacyURL))
 }
 
-@Test func watchCompanionCacheDoesNotResurrectMigratedLegacyPayload() throws {
+@Test func watchCompanionCacheDoesNotResurrectPurgedLegacyPayload() throws {
     let root = try watchCacheTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
     let sharedURL = root.appending(path: "shared.json")
@@ -301,7 +301,7 @@ import Testing
         source: .appGroup
     )
 
-    #expect(cache.load().result.document != nil)
+    #expect(cache.load().result.document == nil)
     #expect(cache.remove())
     #expect(cache.load().result.document == nil)
     #expect(!FileManager.default.fileExists(atPath: legacyURL.path))
@@ -949,6 +949,51 @@ import Testing
     #expect(cache.load().result.document == nil)
 }
 
+@Test func watchCompanionLoaderPurgesForeignCacheWrittenDuringMissingRecordLoad() async throws {
+    let root = try watchCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cache = WatchCompanionCache(cacheURL: root.appending(path: "watch-cache.json"))
+    let generatedAt = Date(timeIntervalSince1970: 1_800_000_050)
+    let foreignDocument = watchCacheDocument(generatedAt: generatedAt).bound(to: watchOtherUserScope)
+    let loader = WatchCompanionLoader(
+        cache: cache,
+        timeout: .seconds(1),
+        resolveUserScope: { watchTestUserScope },
+        loadDocument: { _ in
+            _ = cache.save(
+                document: foreignDocument,
+                displayPreferences: .defaultPreferences,
+                userScope: watchOtherUserScope,
+                now: generatedAt
+            )
+            return CompanionRemoteSyncLoadResult(
+                result: CompanionSyncLoadResult(document: nil, status: .unknown),
+                outcome: CompanionRemoteSyncOutcome(
+                    succeeded: true,
+                    missingRecord: true,
+                    cloudKitUserScope: watchTestUserScope
+                )
+            )
+        },
+        loadPresentation: {
+            CompanionPresentationRemoteLoadResult(
+                document: nil,
+                outcome: CompanionRemoteSyncOutcome(
+                    succeeded: true,
+                    missingRecord: true,
+                    cloudKitUserScope: watchTestUserScope
+                )
+            )
+        }
+    )
+
+    let loaded = await loader.load(now: generatedAt)
+
+    #expect(loaded.result.document == nil)
+    #expect(cache.load(expectedScope: watchTestUserScope, now: generatedAt).result.document == nil)
+    #expect(cache.load(expectedScope: watchOtherUserScope, now: generatedAt).result.document == nil)
+}
+
 @Test func watchCompanionLoaderKeepsCachedUsageWhenMissingRecordRemovalFails() async throws {
     let root = try watchCacheTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -1062,6 +1107,163 @@ import Testing
     }
 }
 
+@Test func watchCompanionLoaderNeverMergesCachedUserAIntoRemoteUserB() async throws {
+    let root = try watchCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 1_800_010_000)
+    let cache = WatchCompanionCache(cacheURL: root.appending(path: "watch-cache.json"))
+    let userADocument = watchCacheDocument(
+        generatedAt: now.addingTimeInterval(-60),
+        limits: [watchOpenAIWeeklyLimit(accountID: "user-a", used: 90, generatedAt: now)]
+    ).bound(to: watchTestUserScope)
+    let userBDocument = watchCacheDocument(
+        generatedAt: now,
+        limits: [watchOpenAIWeeklyLimit(accountID: "user-b", used: 20, generatedAt: now)]
+    ).bound(to: watchOtherUserScope)
+    #expect(cache.save(
+        document: userADocument,
+        displayPreferences: .defaultPreferences,
+        userScope: watchTestUserScope,
+        now: now
+    ))
+    let loader = WatchCompanionLoader(
+        cache: cache,
+        resolveUserScope: { watchOtherUserScope },
+        loadDocument: { _ in
+            CompanionRemoteSyncLoadResult(
+                result: CompanionSyncLoadResult(document: userBDocument, status: .healthy),
+                outcome: CompanionRemoteSyncOutcome(
+                    succeeded: true,
+                    cloudKitUserScope: watchOtherUserScope
+                )
+            )
+        },
+        loadPresentation: {
+            CompanionPresentationRemoteLoadResult(
+                document: nil,
+                outcome: CompanionRemoteSyncOutcome(
+                    storeRole: CompanionRemoteSync.cloudKitPresentationStoreRole,
+                    succeeded: true,
+                    missingRecord: true,
+                    cloudKitUserScope: watchOtherUserScope
+                )
+            )
+        }
+    )
+
+    let loaded = await loader.load(now: now)
+
+    #expect(loaded.result.document?.snapshot.limits.map(\.accountName) == ["User-B"])
+    #expect(cache.load(expectedScope: watchOtherUserScope, now: now).result.document == userBDocument)
+}
+
+@Test func watchCompanionLoaderPurgesCacheWhenIdentityIsUnavailable() async throws {
+    let root = try watchCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 1_800_010_100)
+    let cacheURL = root.appending(path: "watch-cache.json")
+    let cache = WatchCompanionCache(cacheURL: cacheURL)
+    let document = watchCacheDocument(generatedAt: now)
+    #expect(cache.save(
+        document: document,
+        displayPreferences: .defaultPreferences,
+        userScope: watchTestUserScope,
+        now: now
+    ))
+    let loader = WatchCompanionLoader(
+        cache: cache,
+        resolveUserScope: { nil },
+        loadDocument: { _ in watchRemoteLoad(document: document, receivedAt: now) },
+        loadPresentation: { watchPresentationLoad() }
+    )
+
+    let loaded = await loader.load(now: now)
+
+    #expect(loaded.result.document == nil)
+    #expect(loaded.result.status == .failure)
+    #expect(!FileManager.default.fileExists(atPath: cacheURL.path))
+}
+
+@Test func watchCompanionLoaderWithholdsButPreservesCacheWhenIdentityResolutionTimesOut() async throws {
+    let root = try watchCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 1_800_010_150)
+    let cache = WatchCompanionCache(cacheURL: root.appending(path: "watch-cache.json"))
+    let document = watchCacheDocument(generatedAt: now)
+    #expect(cache.save(
+        document: document,
+        displayPreferences: .defaultPreferences,
+        userScope: watchTestUserScope,
+        now: now
+    ))
+    let blocker = WatchDeadlineBlocker()
+    let loader = WatchCompanionLoader(
+        cache: cache,
+        timeout: .milliseconds(20),
+        resolveUserScope: {
+            _ = await blocker.wait()
+            return watchTestUserScope
+        },
+        loadDocument: { _ in watchRemoteLoad(document: document, receivedAt: now) },
+        loadPresentation: { watchPresentationLoad() }
+    )
+
+    let loaded = await loader.load(now: now)
+
+    #expect(loaded.result.document == nil)
+    #expect(loaded.result.status == .unknown)
+    #expect(loaded.disposition == .deadlineExceeded)
+    #expect(cache.load(expectedScope: watchTestUserScope, now: now).result.document == document)
+    await blocker.resume(returning: 1)
+}
+
+@Test func watchCompanionLoaderDiscardsResultWhenAccountChangesDuringLoad() async {
+    let now = Date(timeIntervalSince1970: 1_800_010_200)
+    let resolver = WatchScopeSequenceResolver(
+        scopes: [watchTestUserScope, watchOtherUserScope]
+    )
+    let document = watchCacheDocument(generatedAt: now)
+    let loader = WatchCompanionLoader(
+        resolveUserScope: { await resolver.resolve() },
+        loadDocument: { _ in watchRemoteLoad(document: document, receivedAt: now) },
+        loadPresentation: { watchPresentationLoad() }
+    )
+
+    let loaded = await loader.load(now: now)
+
+    #expect(loaded.result.document == nil)
+    #expect(loaded.result.status == .failure)
+    #expect(loaded.result.errorMessage?.contains("account changed") == true)
+}
+
+@Test func watchCompanionCacheRefusesToOverwriteConcurrentForeignScope() throws {
+    let root = try watchCacheTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let now = Date(timeIntervalSince1970: 1_800_010_300)
+    let cache = WatchCompanionCache(cacheURL: root.appending(path: "watch-cache.json"))
+    let userBDocument = watchCacheDocument(generatedAt: now).bound(to: watchOtherUserScope)
+    #expect(cache.save(
+        document: userBDocument,
+        displayPreferences: .defaultPreferences,
+        userScope: watchOtherUserScope,
+        now: now
+    ))
+    let userADocument = watchCacheDocument(
+        generatedAt: now.addingTimeInterval(60)
+    ).bound(to: watchTestUserScope)
+
+    let outcome = cache.saveSelectingNewest(
+        document: userADocument,
+        displayPreferences: .defaultPreferences,
+        userScope: watchTestUserScope,
+        displayPreferencesUpdatedAt: now,
+        now: now
+    )
+
+    #expect(outcome == .scopeConflict)
+    #expect(cache.load(expectedScope: watchOtherUserScope, now: now).result.document == userBDocument)
+}
+
 private func watchCacheDocument(
     generatedAt: Date,
     limits: [UsageLimit] = [],
@@ -1077,7 +1279,7 @@ private func watchCacheDocument(
             promptCacheSummaries: []
         ),
         widgetDisplayPreferences: widgetDisplayPreferences
-    )
+    ).bound(to: watchTestUserScope)
 }
 
 private func watchOpenAIWeeklyLimit(
@@ -1120,7 +1322,10 @@ private func watchRemoteLoad(
                 deliveryStatus: .healthy
             )
         ),
-        outcome: CompanionRemoteSyncOutcome(succeeded: true)
+        outcome: CompanionRemoteSyncOutcome(
+            succeeded: true,
+            cloudKitUserScope: watchTestUserScope
+        )
     )
 }
 
@@ -1130,9 +1335,121 @@ private func watchPresentationLoad() -> CompanionPresentationRemoteLoadResult {
         outcome: CompanionRemoteSyncOutcome(
             storeRole: CompanionRemoteSync.cloudKitPresentationStoreRole,
             succeeded: true,
-            missingRecord: true
+            missingRecord: true,
+            cloudKitUserScope: watchTestUserScope
         )
     )
+}
+
+private let watchTestUserScope = CompanionCloudKitUserScope.derive(
+    containerIdentifier: ContextPanelLocations.iCloudContainerID,
+    userRecordName: "watch-test-user"
+)
+
+private let watchOtherUserScope = CompanionCloudKitUserScope.derive(
+    containerIdentifier: ContextPanelLocations.iCloudContainerID,
+    userRecordName: "watch-other-user"
+)
+
+private actor WatchScopeSequenceResolver {
+    private var scopes: [CompanionCloudKitUserScope]
+    private var lastScope: CompanionCloudKitUserScope?
+
+    init(scopes: [CompanionCloudKitUserScope]) {
+        self.scopes = scopes
+    }
+
+    func resolve() -> CompanionCloudKitUserScope? {
+        guard !scopes.isEmpty else { return lastScope }
+        let scope = scopes.removeFirst()
+        lastScope = scope
+        return scope
+    }
+}
+
+private extension WatchCompanionCache {
+    func load(now: Date = Date()) -> WatchCompanionCacheLoadResult {
+        load(expectedScope: watchTestUserScope, now: now)
+    }
+
+    func save(
+        document: CompanionSyncDocument,
+        displayPreferences: WidgetDisplayPreferences,
+        displayPreferencesUpdatedAt: Date? = nil,
+        now: Date = Date()
+    ) -> Bool {
+        save(
+            document: document,
+            displayPreferences: displayPreferences,
+            userScope: watchTestUserScope,
+            displayPreferencesUpdatedAt: displayPreferencesUpdatedAt,
+            now: now
+        )
+    }
+
+    func saveSelectingNewest(
+        document: CompanionSyncDocument,
+        displayPreferences: WidgetDisplayPreferences,
+        displayPreferencesUpdatedAt: Date?,
+        now: Date
+    ) -> WatchCompanionCacheSaveOutcome {
+        saveSelectingNewest(
+            document: document,
+            displayPreferences: displayPreferences,
+            userScope: watchTestUserScope,
+            displayPreferencesUpdatedAt: displayPreferencesUpdatedAt,
+            now: now
+        )
+    }
+}
+
+private extension WatchCompanionLoader {
+    init(
+        cache: WatchCompanionCache = WatchCompanionCache(),
+        timeout: Duration = .seconds(5),
+        loadDocument: @escaping @Sendable (Date) async -> CompanionRemoteSyncLoadResult,
+        loadPresentation: @escaping @Sendable () async -> CompanionPresentationRemoteLoadResult
+    ) {
+        self.init(
+            cache: cache,
+            timeout: timeout,
+            resolveUserScope: { watchTestUserScope },
+            loadDocument: { now in
+                let loaded = await loadDocument(now)
+                return CompanionRemoteSyncLoadResult(
+                    result: CompanionSyncLoadResult(
+                        document: loaded.result.document?.bound(to: watchTestUserScope),
+                        status: loaded.result.status,
+                        errorMessage: loaded.result.errorMessage,
+                        transportMetadata: loaded.result.transportMetadata,
+                        transportStatuses: loaded.result.transportStatuses
+                    ),
+                    outcome: CompanionRemoteSyncOutcome(
+                        storeRole: loaded.outcome.storeRole,
+                        isAvailable: loaded.outcome.isAvailable,
+                        succeeded: loaded.outcome.succeeded,
+                        missingRecord: loaded.outcome.missingRecord,
+                        errorMessage: loaded.outcome.errorMessage,
+                        cloudKitUserScope: watchTestUserScope
+                    )
+                )
+            },
+            loadPresentation: {
+                let loaded = await loadPresentation()
+                return CompanionPresentationRemoteLoadResult(
+                    document: loaded.document?.bound(to: watchTestUserScope),
+                    outcome: CompanionRemoteSyncOutcome(
+                        storeRole: loaded.outcome.storeRole,
+                        isAvailable: loaded.outcome.isAvailable,
+                        succeeded: loaded.outcome.succeeded,
+                        missingRecord: loaded.outcome.missingRecord,
+                        errorMessage: loaded.outcome.errorMessage,
+                        cloudKitUserScope: watchTestUserScope
+                    )
+                )
+            }
+        )
+    }
 }
 
 private func watchCacheTemporaryDirectory() throws -> URL {
@@ -1140,6 +1457,14 @@ private func watchCacheTemporaryDirectory() throws -> URL {
         .appending(path: "context-panel-watch-cache-\(UUID().uuidString)", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     return url
+}
+
+private func waitForWatchCacheFileRemoval(_ url: URL) -> Bool {
+    for _ in 0..<100 {
+        if !FileManager.default.fileExists(atPath: url.path) { return true }
+        Thread.sleep(forTimeInterval: 0.001)
+    }
+    return !FileManager.default.fileExists(atPath: url.path)
 }
 
 private func writeWatchLegacyCachePayload(

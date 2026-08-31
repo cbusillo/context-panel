@@ -142,6 +142,16 @@ public enum ContextPanelLocations {
             .appending(path: companionSyncDocumentFileName)
     }
 
+    public static func companionCloudKitUserScopeStateURL(
+        appGroupID: String = companionAppGroupID
+    ) -> URL? {
+        guard let containerURL = appGroupContainerURL(appGroupID: appGroupID) else {
+            return nil
+        }
+        return companionSyncDirectory(containerURL: containerURL)
+            .appending(path: "cloudkit-user-scope.json")
+    }
+
     public static func watchCompanionCacheURL() -> URL {
         watchCompanionAppGroupCacheURL() ?? watchCompanionProcessCacheURL()
     }

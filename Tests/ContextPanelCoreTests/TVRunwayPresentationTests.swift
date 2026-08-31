@@ -729,7 +729,11 @@ import Testing
     let document = makeTVDocument(now: now)
     let receivedAt = now.addingTimeInterval(42)
 
-    try store.save(document: document, receivedAt: receivedAt)
+    try store.save(
+        document: document,
+        receivedAt: receivedAt,
+        cloudKitUserScope: tvRunwayTestUserScope
+    )
     #expect(store.load(matching: document)?.receivedAt == receivedAt)
 
     let newerDocument = makeTVDocument(now: now.addingTimeInterval(60))
@@ -746,13 +750,66 @@ import Testing
     let now = Date(timeIntervalSince1970: 1_750_000_000)
     let document = makeTVDocument(now: now)
 
-    try store.save(document: document, receivedAt: now)
+    try store.save(
+        document: document,
+        receivedAt: now,
+        cloudKitUserScope: tvRunwayTestUserScope
+    )
     let data = try Data(contentsOf: receiptURL)
     var receiptObject = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
     receiptObject["schemaVersion"] = TVSyncReceipt.schemaVersion + 1
     try JSONSerialization.data(withJSONObject: receiptObject).write(to: receiptURL, options: .atomic)
 
     #expect(store.load(matching: document) == nil)
+}
+
+@Test func tvSyncReceiptStoreRejectsAnotherUsersMatchingVersion() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-tv-receipt-scope-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = TVSyncReceiptStore(receiptURL: directory.appending(path: "receipt.json"))
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let document = makeTVDocument(now: now)
+    let otherScope = CompanionCloudKitUserScope.derive(
+        containerIdentifier: ContextPanelLocations.iCloudContainerID,
+        userRecordName: "tv-runway-other-user"
+    )
+
+    try store.save(
+        document: document,
+        receivedAt: now,
+        cloudKitUserScope: tvRunwayTestUserScope
+    )
+
+    #expect(store.load(matching: document.bound(to: otherScope)) == nil)
+}
+
+@Test func tvSyncReceiptStoreConditionalRemovalPreservesNewerReceipt() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "context-panel-tv-receipt-remove-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = TVSyncReceiptStore(receiptURL: directory.appending(path: "receipt.json"))
+    let now = Date(timeIntervalSince1970: 1_750_000_000)
+    let originalDocument = makeTVDocument(now: now)
+    let newerDocument = makeTVDocument(now: now.addingTimeInterval(60))
+    try store.save(
+        document: originalDocument,
+        receivedAt: now,
+        cloudKitUserScope: tvRunwayTestUserScope
+    )
+    let originalReceipt = try #require(store.load(matching: originalDocument))
+    try store.save(
+        document: newerDocument,
+        receivedAt: now.addingTimeInterval(60),
+        cloudKitUserScope: tvRunwayTestUserScope
+    )
+
+    try store.removeIfCurrent(originalReceipt)
+    let newerReceipt = try #require(store.load(matching: newerDocument))
+    #expect(newerReceipt.version == TVCompanionSyncVersion(document: newerDocument))
+
+    try store.removeIfCurrent(newerReceipt)
+    #expect(store.load(matching: newerDocument) == nil)
 }
 
 @Test func tvSyncNoticePolicyUsesTransportOutcomeInsteadOfProviderStatus() {
@@ -783,6 +840,7 @@ import Testing
             == "/container/Library/Caches/Context Panel/Companion/context-panel-companion.json"
     )
     #expect(locations.receiptURL.path == "/container/Library/Caches/Context Panel/tv-sync-receipt.json")
+    #expect(locations.cloudKitUserScopeStateURL.path == "/container/Library/Caches/Context Panel/cloudkit-user-scope.json")
 }
 
 private func makeTVSnapshot(now: Date) -> WidgetSnapshot {
@@ -842,8 +900,16 @@ private func makeTVDocument(now: Date) -> CompanionSyncDocument {
         savedAt: now,
         snapshot: UsageSnapshot(generatedAt: now, limits: limits)
     )
-    return CompanionSyncDocument(storedSnapshot: stored, publishedAt: now)
+    return CompanionSyncDocument(
+        storedSnapshot: stored,
+        publishedAt: now
+    ).bound(to: tvRunwayTestUserScope)
 }
+
+private let tvRunwayTestUserScope = CompanionCloudKitUserScope.derive(
+    containerIdentifier: ContextPanelLocations.iCloudContainerID,
+    userRecordName: "tv-runway-test-user"
+)
 
 private func tvPercentLimit(
     provider: Provider,

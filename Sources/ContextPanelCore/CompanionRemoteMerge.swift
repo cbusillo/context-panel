@@ -6,8 +6,12 @@ public extension CompanionSyncDocument {
         now: Date
     ) -> CompanionSyncDocument {
         let incomingDocument = normalizedForRemotePublish()
-        let existingDocument = existing?.normalizedForRemotePublish()
-        let existingDegradedAccountKeys = existing?.snapshot.degradedAccountKeysForRemotePublish ?? []
+        let existingDocument = existing
+            .flatMap { existing in
+                existing.cloudKitUserScope == cloudKitUserScope ? existing : nil
+            }?
+            .normalizedForRemotePublish()
+        let existingDegradedAccountKeys = existingDocument?.snapshot.degradedAccountKeysForRemotePublish ?? []
         let incomingDegradedAccountKeys = snapshot.degradedAccountKeysForRemotePublish
 
         let merger = CompanionRemoteSnapshotMerger(
@@ -51,7 +55,8 @@ public extension CompanionSyncDocument {
                 mergedSnapshot: retained.snapshot
             ),
             fastModeForecastSettings: settingsDocument.fastModeForecastSettings,
-            accountRetentionStates: retained.states
+            accountRetentionStates: retained.states,
+            cloudKitUserScope: incomingDocument.cloudKitUserScope
         )
     }
 
@@ -81,7 +86,8 @@ private extension CompanionSyncDocument {
             widgetDisplayPreferences: widgetDisplayPreferences,
             observedBurnRates: observedBurnRates,
             fastModeForecastSettings: fastModeForecastSettings,
-            accountRetentionStates: accountRetentionStates
+            accountRetentionStates: accountRetentionStates,
+            cloudKitUserScope: cloudKitUserScope
         )
     }
 

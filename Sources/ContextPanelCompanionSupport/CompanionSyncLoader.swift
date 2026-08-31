@@ -2,25 +2,79 @@ import ContextPanelCore
 import ContextPanelWidgetUI
 import Foundation
 
+private enum CompanionUserScopeResolution: Sendable {
+    case resolved(CompanionCloudKitUserScope)
+    case unavailable
+    case transientFailure
+    case timedOut
+}
+
 public enum CompanionSyncLoader {
     public static func load(now: Date = Date()) -> CompanionSyncLoadResult {
-        return load(
-            localMirrorURL: ContextPanelLocations.companionAppGroupSyncDocumentURL(),
-            remoteLoad: nil,
-            mirrorLoadedDocument: false,
-            diagnosticsStore: RefreshDiagnosticsStateStore(
-                stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.companionAppGroupID)
-            ),
-            now: now
-        )
+        CompanionSyncLoadResult(document: nil, status: .unknown)
     }
 
     public static func load(remoteStore: CompanionRemoteSyncStore?, now: Date = Date()) async -> CompanionSyncLoadResult {
-        let remoteLoad = await remoteStore?.load(now: now)
+        guard let remoteStore else { return load(now: now) }
+        let localMirrorURL = ContextPanelLocations.companionAppGroupSyncDocumentURL()
+        let scopeStateURL = ContextPanelLocations.companionCloudKitUserScopeStateURL()
+        let initialScopeResolution = await remoteStore.currentUserScopeResolution()
+        guard case let .resolved(userScope) = initialScopeResolution else {
+            if initialScopeResolution == .transientFailure {
+                return deferredIdentityResult(
+                    localMirrorURL: localMirrorURL,
+                    scopeStateURL: scopeStateURL,
+                    now: now,
+                    errorMessage: "CloudKit account identity is temporarily unavailable."
+                )
+            }
+            return invalidateIdentity(
+                localMirrorURL: localMirrorURL,
+                scopeStateURL: scopeStateURL,
+                errorMessage: "CloudKit account identity is unavailable."
+            )
+        }
+        guard activateScope(
+            userScope,
+            localMirrorURL: localMirrorURL,
+            scopeStateURL: scopeStateURL
+        ) else {
+            return CompanionSyncLoadResult(
+                document: nil,
+                status: .failure,
+                errorMessage: "Context Panel could not update its CloudKit account scope."
+            )
+        }
+        let remoteLoad = await remoteStore.load(now: now)
+        let finalScopeResolution = await remoteStore.currentUserScopeResolution()
+        guard finalScopeResolution == .resolved(userScope) else {
+            if finalScopeResolution == .transientFailure {
+                return deferredIdentityResult(
+                    localMirrorURL: localMirrorURL,
+                    scopeStateURL: scopeStateURL,
+                    now: now,
+                    errorMessage: "CloudKit account identity is temporarily unavailable."
+                )
+            }
+            return invalidateIdentity(
+                localMirrorURL: localMirrorURL,
+                scopeStateURL: scopeStateURL,
+                errorMessage: "CloudKit account changed while refreshing usage."
+            )
+        }
+        guard remoteLoadMatchesScope(remoteLoad, expectedScope: userScope) else {
+            purgeMirror(at: localMirrorURL)
+            return CompanionSyncLoadResult(
+                document: nil,
+                status: .failure,
+                errorMessage: "CloudKit returned usage for another account scope."
+            )
+        }
         return load(
-            localMirrorURL: ContextPanelLocations.companionAppGroupSyncDocumentURL(),
+            localMirrorURL: localMirrorURL,
+            expectedUserScope: userScope,
             remoteLoad: remoteLoad,
-            mirrorLoadedDocument: remoteLoad?.result.document != nil,
+            mirrorLoadedDocument: remoteLoad.result.document != nil,
             diagnosticsStore: RefreshDiagnosticsStateStore(
                 stateURL: ContextPanelLocations.refreshDiagnosticsStateURL(appGroupID: ContextPanelLocations.companionAppGroupID)
             ),
@@ -35,6 +89,7 @@ public enum CompanionSyncLoader {
     ) async -> CompanionSyncLoadResult {
         await loadWidgetTimeline(
             localMirrorURL: ContextPanelLocations.companionAppGroupSyncDocumentURL(),
+            scopeStateURL: ContextPanelLocations.companionCloudKitUserScopeStateURL(),
             remoteStore: remoteStore,
             timeout: timeout,
             now: now
@@ -43,18 +98,89 @@ public enum CompanionSyncLoader {
 
     static func loadWidgetTimeline(
         localMirrorURL: URL?,
+        scopeStateURL: URL? = nil,
         remoteStore: CompanionRemoteSyncStore?,
         timeout: Duration,
         now: Date
     ) async -> CompanionSyncLoadResult {
         guard let remoteStore else {
-            return loadWidgetMirror(localMirrorURL: localMirrorURL, now: now)
+            return loadWidgetMirror(
+                localMirrorURL: localMirrorURL,
+                scopeStateURL: scopeStateURL,
+                now: now
+            )
         }
 
-        let localAtStart = loadWidgetMirror(localMirrorURL: localMirrorURL, now: now)
+        let initialScopeResolution = await resolveUserScope(
+            remoteStore: remoteStore,
+            timeout: timeout
+        )
+        let userScope: CompanionCloudKitUserScope
+        switch initialScopeResolution {
+        case let .resolved(resolvedScope):
+            userScope = resolvedScope
+        case .unavailable:
+            return invalidateIdentity(
+                localMirrorURL: localMirrorURL,
+                scopeStateURL: scopeStateURL,
+                errorMessage: "CloudKit account identity is unavailable."
+            )
+        case .transientFailure, .timedOut:
+            return deferredIdentityResult(
+                localMirrorURL: localMirrorURL,
+                scopeStateURL: scopeStateURL,
+                now: now,
+                errorMessage: "Context Panel widget timed out while checking its CloudKit account."
+            )
+        }
+        guard activateScope(
+            userScope,
+            localMirrorURL: localMirrorURL,
+            scopeStateURL: scopeStateURL
+        ) else {
+            return CompanionSyncLoadResult(
+                document: nil,
+                status: .failure,
+                errorMessage: "Context Panel widget could not update its CloudKit account scope."
+            )
+        }
+        let localAtStart = loadWidgetMirror(
+            localMirrorURL: localMirrorURL,
+            expectedUserScope: userScope,
+            now: now
+        )
         let remoteLoad = await CompanionAsyncDeadline.value(timeout: timeout) {
             await remoteStore.load(now: now)
-        } ?? timedOutRemoteLoad()
+        } ?? timedOutRemoteLoad(userScope: userScope)
+        let finalScopeResolution = await resolveUserScope(
+            remoteStore: remoteStore,
+            timeout: timeout
+        )
+        switch finalScopeResolution {
+        case let .resolved(resolvedScope) where resolvedScope == userScope:
+            break
+        case .transientFailure, .timedOut:
+            return deferredIdentityResult(
+                localMirrorURL: localMirrorURL,
+                scopeStateURL: scopeStateURL,
+                now: now,
+                errorMessage: "Context Panel widget timed out while rechecking its CloudKit account."
+            )
+        case .unavailable, .resolved:
+            return invalidateIdentity(
+                localMirrorURL: localMirrorURL,
+                scopeStateURL: scopeStateURL,
+                errorMessage: "CloudKit account changed while refreshing widget usage."
+            )
+        }
+        guard remoteLoadMatchesScope(remoteLoad, expectedScope: userScope) else {
+            purgeMirror(at: localMirrorURL)
+            return CompanionSyncLoadResult(
+                document: nil,
+                status: .failure,
+                errorMessage: "CloudKit returned widget usage for another account scope."
+            )
+        }
         if remoteLoad.outcome.succeeded,
            remoteLoad.outcome.missingRecord,
            remoteLoad.result.document == nil,
@@ -63,12 +189,14 @@ public enum CompanionSyncLoader {
             return removeMissingWidgetMirror(
                 localMirrorURL: localMirrorURL,
                 expectedDocument: localAtStart.document,
+                expectedUserScope: userScope,
                 remoteLoad: remoteLoad,
                 now: now
             )
         }
         let result = load(
             localMirrorURL: localMirrorURL,
+            expectedUserScope: userScope,
             remoteLoad: remoteLoad,
             mirrorLoadedDocument: remoteLoad.result.document != nil,
             diagnosticsStore: nil,
@@ -91,6 +219,7 @@ public enum CompanionSyncLoader {
 
     static func load(
         localMirrorURL: URL?,
+        expectedUserScope: CompanionCloudKitUserScope,
         remoteLoad: CompanionRemoteSyncLoadResult? = nil,
         mirrorLoadedDocument: Bool = true,
         diagnosticsStore: RefreshDiagnosticsStateStore? = nil,
@@ -120,7 +249,10 @@ public enum CompanionSyncLoader {
             return result
         }
 
-        let localStore = CompanionSyncStore(documentURL: localMirrorURL)
+        let localStore = CompanionSyncStore(
+            documentURL: localMirrorURL,
+            source: .appGroup
+        )
         var remoteOutcome: CompanionRemoteSyncOutcome?
         var remoteCandidate: CompanionSyncLoadCandidate?
         if let remoteLoad {
@@ -148,16 +280,21 @@ public enum CompanionSyncLoader {
                 )
             }
         }
-        let storeResolvers = [
-            CompanionSyncStoreResolver(storeRole: "app-group") {
-                localStore
-            },
-        ]
-        let storeSet = CompanionSyncStoreSet(stores: [], lazyStores: storeResolvers)
         let stalenessPolicy = SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.companionProviderMaximumAge)
-        let loadDiagnostics = storeSet.loadWithDiagnostics(
+        let localResult = localStore.load(
+            expectedUserScope: expectedUserScope,
             policy: stalenessPolicy,
             now: now
+        )
+        let localSucceeded = localResult.status != .failure
+        let loadDiagnostics = CompanionSyncLoadDiagnosticsResult(
+            result: localResult,
+            storeOutcomes: [CompanionSyncStoreOutcome(
+                storeRole: "app-group",
+                succeeded: localSucceeded,
+                errorMessage: localResult.errorMessage
+            )],
+            selectedStoreRole: localResult.document == nil ? nil : "app-group"
         )
         let selectedCandidate = preferredCandidate(
             lhs: remoteCandidate,
@@ -199,12 +336,27 @@ public enum CompanionSyncLoader {
             let selectedResult = result
             let conditionalSaveResult = localStore.saveResult(
                 document,
+                expectedUserScope: expectedUserScope,
                 policy: stalenessPolicy,
                 now: now
             ) { currentLocalResult in
                 Self.shouldKeepLocalMirror(currentLocalResult, over: selectedResult)
             }
             switch conditionalSaveResult {
+            case .scopeConflict:
+                let failedResult = CompanionSyncLoadResult(
+                    document: nil,
+                    status: .failure,
+                    errorMessage: "CloudKit account changed before the app-group mirror was updated.",
+                    transportStatuses: transportStatuses
+                )
+                diagnosticRecord.outcome = .failed
+                diagnosticRecord.appGroupSucceeded = false
+                diagnosticRecord.loadedDocument = false
+                diagnosticRecord.mirroredDocument = false
+                diagnosticRecord.errorMessage = failedResult.errorMessage
+                recordDiagnostics(diagnosticRecord, in: diagnosticsStore)
+                return failedResult
             case let .keptCurrent(keptCurrentResult):
                 if selectedResult.document == keptCurrentResult.document,
                    let metadata = selectedResult.transportMetadata {
@@ -292,11 +444,32 @@ public enum CompanionSyncLoader {
     }
 
     public static func loadWidgetMirror(now: Date = Date()) -> CompanionSyncLoadResult {
-        loadWidgetMirror(localMirrorURL: ContextPanelLocations.companionAppGroupSyncDocumentURL(), now: now)
+        CompanionSyncLoadResult(document: nil, status: .unknown)
     }
 
     static func loadWidgetMirror(
         localMirrorURL: URL?,
+        scopeStateURL: URL? = nil,
+        now: Date = Date()
+    ) -> CompanionSyncLoadResult {
+        guard let scopeStateURL,
+              let expectedUserScope = CompanionCloudKitUserScopeStateStore(
+                  stateURL: scopeStateURL
+              ).load()
+        else {
+            purgeMirror(at: localMirrorURL)
+            return CompanionSyncLoadResult(document: nil, status: .unknown)
+        }
+        return loadWidgetMirror(
+            localMirrorURL: localMirrorURL,
+            expectedUserScope: expectedUserScope,
+            now: now
+        )
+    }
+
+    static func loadWidgetMirror(
+        localMirrorURL: URL?,
+        expectedUserScope: CompanionCloudKitUserScope,
         now: Date = Date()
     ) -> CompanionSyncLoadResult {
         guard let localMirrorURL else {
@@ -307,7 +480,11 @@ public enum CompanionSyncLoader {
             )
         }
         let policy = SnapshotStoreStalenessPolicy(maximumAge: SnapshotFreshness.companionMirrorMaximumAge)
-        return CompanionSyncStore(documentURL: localMirrorURL).load(policy: policy, now: now)
+        return CompanionSyncStore(documentURL: localMirrorURL).load(
+            expectedUserScope: expectedUserScope,
+            policy: policy,
+            now: now
+        )
     }
 
     private static func mirrorFailureMessage(_ saveResult: CompanionSyncSaveResult) -> String {
@@ -317,7 +494,9 @@ public enum CompanionSyncLoader {
         return "Context Panel iOS app group mirror could not be updated: \(failure.errorMessage)"
     }
 
-    private static func timedOutRemoteLoad() -> CompanionRemoteSyncLoadResult {
+    private static func timedOutRemoteLoad(
+        userScope: CompanionCloudKitUserScope
+    ) -> CompanionRemoteSyncLoadResult {
         let message = "Context Panel widget timed out while refreshing usage."
         return CompanionRemoteSyncLoadResult(
             result: CompanionSyncLoadResult(
@@ -327,14 +506,99 @@ public enum CompanionSyncLoader {
             ),
             outcome: CompanionRemoteSyncOutcome(
                 succeeded: false,
-                errorMessage: message
+                errorMessage: message,
+                cloudKitUserScope: userScope
             )
         )
+    }
+
+    private static func resolveUserScope(
+        remoteStore: CompanionRemoteSyncStore,
+        timeout: Duration
+    ) async -> CompanionUserScopeResolution {
+        guard let resolvedScope = await CompanionAsyncDeadline.value(
+            timeout: timeout,
+            operation: { await remoteStore.currentUserScopeResolution() }
+        ) else {
+            return .timedOut
+        }
+        return switch resolvedScope {
+        case let .resolved(userScope): .resolved(userScope)
+        case .unavailable: .unavailable
+        case .transientFailure: .transientFailure
+        }
+    }
+
+    private static func deferredIdentityResult(
+        localMirrorURL: URL?,
+        scopeStateURL: URL?,
+        now: Date,
+        errorMessage: String
+    ) -> CompanionSyncLoadResult {
+        let cached = loadWidgetMirror(
+            localMirrorURL: localMirrorURL,
+            scopeStateURL: scopeStateURL,
+            now: now
+        )
+        return CompanionSyncLoadResult(
+            document: cached.document,
+            status: cached.document == nil ? .unknown : .stale,
+            errorMessage: errorMessage,
+            transportMetadata: cached.transportMetadata,
+            transportStatuses: cached.transportStatuses
+        )
+    }
+
+    private static func activateScope(
+        _ userScope: CompanionCloudKitUserScope,
+        localMirrorURL: URL?,
+        scopeStateURL: URL?
+    ) -> Bool {
+        guard let scopeStateURL else { return true }
+        let stateStore = CompanionCloudKitUserScopeStateStore(stateURL: scopeStateURL)
+        do {
+            try stateStore.save(userScope)
+            return true
+        } catch {
+            purgeMirror(at: localMirrorURL)
+            return false
+        }
+    }
+
+    private static func invalidateIdentity(
+        localMirrorURL: URL?,
+        scopeStateURL: URL?,
+        errorMessage: String
+    ) -> CompanionSyncLoadResult {
+        if let scopeStateURL {
+            try? CompanionCloudKitUserScopeStateStore(stateURL: scopeStateURL).clear()
+        }
+        purgeMirror(at: localMirrorURL)
+        return CompanionSyncLoadResult(
+            document: nil,
+            status: .failure,
+            errorMessage: errorMessage
+        )
+    }
+
+    private static func purgeMirror(at localMirrorURL: URL?) {
+        guard let localMirrorURL else { return }
+        try? CompanionSyncStore(documentURL: localMirrorURL).remove()
+    }
+
+    private static func remoteLoadMatchesScope(
+        _ remoteLoad: CompanionRemoteSyncLoadResult,
+        expectedScope: CompanionCloudKitUserScope
+    ) -> Bool {
+        guard remoteLoad.outcome.cloudKitUserScope == expectedScope else { return false }
+        guard let document = remoteLoad.result.document else { return true }
+        return document.cloudKitUserScope == expectedScope
     }
 
     private static func removeMissingWidgetMirror(
         localMirrorURL: URL?,
         expectedDocument: CompanionSyncDocument?,
+        expectedUserScope: CompanionCloudKitUserScope,
         remoteLoad: CompanionRemoteSyncLoadResult,
         now: Date
     ) -> CompanionSyncLoadResult {
@@ -359,6 +623,18 @@ public enum CompanionSyncLoader {
                 transportStatuses: transportStatuses
             )
         case let .keptCurrent(current):
+            guard let currentDocument = current.document else {
+                return withTransportStatuses(current, transportStatuses)
+            }
+            guard currentDocument.cloudKitUserScope == expectedUserScope else {
+                _ = localStore.removeIfCurrent(current.document, policy: policy, now: now)
+                return CompanionSyncLoadResult(
+                    document: nil,
+                    status: remoteLoad.result.status,
+                    errorMessage: remoteLoad.result.errorMessage,
+                    transportStatuses: transportStatuses
+                )
+            }
             return withTransportStatuses(current, transportStatuses)
         case let .failed(errorMessage):
             return CompanionSyncLoadResult(

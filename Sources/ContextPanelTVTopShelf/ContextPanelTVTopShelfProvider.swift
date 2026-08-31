@@ -9,7 +9,18 @@ final class ContextPanelTVTopShelfProvider: TVTopShelfContentProvider {
     override func loadTopShelfContent() async -> (any TVTopShelfContent)? {
         let now = Date()
         guard let locations = TVTopShelfSharedLocations.live() else { return nil }
-        let storedDocument = TVTopShelfDocumentStore(documentURL: locations.documentURL).load()
+        let expectedScope = CompanionCloudKitUserScopeStateStore(
+            stateURL: locations.cloudKitUserScopeStateURL
+        ).load()
+        let storedDocument = expectedScope.flatMap {
+            TVTopShelfDocumentStore(
+                documentURL: locations.documentURL,
+                imageDirectoryURL: locations.imageDirectoryURL
+            ).load(expectedScope: $0)
+        }
+        if expectedScope == nil {
+            try? locations.purgePublishedContent()
+        }
         let document = storedDocument ?? Self.missingDocument(now: now)
         do {
             let content = try TVTopShelfRenderer(imageDirectory: locations.imageDirectoryURL)
@@ -243,6 +254,7 @@ struct TVTopShelfRenderer {
             String(document.schemaVersion),
             document.snapshotState.rawValue,
             document.presentationMode.rawValue,
+            document.cloudKitUserScope?.rawValue ?? "unscoped",
         ] + cardContent).joined(separator: "\u{1F}")
         var hash: UInt64 = 14_695_981_039_346_656_037
         for byte in content.utf8 {

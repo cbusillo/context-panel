@@ -16,6 +16,9 @@ extension Notification.Name {
     static let contextPanelTVBackgroundSyncDidUpdateCache = Notification.Name(
         "ContextPanelTVBackgroundSyncDidUpdateCache"
     )
+    static let contextPanelTVCloudKitAccountDidChange = Notification.Name(
+        "ContextPanelTVCloudKitAccountDidChange"
+    )
 }
 
 actor TVSystemSurfaceCoordinator {
@@ -25,35 +28,38 @@ actor TVSystemSurfaceCoordinator {
         category: "TVSystemSurfaces"
     )
 
-    private let topShelfStore: TVTopShelfDocumentStore?
+    private let topShelfLocations: TVTopShelfSharedLocations?
     private var contentSelection = TVSystemSurfaceContentSelection()
+    private var activeUserScope: CompanionCloudKitUserScope?
     private var updateTask: Task<TVSystemSurfaceUpdate, Never>?
     private var updateSequence = 0
+    private var invalidationGeneration = 0
 
     init(
-        topShelfStore: TVTopShelfDocumentStore? = TVTopShelfSharedLocations.live().map {
-            TVTopShelfDocumentStore(documentURL: $0.documentURL)
-        }
+        topShelfLocations: TVTopShelfSharedLocations? = TVTopShelfSharedLocations.live()
     ) {
-        self.topShelfStore = topShelfStore
+        self.topShelfLocations = topShelfLocations
     }
 
     func update(
         snapshot: WidgetSnapshot,
         preferences: WidgetDisplayPreferences,
-        version: TVCompanionSyncVersion?
+        version: TVCompanionSyncVersion?,
+        cloudKitUserScope: CompanionCloudKitUserScope
     ) async -> TVSystemSurfaceUpdate {
         let selectedContent = contentSelection.select(
             snapshot: snapshot,
             preferences: preferences,
-            version: version
+            version: version,
+            cloudKitUserScope: cloudKitUserScope
         )
         let previousUpdateTask = updateTask
         updateSequence += 1
         let sequence = updateSequence
+        let generation = invalidationGeneration
         let task = Task {
             _ = await previousUpdateTask?.value
-            return await performUpdate(selectedContent)
+            return await performUpdate(selectedContent, generation: generation)
         }
         updateTask = task
         let update = await task.value
@@ -63,21 +69,35 @@ actor TVSystemSurfaceCoordinator {
         return update
     }
 
-    private func performUpdate(_ selectedContent: TVSystemSurfaceContent) async -> TVSystemSurfaceUpdate {
+    private func performUpdate(
+        _ selectedContent: TVSystemSurfaceContent,
+        generation: Int
+    ) async -> TVSystemSurfaceUpdate {
+        guard generation == invalidationGeneration else {
+            return TVSystemSurfaceUpdate(noticeMessage: nil)
+        }
         let defaults = UserDefaults.standard
         let mode = defaults.string(forKey: TVPreferenceKeys.presentationMode)
             .flatMap(TVPresentationMode.init(rawValue:))
             ?? .fullDetail
         let now = Date()
         var notices: [String] = []
-        if let topShelfStore {
+        if let topShelfLocations {
             do {
-                try topShelfStore.save(TVTopShelfDocument(
+                if activeUserScope != selectedContent.cloudKitUserScope {
+                    try topShelfLocations.purgePublishedContent()
+                }
+                try CompanionCloudKitUserScopeStateStore(
+                    stateURL: topShelfLocations.cloudKitUserScopeStateURL
+                ).save(selectedContent.cloudKitUserScope, updatedAt: now)
+                try TVTopShelfDocumentStore(documentURL: topShelfLocations.documentURL).save(TVTopShelfDocument(
                     snapshot: selectedContent.snapshot,
                     preferences: selectedContent.preferences,
                     mode: mode,
+                    cloudKitUserScope: selectedContent.cloudKitUserScope,
                     now: now
                 ))
+                activeUserScope = selectedContent.cloudKitUserScope
                 TVTopShelfContentProvider.topShelfContentDidChange()
             } catch {
                 let error = error as NSError
@@ -91,6 +111,19 @@ actor TVSystemSurfaceCoordinator {
         }
 
         return TVSystemSurfaceUpdate(noticeMessage: notices.first)
+    }
+
+    func invalidateUserScope() {
+        invalidationGeneration += 1
+        contentSelection.reset()
+        activeUserScope = nil
+        if let topShelfLocations {
+            try? CompanionCloudKitUserScopeStateStore(
+                stateURL: topShelfLocations.cloudKitUserScopeStateURL
+            ).clear()
+            try? topShelfLocations.purgePublishedContent()
+        }
+        TVTopShelfContentProvider.topShelfContentDidChange()
     }
 }
 
@@ -130,6 +163,7 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
     let runtimeReceiptRelayProvider = TVRuntimeReceiptRelayProvider()
     private let notificationCenter = UNUserNotificationCenter.current()
     private var subscriptionRegistrationTask: Task<Void, Never>?
+    private var accountChangeObserver: NSObjectProtocol?
 
     func application(
         _ application: UIApplication,
@@ -142,6 +176,7 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
         }
         #endif
         application.registerForRemoteNotifications()
+        registerCloudKitAccountChangeObserver()
         registerCloudKitSubscription()
         return true
     }
@@ -189,14 +224,9 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
         }
         let runtimeReceiptRelay = runtimeReceiptRelayProvider.resolve()
         Task { [remoteStore, runtimeReceiptRelay] in
-            let currentUserRecordName: String?
-            if notificationMetadata.subscriptionOwnerRecordName == nil {
-                currentUserRecordName = nil
-            } else {
-                currentUserRecordName = try? await CKContainer(
-                    identifier: ContextPanelLocations.iCloudContainerID
-                ).userRecordID().recordName
-            }
+            let currentUserRecordName = try? await CKContainer(
+                identifier: ContextPanelLocations.iCloudContainerID
+            ).userRecordID().recordName
             guard TVCloudKitNotificationPolicy.accepts(
                 notificationMetadata,
                 expectedSubscriptionID: CompanionRemoteSync.cloudKitSubscriptionID,
@@ -262,6 +292,37 @@ final class ContextPanelTVAppDelegate: NSObject, UIApplicationDelegate {
         }
     }
 
+    private func registerCloudKitAccountChangeObserver() {
+        guard accountChangeObserver == nil else { return }
+        accountChangeObserver = NotificationCenter.default.addObserver(
+            forName: Notification.Name("CKAccountChangedNotification"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.handleCloudKitAccountChange()
+            }
+        }
+    }
+
+    private func handleCloudKitAccountChange() {
+        let locations = TVLocalCacheLocations.live()
+        try? CompanionCloudKitUserScopeStateStore(
+            stateURL: locations.cloudKitUserScopeStateURL
+        ).clear()
+        try? CompanionSyncStore(documentURL: locations.companionDocumentURL).remove()
+        try? TVSyncReceiptStore(receiptURL: locations.receiptURL).remove()
+        Task {
+            await TVSystemSurfaceCoordinator.shared.invalidateUserScope()
+        }
+        UserDefaults.standard.removeObject(forKey: TVPreferenceKeys.cloudKitSubscriptionError)
+        NotificationCenter.default.post(
+            name: .contextPanelTVCloudKitAccountDidChange,
+            object: nil
+        )
+        registerCloudKitSubscription()
+    }
+
     private func synchronizeRuntimeReceipts() {
         let runtimeReceiptRelay = runtimeReceiptRelayProvider.resolve()
         Task { [runtimeReceiptRelay] in
@@ -289,21 +350,91 @@ private struct TVBackgroundSyncCoordinator: Sendable {
 
     func refresh() async -> UIBackgroundFetchResult {
         let startedAt = Date()
-        guard let remoteLoad = await loadWithTimeout(now: startedAt) else { return .failed }
-        let completedAt = Date()
-        let loaded = remoteLoad.result
-        guard let document = loaded.document else {
-            return loaded.status == .failure ? .failed : .noData
+        let initialScopeResolution = await remoteStore.currentUserScopeResolution()
+        guard case let .resolved(userScope) = initialScopeResolution else {
+            if initialScopeResolution == .unavailable {
+                await invalidateLocalScope()
+            }
+            return .noData
         }
-
+        guard await activateLocalScope(userScope, updatedAt: startedAt) else { return .failed }
         let localLocations = TVLocalCacheLocations.live()
         let stalenessPolicy = SnapshotStoreStalenessPolicy.appDefault(
             maximumAge: SnapshotFreshness.companionProviderMaximumAge
         )
-        let cacheSaveResult = CompanionSyncStore(
+        let cacheStore = CompanionSyncStore(
             documentURL: localLocations.companionDocumentURL,
             source: .localCache
-        ).saveResult(
+        )
+        let receiptStore = TVSyncReceiptStore(receiptURL: localLocations.receiptURL)
+        let cachedAtStart = cacheStore.load(
+            expectedUserScope: userScope,
+            policy: stalenessPolicy,
+            now: startedAt
+        )
+        let receiptAtStart = cachedAtStart.document.flatMap(receiptStore.load(matching:))
+        guard let remoteLoad = await loadWithTimeout(now: startedAt) else { return .failed }
+        let finalScopeResolution = await remoteStore.currentUserScopeResolution()
+        guard finalScopeResolution == .resolved(userScope),
+              remoteLoad.outcome.cloudKitUserScope == userScope
+        else {
+            if finalScopeResolution == .unavailable
+                || (finalScopeResolution.userScope != nil && finalScopeResolution.userScope != userScope)
+            {
+                await invalidateLocalScope()
+            }
+            return .failed
+        }
+        if let document = remoteLoad.result.document,
+           document.cloudKitUserScope != userScope {
+            await invalidateLocalScope()
+            return .failed
+        }
+        let completedAt = Date()
+        let loaded = remoteLoad.result
+        guard let document = loaded.document else {
+            if remoteLoad.outcome.succeeded, remoteLoad.outcome.missingRecord {
+                switch cacheStore.removeIfCurrent(
+                    cachedAtStart.document,
+                    policy: stalenessPolicy,
+                    now: completedAt
+                ) {
+                case .removed:
+                    try? receiptStore.removeIfCurrent(receiptAtStart)
+                case let .keptCurrent(currentResult):
+                    guard let currentDocument = currentResult.document,
+                          currentDocument.cloudKitUserScope == userScope
+                    else {
+                        _ = cacheStore.removeIfCurrent(
+                            currentResult.document,
+                            policy: stalenessPolicy,
+                            now: completedAt
+                        )
+                        return .noData
+                    }
+                    let snapshot = WidgetSnapshot.fromCompanionSync(
+                        currentResult,
+                        now: completedAt,
+                        stalenessPolicy: stalenessPolicy
+                    )
+                    _ = await TVSystemSurfaceCoordinator.shared.update(
+                        snapshot: snapshot,
+                        preferences: currentDocument.widgetDisplayPreferences,
+                        version: TVCompanionSyncVersion(document: currentDocument),
+                        cloudKitUserScope: userScope
+                    )
+                    NotificationCenter.default.post(
+                        name: .contextPanelTVBackgroundSyncDidUpdateCache,
+                        object: nil
+                    )
+                case .failed:
+                    return .failed
+                }
+            }
+            return loaded.status == .failure ? .failed : .noData
+        }
+
+        let cacheSaveResult = cacheStore.saveResult(
             document,
             policy: stalenessPolicy,
             now: completedAt
@@ -313,7 +444,6 @@ private struct TVBackgroundSyncCoordinator: Sendable {
                 replacingWith: document
             )
         }
-        let receiptStore = TVSyncReceiptStore(receiptURL: localLocations.receiptURL)
         let incomingVersion = TVCompanionSyncVersion(document: document)
         let publicationResult: CompanionSyncLoadResult
         let fetchResult: UIBackgroundFetchResult
@@ -322,7 +452,11 @@ private struct TVBackgroundSyncCoordinator: Sendable {
             guard let currentDocument = currentResult.document else { return .failed }
             if TVCompanionSyncVersion(document: currentDocument) == incomingVersion {
                 do {
-                    try receiptStore.save(document: currentDocument, receivedAt: completedAt)
+                    try receiptStore.save(
+                        document: currentDocument,
+                        receivedAt: completedAt,
+                        cloudKitUserScope: userScope
+                    )
                 } catch {
                     return .failed
                 }
@@ -334,7 +468,8 @@ private struct TVBackgroundSyncCoordinator: Sendable {
             do {
                 try receiptStore.save(
                     document: document,
-                    receivedAt: completedAt
+                    receivedAt: completedAt,
+                    cloudKitUserScope: userScope
                 )
             } catch {
                 return .failed
@@ -352,7 +487,8 @@ private struct TVBackgroundSyncCoordinator: Sendable {
         _ = await TVSystemSurfaceCoordinator.shared.update(
             snapshot: snapshot,
             preferences: publicationDocument.widgetDisplayPreferences,
-            version: TVCompanionSyncVersion(document: publicationDocument)
+            version: TVCompanionSyncVersion(document: publicationDocument),
+            cloudKitUserScope: userScope
         )
         NotificationCenter.default.post(
             name: .contextPanelTVBackgroundSyncDidUpdateCache,
@@ -365,5 +501,44 @@ private struct TVBackgroundSyncCoordinator: Sendable {
         await TVAsyncDeadline.value(timeout: .seconds(18)) {
             await remoteStore.load(now: now)
         }
+    }
+
+    private func activateLocalScope(
+        _ userScope: CompanionCloudKitUserScope,
+        updatedAt: Date
+    ) async -> Bool {
+        let locations = TVLocalCacheLocations.live()
+        let stateStore = CompanionCloudKitUserScopeStateStore(
+            stateURL: locations.cloudKitUserScopeStateURL
+        )
+        if stateStore.load() != userScope {
+            invalidateLocalUsage()
+            await TVSystemSurfaceCoordinator.shared.invalidateUserScope()
+        }
+        do {
+            try stateStore.save(userScope, updatedAt: updatedAt)
+            return true
+        } catch {
+            await invalidateLocalScope()
+            return false
+        }
+    }
+
+    private func invalidateLocalScope() async {
+        let locations = TVLocalCacheLocations.live()
+        try? CompanionCloudKitUserScopeStateStore(
+            stateURL: locations.cloudKitUserScopeStateURL
+        ).clear()
+        invalidateLocalUsage()
+        await TVSystemSurfaceCoordinator.shared.invalidateUserScope()
+    }
+
+    private func invalidateLocalUsage() {
+        let locations = TVLocalCacheLocations.live()
+        try? CompanionSyncStore(documentURL: locations.companionDocumentURL).remove()
+        try? TVSyncReceiptStore(receiptURL: locations.receiptURL).remove()
+        try? CompanionCloudKitUserScopeStateStore(
+            stateURL: locations.cloudKitUserScopeStateURL
+        ).clear()
     }
 }
