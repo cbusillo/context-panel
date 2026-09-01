@@ -501,7 +501,10 @@ public extension UsageLimit {
     var mainLimitWindow: MainLimitWindow? {
         guard let window = MainLimitWindow.infer(from: self) else { return nil }
         switch provider {
-        case .openAI, .anthropic:
+        case .openAI:
+            guard !isOpenAIAdditionalModelLimit else { return nil }
+            return window == .daily || window == .availability ? nil : window
+        case .anthropic:
             return window == .daily || window == .availability ? nil : window
         case .google:
             if window == .availability, !isGoogleAntigravityGeminiAvailability {
@@ -525,6 +528,16 @@ public extension UsageLimit {
             .joined(separator: " ")
             .lowercased()
         return modelText.contains("gemini")
+    }
+
+    private var isOpenAIAdditionalModelLimit: Bool {
+        guard provider == .openAI else { return false }
+        guard let modelLabel = modelLabel?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !modelLabel.isEmpty
+        else {
+            return false
+        }
+        return modelLabel.localizedCaseInsensitiveCompare("Codex") != .orderedSame
     }
 
 }

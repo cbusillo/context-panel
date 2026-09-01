@@ -546,6 +546,83 @@ import Testing
     #expect(MetricProgress.remainingCapacity(remainingRatio: summary.remainingCapacityRatio).percentText == "55%")
 }
 
+@Test func openAIAdditionalWeeklyLimitsDoNotDiluteMainAccountPool() throws {
+    let snapshot = UsageSnapshot(
+        generatedAt: Date(),
+        limits: [
+            UsageLimit(
+                provider: .openAI,
+                accountID: "personal",
+                accountName: "Personal",
+                label: "Codex Weekly",
+                windowLabel: "Weekly",
+                modelLabel: "Codex",
+                unit: .percent,
+                used: 94,
+                limit: 100
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "personal",
+                accountName: "Personal",
+                label: "gpt-reserve Weekly",
+                windowLabel: "Weekly",
+                modelLabel: "gpt-reserve",
+                unit: .percent,
+                used: 0,
+                limit: 100
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "work",
+                accountName: "Work",
+                label: "Codex Weekly",
+                windowLabel: "Weekly",
+                modelLabel: "Codex",
+                unit: .percent,
+                used: 0,
+                limit: 100
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "work",
+                accountName: "Work",
+                label: "gpt-reserve Weekly",
+                windowLabel: "Weekly",
+                modelLabel: "gpt-reserve",
+                unit: .percent,
+                used: 0,
+                limit: 100
+            ),
+            UsageLimit(
+                provider: .openAI,
+                accountID: "team",
+                accountName: "Team",
+                label: "Codex Weekly",
+                windowLabel: "Weekly",
+                modelLabel: "Codex",
+                unit: .percent,
+                used: 0,
+                limit: 100
+            ),
+        ]
+    )
+
+    let summary = try #require(snapshot.mainLimitSummaries.first)
+
+    #expect(snapshot.mainLimitSummaries.count == 1)
+    #expect(summary.limits.count == 3)
+    #expect(summary.accountCount == 3)
+    #expect(summary.used == 94)
+    #expect(summary.limit == 300)
+    #expect(summary.roundedUsedPercent == 31)
+    #expect(summary.roundedRemainingPercent == 69)
+    #expect(snapshot.limits.filter { !$0.isMainLimit }.map(\.modelLabel) == [
+        "gpt-reserve",
+        "gpt-reserve",
+    ])
+}
+
 @Test func pooledPercentCapacityRejectsNonPercentPools() {
     let summary = MainLimitSummary(
         provider: .openAI,
