@@ -328,6 +328,11 @@ exact target, session lifecycle, required and obtained evidence classes,
 runtime surface states, grouped actions, notification decisions, blockers,
 deferrals, residual risk, and the current carry-forward boundary. It omits the
 coordinator session UUID as well as all private identifiers and raw evidence.
+`totalDurationMinutes` is a derived aggregate equal to the sum of the reported
+group durations. Historical lineage reports generated before scoped action
+contracts introduced that field may omit it during release-gate reconstruction;
+current reports remain strict, and retained lineage payloads are never mutated
+or backfilled.
 Visual approval reports `pending`, `waiting`, `approved`, or `rejected` from the
 ledger. A rejection blocks the coordinator result, and missing or stale
 placement runtime evidence cannot report green. Carry-forward remains
