@@ -549,18 +549,29 @@ def validate_operator_candidates(
 def validate_operator_flow_actions(
     operator_flow: object,
     allowed_surfaces: object,
+    *,
+    allow_derived_total_duration_omission: bool = False,
 ) -> None:
     if not isinstance(operator_flow, dict) or not isinstance(allowed_surfaces, list):
         raise OperatorFlowError("operator action contract is invalid")
     groups = operator_flow.get("groups")
     total_duration_minutes = operator_flow.get("totalDurationMinutes")
+    derived_total_duration_omitted = (
+        allow_derived_total_duration_omission
+        and "totalDurationMinutes" not in operator_flow
+    )
     if (
         operator_flow.get("schemaVersion") != 1
         or any(not isinstance(surface, str) for surface in allowed_surfaces)
         or allowed_surfaces != sorted(set(allowed_surfaces))
         or not isinstance(groups, list)
-        or not isinstance(total_duration_minutes, int)
-        or isinstance(total_duration_minutes, bool)
+        or (
+            not derived_total_duration_omitted
+            and (
+                not isinstance(total_duration_minutes, int)
+                or isinstance(total_duration_minutes, bool)
+            )
+        )
     ):
         raise OperatorFlowError("operator action contract is invalid")
     normalized_allowed_surfaces = tuple(cast(list[str], allowed_surfaces))
@@ -617,7 +628,10 @@ def validate_operator_flow_actions(
         if group["durationMinutes"] != group_duration:
             raise OperatorFlowError("operator action contract is invalid")
         total_duration += group_duration
-    if total_duration_minutes != total_duration:
+    if (
+        not derived_total_duration_omitted
+        and total_duration_minutes != total_duration
+    ):
         raise OperatorFlowError("operator action contract is invalid")
     validate_operator_candidates(tuple(candidates), normalized_allowed_surfaces)
 

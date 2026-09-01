@@ -997,6 +997,13 @@ scripts/context-panel-release-gate.py enforce \
   --lineage-output <release-evidence-lineage.json>
 ```
 
+Transitive reconstruction accepts an omitted operator-flow
+`totalDurationMinutes` only in historical lineage reports generated before the
+scoped action contract added that derived aggregate. Group and action durations
+remain fully validated, a present but incorrect total still fails, and current
+reports must always include the field. The replay path validates the untouched
+historical payload; never hand-edit or backfill a retained lineage bundle.
+
 The App Store submission workflow accepts the ledger separately from the
 coordinator report. Every live build attachment or submission requires the
 `release` evidence tier and release-evidence report in both `shadow` and

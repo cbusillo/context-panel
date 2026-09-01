@@ -781,7 +781,12 @@ def _validate_comparison(
     return surface_map
 
 
-def _validate_report(report: dict[str, Any], current_manifest_id: str) -> Target:
+def _validate_report(
+    report: dict[str, Any],
+    current_manifest_id: str,
+    *,
+    allow_legacy_reconstruction: bool = False,
+) -> Target:
     if report.get("schemaVersion") != 1:
         raise ReleaseEvidenceError("validation report schema is invalid")
     target = _target(report.get("target"), "validation report")
@@ -812,7 +817,11 @@ def _validate_report(report: dict[str, Any], current_manifest_id: str) -> Target
         }
     )
     try:
-        validate_operator_flow_actions(operator_flow, allowed_action_surfaces)
+        validate_operator_flow_actions(
+            operator_flow,
+            allowed_action_surfaces,
+            allow_derived_total_duration_omission=allow_legacy_reconstruction,
+        )
     except OperatorFlowError as error:
         raise ReleaseEvidenceError("validation report operator actions are invalid") from error
     if summary.get("exitCode") != 0:
@@ -1417,7 +1426,7 @@ def _verified_lineage_ledger(
         now=generated_at,
         _lineage_depth=lineage_depth + 1,
         _lineage_seen=lineage_seen | {ledger_id},
-        _allow_legacy_comparison=True,
+        _allow_legacy_reconstruction=True,
     )
     if reconstructed != ledger:
         raise ReleaseEvidenceError(
@@ -1557,7 +1566,7 @@ def _shadow_state(
                 now=embedded_generated_at,
                 _lineage_depth=lineage_depth + 1,
                 _lineage_seen=lineage_seen | {run["ledgerID"]},
-                _allow_legacy_comparison=True,
+                _allow_legacy_reconstruction=True,
             )
             if reconstructed_ledger != embedded_ledger:
                 raise ReleaseEvidenceError(
@@ -1615,7 +1624,7 @@ def evaluate_release_evidence(
     now: datetime | None = None,
     _lineage_depth: int = 0,
     _lineage_seen: frozenset[str] | None = None,
-    _allow_legacy_comparison: bool = False,
+    _allow_legacy_reconstruction: bool = False,
 ) -> dict[str, Any]:
     if train not in TRAINS or mode not in MODES:
         raise ReleaseEvidenceError("release evidence train or mode is invalid")
@@ -1627,13 +1636,17 @@ def evaluate_release_evidence(
         comparison,
         train,
         surface_policy,
-        allow_legacy_reconstruction=_allow_legacy_comparison,
+        allow_legacy_reconstruction=_allow_legacy_reconstruction,
     )
     policy_digest = _hash_payload(policy)
     surface_policy_digest = _hash_payload(surface_policy)
     comparison_digest = _hash_payload(comparison)
     current_manifest_id = str(comparison["currentManifestId"])
-    target = _validate_report(validation_report, current_manifest_id)
+    target = _validate_report(
+        validation_report,
+        current_manifest_id,
+        allow_legacy_reconstruction=_allow_legacy_reconstruction,
+    )
     validation_report_digest = _hash_payload(validation_report)
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if set(surface_comparison) != set(RUNTIME_SURFACES):

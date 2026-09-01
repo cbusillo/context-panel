@@ -819,7 +819,7 @@ def previous_lineage(
         surface_policy=configured_surface_policy,
         shadow_evidence=shadow_payload,
         now=NOW,
-        _allow_legacy_comparison=legacy_comparison,
+        _allow_legacy_reconstruction=legacy_comparison,
     )
     return build_release_evidence_lineage(
         payload,
@@ -1623,6 +1623,81 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
             previous_ledger=previous,
         )
         self.assertNotIn("previous-ledger", " ".join(payload["blockers"]))
+
+    def test_signed_lineage_reconstruction_allows_omitted_derived_duration(self) -> None:
+        surface = "watchos.app"
+        comparison_payload = comparison(
+            surface,
+            "shared-view",
+            previous_manifest_id="d" * 64,
+            current_manifest_id=PREVIOUS_MANIFEST,
+        )
+        validation_report = report(
+            surface,
+            visual_class="shared-view",
+            manifest_id=PREVIOUS_MANIFEST,
+        )
+        del validation_report["operatorFlow"]["totalDurationMinutes"]
+        expected_digest = hashlib.sha256(
+            json.dumps(
+                validation_report,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        identities = all_identities(manifest_id=PREVIOUS_MANIFEST)
+        expected_manifests = all_expected_manifests(manifest_id=PREVIOUS_MANIFEST)
+        shadow_payload = shadow_evidence(
+            surface=surface,
+            evidence_class="shared-view",
+        )
+        historical_ledger = evaluate_release_evidence(
+            train="beta",
+            mode="enforce",
+            comparison=comparison_payload,
+            validation_report=validation_report,
+            identities=identities,
+            expected_build_manifests=expected_manifests,
+            policy=policy(),
+            surface_policy=surface_policy(surface, "shared-view"),
+            shadow_evidence=shadow_payload,
+            now=NOW,
+            _allow_legacy_reconstruction=True,
+        )
+        previous = build_release_evidence_lineage(
+            historical_ledger,
+            comparison=comparison_payload,
+            validation_report=validation_report,
+            expected_build_manifests=expected_manifests,
+            shadow_evidence=shadow_payload,
+        )
+
+        payload = self.evaluate(
+            surface,
+            "shared-view",
+            eligible=True,
+            previous_ledger=previous,
+        )
+
+        self.assertNotIn("previous-ledger", " ".join(payload["blockers"]))
+        self.assertEqual(historical_ledger["validationReportDigest"], expected_digest)
+        self.assertNotIn(
+            "totalDurationMinutes",
+            previous["generation"]["validationReport"]["operatorFlow"],
+        )
+
+    def test_legacy_reconstruction_rejects_incorrect_derived_duration(self) -> None:
+        surface = "watchos.app"
+        validation_report = report(surface, visual_class="shared-view")
+        validation_report["operatorFlow"]["totalDurationMinutes"] = 1
+
+        with self.assertRaisesRegex(ReleaseEvidenceError, "operator actions"):
+            self.evaluate(
+                surface,
+                "shared-view",
+                validation_report=validation_report,
+                _allow_legacy_reconstruction=True,
+            )
 
     def test_release_rc_requirement_cannot_be_removed(self) -> None:
         surface = "watchos.app"
@@ -2502,6 +2577,18 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
         surface = "watchos.app"
         validation_report = report(surface, visual_class="shared-view")
         del validation_report["operatorFlow"]
+
+        with self.assertRaisesRegex(ReleaseEvidenceError, "operator actions"):
+            self.evaluate(
+                surface,
+                "shared-view",
+                validation_report=validation_report,
+            )
+
+    def test_report_validator_rejects_missing_derived_duration(self) -> None:
+        surface = "watchos.app"
+        validation_report = report(surface, visual_class="shared-view")
+        del validation_report["operatorFlow"]["totalDurationMinutes"]
 
         with self.assertRaisesRegex(ReleaseEvidenceError, "operator actions"):
             self.evaluate(
