@@ -79,17 +79,20 @@ requirements for the coordinator. Projected IDs and requirement bodies must
 exactly match the matrix planner output; placement entries are ignored by
 capture and remain structurally unable to satisfy shared-view work.
 
-The executor captures only `ios`, `ipados`, and `visionos` app/widget gallery
-requirements on throwaway simulators. It never builds,
+The executor captures only `ios`, `ipados`, `visionos`, and `watchos` shared
+app/widget-gallery requirements on throwaway simulators. It never builds,
 starts a coordinator session, records a visual decision, reads runtime receipts,
 or claims runtime or placement evidence.
 
-The private schema-v1 config contains only `ios`, `ipados`, or `visionos`
-profiles with `runtimeIdentifier`, `deviceTypeIdentifier`, and an absolute
-non-symlink `appBundle`. The bundle must use the Context Panel identifier,
-bounded numeric version/build values that match the source manifest, the
-expected simulator platform and device family, and the exact embedded manifest
-derived from the supplied canonical current source manifest. The source
+The private schema-v1 config contains only `ios`, `ipados`, `visionos`, or
+`watchos` profiles with `runtimeIdentifier`, `deviceTypeIdentifier`, and an
+absolute non-symlink `appBundle`. The iPhone, iPad, and Vision profiles use the
+Context Panel bundle identifier. The Watch profile must use
+`com.shinycomputers.contextpanel.watch`, `WatchSimulator`, device family `4`,
+a `watchOS` runtime, and an `Apple Watch` simulator device family. Every bundle
+must use bounded numeric version/build values that match the source manifest,
+the expected simulator platform and device family, and the exact embedded
+manifest derived from the supplied canonical current source manifest. The source
 manifest must use the repository policy's fixed algorithm, digest domain,
 toolchain, archive layouts, evidence policy, ignored inputs, and policy digest;
 self-consistent manifests in a caller-selected digest domain are rejected.
@@ -116,10 +119,24 @@ output.
 
 Each simulator name is unique. A pre-create inventory blocks collisions; any
 uncertain create result is cleaned only by a newly observed, profile-matching
-UDID. The executor never deletes by simulator name. Each cell resets appearance,
-requires two stable pre-route baselines, then two stable decodable routed PNGs
-that differ from the baseline and other cells. Termination between cells is
-best-effort so one failed launch cannot poison the next cell.
+UDID. The executor never deletes by simulator name. Each non-Watch cell resets
+appearance, requires two stable pre-route baselines, then two stable decodable
+routed PNGs that differ from the baseline and other cells. The Watch profile
+does not call `simctl ui appearance`; it routes every app or complication cell
+with the fixed argument order `simctl launch --terminate-running-process
+<watch-simulator> com.shinycomputers.contextpanel.watch
+--context-panel-validation-gallery --fixture <fixture> --family <family>`.
+Watch cells retain the same baseline, stability, distinct-image, installed
+identity, cleanup, artifact, and receipt checks. Termination between cells is
+best-effort so one failed route cannot poison the next cell.
+
+The Watch profile does not create or repair a paired iPhone/Watch topology. A
+Watch app that cannot install independently on the selected Watch simulator, a
+container identity mismatch, malformed selector, or catalog topology mismatch
+is an unknown or blocked result; it never falls back to a paired simulator,
+physical Watch, or changed shipping independence semantics. These captures are
+shared-view artifacts only. They do not attest Watch execution and cannot prove
+actual runtime behavior or a placed complication.
 
 Runs stage under a hidden `0700` directory. PNGs, the ownership marker, and the
 private index use `0600`. Publication uses exclusive no-replace renames and
@@ -134,11 +151,11 @@ critical encodings or transparency chunks are reported as `captured-image-invali
 Cleanup removes only a run whose private ownership token still matches, and a
 failed emergency simulator cleanup is surfaced without exposing command output.
 
-Mac, Watch, and Apple TV remain explicit `unsupported-host-mechanism` results;
-missing profiles are blocked and command, image, stability, identity, cleanup,
-or publication faults are unknown. A zero exit means every requested capture
-was collected. The receipt remains an artifact-collection record only and is
-not an approval, runtime claim, placement claim, or pixel gate.
+Mac and Apple TV remain explicit `unsupported-host-mechanism` results; missing
+profiles are blocked and command, image, stability, identity, cleanup, or
+publication faults are unknown. A zero exit means every requested capture was
+collected. The receipt remains an artifact-collection record only and is not an
+approval, runtime claim, placement claim, or pixel gate.
 
 ## Fixture Isolation
 

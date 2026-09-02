@@ -52,17 +52,7 @@ REQUIREMENTS_KIND = "context-panel-visual-review-requirements"
 REQUIREMENTS_DIGEST_DOMAIN = "context-panel-shared-view-capture-requirements/v1"
 EMBEDDED_MANIFEST_DIGEST_DOMAIN = "context-panel-shared-view-capture-embedded-manifest/v1"
 APP_BUNDLE_IDENTIFIER = "com.shinycomputers.contextpanel"
-SUPPORTED_PROFILES = ("ios", "ipados", "visionos")
-PROFILE_SURFACE_PREFIXES = {
-    "ios": "ios.",
-    "ipados": "ipados.",
-    "visionos": "visionos.",
-}
-PROFILE_CATALOG_EXPECTATIONS = {
-    "ios": (("iOS",), "iPhone"),
-    "ipados": (("iOS",), "iPad"),
-    "visionos": (("xrOS", "visionOS"), "Apple Vision"),
-}
+WATCH_APP_BUNDLE_IDENTIFIER = "com.shinycomputers.contextpanel.watch"
 SIMCTL_CATALOG_TIMEOUT = 30
 SIMCTL_CREATE_TIMEOUT = 30
 SIMCTL_BOOT_TIMEOUT = 60
@@ -97,11 +87,6 @@ EXPECTED_ARTIFACT_KEYS = set(
     "artifactId bundleIdentifier marketingVersion buildNumber sourceCommit configuration "
     "xcodeBuild treeState".split()
 )
-PROFILE_PLATFORM_IDENTIFIERS = {
-    "ios": ("iPhoneSimulator", 1),
-    "ipados": ("iPhoneSimulator", 2),
-    "visionos": ("XRSimulator", 7),
-}
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 SIMULATOR_UDID_PATTERN = re.compile(
     r"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
@@ -183,6 +168,63 @@ class CaptureRequirement:
 
 
 @dataclass(frozen=True)
+class SimulatorCaptureProfile:
+    surface_prefix: str
+    bundle_identifier: str
+    bundle_platform: str
+    device_family: int
+    runtime_platforms: tuple[str, ...]
+    product_family: str
+    route_kind: str
+    applies_simulator_appearance: bool
+
+
+SIMULATOR_CAPTURE_PROFILES = {
+    "ios": SimulatorCaptureProfile(
+        surface_prefix="ios.",
+        bundle_identifier=APP_BUNDLE_IDENTIFIER,
+        bundle_platform="iPhoneSimulator",
+        device_family=1,
+        runtime_platforms=("iOS",),
+        product_family="iPhone",
+        route_kind="openurl",
+        applies_simulator_appearance=True,
+    ),
+    "ipados": SimulatorCaptureProfile(
+        surface_prefix="ipados.",
+        bundle_identifier=APP_BUNDLE_IDENTIFIER,
+        bundle_platform="iPhoneSimulator",
+        device_family=2,
+        runtime_platforms=("iOS",),
+        product_family="iPad",
+        route_kind="openurl",
+        applies_simulator_appearance=True,
+    ),
+    "visionos": SimulatorCaptureProfile(
+        surface_prefix="visionos.",
+        bundle_identifier=APP_BUNDLE_IDENTIFIER,
+        bundle_platform="XRSimulator",
+        device_family=7,
+        runtime_platforms=("xrOS", "visionOS"),
+        product_family="Apple Vision",
+        route_kind="openurl",
+        applies_simulator_appearance=True,
+    ),
+    "watchos": SimulatorCaptureProfile(
+        surface_prefix="watchos.",
+        bundle_identifier=WATCH_APP_BUNDLE_IDENTIFIER,
+        bundle_platform="WatchSimulator",
+        device_family=4,
+        runtime_platforms=("watchOS",),
+        product_family="Apple Watch",
+        route_kind="launch",
+        applies_simulator_appearance=False,
+    ),
+}
+SUPPORTED_PROFILES = tuple(SIMULATOR_CAPTURE_PROFILES)
+
+
+@dataclass(frozen=True)
 class CapturePlan:
     current_manifest_id: str
     requirements_digest: str
@@ -202,6 +244,13 @@ class PNGSnapshot:
 class ProfileCaptureOutcome:
     results: dict[str, dict[str, object]]
     cleanup_status: str
+
+
+def _simulator_capture_profile(name: str) -> SimulatorCaptureProfile:
+    try:
+        return SIMULATOR_CAPTURE_PROFILES[name]
+    except KeyError as error:
+        raise SharedViewCaptureError("capture simulator profile is invalid") from error
 
 
 def _load_json_object(path: Path, label: str) -> dict[str, Any]:
@@ -489,7 +538,8 @@ def _app_metadata(
     if not isinstance(info, dict):
         raise SharedViewCaptureError("capture app bundle Info.plist is invalid")
     bundle_identifier = _require_string(info.get("CFBundleIdentifier"), "capture app bundle identifier")
-    if bundle_identifier != APP_BUNDLE_IDENTIFIER:
+    capture_profile = _simulator_capture_profile(profile_name)
+    if bundle_identifier != capture_profile.bundle_identifier:
         raise SharedViewCaptureError("capture app bundle identifier is invalid")
     executable_name = _require_string(info.get("CFBundleExecutable"), "capture app executable")
     if (
@@ -510,18 +560,17 @@ def _app_metadata(
         raise SharedViewCaptureError("capture app version metadata is invalid")
     supported_platforms = info.get("CFBundleSupportedPlatforms")
     device_families = info.get("UIDeviceFamily")
-    expected_platform, expected_family = PROFILE_PLATFORM_IDENTIFIERS[profile_name]
     if (
         not isinstance(supported_platforms, list)
         or not supported_platforms
         or any(not isinstance(value, str) or not value for value in supported_platforms)
         or len(supported_platforms) != len(set(supported_platforms))
-        or expected_platform not in supported_platforms
+        or capture_profile.bundle_platform not in supported_platforms
         or not isinstance(device_families, list)
         or not device_families
         or any(type(value) is not int or value <= 0 for value in device_families)
         or len(device_families) != len(set(device_families))
-        or expected_family not in device_families
+        or capture_profile.device_family not in device_families
     ):
         raise SharedViewCaptureError("capture app platform metadata is invalid")
     executable = path / executable_name
@@ -701,9 +750,9 @@ def load_capture_requirements(
 
 
 def _profile_for_surface(surface: str) -> str | None:
-    for profile, prefix in PROFILE_SURFACE_PREFIXES.items():
-        if surface.startswith(prefix):
-            return profile
+    for profile_name, profile in SIMULATOR_CAPTURE_PROFILES.items():
+        if surface.startswith(profile.surface_prefix):
+            return profile_name
     return None
 
 
@@ -1070,6 +1119,39 @@ def _capture_url(requirement: CaptureRequirement) -> str:
     )
 
 
+def _capture_route(
+    profile: CaptureProfile,
+    simulator_id: str,
+    requirement: CaptureRequirement,
+) -> tuple[list[str], str, str | None]:
+    capture_profile = _simulator_capture_profile(profile.name)
+    if capture_profile.route_kind == "openurl":
+        return (
+            ["xcrun", "simctl", "openurl", simulator_id, _capture_url(requirement)],
+            "simctl-openurl",
+            "simctl-ui-appearance+gallery-route",
+        )
+    if capture_profile.route_kind == "launch":
+        return (
+            [
+                "xcrun",
+                "simctl",
+                "launch",
+                "--terminate-running-process",
+                simulator_id,
+                profile.bundle_identifier,
+                "--context-panel-validation-gallery",
+                "--fixture",
+                requirement.fixture_id,
+                "--family",
+                requirement.family,
+            ],
+            "simctl-launch",
+            None,
+        )
+    raise SharedViewCaptureError("capture simulator profile route is invalid")
+
+
 def _run(runner: Runner, args: list[str], timeout: int) -> CommandResult:
     return runner.run(args, timeout=timeout, environment=None)
 
@@ -1306,8 +1388,11 @@ def _profile_catalog_metadata(
         device_type_name=device_type_name,
         product_family=product_family,
     )
-    expected_platforms, expected_family = PROFILE_CATALOG_EXPECTATIONS[profile.name]
-    if runtime_platform not in expected_platforms or product_family != expected_family:
+    capture_profile = _simulator_capture_profile(profile.name)
+    if (
+        runtime_platform not in capture_profile.runtime_platforms
+        or product_family != capture_profile.product_family
+    ):
         return metadata, "simctl-profile-mismatch"
     return metadata, None
 
@@ -1606,6 +1691,7 @@ def _capture_profile(
     if lifecycle_error is not None:
         results = _unknown_results(requirements, lifecycle_error, now)
     elif simulator_id is not None:
+        capture_profile = _simulator_capture_profile(profile.name)
         for index, requirement in enumerate(requirements):
             appearance_mechanism: str | None = None
             if index > 0:
@@ -1614,28 +1700,29 @@ def _capture_profile(
                     ["xcrun", "simctl", "terminate", simulator_id, profile.bundle_identifier],
                     SIMCTL_TERMINATE_TIMEOUT,
                 )
-            simulator_appearance = (
-                requirement.appearance
-                if requirement.appearance in {"light", "dark"}
-                else "automatic"
-            )
-            appearance = _run(
-                runner,
-                ["xcrun", "simctl", "ui", simulator_id, "appearance", simulator_appearance],
-                SIMCTL_UI_TIMEOUT,
-            )
-            if appearance.returncode != 0 or appearance.timed_out:
-                results[requirement.requirement_id] = _result(
-                    requirement,
-                    status="unknown",
-                    captured_at=now(),
-                    host_mechanism="simctl-gallery",
-                    appearance_mechanism=None,
-                    error_code=_command_error_code(appearance, "simctl-ui"),
+            if capture_profile.applies_simulator_appearance:
+                simulator_appearance = (
+                    requirement.appearance
+                    if requirement.appearance in {"light", "dark"}
+                    else "automatic"
                 )
-                continue
-            appearance_mechanism = "simctl-ui-appearance"
-            sleeper(CAPTURE_SETTLE_SECONDS)
+                appearance = _run(
+                    runner,
+                    ["xcrun", "simctl", "ui", simulator_id, "appearance", simulator_appearance],
+                    SIMCTL_UI_TIMEOUT,
+                )
+                if appearance.returncode != 0 or appearance.timed_out:
+                    results[requirement.requirement_id] = _result(
+                        requirement,
+                        status="unknown",
+                        captured_at=now(),
+                        host_mechanism="simctl-gallery",
+                        appearance_mechanism=None,
+                        error_code=_command_error_code(appearance, "simctl-ui"),
+                    )
+                    continue
+                appearance_mechanism = "simctl-ui-appearance"
+                sleeper(CAPTURE_SETTLE_SECONDS)
             first_baseline, first_baseline_path, first_baseline_error = _take_screenshot(
                 runner,
                 simulator_id,
@@ -1697,22 +1784,23 @@ def _capture_profile(
                     route_baseline_path.unlink(missing_ok=True)
             finally:
                 first_baseline_path.unlink(missing_ok=True)
-            opened = _run(
-                runner,
-                ["xcrun", "simctl", "openurl", simulator_id, _capture_url(requirement)],
-                SIMCTL_OPENURL_TIMEOUT,
+            route_command, route_error_base, route_appearance_mechanism = _capture_route(
+                profile,
+                simulator_id,
+                requirement,
             )
-            if opened.returncode != 0 or opened.timed_out:
+            routed = _run(runner, route_command, SIMCTL_OPENURL_TIMEOUT)
+            if routed.returncode != 0 or routed.timed_out:
                 results[requirement.requirement_id] = _result(
                     requirement,
                     status="unknown",
                     captured_at=now(),
                     host_mechanism="simctl-gallery",
                     appearance_mechanism=appearance_mechanism,
-                    error_code=_command_error_code(opened, "simctl-openurl"),
+                    error_code=_command_error_code(routed, route_error_base),
                 )
                 continue
-            appearance_mechanism = "simctl-ui-appearance+gallery-route"
+            appearance_mechanism = route_appearance_mechanism
             sleeper(CAPTURE_SETTLE_SECONDS)
             first_snapshot, first_path, first_error = _take_screenshot(
                 runner,
