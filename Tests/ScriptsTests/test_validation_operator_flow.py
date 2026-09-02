@@ -1429,10 +1429,7 @@ class OperatorFlowTests(unittest.TestCase):
             for action in group["actions"]
         }
         self.assertIn("coordinator.shared-view-capture-automation", before_ids)
-        self.assertNotIn(
-            f"review.coordinator.shared-view.{consolidation_id}",
-            before_ids,
-        )
+        self.assertNotIn(consolidation_id, before_ids)
 
         window_digest = context_panel_validation.shared_view_capture_window_digest(
             manifest_id,
