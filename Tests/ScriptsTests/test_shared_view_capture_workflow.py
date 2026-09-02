@@ -427,6 +427,7 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
         self.assertIn("git worktree add --detach .build/current-source", text)
         self.assertIn("if-no-files-found: warn", text)
         self.assertNotIn('-sdk "${sdk}"', text)
+        self.assertIn("shared-view-capture-diagnostic-${{ github.run_id }}", text)
 
 
 if __name__ == "__main__":

@@ -301,6 +301,18 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Upload Failed Capture Diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: shared-view-capture-diagnostic-${{ github.run_id }}
+          path: |
+            .build/public/shared-view-capture-receipt.json
+            .build/surface-comparison.json
+            .build/visual-review-requirements.json
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Upload Private PNG Evidence
         if: success()
         uses: actions/upload-artifact@v7
