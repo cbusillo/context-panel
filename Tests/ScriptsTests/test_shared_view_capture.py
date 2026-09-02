@@ -54,12 +54,27 @@ RUNTIME_IDENTIFIERS = {
     "ios": "com.apple.CoreSimulator.SimRuntime.iOS-26-0",
     "ipados": "com.apple.CoreSimulator.SimRuntime.iOS-26-0",
     "visionos": "com.apple.CoreSimulator.SimRuntime.xrOS-26-0",
+    "watchos": "com.apple.CoreSimulator.SimRuntime.watchOS-26-0",
 }
 DEVICE_TYPE_IDENTIFIERS = {
     "ios": "com.apple.CoreSimulator.SimDeviceType.iPhone-17",
     "ipados": "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5",
     "visionos": "com.apple.CoreSimulator.SimDeviceType.Apple-Vision-Pro",
+    "watchos": "com.apple.CoreSimulator.SimDeviceType.Apple-Watch-Series-11-46mm",
 }
+PROFILE_BUNDLE_IDENTIFIERS = {
+    "ios": "com.shinycomputers.contextpanel",
+    "ipados": "com.shinycomputers.contextpanel",
+    "visionos": "com.shinycomputers.contextpanel",
+    "watchos": "com.shinycomputers.contextpanel.watch",
+}
+PROFILE_BUNDLE_PLATFORMS = {
+    "ios": "iPhoneSimulator",
+    "ipados": "iPhoneSimulator",
+    "visionos": "XRSimulator",
+    "watchos": "WatchSimulator",
+}
+PROFILE_DEVICE_FAMILIES = {"ios": 1, "ipados": 2, "visionos": 7, "watchos": 4}
 
 
 def png_chunk(chunk_type: bytes, content: bytes) -> bytes:
@@ -119,6 +134,13 @@ def simulator_catalog() -> dict[str, Any]:
                 "isAvailable": True,
                 "bundlePath": "/private/catalog/vision-runtime",
             },
+            {
+                "identifier": RUNTIME_IDENTIFIERS["watchos"],
+                "name": "watchOS 26.0",
+                "platform": "watchOS",
+                "isAvailable": True,
+                "bundlePath": "/private/catalog/watch-runtime",
+            },
         ],
         "devicetypes": [
             {
@@ -138,6 +160,12 @@ def simulator_catalog() -> dict[str, Any]:
                 "name": "Apple Vision Pro",
                 "productFamily": "Apple Vision",
                 "bundlePath": "/private/catalog/vision",
+            },
+            {
+                "identifier": DEVICE_TYPE_IDENTIFIERS["watchos"],
+                "name": "Apple Watch Series 11 (46mm)",
+                "productFamily": "Apple Watch",
+                "bundlePath": "/private/catalog/watch",
             },
         ],
         "devices": {"private": [{"udid": SECOND_SIMULATOR_ID}]},
@@ -262,6 +290,9 @@ class FakeRunner:
             self.created_simulator_name = "renamed-after-delete"
         if args[:3] == ["xcrun", "simctl", "openurl"]:
             self.active_route[args[3]] = args[-1]
+        if args[:3] == ["xcrun", "simctl", "launch"]:
+            simulator_id = args[4]
+            self.active_route[simulator_id] = "&".join(args[6:])
         if args[:4] == ["xcrun", "simctl", "io", args[3] if len(args) > 3 else ""]:
             route = self.active_route.get(args[3])
             image = self._image_for(route)
@@ -314,10 +345,22 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.root = Path(self.directory.name)
         self.app = self.root / "Context Panel.app"
         self.app.mkdir()
+        self.watch_app = self.root / "Context Panel Watch.app"
+        self.watch_app.mkdir()
         self.current_manifest_path = self.root / "current-manifest.json"
         (self.app / "ContextPanel").write_bytes(b"signed companion executable")
-        self.write_info_plist("ContextPanel")
+        (self.watch_app / "ContextPanelWatch").write_bytes(b"signed watch executable")
+        self.write_info_plist("ContextPanel", app_bundle=self.app)
+        self.write_info_plist(
+            "ContextPanelWatch",
+            profile_names=("watchos",),
+            app_bundle=self.watch_app,
+        )
         self.write_surface_manifest()
+        shutil.copyfile(
+            self.app / "ContextPanelSurfaceManifest.json",
+            self.watch_app / "ContextPanelSurfaceManifest.json",
+        )
         self.matrix = load_shared_view_matrix()
         self.policy = load_surface_policy()
         self.comparison_path = self.root / "comparison.json"
@@ -330,16 +373,30 @@ class SharedViewCaptureTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.directory.cleanup()
 
-    def write_info_plist(self, executable: str) -> None:
-        with (self.app / "Info.plist").open("wb") as stream:
+    def write_info_plist(
+        self,
+        executable: str,
+        *,
+        profile_names: tuple[str, ...] = ("ios", "ipados", "visionos"),
+        app_bundle: Path | None = None,
+    ) -> None:
+        if not profile_names:
+            raise AssertionError("test profile bundle identifiers are inconsistent")
+        bundle_identifier = PROFILE_BUNDLE_IDENTIFIERS[profile_names[0]]
+        if any(PROFILE_BUNDLE_IDENTIFIERS[name] != bundle_identifier for name in profile_names):
+            raise AssertionError("test profile bundle identifiers are inconsistent")
+        target_bundle = app_bundle or self.app
+        with (target_bundle / "Info.plist").open("wb") as stream:
             plistlib.dump(
                 {
-                    "CFBundleIdentifier": "com.shinycomputers.contextpanel",
+                    "CFBundleIdentifier": bundle_identifier,
                     "CFBundleExecutable": executable,
                     "CFBundleShortVersionString": "1.2.3",
                     "CFBundleVersion": "456",
-                    "CFBundleSupportedPlatforms": ["iPhoneSimulator", "XRSimulator"],
-                    "UIDeviceFamily": [1, 2, 7],
+                    "CFBundleSupportedPlatforms": list(
+                        dict.fromkeys(PROFILE_BUNDLE_PLATFORMS[name] for name in profile_names)
+                    ),
+                    "UIDeviceFamily": [PROFILE_DEVICE_FAMILIES[name] for name in profile_names],
                 },
                 stream,
             )
@@ -451,7 +508,7 @@ class SharedViewCaptureTests(unittest.TestCase):
             name: {
                 "runtimeIdentifier": RUNTIME_IDENTIFIERS[name],
                 "deviceTypeIdentifier": DEVICE_TYPE_IDENTIFIERS[name],
-                "appBundle": str(self.app),
+                "appBundle": str(self.watch_app if name == "watchos" else self.app),
             }
             for name in profile_names
         }
@@ -543,6 +600,154 @@ class SharedViewCaptureTests(unittest.TestCase):
             [item["id"] for item in requirements],
             [item["requirementID"] for item in receipt["captures"]],
         )
+
+    def test_watch_profile_uses_direct_launch_without_appearance_mutation(self) -> None:
+        payload = self.write_plan(["watchos.app", "watchos.complication"])
+        self.write_config(("watchos",))
+        runner = FakeRunner()
+
+        exit_code, receipt = self.execute(runner)
+
+        self.assertEqual(EXIT_OK, exit_code)
+        self.assertEqual([1.0] * 12, self.sleeps)
+        commands = [args for args, _ in runner.calls]
+        self.assertEqual(
+            [
+                "list", "list", "create", "list", "boot", "bootstatus", "install", "get_app_container",
+                "io", "io", "launch", "io", "io", "terminate", "io", "io", "launch", "io", "io",
+                "terminate", "io", "io", "launch", "io", "io", "terminate", "io", "io", "launch",
+                "io", "io", "shutdown", "delete", "list", "list",
+            ],
+            [args[2] for args in commands],
+        )
+        self.assertFalse(any(args[2] == "ui" for args in commands))
+        launch_commands = [args for args in commands if args[2] == "launch"]
+        self.assertEqual(
+            [
+                [
+                    "xcrun", "simctl", "launch", "--terminate-running-process", SIMULATOR_ID,
+                    PROFILE_BUNDLE_IDENTIFIERS["watchos"], "--context-panel-validation-gallery",
+                    "--context-panel-validation-surface", surface,
+                    "--context-panel-validation-fixture", fixture,
+                    *([] if family == "not-applicable" else [
+                        "--context-panel-validation-family", family,
+                    ]),
+                ]
+                for surface, fixture, family in (
+                    ("watchos.app", "healthy", "not-applicable"),
+                    ("watchos.app", "dense-accounts", "not-applicable"),
+                    ("watchos.complication", "healthy", "circular"),
+                    ("watchos.complication", "reset-visible", "rectangular"),
+                )
+            ],
+            launch_commands,
+        )
+        self.assertEqual([True] * 16, runner.screenshot_destinations_absent)
+        self.assertEqual(["captured"] * 4, [item["status"] for item in receipt["captures"]])
+        self.assertEqual(
+            [None] * 4,
+            [item["appearanceMechanism"] for item in receipt["captures"]],
+        )
+        self.assertEqual(
+            canonical_json_hash(REQUIREMENTS_DIGEST_DOMAIN, payload),
+            receipt["requirementsDigest"],
+        )
+
+    def test_watch_profile_rejects_invalid_bundle_metadata_and_selectors(self) -> None:
+        self.write_plan(["watchos.app"])
+        self.write_config(("watchos",))
+
+        for key, value in (
+            ("CFBundleIdentifier", "com.shinycomputers.contextpanel"),
+            ("CFBundleSupportedPlatforms", ["iPhoneSimulator"]),
+            ("UIDeviceFamily", [1]),
+        ):
+            self.write_info_plist(
+                "ContextPanelWatch",
+                profile_names=("watchos",),
+                app_bundle=self.watch_app,
+            )
+            with (self.watch_app / "Info.plist").open("rb") as stream:
+                info = plistlib.load(stream)
+            info[key] = value
+            with (self.watch_app / "Info.plist").open("wb") as stream:
+                plistlib.dump(info, stream)
+            with self.subTest(key=key), self.assertRaisesRegex(
+                SharedViewCaptureError,
+                "bundle identifier is invalid" if key == "CFBundleIdentifier" else "platform metadata is invalid",
+            ):
+                self.execute(FakeRunner(), run_id=f"watch-metadata-{key}")
+
+        self.write_info_plist(
+            "ContextPanelWatch",
+            profile_names=("watchos",),
+            app_bundle=self.watch_app,
+        )
+        for key, value in (
+            ("runtimeIdentifier", "/private/watch-runtime"),
+            ("deviceTypeIdentifier", "not-a-simulator-device"),
+        ):
+            self.write_config(("watchos",))
+            config = json.loads(self.config_path.read_text())
+            config["profiles"]["watchos"][key] = value
+            self.config_path.write_text(json.dumps(config))
+            with self.subTest(key=key), self.assertRaisesRegex(
+                SharedViewCaptureError,
+                "simulator identifier is invalid",
+            ):
+                self.execute(FakeRunner(), run_id=f"watch-selector-{key}")
+
+    def test_watch_topology_and_launch_failures_remain_unknown(self) -> None:
+        self.write_plan(["watchos.app"])
+        self.write_config(("watchos",))
+
+        for index, (catalog, expected) in enumerate((
+            (
+                {
+                    **simulator_catalog(),
+                    "runtimes": [
+                        {
+                            **simulator_catalog()["runtimes"][-1],
+                            "platform": "iOS",
+                        }
+                    ],
+                },
+                "simctl-profile-mismatch",
+            ),
+            (
+                {
+                    **simulator_catalog(),
+                    "devicetypes": [
+                        {
+                            **simulator_catalog()["devicetypes"][-1],
+                            "productFamily": "iPhone",
+                        }
+                    ],
+                },
+                "simctl-profile-mismatch",
+            ),
+        )):
+            exit_code, receipt = self.execute(
+                FakeRunner(catalog=catalog),
+                run_id=f"watch-{expected}-{index}",
+                receipt_path=self.root / f"watch-{expected}-{index}.json",
+            )
+            with self.subTest(expected=expected):
+                self.assertEqual(EXIT_BLOCKED, exit_code)
+                self.assert_capture_errors(receipt, *(expected,) * 2)
+
+        for index, (runner, expected) in enumerate((
+            (FakeRunner(fail_at="launch"), "simctl-launch-failed"),
+            (FakeRunner(timeout_at="launch"), "simctl-launch-timeout"),
+        )):
+            exit_code, receipt = self.execute(
+                runner,
+                run_id=f"watch-{expected}",
+                receipt_path=self.root / f"watch-launch-{index}.json",
+            )
+            with self.subTest(expected=expected):
+                self.assertEqual(EXIT_UNKNOWN, exit_code)
+                self.assert_capture_errors(receipt, *(expected,) * 2)
 
     def test_capture_projects_canonical_shared_requirements_from_mixed_plan(self) -> None:
         payload = self.write_plan(["ios.app"])
@@ -1733,7 +1938,8 @@ class SharedViewCaptureTests(unittest.TestCase):
         ]
         unsupported = "unsupported-host-mechanism"
         self.assertEqual(2, summary.count(("ios.app", "profile-not-configured", "unconfigured-profile")))
-        for surface in ("macos.app", "tvos.app", "watchos.app"):
+        self.assertEqual(2, summary.count(("watchos.app", "profile-not-configured", "unconfigured-profile")))
+        for surface in ("macos.app", "tvos.app"):
             self.assertEqual(2, summary.count((surface, unsupported, unsupported)))
 
     def test_command_stderr_privacy_assertion_is_non_vacuous(self) -> None:

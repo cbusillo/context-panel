@@ -18,12 +18,29 @@ relay/reconciliation sequence. The launch uses `/usr/bin/open -g` only; it does
 not install, reset, activate a URL, change placements, or touch a companion
 device. When shared-view requirements exist, the command then attempts the
 existing bounded simulator capture executor after receipt synchronization. The
-private comparison, manifest, requirements, capture config, artifact root, and
-receipt output are supplied only to that invocation and are never persisted in
-coordinator state. Missing inputs are recorded as an unsupported terminal
-attempt so the human review can proceed honestly rather than looping. That
-unsupported fallback is visible in the automation report but does not degrade
-an otherwise healthy `advance-automation` exit code.
+executor can route Watch gallery cells directly on a throwaway Watch simulator
+with the fixed `simctl launch --terminate-running-process` fixture/family
+arguments; it does not mutate Watch appearance, depend on a paired iPhone
+simulator, or make an app-written attestation. The private comparison, manifest,
+requirements, capture config, artifact root, and receipt output are supplied
+only to that invocation and are never persisted in coordinator state. Missing
+inputs are recorded as an unsupported terminal attempt so the human review can
+proceed honestly rather than looping. That unsupported fallback is visible in
+the automation report but does not degrade an otherwise healthy
+`advance-automation` exit code.
+
+A missing or incompatible Watch simulator topology, install, or container
+identity is fail-closed shared-view capture evidence, not a signal to create a
+pair, alter the signed build, or use physical-device navigation. Watch capture
+continues to be structurally incapable of satisfying `actual-runtime` or
+`os-composited-placement`; placed-complication review and the exact-build Watch
+restart rule remain separate physical evidence.
+
+Private capture configs created before Watch capture support must add an
+explicit `watchos` profile before processing a plan with Watch shared-view
+requirements. Without it, those requirements report `profile-not-configured`
+and automation remains fail closed rather than silently treating Watch as an
+unsupported host mechanism.
 
 The command records a schema-v1 public automation sidecar bound by digests to
 the coordinator session, target, and requested surfaces. It persists only fixed

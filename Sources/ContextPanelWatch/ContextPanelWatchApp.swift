@@ -1,16 +1,53 @@
 import ContextPanelCloudKitSync
 import ContextPanelCore
+import Darwin
 import Foundation
 import SwiftUI
 import WidgetKit
 
-private let watchValidationGalleryLaunchArgument = "--context-panel-validation-gallery"
-
 @main
 struct ContextPanelWatchApp: App {
+    private let launchRequest: WatchValidationLaunchRequest
+
+    init() {
+        let request = WatchValidationLaunchRequest(arguments: ProcessInfo.processInfo.arguments)
+        guard request != .invalid else {
+            exit(EX_USAGE)
+        }
+        launchRequest = request
+    }
+
     var body: some Scene {
         WindowGroup {
-            WatchRootView()
+            if launchRequest == .normal {
+                WatchRootView()
+            } else {
+                WatchValidationLaunchView(request: launchRequest)
+            }
+        }
+    }
+}
+
+private struct WatchValidationLaunchView: View {
+    let request: WatchValidationLaunchRequest
+
+    var body: some View {
+        NavigationStack {
+            switch request {
+            case .normal:
+                EmptyView()
+            case .galleryIndex:
+                WatchValidationGalleryView()
+            case let .app(state):
+                WatchAppValidationGalleryView(fixedState: state)
+            case let .complication(state, family):
+                WatchComplicationValidationGalleryView(
+                    state: state,
+                    family: family.contextPanelFamily
+                )
+            case .invalid:
+                EmptyView()
+            }
         }
     }
 }
@@ -19,9 +56,6 @@ struct ContextPanelWatchApp: App {
 private struct WatchRootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var model = WatchSyncModel()
-    @State private var isValidationGalleryPresented = ProcessInfo.processInfo.arguments.contains(
-        watchValidationGalleryLaunchArgument
-    )
 
     var body: some View {
         NavigationStack {
@@ -33,9 +67,6 @@ private struct WatchRootView: View {
                     syncErrorMessage: model.lastSyncErrorMessage,
                     presentationDate: Date()
                 )
-            }
-            .navigationDestination(isPresented: $isValidationGalleryPresented) {
-                WatchValidationGalleryView()
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -61,6 +92,17 @@ private struct WatchRootView: View {
             )) { _ in
                 model.handleCloudKitAccountChange()
             }
+        }
+    }
+}
+
+private extension WatchValidationComplicationFamily {
+    var contextPanelFamily: ContextPanelWatchComplicationFamily {
+        switch self {
+        case .circular: .circular
+        case .rectangular: .rectangular
+        case .inline: .inline
+        case .corner: .corner
         }
     }
 }

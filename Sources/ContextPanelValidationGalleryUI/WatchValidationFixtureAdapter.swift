@@ -46,6 +46,110 @@ public enum WatchValidationComplicationState: String, CaseIterable, Identifiable
     }
 }
 
+public enum WatchValidationComplicationFamily: String, CaseIterable, Identifiable, Sendable {
+    case circular
+    case rectangular
+    case inline
+    case corner
+
+    public var id: String { rawValue }
+}
+
+public enum WatchValidationSurface: String, Sendable {
+    case app = "watchos.app"
+    case complication = "watchos.complication"
+}
+
+public enum WatchValidationLaunchRequest: Equatable, Sendable {
+    case normal
+    case galleryIndex
+    case app(state: WatchValidationAppState)
+    case complication(
+        state: WatchValidationComplicationState,
+        family: WatchValidationComplicationFamily
+    )
+    case invalid
+
+    public static let galleryArgument = "--context-panel-validation-gallery"
+    public static let surfaceArgument = "--context-panel-validation-surface"
+    public static let fixtureArgument = "--context-panel-validation-fixture"
+    public static let familyArgument = "--context-panel-validation-family"
+
+    public init(arguments: [String]) {
+        self = Self.parse(arguments: arguments)
+    }
+
+    public static func parse(arguments: [String]) -> Self {
+        let tokens = arguments.dropFirst(arguments.first.map { !$0.hasPrefix("-") } == true ? 1 : 0)
+        let hasValidationArgument = tokens.contains {
+            $0 == galleryArgument || $0.hasPrefix("--context-panel-validation-")
+        }
+        guard hasValidationArgument else { return .normal }
+        guard tokens.filter({ $0 == galleryArgument }).count == 1 else { return .invalid }
+
+        var values: [String: String] = [:]
+        let argumentTokens = Array(tokens)
+        var index = 0
+        while index < argumentTokens.count {
+            let token = argumentTokens[index]
+            if token == galleryArgument {
+                index += 1
+                continue
+            }
+            guard token.hasPrefix("--context-panel-validation-") else {
+                index += 1
+                continue
+            }
+
+            guard token == surfaceArgument || token == fixtureArgument || token == familyArgument,
+                  index + 1 < argumentTokens.count
+            else {
+                return .invalid
+            }
+
+            let value = argumentTokens[index + 1]
+            guard !value.isEmpty,
+                  !value.hasPrefix("-"),
+                  values[token] == nil
+            else {
+                return .invalid
+            }
+            values[token] = value
+            index += 2
+        }
+
+        guard let rawSurface = values[surfaceArgument] else {
+            return values.isEmpty ? .galleryIndex : .invalid
+        }
+        guard let surface = WatchValidationSurface(rawValue: rawSurface),
+              let fixture = values[fixtureArgument]
+        else {
+            return .invalid
+        }
+
+        switch surface {
+        case .app:
+            guard values[familyArgument] == nil else { return .invalid }
+            return switch fixture {
+            case "healthy": .app(state: .healthy)
+            case "dense-accounts": .app(state: .denseAccounts)
+            default: .invalid
+            }
+
+        case .complication:
+            guard let family = values[familyArgument] else { return .invalid }
+            return switch (fixture, family) {
+            case ("healthy", "circular"):
+                .complication(state: .available, family: .circular)
+            case ("reset-visible", "rectangular"):
+                .complication(state: .close, family: .rectangular)
+            default:
+                .invalid
+            }
+        }
+    }
+}
+
 public struct WatchValidationFixtureContext: Sendable {
     public let snapshot: WidgetSnapshot
     public let result: CompanionSyncLoadResult

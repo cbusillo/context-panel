@@ -123,6 +123,122 @@ import WidgetKit
     #expect(unknown.result.document == nil)
 }
 
+@Test func watchValidationLaunchRequestPreservesBareGalleryIndex() {
+    #expect(
+        WatchValidationLaunchRequest(arguments: [
+            "/Applications/Context Panel.app/Contents/MacOS/Context Panel",
+            WatchValidationLaunchRequest.galleryArgument,
+        ]) == .galleryIndex
+    )
+    #expect(
+        WatchValidationLaunchRequest(arguments: [WatchValidationLaunchRequest.galleryArgument])
+            == .galleryIndex
+    )
+    #expect(WatchValidationLaunchRequest(arguments: ["ContextPanelWatch"]) == .normal)
+}
+
+@Test func watchValidationLaunchRequestSelectsExactAppAndComplicationSamples() {
+    #expect(
+        WatchValidationLaunchRequest(arguments: [
+            WatchValidationLaunchRequest.galleryArgument,
+            WatchValidationLaunchRequest.surfaceArgument,
+            "watchos.app",
+            WatchValidationLaunchRequest.fixtureArgument,
+            "healthy",
+        ]) == .app(state: .healthy)
+    )
+    #expect(
+        WatchValidationLaunchRequest(arguments: [
+            "ContextPanelWatch",
+            WatchValidationLaunchRequest.galleryArgument,
+            WatchValidationLaunchRequest.surfaceArgument,
+            "watchos.app",
+            WatchValidationLaunchRequest.fixtureArgument,
+            "dense-accounts",
+        ]) == .app(state: .denseAccounts)
+    )
+    #expect(
+        WatchValidationLaunchRequest(arguments: [
+            WatchValidationLaunchRequest.galleryArgument,
+            WatchValidationLaunchRequest.surfaceArgument,
+            "watchos.complication",
+            WatchValidationLaunchRequest.fixtureArgument,
+            "healthy",
+            WatchValidationLaunchRequest.familyArgument,
+            "circular",
+        ]) == .complication(state: .available, family: .circular)
+    )
+    #expect(
+        WatchValidationLaunchRequest(arguments: [
+            "ContextPanelWatch",
+            WatchValidationLaunchRequest.galleryArgument,
+            WatchValidationLaunchRequest.surfaceArgument,
+            "watchos.complication",
+            WatchValidationLaunchRequest.fixtureArgument,
+            "reset-visible",
+            WatchValidationLaunchRequest.familyArgument,
+            "rectangular",
+        ]) == .complication(state: .close, family: .rectangular)
+    )
+}
+
+@Test func watchValidationLaunchRequestFailsClosedForMalformedOrUnknownArguments() {
+    let invalidArguments: [[String]] = [
+        [
+            WatchValidationLaunchRequest.galleryArgument,
+            WatchValidationLaunchRequest.surfaceArgument,
+            "watchos.app",
+        ],
+        [
+            WatchValidationLaunchRequest.galleryArgument,
+            WatchValidationLaunchRequest.surfaceArgument,
+            "watchos.app",
+            WatchValidationLaunchRequest.fixtureArgument,
+            "unknown",
+        ],
+        [
+            WatchValidationLaunchRequest.galleryArgument,
+            WatchValidationLaunchRequest.surfaceArgument,
+            "watchos.app",
+            WatchValidationLaunchRequest.fixtureArgument,
+            "healthy",
+            WatchValidationLaunchRequest.familyArgument,
+            "circular",
+        ],
+        [
+            WatchValidationLaunchRequest.galleryArgument,
+            WatchValidationLaunchRequest.surfaceArgument,
+            "watchos.complication",
+            WatchValidationLaunchRequest.fixtureArgument,
+            "available",
+        ],
+        [
+            WatchValidationLaunchRequest.galleryArgument,
+            "--context-panel-validation-unknown",
+            "value",
+        ],
+        [
+            WatchValidationLaunchRequest.galleryArgument,
+            WatchValidationLaunchRequest.surfaceArgument,
+            "watchos.app",
+            WatchValidationLaunchRequest.surfaceArgument,
+            "watchos.complication",
+            WatchValidationLaunchRequest.fixtureArgument,
+            "healthy",
+        ],
+        [
+            WatchValidationLaunchRequest.surfaceArgument,
+            "watchos.app",
+            WatchValidationLaunchRequest.fixtureArgument,
+            "healthy",
+        ],
+    ]
+
+    for arguments in invalidArguments {
+        #expect(WatchValidationLaunchRequest(arguments: arguments) == .invalid)
+    }
+}
+
 @Test func tvValidationFixturesAreDeterministicAndSynthetic() throws {
     let adapter = TVValidationFixtureAdapter()
     let presentationDate = ValidationFixtureCatalog.referencePresentationDate

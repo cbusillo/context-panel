@@ -221,11 +221,8 @@ class ValidationGalleryTargetGraphTests(unittest.TestCase):
         self.assertIn("ValidationGalleryRoute(url: url)", mac_app)
         self.assertIn("ValidationGalleryRoute(url: url)", companion_app)
         self.assertIn("case .validationGallery:", tv_app)
-        self.assertIn("--context-panel-validation-gallery", watch_app)
-        self.assertIn(
-            ".navigationDestination(isPresented: $isValidationGalleryPresented)",
-            watch_app,
-        )
+        self.assertIn("WatchValidationLaunchRequest(", watch_app)
+        self.assertIn("WatchValidationLaunchView(request: launchRequest)", watch_app)
 
     def test_watch_gallery_reuses_shipping_views_without_live_loaders(self):
         project = (REPO_ROOT / "project.yml").read_text()
