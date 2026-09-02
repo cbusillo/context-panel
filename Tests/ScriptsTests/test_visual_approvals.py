@@ -632,6 +632,13 @@ class VisualApprovalTests(unittest.TestCase):
             sum(len(batch["requirementIDs"]) for batch in report["reviewBatches"]),
             31,
         )
+        self.assertEqual(
+            [batch["consolidatedActionID"] for batch in report["reviewBatches"]],
+            [
+                "review.coordinator.shared-view.part-1",
+                "review.coordinator.shared-view.part-2",
+            ],
+        )
 
     def test_state_round_trips_and_contains_no_private_paths(self) -> None:
         _, state = self.configured_state()
@@ -736,6 +743,34 @@ class VisualApprovalTests(unittest.TestCase):
         self.assertEqual(batch["evidenceClass"], "shared-view")
         self.assertFalse(batch["requiresRuntime"])
         self.assertEqual(batch["runtimeSurfaces"], [])
+        self.assertEqual(
+            batch["consolidatedActionID"],
+            "review.coordinator.shared-view",
+        )
+
+    def test_shared_view_batches_share_one_deterministic_consolidation_identifier(self) -> None:
+        _, state = self.configured_state()
+        shared = next(
+            item for item in state.requirements if item.evidence_class == "shared-view"
+        )
+        requirements = (
+            replace(shared, id="ios.app.shared.light", surface="ios.app", device="iPhone"),
+            replace(shared, id="watch.app.shared.dark"),
+        )
+
+        report = build_visual_approval_report(
+            replace(state, requirements=requirements),
+            None,
+        )
+
+        self.assertEqual(
+            [batch["actionID"] for batch in report["reviewBatches"]],
+            ["review.apple-watch.shared-view", "review.iphone.shared-view"],
+        )
+        self.assertEqual(
+            {batch["consolidatedActionID"] for batch in report["reviewBatches"]},
+            {"review.coordinator.shared-view"},
+        )
 
     def test_ready_batches_partition_by_evidence_class_and_chunk_with_stable_ids(self) -> None:
         session, state = self.configured_state()
@@ -804,6 +839,16 @@ class VisualApprovalTests(unittest.TestCase):
         self.assertEqual(
             [item["runtimeSurfaces"] for item in batches_by_class["shared-view"]],
             [[], []],
+        )
+        self.assertEqual(
+            [item["consolidatedActionID"] for item in batches_by_class["shared-view"]],
+            [
+                "review.coordinator.shared-view.part-1",
+                "review.coordinator.shared-view.part-2",
+            ],
+        )
+        self.assertTrue(
+            all("consolidatedActionID" not in item for item in batches_by_class["os-composited-placement"])
         )
         self.assertTrue(
             all(

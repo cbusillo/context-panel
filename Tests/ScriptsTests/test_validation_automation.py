@@ -608,6 +608,27 @@ class ValidationAutomationTests(unittest.TestCase):
         self.assertNotIn("/private/artifacts", serialized)
         self.assertNotIn("/private/receipt.json", serialized)
 
+    def test_shared_view_capture_window_digest_is_queue_consolidation_independent(self) -> None:
+        manifest_id = "9" * 64
+        requirement_ids = ["ios.app.shared.light", "watch.app.shared.dark"]
+
+        digest = cli_module.shared_view_capture_window_digest(
+            manifest_id,
+            requirement_ids,
+        )
+
+        self.assertEqual(
+            digest,
+            "8b051ee6bc3ef01facb6e019b86c04591cefecd2e286908d9e4f40f22ac16228",
+        )
+        self.assertEqual(
+            digest,
+            cli_module.shared_view_capture_window_digest(
+                manifest_id,
+                list(reversed(requirement_ids)),
+            ),
+        )
+
     def test_shared_view_capture_missing_inputs_records_unsupported(self) -> None:
         temporary, store, session = self.fixture()
         self.addCleanup(temporary.cleanup)

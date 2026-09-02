@@ -3,7 +3,8 @@
 The signed validation coordinator turns machine evidence into one calm operator
 queue. It does not manage devices, deliver notifications, make visual judgments,
 or change release gates. It records explicit human approve/reject decisions but
-never makes the visual judgment itself. Those boundaries keep the queue read-only with respect
+never makes the visual judgment itself. Those boundaries keep the queue
+read-only with respect
 to signed runtimes, App Store Connect, CloudKit schema, user data, and existing
 widget, complication, and Top Shelf placements.
 
@@ -73,13 +74,25 @@ and superseded sessions never advance automation.
 
 ## Queue Policy
 
-`status` groups ready visual-review actions by public device class *and*
-evidence class: `shared-view` or `os-composited-placement`. Mac, iPhone, iPad,
-Vision Pro, Apple Watch, Apple TV, and Coordinator remain the only public
+`status` preserves the historical per-device batch structure in
+`visualApprovals.reviewBatches`: each batch retains its action ID, device,
+requirement IDs, and evidence class for replay fidelity. New shared-view
+batches also carry a deterministic optional `consolidatedActionID`. The
+Coordinator packs the complete ready shared-view batch set in stable source
+action order, folds each at-most-60-minute part into one Coordinator review
+action, and unions its surfaces and public device classes. Malformed identifiers,
+mixed legacy and consolidated batches, incomplete membership, or inconsistent
+part assignment fail closed. Historical reports without
+`consolidatedActionID` keep their original per-device queue unchanged.
+
+Placement batches never carry `consolidatedActionID`, remain per-device and
+runtime-gated, and cannot be folded. Mac, iPhone, iPad, Vision Pro, Apple Watch,
+Apple TV, and Coordinator remain the only public
 device labels. Each action has a stable class-specific ID, plain instruction,
 honest time estimate, bounded recovery sequence, and optional notification
-decision. A `.part-N` suffix appears only when a device-and-class batch exceeds
-the bounded review size.
+decision. A `.part-N` suffix bounds both large per-device source batches and
+Coordinator shared-view actions without making the single-part action ID depend
+on changing requirement membership.
 
 Every queued action also carries a fail-closed machine-readable contract:
 

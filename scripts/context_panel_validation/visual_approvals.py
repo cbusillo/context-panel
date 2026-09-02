@@ -40,6 +40,7 @@ VISUAL_REVIEW_CLASSES = ("shared-view", "os-composited-placement")
 VISUAL_DECISIONS = ("approved", "rejected")
 MAXIMUM_REQUIREMENT_COUNT = 128
 MAXIMUM_REQUIREMENTS_PER_REVIEW_BATCH = 30
+MAXIMUM_CONSOLIDATED_REVIEW_MINUTES = 60
 MAXIMUM_DECISION_COUNT = 512
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 REQUIREMENT_ID_PATTERN = re.compile(r"^[a-z0-9]+(?:[.-][a-z0-9]+)*$")
@@ -993,6 +994,30 @@ def build_visual_approval_report(
                     "estimateMinutes": max(2, len(chunk) * 2),
                 }
             )
+    shared_batches = sorted(
+        (
+            batch
+            for batch in review_batches
+            if batch["evidenceClass"] == "shared-view"
+        ),
+        key=lambda batch: str(batch["actionID"]),
+    )
+    consolidated_groups: list[list[dict[str, Any]]] = []
+    for batch in shared_batches:
+        if (
+            not consolidated_groups
+            or sum(item["estimateMinutes"] for item in consolidated_groups[-1])
+            + batch["estimateMinutes"]
+            > MAXIMUM_CONSOLIDATED_REVIEW_MINUTES
+        ):
+            consolidated_groups.append([])
+        consolidated_groups[-1].append(batch)
+    for index, group in enumerate(consolidated_groups, start=1):
+        action_id = "review.coordinator.shared-view"
+        if len(consolidated_groups) > 1:
+            action_id = f"{action_id}.part-{index}"
+        for batch in group:
+            batch["consolidatedActionID"] = action_id
     states = {str(item["state"]) for item in requirements}
     if not requirements:
         overall_state = "not-required"
