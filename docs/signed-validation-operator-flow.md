@@ -3,7 +3,8 @@
 The signed validation coordinator turns machine evidence into one calm operator
 queue. It does not manage devices, deliver notifications, make visual judgments,
 or change release gates. It records explicit human approve/reject decisions but
-never makes the visual judgment itself. Those boundaries keep the queue read-only with respect
+never makes the visual judgment itself. Those boundaries keep the queue
+read-only with respect
 to signed runtimes, App Store Connect, CloudKit schema, user data, and existing
 widget, complication, and Top Shelf placements.
 
@@ -73,9 +74,21 @@ and superseded sessions never advance automation.
 
 ## Queue Policy
 
-`status` groups ready visual-review actions by public device class *and*
-evidence class: `shared-view` or `os-composited-placement`. Mac, iPhone, iPad,
-Vision Pro, Apple Watch, Apple TV, and Coordinator remain the only public
+`status` preserves the historical per-device batch structure in
+`visualApprovals.reviewBatches`: each batch retains its action ID, device,
+requirement IDs, and evidence class for replay fidelity. New shared-view
+batches also carry a deterministic optional `consolidationID`, derived from the
+current manifest and their complete ready requirement set. The Coordinator folds
+only batches with the same valid identifier into one shared-view review action
+with sorted unioned surfaces and public device classes. The folded action has a
+strict 60-minute maximum estimate; malformed identifiers, mixed evidence
+classes, inconsistent membership, or an over-budget group fail closed.
+Historical reports without `consolidationID` keep their original per-device
+queue unchanged.
+
+Placement batches never carry `consolidationID`, remain per-device and
+runtime-gated, and cannot be folded. Mac, iPhone, iPad, Vision Pro, Apple Watch,
+Apple TV, and Coordinator remain the only public
 device labels. Each action has a stable class-specific ID, plain instruction,
 honest time estimate, bounded recovery sequence, and optional notification
 decision. A `.part-N` suffix appears only when a device-and-class batch exceeds

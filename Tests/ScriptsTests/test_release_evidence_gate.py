@@ -3165,6 +3165,51 @@ class ReleaseEvidenceGateTests(unittest.TestCase):
                 validation_report=validation_report,
             )
 
+    def test_report_validator_accepts_consolidated_coordinator_review_action(self) -> None:
+        surface = "watchos.app"
+        validation_report = report(surface, visual_class="shared-view")
+        validation_report["operatorFlow"] = {
+            "schemaVersion": 1,
+            "totalDurationMinutes": 2,
+            "groups": [
+                {
+                    "device": "Coordinator",
+                    "durationMinutes": 2,
+                    "actions": [
+                        {
+                            "id": f"review.coordinator.shared-view.{'a' * 64}",
+                            "instruction": "Review one shared-view check across Apple Watch.",
+                            "notificationKind": "readyForHumanReview",
+                            "recoverySteps": [
+                                "Open the signed validation gallery for every listed surface.",
+                                "Preserve the exact installed builds and existing placements.",
+                                "Record approve or reject for every listed requirement ID.",
+                            ],
+                            "surfaces": [surface],
+                            "reasonCode": "visual-review-required",
+                            "actionKind": "visual-review",
+                            "durationMinutes": 2,
+                            "simulationInsufficiency": {
+                                "code": "visual-presentation-review-required",
+                                "explanation": (
+                                    "The signed surfaces must be reviewed in their actual "
+                                    "presentation contexts."
+                                ),
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+
+        payload = self.evaluate(
+            surface,
+            "shared-view",
+            validation_report=validation_report,
+        )
+
+        self.assertEqual(payload["state"], "shadow-approved")
+
     def test_report_validator_rejects_missing_operator_flow(self) -> None:
         surface = "watchos.app"
         validation_report = report(surface, visual_class="shared-view")
