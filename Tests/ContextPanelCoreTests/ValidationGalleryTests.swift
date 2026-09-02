@@ -140,6 +140,15 @@ import WidgetKit
 @Test func watchValidationLaunchRequestSelectsExactAppAndComplicationSamples() {
     #expect(
         WatchValidationLaunchRequest(arguments: [
+            WatchValidationLaunchRequest.galleryArgument,
+            WatchValidationLaunchRequest.surfaceArgument,
+            "watchos.app",
+            WatchValidationLaunchRequest.fixtureArgument,
+            "healthy",
+        ]) == .app(state: .healthy)
+    )
+    #expect(
+        WatchValidationLaunchRequest(arguments: [
             "ContextPanelWatch",
             WatchValidationLaunchRequest.galleryArgument,
             WatchValidationLaunchRequest.surfaceArgument,
@@ -147,6 +156,17 @@ import WidgetKit
             WatchValidationLaunchRequest.fixtureArgument,
             "dense-accounts",
         ]) == .app(state: .denseAccounts)
+    )
+    #expect(
+        WatchValidationLaunchRequest(arguments: [
+            WatchValidationLaunchRequest.galleryArgument,
+            WatchValidationLaunchRequest.surfaceArgument,
+            "watchos.complication",
+            WatchValidationLaunchRequest.fixtureArgument,
+            "healthy",
+            WatchValidationLaunchRequest.familyArgument,
+            "circular",
+        ]) == .complication(state: .available, family: .circular)
     )
     #expect(
         WatchValidationLaunchRequest(arguments: [

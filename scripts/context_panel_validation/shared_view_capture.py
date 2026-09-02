@@ -62,6 +62,7 @@ SIMCTL_CONTAINER_TIMEOUT = 30
 SIMCTL_TERMINATE_TIMEOUT = 30
 SIMCTL_UI_TIMEOUT = 30
 SIMCTL_OPENURL_TIMEOUT = 30
+SIMCTL_LAUNCH_TIMEOUT = 60
 SIMCTL_SCREENSHOT_TIMEOUT = 60
 SIMCTL_CLEANUP_TIMEOUT = 30
 CAPTURE_SETTLE_SECONDS = 1.0
@@ -1808,7 +1809,12 @@ def _capture_profile(
                 simulator_id,
                 requirement,
             )
-            routed = _run(runner, route_command, SIMCTL_OPENURL_TIMEOUT)
+            route_timeout = (
+                SIMCTL_LAUNCH_TIMEOUT
+                if capture_profile.route_kind == "launch"
+                else SIMCTL_OPENURL_TIMEOUT
+            )
+            routed = _run(runner, route_command, route_timeout)
             if routed.returncode != 0 or routed.timed_out:
                 results[requirement.requirement_id] = _result(
                     requirement,

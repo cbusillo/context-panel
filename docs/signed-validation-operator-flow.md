@@ -36,6 +36,12 @@ continues to be structurally incapable of satisfying `actual-runtime` or
 `os-composited-placement`; placed-complication review and the exact-build Watch
 restart rule remain separate physical evidence.
 
+Private capture configs created before Watch capture support must add an
+explicit `watchos` profile before processing a plan with Watch shared-view
+requirements. Without it, those requirements report `profile-not-configured`
+and automation remains fail closed rather than silently treating Watch as an
+unsupported host mechanism.
+
 The command records a schema-v1 public automation sidecar bound by digests to
 the coordinator session, target, and requested surfaces. It persists only fixed
 result/reason vocabularies, timestamps, counts, booleans, and SHA-256 digests.

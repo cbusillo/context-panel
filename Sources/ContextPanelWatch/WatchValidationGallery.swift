@@ -143,27 +143,6 @@ struct WatchComplicationValidationGalleryView: View {
     }
 }
 
-struct WatchValidationInvalidRequestView: View {
-    var body: some View {
-        WatchValidationSampleContainer {
-            VStack(spacing: 10) {
-                Image(systemName: "exclamationmark.triangle")
-                    .font(.title2)
-                    .foregroundStyle(.orange)
-                Text("Invalid validation request")
-                    .font(.headline)
-                Text("No live Watch data is available for this launch.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
-            .frame(maxWidth: .infinity, minHeight: 180)
-            .padding(16)
-        }
-        .navigationTitle("Validation Error")
-    }
-}
-
 private struct WatchValidationSampleContainer<Content: View>: View {
     @ViewBuilder let content: Content
 

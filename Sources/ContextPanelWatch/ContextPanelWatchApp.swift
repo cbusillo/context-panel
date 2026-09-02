@@ -1,14 +1,21 @@
 import ContextPanelCloudKitSync
 import ContextPanelCore
+import Darwin
 import Foundation
 import SwiftUI
 import WidgetKit
 
 @main
 struct ContextPanelWatchApp: App {
-    private let launchRequest = WatchValidationLaunchRequest(
-        arguments: ProcessInfo.processInfo.arguments
-    )
+    private let launchRequest: WatchValidationLaunchRequest
+
+    init() {
+        let request = WatchValidationLaunchRequest(arguments: ProcessInfo.processInfo.arguments)
+        guard request != .invalid else {
+            exit(EX_USAGE)
+        }
+        launchRequest = request
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -39,7 +46,7 @@ private struct WatchValidationLaunchView: View {
                     family: family.contextPanelFamily
                 )
             case .invalid:
-                WatchValidationInvalidRequestView()
+                EmptyView()
             }
         }
     }
