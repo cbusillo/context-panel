@@ -159,6 +159,54 @@ publication faults are unknown. A zero exit means every requested capture was
 collected. The receipt remains an artifact-collection record only and is not an
 approval, runtime claim, placement claim, or pixel gate.
 
+## Hosted CI Capture Lane
+
+`Shared-View Capture Evidence` is a manually dispatched GitHub-hosted
+`macos-26` lane for deterministic beta shared-view collection. It accepts exact
+previous/current full source SHAs, their version/build identities, and explicit
+previous/current artifact run IDs for macOS, iOS, visionOS, and tvOS. It has only
+`actions: read` and `contents: read`, uses no protected environment, signing, or
+operator secrets, and does not install or contact the canonical local app
+runtime.
+
+The lane checks its workflow tooling commit and both target commits against
+protected `main`, then creates detached clean worktrees for the exact previous
+and current target SHAs. It selects `/Applications/Xcode_26.6.app` before
+validating the runner, requires the runner's full Xcode build to match the
+current sealed source identity, and downloads every requested run into its own
+bounded directory. Each artifact must come from an allowlisted completed release
+workflow, match the requested run/source identity, and contain exactly one
+unexpired sealed `ExpectedBuildManifest` for its layout.
+
+Successful producer runs are accepted. A completed `Ship` run may also have a
+`failure` conclusion when a later release phase failed after the sealed build
+artifact was uploaded; cancelled and timed-out runs are rejected. The target
+current commit must already contain the compatible shared-view capture command
+and planner schema because capture execution deliberately comes from that exact
+source tree rather than newer workflow tooling.
+
+All four layouts must agree on each train's source-manifest identity. The lane
+regenerates each manifest with that source commit's own generator and sealed
+Xcode build, then requires the resulting manifest ID to match before comparison.
+The beta comparison receives all eight expected-build manifests and its
+`requiredSurfaces` field is never edited.
+
+Before capture, the workflow derives a generic placement base from every fresh
+placement surface and merges the canonical shared-view plan into it. This is
+deliberately fail-closed: an uncovered placement surface blocks the lane rather
+than being omitted. It builds unsigned fresh Release simulator bundles only for
+iOS/iPadOS, visionOS, and standalone watchOS, embeds the current manifest, then
+invokes `capture-shared-view-evidence` unchanged. The qualification boundary is
+strict: all supported requirements must be captured, and any uncaptured
+requirements must be macOS or tvOS records with exactly
+`unsupported-host-mechanism`.
+
+Only a qualified run uploads evidence. The public artifact contains the receipt,
+comparison, source manifests, and complete visual requirements. Synthetic PNG
+evidence is uploaded separately with short retention. Neither artifact upgrades
+evidence into `actual-runtime` or `os-composited-placement`; those remain
+physical signed-runtime obligations.
+
 ## Fixture Isolation
 
 `ContextPanelValidationFixtures` is a Foundation-only target. It contains fixed
