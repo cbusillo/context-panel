@@ -329,7 +329,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--surface-policy",
         type=Path,
         default=DEFAULT_SURFACE_POLICY_PATH,
-        help="Canonical Context Panel surface policy JSON; alternate paths are rejected",
+        help="Context Panel surface policy JSON; its digest must match the current manifest",
     )
     capture_shared_view_evidence_parser.add_argument(
         "--requirements",

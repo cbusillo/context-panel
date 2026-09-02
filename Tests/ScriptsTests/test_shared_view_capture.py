@@ -571,7 +571,7 @@ class SharedViewCaptureTests(unittest.TestCase):
             ["xcrun", "simctl", "create", simulator_name, DEVICE_TYPE_IDENTIFIERS["ios"], RUNTIME_IDENTIFIERS["ios"]],
             commands[2],
         )
-        self.assertEqual(["xcrun", "simctl", "list", "-j", "devices", simulator_name], commands[1])
+        self.assertEqual(["xcrun", "simctl", "list", "-j", "devices"], commands[1])
         self.assertEqual(
             [
                 ["xcrun", "simctl", "ui", SIMULATOR_ID, "appearance", "light"],
@@ -1006,6 +1006,7 @@ class SharedViewCaptureTests(unittest.TestCase):
             (CommandResult(0, "not-json", ""), "simctl-created-device-invalid"),
             (CommandResult(0, json.dumps({"devices": []}), ""), "simctl-created-device-invalid"),
             (CommandResult(0, payload({}), ""), "simctl-created-device-invalid"),
+            (CommandResult(0, payload([device] * 257), ""), "simctl-created-device-invalid"),
             (CommandResult(0, payload([{**device, "udid": "bad"}]), ""), "simctl-created-device-invalid"),
             (CommandResult(0, payload([{**device, "udid": SECOND_SIMULATOR_ID}]), ""), "simctl-created-device-mismatch"),
             (CommandResult(0, payload([device, device]), ""), "simctl-created-device-mismatch"),
@@ -1630,10 +1631,20 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.write_plan(["ios.app"])
         self.write_config()
 
-        with self.assertRaisesRegex(SharedViewCaptureError, "canonical surface policy"):
+        exit_code, _ = self.execute(
+            FakeRunner(),
+            run_id="custom-policy",
+            surface_policy_path=policy_path,
+        )
+        self.assertEqual(EXIT_OK, exit_code)
+
+        policy_path.write_text(
+            json.dumps(json.loads(policy_path.read_text()), indent=4) + "\n"
+        )
+        with self.assertRaisesRegex(SharedViewCaptureError, "current surface manifest is invalid"):
             self.execute(
                 FakeRunner(),
-                run_id="custom-policy",
+                run_id="mismatched-policy",
                 surface_policy_path=policy_path,
             )
 

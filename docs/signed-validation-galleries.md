@@ -43,6 +43,8 @@ Create schema-v1 visual-review requirements from a current schema-v5 comparison:
 ```sh
 scripts/context-panel-validation.py plan-shared-view-evidence \
   --surface-comparison <comparison.json> \
+  --matrix <target-source-root>/Config/ContextPanelSharedViewMatrix.json \
+  --surface-policy <target-source-root>/Config/ContextPanelSurfacePolicy.json \
   [--base-requirements <placement-requirements.json>] \
   --output <visual-review-requirements.json> \
   --json
@@ -101,6 +103,8 @@ self-consistent manifests in a caller-selected digest domain are rejected.
 scripts/context-panel-validation.py capture-shared-view-evidence \
   --surface-comparison <comparison.json> \
   --current-manifest <current-surface-manifest.json> \
+  --matrix <target-source-root>/Config/ContextPanelSharedViewMatrix.json \
+  --surface-policy <target-source-root>/Config/ContextPanelSurfacePolicy.json \
   --requirements <visual-review-requirements.json> \
   --capture-config <private-capture-config.json> \
   --artifact-root <absolute-private-artifact-root> \
@@ -180,10 +184,13 @@ unexpired sealed `ExpectedBuildManifest` for its layout.
 
 Successful producer runs are accepted. A completed `Ship` run may also have a
 `failure` conclusion when a later release phase failed after the sealed build
-artifact was uploaded; cancelled and timed-out runs are rejected. The target
-current commit must already contain the compatible shared-view capture command
-and planner schema because capture execution deliberately comes from that exact
-source tree rather than newer workflow tooling.
+artifact was uploaded; cancelled and timed-out runs are rejected. Capture
+orchestration runs from the reviewed workflow tooling commit so lifecycle fixes
+can qualify an older signed target. The app bundles, embedded fixture routes,
+source manifests, and sealed artifacts still come from the exact target source
+commits. The tooling executor receives the exact target policy and shared-view
+matrix paths; `policySha256` and exact plan projection independently reject any
+drift before capture.
 
 All four layouts must agree on each train's source-manifest identity. The lane
 regenerates each manifest with that source commit's own generator and sealed
