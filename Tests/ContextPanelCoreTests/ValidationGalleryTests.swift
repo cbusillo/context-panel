@@ -123,6 +123,102 @@ import WidgetKit
     #expect(unknown.result.document == nil)
 }
 
+@Test func watchValidationLaunchRequestPreservesBareGalleryIndex() {
+    #expect(
+        WatchValidationLaunchRequest(arguments: [
+            "/Applications/Context Panel.app/Contents/MacOS/Context Panel",
+            WatchValidationLaunchRequest.galleryArgument,
+        ]) == .galleryIndex
+    )
+    #expect(
+        WatchValidationLaunchRequest(arguments: [WatchValidationLaunchRequest.galleryArgument])
+            == .galleryIndex
+    )
+    #expect(WatchValidationLaunchRequest(arguments: ["ContextPanelWatch"]) == .normal)
+}
+
+@Test func watchValidationLaunchRequestSelectsExactAppAndComplicationSamples() {
+    #expect(
+        WatchValidationLaunchRequest(arguments: [
+            "ContextPanelWatch",
+            WatchValidationLaunchRequest.galleryArgument,
+            WatchValidationLaunchRequest.surfaceArgument,
+            "watchos.app",
+            WatchValidationLaunchRequest.stateArgument,
+            "denseAccounts",
+        ]) == .app(state: .denseAccounts)
+    )
+    #expect(
+        WatchValidationLaunchRequest(arguments: [
+            "ContextPanelWatch",
+            WatchValidationLaunchRequest.galleryArgument,
+            WatchValidationLaunchRequest.surfaceArgument,
+            "watchos.complication",
+            WatchValidationLaunchRequest.stateArgument,
+            "providerAccess",
+            WatchValidationLaunchRequest.familyArgument,
+            "corner",
+        ]) == .complication(state: .providerAccess, family: .corner)
+    )
+}
+
+@Test func watchValidationLaunchRequestFailsClosedForMalformedOrUnknownArguments() {
+    let invalidArguments: [[String]] = [
+        [
+            WatchValidationLaunchRequest.galleryArgument,
+            WatchValidationLaunchRequest.surfaceArgument,
+            "watchos.app",
+        ],
+        [
+            WatchValidationLaunchRequest.galleryArgument,
+            WatchValidationLaunchRequest.surfaceArgument,
+            "watchos.app",
+            WatchValidationLaunchRequest.stateArgument,
+            "unknown",
+        ],
+        [
+            WatchValidationLaunchRequest.galleryArgument,
+            WatchValidationLaunchRequest.surfaceArgument,
+            "watchos.app",
+            WatchValidationLaunchRequest.stateArgument,
+            "healthy",
+            WatchValidationLaunchRequest.familyArgument,
+            "circular",
+        ],
+        [
+            WatchValidationLaunchRequest.galleryArgument,
+            WatchValidationLaunchRequest.surfaceArgument,
+            "watchos.complication",
+            WatchValidationLaunchRequest.stateArgument,
+            "available",
+        ],
+        [
+            WatchValidationLaunchRequest.galleryArgument,
+            "--context-panel-validation-unknown",
+            "value",
+        ],
+        [
+            WatchValidationLaunchRequest.galleryArgument,
+            WatchValidationLaunchRequest.surfaceArgument,
+            "watchos.app",
+            WatchValidationLaunchRequest.surfaceArgument,
+            "watchos.complication",
+            WatchValidationLaunchRequest.stateArgument,
+            "healthy",
+        ],
+        [
+            WatchValidationLaunchRequest.surfaceArgument,
+            "watchos.app",
+            WatchValidationLaunchRequest.stateArgument,
+            "healthy",
+        ],
+    ]
+
+    for arguments in invalidArguments {
+        #expect(WatchValidationLaunchRequest(arguments: arguments) == .invalid)
+    }
+}
+
 @Test func tvValidationFixturesAreDeterministicAndSynthetic() throws {
     let adapter = TVValidationFixtureAdapter()
     let presentationDate = ValidationFixtureCatalog.referencePresentationDate

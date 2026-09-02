@@ -34,21 +34,29 @@ struct WatchValidationGalleryView: View {
     }
 }
 
-private struct WatchAppValidationGalleryView: View {
-    @State private var state = WatchValidationAppState.healthy
+struct WatchAppValidationGalleryView: View {
+    let fixedState: WatchValidationAppState?
+
+    @State private var selectedState = WatchValidationAppState.healthy
     private let adapter = WatchValidationFixtureAdapter()
 
+    init(fixedState: WatchValidationAppState? = nil) {
+        self.fixedState = fixedState
+    }
+
     private var context: WatchValidationFixtureContext {
-        adapter.appContext(state: state)
+        adapter.appContext(state: fixedState ?? selectedState)
     }
 
     var body: some View {
         WatchValidationSampleContainer {
             List {
-                Section("Sample state") {
-                    Picker("State", selection: $state) {
-                        ForEach(WatchValidationAppState.allCases) { state in
-                            Text(state.displayName).tag(state)
+                if fixedState == nil {
+                    Section("Sample state") {
+                        Picker("State", selection: $selectedState) {
+                            ForEach(WatchValidationAppState.allCases) { state in
+                                Text(state.displayName).tag(state)
+                            }
                         }
                     }
                 }
@@ -62,18 +70,27 @@ private struct WatchAppValidationGalleryView: View {
                 )
             }
         }
-        .navigationTitle("App states")
+        .navigationTitle(fixedState == nil ? "App states" : "Watch app")
     }
 }
 
-private struct WatchComplicationValidationGalleryView: View {
+struct WatchComplicationValidationGalleryView: View {
+    let state: WatchValidationComplicationState?
     let family: ContextPanelWatchComplicationFamily
 
-    @State private var state = WatchValidationComplicationState.available
+    @State private var selectedState = WatchValidationComplicationState.available
     private let adapter = WatchValidationFixtureAdapter()
 
+    init(
+        state: WatchValidationComplicationState? = nil,
+        family: ContextPanelWatchComplicationFamily
+    ) {
+        self.state = state
+        self.family = family
+    }
+
     private var context: WatchValidationFixtureContext {
-        adapter.complicationContext(state: state)
+        adapter.complicationContext(state: state ?? selectedState)
     }
 
     private var entry: ContextPanelWatchWidgetEntry {
@@ -87,10 +104,12 @@ private struct WatchComplicationValidationGalleryView: View {
     var body: some View {
         WatchValidationSampleContainer {
             List {
-                Section("Sample state") {
-                    Picker("State", selection: $state) {
-                        ForEach(WatchValidationComplicationState.allCases) { state in
-                            Text(state.displayName).tag(state)
+                if state == nil {
+                    Section("Sample state") {
+                        Picker("State", selection: $selectedState) {
+                            ForEach(WatchValidationComplicationState.allCases) { state in
+                                Text(state.displayName).tag(state)
+                            }
                         }
                     }
                 }
@@ -120,7 +139,28 @@ private struct WatchComplicationValidationGalleryView: View {
                 }
             }
         }
-        .navigationTitle(family.displayName)
+        .navigationTitle(state == nil ? family.displayName : "Complication")
+    }
+}
+
+struct WatchValidationInvalidRequestView: View {
+    var body: some View {
+        WatchValidationSampleContainer {
+            VStack(spacing: 10) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.title2)
+                    .foregroundStyle(.orange)
+                Text("Invalid validation request")
+                    .font(.headline)
+                Text("No live Watch data is available for this launch.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity, minHeight: 180)
+            .padding(16)
+        }
+        .navigationTitle("Validation Error")
     }
 }
 

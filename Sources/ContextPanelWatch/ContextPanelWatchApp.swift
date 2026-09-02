@@ -8,9 +8,41 @@ private let watchValidationGalleryLaunchArgument = "--context-panel-validation-g
 
 @main
 struct ContextPanelWatchApp: App {
+    private let launchRequest = WatchValidationLaunchRequest(
+        arguments: ProcessInfo.processInfo.arguments
+    )
+
     var body: some Scene {
         WindowGroup {
-            WatchRootView()
+            if launchRequest == .normal {
+                WatchRootView()
+            } else {
+                WatchValidationLaunchView(request: launchRequest)
+            }
+        }
+    }
+}
+
+private struct WatchValidationLaunchView: View {
+    let request: WatchValidationLaunchRequest
+
+    var body: some View {
+        NavigationStack {
+            switch request {
+            case .normal:
+                EmptyView()
+            case .galleryIndex:
+                WatchValidationGalleryView()
+            case let .app(state):
+                WatchAppValidationGalleryView(fixedState: state)
+            case let .complication(state, family):
+                WatchComplicationValidationGalleryView(
+                    state: state,
+                    family: ContextPanelWatchComplicationFamily(rawValue: family.rawValue) ?? .circular
+                )
+            case .invalid:
+                WatchValidationInvalidRequestView()
+            }
         }
     }
 }
