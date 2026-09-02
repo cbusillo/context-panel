@@ -63,6 +63,7 @@ from .shared_view_evidence import (
     SharedViewEvidenceError,
     load_shared_view_matrix,
     load_surface_policy,
+    merge_shared_view_requirements,
     plan_shared_view_evidence,
     write_requirements_payload,
 )
@@ -289,6 +290,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Canonical Context Panel surface policy JSON",
     )
     plan_shared_view_evidence_parser.add_argument(
+        "--base-requirements",
+        type=Path,
+        help="Optional authoritative placement plan to preserve while adding canonical shared-view requirements",
+    )
+    plan_shared_view_evidence_parser.add_argument(
         "--output",
         required=True,
         type=Path,
@@ -483,14 +489,45 @@ def run_plan_shared_view_evidence(args: argparse.Namespace) -> int:
     surface_policy = load_surface_policy(args.surface_policy)
     matrix = load_shared_view_matrix(args.matrix, surface_policy)
     payload = plan_shared_view_evidence(comparison, matrix, surface_policy)
+    comparison_surfaces = comparison.get("surfaces")
+    has_fresh_placement = isinstance(comparison_surfaces, list) and any(
+        isinstance(surface, dict)
+        and isinstance(surface.get("freshEvidence"), list)
+        and "os-composited-placement" in surface["freshEvidence"]
+        for surface in comparison_surfaces
+    )
+    if args.base_requirements is not None:
+        if (
+            args.base_requirements.expanduser().resolve(strict=False)
+            == args.output.expanduser().resolve(strict=False)
+        ):
+            raise SharedViewEvidenceError(
+                "base visual review requirements must differ from the output"
+            )
+        try:
+            base_payload = json.loads(args.base_requirements.expanduser().read_text())
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise SharedViewEvidenceError(
+                "base visual review requirements are unavailable or invalid"
+            ) from error
+        payload = merge_shared_view_requirements(base_payload, payload)
+    elif has_fresh_placement:
+        print(
+            "warning: comparison also requires placement review; pass --base-requirements "
+            "before using this output as the combined coordinator plan",
+            file=sys.stderr,
+        )
     write_requirements_payload(args.output, payload)
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         requirements = cast(list[dict[str, object]], payload["requirements"])
-        surfaces = {item["surface"] for item in requirements}
+        shared_requirements = [
+            item for item in requirements if item["evidenceClass"] == "shared-view"
+        ]
+        surfaces = {item["surface"] for item in shared_requirements}
         print(
-            f"Planned {len(requirements)} shared-view requirements across "
+            f"Planned {len(shared_requirements)} shared-view requirements across "
             f"{len(surfaces)} fresh shared-view surfaces."
         )
     return 0

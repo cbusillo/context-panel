@@ -54,7 +54,7 @@
       "companionCachePreflight": "scripts/context-panel-companion-cache.sh preflight",
       "companionCacheQuarantine": "scripts/context-panel-companion-cache.sh quarantine --root <absolute-.build-or-derived-data/companion-build-validation-root>",
       "signedValidationCoordinator": "scripts/context-panel-validation.py start-session --version <version> --build-number <build-number>",
-      "signedValidationSharedViewPlan": "scripts/context-panel-validation.py plan-shared-view-evidence --surface-comparison <comparison.json> --output <visual-review-requirements.json>",
+      "signedValidationSharedViewPlan": "scripts/context-panel-validation.py plan-shared-view-evidence --surface-comparison <comparison.json> [--base-requirements <placement-requirements.json>] --output <visual-review-requirements.json>",
       "signedValidationSharedViewCapture": "scripts/context-panel-validation.py capture-shared-view-evidence --surface-comparison <comparison.json> --current-manifest <current-surface-manifest.json> --requirements <visual-review-requirements.json> --capture-config <private-capture-config.json> --artifact-root <absolute-private-artifact-root> --output <absolute-shared-view-capture-receipt.json>",
       "signedValidationVisualSession": "scripts/context-panel-validation.py start-session --version <version> --build-number <build-number> --surface-comparison <comparison.json> --visual-review-requirements <visual-review-requirements.json> --expected-build-manifest <ExpectedBuildManifest-platform.json>",
       "signedValidationCoordinatorStatus": "scripts/context-panel-validation.py status --version <version> --build-number <build-number>",

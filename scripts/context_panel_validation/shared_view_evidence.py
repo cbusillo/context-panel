@@ -79,9 +79,24 @@ TV_GALLERY_SURFACES = ("runway", "provider", "topShelf")
 TV_PRESENTATIONS = ("fullDetail", "projectOnly", "countsOnly")
 ACCESSIBILITY_CONTEXTS = ("default",)
 VISUAL_MAXIMUM_REQUIREMENT_COUNT = 128
+VISUAL_REQUIREMENTS_KIND = "context-panel-visual-review-requirements"
+VISUAL_REQUIREMENT_KEYS = {
+    "id",
+    "evidenceClass",
+    "surface",
+    "fixtureContractID",
+    "presentation",
+    "appearance",
+    "accessibility",
+    "hostOS",
+    "presentationFamily",
+    "placementHost",
+}
 
 _CELL_ID_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 _JUSTIFICATION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 .,'()/+-]{0,159}$")
+_REQUIREMENT_ID_PATTERN = re.compile(r"^[a-z0-9]+(?:[.-][a-z0-9]+)*$")
+_SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
 class SharedViewEvidenceError(ValueError):
@@ -428,10 +443,6 @@ def plan_shared_view_evidence(
     fresh_shared_surfaces: set[str] = set()
     for surface in validated_comparison["surfaces"]:
         surface_id = surface["surfaceId"]
-        if "os-composited-placement" in surface["freshEvidence"]:
-            raise SharedViewEvidenceError(
-                "surface comparison requires placement requirements outside the shared-view planner"
-            )
         if "shared-view" in surface["freshEvidence"]:
             if surface_id not in shared_surface_ids:
                 raise SharedViewEvidenceError("surface comparison claims shared-view for an uncovered surface")
@@ -460,9 +471,154 @@ def plan_shared_view_evidence(
         raise SharedViewEvidenceError("shared-view requirements exceed the visual review budget")
     return {
         "schemaVersion": 1,
-        "kind": "context-panel-visual-review-requirements",
+        "kind": VISUAL_REQUIREMENTS_KIND,
         "currentManifestID": validated_comparison["currentManifestId"],
         "requirements": requirements,
+    }
+
+
+def _requirements_payload(
+    payload: object,
+    *,
+    label: str,
+) -> dict[str, object]:
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {"schemaVersion", "kind", "currentManifestID", "requirements"}
+        or type(payload.get("schemaVersion")) is not int
+        or payload["schemaVersion"] != 1
+        or payload.get("kind") != VISUAL_REQUIREMENTS_KIND
+        or not isinstance(payload.get("currentManifestID"), str)
+        or not isinstance(payload.get("requirements"), list)
+        or len(payload["requirements"]) > VISUAL_MAXIMUM_REQUIREMENT_COUNT
+    ):
+        raise SharedViewEvidenceError(f"{label} is invalid")
+    requirement_ids: list[str] = []
+    for requirement in payload["requirements"]:
+        evidence_class = requirement.get("evidenceClass") if isinstance(requirement, dict) else None
+        if (
+            not isinstance(requirement, dict)
+            or set(requirement) != VISUAL_REQUIREMENT_KEYS
+            or not isinstance(requirement.get("id"), str)
+            or len(requirement["id"]) > 128
+            or _REQUIREMENT_ID_PATTERN.fullmatch(requirement["id"]) is None
+            or evidence_class not in {"shared-view", "os-composited-placement"}
+            or not isinstance(requirement.get("surface"), str)
+        ):
+            raise SharedViewEvidenceError(f"{label} requirement is invalid")
+        if evidence_class == "shared-view" and (
+            not isinstance(requirement.get("fixtureContractID"), str)
+            or _SHA256_PATTERN.fullmatch(requirement["fixtureContractID"]) is None
+            or not isinstance(requirement.get("presentation"), str)
+            or not isinstance(requirement.get("appearance"), str)
+            or not isinstance(requirement.get("accessibility"), str)
+            or requirement.get("hostOS") is not None
+            or requirement.get("presentationFamily") is not None
+            or requirement.get("placementHost") is not None
+        ):
+            raise SharedViewEvidenceError(f"{label} shared-view requirement is invalid")
+        if evidence_class == "os-composited-placement" and (
+            requirement.get("fixtureContractID") is not None
+            or requirement.get("presentation") is not None
+            or not isinstance(requirement.get("appearance"), str)
+            or not isinstance(requirement.get("accessibility"), str)
+            or not isinstance(requirement.get("hostOS"), str)
+            or not isinstance(requirement.get("presentationFamily"), str)
+            or not isinstance(requirement.get("placementHost"), str)
+        ):
+            raise SharedViewEvidenceError(f"{label} placement requirement is invalid")
+        requirement_ids.append(requirement["id"])
+    if len(requirement_ids) != len(set(requirement_ids)):
+        raise SharedViewEvidenceError(f"{label} requirement identifier is duplicated")
+    return payload
+
+
+def project_shared_view_requirements(
+    authoritative_payload: object,
+    planned_payload: object,
+) -> dict[str, object]:
+    authoritative = _requirements_payload(
+        authoritative_payload,
+        label="authoritative visual review requirements",
+    )
+    planned = _requirements_payload(
+        planned_payload,
+        label="planned shared-view requirements",
+    )
+    if authoritative["currentManifestID"] != planned["currentManifestID"]:
+        raise SharedViewEvidenceError(
+            "authoritative visual review requirements do not match the current manifest"
+        )
+    authoritative_shared = {
+        requirement["id"]: requirement
+        for requirement in authoritative["requirements"]
+        if requirement["evidenceClass"] == "shared-view"
+    }
+    planned_shared = [
+        requirement
+        for requirement in planned["requirements"]
+        if requirement["evidenceClass"] == "shared-view"
+    ]
+    planned_by_id = {requirement["id"]: requirement for requirement in planned_shared}
+    if set(authoritative_shared) != set(planned_by_id) or any(
+        authoritative_shared[requirement_id] != planned_requirement
+        for requirement_id, planned_requirement in planned_by_id.items()
+    ):
+        raise SharedViewEvidenceError(
+            "authoritative shared-view requirements do not match the canonical plan"
+        )
+    return {
+        "schemaVersion": 1,
+        "kind": VISUAL_REQUIREMENTS_KIND,
+        "currentManifestID": planned["currentManifestID"],
+        "requirements": [
+            authoritative_shared[requirement["id"]]
+            for requirement in planned_shared
+        ],
+    }
+
+
+def merge_shared_view_requirements(
+    base_payload: object,
+    planned_payload: object,
+) -> dict[str, object]:
+    base = _requirements_payload(base_payload, label="base visual review requirements")
+    planned = _requirements_payload(
+        planned_payload,
+        label="planned shared-view requirements",
+    )
+    if base["currentManifestID"] != planned["currentManifestID"]:
+        raise SharedViewEvidenceError(
+            "base visual review requirements do not match the current manifest"
+        )
+    base_shared = [
+        requirement
+        for requirement in base["requirements"]
+        if requirement["evidenceClass"] == "shared-view"
+    ]
+    if base_shared:
+        project_shared_view_requirements(base, planned)
+        return {
+            "schemaVersion": 1,
+            "kind": VISUAL_REQUIREMENTS_KIND,
+            "currentManifestID": planned["currentManifestID"],
+            "requirements": list(base["requirements"]),
+        }
+    non_shared = list(base["requirements"])
+    planned_shared = list(planned["requirements"])
+    existing_ids = {requirement["id"] for requirement in non_shared}
+    if any(requirement["id"] in existing_ids for requirement in planned_shared):
+        raise SharedViewEvidenceError(
+            "base visual review requirements conflict with planned shared-view identifiers"
+        )
+    combined = [*non_shared, *planned_shared]
+    if len(combined) > VISUAL_MAXIMUM_REQUIREMENT_COUNT:
+        raise SharedViewEvidenceError("visual review requirements exceed the review budget")
+    return {
+        "schemaVersion": 1,
+        "kind": VISUAL_REQUIREMENTS_KIND,
+        "currentManifestID": planned["currentManifestID"],
+        "requirements": combined,
     }
 
 

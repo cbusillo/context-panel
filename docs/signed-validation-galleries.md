@@ -43,6 +43,7 @@ Create schema-v1 visual-review requirements from a current schema-v5 comparison:
 ```sh
 scripts/context-panel-validation.py plan-shared-view-evidence \
   --surface-comparison <comparison.json> \
+  [--base-requirements <placement-requirements.json>] \
   --output <visual-review-requirements.json> \
   --json
 ```
@@ -53,9 +54,15 @@ only cells for surfaces with fresh `shared-view` evidence. It does not create a
 coordinator session, launch a simulator, install an app, read local account or
 provider state, or claim runtime or placement proof. A beta comparison that has
 only fresh shared-view surfaces therefore plans successfully with no runtime
-surface. A comparison with fresh `os-composited-placement` evidence is rejected
-because the shared-view-only output could not satisfy the existing combined
-visual-review requirements contract; placement planning remains a later stage.
+surface. Mixed comparisons are accepted. When `--base-requirements` is
+supplied, the planner preserves every non-shared requirement from that explicit
+plan and adds the canonical matrix-bound shared-view subset. Existing
+shared-view entries must already match the canonical subset exactly;
+conflicting IDs, fixture contracts, manifests, or requirement bodies fail
+closed. The base file is never modified in place implicitly. When placement is
+fresh and no base is supplied, the command emits a warning because the
+shared-only output is suitable for capture but cannot cover the combined
+coordinator plan.
 
 Each fixture contract ID is a deterministic hash over the versioned matrix
 domain, complete matrix digest, relevant surface-policy contract, and canonical
@@ -66,8 +73,14 @@ or approval integration remain a Stage 2 boundary.
 
 ## Private Simulator Capture
 
-`capture-shared-view-evidence` captures only `ios`, `ipados`, and `visionos`
-app/widget gallery requirements on throwaway simulators. It never builds,
+`capture-shared-view-evidence` projects the canonical shared-view subset from
+the supplied requirements file, so that file may also retain placement
+requirements for the coordinator. Projected IDs and requirement bodies must
+exactly match the matrix planner output; placement entries are ignored by
+capture and remain structurally unable to satisfy shared-view work.
+
+The executor captures only `ios`, `ipados`, and `visionos` app/widget gallery
+requirements on throwaway simulators. It never builds,
 starts a coordinator session, records a visual decision, reads runtime receipts,
 or claims runtime or placement evidence.
 

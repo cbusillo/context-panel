@@ -28,11 +28,16 @@ from context_panel_validation.shared_view_evidence import (
     fixture_contract_id,
     load_shared_view_matrix,
     load_surface_policy,
+    merge_shared_view_requirements,
     plan_shared_view_evidence,
+    project_shared_view_requirements,
     validate_shared_view_matrix,
 )
 from context_panel_validation.models import EXIT_UNKNOWN
-from context_panel_validation.visual_approvals import MAXIMUM_REQUIREMENT_COUNT
+from context_panel_validation.visual_approvals import (
+    MAXIMUM_REQUIREMENT_COUNT,
+    VisualApprovalError,
+)
 
 
 MANIFEST_ID = "a" * 64
@@ -311,19 +316,135 @@ class SharedViewEvidenceTests(unittest.TestCase):
         self.assertFalse(comparison["requiresRuntimeSession"])
         self.assertEqual([item["surface"] for item in requirements], ["watchos.app"] * 2)
 
-    def test_planner_rejects_fresh_placement_requirements(self) -> None:
+    def test_planner_projects_shared_view_from_mixed_comparison(self) -> None:
         comparison = comparison_for(
             {
-                "watchos.app": [],
+                "watchos.app": ["shared-view"],
                 "watchos.complication": ["actual-runtime", "os-composited-placement"],
             }
         )
 
+        payload = plan_shared_view_evidence(comparison, self.matrix, self.surface_policy)
+
+        requirements = cast(list[dict[str, object]], payload["requirements"])
+        self.assertEqual(
+            [requirement["id"] for requirement in requirements],
+            ["shared-view.watchos-app.baseline", "shared-view.watchos-app.stress"],
+        )
+        self.assertTrue(
+            all(requirement["evidenceClass"] == "shared-view" for requirement in requirements)
+        )
+
+    def test_shared_only_projection_cannot_start_mixed_coordinator_plan(self) -> None:
+        comparison = comparison_for(
+            {
+                "watchos.app": ["shared-view"],
+                "watchos.complication": ["actual-runtime", "os-composited-placement"],
+            }
+        )
+        payload = plan_shared_view_evidence(comparison, self.matrix, self.surface_policy)
+        policy_by_id = {surface.id: surface for surface in self.surface_policy}
+        identities = tuple(
+            identity_for(surface_id, policy_by_id[surface_id].platform)
+            for surface_id in ("watchos.app", "watchos.complication")
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            comparison_path = root / "comparison.json"
+            requirements_path = root / "requirements.json"
+            comparison_path.write_text(json.dumps(comparison))
+            requirements_path.write_text(json.dumps(payload))
+
+            with self.assertRaisesRegex(
+                VisualApprovalError,
+                "do not cover fresh evidence",
+            ):
+                load_visual_review_plan(comparison_path, requirements_path, identities)
+
+    def test_merge_preserves_placement_requirements_and_projects_shared_subset(self) -> None:
+        comparison = comparison_for(
+            {
+                "watchos.app": ["shared-view"],
+                "watchos.complication": ["actual-runtime", "os-composited-placement"],
+            }
+        )
+        planned = plan_shared_view_evidence(comparison, self.matrix, self.surface_policy)
+        placement = {
+            "id": "watchos.complication.placement.default",
+            "evidenceClass": "os-composited-placement",
+            "surface": "watchos.complication",
+            "fixtureContractID": None,
+            "presentation": None,
+            "appearance": "default",
+            "accessibility": "default",
+            "hostOS": "watchOS 27.0",
+            "presentationFamily": "widgetCorner",
+            "placementHost": "watch face",
+        }
+        base = {
+            "schemaVersion": 1,
+            "kind": "context-panel-visual-review-requirements",
+            "currentManifestID": MANIFEST_ID,
+            "requirements": [placement],
+        }
+
+        combined = merge_shared_view_requirements(base, planned)
+        projected = project_shared_view_requirements(combined, planned)
+
+        self.assertIs(combined["requirements"][0], placement)
+        self.assertEqual(projected, planned)
+        self.assertEqual(
+            [item["id"] for item in cast(list[dict[str, object]], combined["requirements"])],
+            [
+                "watchos.complication.placement.default",
+                "shared-view.watchos-app.baseline",
+                "shared-view.watchos-app.stress",
+            ],
+        )
+
+    def test_merge_rejects_conflicting_existing_shared_view_requirements(self) -> None:
+        comparison = comparison_for({"watchos.app": ["shared-view"]})
+        planned = plan_shared_view_evidence(comparison, self.matrix, self.surface_policy)
+        conflicting = copy.deepcopy(planned)
+        conflicting["requirements"][0]["id"] = "watchos.app.shared.default"
+
         with self.assertRaisesRegex(
             SharedViewEvidenceError,
-            "requires placement requirements outside the shared-view planner",
+            "do not match the canonical plan",
         ):
-            plan_shared_view_evidence(comparison, self.matrix, self.surface_policy)
+            merge_shared_view_requirements(conflicting, planned)
+
+    def test_merge_rejects_non_integer_schema_and_duplicate_base_ids(self) -> None:
+        comparison = comparison_for({"watchos.app": ["shared-view"]})
+        planned = plan_shared_view_evidence(comparison, self.matrix, self.surface_policy)
+        malformed_schema = {
+            "schemaVersion": True,
+            "kind": "context-panel-visual-review-requirements",
+            "currentManifestID": MANIFEST_ID,
+            "requirements": [],
+        }
+        placement = {
+            "id": "watchos.complication.placement.default",
+            "evidenceClass": "os-composited-placement",
+            "surface": "watchos.complication",
+            "fixtureContractID": None,
+            "presentation": None,
+            "appearance": "default",
+            "accessibility": "default",
+            "hostOS": "watchOS 27.0",
+            "presentationFamily": "widgetCorner",
+            "placementHost": "watch face",
+        }
+        duplicate_ids = {
+            "schemaVersion": 1,
+            "kind": "context-panel-visual-review-requirements",
+            "currentManifestID": MANIFEST_ID,
+            "requirements": [placement, copy.deepcopy(placement)],
+        }
+
+        for base in (malformed_schema, duplicate_ids):
+            with self.subTest(base=base), self.assertRaises(SharedViewEvidenceError):
+                merge_shared_view_requirements(base, planned)
 
     def test_rejects_stale_unknown_and_tampered_comparisons(self) -> None:
         comparison = comparison_for({"watchos.app": ["shared-view"]})
@@ -441,22 +562,78 @@ class SharedViewEvidenceTests(unittest.TestCase):
             self.assertEqual(json.loads(stdout.getvalue()), json.loads(output_path.read_text()))
             self.assertFalse(list(root.glob(".requirements.json.*")))
 
-    def test_cli_rejection_preserves_existing_output_and_returns_unknown(self) -> None:
+    def test_cli_merges_canonical_shared_requirements_into_explicit_base_plan(self) -> None:
         comparison = comparison_for(
             {
-                "watchos.complication": [
-                    "shared-view",
-                    "actual-runtime",
-                    "os-composited-placement",
+                "watchos.app": ["shared-view"],
+                "watchos.complication": ["actual-runtime", "os-composited-placement"],
+            }
+        )
+        placement = {
+            "id": "watchos.complication.placement.default",
+            "evidenceClass": "os-composited-placement",
+            "surface": "watchos.complication",
+            "fixtureContractID": None,
+            "presentation": None,
+            "appearance": "default",
+            "accessibility": "default",
+            "hostOS": "watchOS 27.0",
+            "presentationFamily": "widgetCorner",
+            "placementHost": "watch face",
+        }
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            comparison_path = root / "comparison.json"
+            base_path = root / "placement.json"
+            output_path = root / "combined.json"
+            comparison_path.write_text(json.dumps(comparison))
+            base_path.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "kind": "context-panel-visual-review-requirements",
+                        "currentManifestID": MANIFEST_ID,
+                        "requirements": [placement],
+                    }
+                )
+            )
+
+            exit_code = cli_module.main(
+                [
+                    "plan-shared-view-evidence",
+                    "--surface-comparison",
+                    str(comparison_path),
+                    "--base-requirements",
+                    str(base_path),
+                    "--output",
+                    str(output_path),
                 ]
+            )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(output_path.read_text())
+            self.assertEqual(
+                [requirement["id"] for requirement in payload["requirements"]],
+                [
+                    "watchos.complication.placement.default",
+                    "shared-view.watchos-app.baseline",
+                    "shared-view.watchos-app.stress",
+                ],
+            )
+            self.assertEqual(payload["requirements"][0], placement)
+
+    def test_cli_warns_when_mixed_comparison_has_no_base_plan(self) -> None:
+        comparison = comparison_for(
+            {
+                "watchos.app": ["shared-view"],
+                "watchos.complication": ["actual-runtime", "os-composited-placement"],
             }
         )
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             comparison_path = root / "comparison.json"
-            output_path = root / "requirements.json"
+            output_path = root / "shared.json"
             comparison_path.write_text(json.dumps(comparison))
-            output_path.write_text("existing output\n")
             stderr = io.StringIO()
 
             with contextlib.redirect_stderr(stderr):
@@ -470,10 +647,80 @@ class SharedViewEvidenceTests(unittest.TestCase):
                     ]
                 )
 
+            self.assertEqual(exit_code, 0)
+            self.assertIn("pass --base-requirements", stderr.getvalue())
+
+    def test_cli_rejection_preserves_existing_output_and_returns_unknown(self) -> None:
+        comparison = comparison_for({"watchos.app": ["shared-view"]})
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            comparison_path = root / "comparison.json"
+            base_path = root / "base.json"
+            output_path = root / "requirements.json"
+            comparison_path.write_text(json.dumps(comparison))
+            base_path.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "kind": "context-panel-visual-review-requirements",
+                        "currentManifestID": "b" * 64,
+                        "requirements": [],
+                    }
+                )
+            )
+            output_path.write_text("existing output\n")
+            stderr = io.StringIO()
+
+            with contextlib.redirect_stderr(stderr):
+                exit_code = cli_module.main(
+                    [
+                        "plan-shared-view-evidence",
+                        "--surface-comparison",
+                        str(comparison_path),
+                        "--base-requirements",
+                        str(base_path),
+                        "--output",
+                        str(output_path),
+                    ]
+                )
+
             self.assertEqual(exit_code, EXIT_UNKNOWN)
             self.assertEqual(output_path.read_text(), "existing output\n")
-            self.assertIn("requires placement requirements", stderr.getvalue())
+            self.assertIn("do not match the current manifest", stderr.getvalue())
             self.assertFalse(list(root.glob(".requirements.json.*")))
+
+    def test_cli_rejects_in_place_base_plan_rewrite(self) -> None:
+        comparison = comparison_for({"watchos.app": ["shared-view"]})
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            comparison_path = root / "comparison.json"
+            requirements_path = root / "requirements.json"
+            comparison_path.write_text(json.dumps(comparison))
+            original = {
+                "schemaVersion": 1,
+                "kind": "context-panel-visual-review-requirements",
+                "currentManifestID": MANIFEST_ID,
+                "requirements": [],
+            }
+            requirements_path.write_text(json.dumps(original))
+            stderr = io.StringIO()
+
+            with contextlib.redirect_stderr(stderr):
+                exit_code = cli_module.main(
+                    [
+                        "plan-shared-view-evidence",
+                        "--surface-comparison",
+                        str(comparison_path),
+                        "--base-requirements",
+                        str(requirements_path),
+                        "--output",
+                        str(requirements_path),
+                    ]
+                )
+
+            self.assertEqual(exit_code, EXIT_UNKNOWN)
+            self.assertEqual(json.loads(requirements_path.read_text()), original)
+            self.assertIn("must differ from the output", stderr.getvalue())
 
 
 if __name__ == "__main__":
