@@ -36,6 +36,7 @@ from .shared_view_evidence import (
     load_shared_view_matrix,
     load_surface_policy,
     plan_shared_view_evidence,
+    project_shared_view_requirements,
     shared_view_requirement_id,
 )
 from .system import SubprocessRunner
@@ -652,12 +653,12 @@ def load_capture_requirements(
         or payload["kind"] != REQUIREMENTS_KIND
     ):
         raise SharedViewCaptureError("shared-view capture requirements identity is invalid")
-    if payload != planned_payload:
-        raise SharedViewCaptureError(
-            "shared-view capture requirements do not exactly match the canonical planner output"
-        )
+    try:
+        projected_payload = project_shared_view_requirements(payload, planned_payload)
+    except SharedViewEvidenceError as error:
+        raise SharedViewCaptureError(str(error)) from error
     manifest_id = _require_sha256(payload["currentManifestID"], "shared-view capture manifest identifier")
-    raw_requirements = payload["requirements"]
+    raw_requirements = projected_payload["requirements"]
     if not isinstance(raw_requirements, list) or not raw_requirements:
         raise SharedViewCaptureError("shared-view capture has no planned work")
     if len(raw_requirements) > matrix.max_cell_count:
@@ -691,7 +692,10 @@ def load_capture_requirements(
         )
     return CapturePlan(
         current_manifest_id=manifest_id,
-        requirements_digest=canonical_json_hash(REQUIREMENTS_DIGEST_DOMAIN, planned_payload),
+        requirements_digest=canonical_json_hash(
+            REQUIREMENTS_DIGEST_DOMAIN,
+            projected_payload,
+        ),
         requirements=tuple(requirements),
     )
 

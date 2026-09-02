@@ -179,6 +179,7 @@ output's `currentManifestID` to that comparison:
 ```sh
 scripts/context-panel-validation.py plan-shared-view-evidence \
   --surface-comparison <comparison.json> \
+  [--base-requirements <placement-requirements.json>] \
   --output <visual-review-requirements.json>
 ```
 
@@ -190,8 +191,13 @@ An axis set to `not-applicable` is intentionally absent from that host gallery;
 the capture step must not try to drive it. Pixel policy is `advisory-only`. The
 command is read-only with respect to coordinator state: it does not start a
 session, inspect a runtime, launch a simulator, or capture private artifacts.
-Comparisons with fresh placement evidence are rejected because this stage emits
-shared-view requirements only; placement planning remains a later stage.
+Mixed shared-view and placement comparisons are accepted. Pass an explicit
+placement requirements file with `--base-requirements` to produce one combined
+plan: non-shared requirements are preserved verbatim, canonical matrix-derived
+shared-view requirements are added, and conflicting existing shared entries
+fail closed. The base file is never rewritten implicitly. Omitting the base on
+a mixed comparison emits a warning; the resulting shared-only file can drive
+capture, but `start-session` still rejects it for missing placement coverage.
 
 For supported simulator companion galleries, run the private executor after
 planning. It requires the same schema-v5 comparison, the canonical current
@@ -206,6 +212,12 @@ scripts/context-panel-validation.py capture-shared-view-evidence \
   --artifact-root <absolute-private-artifact-root> \
   --output <absolute-shared-view-capture-receipt.json>
 ```
+
+The requirements input may be the combined coordinator plan. The executor
+projects only its canonical shared-view subset, preserves those exact
+requirement IDs, and binds the receipt digest to that projection. Placement
+entries remain in the authoritative file but are never captured or claimed as
+shared-view evidence.
 
 The executor uses only throwaway iOS, iPadOS, and visionOS simulators, installs
 a private immutable app snapshot, verifies the installed container, and emits a

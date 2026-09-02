@@ -544,6 +544,43 @@ class SharedViewCaptureTests(unittest.TestCase):
             [item["requirementID"] for item in receipt["captures"]],
         )
 
+    def test_capture_projects_canonical_shared_requirements_from_mixed_plan(self) -> None:
+        payload = self.write_plan(["ios.app"])
+        placement = {
+            "id": "ios.widget.placement.default",
+            "evidenceClass": "os-composited-placement",
+            "surface": "ios.widget",
+            "fixtureContractID": None,
+            "presentation": None,
+            "appearance": "default",
+            "accessibility": "default",
+            "hostOS": "iOS 27.0",
+            "presentationFamily": "systemMedium",
+            "placementHost": "Home Screen",
+        }
+        mixed = copy.deepcopy(payload)
+        mixed["requirements"] = [placement, *mixed["requirements"]]
+        self.requirements_path.write_text(json.dumps(mixed))
+
+        plan = load_capture_requirements(
+            self.requirements_path,
+            payload,
+            self.matrix,
+            self.policy,
+        )
+
+        self.assertEqual(
+            [requirement.requirement_id for requirement in plan.requirements],
+            [
+                "shared-view.ios-app.baseline",
+                "shared-view.ios-app.stress",
+            ],
+        )
+        self.assertEqual(
+            plan.requirements_digest,
+            canonical_json_hash(REQUIREMENTS_DIGEST_DOMAIN, payload),
+        )
+
     def test_run_scoped_artifacts_are_isolated_and_complete(self) -> None:
         self.write_plan(["ios.app"])
         self.write_config()
@@ -947,7 +984,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         self.requirements_path.write_text(json.dumps(truncated))
         runner = FakeRunner()
 
-        with self.assertRaisesRegex(SharedViewCaptureError, "exactly match"):
+        with self.assertRaisesRegex(SharedViewCaptureError, "canonical plan"):
             self.execute(runner)
 
         self.assertEqual([], runner.calls)
