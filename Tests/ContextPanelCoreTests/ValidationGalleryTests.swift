@@ -144,8 +144,8 @@ import WidgetKit
             WatchValidationLaunchRequest.galleryArgument,
             WatchValidationLaunchRequest.surfaceArgument,
             "watchos.app",
-            WatchValidationLaunchRequest.stateArgument,
-            "denseAccounts",
+            WatchValidationLaunchRequest.fixtureArgument,
+            "dense-accounts",
         ]) == .app(state: .denseAccounts)
     )
     #expect(
@@ -154,11 +154,11 @@ import WidgetKit
             WatchValidationLaunchRequest.galleryArgument,
             WatchValidationLaunchRequest.surfaceArgument,
             "watchos.complication",
-            WatchValidationLaunchRequest.stateArgument,
-            "providerAccess",
+            WatchValidationLaunchRequest.fixtureArgument,
+            "reset-visible",
             WatchValidationLaunchRequest.familyArgument,
-            "corner",
-        ]) == .complication(state: .providerAccess, family: .corner)
+            "rectangular",
+        ]) == .complication(state: .close, family: .rectangular)
     )
 }
 
@@ -173,14 +173,14 @@ import WidgetKit
             WatchValidationLaunchRequest.galleryArgument,
             WatchValidationLaunchRequest.surfaceArgument,
             "watchos.app",
-            WatchValidationLaunchRequest.stateArgument,
+            WatchValidationLaunchRequest.fixtureArgument,
             "unknown",
         ],
         [
             WatchValidationLaunchRequest.galleryArgument,
             WatchValidationLaunchRequest.surfaceArgument,
             "watchos.app",
-            WatchValidationLaunchRequest.stateArgument,
+            WatchValidationLaunchRequest.fixtureArgument,
             "healthy",
             WatchValidationLaunchRequest.familyArgument,
             "circular",
@@ -189,7 +189,7 @@ import WidgetKit
             WatchValidationLaunchRequest.galleryArgument,
             WatchValidationLaunchRequest.surfaceArgument,
             "watchos.complication",
-            WatchValidationLaunchRequest.stateArgument,
+            WatchValidationLaunchRequest.fixtureArgument,
             "available",
         ],
         [
@@ -203,13 +203,13 @@ import WidgetKit
             "watchos.app",
             WatchValidationLaunchRequest.surfaceArgument,
             "watchos.complication",
-            WatchValidationLaunchRequest.stateArgument,
+            WatchValidationLaunchRequest.fixtureArgument,
             "healthy",
         ],
         [
             WatchValidationLaunchRequest.surfaceArgument,
             "watchos.app",
-            WatchValidationLaunchRequest.stateArgument,
+            WatchValidationLaunchRequest.fixtureArgument,
             "healthy",
         ],
     ]

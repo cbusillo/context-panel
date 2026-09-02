@@ -1132,6 +1132,28 @@ def _capture_route(
             "simctl-ui-appearance+gallery-route",
         )
     if capture_profile.route_kind == "launch":
+        if requirement.surface == "watchos.app":
+            if requirement.family != "not-applicable" or requirement.fixture_id not in {
+                "healthy", "dense-accounts"
+            }:
+                raise SharedViewCaptureError("capture Watch app selector is invalid")
+            selectors = [
+                "--context-panel-validation-surface", requirement.surface,
+                "--context-panel-validation-fixture", requirement.fixture_id,
+            ]
+        elif requirement.surface == "watchos.complication":
+            if (requirement.fixture_id, requirement.family) not in {
+                ("healthy", "circular"),
+                ("reset-visible", "rectangular"),
+            }:
+                raise SharedViewCaptureError("capture Watch complication selector is invalid")
+            selectors = [
+                "--context-panel-validation-surface", requirement.surface,
+                "--context-panel-validation-fixture", requirement.fixture_id,
+                "--context-panel-validation-family", requirement.family,
+            ]
+        else:
+            raise SharedViewCaptureError("capture Watch surface is invalid")
         return (
             [
                 "xcrun",
@@ -1141,10 +1163,7 @@ def _capture_route(
                 simulator_id,
                 profile.bundle_identifier,
                 "--context-panel-validation-gallery",
-                "--fixture",
-                requirement.fixture_id,
-                "--family",
-                requirement.family,
+                *selectors,
             ],
             "simctl-launch",
             None,

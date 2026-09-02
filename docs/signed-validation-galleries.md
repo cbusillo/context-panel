@@ -125,7 +125,9 @@ routed PNGs that differ from the baseline and other cells. The Watch profile
 does not call `simctl ui appearance`; it routes every app or complication cell
 with the fixed argument order `simctl launch --terminate-running-process
 <watch-simulator> com.shinycomputers.contextpanel.watch
---context-panel-validation-gallery --fixture <fixture> --family <family>`.
+--context-panel-validation-gallery --context-panel-validation-surface <surface>
+--context-panel-validation-fixture <fixture>` plus
+`--context-panel-validation-family <family>` for complication cells.
 Watch cells retain the same baseline, stability, distinct-image, installed
 identity, cleanup, artifact, and receipt checks. Termination between cells is
 best-effort so one failed route cannot poison the next cell.

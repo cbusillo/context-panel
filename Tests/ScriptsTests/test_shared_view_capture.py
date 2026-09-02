@@ -627,13 +627,17 @@ class SharedViewCaptureTests(unittest.TestCase):
                 [
                     "xcrun", "simctl", "launch", "--terminate-running-process", SIMULATOR_ID,
                     PROFILE_BUNDLE_IDENTIFIERS["watchos"], "--context-panel-validation-gallery",
-                    "--fixture", fixture, "--family", family,
+                    "--context-panel-validation-surface", surface,
+                    "--context-panel-validation-fixture", fixture,
+                    *([] if family == "not-applicable" else [
+                        "--context-panel-validation-family", family,
+                    ]),
                 ]
-                for fixture, family in (
-                    ("healthy", "not-applicable"),
-                    ("dense-accounts", "not-applicable"),
-                    ("healthy", "circular"),
-                    ("reset-visible", "rectangular"),
+                for surface, fixture, family in (
+                    ("watchos.app", "healthy", "not-applicable"),
+                    ("watchos.app", "dense-accounts", "not-applicable"),
+                    ("watchos.complication", "healthy", "circular"),
+                    ("watchos.complication", "reset-visible", "rectangular"),
                 )
             ],
             launch_commands,

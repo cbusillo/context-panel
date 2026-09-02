@@ -4,8 +4,6 @@ import Foundation
 import SwiftUI
 import WidgetKit
 
-private let watchValidationGalleryLaunchArgument = "--context-panel-validation-gallery"
-
 @main
 struct ContextPanelWatchApp: App {
     private let launchRequest = WatchValidationLaunchRequest(
@@ -38,7 +36,7 @@ private struct WatchValidationLaunchView: View {
             case let .complication(state, family):
                 WatchComplicationValidationGalleryView(
                     state: state,
-                    family: ContextPanelWatchComplicationFamily(rawValue: family.rawValue) ?? .circular
+                    family: family.contextPanelFamily
                 )
             case .invalid:
                 WatchValidationInvalidRequestView()
@@ -51,9 +49,6 @@ private struct WatchValidationLaunchView: View {
 private struct WatchRootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var model = WatchSyncModel()
-    @State private var isValidationGalleryPresented = ProcessInfo.processInfo.arguments.contains(
-        watchValidationGalleryLaunchArgument
-    )
 
     var body: some View {
         NavigationStack {
@@ -65,9 +60,6 @@ private struct WatchRootView: View {
                     syncErrorMessage: model.lastSyncErrorMessage,
                     presentationDate: Date()
                 )
-            }
-            .navigationDestination(isPresented: $isValidationGalleryPresented) {
-                WatchValidationGalleryView()
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -93,6 +85,17 @@ private struct WatchRootView: View {
             )) { _ in
                 model.handleCloudKitAccountChange()
             }
+        }
+    }
+}
+
+private extension WatchValidationComplicationFamily {
+    var contextPanelFamily: ContextPanelWatchComplicationFamily {
+        switch self {
+        case .circular: .circular
+        case .rectangular: .rectangular
+        case .inline: .inline
+        case .corner: .corner
         }
     }
 }

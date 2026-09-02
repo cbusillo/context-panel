@@ -72,7 +72,7 @@ public enum WatchValidationLaunchRequest: Equatable, Sendable {
 
     public static let galleryArgument = "--context-panel-validation-gallery"
     public static let surfaceArgument = "--context-panel-validation-surface"
-    public static let stateArgument = "--context-panel-validation-state"
+    public static let fixtureArgument = "--context-panel-validation-fixture"
     public static let familyArgument = "--context-panel-validation-family"
 
     public init(arguments: [String]) {
@@ -80,33 +80,34 @@ public enum WatchValidationLaunchRequest: Equatable, Sendable {
     }
 
     public static func parse(arguments: [String]) -> Self {
-        var tokens = arguments
-        if tokens.first.map({ !$0.hasPrefix("-") }) == true {
-            tokens.removeFirst()
-        }
-
+        let tokens = arguments.dropFirst(arguments.first.map { !$0.hasPrefix("-") } == true ? 1 : 0)
         let hasValidationArgument = tokens.contains {
             $0 == galleryArgument || $0.hasPrefix("--context-panel-validation-")
         }
         guard hasValidationArgument else { return .normal }
-        guard tokens.count(where: { $0 == galleryArgument }) == 1 else { return .invalid }
+        guard tokens.filter({ $0 == galleryArgument }).count == 1 else { return .invalid }
 
         var values: [String: String] = [:]
+        let argumentTokens = Array(tokens)
         var index = 0
-        while index < tokens.count {
-            let token = tokens[index]
+        while index < argumentTokens.count {
+            let token = argumentTokens[index]
             if token == galleryArgument {
                 index += 1
                 continue
             }
+            guard token.hasPrefix("--context-panel-validation-") else {
+                index += 1
+                continue
+            }
 
-            guard token == surfaceArgument || token == stateArgument || token == familyArgument,
-                  index + 1 < tokens.count
+            guard token == surfaceArgument || token == fixtureArgument || token == familyArgument,
+                  index + 1 < argumentTokens.count
             else {
                 return .invalid
             }
 
-            let value = tokens[index + 1]
+            let value = argumentTokens[index + 1]
             guard !value.isEmpty,
                   !value.hasPrefix("-"),
                   values[token] == nil
@@ -121,28 +122,30 @@ public enum WatchValidationLaunchRequest: Equatable, Sendable {
             return values.isEmpty ? .galleryIndex : .invalid
         }
         guard let surface = WatchValidationSurface(rawValue: rawSurface),
-              let rawState = values[stateArgument]
+              let fixture = values[fixtureArgument]
         else {
             return .invalid
         }
 
         switch surface {
         case .app:
-            guard values[familyArgument] == nil,
-                  let state = WatchValidationAppState(rawValue: rawState)
-            else {
-                return .invalid
+            guard values[familyArgument] == nil else { return .invalid }
+            return switch fixture {
+            case "healthy": .app(state: .healthy)
+            case "dense-accounts": .app(state: .denseAccounts)
+            default: .invalid
             }
-            return .app(state: state)
 
         case .complication:
-            guard let rawFamily = values[familyArgument],
-                  let state = WatchValidationComplicationState(rawValue: rawState),
-                  let family = WatchValidationComplicationFamily(rawValue: rawFamily)
-            else {
-                return .invalid
+            guard let family = values[familyArgument] else { return .invalid }
+            return switch (fixture, family) {
+            case ("healthy", "circular"):
+                .complication(state: .available, family: .circular)
+            case ("reset-visible", "rectangular"):
+                .complication(state: .close, family: .rectangular)
+            default:
+                .invalid
             }
-            return .complication(state: state, family: family)
         }
     }
 }
