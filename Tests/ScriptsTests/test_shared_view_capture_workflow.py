@@ -426,6 +426,7 @@ class SharedViewCaptureWorkflowTests(unittest.TestCase):
         self.assertIn("/Applications/Xcode_26.6.app", text)
         self.assertIn("git worktree add --detach .build/current-source", text)
         self.assertIn("if-no-files-found: warn", text)
+        self.assertNotIn('-sdk "${sdk}"', text)
 
 
 if __name__ == "__main__":

@@ -243,15 +243,15 @@ jobs:
           cd .build/current-source
           xcodegen generate --spec project.yml
           build_simulator() {
-            local scheme="$1" sdk="$2" destination="$3" derived_data="$4"
+            local scheme="$1" destination="$2" derived_data="$3"
             xcodebuild -project ContextPanel.xcodeproj -scheme "${scheme}" -configuration Release \
-              -sdk "${sdk}" -destination "${destination}" -derivedDataPath "${derived_data}" \
+              -destination "${destination}" -derivedDataPath "${derived_data}" \
               MARKETING_VERSION="${CURRENT_VERSION}" CURRENT_PROJECT_VERSION="${CURRENT_BUILD_NUMBER}" \
               CODE_SIGNING_ALLOWED=NO build
           }
-          build_simulator ContextPanelCompanion iphonesimulator 'generic/platform=iOS Simulator' "${GITHUB_WORKSPACE}/.build/ios-derived-data"
-          build_simulator ContextPanelCompanion xrsimulator 'generic/platform=visionOS Simulator' "${GITHUB_WORKSPACE}/.build/visionos-derived-data"
-          build_simulator ContextPanelWatch watchsimulator 'generic/platform=watchOS Simulator' "${GITHUB_WORKSPACE}/.build/watchos-derived-data"
+          build_simulator ContextPanelCompanion 'generic/platform=iOS Simulator' "${GITHUB_WORKSPACE}/.build/ios-derived-data"
+          build_simulator ContextPanelCompanion 'generic/platform=visionOS Simulator' "${GITHUB_WORKSPACE}/.build/visionos-derived-data"
+          build_simulator ContextPanelWatch 'generic/platform=watchOS Simulator' "${GITHUB_WORKSPACE}/.build/watchos-derived-data"
 
       - name: Create Private Capture Config
         shell: bash
