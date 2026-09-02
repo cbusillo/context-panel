@@ -23,6 +23,7 @@ from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
 
 from context_panel_release_gate import (
     ReleaseEvidenceError,
+    load_historical_policy_archive,
     load_json_object,
     release_evidence_report_blockers,
 )
@@ -1715,6 +1716,11 @@ def validate_release_evidence_report(args: argparse.Namespace) -> None:
     manifest_values = getattr(args, "release_evidence_expected_build_manifests", None)
     policy_value = getattr(args, "release_evidence_policy", None)
     surface_policy_value = getattr(args, "release_evidence_surface_policy", None)
+    historical_policy_archive_values = getattr(
+        args,
+        "release_evidence_historical_policy_archives",
+        None,
+    )
     if (
         not release_report_value
         or not validation_report_value
@@ -1750,6 +1756,9 @@ def validate_release_evidence_report(args: argparse.Namespace) -> None:
         surface_policy = load_json_object(
             Path(surface_policy_value),
             "surface evidence policy",
+        )
+        historical_policy_archive = load_historical_policy_archive(
+            tuple(Path(value) for value in (historical_policy_archive_values or ()))
         )
         expected_build_manifests = tuple(
             load_json_object(Path(value), "expected signed build manifest")
@@ -1810,6 +1819,7 @@ def validate_release_evidence_report(args: argparse.Namespace) -> None:
         selected_rc_ledger=selected_rc_ledger,
         host_os_evidence=host_os_evidence,
         shadow_evidence=shadow_evidence,
+        historical_policy_archive=historical_policy_archive,
     )
     if blockers:
         details = "\n".join(f"- {blocker}" for blocker in blockers)
@@ -1907,6 +1917,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--release-evidence-selected-rc-ledger")
     parser.add_argument("--release-evidence-host-os-evidence")
     parser.add_argument("--release-evidence-shadow-evidence")
+    parser.add_argument(
+        "--release-evidence-historical-policy-archive",
+        dest="release_evidence_historical_policy_archives",
+        action="append",
+        help="Optional directory or archive JSON containing digest-verified historical policy preimages.",
+    )
     parser.add_argument(
         "--validate-report-only",
         action="store_true",

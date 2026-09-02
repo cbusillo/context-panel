@@ -108,14 +108,212 @@ class ReleaseEvidenceError(ValueError):
     pass
 
 
+HISTORICAL_POLICY_ARCHIVE_KIND = "context-panel-historical-policy-archive"
+HISTORICAL_POLICY_ARCHIVE_KEYS = {
+    "schemaVersion",
+    "kind",
+    "releasePolicies",
+    "surfacePolicies",
+}
+HISTORICAL_POLICY_ARCHIVE_ENTRY_KEYS = {"digest", "policy"}
+
+
+class HistoricalPolicyArchive:
+    def __init__(
+        self,
+        *,
+        release_policies: dict[str, dict[str, Any]] | None = None,
+        surface_policies: dict[str, dict[str, Any]] | None = None,
+    ) -> None:
+        self._release_policies = release_policies or {}
+        self._surface_policies = surface_policies or {}
+        self._used: set[tuple[str, str]] = set()
+
+    def fresh_usage_scope(self) -> "HistoricalPolicyArchive":
+        return HistoricalPolicyArchive(
+            release_policies=self._release_policies,
+            surface_policies=self._surface_policies,
+        )
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any], *, label: str) -> "HistoricalPolicyArchive":
+        if (
+            set(payload) != HISTORICAL_POLICY_ARCHIVE_KEYS
+            or payload.get("schemaVersion") != 1
+            or payload.get("kind") != HISTORICAL_POLICY_ARCHIVE_KIND
+            or not isinstance(payload.get("releasePolicies"), list)
+            or not isinstance(payload.get("surfacePolicies"), list)
+        ):
+            raise ReleaseEvidenceError(f"{label} is invalid")
+        return cls(
+            release_policies=_historical_policy_entries(
+                payload["releasePolicies"],
+                kind="release",
+                label=label,
+            ),
+            surface_policies=_historical_policy_entries(
+                payload["surfacePolicies"],
+                kind="surface",
+                label=label,
+            ),
+        )
+
+    @classmethod
+    def merge(cls, archives: tuple["HistoricalPolicyArchive", ...]) -> "HistoricalPolicyArchive":
+        release_policies: dict[str, dict[str, Any]] = {}
+        surface_policies: dict[str, dict[str, Any]] = {}
+        for archive in archives:
+            _merge_historical_policy_entries(
+                release_policies,
+                archive._release_policies,
+                kind="release",
+            )
+            _merge_historical_policy_entries(
+                surface_policies,
+                archive._surface_policies,
+                kind="surface",
+            )
+        return cls(
+            release_policies=release_policies,
+            surface_policies=surface_policies,
+        )
+
+    def resolve(
+        self,
+        kind: str,
+        digest: object,
+        *,
+        current_policy: dict[str, Any],
+        label: str,
+    ) -> dict[str, Any]:
+        if kind not in {"release", "surface"}:
+            raise ReleaseEvidenceError(f"{label} policy kind is invalid")
+        if not _is_sha256(digest):
+            raise ReleaseEvidenceError(f"{label} {kind} policy digest is invalid")
+        policies = self._release_policies if kind == "release" else self._surface_policies
+        policy = policies.get(digest)
+        if policy is not None:
+            self._used.add((kind, digest))
+            return policy
+        if _hash_payload(current_policy) == digest:
+            return current_policy
+        raise ReleaseEvidenceError(
+            f"{label} {kind} policy preimage is missing from the historical archive"
+        )
+
+    def assert_all_used(self) -> None:
+        unused = [
+            f"{kind}:{digest}"
+            for kind, policies in (
+                ("release", self._release_policies),
+                ("surface", self._surface_policies),
+            )
+            for digest in sorted(policies)
+            if (kind, digest) not in self._used
+        ]
+        if unused:
+            raise ReleaseEvidenceError(
+                "historical policy archive contains unused entries: " + ", ".join(unused)
+            )
+
+
+def _historical_policy_entries(
+    entries: list[object],
+    *,
+    kind: str,
+    label: str,
+) -> dict[str, dict[str, Any]]:
+    policies: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        if (
+            not isinstance(entry, dict)
+            or set(entry) != HISTORICAL_POLICY_ARCHIVE_ENTRY_KEYS
+            or not _is_sha256(entry.get("digest"))
+            or not isinstance(entry.get("policy"), dict)
+        ):
+            raise ReleaseEvidenceError(f"{label} {kind} policy entry is invalid")
+        digest = str(entry["digest"])
+        policy = entry["policy"]
+        if digest in policies:
+            raise ReleaseEvidenceError(
+                f"{label} contains duplicate {kind} policy digest {digest}"
+            )
+        if _hash_payload(policy) != digest:
+            raise ReleaseEvidenceError(
+                f"{label} {kind} policy digest does not match its preimage"
+            )
+        if kind == "release":
+            _validate_policy(policy, allow_legacy_watchlist=True)
+        elif kind == "surface":
+            _validate_surface_policy(policy, train="beta", comparison_surfaces=None)
+        else:
+            raise ReleaseEvidenceError(f"{label} policy kind is invalid")
+        policies[digest] = policy
+    return policies
+
+
+def _merge_historical_policy_entries(
+    merged: dict[str, dict[str, Any]],
+    incoming: dict[str, dict[str, Any]],
+    *,
+    kind: str,
+) -> None:
+    for digest, policy in incoming.items():
+        if digest in merged:
+            raise ReleaseEvidenceError(
+                f"historical policy archive contains duplicate {kind} policy digest {digest}"
+            )
+        merged[digest] = policy
+
+
 def load_json_object(path: Path, label: str) -> dict[str, Any]:
     try:
         payload = json.loads(path.expanduser().read_text())
-    except (OSError, json.JSONDecodeError) as error:
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise ReleaseEvidenceError(f"{label} is unavailable or invalid") from error
     if not isinstance(payload, dict):
         raise ReleaseEvidenceError(f"{label} must be a JSON object")
     return payload
+
+
+def load_historical_policy_archive(paths: tuple[Path, ...]) -> HistoricalPolicyArchive:
+    archives: list[HistoricalPolicyArchive] = []
+    for path in paths:
+        expanded = path.expanduser()
+        if expanded.is_dir():
+            release_path = expanded / "ContextPanelReleaseEvidencePolicy.json"
+            surface_path = expanded / "ContextPanelSurfacePolicy.json"
+            release_policy = load_json_object(release_path, "historical release policy")
+            surface_policy = load_json_object(surface_path, "historical surface policy")
+            archives.append(
+                HistoricalPolicyArchive.from_payload(
+                    {
+                        "schemaVersion": 1,
+                        "kind": HISTORICAL_POLICY_ARCHIVE_KIND,
+                        "releasePolicies": [
+                            {
+                                "digest": _hash_payload(release_policy),
+                                "policy": release_policy,
+                            }
+                        ],
+                        "surfacePolicies": [
+                            {
+                                "digest": _hash_payload(surface_policy),
+                                "policy": surface_policy,
+                            }
+                        ],
+                    },
+                    label="historical policy archive",
+                )
+            )
+        else:
+            archives.append(
+                HistoricalPolicyArchive.from_payload(
+                    load_json_object(expanded, "historical policy archive"),
+                    label="historical policy archive",
+                )
+            )
+    return HistoricalPolicyArchive.merge(tuple(archives))
 
 
 def _is_sha256(value: object) -> bool:
@@ -400,14 +598,24 @@ def _validated_shadow_disagreement(
     }
 
 
-def _validate_policy(policy: dict[str, Any]) -> dict[str, Any]:
-    if set(policy) != {
+def _validate_policy(
+    policy: dict[str, Any],
+    *,
+    allow_legacy_watchlist: bool = False,
+) -> dict[str, Any]:
+    required_keys = {
         "schemaVersion",
         "maximumEvidenceAgeDays",
         "requiredShadowTrainCount",
         "hostOSCompatibility",
-        "runtimeRegressionWatchlist",
-    } or policy.get("schemaVersion") != 1:
+    }
+    current_keys = {*required_keys, "runtimeRegressionWatchlist"}
+    allowed_key_sets = (
+        (current_keys,)
+        if not allow_legacy_watchlist
+        else (required_keys, current_keys)
+    )
+    if policy.get("schemaVersion") != 1 or set(policy) not in allowed_key_sets:
         raise ReleaseEvidenceError("release evidence policy is invalid")
     maximum_age = policy.get("maximumEvidenceAgeDays")
     shadow_count = policy.get("requiredShadowTrainCount")
@@ -432,7 +640,8 @@ def _validate_policy(policy: dict[str, Any]) -> dict[str, Any]:
         != len(compatibility["patchSensitiveSurfaces"])
     ):
         raise ReleaseEvidenceError("release evidence policy is invalid")
-    _validate_runtime_regression_watchlist(policy.get("runtimeRegressionWatchlist"))
+    if "runtimeRegressionWatchlist" in policy:
+        _validate_runtime_regression_watchlist(policy.get("runtimeRegressionWatchlist"))
     return policy
 
 
@@ -558,7 +767,7 @@ def _effective_required_surfaces(
         evidence_class: set(required_surfaces[evidence_class])
         for evidence_class in EVIDENCE_CLASSES
     }
-    entries = policy["runtimeRegressionWatchlist"]["entries"]
+    entries = policy.get("runtimeRegressionWatchlist", {}).get("entries", [])
     for entry in entries:
         surface_id = entry["surfaceId"]
         entry_evidence = set(entry["requiredEvidence"])
@@ -592,7 +801,7 @@ def _validate_surface_policy(
     surface_policy: dict[str, Any],
     *,
     train: str,
-    comparison_surfaces: dict[str, dict[str, Any]],
+    comparison_surfaces: dict[str, dict[str, Any]] | None,
     toolchain_changed: bool = False,
     artifact_risk_surfaces: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
@@ -649,6 +858,8 @@ def _validate_surface_policy(
             if "actual-runtime" in capabilities
         },
     )
+    if comparison_surfaces is None:
+        return surface_policy
     for surface, comparison_surface in comparison_surfaces.items():
         if comparison_surface.get("artifactId") != artifact_ids_by_surface[surface]:
             raise ReleaseEvidenceError(
@@ -1381,6 +1592,7 @@ def _verified_lineage_ledger(
     label: str,
     policy: dict[str, Any],
     surface_policy: dict[str, Any],
+    historical_policy_archive: HistoricalPolicyArchive,
     lineage_depth: int,
     lineage_seen: frozenset[str],
 ) -> dict[str, Any]:
@@ -1410,15 +1622,38 @@ def _verified_lineage_ledger(
     generated_at = parse_iso8601(ledger.get("generatedAt"))
     if generated_at is None:
         raise ReleaseEvidenceError(f"{label} lineage ledger is invalid")
+    ledger_train = ledger.get("train")
+    ledger_mode = ledger.get("mode")
+    if ledger_train not in TRAINS or ledger_mode not in MODES:
+        raise ReleaseEvidenceError(f"{label} lineage ledger is invalid")
+    lineage_policy = historical_policy_archive.resolve(
+        "release",
+        ledger.get("policyDigest"),
+        current_policy=policy,
+        label=label,
+    )
+    lineage_surface_policy = historical_policy_archive.resolve(
+        "surface",
+        ledger.get("surfacePolicyDigest"),
+        current_policy=surface_policy,
+        label=label,
+    )
+    _validate_policy(lineage_policy, allow_legacy_watchlist=True)
+    _validate_comparison(
+        generation["comparison"],
+        ledger_train,
+        lineage_surface_policy,
+        allow_legacy_reconstruction=True,
+    )
     reconstructed = evaluate_release_evidence(
-        train=ledger.get("train"),
-        mode=ledger.get("mode"),
+        train=ledger_train,
+        mode=ledger_mode,
         comparison=generation["comparison"],
         validation_report=generation["validationReport"],
         identities=identities,
         expected_build_manifests=tuple(generation["expectedBuildManifests"]),
-        policy=policy,
-        surface_policy=surface_policy,
+        policy=lineage_policy,
+        surface_policy=lineage_surface_policy,
         previous_ledger=generation["previousLedger"],
         selected_rc_ledger=generation["selectedRCLedger"],
         host_os_evidence=generation["hostOSEvidence"],
@@ -1427,6 +1662,8 @@ def _verified_lineage_ledger(
         _lineage_depth=lineage_depth + 1,
         _lineage_seen=lineage_seen | {ledger_id},
         _allow_legacy_reconstruction=True,
+        _archive_usage_scoped=True,
+        historical_policy_archive=historical_policy_archive,
     )
     if reconstructed != ledger:
         raise ReleaseEvidenceError(
@@ -1443,6 +1680,7 @@ def _shadow_state(
     maximum_age_days: int,
     policy: dict[str, Any],
     surface_policy: dict[str, Any],
+    historical_policy_archive: HistoricalPolicyArchive,
     lineage_depth: int,
     lineage_seen: frozenset[str],
 ) -> dict[str, Any]:
@@ -1515,13 +1753,26 @@ def _shadow_state(
         if run["ledgerState"] == "approved":
             if not isinstance(embedded_ledger, dict):
                 raise ReleaseEvidenceError("shadow comparison ledger is invalid")
+            embedded_policy = historical_policy_archive.resolve(
+                "release",
+                embedded_ledger.get("policyDigest"),
+                current_policy=policy,
+                label="shadow comparison ledger",
+            )
+            embedded_surface_policy = historical_policy_archive.resolve(
+                "surface",
+                embedded_ledger.get("surfacePolicyDigest"),
+                current_policy=surface_policy,
+                label="shadow comparison ledger",
+            )
+            _validate_policy(embedded_policy, allow_legacy_watchlist=True)
             _validate_ledger(
                 embedded_ledger,
                 expected_manifest_id=run["manifestID"],
                 now=now,
                 label="shadow comparison ledger",
-                maximum_age_days=maximum_age_days,
-                required_shadow_train_count=required_count,
+                maximum_age_days=embedded_policy["maximumEvidenceAgeDays"],
+                required_shadow_train_count=embedded_policy["requiredShadowTrainCount"],
                 allowed_states=frozenset({"approved", "shadow-approved"}),
             )
             if (
@@ -1532,9 +1783,9 @@ def _shadow_state(
                 or embedded_ledger.get("ledgerID") != run["ledgerID"]
                 or embedded_ledger.get("expectedBuildIdentityDigest")
                 != run["expectedBuildIdentityDigest"]
-                or embedded_ledger.get("policyDigest") != _hash_payload(policy)
+                or embedded_ledger.get("policyDigest") != _hash_payload(embedded_policy)
                 or embedded_ledger.get("surfacePolicyDigest")
-                != _hash_payload(surface_policy)
+                != _hash_payload(embedded_surface_policy)
             ):
                 raise ReleaseEvidenceError("shadow comparison ledger binding is invalid")
             generation = run.get("generation")
@@ -1557,8 +1808,8 @@ def _shadow_state(
                 validation_report=generation["validationReport"],
                 identities=generation_identities,
                 expected_build_manifests=tuple(generation["expectedBuildManifests"]),
-                policy=policy,
-                surface_policy=surface_policy,
+                policy=embedded_policy,
+                surface_policy=embedded_surface_policy,
                 previous_ledger=generation["previousLedger"],
                 selected_rc_ledger=generation["selectedRCLedger"],
                 host_os_evidence=generation["hostOSEvidence"],
@@ -1567,6 +1818,8 @@ def _shadow_state(
                 _lineage_depth=lineage_depth + 1,
                 _lineage_seen=lineage_seen | {run["ledgerID"]},
                 _allow_legacy_reconstruction=True,
+                _archive_usage_scoped=True,
+                historical_policy_archive=historical_policy_archive,
             )
             if reconstructed_ledger != embedded_ledger:
                 raise ReleaseEvidenceError(
@@ -1621,17 +1874,25 @@ def evaluate_release_evidence(
     selected_rc_ledger: dict[str, Any] | None = None,
     host_os_evidence: dict[str, Any] | None = None,
     shadow_evidence: dict[str, Any] | None = None,
+    historical_policy_archive: HistoricalPolicyArchive | None = None,
     now: datetime | None = None,
     _lineage_depth: int = 0,
     _lineage_seen: frozenset[str] | None = None,
     _allow_legacy_reconstruction: bool = False,
+    _archive_usage_scoped: bool = False,
 ) -> dict[str, Any]:
     if train not in TRAINS or mode not in MODES:
         raise ReleaseEvidenceError("release evidence train or mode is invalid")
     if _lineage_depth > MAX_LINEAGE_DEPTH:
         raise ReleaseEvidenceError("release evidence exceeds the lineage depth limit")
     lineage_seen = _lineage_seen or frozenset()
-    policy = _validate_policy(policy)
+    historical_policy_archive = historical_policy_archive or HistoricalPolicyArchive()
+    if not _archive_usage_scoped:
+        historical_policy_archive = historical_policy_archive.fresh_usage_scope()
+    policy = _validate_policy(
+        policy,
+        allow_legacy_watchlist=_allow_legacy_reconstruction,
+    )
     surface_comparison = _validate_comparison(
         comparison,
         train,
@@ -1696,20 +1957,23 @@ def evaluate_release_evidence(
             label="previous release evidence",
             policy=policy,
             surface_policy=surface_policy,
+            historical_policy_archive=historical_policy_archive,
             lineage_depth=_lineage_depth,
             lineage_seen=lineage_seen,
         )
-        if verified_previous_ledger.get("policyDigest") != policy_digest:
-            raise ReleaseEvidenceError("previous release evidence policy does not match")
-        if verified_previous_ledger.get("surfacePolicyDigest") != surface_policy_digest:
-            raise ReleaseEvidenceError("previous surface evidence policy does not match")
+        previous_policy = historical_policy_archive.resolve(
+            "release",
+            verified_previous_ledger["policyDigest"],
+            current_policy=policy,
+            label="previous release evidence",
+        )
         previous_surfaces = _validate_ledger(
             verified_previous_ledger,
             expected_manifest_id=str(comparison["previousManifestId"]),
             now=now,
             label="previous release evidence",
-            maximum_age_days=policy["maximumEvidenceAgeDays"],
-            required_shadow_train_count=policy["requiredShadowTrainCount"],
+            maximum_age_days=previous_policy["maximumEvidenceAgeDays"],
+            required_shadow_train_count=previous_policy["requiredShadowTrainCount"],
         )
         previous_expires_at = parse_iso8601(verified_previous_ledger.get("expiresAt"))
         if comparison.get("schemaVersion") == 5 and comparison["artifactEvidence"].get(
@@ -1741,26 +2005,29 @@ def evaluate_release_evidence(
             label="selected RC evidence",
             policy=policy,
             surface_policy=surface_policy,
+            historical_policy_archive=historical_policy_archive,
             lineage_depth=_lineage_depth,
             lineage_seen=lineage_seen,
         )
-        if verified_selected_rc_ledger.get("policyDigest") != policy_digest:
-            raise ReleaseEvidenceError("selected RC evidence policy does not match")
-        if verified_selected_rc_ledger.get("surfacePolicyDigest") != surface_policy_digest:
-            raise ReleaseEvidenceError("selected RC surface policy does not match")
         selected_rc_target = _target(
             verified_selected_rc_ledger.get("target"),
             "selected RC evidence",
         )
         if selected_rc_target != target:
             raise ReleaseEvidenceError("selected RC target does not match the release target")
+        selected_rc_policy = historical_policy_archive.resolve(
+            "release",
+            verified_selected_rc_ledger["policyDigest"],
+            current_policy=policy,
+            label="selected RC evidence",
+        )
         selected_rc_surfaces = _validate_ledger(
             verified_selected_rc_ledger,
             expected_manifest_id=current_manifest_id,
             now=now,
             label="selected RC evidence",
-            maximum_age_days=policy["maximumEvidenceAgeDays"],
-            required_shadow_train_count=policy["requiredShadowTrainCount"],
+            maximum_age_days=selected_rc_policy["maximumEvidenceAgeDays"],
+            required_shadow_train_count=selected_rc_policy["requiredShadowTrainCount"],
         )
         selected_rc_expires_at = parse_iso8601(
             verified_selected_rc_ledger.get("expiresAt")
@@ -1894,6 +2161,7 @@ def evaluate_release_evidence(
         maximum_age_days=policy["maximumEvidenceAgeDays"],
         policy=policy,
         surface_policy=surface_policy,
+        historical_policy_archive=historical_policy_archive,
         lineage_depth=_lineage_depth,
         lineage_seen=lineage_seen,
     )
@@ -1939,6 +2207,8 @@ def evaluate_release_evidence(
         "privacy": PRIVACY_MARKER,
     }
     payload["ledgerID"] = _ledger_id(payload)
+    if _lineage_depth == 0 and not _archive_usage_scoped:
+        historical_policy_archive.assert_all_used()
     return payload
 
 
@@ -1959,11 +2229,15 @@ def release_evidence_report_blockers(
     selected_rc_ledger: dict[str, Any] | None = None,
     host_os_evidence: dict[str, Any] | None = None,
     shadow_evidence: dict[str, Any] | None = None,
+    historical_policy_archive: HistoricalPolicyArchive | None = None,
     now: datetime | None = None,
 ) -> list[str]:
     if not isinstance(payload, dict):
         return ["the release evidence report root must be a JSON object"]
     blockers: list[str] = []
+    historical_policy_archive = (
+        historical_policy_archive or HistoricalPolicyArchive()
+    ).fresh_usage_scope()
     if expected_build_manifests is None:
         blockers.append("expected signed-build manifests are required")
     observed_now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -2236,7 +2510,9 @@ def release_evidence_report_blockers(
                 selected_rc_ledger=selected_rc_ledger,
                 host_os_evidence=host_os_evidence,
                 shadow_evidence=shadow_evidence,
+                historical_policy_archive=historical_policy_archive,
                 now=generated_at,
+                _archive_usage_scoped=True,
             )
             if reconstructed != payload:
                 blockers.append(
@@ -2244,4 +2520,8 @@ def release_evidence_report_blockers(
                 )
         except ReleaseEvidenceError as error:
             blockers.append(f"release evidence reconstruction failed: {error}")
+    try:
+        historical_policy_archive.assert_all_used()
+    except ReleaseEvidenceError as error:
+        blockers.append(str(error))
     return list(dict.fromkeys(blockers))

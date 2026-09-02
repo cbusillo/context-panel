@@ -1861,6 +1861,9 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
         self.assertIn("release_evidence_expected_build_manifests_base64:", workflow)
         self.assertIn("release_evidence_selected_rc_ledger_base64:", workflow)
         self.assertIn("release_evidence_shadow_evidence_base64:", workflow)
+        self.assertIn("release_evidence_historical_policy_archive_base64:", workflow)
+        self.assertIn("INPUT_RELEASE_EVIDENCE_HISTORICAL_POLICY_ARCHIVE_BASE64", workflow)
+        self.assertIn(".build/release-evidence-policy-archive.json", workflow)
         self.assertIn("release_evidence_mode must be shadow or enforce", workflow)
         self.assertEqual(
             len(
@@ -1891,6 +1894,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             "--release-evidence-expected-build-manifest",
             "--release-evidence-selected-rc-ledger",
             "--release-evidence-shadow-evidence",
+            "--release-evidence-historical-policy-archive",
         ):
             self.assertIn(argument, validation_preflight)
         self.assertIn("--release-evidence-mode enforce", release_docs)
@@ -1938,6 +1942,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                     ".build/release-evidence-comparison.json",
                     ".build/release-evidence-selected-rc-ledger.json",
                     ".build/release-evidence-shadow.json",
+                    ".build/release-evidence-policy-archive.json",
                 ):
                     path = root / relative_path
                     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1978,6 +1983,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                         "INPUT_RELEASE_EVIDENCE_SELECTED_RC_LEDGER_BASE64": "present",
                         "INPUT_RELEASE_EVIDENCE_HOST_OS_EVIDENCE_BASE64": "",
                         "INPUT_RELEASE_EVIDENCE_SHADOW_EVIDENCE_BASE64": "present",
+                        "INPUT_RELEASE_EVIDENCE_HISTORICAL_POLICY_ARCHIVE_BASE64": "present",
                     }
                 )
                 result = subprocess.run(
@@ -1992,6 +1998,7 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
                 arguments = capture_path.read_text().splitlines()
                 self.assertIn("--validation-report", arguments)
                 self.assertIn("--release-evidence-report", arguments)
+                self.assertIn("--release-evidence-historical-policy-archive", arguments)
 
     def test_release_evidence_entrypoints_execute_directly(self):
         for relative_path in (
@@ -2066,6 +2073,19 @@ cp "$FAKE_CKDB_SCHEMA" "$output_file"
             "releaseEvidenceReleaseEnforcementGate",
         ):
             self.assertIn("--lineage-output", shlex.split(validate[command_name]))
+        for command_name in (
+            "releaseEvidenceBetaShadowGate",
+            "releaseEvidenceRCShadowGate",
+            "releaseEvidenceReleaseShadowGate",
+            "releaseEvidenceBetaEnforcementGate",
+            "releaseEvidenceRCEnforcementGate",
+            "releaseEvidenceReleaseEnforcementGate",
+            "releaseEvidenceBetaRCReportValidation",
+            "releaseEvidenceReleaseShadowReportValidation",
+            "releaseEvidenceEnforcedReportValidation",
+            "releaseEvidenceReleaseReportValidation",
+        ):
+            self.assertIn("[--historical-policy-archive", validate[command_name])
 
     def test_app_store_review_workflow_supports_review_notes_override(self):
         workflow = self.read(".github/workflows/submit-app-store-review.yml")

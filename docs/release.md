@@ -993,9 +993,34 @@ scripts/context-panel-release-gate.py enforce \
   --selected-rc-ledger <approved-rc-lineage.json> \
   --host-os-evidence <host-os-evidence.json> \
   --shadow-evidence <shadow-evidence.json> \
+  [--historical-policy-archive Config/ContextPanelHistoricalPolicyArchive.json] \
   --output <release-evidence.json> \
   --lineage-output <release-evidence-lineage.json>
 ```
+
+Historical lineage is digest-bound to the release and surface policies that
+generated each retained ledger. Current train comparison, required scope,
+watchlist expansion, carry-forward admission, expiry, and output digests always
+use the currently configured `Config/ContextPanelReleaseEvidencePolicy.json` and
+`Config/ContextPanelSurfacePolicy.json`. Previous-ledger, selected-RC, and
+embedded shadow subtrees instead resolve their `policyDigest` and
+`surfacePolicyDigest` through an explicit historical policy archive, validate
+those preimages, verify their canonical JSON digests, and reconstruct the old
+ledger bytes exactly. Missing, malformed, mismatched, duplicate, or unused
+archive entries fail closed. Pre-watchlist schema-v1 release policies are valid
+only during historical reconstruction; an absent watchlist is interpreted as an
+empty watchlist without modifying the historical payload or its digest.
+
+The committed public-safe archive
+`Config/ContextPanelHistoricalPolicyArchive.json` contains only bounded policy
+preimages needed to replay retained public ledgers, beginning with 1.0.60. Do
+not hand-edit the archive or retained lineage JSON. Recover policy preimages
+from version-controlled release sources, canonicalize with the gate's JSON
+digest, add only entries that are required by retained lineage, and keep private
+receipts, device data, local checkout paths, screenshots, and operator secrets
+out of the archive. The `--historical-policy-archive` option is optional because
+many trains only reference current policies, but any supplied unused entry is a
+validation failure.
 
 Transitive reconstruction accepts an omitted operator-flow
 `totalDurationMinutes` only in historical lineage reports generated before the
@@ -1018,7 +1043,12 @@ host-incompatible, policy-mismatched, scope-mismatched, or mixed-build evidence
 blocks submission. Dry runs, cancel-only operations, and prepare-only operations
 without a build remain exempt. The ledger binds the canonical configured policy,
 full comparison, expected-build identity set, and exact coordinator report;
-submission independently recomputes every binding.
+submission independently recomputes every binding. When historical lineage needs
+non-current policy preimages, pass the same archive used by the release gate as
+one optional base64 JSON bundle in the workflow input
+`release_evidence_historical_policy_archive_base64`; the workflow decodes it and
+passes `--release-evidence-historical-policy-archive` to the submission
+validator.
 
 Validate a ledger outside the submission workflow with the same authoritative
 inputs:
@@ -1031,6 +1061,7 @@ scripts/validate-release-evidence-report.py \
   --expected-build-manifest <ExpectedBuildManifest-platform.json> \
   --policy Config/ContextPanelReleaseEvidencePolicy.json \
   --surface-policy Config/ContextPanelSurfacePolicy.json \
+  [--historical-policy-archive Config/ContextPanelHistoricalPolicyArchive.json] \
   --version <version> \
   --build-number <build-number> \
   --train <beta|rc>
@@ -1046,7 +1077,9 @@ Add `--enforce` when validating an enforcement ledger. Repeat
 surfaces that are unchanged and do not require fresh evidence. Supply the same
 optional replayable prior lineage and evidence artifacts used to generate the
 ledger with `--previous-ledger`, `--host-os-evidence`, and `--shadow-evidence`.
-The selected-RC lineage is mandatory for release validation. Final validation
+Supply `--historical-policy-archive` only when a retained lineage subtree binds
+non-current release or surface policy digests. The selected-RC lineage is
+mandatory for release validation. Final validation
 reconstructs the complete ledger at its
 original `generatedAt`; relabeling evidence sources or omitting the selected RC
 therefore fails even when all public digests are recomputed.

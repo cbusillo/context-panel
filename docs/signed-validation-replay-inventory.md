@@ -153,6 +153,17 @@ These conditions produce machine-readable residual risks and restrict later
 replay claims. Reference-only evidence can support identity-set replay, not raw
 receipt-body replay. The `1.0.61` beta slice cannot qualify an RC or release.
 
+Release-evidence lineage can also depend on historical release and surface
+policy preimages. Those preimages are retained in the bounded public archive
+`Config/ContextPanelHistoricalPolicyArchive.json`, addressed by canonical JSON
+digest rather than by local path. Each entry must come from version-controlled
+release sources, schema-validate under the replay contract, and be consumed by
+retained lineage; missing, malformed, mismatched, duplicate, or unused entries
+fail closed. Do not hand-edit archive payloads or retained lineage. Local tools
+may accept repeated archive paths during recovery, but workflows use one
+optional base64 archive JSON bundle so generation, standalone report validation,
+and App Store submission replay the same policy preimages.
+
 ## Public Safety
 
 The serializer is construction-based: raw JSON bodies are hashed and never
@@ -168,6 +179,10 @@ Never add raw runtime receipts, device inventories, launch results, provisioning
 profiles, screenshots with private content, or validation containers to the
 repository. The rejected `feat/simulator-first-rc-validation` working tree is
 reference material only and is inadmissible as replay evidence.
+The historical policy archive follows the same public-safety boundary: it may
+contain bounded policy JSON and canonical digests, but not private roots,
+operator host paths, App Store Connect object IDs, approval bodies, device data,
+profiles, screenshots, raw receipts, or credentials.
 
 ## Signed Train Replay
 

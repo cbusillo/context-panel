@@ -2,6 +2,7 @@ import hashlib
 import copy
 import json
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
@@ -22,9 +23,10 @@ from context_panel_release_gate import (
     ReleaseEvidenceError,
     build_release_evidence_lineage,
     evaluate_release_evidence,
+    load_historical_policy_archive,
     release_evidence_report_blockers,
 )
-from context_panel_release_gate.cli import render_lineage
+from context_panel_release_gate.cli import render_lineage, run as run_release_gate
 import context_panel_release_gate.core as release_gate_core
 from context_panel_validation import ExpectedSurfaceIdentity, RUNTIME_SURFACES, Target
 from context_panel_validation.runtime_evidence import (
@@ -208,6 +210,42 @@ def policy(
     }
 
 
+def legacy_policy(
+    *,
+    patch_sensitive: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    payload = policy(patch_sensitive=patch_sensitive)
+    del payload["runtimeRegressionWatchlist"]
+    return payload
+
+
+def archive_payload(
+    *,
+    release_policy: dict[str, Any],
+    surface_policy_payload: dict[str, Any],
+    duplicate_release: bool = False,
+    extra_release_policy: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    release_digest = release_gate_core.canonical_payload_digest(release_policy)
+    surface_digest = release_gate_core.canonical_payload_digest(surface_policy_payload)
+    release_entries = [{"digest": release_digest, "policy": release_policy}]
+    if duplicate_release:
+        release_entries.append({"digest": release_digest, "policy": release_policy})
+    if extra_release_policy is not None:
+        release_entries.append(
+            {
+                "digest": release_gate_core.canonical_payload_digest(extra_release_policy),
+                "policy": extra_release_policy,
+            }
+        )
+    return {
+        "schemaVersion": 1,
+        "kind": "context-panel-historical-policy-archive",
+        "releasePolicies": release_entries,
+        "surfacePolicies": [{"digest": surface_digest, "policy": surface_policy_payload}],
+    }
+
+
 def watchlist_entry(
     surface: str,
     *,
@@ -321,6 +359,12 @@ def surface_policy(surface: str, evidence_class: str) -> dict[str, Any]:
             for surface_id in RUNTIME_SURFACES
         ],
     }
+
+
+def make_historical_surface_policy(surface: str, evidence_class: str) -> dict[str, Any]:
+    payload = surface_policy(surface, evidence_class)
+    payload["digestDomain"] = "context-panel-surface/historical-test"
+    return payload
 
 
 def comparison(
@@ -667,8 +711,13 @@ def shadow_evidence(
     surface: str = "watchos.app",
     evidence_class: str = "actual-runtime",
     policy_payload: dict[str, Any] | None = None,
+    surface_policy_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     release_policy = policy_payload or policy()
+    configured_surface_policy = surface_policy_payload or surface_policy(
+        surface,
+        evidence_class,
+    )
     runs: list[dict[str, Any]] = []
     for index in range(2):
         train = "beta" if duplicate or index == 0 else "rc"
@@ -703,8 +752,11 @@ def shadow_evidence(
                 identities=identities,
                 expected_build_manifests=all_expected_manifests(),
                 policy=release_policy,
-                surface_policy=surface_policy(surface, evidence_class),
+                surface_policy=configured_surface_policy,
                 now=NOW,
+                _allow_legacy_reconstruction=(
+                    "runtimeRegressionWatchlist" not in release_policy
+                ),
             )
             generation = {
                 "comparison": comparison_payload,
@@ -807,6 +859,7 @@ def previous_lineage(
         surface=surface,
         evidence_class=evidence_class,
         policy_payload=release_policy,
+        surface_policy_payload=configured_surface_policy,
     )
     payload = evaluate_release_evidence(
         train="beta",
@@ -819,7 +872,9 @@ def previous_lineage(
         surface_policy=configured_surface_policy,
         shadow_evidence=shadow_payload,
         now=NOW,
-        _allow_legacy_reconstruction=legacy_comparison,
+        _allow_legacy_reconstruction=(
+            legacy_comparison or "runtimeRegressionWatchlist" not in release_policy
+        ),
     )
     return build_release_evidence_lineage(
         payload,
@@ -831,11 +886,33 @@ def previous_lineage(
 
 
 def selected_rc_ledger(surface: str) -> dict[str, Any]:
-    comparison_payload = comparison(surface, "actual-runtime", train="rc")
-    validation_report = report(surface, runtime=True)
+    return selected_rc_ledger_with_policy(
+        surface,
+        policy_payload=policy(),
+        surface_policy_payload=surface_policy(surface, "actual-runtime"),
+    )
+
+
+def selected_rc_ledger_with_policy(
+    surface: str,
+    *,
+    policy_payload: dict[str, Any],
+    surface_policy_payload: dict[str, Any],
+    evidence_class: str = "actual-runtime",
+) -> dict[str, Any]:
+    comparison_payload = comparison(surface, evidence_class, train="rc")
+    validation_report = report(
+        surface,
+        runtime=evidence_class == "actual-runtime",
+        visual_class=evidence_class if evidence_class != "actual-runtime" else None,
+    )
     identities = all_identities()
     expected_manifests = all_expected_manifests()
-    shadow_payload = shadow_evidence()
+    shadow_payload = shadow_evidence(
+        evidence_class=evidence_class,
+        policy_payload=policy_payload,
+        surface_policy_payload=surface_policy_payload,
+    )
     payload = evaluate_release_evidence(
         train="rc",
         mode="enforce",
@@ -843,10 +920,13 @@ def selected_rc_ledger(surface: str) -> dict[str, Any]:
         validation_report=validation_report,
         identities=identities,
         expected_build_manifests=expected_manifests,
-        policy=policy(),
-        surface_policy=surface_policy(surface, "actual-runtime"),
+        policy=policy_payload,
+        surface_policy=surface_policy_payload,
         shadow_evidence=shadow_payload,
         now=NOW,
+        _allow_legacy_reconstruction=(
+            "runtimeRegressionWatchlist" not in policy_payload
+        ),
     )
     return build_release_evidence_lineage(
         payload,
@@ -858,6 +938,518 @@ def selected_rc_ledger(surface: str) -> dict[str, Any]:
 
 
 class ReleaseEvidenceGateTests(unittest.TestCase):
+    def test_committed_historical_policy_archive_loads_1_0_60_preimages(self) -> None:
+        archive = load_historical_policy_archive(
+            (REPO_ROOT / "Config/ContextPanelHistoricalPolicyArchive.json",)
+        )
+        release_digest = "7e7c3c0507c2aa6ba499d8f0f6a7b5b4e471d9810075c78eda7712f3960021a4"
+        surface_digest = "b664a2a099223207144f7b75c3be98dff8f552aabf3225db0b3e4534b3eee273"
+        release_policy = archive.resolve(
+            "release",
+            release_digest,
+            current_policy=policy(),
+            label="test archive",
+        )
+        surface_policy_payload = archive.resolve(
+            "surface",
+            surface_digest,
+            current_policy=surface_policy("watchos.app", "shared-view"),
+            label="test archive",
+        )
+        self.assertNotIn("runtimeRegressionWatchlist", release_policy)
+        self.assertEqual(
+            release_gate_core.canonical_payload_digest(surface_policy_payload),
+            surface_digest,
+        )
+        archive.assert_all_used()
+
+    def test_archive_entries_matching_current_policies_are_marked_used(self) -> None:
+        current_policy = policy()
+        current_surface_policy = surface_policy("watchos.app", "shared-view")
+        archive = release_gate_core.HistoricalPolicyArchive.from_payload(
+            archive_payload(
+                release_policy=current_policy,
+                surface_policy_payload=current_surface_policy,
+            ),
+            label="test archive",
+        )
+
+        archive.resolve(
+            "release",
+            release_gate_core.canonical_payload_digest(current_policy),
+            current_policy=current_policy,
+            label="test archive",
+        )
+        archive.resolve(
+            "surface",
+            release_gate_core.canonical_payload_digest(current_surface_policy),
+            current_policy=current_surface_policy,
+            label="test archive",
+        )
+
+        archive.assert_all_used()
+
+    def test_historical_previous_ledger_replays_under_bound_policy_digest(self) -> None:
+        surface = "watchos.app"
+        historical_policy = legacy_policy(patch_sensitive=("watchos.complication",))
+        historical_surface_policy = make_historical_surface_policy(surface, "shared-view")
+        previous = previous_lineage(
+            surface,
+            "shared-view",
+            policy_payload=historical_policy,
+            surface_policy_payload=historical_surface_policy,
+        )
+        current_policy = policy(
+            watchlist_entries=(watchlist_entry(surface),),
+        )
+        archive = release_gate_core.HistoricalPolicyArchive.from_payload(
+            archive_payload(
+                release_policy=historical_policy,
+                surface_policy_payload=historical_surface_policy,
+            ),
+            label="test archive",
+        )
+
+        current_comparison = watchlist_comparison(surface)
+        payload = self.evaluate(
+            surface,
+            "shared-view",
+            eligible=True,
+            previous_ledger=previous,
+            policy_payload=current_policy,
+            surface_policy_payload=watchlist_surface_policy(surface),
+            comparison_payload=current_comparison,
+            historical_policy_archive=archive,
+        )
+
+        self.assertEqual(
+            payload["policyDigest"],
+            release_gate_core.canonical_payload_digest(current_policy),
+        )
+        self.assertEqual(
+            payload["requiredEvidence"]["actual-runtime"],
+            [surface],
+        )
+        self.assertEqual(payload["state"], "blocked")
+
+    def test_historical_selected_rc_replays_under_bound_policy_digest(self) -> None:
+        surface = "watchos.app"
+        historical_policy = legacy_policy(patch_sensitive=("watchos.complication",))
+        historical_surface_policy = make_historical_surface_policy(surface, "actual-runtime")
+        selected = selected_rc_ledger_with_policy(
+            surface,
+            policy_payload=historical_policy,
+            surface_policy_payload=historical_surface_policy,
+        )
+        archive = release_gate_core.HistoricalPolicyArchive.from_payload(
+            archive_payload(
+                release_policy=historical_policy,
+                surface_policy_payload=historical_surface_policy,
+            ),
+            label="test archive",
+        )
+
+        payload = self.evaluate(
+            surface,
+            "actual-runtime",
+            train="release",
+            mode="enforce",
+            comparison_payload=comparison(surface, "actual-runtime", train="release"),
+            validation_report=report(surface, runtime=True),
+            selected_rc_ledger=selected,
+            shadow_evidence=shadow_evidence(),
+            historical_policy_archive=archive,
+        )
+
+        self.assertEqual(payload["state"], "approved")
+        self.assertEqual(
+            payload["policyDigest"],
+            release_gate_core.canonical_payload_digest(policy()),
+        )
+
+    def test_historical_selected_rc_must_match_current_authoritative_scope(self) -> None:
+        surface = "watchos.app"
+        historical_policy = legacy_policy()
+        historical_surface_policy = make_historical_surface_policy(surface, "shared-view")
+        selected = selected_rc_ledger_with_policy(
+            surface,
+            policy_payload=historical_policy,
+            surface_policy_payload=historical_surface_policy,
+            evidence_class="shared-view",
+        )
+        archive = release_gate_core.HistoricalPolicyArchive.from_payload(
+            archive_payload(
+                release_policy=historical_policy,
+                surface_policy_payload=historical_surface_policy,
+            ),
+            label="test archive",
+        )
+
+        with self.assertRaisesRegex(
+            ReleaseEvidenceError,
+            "selected RC evidence is not an enforced approved RC",
+        ):
+            self.evaluate(
+                surface,
+                "actual-runtime",
+                train="release",
+                mode="enforce",
+                comparison_payload=comparison(
+                    surface,
+                    "actual-runtime",
+                    train="release",
+                ),
+                validation_report=report(surface, runtime=True),
+                selected_rc_ledger=selected,
+                shadow_evidence=shadow_evidence(),
+                historical_policy_archive=archive,
+            )
+
+    def test_historical_shadow_subtree_replays_under_bound_policy_digest(self) -> None:
+        surface = "watchos.app"
+        historical_policy = legacy_policy(patch_sensitive=("watchos.complication",))
+        historical_surface_policy = make_historical_surface_policy(surface, "actual-runtime")
+        evidence = shadow_evidence(
+            policy_payload=historical_policy,
+            surface_policy_payload=historical_surface_policy,
+        )
+        archive = release_gate_core.HistoricalPolicyArchive.from_payload(
+            archive_payload(
+                release_policy=historical_policy,
+                surface_policy_payload=historical_surface_policy,
+            ),
+            label="test archive",
+        )
+
+        payload = self.evaluate(
+            surface,
+            "actual-runtime",
+            mode="enforce",
+            validation_report=report(surface, runtime=True),
+            shadow_evidence=evidence,
+            historical_policy_archive=archive,
+        )
+
+        self.assertEqual(payload["state"], "approved")
+        self.assertEqual(payload["shadow"]["state"], "passed")
+
+    def test_historical_policy_archive_missing_preimages_fail_closed(self) -> None:
+        surface = "watchos.app"
+        historical_policy = legacy_policy()
+        historical_surface_policy = make_historical_surface_policy(surface, "shared-view")
+        previous = previous_lineage(
+            surface,
+            "shared-view",
+            policy_payload=historical_policy,
+            surface_policy_payload=historical_surface_policy,
+        )
+        missing_surface = release_gate_core.HistoricalPolicyArchive.from_payload(
+            {
+                **archive_payload(
+                    release_policy=historical_policy,
+                    surface_policy_payload=historical_surface_policy,
+                ),
+                "surfacePolicies": [],
+            },
+            label="test archive",
+        )
+        with self.assertRaisesRegex(ReleaseEvidenceError, "surface policy preimage is missing"):
+            self.evaluate(
+                surface,
+                "shared-view",
+                eligible=True,
+                previous_ledger=previous,
+                historical_policy_archive=missing_surface,
+            )
+        missing_release = release_gate_core.HistoricalPolicyArchive.from_payload(
+            {
+                **archive_payload(
+                    release_policy=historical_policy,
+                    surface_policy_payload=historical_surface_policy,
+                ),
+                "releasePolicies": [],
+            },
+            label="test archive",
+        )
+        with self.assertRaisesRegex(ReleaseEvidenceError, "release policy preimage is missing"):
+            self.evaluate(
+                surface,
+                "shared-view",
+                eligible=True,
+                previous_ledger=previous,
+                historical_policy_archive=missing_release,
+            )
+
+    def test_historical_policy_archive_rejects_malformed_mismatched_and_duplicate_entries(self) -> None:
+        surface = "watchos.app"
+        historical_policy = legacy_policy()
+        historical_surface_policy = make_historical_surface_policy(surface, "shared-view")
+        payload = archive_payload(
+            release_policy=historical_policy,
+            surface_policy_payload=historical_surface_policy,
+        )
+        malformed = copy.deepcopy(payload)
+        malformed["releasePolicies"][0]["policy"] = []
+        with self.assertRaisesRegex(ReleaseEvidenceError, "release policy entry is invalid"):
+            release_gate_core.HistoricalPolicyArchive.from_payload(
+                malformed,
+                label="test archive",
+            )
+        mismatched = copy.deepcopy(payload)
+        mismatched["releasePolicies"][0]["digest"] = "f" * 64
+        with self.assertRaisesRegex(ReleaseEvidenceError, "digest does not match"):
+            release_gate_core.HistoricalPolicyArchive.from_payload(
+                mismatched,
+                label="test archive",
+            )
+        duplicate = archive_payload(
+            release_policy=historical_policy,
+            surface_policy_payload=historical_surface_policy,
+            duplicate_release=True,
+        )
+        with self.assertRaisesRegex(ReleaseEvidenceError, "duplicate release policy"):
+            release_gate_core.HistoricalPolicyArchive.from_payload(
+                duplicate,
+                label="test archive",
+            )
+
+    def test_unused_historical_policy_archive_entry_fails_closed(self) -> None:
+        surface = "watchos.app"
+        historical_policy = legacy_policy()
+        historical_surface_policy = make_historical_surface_policy(surface, "shared-view")
+        previous = previous_lineage(
+            surface,
+            "shared-view",
+            policy_payload=historical_policy,
+            surface_policy_payload=historical_surface_policy,
+        )
+        extra_policy = legacy_policy(patch_sensitive=("watchos.complication",))
+        archive = release_gate_core.HistoricalPolicyArchive.from_payload(
+            archive_payload(
+                release_policy=historical_policy,
+                surface_policy_payload=historical_surface_policy,
+                extra_release_policy=extra_policy,
+            ),
+            label="test archive",
+        )
+        with self.assertRaisesRegex(ReleaseEvidenceError, "unused entries"):
+            self.evaluate(
+                surface,
+                "shared-view",
+                eligible=True,
+                previous_ledger=previous,
+                historical_policy_archive=archive,
+            )
+
+    def test_current_policy_still_requires_watchlist(self) -> None:
+        with self.assertRaisesRegex(ReleaseEvidenceError, "release evidence policy is invalid"):
+            self.evaluate(
+                "watchos.app",
+                "shared-view",
+                policy_payload=legacy_policy(),
+            )
+
+    def test_legacy_policy_watchlist_is_empty_without_payload_mutation(self) -> None:
+        surface = "watchos.app"
+        historical_policy = legacy_policy()
+        historical_surface_policy = make_historical_surface_policy(surface, "shared-view")
+        original_digest = release_gate_core.canonical_payload_digest(historical_policy)
+        previous = previous_lineage(
+            surface,
+            "shared-view",
+            policy_payload=historical_policy,
+            surface_policy_payload=historical_surface_policy,
+        )
+        archive = release_gate_core.HistoricalPolicyArchive.from_payload(
+            archive_payload(
+                release_policy=historical_policy,
+                surface_policy_payload=historical_surface_policy,
+            ),
+            label="test archive",
+        )
+
+        self.evaluate(
+            surface,
+            "shared-view",
+            eligible=True,
+            previous_ledger=previous,
+            historical_policy_archive=archive,
+        )
+
+        self.assertNotIn("runtimeRegressionWatchlist", historical_policy)
+        self.assertEqual(
+            release_gate_core.canonical_payload_digest(historical_policy),
+            original_digest,
+        )
+
+    def test_report_validation_uses_same_historical_policy_archive(self) -> None:
+        surface = "watchos.app"
+        historical_policy = legacy_policy()
+        historical_surface_policy = make_historical_surface_policy(surface, "shared-view")
+        previous = previous_lineage(
+            surface,
+            "shared-view",
+            policy_payload=historical_policy,
+            surface_policy_payload=historical_surface_policy,
+        )
+        archive = release_gate_core.HistoricalPolicyArchive.from_payload(
+            archive_payload(
+                release_policy=historical_policy,
+                surface_policy_payload=historical_surface_policy,
+            ),
+            label="test archive",
+        )
+        validation_report = report(surface, visual_class="shared-view")
+        comparison_payload = comparison(surface, "shared-view", eligible=True)
+        payload = self.evaluate(
+            surface,
+            "shared-view",
+            eligible=True,
+            previous_ledger=previous,
+            validation_report=validation_report,
+            comparison_payload=comparison_payload,
+            historical_policy_archive=archive,
+        )
+        validation_archive = release_gate_core.HistoricalPolicyArchive.from_payload(
+            archive_payload(
+                release_policy=historical_policy,
+                surface_policy_payload=historical_surface_policy,
+            ),
+            label="test archive",
+        )
+
+        blockers = release_evidence_report_blockers(
+            payload,
+            version="1.0.54",
+            build_number="202608080418",
+            train="beta",
+            enforce=False,
+            validation_report=validation_report,
+            comparison=comparison_payload,
+            identities=all_identities(),
+            expected_build_manifests=all_expected_manifests(),
+            policy=policy(),
+            surface_policy=surface_policy(surface, "shared-view"),
+            previous_ledger=previous,
+            historical_policy_archive=validation_archive,
+            now=NOW,
+        )
+
+        self.assertEqual(blockers, [])
+
+    def test_historical_policy_archive_usage_is_scoped_per_evaluation(self) -> None:
+        surface = "watchos.app"
+        historical_policy = legacy_policy()
+        historical_surface_policy = make_historical_surface_policy(surface, "shared-view")
+        archive = release_gate_core.HistoricalPolicyArchive.from_payload(
+            archive_payload(
+                release_policy=historical_policy,
+                surface_policy_payload=historical_surface_policy,
+            ),
+            label="test archive",
+        )
+        self.evaluate(
+            surface,
+            "shared-view",
+            eligible=True,
+            previous_ledger=previous_lineage(
+                surface,
+                "shared-view",
+                policy_payload=historical_policy,
+                surface_policy_payload=historical_surface_policy,
+            ),
+            historical_policy_archive=archive,
+        )
+
+        with self.assertRaisesRegex(ReleaseEvidenceError, "unused entries"):
+            self.evaluate(
+                surface,
+                "shared-view",
+                historical_policy_archive=archive,
+            )
+
+    def test_lineage_renderer_preserves_raw_embedded_lineage_bytes(self) -> None:
+        previous = previous_lineage("watchos.app", "shared-view")
+        raw_previous = (json.dumps(previous, indent=2) + "\r\n").encode()
+        lineage = build_release_evidence_lineage(
+            self.evaluate(
+                "watchos.app",
+                "shared-view",
+                eligible=True,
+                previous_ledger=previous,
+            ),
+            comparison=comparison("watchos.app", "shared-view", eligible=True),
+            validation_report=report("watchos.app"),
+            expected_build_manifests=all_expected_manifests(),
+            previous_ledger=previous,
+        )
+
+        rendered = render_lineage(lineage, raw_previous_ledger=raw_previous)
+
+        self.assertIn(raw_previous, rendered)
+        self.assertEqual(json.loads(rendered)["generation"]["previousLedger"], previous)
+
+    def test_release_gate_cli_preserves_raw_lineage_file_bytes(self) -> None:
+        surface = "watchos.app"
+        previous = previous_lineage(surface, "shared-view")
+        raw_previous = (
+            json.dumps(previous, indent=2).replace("\n", "\r\n") + "\r\n"
+        ).encode()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            comparison_path = root / "comparison.json"
+            report_path = root / "report.json"
+            policy_path = root / "policy.json"
+            surface_policy_path = root / "surface-policy.json"
+            previous_path = root / "previous.json"
+            output_path = root / "output.json"
+            lineage_path = root / "lineage.json"
+            comparison_path.write_text(
+                json.dumps(comparison(surface, "shared-view", eligible=True))
+            )
+            report_path.write_text(json.dumps(report(surface)))
+            policy_path.write_text(json.dumps(policy()))
+            surface_policy_path.write_text(json.dumps(surface_policy(surface, "shared-view")))
+            previous_path.write_bytes(raw_previous)
+            manifest_arguments: list[str] = []
+            for index, manifest in enumerate(all_expected_manifests()):
+                manifest_path = root / f"manifest-{index}.json"
+                manifest_path.write_text(json.dumps(manifest))
+                manifest_arguments.extend(["--expected-build-manifest", str(manifest_path)])
+
+            result = run_release_gate(
+                [
+                    "shadow",
+                    "--train",
+                    "beta",
+                    "--comparison",
+                    str(comparison_path),
+                    "--validation-report",
+                    str(report_path),
+                    *manifest_arguments,
+                    "--policy",
+                    str(policy_path),
+                    "--surface-policy",
+                    str(surface_policy_path),
+                    "--previous-ledger",
+                    str(previous_path),
+                    "--output",
+                    str(output_path),
+                    "--lineage-output",
+                    str(lineage_path),
+                    "--now",
+                    NOW.isoformat(),
+                ]
+            )
+
+            self.assertEqual(result, 0)
+            rendered = lineage_path.read_bytes()
+            self.assertIn(raw_previous, rendered)
+            self.assertEqual(
+                json.loads(rendered)["generation"]["previousLedger"],
+                previous,
+            )
+
     def test_release_gate_recomputes_v5_artifact_risks_from_lineage(self) -> None:
         surface = "watchos.app"
         current_manifests = list(copy.deepcopy(all_expected_manifests()))

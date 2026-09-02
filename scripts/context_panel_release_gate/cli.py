@@ -16,12 +16,86 @@ from .core import (
     ReleaseEvidenceError,
     build_release_evidence_lineage,
     evaluate_release_evidence,
+    load_historical_policy_archive,
     load_json_object,
 )
 
 
-def render_lineage(lineage: dict[str, Any]) -> str:
-    return json.dumps(lineage, indent=2) + "\n"
+GENERATION_RENDER_ORDER = (
+    "comparison",
+    "validationReport",
+    "expectedBuildManifests",
+    "previousLedger",
+    "selectedRCLedger",
+    "hostOSEvidence",
+    "shadowEvidence",
+)
+
+
+def _render_member(
+    *,
+    indent: int,
+    key: str,
+    value: object,
+    comma: bool,
+    raw_value: bytes | None = None,
+) -> bytes:
+    spaces = b" " * indent
+    suffix = b"," if comma else b""
+    encoded_key = json.dumps(key).encode()
+    if raw_value is not None:
+        return spaces + encoded_key + b":\n" + raw_value + suffix + b"\n"
+    rendered = json.dumps(value, indent=2).splitlines()
+    first_line = spaces + encoded_key + b": " + rendered[0].encode()
+    remaining = b"\n".join(spaces + line.encode() for line in rendered[1:])
+    body = first_line if not remaining else first_line + b"\n" + remaining
+    return body + suffix + b"\n"
+
+
+def render_lineage(
+    lineage: dict[str, Any],
+    *,
+    raw_previous_ledger: bytes | None = None,
+    raw_selected_rc_ledger: bytes | None = None,
+) -> bytes:
+    if raw_previous_ledger is None and raw_selected_rc_ledger is None:
+        return (json.dumps(lineage, indent=2) + "\n").encode()
+    generation = lineage["generation"]
+    rendered = b"{\n"
+    rendered += _render_member(
+        indent=2,
+        key="schemaVersion",
+        value=lineage["schemaVersion"],
+        comma=True,
+    )
+    rendered += _render_member(
+        indent=2,
+        key="kind",
+        value=lineage["kind"],
+        comma=True,
+    )
+    rendered += _render_member(
+        indent=2,
+        key="ledger",
+        value=lineage["ledger"],
+        comma=True,
+    )
+    rendered += b'  "generation": {\n'
+    for index, key in enumerate(GENERATION_RENDER_ORDER):
+        raw_value = None
+        if key == "previousLedger":
+            raw_value = raw_previous_ledger
+        elif key == "selectedRCLedger":
+            raw_value = raw_selected_rc_ledger
+        rendered += _render_member(
+            indent=4,
+            key=key,
+            value=generation[key],
+            comma=index < len(GENERATION_RENDER_ORDER) - 1,
+            raw_value=raw_value,
+        )
+    rendered += b"  }\n}"
+    return rendered + b"\n"
 
 
 DEFAULT_POLICY = Path("Config/ContextPanelReleaseEvidencePolicy.json")
@@ -57,6 +131,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--host-os-evidence", type=Path)
     parser.add_argument("--shadow-evidence", type=Path)
+    parser.add_argument(
+        "--historical-policy-archive",
+        dest="historical_policy_archives",
+        type=Path,
+        action="append",
+        help="Optional directory or archive JSON containing digest-verified historical policy preimages.",
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument(
         "--lineage-output",
@@ -69,6 +150,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def _optional_payload(path: Path | None, label: str) -> dict[str, object] | None:
     return load_json_object(path, label) if path is not None else None
+
+
+def _optional_lineage_payload(
+    path: Path | None,
+    label: str,
+) -> tuple[dict[str, object] | None, bytes | None]:
+    if path is None:
+        return None, None
+    try:
+        raw = path.expanduser().read_bytes()
+        payload = json.loads(raw)
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ReleaseEvidenceError(f"{label} is unavailable or invalid") from error
+    if not isinstance(payload, dict):
+        raise ReleaseEvidenceError(f"{label} must be a JSON object")
+    return payload, raw
 
 
 def run(argv: list[str] | None = None) -> int:
@@ -96,6 +193,9 @@ def run(argv: list[str] | None = None) -> int:
         load_json_object(path, "expected signed build manifest")
         for path in arguments.expected_build_manifests
     )
+    historical_policy_archive = load_historical_policy_archive(
+        tuple(arguments.historical_policy_archives or ())
+    )
     identities = expected_surface_identities_from_payloads(
         list(expected_build_manifests),
         target,
@@ -105,8 +205,11 @@ def run(argv: list[str] | None = None) -> int:
     if arguments.now:
         normalized = arguments.now.replace("Z", "+00:00")
         now = datetime.fromisoformat(normalized).astimezone(timezone.utc)
-    previous_ledger = _optional_payload(arguments.previous_ledger, "previous ledger")
-    selected_rc_ledger = _optional_payload(
+    previous_ledger, raw_previous_ledger = _optional_lineage_payload(
+        arguments.previous_ledger,
+        "previous ledger",
+    )
+    selected_rc_ledger, raw_selected_rc_ledger = _optional_lineage_payload(
         arguments.selected_rc_ledger,
         "selected RC ledger",
     )
@@ -125,6 +228,7 @@ def run(argv: list[str] | None = None) -> int:
         selected_rc_ledger=selected_rc_ledger,
         host_os_evidence=host_os_evidence,
         shadow_evidence=shadow_evidence,
+        historical_policy_archive=historical_policy_archive,
         now=now,
     )
     rendered = json.dumps(payload, indent=2, sort_keys=True) + "\n"
@@ -145,7 +249,13 @@ def run(argv: list[str] | None = None) -> int:
             shadow_evidence=shadow_evidence,
         )
         arguments.lineage_output.parent.mkdir(parents=True, exist_ok=True)
-        arguments.lineage_output.write_text(render_lineage(lineage))
+        arguments.lineage_output.write_bytes(
+            render_lineage(
+                lineage,
+                raw_previous_ledger=raw_previous_ledger,
+                raw_selected_rc_ledger=raw_selected_rc_ledger,
+            )
+        )
     if arguments.mode == "enforce" and payload["state"] != "approved":
         return 20
     return 0
