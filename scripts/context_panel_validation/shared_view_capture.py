@@ -59,6 +59,7 @@ SIMCTL_CREATE_TIMEOUT = 30
 SIMCTL_BOOT_TIMEOUT = 60
 SIMCTL_BOOTSTATUS_TIMEOUT = 120
 SIMCTL_INSTALL_TIMEOUT = 120
+SIMCTL_VISIONOS_INSTALL_TIMEOUT = 300
 SIMCTL_CONTAINER_TIMEOUT = 30
 SIMCTL_TERMINATE_TIMEOUT = 30
 SIMCTL_UI_TIMEOUT = 30
@@ -66,7 +67,7 @@ SIMCTL_OPENURL_TIMEOUT = 30
 SIMCTL_LAUNCH_TIMEOUT = 60
 SIMCTL_SCREENSHOT_TIMEOUT = 60
 SIMCTL_CLEANUP_TIMEOUT = 30
-CAPTURE_SETTLE_SECONDS = 1.0
+CAPTURE_SETTLE_SECONDS = 3.0
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 MAX_PNG_FILE_BYTES = 64 * 1024 * 1024
 MAX_PNG_DIMENSION = 8_192
@@ -1684,10 +1685,15 @@ def _capture_profile(
             cleanup_target = simulator_id or next(iter(new_ids))
             cleanup_target_observer(cleanup_target)
 
+    install_timeout = (
+        SIMCTL_VISIONOS_INSTALL_TIMEOUT
+        if profile.name == "visionos"
+        else SIMCTL_INSTALL_TIMEOUT
+    )
     prerequisites = (
         ("boot", SIMCTL_BOOT_TIMEOUT, "simctl-boot"),
         ("bootstatus", SIMCTL_BOOTSTATUS_TIMEOUT, "simctl-bootstatus"),
-        ("install", SIMCTL_INSTALL_TIMEOUT, "simctl-install"),
+        ("install", install_timeout, "simctl-install"),
     )
     if lifecycle_error is None and simulator_id is not None:
         for verb, timeout, error_base in prerequisites:

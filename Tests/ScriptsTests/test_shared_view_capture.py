@@ -555,7 +555,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         exit_code, receipt = self.execute(runner)
 
         self.assertEqual(EXIT_OK, exit_code)
-        self.assertEqual([1.0] * 8, self.sleeps)
+        self.assertEqual([3.0] * 8, self.sleeps)
         commands = [args for args, _ in runner.calls]
         requirements = payload["requirements"]
         self.assertEqual(
@@ -601,6 +601,20 @@ class SharedViewCaptureTests(unittest.TestCase):
             [item["requirementID"] for item in receipt["captures"]],
         )
 
+    def test_visionos_install_uses_cold_runtime_timeout(self) -> None:
+        self.write_plan(["visionos.app"])
+        self.write_config(("visionos",))
+        runner = FakeRunner()
+
+        exit_code, _ = self.execute(runner)
+
+        self.assertEqual(EXIT_OK, exit_code)
+        install_calls = [
+            (args, timeout) for args, timeout in runner.calls if args[2] == "install"
+        ]
+        self.assertEqual(1, len(install_calls))
+        self.assertEqual(300, install_calls[0][1])
+
     def test_watch_profile_uses_direct_launch_without_appearance_mutation(self) -> None:
         payload = self.write_plan(["watchos.app", "watchos.complication"])
         self.write_config(("watchos",))
@@ -609,7 +623,7 @@ class SharedViewCaptureTests(unittest.TestCase):
         exit_code, receipt = self.execute(runner)
 
         self.assertEqual(EXIT_OK, exit_code)
-        self.assertEqual([1.0] * 12, self.sleeps)
+        self.assertEqual([3.0] * 12, self.sleeps)
         commands = [args for args, _ in runner.calls]
         self.assertEqual(
             [
