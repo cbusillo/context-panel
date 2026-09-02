@@ -43,6 +43,8 @@ Create schema-v1 visual-review requirements from a current schema-v5 comparison:
 ```sh
 scripts/context-panel-validation.py plan-shared-view-evidence \
   --surface-comparison <comparison.json> \
+  --matrix <target-source-root>/Config/ContextPanelSharedViewMatrix.json \
+  --surface-policy <target-source-root>/Config/ContextPanelSurfacePolicy.json \
   [--base-requirements <placement-requirements.json>] \
   --output <visual-review-requirements.json> \
   --json
@@ -101,6 +103,8 @@ self-consistent manifests in a caller-selected digest domain are rejected.
 scripts/context-panel-validation.py capture-shared-view-evidence \
   --surface-comparison <comparison.json> \
   --current-manifest <current-surface-manifest.json> \
+  --matrix <target-source-root>/Config/ContextPanelSharedViewMatrix.json \
+  --surface-policy <target-source-root>/Config/ContextPanelSurfacePolicy.json \
   --requirements <visual-review-requirements.json> \
   --capture-config <private-capture-config.json> \
   --artifact-root <absolute-private-artifact-root> \
