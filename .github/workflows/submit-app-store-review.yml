@@ -114,6 +114,10 @@ name: Submit App Store Review
         description: Base64 signed shadow-train comparison evidence.
         required: false
         type: string
+      release_evidence_historical_policy_archive_base64:
+        description: Base64 optional digest-verified historical policy archive JSON.
+        required: false
+        type: string
       cloudkit_schema_receipt_base64:
         description: Sealed short-lived Production CloudKit schema receipt.
         required: false
@@ -243,6 +247,10 @@ name: Submit App Store Review
         description: Base64 signed shadow-train comparison evidence.
         required: false
         type: string
+      release_evidence_historical_policy_archive_base64:
+        description: Base64 optional digest-verified historical policy archive JSON.
+        required: false
+        type: string
       cloudkit_schema_receipt_base64:
         description: Sealed short-lived Production CloudKit schema receipt.
         required: false
@@ -323,6 +331,8 @@ jobs:
             ${{ inputs.release_evidence_host_os_evidence_base64 }}
           INPUT_RELEASE_EVIDENCE_SHADOW_EVIDENCE_BASE64: >-
             ${{ inputs.release_evidence_shadow_evidence_base64 }}
+          INPUT_RELEASE_EVIDENCE_HISTORICAL_POLICY_ARCHIVE_BASE64: >-
+            ${{ inputs.release_evidence_historical_policy_archive_base64 }}
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_STORE_CONNECT_API_KEY_P8_BASE64: >-
@@ -377,6 +387,8 @@ jobs:
             .build/release-evidence-host-os.json
           decode_optional_json "${INPUT_RELEASE_EVIDENCE_SHADOW_EVIDENCE_BASE64}" \
             .build/release-evidence-shadow.json
+          decode_optional_json "${INPUT_RELEASE_EVIDENCE_HISTORICAL_POLICY_ARCHIVE_BASE64}" \
+            .build/release-evidence-policy-archive.json
 
       - name: Verify Production CloudKit Schema Receipt
         if: ${{ !inputs.dry_run && !inputs.cancel_review_only }}
@@ -426,6 +438,8 @@ jobs:
             ${{ inputs.release_evidence_host_os_evidence_base64 }}
           INPUT_RELEASE_EVIDENCE_SHADOW_EVIDENCE_BASE64: >-
             ${{ inputs.release_evidence_shadow_evidence_base64 }}
+          INPUT_RELEASE_EVIDENCE_HISTORICAL_POLICY_ARCHIVE_BASE64: >-
+            ${{ inputs.release_evidence_historical_policy_archive_base64 }}
         run: |
           set -euo pipefail
           args=(
@@ -549,6 +563,10 @@ jobs:
             if [[ -f .build/release-evidence-shadow.json ]]; then
               args+=(--release-evidence-shadow-evidence \
                 .build/release-evidence-shadow.json)
+            fi
+            if [[ -f .build/release-evidence-policy-archive.json ]]; then
+              args+=(--release-evidence-historical-policy-archive \
+                .build/release-evidence-policy-archive.json)
             fi
           elif [[ "${report_required}" == "true" ]]; then
             echo "release_evidence_report_base64 is required for live shadow or enforce validation" >&2

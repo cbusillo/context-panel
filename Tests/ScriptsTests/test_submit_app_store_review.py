@@ -169,6 +169,7 @@ class ValidationReportGateTests(unittest.TestCase):
             "release_evidence_selected_rc_ledger": "selected-rc.json",
             "release_evidence_host_os_evidence": None,
             "release_evidence_shadow_evidence": None,
+            "release_evidence_historical_policy_archives": None,
         }
         values.update(overrides)
         return SimpleNamespace(**values)
@@ -360,6 +361,40 @@ class ValidationReportGateTests(unittest.TestCase):
 
     def test_live_shadow_argument_contract_is_accepted(self):
         submit_app_store_review.validate_args(self.live_args())
+
+    def test_release_evidence_accepts_historical_policy_archive_input(self):
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "submit-app-store-review.py",
+                "--version",
+                "1.0.54",
+                "--build-number",
+                "202608100001",
+                "--validation-report",
+                "final-report.json",
+                "--validation-train",
+                "release",
+                "--release-evidence-report",
+                "release-evidence.json",
+                "--release-evidence-comparison",
+                "comparison.json",
+                "--release-evidence-expected-build-manifest",
+                "expected.json",
+                "--release-evidence-selected-rc-ledger",
+                "selected-rc.json",
+                "--release-evidence-historical-policy-archive",
+                "Config/ContextPanelHistoricalPolicyArchive.json",
+                "--validate-report-only",
+            ],
+        ):
+            parsed = submit_app_store_review.parse_args()
+
+        self.assertEqual(
+            parsed.release_evidence_historical_policy_archives,
+            ["Config/ContextPanelHistoricalPolicyArchive.json"],
+        )
 
     def test_live_submission_requires_release_evidence_train(self):
         for train in (None, "beta", "rc"):

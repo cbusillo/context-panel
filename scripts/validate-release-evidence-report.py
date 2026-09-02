@@ -9,6 +9,7 @@ from pathlib import Path
 from context_panel_comparison_schema import ComparisonSchemaError, validate_current_comparison
 from context_panel_release_gate import (
     ReleaseEvidenceError,
+    load_historical_policy_archive,
     load_json_object,
     release_evidence_report_blockers,
 )
@@ -49,6 +50,13 @@ def main() -> None:
     parser.add_argument("--policy", type=Path, default=DEFAULT_POLICY)
     parser.add_argument("--surface-policy", type=Path, default=DEFAULT_SURFACE_POLICY)
     parser.add_argument(
+        "--historical-policy-archive",
+        dest="historical_policy_archives",
+        type=Path,
+        action="append",
+        help="Optional directory or archive JSON containing digest-verified historical policy preimages.",
+    )
+    parser.add_argument(
         "--previous-ledger",
         type=Path,
         help="Replayable lineage bundle for the prior approved ledger.",
@@ -73,6 +81,9 @@ def main() -> None:
         surface_policy = load_json_object(
             arguments.surface_policy,
             "surface evidence policy",
+        )
+        historical_policy_archive = load_historical_policy_archive(
+            tuple(arguments.historical_policy_archives or ())
         )
         expected_build_manifests = tuple(
             load_json_object(path, "expected signed build manifest")
@@ -104,6 +115,7 @@ def main() -> None:
         ),
         host_os_evidence=optional_payload(arguments.host_os_evidence, "host OS evidence"),
         shadow_evidence=optional_payload(arguments.shadow_evidence, "shadow evidence"),
+        historical_policy_archive=historical_policy_archive,
     )
     if blockers:
         details = "\n".join(f"- {blocker}" for blocker in blockers)
